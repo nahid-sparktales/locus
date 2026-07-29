@@ -1,0 +1,70 @@
+name: Locus
+options:
+  bundleIdPrefix: com.nahid
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+    ENABLE_HARDENED_RUNTIME: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    CURRENT_PROJECT_VERSION: 6
+    MARKETING_VERSION: 1.5.1
+targets:
+  Locus:
+    type: application
+    platform: macOS
+    sources:
+      - path: Locus
+        excludes:
+          - Resources
+      - path: Locus/Resources
+        buildPhase: resources
+    postBuildScripts:
+      - name: Bundle local agent runtime
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/Tools/BundleBackend.sh"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.nahid.locus
+        PRODUCT_NAME: Locus
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Locus
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        INFOPLIST_KEY_NSDocumentsFolderUsageDescription: "Locus needs access to your Documents folder to open coding workspaces and start the local Ollama agent."
+        INFOPLIST_KEY_NSDownloadsFolderUsageDescription: "Locus needs access when you choose files or projects from Downloads."
+        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026"
+        COMBINE_HIDPI_IMAGES: YES
+    scheme:
+      testTargets:
+        - LocusTests
+        - LocusUITests
+  LocusTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: LocusTests
+    dependencies:
+      - target: Locus
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.nahid.locus.tests
+        GENERATE_INFOPLIST_FILE: YES
+  LocusUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: LocusUITests
+    dependencies:
+      - target: Locus
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.nahid.locus.ui-tests
+        TEST_TARGET_NAME: Locus
+        GENERATE_INFOPLIST_FILE: YES

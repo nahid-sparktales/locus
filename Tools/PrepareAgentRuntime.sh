@@ -1,0 +1,79 @@
+#!/bin/zsh
+# Builds/refreshes the cached self-contained agent runtime consumed by
+# BundleBackend.sh:
+#   .agent-runtime/cpython        relocatable CPython (python-build-standalone)
+#   .agent-runtime/site-packages  agent dependencies (pip --target)
+# Unlike a Homebrew/system Python, these builds resolve their dylib and
+# stdlib relative to the executable, so the copy inside Locus.app works on
+# Macs with no Python installed.
+# Safe to run manually; does no work (and no network) while the stamp is
+# current. The stamp covers the interpreter build and agent/pyproject.toml.
+set -euo pipefail
+
+script_dir="${0:A:h}"
+repo_root="${script_dir:h}"
+backend_root="${LOCUS_BACKEND_ROOT:-${repo_root}/agent}"
+cache="${LOCUS_RUNTIME_CACHE:-${repo_root}/.agent-runtime}"
+
+# Bump these together when moving to a newer interpreter:
+# https://github.com/astral-sh/python-build-standalone/releases
+pbs_tag="${LOCUS_PBS_TAG:-20260728}"
+py_version="${LOCUS_PBS_PYTHON:-3.14.6}"
+
+case "$(/usr/bin/uname -m)" in
+    arm64)  pbs_arch="aarch64" ;;
+    x86_64) pbs_arch="x86_64" ;;
+    *) echo "error: unsupported architecture $(/usr/bin/uname -m)" >&2; exit 1 ;;
+esac
+
+asset="cpython-${py_version}+${pbs_tag}-${pbs_arch}-apple-darwin-install_only_stripped.tar.gz"
+url="https://github.com/astral-sh/python-build-standalone/releases/download/${pbs_tag}/${asset}"
+
+stamp_value="${asset} $(/usr/bin/shasum -a 256 "${backend_root}/pyproject.toml" | /usr/bin/cut -d' ' -f1)"
+stamp_file="${cache}/.stamp"
+
+if [[ -f "${stamp_file}" && -x "${cache}/cpython/bin/python3" && -d "${cache}/site-packages" ]] \
+    && [[ "$(<"${stamp_file}")" == "${stamp_value}" ]]; then
+    echo "Agent runtime cache is current (${asset})."
+    exit 0
+fi
+
+echo "Preparing agent runtime: ${asset}"
+workdir="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/locus-runtime.XXXXXX")"
+trap '/bin/rm -rf "${workdir}"' EXIT
+
+/usr/bin/curl -fsSL --retry 3 -o "${workdir}/${asset}" "${url}"
+sums_url="https://github.com/astral-sh/python-build-standalone/releases/download/${pbs_tag}/SHA256SUMS"
+if /usr/bin/curl -fsSL --max-time 30 -o "${workdir}/SHA256SUMS" "${sums_url}"; then
+    expected="$(/usr/bin/awk -v a="${asset}" '$2 == a { print $1; exit }' "${workdir}/SHA256SUMS")"
+    actual="$(/usr/bin/shasum -a 256 "${workdir}/${asset}" | /usr/bin/cut -d' ' -f1)"
+    if [[ -z "${expected}" || "${expected}" != "${actual}" ]]; then
+        echo "error: checksum mismatch for ${asset}" >&2
+        exit 1
+    fi
+else
+    echo "warning: checksums for ${pbs_tag} unavailable; continuing unverified."
+fi
+
+/usr/bin/tar -xzf "${workdir}/${asset}" -C "${workdir}"
+if [[ ! -x "${workdir}/python/bin/python3" ]]; then
+    echo "error: unexpected archive layout in ${asset}" >&2
+    exit 1
+fi
+
+# Install the agent package to pull in its dependencies, then drop the
+# package itself — the app bundles the live source tree separately.
+/bin/mkdir -p "${workdir}/site-packages"
+"${workdir}/python/bin/python3" -m pip install --quiet \
+    --target "${workdir}/site-packages" "${backend_root}"
+/bin/rm -rf "${workdir}/site-packages/ollama_code" \
+    "${workdir}"/site-packages/ollama_code-*.dist-info(N) \
+    "${workdir}/site-packages/bin"
+"${workdir}/python/bin/python3" -m compileall -q "${workdir}/site-packages"
+
+/bin/rm -rf "${cache}"
+/bin/mkdir -p "${cache}"
+/usr/bin/ditto "${workdir}/python" "${cache}/cpython"
+/usr/bin/ditto "${workdir}/site-packages" "${cache}/site-packages"
+print -r -- "${stamp_value}" > "${stamp_file}"
+echo "Agent runtime cache ready at ${cache}"

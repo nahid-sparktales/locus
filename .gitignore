@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+
+# Xcode / builds
+.build/
+.build-*/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.app
+*.dSYM
+*.xcarchive
+*.zip
+.release-*/
+.releasebuild-*/
+
+# Bundled agent runtime cache (downloaded standalone Python + deps)
+.agent-runtime/
+
+# Python (agent/)
+agent/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+agent/build/
+agent/dist/
+
+# Secrets
+.env
+.env.*

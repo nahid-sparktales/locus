@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# ollama-code launcher — resolves symlinks, uses the project venv, keeps your cwd.
+set -e
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  case "$SOURCE" in /*) ;; *) SOURCE="$DIR/$SOURCE" ;; esac
+done
+BIN_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+PROJECT_DIR="$(cd "$BIN_DIR/.." >/dev/null 2>&1 && pwd)"
+export PYTHONPATH="$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}"
+exec "$PROJECT_DIR/.venv/bin/python" -m ollama_code "$@"

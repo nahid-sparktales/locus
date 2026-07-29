@@ -1,0 +1,95 @@
+import Foundation
+
+/// Verifies a remote OpenAI-compatible endpoint straight from the app, so
+/// "Test Connection" in Settings has no side effects: it must not commit the
+/// unsaved draft, write the keychain, or switch the live agent's provider.
+enum RemoteEndpointTester {
+    struct Outcome {
+        let ok: Bool
+        let message: String
+    }
+
+    /// Mirrors the backend's `normalize_base_url`: people paste endpoints
+    /// with or without `/v1`, with a trailing slash, or with the full
+    /// `/v1/chat/completions` path — accept all of them.
+    static func normalizeBaseURL(_ url: String) -> String {
+        var base = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        while base.hasSuffix("/") { base.removeLast() }
+        guard !base.isEmpty else { return "" }
+        if !base.contains("://") { base = "https://" + base }
+        for suffix in ["/chat/completions", "/completions"] where base.hasSuffix(suffix) {
+            base.removeLast(suffix.count)
+            break
+        }
+        while base.hasSuffix("/") { base.removeLast() }
+        if !base.hasSuffix("/v1") { base += "/v1" }
+        return base
+    }
+
+    static func test(baseURL: String, model: String, apiKey: String) async -> Outcome {
+        let base = normalizeBaseURL(baseURL)
+        guard !base.isEmpty, let modelsURL = URL(string: base + "/models") else {
+            return Outcome(ok: false, message: "That endpoint URL is not valid.")
+        }
+        var request = URLRequest(url: modelsURL)
+        request.timeoutInterval = 15
+        if !apiKey.isEmpty {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            if (200..<300).contains(status) {
+                return Outcome(ok: true, message: "Connected — \(base) answered.")
+            }
+            // Endpoints that serve exactly one model often reject /models;
+            // a one-token chat probe is the authoritative check there.
+            if status == 404 || status == 405 {
+                return await chatProbe(base: base, model: model, apiKey: apiKey)
+            }
+            return Outcome(ok: false, message: failureMessage(status: status, data: data))
+        } catch {
+            return Outcome(ok: false, message: error.localizedDescription)
+        }
+    }
+
+    private static func chatProbe(base: String, model: String, apiKey: String) async -> Outcome {
+        guard let url = URL(string: base + "/chat/completions") else {
+            return Outcome(ok: false, message: "That endpoint URL is not valid.")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !apiKey.isEmpty {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
+        let body: [String: Any] = [
+            "model": model,
+            "messages": [["role": "user", "content": "ping"]],
+            "max_tokens": 1,
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            guard (200..<300).contains(status) else {
+                return Outcome(ok: false, message: failureMessage(status: status, data: data))
+            }
+            return Outcome(ok: true, message: "Connected — \(base) answered a chat probe.")
+        } catch {
+            return Outcome(ok: false, message: error.localizedDescription)
+        }
+    }
+
+    private static func failureMessage(status: Int, data: Data) -> String {
+        let body = String(data: data.prefix(300), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let hint = switch status {
+        case 401, 403: "The endpoint rejected the API key"
+        case 404: "Nothing answered at that path"
+        default: "The endpoint answered \(status)"
+        }
+        return body.isEmpty ? "\(hint)." : "\(hint): \(body)"
+    }
+}

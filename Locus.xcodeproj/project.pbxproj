@@ -1,0 +1,671 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		02458331522F5E1FA06ADC29 /* WorkspaceIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = B082AFE6729F96D2D8606AC9 /* WorkspaceIndex.swift */; };
+		09B6A5BCCC8803A5F53316D4 /* ModelLibraryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8FCD4DB1FD5A4E1FD862797 /* ModelLibraryService.swift */; };
+		0BEFB1DD866AB33ACE30D409 /* LocusUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FEDB7872CF5F644CE91EC65 /* LocusUITests.swift */; };
+		0F72DE71A4842FDA1E802CC0 /* GitStatusModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63EA24EB82248151706E566E /* GitStatusModels.swift */; };
+		20C4A1758890CFAC76C9ED6B /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5118157AFFA0FF82EDCA5BED /* AppModel.swift */; };
+		2C48811226A5E53CECD51253 /* FeatureLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16740EAD75B3BC87EA7D49A7 /* FeatureLogicTests.swift */; };
+		35872DC7D25B9CE5D3A43C6E /* InspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF3D3389D598BBECBE77E38F /* InspectorView.swift */; };
+		3C3E46189C3441DA21CB8E5A /* TerminalSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = F95947ACE0751337457A57CD /* TerminalSession.swift */; };
+		3EB73A207975893878E53D8B /* MessageContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA164EE10426EF2AD4E606A /* MessageContent.swift */; };
+		404AF919F8C0790788D0A26B /* GitClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06DD9A63C8FBDB42368F8A0C /* GitClient.swift */; };
+		4679DAB70FE7B88A97E3F6D9 /* RemoteEndpointTester.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01EE3ED166C864419A854532 /* RemoteEndpointTester.swift */; };
+		4C25B8F53E842CD8D5556308 /* InspectorTerminalTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C90DE8FC778C6A106DF35EB /* InspectorTerminalTab.swift */; };
+		56B2392CBBC3354BD5A6E359 /* InspectorFilesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10D6D002C03E3AA6EB9FEFD0 /* InspectorFilesTab.swift */; };
+		62A955375EBFA6E5A70A6C85 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0204C24A0102A8D20E3A23CE /* Theme.swift */; };
+		6777453D22A87B5DF2E89B0C /* ShortcutsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CBA85D1FB7286E08482ED76 /* ShortcutsSheet.swift */; };
+		686A434D611B736A8BC449A2 /* SlashCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78188AFFEC80498E68C2EE3A /* SlashCommands.swift */; };
+		6CB6F6C625981B438BD534AB /* AppModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C41E39F35E0F75A05095B5EC /* AppModelTests.swift */; };
+		74A5BCF6953128864737A070 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2D4CA41C622A34E45EF21F54 /* Assets.xcassets */; };
+		7B87C08B32EA786673C34F3F /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76FC0F4F0C6864707814EAA5 /* Keychain.swift */; };
+		A6D846A90EED0F655A108FE8 /* Sheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11B2324D330884AA4555A92 /* Sheets.swift */; };
+		BEAFCBFDAE33591C970B5E98 /* BackendProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */; };
+		C0EB8EF86FF9954D89CC082E /* InspectorPlanTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */; };
+		CB22892B835E59A99C4FA35D /* LocusApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCCEF7CD29A9C6F9C3E1472F /* LocusApp.swift */; };
+		CC34DB49F0794EFC59213A34 /* ModelLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CB88F08135C226D4D6AFF6A /* ModelLibraryView.swift */; };
+		D586AEB96691BDCC5A9F0418 /* InspectorChangesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCCD81AAF0691EDC3F6B0D64 /* InspectorChangesTab.swift */; };
+		D8873F086E1F5351BAB0FB2E /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2CC3300CABBD87F954E4C63 /* WorkspaceView.swift */; };
+		DAC9BDD3759C84F504BBD92F /* PermissionPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28BF95EE575D10DBDE8FA1B3 /* PermissionPromptView.swift */; };
+		E6B5E9C34E90B735A5A84C22 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E18BD6EB5EBD180B3E69FBD6 /* ComposerView.swift */; };
+		F01F72892D90A52009E99BC3 /* SessionSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A37D5FE4583645B552296C /* SessionSidebarView.swift */; };
+		F9405ED899AAD041CF6BAD66 /* BackendService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3793FC69B1D813ED07567A2E /* BackendService.swift */; };
+		FCCDEFB817C5CCEC225278D5 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C24AE13FC7723F12A5F2380 /* Models.swift */; };
+		FDE94DBD1929144B43AB6156 /* InspectorPreviewTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 264A4A5A5DB18E19BD6A2741 /* InspectorPreviewTab.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		06154FA31EB7C57345669D51 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = EB04EC8B4299D1D64DC4EDE5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4896638691C4AFF8C4B6701D;
+			remoteInfo = Locus;
+		};
+		C34DCDDD96F4EB05E4117417 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = EB04EC8B4299D1D64DC4EDE5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4896638691C4AFF8C4B6701D;
+			remoteInfo = Locus;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		00A37D5FE4583645B552296C /* SessionSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSidebarView.swift; sourceTree = "<group>"; };
+		01EE3ED166C864419A854532 /* RemoteEndpointTester.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteEndpointTester.swift; sourceTree = "<group>"; };
+		0204C24A0102A8D20E3A23CE /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		06DD9A63C8FBDB42368F8A0C /* GitClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitClient.swift; sourceTree = "<group>"; };
+		10D6D002C03E3AA6EB9FEFD0 /* InspectorFilesTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorFilesTab.swift; sourceTree = "<group>"; };
+		16740EAD75B3BC87EA7D49A7 /* FeatureLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeatureLogicTests.swift; sourceTree = "<group>"; };
+		264A4A5A5DB18E19BD6A2741 /* InspectorPreviewTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorPreviewTab.swift; sourceTree = "<group>"; };
+		28BF95EE575D10DBDE8FA1B3 /* PermissionPromptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionPromptView.swift; sourceTree = "<group>"; };
+		2D4CA41C622A34E45EF21F54 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		3793FC69B1D813ED07567A2E /* BackendService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendService.swift; sourceTree = "<group>"; };
+		38EED4FF1CBA575694CE08AA /* LocusTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocusTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		4CB88F08135C226D4D6AFF6A /* ModelLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelLibraryView.swift; sourceTree = "<group>"; };
+		5118157AFFA0FF82EDCA5BED /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		5CBA85D1FB7286E08482ED76 /* ShortcutsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsSheet.swift; sourceTree = "<group>"; };
+		63EA24EB82248151706E566E /* GitStatusModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitStatusModels.swift; sourceTree = "<group>"; };
+		73FB5B7D276424050FE55E24 /* LocusUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocusUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		76FC0F4F0C6864707814EAA5 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
+		78188AFFEC80498E68C2EE3A /* SlashCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlashCommands.swift; sourceTree = "<group>"; };
+		8FA164EE10426EF2AD4E606A /* MessageContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageContent.swift; sourceTree = "<group>"; };
+		9C24AE13FC7723F12A5F2380 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		9C90DE8FC778C6A106DF35EB /* InspectorTerminalTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorTerminalTab.swift; sourceTree = "<group>"; };
+		9FEDB7872CF5F644CE91EC65 /* LocusUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocusUITests.swift; sourceTree = "<group>"; };
+		A2CC3300CABBD87F954E4C63 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
+		AEFB9A10F8784355D5344D95 /* Locus.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Locus.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B082AFE6729F96D2D8606AC9 /* WorkspaceIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceIndex.swift; sourceTree = "<group>"; };
+		B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendProcess.swift; sourceTree = "<group>"; };
+		BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorPlanTab.swift; sourceTree = "<group>"; };
+		BCCEF7CD29A9C6F9C3E1472F /* LocusApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocusApp.swift; sourceTree = "<group>"; };
+		C41E39F35E0F75A05095B5EC /* AppModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelTests.swift; sourceTree = "<group>"; };
+		CCCD81AAF0691EDC3F6B0D64 /* InspectorChangesTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorChangesTab.swift; sourceTree = "<group>"; };
+		CF3D3389D598BBECBE77E38F /* InspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorView.swift; sourceTree = "<group>"; };
+		E11B2324D330884AA4555A92 /* Sheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sheets.swift; sourceTree = "<group>"; };
+		E18BD6EB5EBD180B3E69FBD6 /* ComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerView.swift; sourceTree = "<group>"; };
+		E8FCD4DB1FD5A4E1FD862797 /* ModelLibraryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelLibraryService.swift; sourceTree = "<group>"; };
+		F95947ACE0751337457A57CD /* TerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSession.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		1034C21D9930A5F35D463962 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AEFB9A10F8784355D5344D95 /* Locus.app */,
+				38EED4FF1CBA575694CE08AA /* LocusTests.xctest */,
+				73FB5B7D276424050FE55E24 /* LocusUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		60C7C16567C3B98966E012C1 /* LocusTests */ = {
+			isa = PBXGroup;
+			children = (
+				C41E39F35E0F75A05095B5EC /* AppModelTests.swift */,
+				16740EAD75B3BC87EA7D49A7 /* FeatureLogicTests.swift */,
+			);
+			path = LocusTests;
+			sourceTree = "<group>";
+		};
+		796058090ADB9656F1AC489F = {
+			isa = PBXGroup;
+			children = (
+				B9D7C7183910882434437EA5 /* Locus */,
+				60C7C16567C3B98966E012C1 /* LocusTests */,
+				88C72357FA5D8FFEC5FDDFC5 /* LocusUITests */,
+				1034C21D9930A5F35D463962 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		88C72357FA5D8FFEC5FDDFC5 /* LocusUITests */ = {
+			isa = PBXGroup;
+			children = (
+				9FEDB7872CF5F644CE91EC65 /* LocusUITests.swift */,
+			);
+			path = LocusUITests;
+			sourceTree = "<group>";
+		};
+		B9D7C7183910882434437EA5 /* Locus */ = {
+			isa = PBXGroup;
+			children = (
+				5118157AFFA0FF82EDCA5BED /* AppModel.swift */,
+				B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */,
+				3793FC69B1D813ED07567A2E /* BackendService.swift */,
+				E18BD6EB5EBD180B3E69FBD6 /* ComposerView.swift */,
+				06DD9A63C8FBDB42368F8A0C /* GitClient.swift */,
+				63EA24EB82248151706E566E /* GitStatusModels.swift */,
+				CCCD81AAF0691EDC3F6B0D64 /* InspectorChangesTab.swift */,
+				10D6D002C03E3AA6EB9FEFD0 /* InspectorFilesTab.swift */,
+				BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */,
+				264A4A5A5DB18E19BD6A2741 /* InspectorPreviewTab.swift */,
+				9C90DE8FC778C6A106DF35EB /* InspectorTerminalTab.swift */,
+				CF3D3389D598BBECBE77E38F /* InspectorView.swift */,
+				76FC0F4F0C6864707814EAA5 /* Keychain.swift */,
+				BCCEF7CD29A9C6F9C3E1472F /* LocusApp.swift */,
+				8FA164EE10426EF2AD4E606A /* MessageContent.swift */,
+				E8FCD4DB1FD5A4E1FD862797 /* ModelLibraryService.swift */,
+				4CB88F08135C226D4D6AFF6A /* ModelLibraryView.swift */,
+				9C24AE13FC7723F12A5F2380 /* Models.swift */,
+				28BF95EE575D10DBDE8FA1B3 /* PermissionPromptView.swift */,
+				01EE3ED166C864419A854532 /* RemoteEndpointTester.swift */,
+				00A37D5FE4583645B552296C /* SessionSidebarView.swift */,
+				E11B2324D330884AA4555A92 /* Sheets.swift */,
+				5CBA85D1FB7286E08482ED76 /* ShortcutsSheet.swift */,
+				78188AFFEC80498E68C2EE3A /* SlashCommands.swift */,
+				F95947ACE0751337457A57CD /* TerminalSession.swift */,
+				0204C24A0102A8D20E3A23CE /* Theme.swift */,
+				B082AFE6729F96D2D8606AC9 /* WorkspaceIndex.swift */,
+				A2CC3300CABBD87F954E4C63 /* WorkspaceView.swift */,
+				FA27A5BC6D7A370C663C36F1 /* Resources */,
+			);
+			path = Locus;
+			sourceTree = "<group>";
+		};
+		FA27A5BC6D7A370C663C36F1 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				2D4CA41C622A34E45EF21F54 /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		4896638691C4AFF8C4B6701D /* Locus */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 499F5785D4491853643B4C0D /* Build configuration list for PBXNativeTarget "Locus" */;
+			buildPhases = (
+				3D126E6D0964BF8D319384BC /* Sources */,
+				DD475AF090311C77FAF727EA /* Resources */,
+				314A6CA35922466E9F0C1B81 /* Bundle local agent runtime */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Locus;
+			packageProductDependencies = (
+			);
+			productName = Locus;
+			productReference = AEFB9A10F8784355D5344D95 /* Locus.app */;
+			productType = "com.apple.product-type.application";
+		};
+		54F38C8317FB3757358B2EBD /* LocusUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3B534D105C419153FDD9DC1F /* Build configuration list for PBXNativeTarget "LocusUITests" */;
+			buildPhases = (
+				71247B7960ED58D704AFDC6B /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				DC8669A2F8C3CDEAADC5C59D /* PBXTargetDependency */,
+			);
+			name = LocusUITests;
+			packageProductDependencies = (
+			);
+			productName = LocusUITests;
+			productReference = 73FB5B7D276424050FE55E24 /* LocusUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		A0463F65BF102D8D5DE8EDD0 /* LocusTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2A3122EA61774C96D036B4DE /* Build configuration list for PBXNativeTarget "LocusTests" */;
+			buildPhases = (
+				256081274D06E154354DD857 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E9E0134139F5BDDA9BF795ED /* PBXTargetDependency */,
+			);
+			name = LocusTests;
+			packageProductDependencies = (
+			);
+			productName = LocusTests;
+			productReference = 38EED4FF1CBA575694CE08AA /* LocusTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		EB04EC8B4299D1D64DC4EDE5 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					4896638691C4AFF8C4B6701D = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Manual;
+					};
+					54F38C8317FB3757358B2EBD = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Manual;
+						TestTargetID = 4896638691C4AFF8C4B6701D;
+					};
+					A0463F65BF102D8D5DE8EDD0 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Manual;
+					};
+				};
+			};
+			buildConfigurationList = E114DA24E8222F8A31A01840 /* Build configuration list for PBXProject "Locus" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 796058090ADB9656F1AC489F;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 1034C21D9930A5F35D463962 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				4896638691C4AFF8C4B6701D /* Locus */,
+				A0463F65BF102D8D5DE8EDD0 /* LocusTests */,
+				54F38C8317FB3757358B2EBD /* LocusUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		DD475AF090311C77FAF727EA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				74A5BCF6953128864737A070 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		314A6CA35922466E9F0C1B81 /* Bundle local agent runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle local agent runtime";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/Tools/BundleBackend.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		256081274D06E154354DD857 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6CB6F6C625981B438BD534AB /* AppModelTests.swift in Sources */,
+				2C48811226A5E53CECD51253 /* FeatureLogicTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3D126E6D0964BF8D319384BC /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				20C4A1758890CFAC76C9ED6B /* AppModel.swift in Sources */,
+				BEAFCBFDAE33591C970B5E98 /* BackendProcess.swift in Sources */,
+				F9405ED899AAD041CF6BAD66 /* BackendService.swift in Sources */,
+				E6B5E9C34E90B735A5A84C22 /* ComposerView.swift in Sources */,
+				404AF919F8C0790788D0A26B /* GitClient.swift in Sources */,
+				0F72DE71A4842FDA1E802CC0 /* GitStatusModels.swift in Sources */,
+				D586AEB96691BDCC5A9F0418 /* InspectorChangesTab.swift in Sources */,
+				56B2392CBBC3354BD5A6E359 /* InspectorFilesTab.swift in Sources */,
+				C0EB8EF86FF9954D89CC082E /* InspectorPlanTab.swift in Sources */,
+				FDE94DBD1929144B43AB6156 /* InspectorPreviewTab.swift in Sources */,
+				4C25B8F53E842CD8D5556308 /* InspectorTerminalTab.swift in Sources */,
+				35872DC7D25B9CE5D3A43C6E /* InspectorView.swift in Sources */,
+				7B87C08B32EA786673C34F3F /* Keychain.swift in Sources */,
+				CB22892B835E59A99C4FA35D /* LocusApp.swift in Sources */,
+				3EB73A207975893878E53D8B /* MessageContent.swift in Sources */,
+				09B6A5BCCC8803A5F53316D4 /* ModelLibraryService.swift in Sources */,
+				CC34DB49F0794EFC59213A34 /* ModelLibraryView.swift in Sources */,
+				FCCDEFB817C5CCEC225278D5 /* Models.swift in Sources */,
+				DAC9BDD3759C84F504BBD92F /* PermissionPromptView.swift in Sources */,
+				4679DAB70FE7B88A97E3F6D9 /* RemoteEndpointTester.swift in Sources */,
+				F01F72892D90A52009E99BC3 /* SessionSidebarView.swift in Sources */,
+				A6D846A90EED0F655A108FE8 /* Sheets.swift in Sources */,
+				6777453D22A87B5DF2E89B0C /* ShortcutsSheet.swift in Sources */,
+				686A434D611B736A8BC449A2 /* SlashCommands.swift in Sources */,
+				3C3E46189C3441DA21CB8E5A /* TerminalSession.swift in Sources */,
+				62A955375EBFA6E5A70A6C85 /* Theme.swift in Sources */,
+				02458331522F5E1FA06ADC29 /* WorkspaceIndex.swift in Sources */,
+				D8873F086E1F5351BAB0FB2E /* WorkspaceView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		71247B7960ED58D704AFDC6B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0BEFB1DD866AB33ACE30D409 /* LocusUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		DC8669A2F8C3CDEAADC5C59D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4896638691C4AFF8C4B6701D /* Locus */;
+			targetProxy = C34DCDDD96F4EB05E4117417 /* PBXContainerItemProxy */;
+		};
+		E9E0134139F5BDDA9BF795ED /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4896638691C4AFF8C4B6701D /* Locus */;
+			targetProxy = 06154FA31EB7C57345669D51 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0306EFA1CE0152B3C697CC8C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.nahid.locus.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Locus.app/Contents/MacOS/Locus";
+			};
+			name = Debug;
+		};
+		14F24361BAF1BF5528F22776 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.nahid.locus.ui-tests";
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = Locus;
+			};
+			name = Release;
+		};
+		28BC1FD1E1ADCF31A64625B3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 6;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.5.1;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.10;
+			};
+			name = Release;
+		};
+		7FE184EA7F574C71EE5B684D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Locus;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "Locus needs access to your Documents folder to open coding workspaces and start the local Ollama agent.";
+				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Locus needs access when you choose files or projects from Downloads.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.nahid.locus;
+				PRODUCT_NAME = Locus;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		99E7112DC3789C83E2A09317 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 6;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.5.1;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.10;
+			};
+			name = Debug;
+		};
+		B3342ABAAF2B03E13123490C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.nahid.locus.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Locus.app/Contents/MacOS/Locus";
+			};
+			name = Release;
+		};
+		BC388FAE8A56E67403A13E4B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.nahid.locus.ui-tests";
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = Locus;
+			};
+			name = Debug;
+		};
+		EC219525ECF2D2F87B9312BB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Locus;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "Locus needs access to your Documents folder to open coding workspaces and start the local Ollama agent.";
+				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Locus needs access when you choose files or projects from Downloads.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.nahid.locus;
+				PRODUCT_NAME = Locus;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		2A3122EA61774C96D036B4DE /* Build configuration list for PBXNativeTarget "LocusTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0306EFA1CE0152B3C697CC8C /* Debug */,
+				B3342ABAAF2B03E13123490C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		3B534D105C419153FDD9DC1F /* Build configuration list for PBXNativeTarget "LocusUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BC388FAE8A56E67403A13E4B /* Debug */,
+				14F24361BAF1BF5528F22776 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		499F5785D4491853643B4C0D /* Build configuration list for PBXNativeTarget "Locus" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EC219525ECF2D2F87B9312BB /* Debug */,
+				7FE184EA7F574C71EE5B684D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E114DA24E8222F8A31A01840 /* Build configuration list for PBXProject "Locus" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				99E7112DC3789C83E2A09317 /* Debug */,
+				28BC1FD1E1ADCF31A64625B3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = EB04EC8B4299D1D64DC4EDE5 /* Project object */;
+}
