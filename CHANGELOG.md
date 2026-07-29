@@ -87,6 +87,13 @@
 
 ### Fixed
 
+- **Release packaging could ship a broken code-signature seal.** The bundled
+  Python wrote `.pyc` caches into the sealed app the first time it ran,
+  after which macOS reports the download as "damaged". The runtime now
+  ships fully pre-compiled (stdlib included), the app launches Python with
+  byte-code writing disabled, and `Tools/PackageRelease.sh` verifies the
+  seal after signing, again after exercising the runtime, and once more
+  across the zip round-trip before anything is uploaded.
 - **`/compact` crashed the app** — it re-entered the slash-command matcher
   and recursed until the stack overflowed. Forwarded commands now bypass
   local matching.

@@ -29,7 +29,7 @@ esac
 asset="cpython-${py_version}+${pbs_tag}-${pbs_arch}-apple-darwin-install_only_stripped.tar.gz"
 url="https://github.com/astral-sh/python-build-standalone/releases/download/${pbs_tag}/${asset}"
 
-stamp_value="${asset} $(/usr/bin/shasum -a 256 "${backend_root}/pyproject.toml" | /usr/bin/cut -d' ' -f1)"
+stamp_value="v2 ${asset} $(/usr/bin/shasum -a 256 "${backend_root}/pyproject.toml" | /usr/bin/cut -d' ' -f1)"
 stamp_file="${cache}/.stamp"
 
 if [[ -f "${stamp_file}" && -x "${cache}/cpython/bin/python3" && -d "${cache}/site-packages" ]] \
@@ -69,7 +69,12 @@ fi
 /bin/rm -rf "${workdir}/site-packages/ollama_code" \
     "${workdir}"/site-packages/ollama_code-*.dist-info(N) \
     "${workdir}/site-packages/bin"
-"${workdir}/python/bin/python3" -m compileall -q "${workdir}/site-packages"
+
+# Pre-compile EVERYTHING — stdlib included. The bundle is sealed by the app's
+# code signature after this; a .pyc written at first launch would break the
+# seal and make Gatekeeper report the download as damaged.
+"${workdir}/python/bin/python3" -m compileall -q -j 0 \
+    "${workdir}/python/lib" "${workdir}/site-packages"
 
 /bin/rm -rf "${cache}"
 /bin/mkdir -p "${cache}"

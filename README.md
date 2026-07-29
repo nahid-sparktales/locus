@@ -226,9 +226,17 @@ app, so there is nothing else to install — you only need
 up to 1.5.1 were published from the old `locus-macos` repository and required
 Homebrew's `python@3.14`; builds from this repository do not.
 
-The downloadable build is ad-hoc signed for local testing and is not notarized
-with an Apple Developer certificate. If macOS shows an unidentified-developer
-warning, Control-click Locus and choose **Open**.
+The downloadable build is signed with an Apple Development certificate and is
+not notarized, so macOS blocks the first open of a downloaded copy. Try to
+open Locus once, then go to **System Settings ▸ Privacy & Security** and click
+**Open Anyway** — or clear the quarantine flag from Terminal instead:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Locus.app
+```
+
+A Developer ID certificate plus notarization would remove this step; that is
+planned once the certificate exists.
 
 On first launch:
 
