@@ -1,6 +1,6 @@
 # Locus for macOS
 
-Locus 1.5 is a native workspace for building with local Ollama models. It combines
+Locus 1.6 is a native workspace for building with local Ollama models. It combines
 conversation, planning, file context, change review, a console, and live preview
 in one calm SwiftUI interface—without sending your code to a hosted model provider.
 
