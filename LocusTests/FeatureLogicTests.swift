@@ -425,4 +425,24 @@ final class FeatureLogicTests: XCTestCase {
             "a/b.swift"
         )
     }
+
+    // MARK: - Plan prompt suggestions
+
+    func testPlanPromptSuggestionsAreFiveDistinctReadyToSendPrompts() {
+        let suggestions = PlanPromptSuggestion.curated
+        XCTAssertEqual(suggestions.count, 5)
+        XCTAssertEqual(Set(suggestions.map(\.title)).count, suggestions.count)
+        XCTAssertEqual(Set(suggestions.map(\.prompt)).count, suggestions.count)
+        for suggestion in suggestions {
+            XCTAssertFalse(suggestion.title.isEmpty)
+            XCTAssertFalse(
+                suggestion.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                "an empty prompt would send nothing"
+            )
+            XCTAssertFalse(
+                suggestion.prompt.hasPrefix("/"),
+                "a leading slash would be routed as a command, not a plan request"
+            )
+        }
+    }
 }

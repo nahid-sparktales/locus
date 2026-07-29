@@ -27,6 +27,12 @@ struct ComposerView: View {
                 PermissionPromptView(request: request)
                     .frame(maxWidth: 740)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if model.planApprovalPending {
+                // Same contract as the permission panel: the finished plan is
+                // a decision point, so the decision replaces the input.
+                PlanApprovalPromptView()
+                    .frame(maxWidth: 740)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             } else {
                 VStack(spacing: 0) {
                     if let popup = activePopup {
@@ -84,11 +90,17 @@ struct ComposerView: View {
             )
         )
         .animation(.easeInOut(duration: 0.18), value: model.activePermissionRequest?.requestID)
+        .animation(.easeInOut(duration: 0.18), value: model.planApprovalPending)
         .onAppear { focused = true }
         .onChange(of: model.activePermissionRequest?.requestID) {
             // Focus returns to the editor after any decision — option 3 is
             // "tell Locus what to do differently", so typing must just work.
             if model.activePermissionRequest == nil { focused = true }
+        }
+        .onChange(of: model.planApprovalPending) {
+            // Same for "keep planning": the natural next act is typing the
+            // refinement, so the editor takes focus back.
+            if !model.planApprovalPending { focused = true }
         }
         .onChange(of: model.draftText) {
             popupSelection = 0

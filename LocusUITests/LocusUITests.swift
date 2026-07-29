@@ -205,9 +205,9 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("terminal.output").waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("terminal.empty").exists)
 
-        // ⌘1 — back to Plan.
+        // ⌘1 — back to Plan, which shows its empty state (no seeded todos).
         app.typeKey("1", modifierFlags: .command)
-        XCTAssertTrue(anyElement("plan.refresh").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("plan.create").waitForExistence(timeout: 3))
     }
 
     func testChangesTabShowsSeededWorkingTreeAndOpensADiff() {

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct InspectorPlanTab: View {
     @EnvironmentObject private var model: AppModel
+    @State private var suggestionsPresented = false
 
     private var completedCount: Int {
         model.todos.filter { $0.status == .completed }.count
@@ -25,16 +26,6 @@ struct InspectorPlanTab: View {
                             .font(.system(size: 11, weight: .bold))
                     }
                     Spacer()
-                    Button {
-                        model.requestPlan()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(model.isBusy || model.hasPendingPermission)
-                    .help("Create or refresh the plan")
-                    .accessibilityLabel("Refresh plan")
-                    .accessibilityIdentifier("plan.refresh")
                 }
 
                 if model.todos.isEmpty {
@@ -47,13 +38,19 @@ struct InspectorPlanTab: View {
                             .foregroundStyle(LocusTheme.muted)
                             .multilineTextAlignment(.center)
                         Button("Create a plan") {
-                            model.requestPlan()
+                            suggestionsPresented = true
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(LocusTheme.ink)
                         .controlSize(.small)
                         .disabled(model.isBusy || model.hasPendingPermission)
                         .accessibilityIdentifier("plan.create")
+                        .popover(isPresented: $suggestionsPresented, arrowEdge: .bottom) {
+                            PlanSuggestionsPopover { prompt in
+                                suggestionsPresented = false
+                                model.requestPlan(prompt: prompt)
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 28)
@@ -151,6 +148,57 @@ struct InspectorPlanTab: View {
             }
             .padding(17)
         }
+    }
+}
+
+/// Offered when the user asks for a plan without having described one:
+/// five ready-made prompts, each sent to the agent in Plan mode.
+struct PlanSuggestionsPopover: View {
+    let choose: (String) -> Void
+
+    @State private var hovered: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("WHAT SHOULD THE PLAN COVER?")
+                .font(.system(size: 8, weight: .bold))
+                .tracking(0.8)
+                .foregroundStyle(LocusTheme.muted)
+                .padding(.horizontal, 8)
+                .padding(.top, 10)
+                .padding(.bottom, 4)
+            ForEach(Array(PlanPromptSuggestion.curated.enumerated()), id: \.element.id) { index, suggestion in
+                Button {
+                    choose(suggestion.prompt)
+                } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(suggestion.title)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(LocusTheme.ink)
+                        Text(suggestion.prompt)
+                            .font(.system(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                            .lineSpacing(1)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 7)
+                    .background(hovered == suggestion.id ? LocusTheme.paperDeep : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    hovered = hovering ? suggestion.id : (hovered == suggestion.id ? nil : hovered)
+                }
+                .accessibilityLabel(suggestion.title)
+                .accessibilityIdentifier("plan.suggestion.\(index)")
+            }
+        }
+        .padding(6)
+        .frame(width: 264)
     }
 }
 

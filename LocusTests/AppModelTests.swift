@@ -1033,6 +1033,227 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(messages.first?.role, "tool")
     }
 
+    // MARK: - Plan approval
+
+    @MainActor
+    func testCompletedPlanTurnOffersToImplementThePlan() {
+        let model = AppModel(startImmediately: false)
+        armPlanApproval(model)
+
+        XCTAssertTrue(model.planApprovalPending, "a finished plan is a decision point")
+    }
+
+    @MainActor
+    func testStalePlanDoesNotReOfferAfterAChatTurn() {
+        let model = AppModel(startImmediately: false)
+        model.selectedMode = .plan
+        model.turnDispatchedInPlanMode = true
+        model.todos = [TodoItem(content: "Left over from an earlier run", status: .pending)]
+
+        model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
+
+        XCTAssertFalse(model.planApprovalPending, "only turns that wrote the plan may offer it")
+    }
+
+    @MainActor
+    func testBuildTurnDoesNotOfferApprovalEvenAfterAMidRunSwitchToPlan() {
+        let model = AppModel(startImmediately: false)
+        // What send() latches when a turn is dispatched in Build mode.
+        model.selectedMode = .build
+        model.turnDispatchedInPlanMode = false
+
+        model.handleEventForTesting([
+            "type": "todo_update",
+            "todos": [["content": "Implement the header", "status": "in_progress"]],
+        ])
+        // Flipping the picker to Plan while the Build run streams must not
+        // turn its todo bookkeeping into an "implement this plan?" offer.
+        model.selectedMode = .plan
+        model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
+
+        XCTAssertFalse(model.planApprovalPending, "the offer keys off the dispatch mode, not the picker")
+    }
+
+    @MainActor
+    func testPlanModeDispatchLatchesTheTurnMode() {
+        let model = AppModel(startImmediately: false)
+        model.connectionPhase = .connected
+
+        model.selectedMode = .plan
+        model.send("Sketch the work")
+        XCTAssertTrue(model.turnDispatchedInPlanMode)
+    }
+
+    @MainActor
+    func testForwardedSlashTurnIsNeverAPlanDispatch() {
+        let model = AppModel(startImmediately: false)
+        model.connectionPhase = .connected
+        model.selectedMode = .plan
+
+        model.send("/init")
+
+        XCTAssertFalse(
+            model.turnDispatchedInPlanMode,
+            "agent-side slash commands are housekeeping, not plans to offer"
+        )
+    }
+
+    @MainActor
+    func testInterruptedPlanTurnDoesNotOfferApproval() {
+        let model = AppModel(startImmediately: false)
+        model.selectedMode = .plan
+        model.turnDispatchedInPlanMode = true
+
+        model.handleEventForTesting([
+            "type": "todo_update",
+            "todos": [["content": "Audit the sidebar", "status": "pending"]],
+        ])
+        model.handleEventForTesting(["type": "turn_done", "reason": "interrupted"])
+
+        XCTAssertFalse(model.planApprovalPending, "a stopped run was already a decision")
+    }
+
+    @MainActor
+    func testMaxIterationsPlanTurnDoesNotOfferApproval() {
+        let model = AppModel(startImmediately: false)
+        model.selectedMode = .plan
+        model.turnDispatchedInPlanMode = true
+
+        model.handleEventForTesting([
+            "type": "todo_update",
+            "todos": [["content": "Audit the sidebar", "status": "pending"]],
+        ])
+        model.handleEventForTesting(["type": "turn_done", "reason": "max_iterations"])
+
+        XCTAssertFalse(model.planApprovalPending, "an exhausted turn's plan is unfinished")
+    }
+
+    @MainActor
+    func testTurnDoneWithoutAReasonStillOffersApproval() {
+        let model = AppModel(startImmediately: false)
+        model.selectedMode = .plan
+        model.turnDispatchedInPlanMode = true
+
+        model.handleEventForTesting([
+            "type": "todo_update",
+            "todos": [["content": "Audit the sidebar", "status": "pending"]],
+        ])
+        model.handleEventForTesting(["type": "turn_done"])
+
+        XCTAssertTrue(model.planApprovalPending, "an agent that omits the reason completed normally")
+    }
+
+    @MainActor
+    func testPlanEmptiedMidTurnDoesNotOfferApproval() {
+        let model = AppModel(startImmediately: false)
+        model.selectedMode = .plan
+        model.turnDispatchedInPlanMode = true
+
+        model.handleEventForTesting([
+            "type": "todo_update",
+            "todos": [["content": "Audit the sidebar", "status": "pending"]],
+        ])
+        model.handleEventForTesting(["type": "todo_update", "todos": [[String: Any]]()])
+        model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
+
+        XCTAssertFalse(model.planApprovalPending, "there is no zero-step plan to implement")
+    }
+
+    @MainActor
+    func testEmptyTodoUpdateWithdrawsAPendingOffer() {
+        let model = AppModel(startImmediately: false)
+        armPlanApproval(model)
+
+        model.handleEventForTesting(["type": "todo_update", "todos": [[String: Any]]()])
+
+        XCTAssertFalse(model.planApprovalPending, "emptying the list withdraws the plan")
+    }
+
+    @MainActor
+    func testQueuedMessageSuppressesPlanApproval() {
+        let model = AppModel(startImmediately: false)
+        model.selectedMode = .plan
+        model.turnDispatchedInPlanMode = true
+        model.queuedMessages = ["and then do the follow-up"]
+
+        model.handleEventForTesting([
+            "type": "todo_update",
+            "todos": [["content": "Audit the sidebar", "status": "pending"]],
+        ])
+        model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
+
+        XCTAssertFalse(model.planApprovalPending, "the queued message already decided what happens next")
+    }
+
+    @MainActor
+    func testKeepPlanningDismissesThePromptAndStaysInPlanMode() {
+        let model = AppModel(startImmediately: false)
+        armPlanApproval(model)
+
+        model.resolvePlanApproval(.keepPlanning)
+
+        XCTAssertFalse(model.planApprovalPending)
+        XCTAssertEqual(model.selectedMode, .plan)
+        XCTAssertFalse(model.isBusy)
+    }
+
+    @MainActor
+    func testImplementingThePlanSwitchesToBuildMode() {
+        let model = AppModel(startImmediately: false)
+        model.connectionPhase = .connected
+        armPlanApproval(model)
+
+        model.resolvePlanApproval(.implementReviewing)
+
+        XCTAssertFalse(model.planApprovalPending)
+        XCTAssertEqual(model.selectedMode, .build, "implementation happens in Build mode")
+    }
+
+    @MainActor
+    func testImplementingWhileDisconnectedKeepsThePromptPending() {
+        let model = AppModel(startImmediately: false)
+        model.connectionPhase = .disconnected("gone")
+        armPlanApproval(model)
+
+        model.resolvePlanApproval(.implementReviewing)
+
+        XCTAssertTrue(model.planApprovalPending, "the decision must survive a reconnect")
+        XCTAssertEqual(model.selectedMode, .plan)
+    }
+
+    @MainActor
+    func testSwitchingModesDismissesThePlanApprovalPrompt() {
+        let model = AppModel(startImmediately: false)
+        armPlanApproval(model)
+
+        model.selectedMode = .ask
+
+        XCTAssertFalse(model.planApprovalPending, "changing modes is already an answer")
+    }
+
+    @MainActor
+    func testAgentErrorClearsThePlanApprovalPrompt() {
+        let model = AppModel(startImmediately: false)
+        armPlanApproval(model)
+
+        model.handleEventForTesting(["type": "error", "message": "agent crashed"])
+
+        XCTAssertFalse(model.planApprovalPending)
+    }
+
+    /// Drives the model through the real wire sequence that ends a Plan-mode
+    /// turn with a plan on the board: dispatch latch, todo_update, turn_done.
+    @MainActor
+    private func armPlanApproval(_ model: AppModel) {
+        model.selectedMode = .plan
+        model.turnDispatchedInPlanMode = true
+        model.handleEventForTesting([
+            "type": "todo_update",
+            "todos": [["content": "Audit the sidebar", "status": "pending"]],
+        ])
+        model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
+    }
+
     private func sessionInfo(id: String) -> [String: Any] {
         [
             "model": "qwen3:8b",

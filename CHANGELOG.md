@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Plan approval in the composer**, the way Claude Code closes plan mode.
+  When a Plan-mode turn finishes with a plan on the board, the input is
+  replaced by "Do you want to implement this plan?" with the numbered steps
+  and a keyboard-first option list — **1** Yes, and auto-accept edits ·
+  **2** Yes, and approve each edit as it happens · **3** No, keep planning.
+  Implementing switches to Build mode and starts the run; auto-accepting
+  also raises Ask permissions to Accept Edits first. The offer is keyed to
+  the mode the turn was *dispatched* in, only fires for turns that actually
+  wrote the todo list, and never fires over a queued message, an
+  interrupted or exhausted run, or an agent-side slash command.
+- **Plan prompt suggestions**: the Plan tab's "Create a plan" button now
+  opens five ready-made prompts (current request, latest problem, codebase
+  improvements, missing tests, a safe refactor) — pick one and it is sent
+  as the plan request.
+
+### Removed
+
+- The circular-arrow refresh button in the Plan tab header. Plans are
+  created from the suggestions popover and refreshed by the agent's own
+  todo updates.
+
 ## 1.6.0 — 2026-07-28
 
 ### Added

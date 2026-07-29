@@ -27,6 +27,49 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+/// The answer to the "implement this plan?" prompt that follows a completed
+/// Plan-mode turn.
+enum PlanApprovalDecision {
+    /// Switch to Build mode, raise permissions to accept-edits, implement.
+    case implementAutoAccepting
+    /// Switch to Build mode and implement, approving each edit as it comes.
+    case implementReviewing
+    /// Dismiss the prompt and stay in Plan mode.
+    case keepPlanning
+}
+
+/// A ready-made prompt offered when the user asks for a plan without having
+/// described one. Titles are what the picker shows; prompts are what is sent.
+struct PlanPromptSuggestion: Identifiable {
+    let title: String
+    let prompt: String
+
+    var id: String { title }
+
+    static let curated: [PlanPromptSuggestion] = [
+        PlanPromptSuggestion(
+            title: "Plan the current request",
+            prompt: "Create a step-by-step implementation plan for the most recent request in this conversation."
+        ),
+        PlanPromptSuggestion(
+            title: "Fix the latest problem",
+            prompt: "Diagnose the most recent error or failing behavior we discussed and plan the fix."
+        ),
+        PlanPromptSuggestion(
+            title: "Improve this codebase",
+            prompt: "Review the workspace and plan the highest-impact improvements, ordered so the quickest wins come first."
+        ),
+        PlanPromptSuggestion(
+            title: "Add missing tests",
+            prompt: "Identify the most important untested behavior in this workspace and plan the test coverage for it."
+        ),
+        PlanPromptSuggestion(
+            title: "Refactor a rough spot",
+            prompt: "Find the most tangled part of the codebase and plan a safe, incremental refactor."
+        ),
+    ]
+}
+
 enum InspectorTab: String, CaseIterable, Identifiable {
     case plan
     case changes

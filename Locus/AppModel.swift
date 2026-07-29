@@ -23,7 +23,12 @@ final class AppModel: ObservableObject {
     @Published var todos: [TodoItem] = []
     @Published var isBusy = false
     @Published var selectedMode: WorkMode = .build {
-        didSet { scheduleWorkspacePersistence() }
+        didSet {
+            // Changing modes is taking a stance on what happens next, so a
+            // pending "implement this plan?" prompt would only contradict it.
+            if selectedMode != oldValue { planApprovalPending = false }
+            scheduleWorkspacePersistence()
+        }
     }
     /// Only `selectInspectorTab(_:)` may change this. Backend events set a
     /// badge instead, so a run can never yank the panel out from under you.
@@ -36,6 +41,10 @@ final class AppModel: ObservableObject {
     }
     @Published private(set) var inspectorWidth: CGFloat = CGFloat(AppSettings.defaultInspectorWidth)
     @Published private(set) var planHasUnseenUpdate = false
+    /// True between a completed Plan-mode turn that produced a plan and the
+    /// user's answer to "implement this plan?". While set, the composer input
+    /// is replaced by PlanApprovalPromptView, the way permission requests are.
+    @Published private(set) var planApprovalPending = false
     @Published private(set) var gitChanges: [GitChange] = []
     @Published private(set) var isRefreshingGitStatus = false
     @Published private(set) var isGitRepository = false
@@ -122,6 +131,16 @@ final class AppModel: ObservableObject {
     private var promptHistoryCursor: Int?
     private var stashedDraft: String?
     private var pendingSessionReset = false
+    /// Whether the turn in flight rewrote the todo list. The approval prompt
+    /// is offered only for turns that actually produced a plan — a Plan-mode
+    /// chat answer must not re-offer a plan left over from an earlier run.
+    private var planTodosChangedThisTurn = false
+    /// Whether the turn in flight was dispatched in Plan mode. The approval
+    /// offer is keyed to this latch, not the live picker — switching modes
+    /// while a Build run streams must not turn that run's todo bookkeeping
+    /// into an "implement this plan?" offer. Internal so tests can dispatch
+    /// turns without a live backend.
+    var turnDispatchedInPlanMode = false
     private var pendingRetry = false
     private var pendingCheckpointRestore: SessionCheckpoint?
     private var pendingRewindDraft: String?
@@ -619,6 +638,11 @@ final class AppModel: ObservableObject {
 
         let isSlashPassthrough = SlashCommand.query(from: text) != nil
         isBusy = true
+        planApprovalPending = false
+        planTodosChangedThisTurn = false
+        // Agent-side slash commands (/init and friends) may write todos, but
+        // running one is housekeeping, never a plan worth offering to build.
+        turnDispatchedInPlanMode = selectedMode == .plan && !isSlashPassthrough
         Task { [weak self] in
             guard let self else { return }
             await refreshContextFiles()
@@ -644,9 +668,11 @@ final class AppModel: ObservableObject {
         if requeue {
             queuedMessages.insert(text, at: 0)
             showToast("Kept in queue — reconnect the local agent to send")
-        } else {
-            if preserveDraft { draftText = text }
+        } else if preserveDraft {
+            draftText = text
             showToast("Draft kept — reconnect the local agent to send")
+        } else {
+            showToast("Not sent — reconnect the local agent and try again")
         }
     }
 
@@ -667,6 +693,9 @@ final class AppModel: ObservableObject {
             return
         }
         isBusy = true
+        planApprovalPending = false
+        planTodosChangedThisTurn = false
+        turnDispatchedInPlanMode = false
         blocks.append(ChatBlock(kind: .user, text: text))
     }
 
@@ -756,6 +785,9 @@ final class AppModel: ObservableObject {
         }
         pendingRetry = true
         isBusy = true
+        planApprovalPending = false
+        planTodosChangedThisTurn = false
+        turnDispatchedInPlanMode = selectedMode == .plan
         showToast("Regenerating the last response")
     }
 
@@ -1088,6 +1120,7 @@ final class AppModel: ObservableObject {
                 streamingAssistantID = nil
                 isBusy = false
                 todos = []
+                planApprovalPending = false
                 queuedMessages = []
                 restoredTranscriptContext = nil
                 // Pre-acknowledge the session's workspace so a later
@@ -1343,7 +1376,9 @@ final class AppModel: ObservableObject {
         persistCheckpoints()
     }
 
-    func requestPlan() {
+    func requestPlan(
+        prompt: String = "Create a concise implementation plan for the current request and workspace."
+    ) {
         guard !isBusy, !hasPendingPermission else {
             showToast("Finish the active run before creating a plan")
             return
@@ -1353,10 +1388,41 @@ final class AppModel: ObservableObject {
             return
         }
         selectedMode = .plan
-        send(
-            "Create a concise implementation plan for the current request and workspace.",
-            preservingDraftOnFailure: false
-        )
+        send(prompt, preservingDraftOnFailure: false)
+    }
+
+    /// Answers the "implement this plan?" prompt that follows a completed
+    /// Plan-mode turn. Implementing switches to Build mode and starts the
+    /// run; auto-accepting also raises Ask permissions to Accept Edits so
+    /// the build is not interrupted for every file change.
+    func resolvePlanApproval(_ decision: PlanApprovalDecision) {
+        guard planApprovalPending else { return }
+        switch decision {
+        case .keepPlanning:
+            planApprovalPending = false
+        case .implementAutoAccepting, .implementReviewing:
+            guard case .connected = connectionPhase else {
+                showToast("Reconnect the local agent to implement the plan")
+                return
+            }
+            planApprovalPending = false
+            selectedMode = .build
+            let escalate = decision == .implementAutoAccepting && permissionMode == .ask
+            Task { [weak self] in
+                guard let self else { return }
+                // The escalation lands before the run starts; if it fails,
+                // the run still proceeds and simply asks per edit — the
+                // failure toast says why. If delivery of the message itself
+                // fails, it is requeued and drained on reconnect rather
+                // than dropped, so the decision survives.
+                if escalate { await changePermissionMode(.acceptEdits) }
+                send(
+                    "Implement the plan you just created, in order. Keep the todo list updated as you complete each step.",
+                    preservingDraftOnFailure: false,
+                    requeueingOnFailure: true
+                )
+            }
+        }
     }
 
     func openPreviewExternally() {
@@ -1837,18 +1903,20 @@ final class AppModel: ObservableObject {
 
     func setPermissionMode(_ mode: PermissionMode) {
         guard mode != permissionMode else { return }
-        Task {
-            do {
-                let state = try await backend.post(
-                    "/api/permissions",
-                    body: ["mode": mode.rawValue],
-                    as: PermissionStateResponse.self
-                )
-                applyPermissionState(state)
-                showToast("Permissions: \(mode.title)")
-            } catch {
-                showToast("Could not change permissions: \(error.localizedDescription)")
-            }
+        Task { await changePermissionMode(mode) }
+    }
+
+    private func changePermissionMode(_ mode: PermissionMode) async {
+        do {
+            let state = try await backend.post(
+                "/api/permissions",
+                body: ["mode": mode.rawValue],
+                as: PermissionStateResponse.self
+            )
+            applyPermissionState(state)
+            showToast("Permissions: \(mode.title)")
+        } catch {
+            showToast("Could not change permissions: \(error.localizedDescription)")
         }
     }
 
@@ -2098,6 +2166,13 @@ final class AppModel: ObservableObject {
         case "todo_update":
             if let raw = event["todos"] as? [[String: Any]] {
                 todos = raw.compactMap { decode(TodoItem.self, from: $0) }
+                if todos.isEmpty {
+                    // A prompt offering to implement zero steps is nonsense;
+                    // the agent emptying the list withdraws the plan.
+                    planApprovalPending = false
+                } else {
+                    planTodosChangedThisTurn = true
+                }
                 // Badge rather than switch: being pulled off the tab you are
                 // reading mid-run is the complaint this replaces.
                 if !todos.isEmpty, inspectorTab != .plan || inspectorCollapsed {
@@ -2113,6 +2188,21 @@ final class AppModel: ObservableObject {
             pendingRetry = false
             streamingAssistantID = nil
             streamedCharsThisTurn = 0
+            // A Plan-mode turn that wrote a plan ends by asking whether to
+            // implement it — but only a finished turn, only a turn that was
+            // dispatched in Plan mode and is still being read in it, and
+            // never over a queued message, which the user has already
+            // decided comes next.
+            if (event["reason"] as? String ?? "complete") == "complete",
+               turnDispatchedInPlanMode,
+               selectedMode == .plan,
+               planTodosChangedThisTurn,
+               !todos.isEmpty,
+               queuedMessages.isEmpty {
+                planApprovalPending = true
+            }
+            planTodosChangedThisTurn = false
+            turnDispatchedInPlanMode = false
             notifyTurnCompleteIfInactive()
             if persistenceEnabled {
                 Task { await refreshMetadata() }
@@ -2127,6 +2217,9 @@ final class AppModel: ObservableObject {
             resolveDanglingPermissions()
             isBusy = false
             pendingRetry = false
+            planApprovalPending = false
+            planTodosChangedThisTurn = false
+            turnDispatchedInPlanMode = false
             pendingSessionReset = false
             pendingCheckpointRestore = nil
             pendingRewindDraft = nil
@@ -2141,6 +2234,7 @@ final class AppModel: ObservableObject {
             if event["command"] as? String == "clear" {
                 blocks = []
                 todos = []
+                planApprovalPending = false
             } else if let text = event["text"] as? String, !text.isEmpty {
                 blocks.append(
                     ChatBlock(
@@ -2177,6 +2271,7 @@ final class AppModel: ObservableObject {
             pendingWorkspacePath = nil
             blocks = checkpoint.blocks
             todos = checkpoint.todos
+            planApprovalPending = false
             contextFiles = checkpoint.contextFiles
             queuedMessages = []
             restoredTranscriptContext = transcriptContext(from: checkpoint.blocks)
@@ -2200,12 +2295,15 @@ final class AppModel: ObservableObject {
                 blocks = Array(blocks.prefix(through: userIndex))
             }
             todos = []
+            planApprovalPending = false
+            planTodosChangedThisTurn = false
             pendingRetry = false
             isBusy = true
         } else if pendingSessionReset || reason == "clear_chat" {
             flushPendingTokens()
             blocks = []
             todos = []
+            planApprovalPending = false
             queuedMessages = []
             streamingAssistantID = nil
             restoredTranscriptContext = nil
@@ -2253,6 +2351,11 @@ final class AppModel: ObservableObject {
         streamedCharsThisTurn = 0
         isBusy = false
         pendingRetry = false
+        // A pending "implement this plan?" survives the blip on purpose: the
+        // decision is client-side state, and answering "implement" while
+        // still disconnected is caught by resolvePlanApproval's guard.
+        planTodosChangedThisTurn = false
+        turnDispatchedInPlanMode = false
         pendingSessionReset = false
         pendingCheckpointRestore = nil
         pendingRewindDraft = nil
@@ -2318,6 +2421,7 @@ final class AppModel: ObservableObject {
             flushPendingTokens()
             blocks = []
             todos = []
+            planApprovalPending = false
             restoredTranscriptContext = nil
         }
         if let profile = workspaceProfiles.first(where: { $0.path == info.cwd }) {
