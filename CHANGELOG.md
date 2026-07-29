@@ -19,6 +19,20 @@
   improvements, missing tests, a safe refactor) — pick one and it is sent
   as the plan request.
 
+### Changed
+
+- **Release builds are prepared for Mac App Store distribution** under the
+  SparkTales team: the bundle ID is now `io.sparktales.locus`, Release
+  builds enable the App Sandbox and hardened runtime, workspaces persist
+  through security-scoped bookmarks, the agent keeps its state in the app
+  container when sandboxed, the bundled runtime's 24 Python packages are
+  pinned by hash in `agent/requirements-runtime.lock`, and third-party
+  license notices ship inside the app. The GPLv3 `_dbm` extension (and the
+  unused `_tkinter`) are stripped from the runtime before signing, and
+  `Tools/AuditDistribution.sh` blocks an archive that still contains
+  either. Docs/APP-STORE-RELEASE-2026-07-29.md records the 1.6.0 (9)
+  build already uploaded to App Store Connect.
+
 ### Removed
 
 - The circular-arrow refresh button in the Plan tab header. Plans are

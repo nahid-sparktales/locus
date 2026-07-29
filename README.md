@@ -350,6 +350,36 @@ UI tests drive a real window, so run them from a terminal with UI automation
 permission — not from a sandboxed shell, where the app launches without a
 window and every test fails at the window wait.
 
+## Mac App Store archive
+
+The Release configuration is a sandboxed, arm64 Mac App Store build for the
+SparkTales team. It signs the bundled Python interpreter as an inheriting
+sandbox helper, stores agent data in the app container, and persists
+user-selected workspace access with security-scoped bookmarks.
+
+The App Store Connect app uses bundle ID `io.sparktales.locus`. After incrementing
+`CURRENT_PROJECT_VERSION` in `project.yml`, archive and export with:
+
+```bash
+Tools/ArchiveAppStore.sh
+```
+
+To upload the exported archive directly to App Store Connect:
+
+```bash
+LOCUS_UPLOAD=1 Tools/ArchiveAppStore.sh
+```
+
+The script uses the SparkTales App Store Connect API key shared with the
+StoryBook2 release workflow. Set `LOCUS_ASC_KEY_PATH` if that key is stored
+somewhere else.
+
+Every archive runs `Tools/AuditDistribution.sh` before export. The audit
+rejects unused GPL-licensed GNU gdbm content, the broken Tk extension, and
+missing third-party license materials. The component inventory is in
+`Locus/Resources/ThirdPartyNotices.md`; release history and remaining App
+Store work are documented in `Docs/APP-STORE-RELEASE-2026-07-29.md`.
+
 ## Architecture
 
 Locus is written in SwiftUI. A bundled Python service owns the local agent loop,

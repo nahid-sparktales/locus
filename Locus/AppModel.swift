@@ -116,6 +116,8 @@ final class AppModel: ObservableObject {
 
     private let backend: BackendService
     private let backendProcess = BackendProcess()
+    private let workspaceAccess: WorkspaceAccess
+    private var initialWorkspacePath: String?
     private var streamingAssistantID: UUID?
     private var pendingTokens = ""
     /// Rough size of the reply streamed since the last `session_info`, so the
@@ -179,12 +181,19 @@ final class AppModel: ObservableObject {
         {
             checkpoints = saved
         }
+        var restoredWorkspacePaths: [String] = []
         if !isUITesting,
            let data = defaults.data(forKey: "Locus.workspaceProfiles"),
            let saved = try? JSONDecoder().decode([WorkspaceProfile].self, from: data)
         {
-            workspaceProfiles = Array(saved.sorted { $0.lastOpened > $1.lastOpened }.prefix(8))
+            let recent = Array(saved.sorted { $0.lastOpened > $1.lastOpened }.prefix(8))
+            workspaceProfiles = recent
+            restoredWorkspacePaths = recent.map(\.path)
         }
+        let access = WorkspaceAccess(defaults: defaults)
+        workspaceAccess = access
+        initialWorkspacePath = access.restoreAvailable(paths: restoredWorkspacePaths)
+            ?? WorkspaceAccess.sandboxWorkspaceURL()?.path
         promptHistory = isUITesting ? [] : (defaults.stringArray(forKey: "Locus.promptHistory") ?? [])
 
         // Seeded here rather than in a didSet: assignments inside init skip
@@ -239,7 +248,7 @@ final class AppModel: ObservableObject {
         if let cwd = sessionInfo?.cwd, !cwd.isEmpty {
             return cwd
         }
-        return FileManager.default.homeDirectoryForCurrentUser.path
+        return initialWorkspacePath ?? FileManager.default.homeDirectoryForCurrentUser.path
     }
 
     var selectedModel: String {
@@ -1206,6 +1215,10 @@ final class AppModel: ObservableObject {
         panel.allowsMultipleSelection = false
         panel.directoryURL = URL(fileURLWithPath: workspacePath)
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard workspaceAccess.rememberAndActivate(url) else {
+            showToast("Locus could not retain access to that workspace")
+            return
+        }
         switchWorkspace(to: url.path)
     }
 
@@ -1232,6 +1245,10 @@ final class AppModel: ObservableObject {
                 return
             }
             // The folder already exists — just open it.
+            guard workspaceAccess.rememberAndActivate(url) else {
+                showToast("Locus could not retain access to that workspace")
+                return
+            }
             switchWorkspace(to: url.path)
             return
         }
@@ -1239,6 +1256,10 @@ final class AppModel: ObservableObject {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         } catch {
             showToast("Could not create the folder: \(error.localizedDescription)")
+            return
+        }
+        guard workspaceAccess.rememberAndActivate(url) else {
+            showToast("Locus could not retain access to that workspace")
             return
         }
         showToast("Created \(url.lastPathComponent)")
@@ -1250,6 +1271,10 @@ final class AppModel: ObservableObject {
             showToast("Finish the active run before switching workspaces")
             return
         }
+        guard workspaceAccess.activateStored(path: path) else {
+            showToast("Choose that workspace again to restore access")
+            return
+        }
         guard FileManager.default.fileExists(atPath: path) else {
             showToast("That workspace is no longer available")
             removeWorkspaceProfile(path)
@@ -1257,6 +1282,17 @@ final class AppModel: ObservableObject {
         }
         persistCurrentWorkspaceProfile()
         pendingWorkspacePath = path
+        initialWorkspacePath = path
+        if backendProcess.isRunning, WorkspaceAccess.isSandboxed {
+            backend.disconnect()
+            sessionInfo = nil
+            Task { [backendProcess] in
+                await backendProcess.stopAndWait()
+                await self.bootstrap()
+            }
+            showToast("Switching to \(URL(fileURLWithPath: path).lastPathComponent)")
+            return
+        }
         guard backend.send(["type": "set_cwd", "path": path]) else {
             pendingWorkspacePath = nil
             showToast("Reconnect before switching workspaces")
@@ -1279,6 +1315,9 @@ final class AppModel: ObservableObject {
         panel.allowsMultipleSelection = true
         panel.directoryURL = URL(fileURLWithPath: workspacePath)
         guard panel.runModal() == .OK else { return }
+        for url in panel.urls {
+            _ = workspaceAccess.rememberAndActivate(url)
+        }
         loadContext(from: panel.urls)
     }
 
@@ -1359,6 +1398,10 @@ final class AppModel: ObservableObject {
     func restore(_ checkpoint: SessionCheckpoint) {
         guard !isBusy, !hasPendingPermission else {
             showToast("Finish the active run before restoring a checkpoint")
+            return
+        }
+        guard workspaceAccess.activateStored(path: checkpoint.workspacePath) else {
+            showToast("Choose that workspace again before restoring this checkpoint")
             return
         }
         guard backend.send(["type": "new_session"]) else {
