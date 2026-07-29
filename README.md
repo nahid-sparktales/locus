@@ -324,7 +324,7 @@ xcodebuild \
 cd agent && .venv/bin/python -m pytest -q
 ```
 
-104 unit tests, 18 UI tests, and 153 backend tests currently pass.
+121 unit tests, 18 UI tests, and 153 backend tests currently pass.
 
 The unit suite covers work modes, lightweight context migration, session
 acknowledgements and retry branches, recoverable session clearing, Hugging Face
