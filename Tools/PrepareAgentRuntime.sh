@@ -7,13 +7,20 @@
 # stdlib relative to the executable, so the copy inside Locus.app works on
 # Macs with no Python installed.
 # Safe to run manually; does no work (and no network) while the stamp is
-# current. The stamp covers the interpreter build and agent/pyproject.toml.
+# current. The stamp covers the interpreter build, package metadata, and the
+# fully hashed runtime dependency lock.
 set -euo pipefail
 
 script_dir="${0:A:h}"
 repo_root="${script_dir:h}"
 backend_root="${LOCUS_BACKEND_ROOT:-${repo_root}/agent}"
 cache="${LOCUS_RUNTIME_CACHE:-${repo_root}/.agent-runtime}"
+requirements_lock="${backend_root}/requirements-runtime.lock"
+
+if [[ ! -f "${requirements_lock}" ]]; then
+    echo "error: missing hashed runtime lock ${requirements_lock}" >&2
+    exit 1
+fi
 
 # Bump these together when moving to a newer interpreter:
 # https://github.com/astral-sh/python-build-standalone/releases
@@ -29,7 +36,14 @@ esac
 asset="cpython-${py_version}+${pbs_tag}-${pbs_arch}-apple-darwin-install_only_stripped.tar.gz"
 url="https://github.com/astral-sh/python-build-standalone/releases/download/${pbs_tag}/${asset}"
 
-stamp_value="v2 ${asset} $(/usr/bin/shasum -a 256 "${backend_root}/pyproject.toml" | /usr/bin/cut -d' ' -f1)"
+manifest_hash="$(
+    /usr/bin/shasum -a 256 \
+        "${backend_root}/pyproject.toml" \
+        "${requirements_lock}" \
+    | /usr/bin/shasum -a 256 \
+    | /usr/bin/cut -d' ' -f1
+)"
+stamp_value="v3 ${asset} ${manifest_hash}"
 stamp_file="${cache}/.stamp"
 
 if [[ -f "${stamp_file}" && -x "${cache}/cpython/bin/python3" && -d "${cache}/site-packages" ]] \
@@ -52,7 +66,8 @@ if /usr/bin/curl -fsSL --max-time 30 -o "${workdir}/SHA256SUMS" "${sums_url}"; t
         exit 1
     fi
 else
-    echo "warning: checksums for ${pbs_tag} unavailable; continuing unverified."
+    echo "error: checksums for ${pbs_tag} are unavailable" >&2
+    exit 1
 fi
 
 /usr/bin/tar -xzf "${workdir}/${asset}" -C "${workdir}"
@@ -61,13 +76,15 @@ if [[ ! -x "${workdir}/python/bin/python3" ]]; then
     exit 1
 fi
 
-# Install the agent package to pull in its dependencies, then drop the
-# package itself — the app bundles the live source tree separately.
+# Install only the agent's locked third-party dependencies. The app bundles
+# the live first-party source tree separately.
 /bin/mkdir -p "${workdir}/site-packages"
 "${workdir}/python/bin/python3" -m pip install --quiet \
-    --target "${workdir}/site-packages" "${backend_root}"
-/bin/rm -rf "${workdir}/site-packages/ollama_code" \
-    "${workdir}"/site-packages/ollama_code-*.dist-info(N) \
+    --require-hashes \
+    --only-binary=:all: \
+    --target "${workdir}/site-packages" \
+    --requirement "${requirements_lock}"
+/bin/rm -rf \
     "${workdir}/site-packages/bin"
 
 # Pre-compile EVERYTHING — stdlib included. The bundle is sealed by the app's

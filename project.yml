@@ -1,6 +1,6 @@
 name: Locus
 options:
-  bundleIdPrefix: com.nahid
+  bundleIdPrefix: io.sparktales
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
@@ -8,13 +8,22 @@ settings:
   base:
     SWIFT_VERSION: "5.10"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
-    CODE_SIGN_STYLE: Manual
-    CODE_SIGN_IDENTITY: "-"
-    DEVELOPMENT_TEAM: ""
-    ENABLE_HARDENED_RUNTIME: NO
     ENABLE_USER_SCRIPT_SANDBOXING: NO
-    CURRENT_PROJECT_VERSION: 7
+    CURRENT_PROJECT_VERSION: 9
     MARKETING_VERSION: 1.6.0
+  configs:
+    Debug:
+      CODE_SIGN_STYLE: Manual
+      CODE_SIGN_IDENTITY: "-"
+      DEVELOPMENT_TEAM: ""
+      ENABLE_APP_SANDBOX: NO
+      ENABLE_HARDENED_RUNTIME: NO
+    Release:
+      ARCHS: arm64
+      CODE_SIGN_STYLE: Automatic
+      DEVELOPMENT_TEAM: 4X4RJA7GMD
+      ENABLE_APP_SANDBOX: YES
+      ENABLE_HARDENED_RUNTIME: YES
 targets:
   Locus:
     type: application
@@ -25,6 +34,11 @@ targets:
           - Resources
       - path: Locus/Resources
         buildPhase: resources
+        excludes:
+          - ThirdPartyLicenses
+      - path: Locus/Resources/ThirdPartyLicenses
+        type: folder
+        buildPhase: resources
     postBuildScripts:
       - name: Bundle local agent runtime
         basedOnDependencyAnalysis: false
@@ -32,15 +46,19 @@ targets:
           "$SRCROOT/Tools/BundleBackend.sh"
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.nahid.locus
+        PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus
         PRODUCT_NAME: Locus
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Locus
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         INFOPLIST_KEY_NSDocumentsFolderUsageDescription: "Locus needs access to your Documents folder to open coding workspaces and start the local Ollama agent."
         INFOPLIST_KEY_NSDownloadsFolderUsageDescription: "Locus needs access when you choose files or projects from Downloads."
         INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026"
         COMBINE_HIDPI_IMAGES: YES
+      configs:
+        Release:
+          CODE_SIGN_ENTITLEMENTS: Config/Locus.entitlements
     scheme:
       testTargets:
         - LocusTests
@@ -54,7 +72,7 @@ targets:
       - target: Locus
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.nahid.locus.tests
+        PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.tests
         GENERATE_INFOPLIST_FILE: YES
   LocusUITests:
     type: bundle.ui-testing
@@ -65,6 +83,6 @@ targets:
       - target: Locus
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.nahid.locus.ui-tests
+        PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.ui-tests
         TEST_TARGET_NAME: Locus
         GENERATE_INFOPLIST_FILE: YES

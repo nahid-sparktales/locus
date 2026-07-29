@@ -8,7 +8,7 @@ import Security
 enum Keychain {
     static let remoteAPIKeyAccount = "remote-api-key"
 
-    private static let service = "com.nahid.locus"
+    private static let service = "io.sparktales.locus"
 
     @discardableResult
     static func set(_ value: String, account: String) -> Bool {
