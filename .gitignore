@@ -13,6 +13,7 @@ xcuserdata/
 *.zip
 .release-*/
 .releasebuild-*/
+artifacts/
 
 # Bundled agent runtime cache (downloaded standalone Python + deps)
 .agent-runtime/
@@ -29,3 +30,8 @@ agent/dist/
 # Secrets
 .env
 .env.*
+*.p8
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile

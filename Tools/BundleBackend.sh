@@ -47,6 +47,20 @@ bundle_source() {
     done
 }
 
+prune_disallowed_runtime_components() {
+    # The standalone distribution includes optional stdlib extensions that
+    # Locus never imports. _dbm statically includes GPLv3 GNU gdbm, while
+    # _tkinter points at Tcl/Tk libraries that the slim runtime removes.
+    # Exclude both so the shipped app contains neither unused copyleft code
+    # nor a known-broken extension.
+    local lib_dir
+    for lib_dir in "${runtime}/python/lib"/python3.*(N/); do
+        /bin/rm -rf "${lib_dir}/dbm" "${lib_dir}/tkinter"
+        /bin/rm -f "${lib_dir}/lib-dynload"/_dbm*.so(N) \
+            "${lib_dir}/lib-dynload"/_tkinter*.so(N)
+    done
+}
+
 bundle_standalone() {
     "${script_dir}/PrepareAgentRuntime.sh" || return 1
     [[ -x "${cache}/cpython/bin/python3" && -d "${cache}/site-packages" ]] || return 1
@@ -78,10 +92,34 @@ bundle_standalone() {
         "${runtime}/python/share"; do
         /bin/rm -rf "${prune}"
     done
+    prune_disallowed_runtime_components
 
     # Pre-compile so imports from the read-only bundle skip source compiling.
     "${runtime}/python/bin/python3" -m compileall -q "${runtime}/source" || true
+    sign_runtime_if_needed
     echo "Bundled self-contained agent runtime ($("${runtime}/python/bin/python3" -V))."
+}
+
+sign_runtime_if_needed() {
+    local identity="${EXPANDED_CODE_SIGN_IDENTITY:-}"
+    [[ "${CODE_SIGNING_ALLOWED:-NO}" == "YES" && -n "${identity}" ]] || return 0
+
+    local helper_entitlements="${repo_root}/Config/AgentRuntime.entitlements"
+    local item
+    for item in "${runtime}"/**/*.dylib(N) "${runtime}"/**/*.so(N); do
+        /usr/bin/codesign --force --options runtime --sign "${identity}" "${item}"
+    done
+    for item in "${runtime}/python/bin"/python3.*(N); do
+        [[ -L "${item}" ]] && continue
+        if [[ "${ENABLE_APP_SANDBOX:-NO}" == "YES" ]]; then
+            /usr/bin/codesign --force --options runtime \
+                --identifier io.sparktales.locus.agent-runtime \
+                --entitlements "${helper_entitlements}" \
+                --sign "${identity}" "${item}"
+        else
+            /usr/bin/codesign --force --options runtime --sign "${identity}" "${item}"
+        fi
+    done
 }
 
 bundle_venv() {
@@ -108,6 +146,8 @@ bundle_venv() {
     bundle_source
     /usr/bin/ditto "${site_packages}" "${runtime}/site-packages"
     /usr/bin/ditto "${python_home%/bin}" "${runtime}/python"
+    prune_disallowed_runtime_components
+    sign_runtime_if_needed
     echo "warning: Bundled the developer venv's Python ($(basename "${python_bin}"))." \
         "This build runs only on Macs where that Python is installed;" \
         "use LOCUS_BUNDLE_MODE=standalone for a self-contained app."
@@ -121,8 +161,7 @@ if [[ "${mode}" == "venv" ]]; then
 fi
 
 if ! bundle_standalone; then
-    echo "warning: Standalone runtime unavailable (offline?); falling back to the developer venv."
-    if ! bundle_venv; then
-        echo "warning: venv fallback also failed; runtime not bundled."
-    fi
+    echo "error: standalone runtime preparation failed" >&2
+    echo "error: use LOCUS_BUNDLE_MODE=venv explicitly for a local-only venv build" >&2
+    exit 1
 fi

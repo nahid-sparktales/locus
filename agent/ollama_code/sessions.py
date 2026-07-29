@@ -17,7 +17,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-APP_DIR = Path.home() / ".ollama-code"
+from .paths import APP_DIR
+
 SESSIONS_DIR = APP_DIR / "sessions"
 TRASH_DIR = APP_DIR / "session-trash"
 META_PATH = APP_DIR / "session-metadata.json"

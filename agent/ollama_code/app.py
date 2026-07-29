@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 from typing import Any
 
 from rich.live import Live
@@ -15,6 +14,7 @@ from rich.text import Text
 from . import __version__
 from .core import SLASH_COMMANDS, AgentCore
 from .ollama import DEFAULT_HOST, OllamaError
+from .paths import APP_DIR
 from .render import (
     console,
     print_banner,
@@ -28,7 +28,6 @@ from .render import (
 )
 from .sessions import SessionStore
 
-APP_DIR = Path.home() / ".ollama-code"
 HISTORY_FILE = APP_DIR / "history"
 
 HELP_TEXT = """[bold]Slash commands[/bold]

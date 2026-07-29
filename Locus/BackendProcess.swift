@@ -55,6 +55,21 @@ final class BackendProcess {
         // written there at import time would invalidate the code signature,
         // so byte-code writing must stay off no matter where we run from.
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        if WorkspaceAccess.isSandboxed,
+           let support = FileManager.default.urls(
+               for: .applicationSupportDirectory,
+               in: .userDomainMask
+           ).first
+        {
+            let agentHome = support
+                .appending(path: "Locus", directoryHint: .isDirectory)
+                .appending(path: "Agent", directoryHint: .isDirectory)
+            try? FileManager.default.createDirectory(
+                at: agentHome,
+                withIntermediateDirectories: true
+            )
+            environment["OLLAMA_CODE_HOME"] = agentHome.path
+        }
         if let packages = launch.packages {
             environment["PYTHONPATH"] = [
                 launch.source.path,

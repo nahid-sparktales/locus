@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
-APP_DIR = Path.home() / ".ollama-code"
+from .paths import APP_DIR
+
 CONFIG_PATH = APP_DIR / "config.json"
 
 DEFAULTS: dict[str, Any] = {
