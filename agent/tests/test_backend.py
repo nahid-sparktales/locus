@@ -181,6 +181,37 @@ def test_bash_timeout_kills_the_whole_process_group(ctx, tmp_path):
     assert not marker.exists(), "a child process outlived the timeout"
 
 
+def test_web_fetch_identifies_itself_by_its_real_name(monkeypatch, tmp_path):
+    """The model's browsing must say what it actually is.
+
+    This header used to be the literal "ollama-code/0.2" — a product name we
+    no longer ship under and a version that never moved. Deriving it from
+    ``__version__`` is what stops it drifting again.
+    """
+    import requests
+
+    import ollama_code
+
+    seen = {}
+
+    def fake_get(url, timeout=None, headers=None):
+        seen["headers"] = headers or {}
+        return FakeResponse(text="<html><body>hello</body></html>")
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    execute_tool("web_fetch", {"url": "example.com"}, ToolContext(cwd=str(tmp_path)))
+
+    agent = seen["headers"]["User-Agent"]
+    assert agent == ollama_code.USER_AGENT
+    assert ollama_code.__version__ in agent
+    assert agent.startswith("Locus-Agent/")
+    # The old literal, and anything claiming to be a client we are not.
+    assert "ollama-code" not in agent.lower()
+    assert "0.2" not in agent
+    for impostor in ("claude", "codex", "kimi", "cursor", "curl", "mozilla"):
+        assert impostor not in agent.lower()
+
+
 # --------------------------------------------------------------- permissions
 
 

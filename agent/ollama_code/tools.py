@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from . import USER_AGENT
+
 MAX_OUTPUT = 30_000
 MAX_LIST_ENTRIES = 300
 MAX_GREP_MATCHES = 200
@@ -446,7 +448,7 @@ def _impl_web_fetch(args: dict[str, Any], ctx: ToolContext) -> str:
     import requests
 
     try:
-        r = requests.get(url, timeout=20, headers={"User-Agent": "ollama-code/0.2"})
+        r = requests.get(url, timeout=20, headers={"User-Agent": USER_AGENT})
         r.raise_for_status()
     except Exception as e:  # noqa: BLE001 - surface any fetch failure to the model
         return f"Error fetching {url}: {e}"
