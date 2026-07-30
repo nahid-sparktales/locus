@@ -482,6 +482,46 @@ def test_remote_client_sends_bearer_token(monkeypatch):
     assert models[0]["name"] == "meta-llama/Llama-3.1-8B-Instruct"
 
 
+def test_remote_client_adds_anthropic_headers_for_that_auth_style(monkeypatch):
+    from ollama_code import remote as remote_mod
+
+    seen = {}
+
+    def fake_get(url, headers=None, timeout=None):
+        seen["headers"] = headers or {}
+        return FakeResponse(payload={"data": [{"id": "claude-sonnet-4-5"}]})
+
+    monkeypatch.setattr(remote_mod.requests, "get", fake_get)
+    client = remote_mod.RemoteClient(
+        "https://api.anthropic.com/v1", api_key="sk-ant-secret"
+    )
+    client.list_models()
+
+    # The bearer token still travels: chat completions authenticate with it,
+    # and only the native model listing needs the pair below.
+    assert seen["headers"]["Authorization"] == "Bearer sk-ant-secret"
+    assert seen["headers"]["x-api-key"] == "sk-ant-secret"
+    assert seen["headers"]["anthropic-version"] == remote_mod.ANTHROPIC_VERSION
+
+
+def test_remote_auth_style_is_inferred_and_coerced():
+    from ollama_code import remote as remote_mod
+
+    # Inferred from the host when unset, explicit when given, and anything
+    # unrecognized falls back to a plain bearer token.
+    assert remote_mod.RemoteClient("https://api.anthropic.com/v1").auth_style == "anthropic"
+    assert remote_mod.RemoteClient("https://api.openai.com/v1").auth_style == "bearer"
+    assert remote_mod.RemoteClient(
+        "https://gateway.example", auth_style="anthropic"
+    ).auth_style == "anthropic"
+    assert remote_mod.RemoteClient(
+        "https://gateway.example", auth_style="nonsense"
+    ).auth_style == "bearer"
+
+    other = remote_mod.RemoteClient("https://api.moonshot.ai/v1", api_key="sk-kimi")
+    assert "x-api-key" not in other._headers()
+
+
 def test_remote_client_falls_back_to_the_configured_model(monkeypatch):
     from ollama_code import remote as remote_mod
 
@@ -645,6 +685,52 @@ def test_core_switches_providers_and_keeps_keys_out_of_disk(tmp_path):
     assert core.session_info()["provider"] == "ollama"
 
 
+def test_core_tracks_the_account_label_without_leaking_the_key(tmp_path):
+    core = _core(tmp_path, [])
+    core.use_remote(
+        "https://api.anthropic.com/v1",
+        api_key="sk-ant-topsecret",
+        model="claude-sonnet-4-5",
+        auth_style="anthropic",
+        account_label="Claude — Work",
+    )
+
+    assert core.provider_state()["account_label"] == "Claude — Work"
+    assert core.session_info()["account_label"] == "Claude — Work"
+
+    saved_text = config_mod.CONFIG_PATH.read_text()
+    saved = json.loads(saved_text)
+    assert saved["remote_account_label"] == "Claude — Work", "the label survives a restart"
+    assert saved["remote_auth_style"] == "anthropic"
+    assert "sk-ant-topsecret" not in saved_text, "the key must never be written to disk"
+
+    # A URL-only update keeps the label, the same way it keeps the key.
+    core.use_remote("https://api.anthropic.com/v1", api_key=None)
+    assert core.provider_state()["account_label"] == "Claude — Work"
+
+    # Local Ollama has no account, so the label must not linger.
+    core.use_ollama()
+    assert core.provider_state()["account_label"] == ""
+    assert core.session_info()["account_label"] == ""
+
+
+def test_session_meta_records_the_provider_and_account(tmp_path):
+    core = _core(tmp_path, [])
+    core.use_remote(
+        "https://api.moonshot.ai/v1",
+        api_key="sk-kimi",
+        model="kimi-k2",
+        account_label="Kimi",
+    )
+    core.start_new_session()
+
+    meta = json.loads(core.session.path.read_text().splitlines()[0])
+    assert meta["type"] == "meta"
+    assert meta["provider"] == "remote"
+    assert meta["account"] == "Kimi"
+    assert meta["model"] == "kimi-k2"
+
+
 def test_provider_endpoints_round_trip(client):
     body = client.post("/api/provider", json={
         "provider": "remote",
@@ -663,6 +749,30 @@ def test_provider_endpoints_round_trip(client):
     assert client.post("/api/provider", json={"provider": "remote"}).status_code == 422
 
     assert client.post("/api/provider", json={"provider": "ollama"}).json()["provider"] == "ollama"
+
+
+def test_provider_endpoint_carries_the_account_identity(client):
+    body = client.post("/api/provider", json={
+        "provider": "remote",
+        "base_url": "https://api.anthropic.com/v1",
+        "api_key": "sk-ant-secret",
+        "model": "claude-sonnet-4-5",
+        "auth_style": "anthropic",
+        "account_label": "Claude — Personal",
+    }).json()
+    assert body["account_label"] == "Claude — Personal"
+    assert "sk-ant-secret" not in json.dumps(body)
+
+    # Omitting the label keeps it: an older client updating only the model must
+    # not erase which account the agent is holding a key for.
+    kept = client.post("/api/provider", json={
+        "provider": "remote",
+        "base_url": "https://api.anthropic.com/v1",
+        "model": "claude-haiku-4-5",
+    }).json()
+    assert kept["account_label"] == "Claude — Personal"
+
+    assert client.post("/api/provider", json={"provider": "ollama"}).json()["account_label"] == ""
 
 
 # ------------------------------------------------------------------- terminal

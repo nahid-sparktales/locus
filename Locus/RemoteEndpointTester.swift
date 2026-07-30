@@ -26,15 +26,33 @@ enum RemoteEndpointTester {
         return base
     }
 
-    static func test(baseURL: String, model: String, apiKey: String) async -> Outcome {
+    /// The auth headers a provider expects. Anthropic's native model listing
+    /// only accepts `x-api-key`, while its chat completions take the bearer
+    /// token — sending both satisfies either, and other hosts ignore the rest.
+    static func authHeaders(apiKey: String, kind: ProviderKind) -> [String: String] {
+        guard !apiKey.isEmpty else { return [:] }
+        var headers = ["Authorization": "Bearer \(apiKey)"]
+        if kind.authStyle == "anthropic" {
+            headers["x-api-key"] = apiKey
+            headers["anthropic-version"] = "2023-06-01"
+        }
+        return headers
+    }
+
+    static func test(
+        baseURL: String,
+        model: String,
+        apiKey: String,
+        kind: ProviderKind = .custom
+    ) async -> Outcome {
         let base = normalizeBaseURL(baseURL)
         guard !base.isEmpty, let modelsURL = URL(string: base + "/models") else {
             return Outcome(ok: false, message: "That endpoint URL is not valid.")
         }
         var request = URLRequest(url: modelsURL)
         request.timeoutInterval = 15
-        if !apiKey.isEmpty {
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        for (field, value) in authHeaders(apiKey: apiKey, kind: kind) {
+            request.setValue(value, forHTTPHeaderField: field)
         }
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -45,7 +63,12 @@ enum RemoteEndpointTester {
             // Endpoints that serve exactly one model often reject /models;
             // a one-token chat probe is the authoritative check there.
             if status == 404 || status == 405 {
-                return await chatProbe(base: base, model: model, apiKey: apiKey)
+                return await chatProbe(
+                    base: base,
+                    model: model.isEmpty ? kind.probeModel : model,
+                    apiKey: apiKey,
+                    kind: kind
+                )
             }
             return Outcome(ok: false, message: failureMessage(status: status, data: data))
         } catch {
@@ -53,7 +76,12 @@ enum RemoteEndpointTester {
         }
     }
 
-    private static func chatProbe(base: String, model: String, apiKey: String) async -> Outcome {
+    private static func chatProbe(
+        base: String,
+        model: String,
+        apiKey: String,
+        kind: ProviderKind
+    ) async -> Outcome {
         guard let url = URL(string: base + "/chat/completions") else {
             return Outcome(ok: false, message: "That endpoint URL is not valid.")
         }
@@ -61,8 +89,8 @@ enum RemoteEndpointTester {
         request.httpMethod = "POST"
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !apiKey.isEmpty {
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        for (field, value) in authHeaders(apiKey: apiKey, kind: kind) {
+            request.setValue(value, forHTTPHeaderField: field)
         }
         let body: [String: Any] = [
             "model": model,

@@ -21,6 +21,7 @@
 		404AF919F8C0790788D0A26B /* GitClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06DD9A63C8FBDB42368F8A0C /* GitClient.swift */; };
 		4679DAB70FE7B88A97E3F6D9 /* RemoteEndpointTester.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01EE3ED166C864419A854532 /* RemoteEndpointTester.swift */; };
 		4C25B8F53E842CD8D5556308 /* InspectorTerminalTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C90DE8FC778C6A106DF35EB /* InspectorTerminalTab.swift */; };
+		4C716EA94327E1CAE0B35444 /* ProviderAccounts.swift in Sources */ = {isa = PBXBuildFile; fileRef = D99C4113009BE46AB55CB21C /* ProviderAccounts.swift */; };
 		56B2392CBBC3354BD5A6E359 /* InspectorFilesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10D6D002C03E3AA6EB9FEFD0 /* InspectorFilesTab.swift */; };
 		62A955375EBFA6E5A70A6C85 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0204C24A0102A8D20E3A23CE /* Theme.swift */; };
 		6777453D22A87B5DF2E89B0C /* ShortcutsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CBA85D1FB7286E08482ED76 /* ShortcutsSheet.swift */; };
@@ -35,10 +36,12 @@
 		C0EB8EF86FF9954D89CC082E /* InspectorPlanTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */; };
 		C214A77B64E488AE82DCFB59 /* WorkspaceAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAAE8017A82BDD5DBCA5F587 /* WorkspaceAccess.swift */; };
 		CB22892B835E59A99C4FA35D /* LocusApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCCEF7CD29A9C6F9C3E1472F /* LocusApp.swift */; };
+		CB539BDAB01E69E8E2AB8C83 /* AccountEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7FD1471F0D2805148D40887 /* AccountEditorView.swift */; };
 		CC34DB49F0794EFC59213A34 /* ModelLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CB88F08135C226D4D6AFF6A /* ModelLibraryView.swift */; };
 		D586AEB96691BDCC5A9F0418 /* InspectorChangesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCCD81AAF0691EDC3F6B0D64 /* InspectorChangesTab.swift */; };
 		D8873F086E1F5351BAB0FB2E /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2CC3300CABBD87F954E4C63 /* WorkspaceView.swift */; };
 		DAC9BDD3759C84F504BBD92F /* PermissionPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28BF95EE575D10DBDE8FA1B3 /* PermissionPromptView.swift */; };
+		E5357DCEABE29A7A65F07F06 /* ProviderModelCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2F4D55B6CB8B4C966BACBE /* ProviderModelCatalog.swift */; };
 		E6B5E9C34E90B735A5A84C22 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E18BD6EB5EBD180B3E69FBD6 /* ComposerView.swift */; };
 		F01F72892D90A52009E99BC3 /* SessionSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A37D5FE4583645B552296C /* SessionSidebarView.swift */; };
 		F9405ED899AAD041CF6BAD66 /* BackendService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3793FC69B1D813ED07567A2E /* BackendService.swift */; };
@@ -99,11 +102,14 @@
 		C41E39F35E0F75A05095B5EC /* AppModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelTests.swift; sourceTree = "<group>"; };
 		CCCD81AAF0691EDC3F6B0D64 /* InspectorChangesTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorChangesTab.swift; sourceTree = "<group>"; };
 		CF3D3389D598BBECBE77E38F /* InspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorView.swift; sourceTree = "<group>"; };
+		D99C4113009BE46AB55CB21C /* ProviderAccounts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderAccounts.swift; sourceTree = "<group>"; };
 		E11B2324D330884AA4555A92 /* Sheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sheets.swift; sourceTree = "<group>"; };
 		E18BD6EB5EBD180B3E69FBD6 /* ComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerView.swift; sourceTree = "<group>"; };
 		E8FCD4DB1FD5A4E1FD862797 /* ModelLibraryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelLibraryService.swift; sourceTree = "<group>"; };
 		EAAE8017A82BDD5DBCA5F587 /* WorkspaceAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceAccess.swift; sourceTree = "<group>"; };
+		F7FD1471F0D2805148D40887 /* AccountEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountEditorView.swift; sourceTree = "<group>"; };
 		F95947ACE0751337457A57CD /* TerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSession.swift; sourceTree = "<group>"; };
+		FA2F4D55B6CB8B4C966BACBE /* ProviderModelCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderModelCatalog.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -147,6 +153,7 @@
 		B9D7C7183910882434437EA5 /* Locus */ = {
 			isa = PBXGroup;
 			children = (
+				F7FD1471F0D2805148D40887 /* AccountEditorView.swift */,
 				5118157AFFA0FF82EDCA5BED /* AppModel.swift */,
 				B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */,
 				3793FC69B1D813ED07567A2E /* BackendService.swift */,
@@ -167,6 +174,8 @@
 				9C24AE13FC7723F12A5F2380 /* Models.swift */,
 				28BF95EE575D10DBDE8FA1B3 /* PermissionPromptView.swift */,
 				BEF0BEF00F2EA8083877CC21 /* PlanApprovalPromptView.swift */,
+				D99C4113009BE46AB55CB21C /* ProviderAccounts.swift */,
+				FA2F4D55B6CB8B4C966BACBE /* ProviderModelCatalog.swift */,
 				01EE3ED166C864419A854532 /* RemoteEndpointTester.swift */,
 				00A37D5FE4583645B552296C /* SessionSidebarView.swift */,
 				E11B2324D330884AA4555A92 /* Sheets.swift */,
@@ -336,6 +345,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CB539BDAB01E69E8E2AB8C83 /* AccountEditorView.swift in Sources */,
 				20C4A1758890CFAC76C9ED6B /* AppModel.swift in Sources */,
 				BEAFCBFDAE33591C970B5E98 /* BackendProcess.swift in Sources */,
 				F9405ED899AAD041CF6BAD66 /* BackendService.swift in Sources */,
@@ -356,6 +366,8 @@
 				FCCDEFB817C5CCEC225278D5 /* Models.swift in Sources */,
 				DAC9BDD3759C84F504BBD92F /* PermissionPromptView.swift in Sources */,
 				77D7EC97E924FD976475CB02 /* PlanApprovalPromptView.swift in Sources */,
+				4C716EA94327E1CAE0B35444 /* ProviderAccounts.swift in Sources */,
+				E5357DCEABE29A7A65F07F06 /* ProviderModelCatalog.swift in Sources */,
 				4679DAB70FE7B88A97E3F6D9 /* RemoteEndpointTester.swift in Sources */,
 				F01F72892D90A52009E99BC3 /* SessionSidebarView.swift in Sources */,
 				A6D846A90EED0F655A108FE8 /* Sheets.swift in Sources */,

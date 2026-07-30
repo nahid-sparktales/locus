@@ -218,10 +218,16 @@ def set_provider(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str,
     # clears it, which is how the app removes a saved key.
     raw_key = body.get("api_key")
     api_key = None if raw_key is None else str(raw_key)
+    # Same "missing means keep" rule as the key, so a URL-only update from an
+    # older client cannot silently drop the account's identity.
+    raw_style = body.get("auth_style")
+    raw_label = body.get("account_label")
     svc.core.use_remote(
         base_url=base_url,
         api_key=api_key,
         model=str(body.get("model") or ""),
+        auth_style=None if raw_style is None else str(raw_style),
+        account_label=None if raw_label is None else str(raw_label),
     )
     if body.get("verify"):
         try:

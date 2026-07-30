@@ -416,6 +416,265 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertFalse(Keychain.has(account: account))
     }
 
+    // MARK: - Provider accounts
+
+    func testProviderAccountEncodesWithoutTheKeyAndKeepsItsKind() throws {
+        let account = ProviderAccount(
+            kind: .claude,
+            name: "Work",
+            preferredModel: "claude-sonnet-4-5"
+        )
+        let data = try JSONEncoder().encode([account])
+        let encoded = String(decoding: data, as: UTF8.self).lowercased()
+        let restored = ProviderAccountStore.decode(data)
+
+        XCTAssertEqual(restored.count, 1)
+        XCTAssertEqual(restored[0].kind, .claude)
+        XCTAssertEqual(restored[0].displayName, "Claude — Work")
+        XCTAssertEqual(restored[0].resolvedBaseURL, "https://api.anthropic.com/v1")
+        XCTAssertEqual(restored[0].keychainAccount, Keychain.providerAccountKey(account.id))
+        XCTAssertFalse(encoded.contains("apikey"))
+        XCTAssertFalse(encoded.contains("sk-"))
+    }
+
+    func testAccountWithoutANameFallsBackToTheProviderName() {
+        let account = ProviderAccount(kind: .kimi)
+        XCTAssertEqual(account.displayName, "Kimi")
+        XCTAssertEqual(account.shortName, "Kimi")
+    }
+
+    func testUnknownAccountKindStaysUsableAsACustomEndpoint() {
+        let json = """
+        [{"id":"\(UUID().uuidString)","kindRaw":"gemini","name":"Future",
+          "baseURLOverride":"https://api.example.com/v1","preferredModel":"x",
+          "createdAt":0}]
+        """
+        let restored = ProviderAccountStore.decode(Data(json.utf8))
+
+        XCTAssertEqual(restored.count, 1, "a newer provider must not drop the account")
+        XCTAssertEqual(restored[0].kind, .custom)
+        XCTAssertEqual(restored[0].resolvedBaseURL, "https://api.example.com/v1")
+    }
+
+    func testOneCorruptAccountDoesNotDiscardTheRest() {
+        let good = UUID().uuidString
+        let json = """
+        [{"id":"not-a-uuid","kindRaw":"claude","name":"Broken","preferredModel":"",
+          "createdAt":0},
+         {"id":"\(good)","kindRaw":"codex","name":"Fine","preferredModel":"gpt-5",
+          "createdAt":0}]
+        """
+        let restored = ProviderAccountStore.decode(Data(json.utf8))
+
+        XCTAssertEqual(restored.count, 1)
+        XCTAssertEqual(restored[0].name, "Fine")
+        XCTAssertEqual(restored[0].kind, .codex)
+    }
+
+    func testLegacyRemoteEndpointMigratesIntoACustomAccount() {
+        var settings = AppSettings()
+        settings.provider = .remote
+        settings.remoteBaseURL = "https://abc.endpoints.huggingface.cloud/v1"
+        settings.remoteModel = "meta-llama/Llama-3.1-8B-Instruct"
+
+        let migrated = ProviderAccountStore.migrateLegacyEndpoint(
+            settings: settings,
+            existing: []
+        )
+
+        let account = try? XCTUnwrap(migrated)
+        XCTAssertEqual(account?.kind, .custom)
+        XCTAssertEqual(account?.resolvedBaseURL, settings.remoteBaseURL)
+        XCTAssertEqual(account?.preferredModel, settings.remoteModel)
+        // The key is not copied: the account points at the entry that is
+        // already there, so an interrupted migration cannot lose it.
+        XCTAssertEqual(account?.keychainAccount, Keychain.remoteAPIKeyAccount)
+    }
+
+    func testMigrationSkipsWhenThereIsNothingToMoveOrAccountsExist() {
+        // Nothing configured.
+        XCTAssertNil(
+            ProviderAccountStore.migrateLegacyEndpoint(settings: AppSettings(), existing: [])
+        )
+        // Already migrated once: it must not run again and duplicate.
+        var settings = AppSettings()
+        settings.remoteBaseURL = "https://abc.example.com/v1"
+        XCTAssertNil(
+            ProviderAccountStore.migrateLegacyEndpoint(
+                settings: settings,
+                existing: [ProviderAccount(kind: .custom)]
+            )
+        )
+    }
+
+    func testDuplicateAccountNamesAreSuffixedPerProvider() {
+        let existing = [
+            ProviderAccount(kind: .claude, name: "Work"),
+            ProviderAccount(kind: .codex, name: "Work"),
+        ]
+        XCTAssertEqual(
+            ProviderAccountStore.uniqueName("Work", kind: .claude, existing: existing),
+            "Work 2"
+        )
+        // A different provider may reuse the name — "Claude — Work" and
+        // "Codex — Work" are already distinct.
+        XCTAssertEqual(
+            ProviderAccountStore.uniqueName("Personal", kind: .claude, existing: existing),
+            "Personal"
+        )
+        // Editing an account keeps its own name.
+        XCTAssertEqual(
+            ProviderAccountStore.uniqueName(
+                "Work",
+                kind: .claude,
+                existing: existing,
+                excluding: existing[0].id
+            ),
+            "Work"
+        )
+    }
+
+    func testModelFilterKeepsChatModelsAndDropsTheRest() {
+        let openAI = [
+            "gpt-5", "o3", "text-embedding-3-large", "whisper-1", "dall-e-3",
+            "gpt-4o-realtime-preview", "tts-1", "omni-moderation-latest",
+        ]
+        XCTAssertEqual(
+            ProviderModelFilter.chatModels(kind: .codex, names: openAI),
+            ["gpt-5", "o3"]
+        )
+        XCTAssertEqual(
+            ProviderModelFilter.chatModels(
+                kind: .claude,
+                names: ["claude-opus-4-1", "claude-sonnet-4-5", "gpt-5"]
+            ),
+            ["claude-opus-4-1", "claude-sonnet-4-5"]
+        )
+        XCTAssertEqual(
+            ProviderModelFilter.chatModels(
+                kind: .kimi,
+                names: ["kimi-k2-0905-preview", "moonshot-v1-128k"]
+            ),
+            ["kimi-k2-0905-preview", "moonshot-v1-128k"]
+        )
+    }
+
+    func testModelFilterFallsBackRatherThanShowingAnEmptyPicker() {
+        // A renamed line-up must not produce an empty menu.
+        let renamed = ["anthropic.something-new", "another-one"]
+        XCTAssertEqual(
+            ProviderModelFilter.chatModels(kind: .claude, names: renamed),
+            renamed
+        )
+        XCTAssertTrue(ProviderModelFilter.chatModels(kind: .codex, names: []).isEmpty)
+    }
+
+    func testModelListParsingHandlesEveryProviderShapeAndGarbage() {
+        let payload = """
+        {"data":[{"id":"claude-sonnet-4-5"},{"id":"claude-opus-4-1"},{"id":""}]}
+        """
+        XCTAssertEqual(
+            ProviderModelFilter.parseModelList(Data(payload.utf8)),
+            ["claude-sonnet-4-5", "claude-opus-4-1"]
+        )
+        XCTAssertTrue(ProviderModelFilter.parseModelList(Data("not json".utf8)).isEmpty)
+        XCTAssertTrue(ProviderModelFilter.parseModelList(Data("{}".utf8)).isEmpty)
+    }
+
+    func testCuratedModelsAreListedFirst() {
+        let fetched = ["some-old-model", "claude-sonnet-4-5", "another", "claude-opus-4-1"]
+        XCTAssertEqual(
+            ProviderModelFilter.ordered(kind: .claude, fetched: fetched),
+            ["claude-opus-4-1", "claude-sonnet-4-5", "some-old-model", "another"]
+        )
+    }
+
+    func testPickerSectionsPutLocalFirstThenEachAccount() {
+        let claude = ProviderAccount(kind: .claude, name: "Work")
+        let kimi = ProviderAccount(kind: .kimi)
+        let sections = ModelPickerSection.build(
+            localModels: ["qwen3:8b"],
+            accounts: [claude, kimi],
+            accountModels: [claude.id: ["claude-sonnet-4-5"]],
+            accountStatus: [kimi.id: .keyRejected]
+        )
+
+        XCTAssertEqual(sections.map(\.title), ["Local (Ollama)", "Claude — Work", "Kimi"])
+        XCTAssertNil(sections[0].account)
+        XCTAssertEqual(sections[1].models, ["claude-sonnet-4-5"])
+        XCTAssertNil(sections[1].emptyMessage)
+        // An account with no models says why rather than showing a blank group.
+        XCTAssertEqual(sections[2].models, [])
+        XCTAssertEqual(sections[2].emptyMessage, "Check the API key in Settings")
+    }
+
+    func testPickerSectionsExplainAnEmptyLocalRuntime() {
+        let sections = ModelPickerSection.build(
+            localModels: [],
+            accounts: [],
+            accountModels: [:],
+            accountStatus: [:]
+        )
+        XCTAssertEqual(sections.count, 1)
+        XCTAssertEqual(sections[0].emptyMessage, "No Ollama models found")
+    }
+
+    func testAnthropicAccountsSendTheNativeHeadersAsWell() {
+        let anthropic = RemoteEndpointTester.authHeaders(apiKey: "sk-ant-x", kind: .claude)
+        XCTAssertEqual(anthropic["Authorization"], "Bearer sk-ant-x")
+        XCTAssertEqual(anthropic["x-api-key"], "sk-ant-x")
+        XCTAssertEqual(anthropic["anthropic-version"], "2023-06-01")
+
+        let bearer = RemoteEndpointTester.authHeaders(apiKey: "sk-x", kind: .codex)
+        XCTAssertEqual(bearer["Authorization"], "Bearer sk-x")
+        XCTAssertNil(bearer["x-api-key"])
+
+        XCTAssertTrue(RemoteEndpointTester.authHeaders(apiKey: "", kind: .claude).isEmpty)
+    }
+
+    func testEveryProviderHasTheMetadataTheUIDependsOn() {
+        for kind in ProviderKind.allCases where kind != .custom {
+            XCTAssertFalse(kind.defaultBaseURL.isEmpty, "\(kind) needs an endpoint")
+            XCTAssertFalse(kind.keyDocsURL.isEmpty, "\(kind) needs a docs link")
+            XCTAssertFalse(kind.curatedModels.isEmpty, "\(kind) needs fallback models")
+            XCTAssertFalse(kind.probeModel.isEmpty)
+        }
+        // Titles are what the Add Account menu shows; they must not collide.
+        let titles = ProviderKind.allCases.map(\.title)
+        XCTAssertEqual(Set(titles).count, titles.count)
+    }
+
+    func testWorkspaceProfilesFromBeforeAccountsStillDecode() throws {
+        let legacy = """
+        [{"path":"/tmp/ws","lastOpened":0,"model":"qwen3:8b","mode":"build",
+          "previewURL":"http://localhost:3000","contextFiles":[],"draft":""}]
+        """
+        let restored = try JSONDecoder().decode(
+            [WorkspaceProfile].self,
+            from: Data(legacy.utf8)
+        )
+        XCTAssertEqual(restored.count, 1)
+        XCTAssertNil(restored[0].accountID, "an old profile means the local runtime")
+        XCTAssertEqual(restored[0].model, "qwen3:8b")
+    }
+
+    func testSettingsCarryTheActiveAccountAndOldOnesDecodeWithout() throws {
+        var settings = AppSettings()
+        let id = UUID().uuidString
+        settings.activeAccountID = id
+        let restored = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONEncoder().encode(settings)
+        )
+        XCTAssertEqual(restored.activeAccountID, id)
+
+        let legacy = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data(#"{"backendURL":"http://127.0.0.1:8791"}"#.utf8)
+        )
+        XCTAssertNil(legacy.activeAccountID)
+    }
+
     func testRelativePathTrimsWorkspaceRoot() {
         XCTAssertEqual(
             WorkspaceIndex.relativePath(

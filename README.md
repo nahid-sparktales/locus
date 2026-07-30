@@ -157,35 +157,52 @@ as the balanced default when a repository provides it.
 
 Ollama and model weights are not bundled.
 
-## Using a model on a rented GPU
+## Hosted models: Claude, Codex, Kimi
 
-A model too large for this Mac can run somewhere else. In **Settings ▸ Model
-provider**, switch to **Remote endpoint** and fill in:
+Local models are the default, not the limit. In **Settings ▸ Model providers**,
+choose **Add Account…** and pick a provider:
 
-| Field | Example |
-| --- | --- |
-| Endpoint URL | `https://xxxx.us-east-1.aws.endpoints.huggingface.cloud` |
-| Model name | `meta-llama/Llama-3.1-8B-Instruct` |
-| API key | your `hf_…` token, or the key your host issued |
+| Provider | Endpoint | Where the key comes from |
+| --- | --- | --- |
+| Claude (Anthropic) | `https://api.anthropic.com/v1` | console.anthropic.com |
+| Codex (OpenAI) | `https://api.openai.com/v1` | platform.openai.com |
+| Kimi (Moonshot AI) | `https://api.moonshot.ai/v1` | platform.moonshot.ai |
+| Custom endpoint | whatever you paste | your own host |
 
-**Test Connection** confirms the endpoint answers before you send a message,
+Give the account a name — "Work", "Personal" — paste its API key, and it joins
+the model picker as its own section. **You can add as many accounts as you
+like, including several for the same provider**: two Claude keys appear as
+"Claude — Work" and "Claude — Personal", each with its own models, and the
+picker's checkmark tracks the account as well as the model, so identically
+named models never blur together.
+
+Choosing a model routes the session through that account. Choosing one during a
+turn is held until the turn finishes rather than refused, because the agent
+cannot swap providers mid-run. Local Ollama is always the first section.
+
+**Test Connection** confirms the account answers before you send a message,
 and reports the actual reason when it does not — a rejected key, a wrong URL,
 or a scaled-to-zero GPU that is still waking up.
 
-Anything speaking the OpenAI chat-completions API works: Hugging Face
-Inference Endpoints, the Hugging Face Inference Providers router
-(`https://router.huggingface.co/v1`), or vLLM/TGI on RunPod, Vast.ai, Lambda,
-and friends. The URL is accepted with or without `/v1`. If the endpoint does
-not support tool calling, Locus retries once without tools and says so — the
-agent can still answer, but it cannot edit files that way.
+### Any OpenAI-compatible endpoint
 
-**About the key.** It is stored in your login keychain and passed to the local
-agent process in memory. It is never written to a config file, never returned
-by any API, and only ever sent to the endpoint you configured. If no key is
-passed that way, the agent falls back to the first of `LOCUS_REMOTE_API_KEY`,
-`OLLAMA_CODE_API_KEY`, `HF_TOKEN`, `HUGGING_FACE_HUB_TOKEN`, or
-`OPENAI_API_KEY` in its own environment — that is how you supply one when
-running the agent from a terminal.
+**Custom endpoint** covers a model too large for this Mac running somewhere
+else: Hugging Face Inference Endpoints, the Hugging Face Inference Providers
+router (`https://router.huggingface.co/v1`), or vLLM/TGI on RunPod, Vast.ai,
+Lambda, and friends. The URL is accepted with or without `/v1`. If the endpoint
+does not support tool calling, Locus retries once without tools and says so —
+the agent can still answer, but it cannot edit files that way.
+
+### About the keys
+
+Each account keeps its key in your login keychain, in its own entry, and passes
+it to the local agent process in memory. A key is never written to a config
+file, never returned by any API, and only ever sent to its own provider.
+Removing an account deletes its key with it. If no key is passed that way, the
+agent falls back to the first of `LOCUS_REMOTE_API_KEY`, `OLLAMA_CODE_API_KEY`,
+`HF_TOKEN`, `HUGGING_FACE_HUB_TOKEN`, or `OPENAI_API_KEY` in its own
+environment — that is how you supply one when running the agent from a
+terminal.
 
 ## The local agent runtime
 

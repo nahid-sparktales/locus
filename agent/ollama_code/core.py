@@ -40,7 +40,7 @@ from .ollama import (
     effective_context_length,
 )
 from .permissions import PermissionManager, build_preview
-from .remote import RemoteClient, normalize_base_url
+from .remote import RemoteClient, normalize_base_url, resolve_auth_style
 from .render import ThinkFilter, strip_think
 from .sessions import (
     SessionMeta,
@@ -199,7 +199,7 @@ class AgentCore:
         self.project_context: tuple[str, str] | None = None
         self.reload_context()
         self.messages: list[dict[str, Any]] = []
-        self.session = SessionStore(self.cwd, self.model)
+        self.session = self._new_session_store()
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
         self.context_limit = 0
@@ -355,6 +355,7 @@ class AgentCore:
             base_url=base,
             api_key=str(self.config.get("remote_api_key") or ""),
             model=str(self.config.get("remote_model") or ""),
+            auth_style=str(self.config.get("remote_auth_style") or ""),
         )
         self.host = self.client.host
         remote_model = str(self.config.get("remote_model") or "")
@@ -368,6 +369,9 @@ class AgentCore:
         self.client = OllamaClient(self.host)
         self.config["provider"] = "ollama"
         self.config["host"] = self.host
+        # The label describes a remote account; it would be a lie about the
+        # local runtime, and the transcript reads it.
+        self.config["remote_account_label"] = ""
         self.model = str(self.config.get("model") or "")
         # Left unknown rather than resolved here: resolving costs Ollama I/O and
         # the app awaits this endpoint on a short timeout. `run_turn` settles it
@@ -377,11 +381,19 @@ class AgentCore:
         save_config(self.config)
         self._emit_info()
 
-    def use_remote(self, base_url: str, api_key: str | None = None, model: str = "") -> None:
+    def use_remote(
+        self,
+        base_url: str,
+        api_key: str | None = None,
+        model: str = "",
+        auth_style: str | None = None,
+        account_label: str | None = None,
+    ) -> None:
         """Point the agent at an OpenAI-compatible endpoint.
 
         ``api_key=None`` keeps the key already in memory, so the app can
-        update the URL or model without re-sending the secret.
+        update the URL or model without re-sending the secret. ``auth_style``
+        and ``account_label`` follow the same rule: ``None`` leaves them alone.
         """
         self.provider = "remote"
         self.config["provider"] = "remote"
@@ -390,6 +402,12 @@ class AgentCore:
             self.config["remote_api_key"] = api_key.strip()
         if model:
             self.config["remote_model"] = model.strip()
+        if auth_style is not None:
+            self.config["remote_auth_style"] = resolve_auth_style(
+                auth_style, self.config["remote_base_url"]
+            )
+        if account_label is not None:
+            self.config["remote_account_label"] = account_label.strip()
         self._build_remote_client()
         self.context_limit = context_window(self.config.get("context_window"))
         self._trained_window_for = ""
@@ -405,7 +423,23 @@ class AgentCore:
             "remote_base_url": str(self.config.get("remote_base_url") or ""),
             "remote_model": str(self.config.get("remote_model") or ""),
             "has_api_key": bool(self.config.get("remote_api_key")),
+            "account_label": self.account_label,
         }
+
+    def _new_session_store(self) -> SessionStore:
+        return SessionStore(
+            self.cwd,
+            self.model,
+            provider=self.provider,
+            account=self.account_label,
+        )
+
+    @property
+    def account_label(self) -> str:
+        """The app's name for the account in use, or "" for local Ollama."""
+        if self.provider != "remote":
+            return ""
+        return str(self.config.get("remote_account_label") or "")
 
     def set_model(self, name: str) -> None:
         self.model = name
@@ -431,7 +465,7 @@ class AgentCore:
         self.cwd = os.getcwd()
         self.tool_ctx.cwd = self.cwd
         self.reload_context()
-        self.session = SessionStore(self.cwd, self.model)
+        self.session = self._new_session_store()
         self.messages = [self.system_message()]
         self.tool_ctx.todos = []
         self._emit({"type": "todo_update", "todos": []})
@@ -451,7 +485,7 @@ class AgentCore:
         A new chat starts clean: session-scoped tool permissions and the token
         counters belong to the conversation that just ended, not the next one.
         """
-        self.session = SessionStore(self.cwd, self.model)
+        self.session = self._new_session_store()
         self.reset_conversation()
         self.perms.allowed.clear()
         self.total_prompt_tokens = 0
@@ -508,6 +542,7 @@ class AgentCore:
             "has_project_context": bool(self.project_context),
             "permissions": self.perms.state(),
             "provider": self.provider,
+            "account_label": self.account_label,
         }
 
     def _emit_info(self) -> None:
@@ -701,7 +736,7 @@ class AgentCore:
         self._interrupt.clear()
         self.tool_ctx.read_files.clear()
         # Branch onto a fresh saved session so the original transcript survives.
-        self.session = SessionStore(self.cwd, self.model)
+        self.session = self._new_session_store()
         for message in self.messages[1:]:
             self.session.append({"type": "message", "message": message})
         self._emit({

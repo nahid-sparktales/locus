@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Provider accounts — Claude, Codex, and Kimi models alongside local ones.**
+  **Settings ▸ Model providers ▸ Add Account…** signs Locus in to Anthropic,
+  OpenAI, or Moonshot with an API key, or to any other OpenAI-compatible
+  endpoint. **Several accounts per provider are supported**: two Claude keys
+  become "Claude — Work" and "Claude — Personal". Each account gets its own
+  section in the model picker, and choosing a model routes the session through
+  that account — the checkmark tracks the account as well as the model, so the
+  same model name under two accounts is never ambiguous. A switch requested
+  mid-turn is applied when the turn finishes, since the agent cannot swap
+  providers during a run. Removing an account deletes its key and, if it was
+  in use, falls back to local Ollama. The single **Remote endpoint** from
+  earlier versions migrates automatically into a Custom account, keeping its
+  URL, model, and saved key.
+- Every account keeps its key in its own login-keychain entry. Keys still
+  reach the agent in memory only, are never written to a config file, and are
+  only ever sent to their own provider. Anthropic accounts also send the
+  native `x-api-key` header its model listing requires.
+- Session transcripts now record the provider and account that produced them,
+  so an exported session says which of two same-provider accounts ran it.
+
 ## 1.7.0 — 2026-07-29
 
 ### Added
