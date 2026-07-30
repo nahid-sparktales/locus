@@ -167,7 +167,18 @@ choose **Add Account…** and pick a provider:
 | Claude (Anthropic) | `https://api.anthropic.com/v1` | console.anthropic.com |
 | Codex (OpenAI) | `https://api.openai.com/v1` | platform.openai.com |
 | Kimi (Moonshot AI) | `https://api.moonshot.ai/v1` | platform.moonshot.ai |
+| Kimi Code (Moonshot AI) | `https://api.kimi.com/coding/v1` | Kimi Code Console |
 | Custom endpoint | whatever you paste | your own host |
+
+**Kimi Code** is the one that spends a subscription rather than per-token
+credit: its keys come from the Kimi Code Console and bill against a Kimi
+membership. It is a separate account type from **Kimi** — different host,
+different key, different models — and the two keys are not interchangeable.
+
+There is no equivalent for Claude or Codex. Anthropic does not permit
+third-party apps to sign in with a Claude.ai account or to route requests
+through Pro or Max plan credentials, so Claude accounts need a console API
+key; the account editor says so and links to their terms.
 
 Give the account a name — "Work", "Personal" — paste its API key, and it joins
 the model picker as its own section. **You can add as many accounts as you
@@ -182,7 +193,14 @@ cannot swap providers mid-run. Local Ollama is always the first section.
 
 **Test Connection** confirms the account answers before you send a message,
 and reports the actual reason when it does not — a rejected key, a wrong URL,
-or a scaled-to-zero GPU that is still waking up.
+or a scaled-to-zero GPU that is still waking up. For providers that publish no
+model listing, it sends a one-token completion instead, which is the only thing
+that really proves a key works.
+
+Locus identifies itself as `Locus/<version>` on every request it makes,
+including the pages the model browses. That is a fixed value rather than a
+setting: Moonshot's Kimi Code terms require third-party tools to identify
+themselves honestly, and a header configuration could rewrite would defeat it.
 
 ### Any OpenAI-compatible endpoint
 

@@ -644,6 +644,109 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(Set(titles).count, titles.count)
     }
 
+    func testKimiCodeIsASeparateProviderFromPayPerTokenKimi() {
+        XCTAssertNotEqual(ProviderKind.kimiCode.defaultBaseURL, ProviderKind.kimi.defaultBaseURL)
+        XCTAssertTrue(ProviderKind.kimiCode.defaultBaseURL.contains("api.kimi.com"))
+        XCTAssertTrue(ProviderKind.kimi.defaultBaseURL.contains("api.moonshot.ai"))
+        XCTAssertNotEqual(ProviderKind.kimiCode.keyDocsURL, ProviderKind.kimi.keyDocsURL)
+
+        // The two are unrelated services, so their account names live in
+        // separate namespaces — a subscription "Work" must not be renamed
+        // because a pay-per-token "Work" already exists.
+        let payPerToken = ProviderAccount(kind: .kimi, name: "Work")
+        XCTAssertEqual(
+            ProviderAccountStore.uniqueName("Work", kind: .kimiCode, existing: [payPerToken]),
+            "Work"
+        )
+    }
+
+    func testKimiCodeModelFilterKeepsTheCodingModelIDs() {
+        let listed = ["kimi-for-coding", "kimi-for-coding-highspeed", "k3", "k3-256k"]
+        XCTAssertEqual(
+            ProviderModelFilter.chatModels(kind: .kimiCode, names: listed),
+            listed
+        )
+        // The reason this is its own kind: `k3` starts with neither "kimi" nor
+        // "moonshot", and the empty-filter fallback would not rescue it because
+        // `kimi-for-coding` passes the pay-per-token rule.
+        XCTAssertEqual(
+            ProviderModelFilter.chatModels(kind: .kimi, names: ["k3", "kimi-for-coding"]),
+            ["kimi-for-coding"]
+        )
+    }
+
+    func testKimiCodeProbesWithTheModelEveryMembershipTierCanReach() {
+        XCTAssertEqual(ProviderKind.kimiCode.probeModel, "kimi-for-coding")
+    }
+
+    func testProvidersThatDoNotDocumentAModelListingSaySo() {
+        XCTAssertFalse(ProviderKind.kimiCode.listsModels)
+        for kind in ProviderKind.allCases where kind != .kimiCode {
+            XCTAssertTrue(kind.listsModels, "\(kind) serves /models")
+        }
+    }
+
+    func testProviderNotesExplainWhyAKeyIsNeeded() {
+        // Claude's note is the one that has to exist: without it, the absence
+        // of subscription sign-in reads as an oversight rather than a rule.
+        let claude = ProviderKind.claude.note
+        XCTAssertNotNil(claude, "Claude must explain why a key is required")
+        XCTAssertTrue(claude?.text.contains("console.anthropic.com") == true)
+        XCTAssertTrue(claude?.hasLink == true)
+
+        XCTAssertTrue(ProviderKind.kimiCode.note?.text.contains("Kimi Code Console") == true)
+        XCTAssertTrue(ProviderKind.kimi.note?.text.contains("Kimi Code") == true)
+
+        for kind in ProviderKind.allCases {
+            guard let note = kind.note else { continue }
+            XCTAssertFalse(note.text.isEmpty)
+            if note.hasLink {
+                XCTAssertEqual(URL(string: note.linkURL)?.scheme, "https")
+            }
+        }
+    }
+
+    func testProviderEndpointsSurviveNormalization() {
+        let kimiCode = "https://api.kimi.com/coding/v1"
+        for given in [
+            kimiCode,
+            "https://api.kimi.com/coding/v1/",
+            "https://api.kimi.com/coding/",
+            "https://api.kimi.com/coding",
+            "https://api.kimi.com/coding/v1/chat/completions",
+            "api.kimi.com/coding/v1",
+        ] {
+            XCTAssertEqual(
+                RemoteEndpointTester.normalizeBaseURL(given), kimiCode,
+                "\(given) must keep the /coding path"
+            )
+        }
+        for fixed in [ProviderKind.claude, .codex, .kimi] {
+            XCTAssertEqual(
+                RemoteEndpointTester.normalizeBaseURL(fixed.defaultBaseURL),
+                fixed.defaultBaseURL
+            )
+        }
+    }
+
+    func testLocusIdentifiesItselfHonestlyToProviders() {
+        XCTAssertEqual(
+            LocusClientIdentity.userAgent(version: "1.7.0"),
+            "Locus/1.7.0 (macOS; io.sparktales.locus)"
+        )
+        let live = LocusClientIdentity.value
+        XCTAssertTrue(live.hasPrefix("Locus/"))
+        XCTAssertTrue(live.contains(LocusClientIdentity.bundleID))
+        // Moonshot's terms turn on the client identifier being real. Borrowing
+        // another tool's name would be a violation, not a compatibility trick.
+        for impostor in ["claude", "kimi", "cursor", "codex", "curl", "mozilla", "python-requests"] {
+            XCTAssertFalse(
+                live.lowercased().contains(impostor),
+                "the user agent must not claim to be \(impostor)"
+            )
+        }
+    }
+
     func testWorkspaceProfilesFromBeforeAccountsStillDecode() throws {
         let legacy = """
         [{"path":"/tmp/ws","lastOpened":0,"model":"qwen3:8b","mode":"build",

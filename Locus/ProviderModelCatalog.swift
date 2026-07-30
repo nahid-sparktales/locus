@@ -18,6 +18,12 @@ enum ProviderModelCatalog {
         guard !key.isEmpty else {
             return Result(models: account.kind.curatedModels, status: .noKey)
         }
+        // Kimi Code serves chat completions and nothing else. Asking it for a
+        // listing every five minutes would earn an auth error the UI would
+        // report as a rejected key, so offer the fixed menu instead.
+        guard account.kind.listsModels else {
+            return Result(models: fallbackModels(for: account), status: .keySaved)
+        }
         let base = RemoteEndpointTester.normalizeBaseURL(account.resolvedBaseURL)
         guard !base.isEmpty, let url = URL(string: base + "/models") else {
             return Result(
@@ -28,6 +34,7 @@ enum ProviderModelCatalog {
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 20
+        LocusClientIdentity.apply(to: &request)
         for (field, value) in RemoteEndpointTester.authHeaders(
             apiKey: key,
             kind: account.kind

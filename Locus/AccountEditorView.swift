@@ -88,6 +88,20 @@ struct AccountEditorView: View {
                             .font(.system(size: 9))
                     }
 
+                    // Why this key and not a subscription — read before the
+                    // user tries a key that was never going to work here.
+                    if let note = kind.note {
+                        Text(note.text)
+                            .font(.system(size: 9))
+                            .foregroundStyle(LocusTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("accountEditor.note")
+                        if note.hasLink, let noteURL = URL(string: note.linkURL) {
+                            Link(note.linkTitle, destination: noteURL)
+                                .font(.system(size: 9))
+                        }
+                    }
+
                     HStack(spacing: 10) {
                         Button("Test Connection") { testConnection() }
                             .disabled(isTesting || resolvedBaseURL.isEmpty)

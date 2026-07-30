@@ -535,6 +535,57 @@ def test_remote_client_adds_anthropic_headers_for_that_auth_style(monkeypatch):
     assert seen["headers"]["anthropic-version"] == remote_mod.ANTHROPIC_VERSION
 
 
+def test_remote_client_identifies_itself_by_its_real_name():
+    from ollama_code import USER_AGENT, __version__
+    from ollama_code import remote as remote_mod
+
+    # No key: the identity must still travel, so it cannot live inside the
+    # Authorization branch.
+    headers = remote_mod.RemoteClient("https://api.kimi.com/coding/v1")._headers()
+    assert headers["User-Agent"] == USER_AGENT
+    assert __version__ in headers["User-Agent"]
+    assert "Authorization" not in headers
+
+    agent = USER_AGENT.lower()
+    for impostor in ("python-requests", "curl", "claude", "kimi", "cursor", "codex"):
+        assert impostor not in agent, f"must not claim to be {impostor}"
+
+
+def test_remote_chat_sends_the_user_agent(monkeypatch):
+    """The streaming POST is the request that spends the subscription."""
+    from ollama_code import USER_AGENT
+    from ollama_code import remote as remote_mod
+
+    seen = {}
+
+    def fake_post(url, headers=None, json=None, stream=None, timeout=None):
+        seen["headers"] = headers or {}
+        return FakeResponse(lines=_sse([{"choices": [{"delta": {"content": "hi"}}]}]))
+
+    monkeypatch.setattr(remote_mod.requests, "post", fake_post)
+    client = remote_mod.RemoteClient(
+        "https://api.kimi.com/coding/v1", api_key="secret", model="kimi-for-coding"
+    )
+    client.chat_stream(model="kimi-for-coding", messages=[{"role": "user", "content": "hi"}])
+
+    assert seen["headers"]["User-Agent"] == USER_AGENT
+
+
+def test_kimi_code_endpoints_survive_normalization():
+    from ollama_code.remote import normalize_base_url
+
+    expected = "https://api.kimi.com/coding/v1"
+    for given in [
+        expected,
+        "https://api.kimi.com/coding/v1/",
+        "https://api.kimi.com/coding/",
+        "https://api.kimi.com/coding",
+        "https://api.kimi.com/coding/v1/chat/completions",
+        "api.kimi.com/coding/v1",
+    ]:
+        assert normalize_base_url(given) == expected, f"{given} lost the /coding path"
+
+
 def test_remote_auth_style_is_inferred_and_coerced():
     from ollama_code import remote as remote_mod
 

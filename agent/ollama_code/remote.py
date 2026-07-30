@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 import requests
 
+from . import USER_AGENT
 from .ollama import ChatResponse, OllamaError, ToolCall
 
 #: Well-known bases, offered as presets in the UI.
@@ -93,7 +94,9 @@ class RemoteClient:
         return self.base_url
 
     def _headers(self) -> dict[str, str]:
-        headers = {"Content-Type": "application/json"}
+        # The identity travels outside the api_key branch on purpose: an
+        # unauthenticated probe should still say who is calling.
+        headers = {"Content-Type": "application/json", "User-Agent": USER_AGENT}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
             if self.auth_style == AUTH_ANTHROPIC:

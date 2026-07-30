@@ -10,6 +10,11 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     case claude
     case codex
     case kimi
+    /// Moonshot's coding service, billed through a Kimi membership rather than
+    /// per token. A separate kind from `.kimi` rather than a flag on it: it is a
+    /// different host, a different key, and a different model line-up, and the
+    /// two keys are not interchangeable.
+    case kimiCode
     /// Any other OpenAI-compatible endpoint: a rented GPU, a gateway, or the
     /// single remote endpoint configured before accounts existed.
     case custom
@@ -22,6 +27,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
         case .claude: "Claude"
         case .codex: "Codex"
         case .kimi: "Kimi"
+        case .kimiCode: "Kimi Code"
         case .custom: "Custom endpoint"
         }
     }
@@ -31,7 +37,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .claude: "Anthropic"
         case .codex: "OpenAI"
-        case .kimi: "Moonshot AI"
+        case .kimi, .kimiCode: "Moonshot AI"
         case .custom: ""
         }
     }
@@ -45,6 +51,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
         case .claude: "https://api.anthropic.com/v1"
         case .codex: "https://api.openai.com/v1"
         case .kimi: "https://api.moonshot.ai/v1"
+        case .kimiCode: "https://api.kimi.com/coding/v1"
         case .custom: ""
         }
     }
@@ -55,6 +62,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
         case .claude: "https://console.anthropic.com/settings/keys"
         case .codex: "https://platform.openai.com/api-keys"
         case .kimi: "https://platform.moonshot.ai/console/api-keys"
+        case .kimiCode: "https://www.kimi.com/code/docs/en/"
         case .custom: ""
         }
     }
@@ -63,6 +71,9 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .claude: "sk-ant-…"
         case .codex, .kimi: "sk-…"
+        // Moonshot documents no prefix for these; guessing one would contradict
+        // what the user is about to paste.
+        case .kimiCode: "Kimi Code Console key"
         case .custom: "API key"
         }
     }
@@ -72,9 +83,16 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     var authStyle: String {
         switch self {
         case .claude: "anthropic"
-        case .codex, .kimi, .custom: "bearer"
+        case .codex, .kimi, .kimiCode, .custom: "bearer"
         }
     }
+
+    /// Whether `GET {base}/models` is a route this provider actually serves.
+    ///
+    /// Kimi Code documents only chat completions. Probing an undocumented path
+    /// turns a perfectly good subscription key into a misleading "rejected the
+    /// API key" the moment that path answers 401 or 403.
+    var listsModels: Bool { self != .kimiCode }
 
     /// Only `.custom` has a URL worth editing — the rest are fixed endpoints,
     /// though a stored override (Moonshot's China domain, say) still wins.
@@ -90,6 +108,11 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
             ["gpt-5", "gpt-5-mini", "gpt-4.1", "o3"]
         case .kimi:
             ["kimi-k2-0905-preview", "kimi-k2-turbo-preview", "moonshot-v1-128k"]
+        case .kimiCode:
+            // Order matters: `probeModel` takes the first, and this is the only
+            // one every membership tier can reach. Leading with a higher tier
+            // would make Test Connection fail in a way that reads like a bad key.
+            ["kimi-for-coding", "kimi-for-coding-highspeed", "k3", "k3-256k"]
         case .custom:
             []
         }
@@ -97,6 +120,56 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
 
     /// A model this provider will accept for a one-token connection probe.
     var probeModel: String { curatedModels.first ?? "" }
+
+    /// A provider-specific fact the user needs before their key will work.
+    /// Rendered in the account editor, above Test Connection.
+    var note: ProviderNote? {
+        switch self {
+        case .claude:
+            ProviderNote(
+                text: """
+                Claude accounts use an API key from console.anthropic.com. \
+                Anthropic does not permit third-party apps to sign in with a \
+                Claude.ai account or to route requests through Pro or Max plan \
+                credentials, so a Claude subscription cannot be used here.
+                """,
+                linkTitle: "Anthropic's terms for third-party tools",
+                linkURL: "https://code.claude.com/docs/en/legal-and-compliance"
+            )
+        case .kimiCode:
+            ProviderNote(
+                text: """
+                Kimi Code is billed through a Kimi membership rather than per \
+                token. Create a key in the Kimi Code Console — up to five, each \
+                shown only once. This is a different key from a \
+                platform.moonshot.ai key; the two are not interchangeable.
+                """,
+                linkTitle: "Kimi Code documentation",
+                linkURL: "https://www.kimi.com/code/docs/en/"
+            )
+        case .kimi:
+            ProviderNote(
+                text: """
+                Kimi accounts are billed per token with a key from \
+                platform.moonshot.ai. For a key included in a Kimi membership, \
+                add a Kimi Code account instead.
+                """,
+                linkTitle: "",
+                linkURL: ""
+            )
+        case .codex, .custom:
+            nil
+        }
+    }
+}
+
+/// A short provider-specific explanation, with an optional documentation link.
+struct ProviderNote: Equatable {
+    let text: String
+    let linkTitle: String
+    let linkURL: String
+
+    var hasLink: Bool { !linkTitle.isEmpty && !linkURL.isEmpty }
 }
 
 /// Which of a provider's models belong in a chat model picker.
@@ -131,6 +204,11 @@ enum ProviderModelFilter {
             return codexPrefixes.contains { lowered.hasPrefix($0) }
         case .kimi:
             return lowered.hasPrefix("kimi") || lowered.hasPrefix("moonshot")
+        case .kimiCode:
+            // Two of the coding models are named `k3` and `k3-256k`, which the
+            // `.kimi` rule above would drop — and the empty-filter fallback
+            // would not save them, because `kimi-for-coding` passes it.
+            return ["kimi", "k3", "k2", "moonshot"].contains(where: lowered.hasPrefix)
         case .custom:
             return true
         }

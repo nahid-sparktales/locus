@@ -1,5 +1,33 @@
 import Foundation
 
+/// How Locus identifies itself to every host the app talks to directly.
+///
+/// The agent sends its own equivalent (`ollama_code.USER_AGENT`) for provider
+/// traffic and the model's browsing; this covers the requests the app makes
+/// itself, which is Test Connection and the model catalogue.
+///
+/// Deliberately a constant rather than a setting: Moonshot's Kimi Code terms
+/// require third-party tools to identify themselves honestly, and a header
+/// that configuration could rewrite is the tampering those terms forbid.
+enum LocusClientIdentity {
+    static let bundleID = "io.sparktales.locus"
+
+    /// Pure, so the test does not depend on which bundle is hosting it.
+    static func userAgent(version: String) -> String {
+        "Locus/\(version) (macOS; \(bundleID))"
+    }
+
+    static let value = userAgent(
+        version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+    )
+
+    /// Sets the identity on a request. Separate from `authHeaders` on purpose:
+    /// this must travel even when there is no key to send.
+    static func apply(to request: inout URLRequest) {
+        request.setValue(value, forHTTPHeaderField: "User-Agent")
+    }
+}
+
 /// Verifies a remote OpenAI-compatible endpoint straight from the app, so
 /// "Test Connection" in Settings has no side effects: it must not commit the
 /// unsaved draft, write the keychain, or switch the live agent's provider.
@@ -49,8 +77,15 @@ enum RemoteEndpointTester {
         guard !base.isEmpty, let modelsURL = URL(string: base + "/models") else {
             return Outcome(ok: false, message: "That endpoint URL is not valid.")
         }
+        // A provider that does not serve a listing would answer this probe with
+        // an auth error, which reads as a bad key. Go straight to the one thing
+        // that actually proves the key works.
+        guard kind.listsModels else {
+            return await chatProbe(base: base, model: model, apiKey: apiKey, kind: kind)
+        }
         var request = URLRequest(url: modelsURL)
         request.timeoutInterval = 15
+        LocusClientIdentity.apply(to: &request)
         for (field, value) in authHeaders(apiKey: apiKey, kind: kind) {
             request.setValue(value, forHTTPHeaderField: field)
         }
@@ -89,6 +124,7 @@ enum RemoteEndpointTester {
         request.httpMethod = "POST"
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        LocusClientIdentity.apply(to: &request)
         for (field, value) in authHeaders(apiKey: apiKey, kind: kind) {
             request.setValue(value, forHTTPHeaderField: field)
         }
