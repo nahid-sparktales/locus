@@ -215,9 +215,23 @@ final class AppModel: ObservableObject {
             providerAccounts = accounts
             // A key whose account is gone is residue from a crash between the
             // two writes; nothing can reach it again.
-            Keychain.removeOrphanedProviderKeys(
-                keeping: Set(accounts.map(\.keychainAccount))
-            )
+            //
+            // Only ever swept on a *complete* read. The decode above salvages
+            // what it can, and the accounts it could not parse are exactly the
+            // ones whose keys would look orphaned — deleting those would turn a
+            // recoverable parse failure into permanent credential loss, and
+            // Anthropic and the Kimi Code console each show a key once. The
+            // same guard covers an empty read: a container reset clears
+            // UserDefaults while the keychain survives, and that must not be
+            // read as "every account was deleted".
+            if persistenceEnabled,
+               let stored = ProviderAccountStore.storedCount(in: defaults),
+               stored == accounts.count
+            {
+                Keychain.removeOrphanedProviderKeys(
+                    keeping: Set(accounts.map(\.keychainAccount))
+                )
+            }
             // Written here rather than through `settings`: assignments inside
             // init skip property observers, so the debounced save never fires
             // and the migration would be redone — with a *new* account id —
@@ -1251,10 +1265,24 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Deletes the stored key. When it belongs to the account in use the
+    /// agent is told at once: it holds the key in memory, so leaving it be
+    /// would keep spending a credential the user just revoked.
     func removeProviderAccountKey(_ account: ProviderAccount) {
         Keychain.remove(account: account.keychainAccount)
         accountStatus[account.id] = .noKey
         forgetAccountCatalog(account.id)
+        guard account.id.uuidString == settings.activeAccountID else { return }
+        // Sends an empty key, which the agent treats as "clear it". Held until
+        // the turn finishes when one is running, because /api/provider refuses
+        // mid-turn — and a dropped revocation is the one failure here that
+        // costs the user money.
+        if isBusy {
+            pendingProviderSwitch = (account.id, account.preferredModel)
+            showToast("Key removed — the agent drops it when this turn finishes")
+        } else {
+            Task { await applyProvider(announce: false) }
+        }
     }
 
     /// Records that the endpoint rejected this account's key, so Settings and
@@ -1822,6 +1850,10 @@ final class AppModel: ObservableObject {
             "api_key": Keychain.get(account: account.keychainAccount) ?? "",
             "auth_style": account.kind.authStyle,
             "account_label": account.displayName,
+            // Kimi Code serves no model listing; without this the agent's
+            // health probe reads its auth error on /models as a rejected
+            // key and reports a working account as permanently offline.
+            "lists_models": account.kind.listsModels,
             "verify": verify,
         ]
     }
@@ -2577,9 +2609,14 @@ final class AppModel: ObservableObject {
                     text: annotatingRejectedKey(event["message"] as? String ?? "Unknown agent error")
                 )
             )
+            // A turn that failed still ended. Held switches must drain here
+            // too: one of them may be a revoked key the agent is still
+            // holding, and dropping it keeps that credential in use.
+            applyPendingProviderSwitchIfNeeded()
 
         case "slash_result":
             isBusy = false
+            applyPendingProviderSwitchIfNeeded()
             if event["command"] as? String == "clear" {
                 blocks = []
                 todos = []

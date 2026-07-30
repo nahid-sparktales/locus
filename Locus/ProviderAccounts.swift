@@ -305,6 +305,20 @@ enum ProviderAccountStore {
         return decode(data)
     }
 
+    /// How many accounts the stored blob claims to hold, or nil when nothing
+    /// is stored or the blob is not even an array.
+    ///
+    /// Exists so a caller can tell a complete read from a salvaged one.
+    /// `decode` is deliberately lossy, and anything destructive — deleting a
+    /// key, say — must not act on the difference between what was stored and
+    /// what could be understood.
+    static func storedCount(in defaults: UserDefaults = .standard) -> Int? {
+        guard let data = defaults.data(forKey: defaultsKey),
+              let raw = try? JSONSerialization.jsonObject(with: data) as? [Any]
+        else { return nil }
+        return raw.count
+    }
+
     /// Decodes element by element: one unreadable account must not delete the
     /// rest of them.
     static func decode(_ data: Data) -> [ProviderAccount] {

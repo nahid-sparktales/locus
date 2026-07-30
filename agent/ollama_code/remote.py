@@ -78,6 +78,7 @@ class RemoteClient:
         model: str = "",
         timeout: int = DEFAULT_TIMEOUT,
         auth_style: str = "",
+        lists_models: bool = True,
     ) -> None:
         self.base_url = normalize_base_url(base_url)
         self.api_key = (api_key or "").strip()
@@ -86,6 +87,11 @@ class RemoteClient:
         self.configured_model = (model or "").strip()
         self.timeout = timeout
         self.auth_style = resolve_auth_style(auth_style, self.base_url)
+        #: Whether ``GET {base}/models`` is a route this provider serves.
+        #: Kimi Code documents chat completions and nothing else, and an
+        #: endpoint that answers 401 there would read as a rejected key on
+        #: every health poll.
+        self.lists_models = lists_models
 
     # ----------------------------------------------------------------- meta
 
@@ -143,6 +149,13 @@ class RemoteClient:
         """Raise OllamaError when the endpoint is unusable."""
         if not self.base_url:
             raise OllamaError("no endpoint URL is configured")
+        if not self.lists_models:
+            # Nothing here that would not lie. A provider serving only chat
+            # completions answers this path with an auth error whatever the
+            # key is, and reporting that as "offline" would condemn a
+            # working subscription on every 15-second poll. The turn itself
+            # is the real check.
+            return
         try:
             response = requests.get(
                 f"{self.base_url}/models", headers=self._headers(), timeout=15

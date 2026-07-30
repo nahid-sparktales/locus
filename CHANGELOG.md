@@ -36,6 +36,17 @@
   "ollama-code/0.2", a product name Locus has not used for two releases.
   Moonshot's terms require third-party tools to identify themselves honestly,
   so the header is a constant no setting can rewrite.
+- **The context meter no longer goes blank whenever Ollama unloads a model.**
+  The window a model really runs in can only be measured while it is resident,
+  and Ollama evicts after about five idle minutes — so the meter was dark on
+  every launch and went dark again mid-session. Measured windows are now
+  remembered per model and reused when the model is not loaded. Still measured,
+  never guessed: a model that has never been resident reports no window rather
+  than borrowing the trained one, which reads reassuringly low right up to the
+  point where replies start getting truncated.
+- Switching to a different endpoint no longer arrives carrying the previous
+  one's model name — that is how a Kimi model ended up pointed at Anthropic,
+  failing with an error that named neither.
 - Claude account setup now states plainly that Anthropic requires a console API
   key and does not permit third-party apps to use Claude.ai subscription
   credentials, with a link to their terms — the absence of a "sign in with

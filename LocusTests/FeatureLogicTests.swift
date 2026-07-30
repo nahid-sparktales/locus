@@ -729,6 +729,35 @@ final class FeatureLogicTests: XCTestCase {
         }
     }
 
+    func testStoredCountDistinguishesACompleteReadFromASalvagedOne() {
+        // The sweep that deletes keys keys off this: a salvaged read must
+        // never be mistaken for "these accounts no longer exist".
+        let defaults = UserDefaults(suiteName: "locus.tests.storedCount")!
+        defaults.removePersistentDomain(forName: "locus.tests.storedCount")
+        defer { defaults.removePersistentDomain(forName: "locus.tests.storedCount") }
+
+        XCTAssertNil(
+            ProviderAccountStore.storedCount(in: defaults),
+            "nothing stored is not the same as zero accounts"
+        )
+
+        let good = [ProviderAccount(kind: .claude, name: "Work")]
+        ProviderAccountStore.save(good, to: defaults)
+        XCTAssertEqual(ProviderAccountStore.storedCount(in: defaults), 1)
+        XCTAssertEqual(ProviderAccountStore.load(from: defaults).count, 1)
+
+        // One unreadable element: the list salvages, and the counts disagree,
+        // which is exactly the signal that stops a destructive sweep.
+        let mixed = """
+        [{"id":"\(UUID().uuidString)","kindRaw":"claude","name":"Work",
+          "preferredModel":"","createdAt":0},
+         {"id":"not-a-uuid"}]
+        """
+        defaults.set(Data(mixed.utf8), forKey: ProviderAccountStore.defaultsKey)
+        XCTAssertEqual(ProviderAccountStore.storedCount(in: defaults), 2)
+        XCTAssertEqual(ProviderAccountStore.load(from: defaults).count, 1)
+    }
+
     func testLocusIdentifiesItselfHonestlyToProviders() {
         XCTAssertEqual(
             LocusClientIdentity.userAgent(version: "1.7.0"),

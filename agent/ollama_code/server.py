@@ -222,12 +222,14 @@ def set_provider(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str,
     # older client cannot silently drop the account's identity.
     raw_style = body.get("auth_style")
     raw_label = body.get("account_label")
+    raw_lists = body.get("lists_models")
     svc.core.use_remote(
         base_url=base_url,
         api_key=api_key,
         model=str(body.get("model") or ""),
         auth_style=None if raw_style is None else str(raw_style),
         account_label=None if raw_label is None else str(raw_label),
+        lists_models=None if raw_lists is None else bool(raw_lists),
     )
     if body.get("verify"):
         try:
@@ -280,6 +282,11 @@ def models() -> dict[str, Any]:
             window = effective_context_length(
                 resident.get(name, 0), trained, model_configured
             )
+            if window <= 0:
+                # Measured on an earlier run and remembered since. Still an
+                # observation, and it keeps the meter alive for a model Ollama
+                # has evicted rather than blanking it every five idle minutes.
+                window = svc.core.remembered_model_window(name)
         out.append({
             "name": name,
             "size": m.get("size") or 0,

@@ -2474,8 +2474,136 @@ def test_switching_endpoints_does_not_carry_the_old_model_over(tmp_path, monkeyp
     # A different provider, no model named: the old one must not follow.
     core.use_remote("https://api.anthropic.com/v1")
     assert core.config["remote_model"] == ""
+    # The live model matters more than the stored one: it is what
+    # session_info reports and what chat_stream actually sends.
+    assert core.model == "", "the previous endpoint's model is still loaded"
 
     # The same host with a different path keeps it — still the same service.
     core.use_remote("https://api.anthropic.com/v1", model="claude-sonnet-4-5")
     core.use_remote("https://api.anthropic.com")
     assert core.config["remote_model"] == "claude-sonnet-4-5"
+
+
+def test_a_measured_context_window_survives_the_model_being_evicted(tmp_path, monkeypatch):
+    """Ollama evicts after five idle minutes, so "not resident" is the normal
+    state. Re-measuring is impossible then, but the last real measurement is
+    still an observation and keeps the meter and compaction working."""
+    from ollama_code import config as config_mod
+    from ollama_code.core import AgentCore
+
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
+    core = AgentCore(cwd=str(tmp_path), config={"provider": "ollama"})
+    core.model = "qwen3:8b"
+
+    class Resident:
+        def loaded_context_length(self, _model): return 8192
+        def context_length(self, _model): return 32768
+
+    class Evicted:
+        def loaded_context_length(self, _model): return 0
+        def context_length(self, _model): return 32768
+
+    core.client = Resident()
+    core.refresh_context_limit()
+    assert core.context_limit == 8192
+    assert core.config["model_windows"]["qwen3:8b"] == 8192
+
+    # A fresh process, same config: the model is not loaded and cannot be
+    # measured, but it was measured before.
+    revived = AgentCore(cwd=str(tmp_path), config=dict(core.config))
+    revived.model = "qwen3:8b"
+    revived.client = Evicted()
+    revived.refresh_context_limit()
+    assert revived.context_limit == 8192, "a remembered window must survive a restart"
+
+
+def test_a_window_is_only_remembered_when_it_was_measured(tmp_path, monkeypatch):
+    """The trained window is not the running window — remembering it would
+    reinstate exactly the over-reporting effective_context_length prevents."""
+    from ollama_code import config as config_mod
+    from ollama_code.core import AgentCore
+
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
+    core = AgentCore(cwd=str(tmp_path), config={"provider": "ollama"})
+    core.model = "qwen3:8b"
+
+    class NeverLoaded:
+        def loaded_context_length(self, _model): return 0
+        def context_length(self, _model): return 262144
+
+    core.client = NeverLoaded()
+    core.refresh_context_limit()
+    assert core.config["model_windows"] == {}, "nothing was measured"
+    assert core.context_limit == 0, "unknown stays unknown"
+
+
+def test_corrupt_remembered_windows_are_dropped_not_trusted(tmp_path, monkeypatch):
+    from ollama_code import config as config_mod
+
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({
+        "model_windows": {"good": 8192, "negative": -1, "text": "lots", "zero": 0}
+    }))
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", path)
+    assert config_mod.load_config()["model_windows"] == {"good": 8192}
+
+    path.write_text(json.dumps({"model_windows": "not a mapping"}))
+    assert config_mod.load_config()["model_windows"] == {}
+
+
+def test_one_agent_does_not_leak_its_windows_into_another(tmp_path, monkeypatch):
+    """DEFAULTS holds a real dict and configs are built by shallow-copying it,
+    so mutating that mapping in place would share one session's measurements
+    with every other core in the process."""
+    from ollama_code import config as config_mod
+    from ollama_code.config import DEFAULTS
+    from ollama_code.core import AgentCore
+
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
+
+    class Resident:
+        def loaded_context_length(self, _model): return 4096
+        def context_length(self, _model): return 32768
+
+    first = AgentCore(cwd=str(tmp_path), config={"provider": "ollama"})
+    first.model = "a-model"
+    first.client = Resident()
+    first.refresh_context_limit()
+
+    second = AgentCore(cwd=str(tmp_path), config={"provider": "ollama"})
+    assert second.config["model_windows"] == {}, "windows leaked between cores"
+    assert DEFAULTS["model_windows"] == {}, "the defaults themselves were mutated"
+
+
+def test_a_provider_without_a_model_listing_is_not_reported_offline(monkeypatch):
+    """Kimi Code documents chat completions and no listing. Probing /models
+    there answers with an auth error whatever the key is, and reporting that
+    as offline condemns a working subscription on every health poll."""
+    from ollama_code import remote as remote_mod
+
+    def explode(*a, **k):  # the probe must not even be attempted
+        raise AssertionError("checked /models on a provider that serves none")
+
+    monkeypatch.setattr(remote_mod.requests, "get", explode)
+    client = remote_mod.RemoteClient(
+        "https://api.kimi.com/coding/v1", api_key="k", lists_models=False
+    )
+    client.check()  # must not raise
+
+    # The default is unchanged for everyone else.
+    assert remote_mod.RemoteClient("https://api.openai.com/v1").lists_models is True
+
+
+def test_the_listing_capability_reaches_the_client_from_the_provider_call(tmp_path, monkeypatch):
+    from ollama_code import config as config_mod
+    from ollama_code.core import AgentCore
+
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
+    core = AgentCore(cwd=str(tmp_path), config={"provider": "ollama"})
+    core.use_remote("https://api.kimi.com/coding/v1", api_key="k", lists_models=False)
+    assert core.client.lists_models is False
+    assert core.config["remote_lists_models"] is False
+
+    # Missing means keep, like the key and the label.
+    core.use_remote("https://api.kimi.com/coding/v1", model="kimi-for-coding")
+    assert core.client.lists_models is False

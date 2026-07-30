@@ -25,6 +25,10 @@ DEFAULTS: dict[str, Any] = {
     # display label only: two accounts can share a host, and without it the
     # app cannot tell which one this process is actually holding a key for.
     "remote_account_label": "",
+    # False for a provider that serves chat completions and no model
+    # listing (Kimi Code), so the health probe does not read its auth
+    # error on /models as a rejected key.
+    "remote_lists_models": True,
     # The API key is NEVER written here. It comes from the keychain via the
     # app, or from one of REMOTE_API_KEY_ENV at the command line.
     "remote_api_key": "",
@@ -36,6 +40,10 @@ DEFAULTS: dict[str, Any] = {
     "always_allow": [],
     # Shell commands that may never run, matched as a prefix.
     "deny_commands": ["rm -rf /", "mkfs", "dd if=", ":(){"],
+    # Context windows Ollama was actually seen running a model in, keyed by
+    # model name. Measured from /api/ps, never guessed — see
+    # AgentCore.refresh_context_limit.
+    "model_windows": {},
     "auto_compact": True,
     # Context window in tokens, and the single source of truth for both what
     # the agent asks Ollama for (`num_ctx`) and what it budgets against. 0 means
@@ -113,6 +121,19 @@ def load_config() -> dict[str, Any]:
         pass
     if cfg.get("permission_mode") not in PERMISSION_MODES:
         cfg["permission_mode"] = "ask"
+    # Tolerate a hand-edited or older file: anything that is not a
+    # name -> positive int mapping is dropped rather than trusted.
+    windows = cfg.get("model_windows")
+    cfg["model_windows"] = (
+        {
+            str(name): int(value)
+            for name, value in windows.items()
+            if isinstance(value, int) and value > 0
+        }
+        if isinstance(windows, dict)
+        else {}
+    )
+    cfg["remote_lists_models"] = bool(cfg.get("remote_lists_models", True))
     if not isinstance(cfg.get("always_allow"), list):
         cfg["always_allow"] = []
     if not isinstance(cfg.get("deny_commands"), list):

@@ -322,13 +322,49 @@ class AgentCore:
         # Asking Ollama what it loaded is only needed when we are not telling
         # it what to load.
         loaded = 0 if configured > 0 else self.client.loaded_context_length(self.model)
+        if loaded > 0:
+            self.remember_model_window(self.model, loaded)
         window = effective_context_length(loaded, self._trained_context_length(), configured)
-        # A model Ollama has since evicted — keep_alive expires after five idle
-        # minutes — drops off /api/ps and reads as unknown again. Forgetting the
-        # window at that point would quietly switch compaction off for the rest
-        # of the session, so a number once known is never downgraded to unknown.
+        if window <= 0:
+            # Nothing resident to measure, but this model may have been
+            # measured before. A remembered window is still an observation
+            # rather than a guess, and it is what lets the meter work from
+            # launch instead of staying blank until the first turn loads a
+            # model — Ollama evicts after five idle minutes, so "not resident"
+            # is the normal state, not the exception.
+            window = self.remembered_model_window(self.model)
+        # A model Ollama has since evicted drops off /api/ps and reads as
+        # unknown again. Forgetting the window at that point would quietly
+        # switch compaction off for the rest of the session, so a number once
+        # known is never downgraded to unknown.
         if window > 0 or self.context_limit <= 0:
             self.context_limit = window
+
+    def remembered_model_window(self, model: str) -> int:
+        """The last window Ollama was seen running this model in, or 0."""
+        windows = self.config.get("model_windows")
+        if not isinstance(windows, dict):
+            return 0
+        value = windows.get(model)
+        return value if isinstance(value, int) and value > 0 else 0
+
+    def remember_model_window(self, model: str, window: int) -> None:
+        """Record a measured window, so a later session need not re-measure.
+
+        Replaces the mapping rather than mutating it. `DEFAULTS` holds a real
+        dict and a config built as ``{**DEFAULTS, **overrides}`` shallow-copies,
+        so the mapping can be the very object every other core is reading —
+        mutating it in place would leak one session's models into all of them.
+        """
+        if not model or window <= 0:
+            return
+        current = self.config.get("model_windows")
+        windows = dict(current) if isinstance(current, dict) else {}
+        if windows.get(model) == window:
+            return  # Unchanged: refreshed twice a turn, so do not rewrite.
+        windows[model] = window
+        self.config["model_windows"] = windows
+        save_config(self.config)
 
     def _trained_context_length(self) -> int:
         """The current model's trained window, asked for once per model.
@@ -369,6 +405,7 @@ class AgentCore:
             api_key=str(self.config.get("remote_api_key") or ""),
             model=str(self.config.get("remote_model") or ""),
             auth_style=str(self.config.get("remote_auth_style") or ""),
+            lists_models=bool(self.config.get("remote_lists_models", True)),
         )
         self.host = self.client.host
         remote_model = str(self.config.get("remote_model") or "")
@@ -401,6 +438,7 @@ class AgentCore:
         model: str = "",
         auth_style: str | None = None,
         account_label: str | None = None,
+        lists_models: bool | None = None,
     ) -> None:
         """Point the agent at an OpenAI-compatible endpoint.
 
@@ -427,7 +465,14 @@ class AgentCore:
             )
         if account_label is not None:
             self.config["remote_account_label"] = account_label.strip()
+        if lists_models is not None:
+            self.config["remote_lists_models"] = bool(lists_models)
         self._build_remote_client()
+        # _build_remote_client only adopts a non-empty model, so clearing the
+        # config above is not enough on its own: self.model would keep the
+        # previous endpoint's name and get sent to this one. Empty is the
+        # honest value — ensure_model settles it against the new endpoint.
+        self.model = str(self.config.get("remote_model") or "")
         self.context_limit = context_window(self.config.get("context_window"))
         self._trained_window_for = ""
         save_config(self.config)  # never writes the key
