@@ -114,6 +114,135 @@ final class AppModelTests: XCTestCase {
         )
     }
 
+    // MARK: - Provider accounts
+
+    /// Adds an account through the real save path, with its key, and cleans up
+    /// the keychain entry afterwards.
+    @MainActor
+    private func seedAccount(
+        _ model: AppModel,
+        kind: ProviderKind,
+        name: String,
+        preferredModel: String = "",
+        key: String = "sk-test"
+    ) -> ProviderAccount {
+        let account = ProviderAccount(kind: kind, name: name, preferredModel: preferredModel)
+        model.saveProviderAccount(account, apiKey: key)
+        addTeardownBlock { Keychain.remove(account: account.keychainAccount) }
+        return model.providerAccounts.first { $0.id == account.id } ?? account
+    }
+
+    @MainActor
+    func testProviderRequestBodyCarriesTheAccountCredentials() {
+        let model = AppModel(startImmediately: false)
+        let account = seedAccount(
+            model,
+            kind: .claude,
+            name: "Work",
+            preferredModel: "claude-sonnet-4-5",
+            key: "sk-ant-secret"
+        )
+
+        // Local until an account is chosen.
+        XCTAssertEqual(model.providerRequestBody()["provider"] as? String, "ollama")
+        XCTAssertNil(model.providerRequestBody()["api_key"])
+
+        model.settings.activeAccountID = account.id.uuidString
+        let body = model.providerRequestBody()
+
+        XCTAssertEqual(body["provider"] as? String, "remote")
+        XCTAssertEqual(body["base_url"] as? String, "https://api.anthropic.com/v1")
+        XCTAssertEqual(body["model"] as? String, "claude-sonnet-4-5")
+        XCTAssertEqual(body["api_key"] as? String, "sk-ant-secret")
+        XCTAssertEqual(body["auth_style"] as? String, "anthropic")
+        XCTAssertEqual(body["account_label"] as? String, "Claude — Work")
+    }
+
+    @MainActor
+    func testSwitchingAccountsMidTurnIsHeldUntilTheTurnFinishes() {
+        let model = AppModel(startImmediately: false)
+        let account = seedAccount(model, kind: .kimi, name: "", preferredModel: "kimi-k2")
+        model.isBusy = true
+
+        model.selectModel(account: account, model: "kimi-k2")
+
+        // The agent refuses to swap its client mid-turn, so nothing moves yet.
+        XCTAssertNil(model.settings.activeAccountID)
+        XCTAssertEqual(model.settings.provider, .ollama)
+
+        model.isBusy = false
+        model.applyPendingProviderSwitchIfNeeded()
+
+        XCTAssertEqual(model.settings.activeAccountID, account.id.uuidString)
+        XCTAssertEqual(model.settings.provider, .remote)
+    }
+
+    @MainActor
+    func testChoosingAnAccountWithNoKeyOpensSettingsInsteadOfSwitching() {
+        let model = AppModel(startImmediately: false)
+        let account = ProviderAccount(kind: .codex, name: "Unconfigured")
+        model.saveProviderAccount(account, apiKey: nil)
+
+        model.selectModel(account: account, model: "gpt-5")
+
+        XCTAssertNil(model.settings.activeAccountID, "an account with no key cannot be used")
+        XCTAssertTrue(model.settingsPresented)
+    }
+
+    @MainActor
+    func testRemovingTheActiveAccountFallsBackToLocalOllama() {
+        let model = AppModel(startImmediately: false)
+        let account = seedAccount(model, kind: .claude, name: "Personal")
+        model.settings.activeAccountID = account.id.uuidString
+        model.settings.provider = .remote
+
+        model.removeProviderAccount(account)
+
+        XCTAssertFalse(model.providerAccounts.contains { $0.id == account.id })
+        XCTAssertNil(model.settings.activeAccountID)
+        XCTAssertEqual(model.settings.provider, .ollama)
+        XCTAssertNil(Keychain.get(account: account.keychainAccount), "the key goes with it")
+    }
+
+    @MainActor
+    func testTheCurrentRouteDistinguishesAccountsOfferingTheSameModel() {
+        let model = AppModel(startImmediately: false)
+        let work = seedAccount(model, kind: .claude, name: "Work")
+        let personal = seedAccount(model, kind: .claude, name: "Personal")
+        model.settings.activeAccountID = work.id.uuidString
+        model.sessionInfo = nil
+        model.models = [
+            ModelInfo(name: "claude-sonnet-4-5", size: 0, parameterSize: "", contextLength: 0)
+        ]
+
+        XCTAssertTrue(model.isCurrentRoute(account: work, model: "claude-sonnet-4-5"))
+        XCTAssertFalse(model.isCurrentRoute(account: personal, model: "claude-sonnet-4-5"))
+        XCTAssertFalse(model.isCurrentRoute(account: nil, model: "claude-sonnet-4-5"))
+        XCTAssertEqual(model.modelPickerLabel, "Work · claude-sonnet-4-5")
+    }
+
+    @MainActor
+    func testDuplicateAccountNamesAreResolvedOnSave() {
+        let model = AppModel(startImmediately: false)
+        _ = seedAccount(model, kind: .claude, name: "Work")
+        let second = seedAccount(model, kind: .claude, name: "Work")
+
+        XCTAssertEqual(model.providerAccounts.count, 2)
+        XCTAssertEqual(second.name, "Work 2")
+        XCTAssertEqual(Set(model.providerAccounts.map(\.displayName)).count, 2)
+    }
+
+    @MainActor
+    func testProviderLabelNamesTheAccountInUse() {
+        let model = AppModel(startImmediately: false)
+        model.ollamaOnline = true
+        XCTAssertEqual(model.providerLabel, "Ollama ready")
+
+        let account = seedAccount(model, kind: .claude, name: "Work")
+        model.settings.activeAccountID = account.id.uuidString
+        XCTAssertEqual(model.providerLabel, "Claude ready")
+    }
+
     @MainActor
     func testSessionFilteringFindsPreviewText() {
         let model = AppModel(startImmediately: false)

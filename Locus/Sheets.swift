@@ -264,11 +264,9 @@ struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var draft = AppSettings()
-    @State private var apiKey = ""
-    @State private var apiKeyStored = false
-    @State private var isTesting = false
-    @State private var testResult: String?
-    @State private var testFailed = false
+    @State private var addingAccount: ProviderAccount?
+    @State private var editingAccount: ProviderAccount?
+    @State private var accountPendingRemoval: ProviderAccount?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -297,68 +295,53 @@ struct SettingsView: View {
             }
 
             Form {
-                Section("Model provider") {
-                    Picker("Models come from", selection: $draft.provider) {
-                        ForEach(ModelProvider.allCases) { provider in
-                            Text(provider.title).tag(provider)
+                Section("Model providers") {
+                    Label(
+                        "Local Ollama — models installed on this Mac appear in the picker automatically.",
+                        systemImage: "bolt.fill"
+                    )
+                    .font(.system(size: 10))
+                    .foregroundStyle(LocusTheme.muted)
+
+                    ForEach(model.providerAccounts) { account in
+                        HStack(spacing: 10) {
+                            Circle()
+                                .fill(
+                                    model.accountStatus[account.id]?.isHealthy ?? account.hasKey
+                                        ? LocusTheme.success
+                                        : LocusTheme.coral
+                                )
+                                .frame(width: 7, height: 7)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(account.displayName)
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text(accountDetail(account))
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(LocusTheme.muted)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Button("Edit") { editingAccount = account }
+                                .accessibilityIdentifier("settings.accounts.edit")
+                            Button("Remove") { accountPendingRemoval = account }
+                                .accessibilityIdentifier("settings.accounts.remove")
+                        }
+                        .accessibilityIdentifier("settings.accounts.row")
+                    }
+
+                    Menu("Add Account…") {
+                        ForEach(ProviderKind.allCases) { kind in
+                            Button(kind.title) {
+                                addingAccount = ProviderAccount(kind: kind)
+                            }
                         }
                     }
-                    .pickerStyle(.segmented)
-                    .accessibilityIdentifier("settings.provider")
+                    .accessibilityIdentifier("settings.accounts.add")
 
-                    Text(draft.provider.detail)
+                    Text("Each account keeps its API key in your login keychain. Keys are passed to the local agent in memory, never written to a config file, and only ever sent to their own provider.")
                         .font(.system(size: 9))
                         .foregroundStyle(LocusTheme.muted)
-
-                    if draft.provider == .remote {
-                        TextField(
-                            "https://xxxx.us-east-1.aws.endpoints.huggingface.cloud",
-                            text: $draft.remoteBaseURL
-                        )
-                        .accessibilityIdentifier("settings.remoteURL")
-
-                        TextField("Model name (e.g. meta-llama/Llama-3.1-8B-Instruct)", text: $draft.remoteModel)
-                            .accessibilityIdentifier("settings.remoteModel")
-
-                        SecureField(
-                            apiKeyStored && apiKey.isEmpty ? "Saved in your keychain" : "API key",
-                            text: $apiKey
-                        )
-                        .accessibilityIdentifier("settings.apiKey")
-
-                        HStack(spacing: 10) {
-                            Button("Test Connection") { testConnection() }
-                                .disabled(
-                                    draft.remoteBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                        || isTesting
-                                )
-                                .accessibilityIdentifier("settings.testConnection")
-                            if apiKeyStored {
-                                Button("Remove Key") {
-                                    Keychain.remove(account: Keychain.remoteAPIKeyAccount)
-                                    apiKey = ""
-                                    apiKeyStored = false
-                                    testResult = "API key removed."
-                                }
-                                .accessibilityIdentifier("settings.removeKey")
-                            }
-                            if isTesting {
-                                ProgressView().controlSize(.small)
-                            }
-                        }
-
-                        if let testResult {
-                            Text(testResult)
-                                .font(.system(size: 9))
-                                .foregroundStyle(testFailed ? LocusTheme.coral : LocusTheme.success)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-
-                        Text("The key is kept in your login keychain and passed to the local agent in memory. It is never written to a config file, and the agent only sends it to the endpoint above.")
-                            .font(.system(size: 9))
-                            .foregroundStyle(LocusTheme.muted)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Section("Permissions") {
@@ -469,9 +452,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.cancel")
                 Spacer()
                 Button("Save") {
-                    // An untouched secure field means "keep the saved key".
-                    model.applySettings(draft, apiKey: apiKey.isEmpty ? nil : apiKey)
-                    apiKey = ""
+                    model.applySettings(draft)
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
@@ -485,38 +466,42 @@ struct SettingsView: View {
         }
         .frame(width: 560, height: 560)
         .background(LocusTheme.panel)
-        .onAppear {
-            draft = model.settings
-            apiKeyStored = Keychain.has(account: Keychain.remoteAPIKeyAccount)
-        }
+        .onAppear { draft = model.settings }
         .onExitCommand {
             dismiss()
             model.settingsPresented = false
         }
+        // Accounts are saved as they are edited rather than with the rest of
+        // the draft: they write the keychain, and Cancel cannot un-write it.
+        .sheet(item: $addingAccount) { account in
+            AccountEditorView(account: account, isNew: true)
+                .environmentObject(model)
+        }
+        .sheet(item: $editingAccount) { account in
+            AccountEditorView(account: account, isNew: false)
+                .environmentObject(model)
+        }
+        .alert(item: $accountPendingRemoval) { account in
+            Alert(
+                title: Text("Remove \(account.displayName)?"),
+                message: Text(
+                    account.id.uuidString == model.settings.activeAccountID
+                        ? "The API key is deleted from your keychain and Locus switches back to local Ollama. Saved transcripts are kept."
+                        : "The API key is deleted from your keychain. Saved transcripts are kept."
+                ),
+                primaryButton: .destructive(Text("Remove")) {
+                    model.removeProviderAccount(account)
+                },
+                secondaryButton: .cancel()
+            )
+        }
     }
 
-    /// Probes the endpoint straight from the app, with the draft values as
-    /// typed. Deliberately side-effect free: it used to save the draft and
-    /// write the keychain, which survived Cancel and — because the saved URL
-    /// was then already equal — made the following Save skip its reconnect.
-    private func testConnection() {
-        isTesting = true
-        testResult = nil
-        let base = draft.remoteBaseURL
-        let modelName = draft.remoteModel
-        let key = apiKey.isEmpty
-            ? (Keychain.get(account: Keychain.remoteAPIKeyAccount) ?? "")
-            : apiKey
-        Task {
-            let outcome = await RemoteEndpointTester.test(
-                baseURL: base,
-                model: modelName,
-                apiKey: key
-            )
-            isTesting = false
-            testFailed = !outcome.ok
-            testResult = outcome.message
-        }
+    private func accountDetail(_ account: ProviderAccount) -> String {
+        let status = model.accountStatus[account.id]
+            ?? (account.hasKey ? .keySaved : .noKey)
+        let host = URL(string: RemoteEndpointTester.normalizeBaseURL(account.resolvedBaseURL))?.host
+        return [host, status.summary].compactMap { $0 }.joined(separator: " · ")
     }
 
     private var connectionLabel: String {

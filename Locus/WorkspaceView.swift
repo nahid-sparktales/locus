@@ -73,17 +73,23 @@ struct WorkspaceView: View {
                 .environmentObject(model)
 
             Menu {
-                if model.models.isEmpty {
-                    Text("No Ollama models found")
-                } else {
-                    ForEach(model.models) { item in
-                        Button {
-                            model.selectModel(item.name)
-                        } label: {
-                            if item.name == model.selectedModel {
-                                Label(item.name, systemImage: "checkmark")
-                            } else {
-                                Text(item.name)
+                ForEach(model.modelPickerSections) { section in
+                    Section(section.title) {
+                        if let message = section.emptyMessage {
+                            Text(message)
+                        }
+                        ForEach(section.models, id: \.self) { name in
+                            Button {
+                                model.selectModel(account: section.account, model: name)
+                            } label: {
+                                // The checkmark answers "which one am I using",
+                                // and the same model name can appear under two
+                                // accounts — so the account has to match too.
+                                if model.isCurrentRoute(account: section.account, model: name) {
+                                    Label(name, systemImage: "checkmark")
+                                } else {
+                                    Text(name)
+                                }
                             }
                         }
                     }
@@ -94,14 +100,21 @@ struct WorkspaceView: View {
                 }
                 .accessibilityIdentifier("workspace.modelPicker.browseHuggingFace")
                 Button("Refresh Models") {
-                    Task { await model.refreshMetadata() }
+                    Task {
+                        await model.refreshMetadata()
+                        await model.refreshAccountCatalogs(force: true)
+                    }
                 }
+                Button("Manage Accounts…") {
+                    model.settingsPresented = true
+                }
+                .accessibilityIdentifier("workspace.modelPicker.manageAccounts")
             } label: {
                 HStack(spacing: 7) {
-                    Image(systemName: "bolt.fill")
+                    Image(systemName: model.activeAccount == nil ? "bolt.fill" : "cloud.fill")
                         .font(.system(size: 11))
                         .foregroundStyle(LocusTheme.signalDeep)
-                    Text(model.models.isEmpty ? "Auto" : model.selectedModel)
+                    Text(model.modelPickerLabel)
                         .font(.system(size: 9, weight: .semibold))
                         .lineLimit(1)
                     Image(systemName: "chevron.down")

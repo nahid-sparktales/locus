@@ -71,6 +71,19 @@ keychain via `POST /api/provider`. **It is never written to
 Endpoints that reject tool calling get one automatic retry without tools, and
 the reply says so instead of failing.
 
+`POST /api/provider` takes two optional fields alongside the endpoint. Both
+follow the same rule as `api_key`: omitting one keeps the current value.
+
+- `auth_style` — `bearer` (the default) or `anthropic`, which adds the
+  `x-api-key` and `anthropic-version` headers Anthropic's native model listing
+  requires. Left unset, it is inferred from the host. Anything unrecognized
+  falls back to `bearer`.
+- `account_label` — the app's name for the account in use, such as
+  `Claude — Work`. Two accounts can share a host, so this is what tells them
+  apart: it comes back in `provider_state` and `session_info`, and it is
+  written into each session's `meta` record next to the provider. It is a
+  display label, not a credential, and it is persisted; `use_ollama` clears it.
+
 ## Permission modes
 
 | Mode | Behavior |

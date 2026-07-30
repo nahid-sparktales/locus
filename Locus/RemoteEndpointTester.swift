@@ -1,5 +1,33 @@
 import Foundation
 
+/// How Locus identifies itself to every host the app talks to directly.
+///
+/// The agent sends its own equivalent (`ollama_code.USER_AGENT`) for provider
+/// traffic and the model's browsing; this covers the requests the app makes
+/// itself, which is Test Connection and the model catalogue.
+///
+/// Deliberately a constant rather than a setting: Moonshot's Kimi Code terms
+/// require third-party tools to identify themselves honestly, and a header
+/// that configuration could rewrite is the tampering those terms forbid.
+enum LocusClientIdentity {
+    static let bundleID = "io.sparktales.locus"
+
+    /// Pure, so the test does not depend on which bundle is hosting it.
+    static func userAgent(version: String) -> String {
+        "Locus/\(version) (macOS; \(bundleID))"
+    }
+
+    static let value = userAgent(
+        version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+    )
+
+    /// Sets the identity on a request. Separate from `authHeaders` on purpose:
+    /// this must travel even when there is no key to send.
+    static func apply(to request: inout URLRequest) {
+        request.setValue(value, forHTTPHeaderField: "User-Agent")
+    }
+}
+
 /// Verifies a remote OpenAI-compatible endpoint straight from the app, so
 /// "Test Connection" in Settings has no side effects: it must not commit the
 /// unsaved draft, write the keychain, or switch the live agent's provider.
@@ -26,15 +54,40 @@ enum RemoteEndpointTester {
         return base
     }
 
-    static func test(baseURL: String, model: String, apiKey: String) async -> Outcome {
+    /// The auth headers a provider expects. Anthropic's native model listing
+    /// only accepts `x-api-key`, while its chat completions take the bearer
+    /// token — sending both satisfies either, and other hosts ignore the rest.
+    static func authHeaders(apiKey: String, kind: ProviderKind) -> [String: String] {
+        guard !apiKey.isEmpty else { return [:] }
+        var headers = ["Authorization": "Bearer \(apiKey)"]
+        if kind.authStyle == "anthropic" {
+            headers["x-api-key"] = apiKey
+            headers["anthropic-version"] = "2023-06-01"
+        }
+        return headers
+    }
+
+    static func test(
+        baseURL: String,
+        model: String,
+        apiKey: String,
+        kind: ProviderKind = .custom
+    ) async -> Outcome {
         let base = normalizeBaseURL(baseURL)
         guard !base.isEmpty, let modelsURL = URL(string: base + "/models") else {
             return Outcome(ok: false, message: "That endpoint URL is not valid.")
         }
+        // A provider that does not serve a listing would answer this probe with
+        // an auth error, which reads as a bad key. Go straight to the one thing
+        // that actually proves the key works.
+        guard kind.listsModels else {
+            return await chatProbe(base: base, model: model, apiKey: apiKey, kind: kind)
+        }
         var request = URLRequest(url: modelsURL)
         request.timeoutInterval = 15
-        if !apiKey.isEmpty {
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        LocusClientIdentity.apply(to: &request)
+        for (field, value) in authHeaders(apiKey: apiKey, kind: kind) {
+            request.setValue(value, forHTTPHeaderField: field)
         }
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -45,7 +98,12 @@ enum RemoteEndpointTester {
             // Endpoints that serve exactly one model often reject /models;
             // a one-token chat probe is the authoritative check there.
             if status == 404 || status == 405 {
-                return await chatProbe(base: base, model: model, apiKey: apiKey)
+                return await chatProbe(
+                    base: base,
+                    model: model.isEmpty ? kind.probeModel : model,
+                    apiKey: apiKey,
+                    kind: kind
+                )
             }
             return Outcome(ok: false, message: failureMessage(status: status, data: data))
         } catch {
@@ -53,7 +111,12 @@ enum RemoteEndpointTester {
         }
     }
 
-    private static func chatProbe(base: String, model: String, apiKey: String) async -> Outcome {
+    private static func chatProbe(
+        base: String,
+        model: String,
+        apiKey: String,
+        kind: ProviderKind
+    ) async -> Outcome {
         guard let url = URL(string: base + "/chat/completions") else {
             return Outcome(ok: false, message: "That endpoint URL is not valid.")
         }
@@ -61,8 +124,9 @@ enum RemoteEndpointTester {
         request.httpMethod = "POST"
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !apiKey.isEmpty {
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        LocusClientIdentity.apply(to: &request)
+        for (field, value) in authHeaders(apiKey: apiKey, kind: kind) {
+            request.setValue(value, forHTTPHeaderField: field)
         }
         let body: [String: Any] = [
             "model": model,

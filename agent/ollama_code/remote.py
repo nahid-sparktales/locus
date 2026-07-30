@@ -18,12 +18,32 @@ from typing import Any, Callable
 
 import requests
 
+from . import USER_AGENT
 from .ollama import ChatResponse, OllamaError, ToolCall
 
 #: Well-known bases, offered as presets in the UI.
 HUGGINGFACE_ROUTER = "https://router.huggingface.co/v1"
 
 DEFAULT_TIMEOUT = 600
+
+#: Auth styles. Most endpoints take a bearer token; Anthropic's chat-completions
+#: compatibility surface does too, but its native ``/v1/models`` wants the key in
+#: ``x-api-key`` with an API version. Sending both satisfies either one.
+AUTH_BEARER = "bearer"
+AUTH_ANTHROPIC = "anthropic"
+AUTH_STYLES = (AUTH_BEARER, AUTH_ANTHROPIC)
+
+ANTHROPIC_VERSION = "2023-06-01"
+
+
+def resolve_auth_style(style: str, base_url: str) -> str:
+    """Return the auth style to use, inferring it from the host when unset."""
+    candidate = (style or "").strip().lower()
+    if candidate in AUTH_STYLES:
+        return candidate
+    if "api.anthropic.com" in (base_url or ""):
+        return AUTH_ANTHROPIC
+    return AUTH_BEARER
 
 
 def normalize_base_url(url: str) -> str:
@@ -57,6 +77,7 @@ class RemoteClient:
         api_key: str = "",
         model: str = "",
         timeout: int = DEFAULT_TIMEOUT,
+        auth_style: str = "",
     ) -> None:
         self.base_url = normalize_base_url(base_url)
         self.api_key = (api_key or "").strip()
@@ -64,6 +85,7 @@ class RemoteClient:
         #: the configured name is used as the fallback listing.
         self.configured_model = (model or "").strip()
         self.timeout = timeout
+        self.auth_style = resolve_auth_style(auth_style, self.base_url)
 
     # ----------------------------------------------------------------- meta
 
@@ -72,9 +94,17 @@ class RemoteClient:
         return self.base_url
 
     def _headers(self) -> dict[str, str]:
-        headers = {"Content-Type": "application/json"}
+        # The identity travels outside the api_key branch on purpose: an
+        # unauthenticated probe should still say who is calling.
+        headers = {"Content-Type": "application/json", "User-Agent": USER_AGENT}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+            if self.auth_style == AUTH_ANTHROPIC:
+                # Chat completions accept the bearer token; the native model
+                # listing only accepts these. Servers ignore headers they do
+                # not recognize, so both can travel together.
+                headers["x-api-key"] = self.api_key
+                headers["anthropic-version"] = ANTHROPIC_VERSION
         return headers
 
     def _error(self, response: requests.Response) -> OllamaError:

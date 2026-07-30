@@ -605,8 +605,15 @@ struct AppSettings: Codable, Hashable {
     var notifyOnCompletion = true
     var provider: ModelProvider = .ollama
     /// Endpoint base URL. The API key is not stored here — see `Keychain`.
+    ///
+    /// Superseded by provider accounts: the migration moves this into a
+    /// `.custom` account on first launch. Kept so a downgrade still decodes.
     var remoteBaseURL = ""
     var remoteModel = ""
+    /// The provider account in use, as a UUID string, or nil for local Ollama.
+    /// The accounts themselves live under `ProviderAccountStore.defaultsKey` —
+    /// they carry keychain side effects that must not ride the settings draft.
+    var activeAccountID: String?
     var inspectorWidth: Double = AppSettings.defaultInspectorWidth
     /// The inspector starts collapsed: the conversation is the point, and
     /// ⌘1–⌘5 or ⌘⌥I bring the panel back the moment it is needed.
@@ -658,6 +665,8 @@ struct AppSettings: Codable, Hashable {
             ?? defaults.remoteBaseURL
         remoteModel = try container.decodeIfPresent(String.self, forKey: .remoteModel)
             ?? defaults.remoteModel
+        activeAccountID = try container.decodeIfPresent(String.self, forKey: .activeAccountID)
+            ?? defaults.activeAccountID
         // Clamped on the way in as well as on the way out: a corrupt or
         // out-of-range stored value must not produce an unusable panel.
         inspectorWidth = Self.clampInspectorWidth(
@@ -707,6 +716,10 @@ struct WorkspaceProfile: Identifiable, Codable, Hashable {
     let path: String
     var lastOpened: Date
     var model: String
+    /// The provider account the model belongs to, or nil for local Ollama. A
+    /// model name is no longer enough on its own: two accounts can offer the
+    /// same one. Optional, so profiles saved before accounts still decode.
+    var accountID: String?
     var mode: WorkMode
     var previewURL: String
     var contextFiles: [ContextFile]

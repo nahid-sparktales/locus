@@ -16,6 +16,13 @@ final class AppModel: ObservableObject {
     @Published var ollamaOnline = false
     @Published var ollamaErrorMessage: String?
     @Published var models: [ModelInfo] = []
+    /// The local Ollama models, kept separately because `models` reflects
+    /// whichever provider the agent is currently pointed at — with an account
+    /// active it holds that account's list, not the local one.
+    @Published private(set) var localModels: [ModelInfo] = []
+    @Published private(set) var providerAccounts: [ProviderAccount] = []
+    @Published private(set) var accountModels: [UUID: [String]] = [:]
+    @Published private(set) var accountStatus: [UUID: ProviderAccountStatus] = [:]
     @Published var sessions: [SessionSummary] = []
     @Published var currentSessionID = ""
     @Published var sessionInfo: SessionInfo?
@@ -164,7 +171,7 @@ final class AppModel: ObservableObject {
         self.isUITesting = isUITesting
         persistenceEnabled = startImmediately && !isUITesting
         let defaults = UserDefaults.standard
-        let loadedSettings: AppSettings
+        var loadedSettings: AppSettings
         if !isUITesting,
            let data = defaults.data(forKey: "Locus.settings"),
            let saved = try? JSONDecoder().decode(AppSettings.self, from: data)
@@ -172,6 +179,54 @@ final class AppModel: ObservableObject {
             loadedSettings = saved
         } else {
             loadedSettings = AppSettings()
+        }
+
+        if !isUITesting {
+            var accounts = ProviderAccountStore.load(from: defaults)
+            var routingRewritten = false
+            // The pre-accounts remote endpoint becomes a Custom account, so an
+            // upgrade keeps working without re-entering the key.
+            if let migrated = ProviderAccountStore.migrateLegacyEndpoint(
+                settings: loadedSettings,
+                existing: accounts
+            ) {
+                accounts = [migrated]
+                // Only a real launch commits it: a unit test constructing an
+                // AppModel must not rewrite the user's stored accounts.
+                if persistenceEnabled {
+                    ProviderAccountStore.save(accounts, to: defaults)
+                }
+                if loadedSettings.provider == .remote {
+                    loadedSettings.activeAccountID = migrated.id.uuidString
+                }
+                loadedSettings.remoteBaseURL = ""
+                loadedSettings.remoteModel = ""
+                routingRewritten = true
+            }
+            // An account can be deleted while the app is closed; never boot
+            // into a remote provider that no longer has credentials.
+            if let id = loadedSettings.activeAccountID,
+               !accounts.contains(where: { $0.id.uuidString == id })
+            {
+                loadedSettings.activeAccountID = nil
+                loadedSettings.provider = .ollama
+                routingRewritten = true
+            }
+            providerAccounts = accounts
+            // A key whose account is gone is residue from a crash between the
+            // two writes; nothing can reach it again.
+            Keychain.removeOrphanedProviderKeys(
+                keeping: Set(accounts.map(\.keychainAccount))
+            )
+            // Written here rather than through `settings`: assignments inside
+            // init skip property observers, so the debounced save never fires
+            // and the migration would be redone — with a *new* account id —
+            // on every launch.
+            if routingRewritten, persistenceEnabled,
+               let data = try? JSONEncoder().encode(loadedSettings)
+            {
+                defaults.set(data, forKey: "Locus.settings")
+            }
         }
         settings = loadedSettings
 
@@ -255,8 +310,46 @@ final class AppModel: ObservableObject {
         sessionInfo?.model ?? models.first?.name ?? "No model"
     }
 
+    /// The provider account the agent is pointed at, or nil for local Ollama.
+    var activeAccount: ProviderAccount? {
+        guard let id = settings.activeAccountID else { return nil }
+        return providerAccounts.first { $0.id.uuidString == id }
+    }
+
+    /// The local runtime's address. `sessionInfo.host` is the *active*
+    /// provider's host, which is the endpoint's URL while an account is in use
+    /// — the model library and the commit-message drafter need the real
+    /// Ollama, so remember the last one it reported.
     var ollamaHost: String {
-        sessionInfo?.host ?? "http://127.0.0.1:11434"
+        if activeAccount != nil { return lastOllamaHost }
+        return sessionInfo?.host ?? lastOllamaHost
+    }
+
+    private var lastOllamaHost = "http://127.0.0.1:11434"
+    private var accountCatalogFetchedAt: [UUID: Date] = [:]
+
+    /// Whether the session is running this model through this source. Both
+    /// halves matter: two accounts can offer a model of the same name.
+    func isCurrentRoute(account: ProviderAccount?, model: String) -> Bool {
+        account?.id.uuidString == settings.activeAccountID && model == selectedModel
+    }
+
+    /// The closed picker's label. With an account it leads with the account's
+    /// short name, because the model name alone no longer says where it runs.
+    var modelPickerLabel: String {
+        guard let account = activeAccount else {
+            return localModels.isEmpty && models.isEmpty ? "Auto" : selectedModel
+        }
+        return "\(account.shortName) · \(selectedModel)"
+    }
+
+    var modelPickerSections: [ModelPickerSection] {
+        ModelPickerSection.build(
+            localModels: localModels.map(\.name),
+            accounts: providerAccounts,
+            accountModels: accountModels,
+            accountStatus: accountStatus
+        )
     }
 
     var filteredSessions: [SessionSummary] {
@@ -589,9 +682,14 @@ final class AppModel: ObservableObject {
         do {
             let response = try await backend.get("/api/models", as: ModelsResponse.self)
             models = response.models
+            // `/api/models` describes the active provider. Only trust it as the
+            // local list when local is what is active.
+            if activeAccount == nil { localModels = response.models }
         } catch {
             // Connection state communicates backend failures.
         }
+        if activeAccount != nil { await refreshLocalModels() }
+        await refreshAccountCatalogs()
 
         do {
             let suffix = showArchivedSessions ? "?include_archived=true" : ""
@@ -603,6 +701,64 @@ final class AppModel: ObservableObject {
         }
 
         refreshGitBranch()
+    }
+
+    /// Reads the local runtime directly. With an account active the agent has
+    /// no Ollama client to ask, but the local models still belong in the picker.
+    private func refreshLocalModels() async {
+        guard let url = URL(string: lastOllamaHost + "/api/tags") else { return }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (200..<300).contains((response as? HTTPURLResponse)?.statusCode ?? -1),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let entries = root["models"] as? [[String: Any]]
+        else { return }  // Ollama not running is normal; keep the last list.
+        localModels = entries.compactMap { entry in
+            guard let name = entry["name"] as? String else { return nil }
+            return ModelInfo(
+                name: name,
+                size: (entry["size"] as? NSNumber)?.int64Value ?? 0,
+                parameterSize: (entry["details"] as? [String: Any])?["parameter_size"] as? String ?? "",
+                contextLength: 0
+            )
+        }
+    }
+
+    /// Refreshes every account's model list, unless it was fetched recently.
+    func refreshAccountCatalogs(force: Bool = false) async {
+        guard persistenceEnabled else { return }
+        let stale = Date().addingTimeInterval(-Self.accountCatalogTTL)
+        let due = providerAccounts.filter { account in
+            force || (accountCatalogFetchedAt[account.id] ?? .distantPast) < stale
+        }
+        guard !due.isEmpty else { return }
+        let now = Date()
+        for account in due { accountCatalogFetchedAt[account.id] = now }
+        await withTaskGroup(of: (UUID, ProviderModelCatalog.Result).self) { group in
+            for account in due {
+                group.addTask { (account.id, await ProviderModelCatalog.fetch(for: account)) }
+            }
+            for await (id, result) in group {
+                accountModels[id] = result.models
+                accountStatus[id] = result.status
+            }
+        }
+    }
+
+    /// Long enough that the 15-second metadata poll cannot hammer a provider,
+    /// short enough that a new model shows up without a relaunch.
+    private static let accountCatalogTTL: TimeInterval = 300
+
+    func forgetAccountCatalog(_ id: UUID) {
+        accountCatalogFetchedAt[id] = nil
+        accountModels[id] = nil
+        accountStatus[id] = nil
+    }
+
+    private func noteLocalHost(from info: SessionInfo) {
+        guard info.provider != "remote", !info.host.isEmpty else { return }
+        lastOllamaHost = info.host
     }
 
     func send(_ rawText: String) {
@@ -972,6 +1128,140 @@ final class AppModel: ObservableObject {
             return
         }
         showToast("Switching to \(model)")
+    }
+
+    /// Routes the session to a model, switching providers when the model comes
+    /// from a different source than the one in use.
+    ///
+    /// `account` nil means local Ollama. Switching providers replaces the
+    /// agent's client, which it refuses to do mid-turn — so a switch requested
+    /// during a run is held and applied when the turn finishes.
+    func selectModel(account: ProviderAccount?, model: String) {
+        let sameSource = account?.id.uuidString == settings.activeAccountID
+        guard !sameSource else {
+            selectModel(model)
+            if let account { rememberPreferredModel(model, for: account) }
+            return
+        }
+        if let account, !account.hasKey {
+            showToast("Add an API key for \(account.displayName) in Settings")
+            settingsPresented = true
+            return
+        }
+        guard !isBusy else {
+            pendingProviderSwitch = (account?.id, model)
+            showToast("Switching to \(account?.displayName ?? "local Ollama") after this turn")
+            return
+        }
+        applyProviderSwitch(accountID: account?.id, model: model)
+    }
+
+    /// A provider switch that arrived mid-turn, applied once the agent is idle.
+    private var pendingProviderSwitch: (accountID: UUID?, model: String)?
+
+    func applyPendingProviderSwitchIfNeeded() {
+        guard let pending = pendingProviderSwitch else { return }
+        pendingProviderSwitch = nil
+        applyProviderSwitch(accountID: pending.accountID, model: pending.model)
+    }
+
+    private func applyProviderSwitch(accountID: UUID?, model: String) {
+        if let accountID, let account = providerAccounts.first(where: { $0.id == accountID }) {
+            rememberPreferredModel(model, for: account)
+            settings.activeAccountID = accountID.uuidString
+            settings.provider = .remote
+        } else {
+            settings.activeAccountID = nil
+            settings.provider = .ollama
+        }
+        persistSettings()
+        Task {
+            await applyProvider()
+            // The remote provider adopts its configured model as it connects;
+            // the local runtime keeps whatever it had, so name it explicitly.
+            if accountID == nil, !model.isEmpty, model != selectedModel {
+                selectModel(model)
+            }
+            persistCurrentWorkspaceProfile()
+        }
+    }
+
+    private func rememberPreferredModel(_ model: String, for account: ProviderAccount) {
+        guard let index = providerAccounts.firstIndex(where: { $0.id == account.id }),
+              providerAccounts[index].preferredModel != model
+        else { return }
+        providerAccounts[index].preferredModel = model
+        persistProviderAccounts()
+    }
+
+    func persistProviderAccounts() {
+        guard persistenceEnabled else { return }
+        ProviderAccountStore.save(providerAccounts)
+    }
+
+    /// Adds or updates an account. The key is written here rather than in the
+    /// editor so an abandoned sheet leaves nothing behind; `apiKey` nil means
+    /// "keep the saved one".
+    func saveProviderAccount(_ account: ProviderAccount, apiKey: String?) {
+        var updated = account
+        updated.name = ProviderAccountStore.uniqueName(
+            account.name,
+            kind: account.kind,
+            existing: providerAccounts,
+            excluding: account.id
+        )
+        if let index = providerAccounts.firstIndex(where: { $0.id == updated.id }) {
+            providerAccounts[index] = updated
+        } else {
+            providerAccounts.append(updated)
+        }
+        if let apiKey {
+            Keychain.set(apiKey, account: updated.keychainAccount)
+        }
+        persistProviderAccounts()
+        forgetAccountCatalog(updated.id)
+        Task {
+            await refreshAccountCatalogs(force: true)
+            // The live agent is holding the old endpoint or key until it is
+            // told otherwise.
+            if updated.id.uuidString == settings.activeAccountID {
+                await applyProvider(announce: false)
+            }
+        }
+        showToast("Saved \(updated.displayName)")
+    }
+
+    /// Removes an account, its key, and — if it was the one in use — the
+    /// routing that depended on it.
+    func removeProviderAccount(_ account: ProviderAccount) {
+        providerAccounts.removeAll { $0.id == account.id }
+        Keychain.remove(account: account.keychainAccount)
+        persistProviderAccounts()
+        forgetAccountCatalog(account.id)
+        guard account.id.uuidString == settings.activeAccountID else {
+            showToast("Removed \(account.displayName)")
+            return
+        }
+        if isBusy {
+            pendingProviderSwitch = (nil, "")
+            showToast("Removed \(account.displayName) — local Ollama takes over after this turn")
+        } else {
+            applyProviderSwitch(accountID: nil, model: "")
+            showToast("Removed \(account.displayName) — using local Ollama")
+        }
+    }
+
+    func removeProviderAccountKey(_ account: ProviderAccount) {
+        Keychain.remove(account: account.keychainAccount)
+        accountStatus[account.id] = .noKey
+        forgetAccountCatalog(account.id)
+    }
+
+    /// Records that the endpoint rejected this account's key, so Settings and
+    /// the picker can say so instead of leaving the user to guess.
+    func noteAccountKeyRejected() {
+        guard let account = activeAccount else { return }
+        accountStatus[account.id] = .keyRejected
     }
 
     func activateInstalledModel(_ reference: String) async {
@@ -1489,18 +1779,15 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.open(URL(fileURLWithPath: settings.backendRoot))
     }
 
-    func applySettings(_ newSettings: AppSettings, apiKey: String? = nil) {
+    func applySettings(_ newSettings: AppSettings) {
         let backendChanged = settings.backendURL != newSettings.backendURL
             || settings.backendRoot != newSettings.backendRoot
+        // Accounts are applied as they are edited, so the only routing change
+        // that can arrive with the draft is a different active account.
         let providerChanged = settings.provider != newSettings.provider
-            || settings.remoteBaseURL != newSettings.remoteBaseURL
-            || settings.remoteModel != newSettings.remoteModel
-            || apiKey != nil
+            || settings.activeAccountID != newSettings.activeAccountID
         settings = newSettings
         persistSettings()
-        if let apiKey {
-            Keychain.set(apiKey, account: Keychain.remoteAPIKeyAccount)
-        }
         settingsPresented = false
 
         if backendChanged, let url = URL(string: newSettings.backendURL) {
@@ -1521,35 +1808,46 @@ final class AppModel: ObservableObject {
         showToast("Settings saved")
     }
 
+    /// The `/api/provider` payload for the current routing choice.
+    ///
+    /// Pure, so the routing rules can be tested without a backend: an account
+    /// contributes its endpoint, key, auth style, and label; no account means
+    /// the local runtime.
+    func providerRequestBody(verify: Bool = false) -> [String: Any] {
+        guard let account = activeAccount else { return ["provider": "ollama"] }
+        return [
+            "provider": "remote",
+            "base_url": account.resolvedBaseURL,
+            "model": account.preferredModel,
+            "api_key": Keychain.get(account: account.keychainAccount) ?? "",
+            "auth_style": account.kind.authStyle,
+            "account_label": account.displayName,
+            "verify": verify,
+        ]
+    }
+
     /// Pushes the chosen provider to the local agent. The API key travels from
     /// the keychain to the agent process only — it is never written to disk by
-    /// either side.
+    /// either side, so it is re-sent on every launch.
     func applyProvider(verify: Bool = false, announce: Bool = true) async {
-        var body: [String: Any] = ["provider": settings.provider.rawValue]
-        if settings.provider == .remote {
-            let base = settings.remoteBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !base.isEmpty else {
-                if announce {
-                    showToast("Add the endpoint URL before switching to a remote model")
-                }
-                return
+        let account = activeAccount
+        if let account, account.resolvedBaseURL.isEmpty {
+            if announce {
+                showToast("Add the endpoint URL for \(account.displayName) in Settings")
             }
-            body["base_url"] = base
-            body["model"] = settings.remoteModel.trimmingCharacters(in: .whitespacesAndNewlines)
-            body["api_key"] = Keychain.get(account: Keychain.remoteAPIKeyAccount) ?? ""
-            body["verify"] = verify
+            return
         }
         do {
             let state = try await backend.post(
                 "/api/provider",
-                body: body,
+                body: providerRequestBody(verify: verify),
                 as: ProviderStateResponse.self
             )
             await refreshMetadata()
             guard announce else { return }
             showToast(
                 state.provider == "remote"
-                    ? "Connected to \(shortHost(state.host))"
+                    ? "Using \(account?.displayName ?? shortHost(state.host))"
                     : "Using local Ollama"
             )
         } catch {
@@ -1994,10 +2292,11 @@ final class AppModel: ObservableObject {
     }
 
     var providerLabel: String {
-        switch settings.provider {
-        case .ollama: ollamaOnline ? "Ollama ready" : "Ollama offline"
-        case .remote: ollamaOnline ? "Endpoint ready" : "Endpoint offline"
+        guard let account = activeAccount else {
+            return ollamaOnline ? "Ollama ready" : "Ollama offline"
         }
+        let name = account.kind == .custom ? "Endpoint" : account.kind.marketingName
+        return ollamaOnline ? "\(name) ready" : "\(name) offline"
     }
 
     func runCommand(_ command: CommandAction) {
@@ -2080,6 +2379,7 @@ final class AppModel: ObservableObject {
                 sessionInfo = info
                 currentSessionID = info.sessionID
                 streamedCharsThisTurn = 0
+                noteLocalHost(from: info)
                 applyWorkspaceProfileIfNeeded(for: info)
             }
 
@@ -2250,6 +2550,9 @@ final class AppModel: ObservableObject {
             if persistenceEnabled {
                 Task { await refreshMetadata() }
             }
+            // Before the queue drains: a model chosen mid-turn is meant for
+            // the messages waiting behind it.
+            applyPendingProviderSwitchIfNeeded()
             Task { @MainActor [weak self] in
                 self?.drainQueuedMessages()
             }
@@ -2269,7 +2572,10 @@ final class AppModel: ObservableObject {
             streamingAssistantID = nil
             streamedCharsThisTurn = 0
             blocks.append(
-                ChatBlock(kind: .error, text: event["message"] as? String ?? "Unknown agent error")
+                ChatBlock(
+                    kind: .error,
+                    text: annotatingRejectedKey(event["message"] as? String ?? "Unknown agent error")
+                )
             )
 
         case "slash_result":
@@ -2290,6 +2596,16 @@ final class AppModel: ObservableObject {
         default:
             break
         }
+    }
+
+    /// A rejected key is the one turn failure the user can fix immediately, so
+    /// say whose key it was and where to change it.
+    private func annotatingRejectedKey(_ message: String) -> String {
+        guard message.localizedCaseInsensitiveContains("rejected the API key"),
+              let account = activeAccount
+        else { return message }
+        accountStatus[account.id] = .keyRejected
+        return "\(message)\n\nUpdate the key for \(account.displayName) in Settings → Model providers."
     }
 
     private func applySessionStarted(_ info: SessionInfo, reason: String?) {
@@ -2472,14 +2788,35 @@ final class AppModel: ObservableObject {
             selectedMode = profile.mode
             settings.previewURL = profile.previewURL
             contextFiles = profile.contextFiles
-            if profile.model != info.model, models.contains(where: { $0.name == profile.model }) {
-                backend.send(["type": "set_model", "model": profile.model])
-            }
+            applyProfileRoute(profile, currentModel: info.model)
             Task { await refreshContextFiles() }
         }
         touchWorkspaceProfile(info.cwd)
         refreshGitBranch()
         refreshWorkspaceIndex(force: true)
+    }
+
+    /// Restores the model a workspace was last used with, through the account
+    /// it belonged to.
+    private func applyProfileRoute(_ profile: WorkspaceProfile, currentModel: String) {
+        guard !profile.model.isEmpty else { return }
+        guard profile.accountID != settings.activeAccountID || profile.model != currentModel
+        else { return }
+        if let accountID = profile.accountID {
+            // An account deleted since this workspace was last open leaves the
+            // session where it is rather than routing somewhere unintended.
+            guard let account = providerAccounts.first(where: { $0.id.uuidString == accountID })
+            else { return }
+            selectModel(account: account, model: profile.model)
+        } else if settings.activeAccountID == nil {
+            // Still on the local runtime: only the model has to change, and
+            // only if it is actually installed.
+            if localModels.contains(where: { $0.name == profile.model }) {
+                backend.send(["type": "set_model", "model": profile.model])
+            }
+        } else {
+            selectModel(account: nil, model: profile.model)
+        }
     }
 
     private func touchWorkspaceProfile(_ path: String) {
@@ -2491,6 +2828,7 @@ final class AppModel: ObservableObject {
                     path: path,
                     lastOpened: Date(),
                     model: selectedModel,
+                    accountID: settings.activeAccountID,
                     mode: selectedMode,
                     previewURL: settings.previewURL,
                     contextFiles: contextFiles,
@@ -2532,6 +2870,7 @@ final class AppModel: ObservableObject {
             path: path,
             lastOpened: Date(),
             model: selectedModel,
+            accountID: settings.activeAccountID,
             mode: selectedMode,
             previewURL: settings.previewURL,
             contextFiles: contextFiles,
@@ -2616,6 +2955,9 @@ final class AppModel: ObservableObject {
                 contextLength: 32_768
             ),
         ]
+        // The picker reads the local list, which a live refresh would normally
+        // fill in.
+        localModels = models
         sessionInfo = SessionInfo(
             model: "qwen3:8b",
             host: "http://localhost:11434",
@@ -2713,6 +3055,7 @@ final class AppModel: ObservableObject {
                 path: workspace,
                 lastOpened: Date(),
                 model: "qwen3:8b",
+                accountID: nil,
                 mode: .build,
                 previewURL: "http://localhost:3000",
                 contextFiles: [],

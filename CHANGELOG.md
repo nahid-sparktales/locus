@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Provider accounts — Claude, Codex, and Kimi models alongside local ones.**
+  **Settings ▸ Model providers ▸ Add Account…** signs Locus in to Anthropic,
+  OpenAI, or Moonshot with an API key, or to any other OpenAI-compatible
+  endpoint. **Several accounts per provider are supported**: two Claude keys
+  become "Claude — Work" and "Claude — Personal". Each account gets its own
+  section in the model picker, and choosing a model routes the session through
+  that account — the checkmark tracks the account as well as the model, so the
+  same model name under two accounts is never ambiguous. A switch requested
+  mid-turn is applied when the turn finishes, since the agent cannot swap
+  providers during a run. Removing an account deletes its key and, if it was
+  in use, falls back to local Ollama. The single **Remote endpoint** from
+  earlier versions migrates automatically into a Custom account, keeping its
+  URL, model, and saved key.
+- Every account keeps its key in its own login-keychain entry. Keys still
+  reach the agent in memory only, are never written to a config file, and are
+  only ever sent to their own provider. Anthropic accounts also send the
+  native `x-api-key` header its model listing requires.
+- Session transcripts now record the provider and account that produced them,
+  so an exported session says which of two same-provider accounts ran it.
+- **Kimi Code accounts spend a Kimi membership instead of per-token credit.**
+  Moonshot documents this route for third-party tools: keys minted in the Kimi
+  Code Console bill against the plan rather than by the token. It is a separate
+  provider from pay-per-token **Kimi** — a different host, a different key, and
+  a different model line-up — and each editor now says which is which, so a
+  membership key is not pasted into an account that cannot use it. Kimi Code
+  serves only chat completions, so Locus offers its published models rather
+  than probing a model listing that would answer like a rejected key.
+- Locus now identifies itself by name and version on every outbound request,
+  including the pages the model browses — which previously claimed to be
+  "ollama-code/0.2", a product name Locus has not used for two releases.
+  Moonshot's terms require third-party tools to identify themselves honestly,
+  so the header is a constant no setting can rewrite.
+- Claude account setup now states plainly that Anthropic requires a console API
+  key and does not permit third-party apps to use Claude.ai subscription
+  credentials, with a link to their terms — the absence of a "sign in with
+  Claude" button is a rule, not an oversight.
+
 ## 1.7.0 — 2026-07-29
 
 ### Added

@@ -18,6 +18,13 @@ DEFAULTS: dict[str, Any] = {
     "provider": "ollama",
     "remote_base_url": "",
     "remote_model": "",
+    # How the key is presented to the endpoint: "bearer", or "anthropic" for
+    # the extra x-api-key/anthropic-version pair. "" infers it from the host.
+    "remote_auth_style": "",
+    # Which of the app's provider accounts is in use ("Claude — Work"). A
+    # display label only: two accounts can share a host, and without it the
+    # app cannot tell which one this process is actually holding a key for.
+    "remote_account_label": "",
     # The API key is NEVER written here. It comes from the keychain via the
     # app, or from one of REMOTE_API_KEY_ENV at the command line.
     "remote_api_key": "",
@@ -112,6 +119,9 @@ def load_config() -> dict[str, Any]:
         cfg["deny_commands"] = list(DEFAULTS["deny_commands"])
     if cfg.get("provider") not in PROVIDERS:
         cfg["provider"] = "ollama"
+    for key in ("remote_auth_style", "remote_account_label"):
+        if not isinstance(cfg.get(key), str):
+            cfg[key] = ""
     # Silently, rather than raising: a hand-edited config reaches here at
     # startup, and refusing to start is how a user loses the ability to fix it.
     cfg["context_window"] = context_window(cfg.get("context_window"))

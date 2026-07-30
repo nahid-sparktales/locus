@@ -136,7 +136,13 @@ class SessionMeta:
 class SessionStore:
     """Appends conversation records to one JSONL file per run."""
 
-    def __init__(self, cwd: str, model: str = "") -> None:
+    def __init__(
+        self,
+        cwd: str,
+        model: str = "",
+        provider: str = "",
+        account: str = "",
+    ) -> None:
         SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
         stem = f"{ts}-{_slug(cwd)}"
@@ -152,10 +158,15 @@ class SessionStore:
                 self.path = SESSIONS_DIR / f"{stem}-{attempt}.jsonl"
             except OSError:
                 break
+        # The model name alone does not say who served it: two accounts for the
+        # same provider run the same models, so an exported transcript needs
+        # the account that produced it.
         self.append({
             "type": "meta",
             "cwd": cwd,
             "model": model,
+            "provider": provider,
+            "account": account,
             "started": datetime.now().isoformat(timespec="seconds"),
         })
 
