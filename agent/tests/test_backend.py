@@ -2444,3 +2444,38 @@ def test_window_overflow_classifier_matches_only_overflow_shapes():
     assert _looks_like_window_overflow("Error Parsing Tool Call: boom")
     assert not _looks_like_window_overflow("connection dropped")
     assert not _looks_like_window_overflow("chat request failed: timeout")
+
+
+def test_local_ollama_is_the_default_with_no_account_configured():
+    """A fresh install talks to the local runtime, not to anything hosted."""
+    from ollama_code.config import DEFAULTS
+
+    assert DEFAULTS["provider"] == "ollama"
+    assert DEFAULTS["remote_base_url"] == ""
+    assert DEFAULTS["remote_model"] == ""
+
+
+def test_switching_endpoints_does_not_carry_the_old_model_over(tmp_path, monkeypatch):
+    """A model name belongs to the endpoint it came from.
+
+    The failure this prevents was real: a config left holding
+    remote_model "kimi-k2" against an Anthropic base URL, which would have
+    surfaced as a model-not-found naming neither the model nor the host.
+    """
+    from ollama_code import config as config_mod
+    from ollama_code.core import AgentCore
+
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
+    core = AgentCore(cwd=str(tmp_path), config={"provider": "ollama"})
+
+    core.use_remote("https://api.moonshot.ai/v1", api_key="k", model="kimi-k2")
+    assert core.config["remote_model"] == "kimi-k2"
+
+    # A different provider, no model named: the old one must not follow.
+    core.use_remote("https://api.anthropic.com/v1")
+    assert core.config["remote_model"] == ""
+
+    # The same host with a different path keeps it — still the same service.
+    core.use_remote("https://api.anthropic.com/v1", model="claude-sonnet-4-5")
+    core.use_remote("https://api.anthropic.com")
+    assert core.config["remote_model"] == "claude-sonnet-4-5"

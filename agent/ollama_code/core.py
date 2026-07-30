@@ -102,6 +102,19 @@ _WINDOW_OVERFLOW_MARKERS = (
 )
 
 
+def _different_host(before: str, after: str) -> bool:
+    """Whether two endpoint URLs point at different services.
+
+    Compared by host alone: a path change on the same host is the same
+    provider, so a remembered model is still meaningful there.
+    """
+    def host(url: str) -> str:
+        rest = url.split("://", 1)[-1]
+        return rest.split("/", 1)[0].lower()
+
+    return bool(before) and bool(after) and host(before) != host(after)
+
+
 def _looks_like_window_overflow(error_text: str) -> bool:
     """Whether an OllamaError is the window running out mid-tool-call."""
     lowered = error_text.lower()
@@ -397,11 +410,17 @@ class AgentCore:
         """
         self.provider = "remote"
         self.config["provider"] = "remote"
+        previous_url = str(self.config.get("remote_base_url") or "")
         self.config["remote_base_url"] = normalize_base_url(base_url)
         if api_key is not None:
             self.config["remote_api_key"] = api_key.strip()
         if model:
             self.config["remote_model"] = model.strip()
+        elif _different_host(previous_url, self.config["remote_base_url"]):
+            # The remembered model belongs to the endpoint we just left. Keeping
+            # it here is how a Kimi model name ends up pointed at Anthropic,
+            # failing with a model-not-found that names neither problem.
+            self.config["remote_model"] = ""
         if auth_style is not None:
             self.config["remote_auth_style"] = resolve_auth_style(
                 auth_style, self.config["remote_base_url"]

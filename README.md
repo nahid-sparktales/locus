@@ -159,8 +159,15 @@ Ollama and model weights are not bundled.
 
 ## Hosted models: Claude, Codex, Kimi
 
-Local models are the default, not the limit. In **Settings ▸ Model providers**,
-choose **Add Account…** and pick a provider:
+**Local Ollama is the default and stays the default.** A fresh install talks to
+your own machine and nothing else; hosted providers only ever come into play
+once you add an account, and removing the last one drops you straight back to
+local. The model picker always opens with the local section first.
+
+Every hosted provider here is authenticated with an **API key you supply**.
+Locus does not sign in to anyone's account and does not carry OAuth
+credentials. In **Settings ▸ Model providers**, choose **Add Account…** and
+pick a provider:
 
 | Provider | Endpoint | Where the key comes from |
 | --- | --- | --- |
@@ -170,15 +177,17 @@ choose **Add Account…** and pick a provider:
 | Kimi Code (Moonshot AI) | `https://api.kimi.com/coding/v1` | Kimi Code Console |
 | Custom endpoint | whatever you paste | your own host |
 
-**Kimi Code** is the one that spends a subscription rather than per-token
-credit: its keys come from the Kimi Code Console and bill against a Kimi
-membership. It is a separate account type from **Kimi** — different host,
-different key, different models — and the two keys are not interchangeable.
+**Kimi Code** is the one whose key bills against a subscription rather than
+per token: its keys come from the Kimi Code Console and draw on a Kimi
+membership. It is still a key you paste, just a differently billed one. It is a
+separate account type from **Kimi** — different host, different key, different
+models — and the two keys are not interchangeable.
 
-There is no equivalent for Claude or Codex. Anthropic does not permit
-third-party apps to sign in with a Claude.ai account or to route requests
-through Pro or Max plan credentials, so Claude accounts need a console API
-key; the account editor says so and links to their terms.
+There is no equivalent for Claude or Codex, and this is a rule rather than a
+gap. Anthropic does not permit third-party apps to sign in with a Claude.ai
+account or to route requests through Pro or Max plan credentials, so Claude
+accounts need a console API key; the account editor says so and links to their
+terms. Codex accounts likewise use an OpenAI API key.
 
 Give the account a name — "Work", "Personal" — paste its API key, and it joins
 the model picker as its own section. **You can add as many accounts as you
@@ -189,7 +198,13 @@ named models never blur together.
 
 Choosing a model routes the session through that account. Choosing one during a
 turn is held until the turn finishes rather than refused, because the agent
-cannot swap providers mid-run. Local Ollama is always the first section.
+cannot swap providers mid-run. Local Ollama is always the first section, and
+deleting the account a session was using falls back to it.
+
+A model name is remembered per account rather than globally, so switching to a
+different provider never arrives carrying the last one's model — that is how a
+Kimi model name ends up pointed at Anthropic and fails with an error that names
+neither problem.
 
 **Test Connection** confirms the account answers before you send a message,
 and reports the actual reason when it does not — a rejected key, a wrong URL,
