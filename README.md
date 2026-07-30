@@ -1,6 +1,6 @@
 # Locus for macOS
 
-Locus 1.6 is a native workspace for building with local Ollama models. It combines
+Locus 1.7 is a native workspace for building with local Ollama models. It combines
 conversation, planning, file context, change review, a console, and live preview
 in one calm SwiftUI interface—without sending your code to a hosted model provider.
 
@@ -370,8 +370,8 @@ To upload the exported archive directly to App Store Connect:
 LOCUS_UPLOAD=1 Tools/ArchiveAppStore.sh
 ```
 
-The script uses the SparkTales App Store Connect API key shared with the
-StoryBook2 release workflow. Set `LOCUS_ASC_KEY_PATH` if that key is stored
+The script uses the shared SparkTales App Store Connect API key from
+`SparkTales_Master/api-keys`. Set `LOCUS_ASC_KEY_PATH` if that key is stored
 somewhere else.
 
 Every archive runs `Tools/AuditDistribution.sh` before export. The audit
@@ -401,10 +401,3 @@ and they can be moved back.
 Everything runs locally by default: prompts, workspace files, model traffic,
 and saved sessions stay on the Mac. Workspace preferences persist file
 references only; source-file contents are re-read from disk when needed.
-
-## The product site
-
-The Locus site is its own git repository and is not part of this one —
-nothing in it ships with the app. It repeats claims made in this README (the
-version badge, the macOS floor, the inspector tab names, the mode shortcuts),
-so re-read it against this file whenever Locus ships a release.

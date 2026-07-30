@@ -115,3 +115,21 @@ The repository is private but currently owned by the personal GitHub user
 
 The version remains configured for manual release. No submission to App
 Review or public release was performed.
+
+## 1.7.0 (10) upload — 2026-07-29 evening
+
+Marketing version 1.7.0, build 10, was uploaded to App Store Connect at
+19:30 EDT on July 29, 2026 and processed to state **VALID**. The archive
+that produced the uploaded package is kept at
+`artifacts/appstore/uploaded-2026-07-29-1930/Locus-1.7.0-10.xcarchive`; a
+same-source rebuild at `artifacts/appstore/Locus-1.7.0-10.xcarchive` passed
+the distribution audit and deep code-signature verification
+(`io.sparktales.locus`, team `4X4RJA7GMD`).
+
+- 121 Swift unit tests and 153 Python backend tests passed before the
+  archive.
+- The release script's default ASC key path was corrected to
+  `SparkTales_Master/api-keys`; the previous StoryBook2 location no longer
+  exists, which is what interrupted the first export run.
+- Build 10 is not yet assigned to the **Locus Internal Testers** TestFlight
+  group and has not been submitted for review.
