@@ -1,0 +1,10 @@
+Locus
+Copyright 2026 SparkTales Inc.
+
+This product includes software developed at SparkTales Inc.
+
+Locus bundles third-party components — CPython and its statically linked
+libraries, and a pinned set of Python packages — which remain under their own
+licenses. The component inventory, versions, licenses and source locations are
+in Locus/Resources/ThirdPartyNotices.md, and the full license texts ship inside
+the application at Contents/Resources/ThirdPartyLicenses/.

@@ -72,7 +72,7 @@ targets:
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         INFOPLIST_KEY_NSDocumentsFolderUsageDescription: "Locus needs access to your Documents folder to open coding workspaces and start the local Ollama agent."
         INFOPLIST_KEY_NSDownloadsFolderUsageDescription: "Locus needs access when you choose files or projects from Downloads."
-        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026"
+        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 SparkTales Inc."
         COMBINE_HIDPI_IMAGES: YES
       configs:
         ReleaseMAS:

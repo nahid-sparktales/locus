@@ -1,8 +1,10 @@
 # Locus Third-Party Notices
 
-Locus includes the open-source components listed below. SparkTales thanks
-their authors and contributors. The corresponding license texts are retained
-inside the application bundle.
+Locus itself is licensed under the Apache License 2.0, © 2026 SparkTales Inc.
+The components listed below are not: each remains under its own license, and
+this file exists to say which. SparkTales thanks their authors and
+contributors. The corresponding license texts are retained inside the
+application bundle.
 
 ## Standalone Python runtime
 

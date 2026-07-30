@@ -83,12 +83,10 @@ Build 9 completed processing and was added to the manual internal group
 **Locus Internal Testers**. Automatic distribution is disabled so the
 superseded Build 8 cannot be distributed accidentally.
 
-The group has one active macOS build, `1.6.0 (9)`, and these three internal
-testers:
-
-- `nahid@sparktales.io`
-- `andrew@sparktales.io`
-- `andrew@ainvr.com`
+The group has one active macOS build, `1.6.0 (9)`, and three internal testers
+(two SparkTales accounts and one external collaborator). The addresses are in
+App Store Connect rather than here — this repository is open source, and
+publishing people's email addresses is not ours to do.
 
 App Store Connect reports Build 9 as **Testing**, expiring in 90 days. Build 8
 was not added to the group.

@@ -446,9 +446,19 @@ To upload the exported archive directly to App Store Connect:
 LOCUS_UPLOAD=1 Tools/ArchiveAppStore.sh
 ```
 
-The script uses the shared SparkTales App Store Connect API key from
-`SparkTales_Master/api-keys`. Set `LOCUS_ASC_KEY_PATH` if that key is stored
-somewhere else.
+Both release scripts authenticate with an App Store Connect API key. The key id
+and issuer id are **not** defaulted in this repository — they are half of a
+credential pair and this repository is public — so export them alongside the
+`.p8`, which lives outside the tree:
+
+```bash
+export LOCUS_ASC_KEY_ID=…
+export LOCUS_ASC_ISSUER_ID=…
+export LOCUS_ASC_KEY_PATH=/path/to/AuthKey_<id>.p8   # optional; defaults next to the repo
+```
+
+A missing value fails the script immediately with the variable's name rather
+than a confusing authentication error later.
 
 Every archive runs `Tools/AuditDistribution.sh` before export. The audit
 rejects unused GPL-licensed GNU gdbm content, the broken Tk extension, and
@@ -477,3 +487,22 @@ and they can be moved back.
 Everything runs locally by default: prompts, workspace files, model traffic,
 and saved sessions stay on the Mac. Workspace preferences persist file
 references only; source-file contents are re-read from disk when needed.
+
+## License
+
+Locus is licensed under the [Apache License 2.0](LICENSE), © 2026 SparkTales Inc.
+
+Apache-2.0 was chosen over MIT for two things MIT does not cover: an express
+patent grant from contributors, and an explicit statement that the license does
+not grant rights to the project's trademarks. The name *Locus* and the SparkTales
+identity are not part of what the license gives away.
+
+The app bundles third-party components — CPython and its statically linked
+libraries, and 24 pinned Python packages — which remain under their own licenses.
+The inventory, versions and licenses are in
+[Locus/Resources/ThirdPartyNotices.md](Locus/Resources/ThirdPartyNotices.md), the
+full texts ship inside the app, and `Tools/AuditDistribution.sh` fails a release
+that omits them. Ollama, hosted models and model weights are not distributed with
+Locus; it only connects to services you configure.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to submit a change.
