@@ -49,7 +49,7 @@ xcodegen generate >/dev/null
 xcodebuild -quiet \
     -project "${repo_root}/Locus.xcodeproj" \
     -scheme Locus \
-    -configuration Release \
+    -configuration ReleaseMAS \
     -destination "generic/platform=macOS" \
     -archivePath "${archive_path}" \
     -derivedDataPath "${repo_root}/.build-archive" \

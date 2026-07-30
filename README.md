@@ -1,6 +1,6 @@
 # Locus for macOS
 
-Locus 1.7 is a native workspace for building with local Ollama models. It combines
+Locus 1.8 is a native workspace for building with local Ollama models. It combines
 conversation, planning, file context, change review, a console, and live preview
 in one calm SwiftUI interface—without sending your code to a hosted model provider.
 
@@ -283,17 +283,15 @@ app, so there is nothing else to install — you only need
 up to 1.5.1 were published from the old `locus-macos` repository and required
 Homebrew's `python@3.14`; builds from this repository do not.
 
-The downloadable build is signed with an Apple Development certificate and is
-not notarized, so macOS blocks the first open of a downloaded copy. Try to
-open Locus once, then go to **System Settings ▸ Privacy & Security** and click
-**Open Anyway** — or clear the quarantine flag from Terminal instead:
+From 1.8.0 the downloadable build is signed with the SparkTales **Developer ID**
+certificate, notarized by Apple, and stapled, so it opens normally on a Mac
+that has never seen it — no Gatekeeper prompt and no quarantine flag to clear.
+Earlier downloads were signed with a development certificate and needed
+**System Settings ▸ Privacy & Security ▸ Open Anyway** on first launch.
 
-```bash
-xattr -dr com.apple.quarantine /Applications/Locus.app
-```
-
-A Developer ID certificate plus notarization would remove this step; that is
-planned once the certificate exists.
+This build is deliberately **not sandboxed**. A container would buy nothing
+outside the App Store and would limit which workspaces the agent can reach; the
+App Store build (`ReleaseMAS`) keeps the sandbox and its entitlements.
 
 On first launch:
 
@@ -407,12 +405,33 @@ UI tests drive a real window, so run them from a terminal with UI automation
 permission — not from a sandboxed shell, where the app launches without a
 window and every test fails at the window wait.
 
+## Building a release
+
+Two configurations, because the two channels want opposite things.
+
+**`Release` — the direct download.** arm64, Developer ID signed, hardened
+runtime, **not** sandboxed. Build it, then sign, notarize, staple and package
+in one step:
+
+```bash
+LOCUS_NOTARIZE=1 Tools/PackageRelease.sh /path/to/Locus.app artifacts/direct/Locus-<version>.zip
+```
+
+`PackageRelease.sh` signs in an order that cannot ship a broken seal: every
+Mach-O in the bundled runtime first, then the app, verify, exercise the runtime,
+verify again — so a bundle dirtied by its own import check fails the build
+rather than the user's launch. With `LOCUS_NOTARIZE=1` it submits to Apple,
+waits, staples the ticket into the `.app`, rebuilds the zip, and then checks
+that a fresh extraction still passes `spctl` and carries the ticket. Signing
+identity comes from `LOCUS_SIGN_IDENTITY`, else the first Developer ID
+Application certificate in the keychain.
+
 ## Mac App Store archive
 
-The Release configuration is a sandboxed, arm64 Mac App Store build for the
-SparkTales team. It signs the bundled Python interpreter as an inheriting
-sandbox helper, stores agent data in the app container, and persists
-user-selected workspace access with security-scoped bookmarks.
+`ReleaseMAS` is the sandboxed, arm64 Mac App Store build for the SparkTales
+team. It signs the bundled Python interpreter as an inheriting sandbox helper,
+stores agent data in the app container, and persists user-selected workspace
+access with security-scoped bookmarks.
 
 The App Store Connect app uses bundle ID `io.sparktales.locus`. After incrementing
 `CURRENT_PROJECT_VERSION` in `project.yml`, archive and export with:

@@ -4,13 +4,22 @@ options:
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
+configs:
+  # Two release shapes, because the two channels want opposite things.
+  # Release is the direct download: Developer ID signed, notarized, and NOT
+  # sandboxed — a container buys nothing outside the App Store and only
+  # constrains which workspaces the agent can reach. ReleaseMAS is the App
+  # Store build, sandboxed and entitled.
+  Debug: debug
+  Release: release
+  ReleaseMAS: release
 settings:
   base:
     SWIFT_VERSION: "5.10"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     ENABLE_USER_SCRIPT_SANDBOXING: NO
-    CURRENT_PROJECT_VERSION: 10
-    MARKETING_VERSION: 1.7.0
+    CURRENT_PROJECT_VERSION: 11
+    MARKETING_VERSION: 1.8.0
   configs:
     Debug:
       CODE_SIGN_STYLE: Manual
@@ -19,6 +28,15 @@ settings:
       ENABLE_APP_SANDBOX: NO
       ENABLE_HARDENED_RUNTIME: NO
     Release:
+      ARCHS: arm64
+      CODE_SIGN_STYLE: Manual
+      CODE_SIGN_IDENTITY: "Developer ID Application"
+      DEVELOPMENT_TEAM: 4X4RJA7GMD
+      ENABLE_APP_SANDBOX: NO
+      # Required for notarization, and safe here: every Mach-O in the bundled
+      # runtime is signed with this same team, so library validation passes.
+      ENABLE_HARDENED_RUNTIME: YES
+    ReleaseMAS:
       ARCHS: arm64
       CODE_SIGN_STYLE: Automatic
       DEVELOPMENT_TEAM: 4X4RJA7GMD
@@ -57,7 +75,7 @@ targets:
         INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026"
         COMBINE_HIDPI_IMAGES: YES
       configs:
-        Release:
+        ReleaseMAS:
           CODE_SIGN_ENTITLEMENTS: Config/Locus.entitlements
     scheme:
       testTargets:

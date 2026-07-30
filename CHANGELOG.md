@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.0 — 2026-07-30
 
 ### Added
 
@@ -51,6 +51,24 @@
   key and does not permit third-party apps to use Claude.ai subscription
   credentials, with a link to their terms — the absence of a "sign in with
   Claude" button is a rule, not an oversight.
+
+### Fixed
+
+- **The bundled agent would not start in a locally built app.** The runtime was
+  signed with the hardened runtime regardless of configuration, which turns on
+  library validation — so an ad-hoc-signed build produced an interpreter that
+  refused to load its own extension modules, and the app came up with no agent
+  and no local models. Release builds were unaffected, because a real
+  certificate gives every file the same Team ID.
+
+### Distribution
+
+- The direct download is now **signed with the SparkTales Developer ID,
+  notarized, and stapled**, so it runs on a Mac that has never seen it without
+  a Gatekeeper prompt. `Release` and `ReleaseMAS` are now separate
+  configurations: the direct download is not sandboxed, since a container buys
+  nothing outside the App Store and only limits which workspaces the agent can
+  reach; the App Store build keeps the sandbox and its entitlements.
 
 ## 1.7.0 — 2026-07-29
 
