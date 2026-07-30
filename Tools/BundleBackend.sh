@@ -104,20 +104,36 @@ sign_runtime_if_needed() {
     local identity="${EXPANDED_CODE_SIGN_IDENTITY:-}"
     [[ "${CODE_SIGNING_ALLOWED:-NO}" == "YES" && -n "${identity}" ]] || return 0
 
+    # Follow the build's own hardened-runtime setting rather than forcing it.
+    #
+    # Hardened runtime turns on library validation, which requires everything
+    # the interpreter loads to share its Team ID. A Release build signs with a
+    # real certificate, so the interpreter and all 24 packages' extension
+    # modules match and it holds. A Debug build signs ad-hoc, where there is no
+    # Team ID to match — so forcing it there produced an interpreter that could
+    # not load its own pydantic_core, and the app silently had no agent at all:
+    #
+    #   dlopen(_pydantic_core…so): code signature not valid for use in process:
+    #   mapping process and mapped file (non-platform) have different Team IDs
+    local hardened=()
+    if [[ "${ENABLE_HARDENED_RUNTIME:-NO}" == "YES" ]]; then
+        hardened=(--options runtime)
+    fi
+
     local helper_entitlements="${repo_root}/Config/AgentRuntime.entitlements"
     local item
     for item in "${runtime}"/**/*.dylib(N) "${runtime}"/**/*.so(N); do
-        /usr/bin/codesign --force --options runtime --sign "${identity}" "${item}"
+        /usr/bin/codesign --force "${hardened[@]}" --sign "${identity}" "${item}"
     done
     for item in "${runtime}/python/bin"/python3.*(N); do
         [[ -L "${item}" ]] && continue
         if [[ "${ENABLE_APP_SANDBOX:-NO}" == "YES" ]]; then
-            /usr/bin/codesign --force --options runtime \
+            /usr/bin/codesign --force "${hardened[@]}" \
                 --identifier io.sparktales.locus.agent-runtime \
                 --entitlements "${helper_entitlements}" \
                 --sign "${identity}" "${item}"
         else
-            /usr/bin/codesign --force --options runtime --sign "${identity}" "${item}"
+            /usr/bin/codesign --force "${hardened[@]}" --sign "${identity}" "${item}"
         fi
     done
 }
