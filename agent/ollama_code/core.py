@@ -657,6 +657,9 @@ class AgentCore:
             "completion_tokens": self.total_completion_tokens,
             "max_iterations": self.max_iterations,
             "context_limit": self.context_limit,
+            # What a conversation may actually occupy, which is what the
+            # meter should divide by — see budget_tokens.
+            "usable_tokens": self.budget_tokens(),
             "has_project_context": bool(self.project_context),
             "permissions": self.perms.state(),
             "provider": self.provider,
@@ -743,6 +746,24 @@ class AgentCore:
         })
         return not result.get("error", False)
 
+    def budget_tokens(self, headroom_tokens: int = 0) -> int:
+        """How much of the window a conversation may actually occupy.
+
+        The raw window is not what a conversation gets: the tool schemas ride
+        along on every request, room has to be kept for the reply, and
+        `approx_tokens` counts four characters to a token, which is optimistic
+        for the code and JSON this agent really sends.
+
+        Reported in `session_info` so the meter divides by the same number
+        compaction compares against. Dividing by the raw window instead is why
+        compaction used to fire at a displayed ~55%.
+        """
+        if self.context_limit <= 0:
+            return 0
+        reply_room = self._reply_room() + headroom_tokens
+        budget = int((self.context_limit - TOOL_SCHEMA_TOKENS - reply_room) * ESTIMATE_OPTIMISM)
+        return max(budget, 0)
+
     def _over_budget(self, headroom_tokens: int = 0) -> bool:
         """Whether the next request likely overflows the window in use.
 
@@ -755,7 +776,7 @@ class AgentCore:
         if self.context_limit <= 0:
             return False
         reply_room = self._reply_room() + headroom_tokens
-        budget = int((self.context_limit - TOOL_SCHEMA_TOKENS - reply_room) * ESTIMATE_OPTIMISM)
+        budget = self.budget_tokens(headroom_tokens)
         if budget <= 0 or self.approx_tokens() >= budget:
             return True
         if self._last_call_tokens > 0:
@@ -939,6 +960,12 @@ class AgentCore:
                     break
                 result = self._run_tool_call(tc, decider)
                 self._add_message({"role": "tool", "name": tc.name, "content": result})
+            # Tool output is most of what fills a window, and until this the
+            # meter only learned about it when the whole turn ended — so a turn
+            # that read twenty files showed a flat meter and then jumped. One
+            # event per iteration, not per tool, keeps that honest without
+            # flooding the socket.
+            self._emit_info()
             if interrupted:
                 reason = "interrupted"
                 break

@@ -2544,10 +2544,15 @@ def test_corrupt_remembered_windows_are_dropped_not_trusted(tmp_path, monkeypatc
 
     path = tmp_path / "config.json"
     path.write_text(json.dumps({
-        "model_windows": {"good": 8192, "negative": -1, "text": "lots", "zero": 0}
+        "host": "http://localhost:11434",
+        "model_windows": {"good": 8192, "negative": -1, "text": "lots", "zero": 0},
     }))
     monkeypatch.setattr(config_mod, "CONFIG_PATH", path)
-    assert config_mod.load_config()["model_windows"] == {"good": 8192}
+    # Only the usable entry survives; it is also re-keyed onto the host, which
+    # is what the pre-host-scoping migration does.
+    assert config_mod.load_config()["model_windows"] == {
+        "http://localhost:11434|good": 8192
+    }
 
     path.write_text(json.dumps({"model_windows": "not a mapping"}))
     assert config_mod.load_config()["model_windows"] == {}
@@ -2755,3 +2760,27 @@ def test_a_configured_window_lets_compaction_engage_on_a_hosted_account(tmp_path
     core.use_remote("https://api.openai.com/v1", context_window_tokens=8192)
     assert core.context_limit == 8192
     assert core._over_budget() is True, "a window was set; compaction must see it"
+
+
+def test_windows_measured_before_host_scoping_are_kept_not_discarded(tmp_path, monkeypatch):
+    """Re-key rather than drop: those were real measurements against the host
+    in this same config, and discarding them blanks the meter until the model
+    happens to be resident again."""
+    import json as _json
+
+    from ollama_code import config as config_mod
+
+    path = tmp_path / "config.json"
+    path.write_text(_json.dumps({
+        "host": "http://192.168.50.99:11434",
+        "model_windows": {
+            "qwen3:8b": 8192,                                  # old bare key
+            "http://192.168.50.99:11434|already-scoped": 4096,  # current shape
+        },
+    }))
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", path)
+
+    windows = config_mod.load_config()["model_windows"]
+    assert windows["http://192.168.50.99:11434|qwen3:8b"] == 8192
+    assert windows["http://192.168.50.99:11434|already-scoped"] == 4096
+    assert "qwen3:8b" not in windows, "the bare key should have been migrated"

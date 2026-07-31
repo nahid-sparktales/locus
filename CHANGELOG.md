@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The context meter never worked for a hosted account, and could not have.**
+  Nothing in the app could set a context window — `/api/config` accepted one but
+  no code called it — and a hosted endpoint advertises none, so every Claude,
+  Codex, Kimi and Custom account had a dead meter and no automatic compaction at
+  all. Accounts now carry a window, defaulting to the provider's published
+  figure for the selected model, and local Ollama has one in Settings for
+  pinning a window rather than measuring it.
+- **Switching models kept the previous model's window.** A 4K model would read
+  about 12% at 96% of its real window and budget compaction against a window
+  that does not exist. The rule that keeps a window through eviction is now
+  scoped to the model it was measured for.
+- **The meter disagreed with compaction.** It divided by the raw window while
+  compaction budgets against the window less the tool schemas and the room kept
+  for a reply — so compaction fired at a displayed ~55–73%. The agent now
+  reports the usable figure and the meter divides by that, reaching 100% exactly
+  when compaction acts.
+- The meter no longer freezes mid-turn: tool output, which is most of what fills
+  a window, was invisible until the turn ended. It also no longer jumps backwards
+  when the permission mode is changed during a run.
+- Windows measured before they were scoped by host are re-keyed rather than
+  discarded, so upgrading does not blank the meter.
+
 ## 1.8.0 — 2026-07-30
 
 ### Added

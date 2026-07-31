@@ -758,6 +758,51 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(ProviderAccountStore.load(from: defaults).count, 1)
     }
 
+    func testHostedProvidersCarryAPublishedContextWindow() {
+        // Before this, a hosted account had no window at all: the meter was
+        // dead and automatic compaction never engaged.
+        XCTAssertEqual(ProviderKind.claude.publishedContextWindow(for: "claude-sonnet-4-5"), 200_000)
+        XCTAssertEqual(ProviderKind.codex.publishedContextWindow(for: "gpt-5"), 400_000)
+        XCTAssertEqual(ProviderKind.kimiCode.publishedContextWindow(for: "k3-256k"), 256_000)
+        // Someone else's deployment; only they know how it was configured.
+        XCTAssertNil(ProviderKind.custom.publishedContextWindow(for: "anything"))
+        XCTAssertNil(ProviderKind.claude.publishedContextWindow(for: "some-future-model"))
+    }
+
+    func testAnAccountsOwnWindowWinsOverThePublishedOne() {
+        var account = ProviderAccount(kind: .claude, name: "Work", preferredModel: "claude-sonnet-4-5")
+        XCTAssertEqual(account.resolvedContextWindow, 200_000, "published figure by default")
+
+        account.contextWindow = 64_000
+        XCTAssertEqual(account.resolvedContextWindow, 64_000, "the user's value must win")
+
+        account.contextWindow = nil
+        XCTAssertEqual(account.resolvedContextWindow, 200_000)
+    }
+
+    func testAccountsStoredBeforeWindowsExistedStillDecode() throws {
+        let legacy = """
+        [{"id":"\(UUID().uuidString)","kindRaw":"claude","name":"Work",
+          "preferredModel":"claude-sonnet-4-5","createdAt":0}]
+        """
+        let restored = ProviderAccountStore.decode(Data(legacy.utf8))
+        XCTAssertEqual(restored.count, 1)
+        XCTAssertNil(restored[0].contextWindow)
+        // It still resolves, from the published table.
+        XCTAssertEqual(restored[0].resolvedContextWindow, 200_000)
+    }
+
+    func testSessionInfoFromAnOlderAgentHasNoUsableTokens() throws {
+        let json = #"{"model":"m","host":"h","context_limit":8192,"approx_tokens":100}"#
+        let info = try JSONDecoder().decode(SessionInfo.self, from: Data(json.utf8))
+        XCTAssertEqual(info.contextLimit, 8192)
+        XCTAssertNil(info.usableTokens, "an older agent does not send it")
+
+        let current = #"{"model":"m","host":"h","context_limit":8192,"usable_tokens":5000}"#
+        let newer = try JSONDecoder().decode(SessionInfo.self, from: Data(current.utf8))
+        XCTAssertEqual(newer.usableTokens, 5000)
+    }
+
     func testLocusIdentifiesItselfHonestlyToProviders() {
         XCTAssertEqual(
             LocusClientIdentity.userAgent(version: "1.7.0"),

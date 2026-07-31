@@ -796,8 +796,21 @@ private struct ContextUsageChip: View {
                     model.contextWindowTokens.map { "\($0.formatted()) tokens" } ?? "Unknown"
                 )
                 statRow("Session so far", "~\(model.contextUsedTokens.formatted()) tokens")
-                statRow("Prompt tokens", "\((model.sessionInfo?.promptTokens ?? 0).formatted())")
-                statRow("Completion tokens", "\((model.sessionInfo?.completionTokens ?? 0).formatted())")
+                if let usable = model.contextUsableTokens,
+                   let window = model.contextWindowTokens, usable < window {
+                    statRow("Usable for the conversation", "\(usable.formatted()) tokens")
+                }
+                // Cumulative across every model call this session, so they
+                // routinely exceed the window above — labelled, because
+                // unlabelled they read as a broken meter.
+                statRow(
+                    "Prompt tokens (session total)",
+                    "\((model.sessionInfo?.promptTokens ?? 0).formatted())"
+                )
+                statRow(
+                    "Completion tokens (session total)",
+                    "\((model.sessionInfo?.completionTokens ?? 0).formatted())"
+                )
                 statRow(
                     "Context pack (next send)",
                     "\(model.includedContextTokens.formatted()) tokens · \(model.includedContextCount) files"

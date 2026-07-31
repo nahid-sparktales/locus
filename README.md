@@ -37,13 +37,18 @@ in one calm SwiftUI interface—without sending your code to a hosted model prov
   The window is the one Ollama is really running the model in, not the one it
   was trained for — metering against the trained window reads reassuringly low
   right up to the point where replies start getting truncated. That figure is
-  measured once the model is resident and then **remembered per model**, so the
-  meter keeps working after Ollama evicts the model (it does so after about
-  five idle minutes) and on the next launch. Until a model has been measured
-  even once — and against remote endpoints, which advertise no window at all —
-  it shows the token count plainly rather than a percentage of an invented
-  window. The popover breaks down the window, the session, and what the context
-  pack adds to the next send.
+  measured once the model is resident and then **remembered per host and
+  model**, so the meter keeps working after Ollama evicts the model (it does so
+  after about five idle minutes) and on the next launch — and a model served at
+  32K on a GPU box on the LAN does not report 32K when the same model is served
+  at 4K here. Hosted accounts use the provider's published window for the
+  selected model, or a value you set on the account. The percentage is measured
+  against what a conversation may actually occupy — the window less the tool
+  schemas and the room kept for a reply — so it reaches 100% exactly when
+  compaction acts, rather than reading about 55%. Only a local model that has
+  never been resident, with no window set, shows a plain token count instead.
+  The popover breaks down the window, the session, and what the context pack
+  adds to the next send.
 - **Find in conversation** (`⌘F`) searches the current transcript with a live
   match count, `↵`/`⇧↵` navigation, and scroll-to-match highlighting.
 - **Message queueing** keeps you typing while a run is active — queued
@@ -70,10 +75,10 @@ in one calm SwiftUI interface—without sending your code to a hosted model prov
   requests when Locus is not the active app.
 - **Local sessions and model switching** work directly with the Ollama Code
   service, which also compacts a conversation automatically before it outgrows
-  the model's context window. Automatic compaction needs a known window size —
-  one measured from a resident model, or remembered from the last time it was —
-  so it applies to local Ollama models; against an OpenAI-compatible endpoint,
-  which advertises none, set a window in Settings or compact with `/compact`.
+  the model's context window. Compaction needs a known window: locally that is
+  measured from a resident model or remembered from the last time it was, and
+  for a hosted account it is the provider's published figure for the model, or
+  whatever you set on the account.
 - **Local Model Library** searches GGUF repositories on Hugging Face, scans
   available quantizations and sizes, then downloads the selected build through
   Ollama with native progress, cancellation, refresh, and selection.

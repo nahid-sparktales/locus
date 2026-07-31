@@ -246,6 +246,9 @@ struct SessionInfo: Codable, Hashable {
     /// The window the agent budgets compaction against. 0 means the backend
     /// could not determine one (remote endpoints report no window).
     let contextLimit: Int
+    /// What a conversation may actually occupy, which is what the meter
+    /// divides by. Optional: an older agent does not send it.
+    let usableTokens: Int?
     let maxIterations: Int
     let hasProjectContext: Bool
     let provider: String?
@@ -262,6 +265,7 @@ struct SessionInfo: Codable, Hashable {
         promptTokens: Int,
         completionTokens: Int,
         contextLimit: Int = 0,
+        usableTokens: Int? = nil,
         maxIterations: Int,
         hasProjectContext: Bool,
         provider: String? = nil,
@@ -277,6 +281,7 @@ struct SessionInfo: Codable, Hashable {
         self.promptTokens = promptTokens
         self.completionTokens = completionTokens
         self.contextLimit = contextLimit
+        self.usableTokens = usableTokens
         self.maxIterations = maxIterations
         self.hasProjectContext = hasProjectContext
         self.provider = provider
@@ -310,6 +315,7 @@ struct SessionInfo: Codable, Hashable {
         case promptTokens = "prompt_tokens"
         case completionTokens = "completion_tokens"
         case contextLimit = "context_limit"
+        case usableTokens = "usable_tokens"
         case maxIterations = "max_iterations"
         case hasProjectContext = "has_project_context"
     }
@@ -329,6 +335,7 @@ struct SessionInfo: Codable, Hashable {
         promptTokens = try container.decodeIfPresent(Int.self, forKey: .promptTokens) ?? 0
         completionTokens = try container.decodeIfPresent(Int.self, forKey: .completionTokens) ?? 0
         contextLimit = try container.decodeIfPresent(Int.self, forKey: .contextLimit) ?? 0
+        usableTokens = try container.decodeIfPresent(Int.self, forKey: .usableTokens)
         maxIterations = try container.decodeIfPresent(Int.self, forKey: .maxIterations) ?? 0
         hasProjectContext = try container.decodeIfPresent(Bool.self, forKey: .hasProjectContext) ?? false
         provider = try? container.decodeIfPresent(String.self, forKey: .provider)

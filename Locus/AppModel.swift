@@ -439,9 +439,19 @@ final class AppModel: ObservableObject {
         (sessionInfo?.approxTokens ?? 0) + streamedCharsThisTurn / 4
     }
 
+    /// What a conversation may actually occupy — the raw window less the tool
+    /// schemas and the room kept for a reply, scaled the way the agent scales
+    /// its own estimate. The agent reports it so the meter divides by the same
+    /// number compaction compares against; dividing by the raw window is why
+    /// compaction used to fire at a displayed ~55%.
+    var contextUsableTokens: Int? {
+        if let usable = sessionInfo?.usableTokens, usable > 0 { return usable }
+        return contextWindowTokens
+    }
+
     var contextWindowUsageFraction: Double? {
-        guard let window = contextWindowTokens else { return nil }
-        return min(max(Double(contextUsedTokens) / Double(window), 0), 1)
+        guard let usable = contextUsableTokens, usable > 0 else { return nil }
+        return min(max(Double(contextUsedTokens) / Double(usable), 0), 1)
     }
 
     var recentWorkspaceProfiles: [WorkspaceProfile] {
@@ -2421,7 +2431,14 @@ final class AppModel: ObservableObject {
             if let info = decode(SessionInfo.self, from: event) {
                 sessionInfo = info
                 currentSessionID = info.sessionID
-                streamedCharsThisTurn = 0
+                // Only when a reply is not mid-flight. `approx_tokens` counts
+                // the assistant message once it has been committed, which
+                // happens at message_end — the same moment streamingAssistantID
+                // clears. A session_info arriving before that (changing
+                // permission mode does it, and it is busy-guarded on neither
+                // side) does not include the text streamed so far, so clearing
+                // the estimate would drop it and the meter would visibly fall.
+                if streamingAssistantID == nil { streamedCharsThisTurn = 0 }
                 noteLocalHost(from: info)
                 applyWorkspaceProfileIfNeeded(for: info)
             }

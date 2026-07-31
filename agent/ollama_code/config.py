@@ -124,7 +124,7 @@ def load_config() -> dict[str, Any]:
     # Tolerate a hand-edited or older file: anything that is not a
     # name -> positive int mapping is dropped rather than trusted.
     windows = cfg.get("model_windows")
-    cfg["model_windows"] = (
+    clean = (
         {
             str(name): int(value)
             for name, value in windows.items()
@@ -133,6 +133,18 @@ def load_config() -> dict[str, Any]:
         if isinstance(windows, dict)
         else {}
     )
+    # Entries written before windows were scoped by host carry a bare model
+    # name. They were measured against the host in this same config, so re-key
+    # them to it rather than discarding a real measurement and leaving the
+    # meter blank until the model is next resident.
+    host = str(cfg.get("host") or "").rstrip("/")
+    if host:
+        cfg["model_windows"] = {
+            (name if "|" in name else f"{host}|{name}"): value
+            for name, value in clean.items()
+        }
+    else:
+        cfg["model_windows"] = clean
     cfg["remote_lists_models"] = bool(cfg.get("remote_lists_models", True))
     if not isinstance(cfg.get("always_allow"), list):
         cfg["always_allow"] = []
