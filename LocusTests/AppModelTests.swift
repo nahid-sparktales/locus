@@ -363,12 +363,34 @@ final class AppModelTests: XCTestCase {
     @MainActor
     func testErrorEventFinalizesStreamingBlock() {
         let model = AppModel(startImmediately: false)
+        model.isBusy = true
         model.handleEventForTesting(["type": "message_start"])
         model.handleEventForTesting(["type": "token", "text": "partial"])
         model.handleEventForTesting(["type": "error", "message": "model crashed"])
 
-        XCTAssertFalse(model.isBusy)
+        XCTAssertTrue(model.isBusy)
         XCTAssertFalse(model.blocks.contains(where: \.isStreaming))
+        XCTAssertEqual(model.blocks.last?.kind, .error)
+
+        model.handleEventForTesting(["type": "turn_done", "reason": "error"])
+        XCTAssertFalse(model.isBusy)
+    }
+
+    @MainActor
+    func testCommandErrorDoesNotEndTheActiveTurn() {
+        let model = AppModel(startImmediately: false)
+        model.isBusy = true
+        model.handleEventForTesting(["type": "message_start"])
+        model.handleEventForTesting(["type": "token", "text": "still streaming"])
+
+        model.handleEventForTesting([
+            "type": "command_error",
+            "operation": "set_model",
+            "message": "Agent is busy",
+        ])
+
+        XCTAssertTrue(model.isBusy)
+        XCTAssertTrue(model.blocks.contains(where: \.isStreaming))
         XCTAssertEqual(model.blocks.last?.kind, .error)
     }
 
@@ -837,7 +859,50 @@ final class AppModelTests: XCTestCase {
             RemoteEndpointTester.normalizeBaseURL("https://example.com/v1/chat/completions"),
             "https://example.com/v1"
         )
+        XCTAssertEqual(
+            RemoteEndpointTester.normalizeBaseURL("https://api.anthropic.com/v1/messages"),
+            "https://api.anthropic.com/v1"
+        )
         XCTAssertEqual(RemoteEndpointTester.normalizeBaseURL("   "), "")
+    }
+
+    func testProviderCredentialsRequireHTTPSExceptOnLoopback() {
+        XCTAssertNotNil(
+            RemoteEndpointTester.securityError(
+                baseURL: "http://provider.example/v1",
+                apiKey: "secret"
+            )
+        )
+        XCTAssertNil(
+            RemoteEndpointTester.securityError(
+                baseURL: "http://127.0.0.1:8000/v1",
+                apiKey: "secret"
+            )
+        )
+        XCTAssertNotNil(
+            RemoteEndpointTester.securityError(
+                baseURL: "http://127.attacker.example/v1",
+                apiKey: "secret"
+            )
+        )
+        XCTAssertNil(
+            RemoteEndpointTester.securityError(
+                baseURL: "https://provider.example/v1",
+                apiKey: "secret"
+            )
+        )
+        XCTAssertNotNil(
+            RemoteEndpointTester.securityError(
+                baseURL: "https://name:secret@provider.example/v1",
+                apiKey: ""
+            )
+        )
+    }
+
+    func testLocalBackendCapabilityIsFreshAndHeaderSafe() {
+        XCTAssertEqual(BackendSecurity.header, "X-Locus-Token")
+        XCTAssertEqual(BackendSecurity.launchToken.count, 32)
+        XCTAssertNil(BackendSecurity.launchToken.range(of: "[^A-Fa-f0-9]", options: .regularExpression))
     }
 
     func testQueryValuesEncodeCharactersStarletteWouldMangle() {

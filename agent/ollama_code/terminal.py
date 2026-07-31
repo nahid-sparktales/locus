@@ -20,8 +20,9 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 from .permissions import PermissionManager
 from .tools import signal_process_group
@@ -53,7 +54,14 @@ class TerminalRejected(Exception):
 class TerminalRun:
     """One command, its process, and the pump thread's bookkeeping."""
 
-    def __init__(self, run_id: str, command: str, cwd: str, timeout: int) -> None:
+    def __init__(
+        self,
+        run_id: str,
+        command: str,
+        cwd: str,
+        timeout: int,
+        record: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
         self.run_id = run_id
         self.command = command
         self.cwd = cwd
@@ -74,6 +82,7 @@ class TerminalRun:
         self.lock = threading.Lock()
         self.ring = bytearray()
         self.recorded: list[str] = []
+        self.record = record
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -104,7 +113,14 @@ class TerminalManager:
 
     # ----------------------------------------------------------------- start
 
-    def start(self, command: str, cwd: str, run_id: str = "", timeout: int = 0) -> str:
+    def start(
+        self,
+        command: str,
+        cwd: str,
+        run_id: str = "",
+        timeout: int = 0,
+        record: Callable[[dict[str, Any]], None] | None = None,
+    ) -> str:
         command = (command or "").strip()
         if not command:
             raise TerminalRejected("invalid", "a command is required")
@@ -136,7 +152,7 @@ class TerminalManager:
                 self._config.get("terminal_timeout") or DEFAULT_TIMEOUT
             )
             limit = max(1, min(limit, MAX_TIMEOUT))
-            run = TerminalRun(resolved, command, cwd, limit)
+            run = TerminalRun(resolved, command, cwd, limit, record=record)
 
             shell = str(self._config.get("terminal_shell") or os.environ.get("SHELL") or "/bin/sh")
             login = bool(self._config.get("terminal_login_shell", True))
@@ -327,11 +343,12 @@ class TerminalManager:
             "total_bytes": run.total_bytes,
         })
 
-        if self._record is not None and self._config.get("terminal_record_output", True):
+        record = run.record or self._record
+        if record is not None and self._config.get("terminal_record_output", True):
             # Stdin is deliberately not recorded — only how many lines were
             # sent. A y/n answer is the happy case; a password is the one that
             # would otherwise be written to disk.
-            self._record({
+            record({
                 "type": "terminal",
                 "run_id": run.run_id,
                 "command": run.command,

@@ -32,6 +32,9 @@ settings:
       CODE_SIGN_STYLE: Manual
       CODE_SIGN_IDENTITY: "Developer ID Application"
       DEVELOPMENT_TEAM: 4X4RJA7GMD
+      # A distribution signature must never inherit the development-only
+      # debugger entitlement from the local build environment.
+      CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
       ENABLE_APP_SANDBOX: NO
       # Required for notarization, and safe here: every Mach-O in the bundled
       # runtime is signed with this same team, so library validation passes.

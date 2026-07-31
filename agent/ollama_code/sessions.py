@@ -26,6 +26,15 @@ META_PATH = APP_DIR / "session-metadata.json"
 _META_LOCK = threading.Lock()
 _APPEND_LOCK = threading.Lock()
 
+MAX_SESSION_BYTES = 64 * 1024 * 1024
+MAX_SESSION_LINE_BYTES = 2 * 1024 * 1024
+MAX_SESSION_MESSAGES = 20_000
+MAX_METADATA_BYTES = 4 * 1024 * 1024
+
+
+class SessionTooLargeError(ValueError):
+    """A transcript exceeds the bounded restore/export limits."""
+
 
 # The sibling paths are derived from SESSIONS_DIR at call time, so pointing
 # SESSIONS_DIR at a temp directory (as the tests do) relocates the metadata
@@ -80,6 +89,8 @@ class SessionMeta:
     @staticmethod
     def _read() -> dict[str, dict[str, Any]]:
         try:
+            if _meta_path().stat().st_size > MAX_METADATA_BYTES:
+                return {}
             data = json.loads(_meta_path().read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return {}
@@ -192,7 +203,12 @@ class SessionStore:
         """All session files, newest first (filenames start with a timestamp)."""
         if not SESSIONS_DIR.exists():
             return []
-        return sorted(SESSIONS_DIR.glob("*.jsonl"), reverse=True)
+        paths = (
+            resolved
+            for candidate in SESSIONS_DIR.glob("*.jsonl")
+            if (resolved := SessionStore.path_for(candidate.stem)) is not None
+        )
+        return sorted(paths, reverse=True)
 
     @staticmethod
     def path_for(session_id: str) -> Path | None:
@@ -221,29 +237,50 @@ class SessionStore:
         """Reconstruct the message list from a session file."""
         messages: list[dict[str, Any]] = []
         try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            if path.stat().st_size > MAX_SESSION_BYTES:
+                raise SessionTooLargeError(
+                    f"{path.name} is larger than the {MAX_SESSION_BYTES // (1024 * 1024)} MB "
+                    "session safety limit"
+                )
+            with path.open("rb") as handle:
+                for line_number, raw in enumerate(handle, 1):
+                    if len(raw) > MAX_SESSION_LINE_BYTES:
+                        raise SessionTooLargeError(
+                            f"{path.name} line {line_number} exceeds the "
+                            f"{MAX_SESSION_LINE_BYTES // (1024 * 1024)} MB record limit"
+                        )
+                    if not raw.strip():
+                        continue
+                    try:
+                        rec = json.loads(raw.decode("utf-8", errors="replace"))
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(rec, dict):
+                        continue
+                    if rec.get("type") == "message" and isinstance(rec.get("message"), dict):
+                        messages.append(rec["message"])
+                        if len(messages) > MAX_SESSION_MESSAGES:
+                            raise SessionTooLargeError(
+                                f"{path.name} contains more than "
+                                f"{MAX_SESSION_MESSAGES:,} messages"
+                            )
         except OSError:
             return messages
-        for line in lines:
-            if not line.strip():
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if rec.get("type") == "message" and isinstance(rec.get("message"), dict):
-                messages.append(rec["message"])
         return messages
 
     @staticmethod
     def header(path: Path) -> dict[str, Any]:
         """The leading meta record: cwd, model, started."""
         try:
-            with path.open(encoding="utf-8", errors="replace") as f:
-                for line in f:
+            with path.open("rb") as f:
+                for raw in f:
+                    if len(raw) > MAX_SESSION_LINE_BYTES:
+                        return {}
                     try:
-                        rec = json.loads(line)
+                        rec = json.loads(raw.decode("utf-8", errors="replace"))
                     except json.JSONDecodeError:
+                        continue
+                    if not isinstance(rec, dict):
                         continue
                     if rec.get("type") == "meta":
                         return rec
@@ -261,11 +298,15 @@ class SessionStore:
         """
         info = dict(SessionStore.header(path))
         try:
-            with path.open(encoding="utf-8", errors="replace") as f:
-                for line in f:
+            with path.open("rb") as f:
+                for raw in f:
+                    if len(raw) > MAX_SESSION_LINE_BYTES:
+                        break
                     try:
-                        rec = json.loads(line)
+                        rec = json.loads(raw.decode("utf-8", errors="replace"))
                     except json.JSONDecodeError:
+                        continue
+                    if not isinstance(rec, dict):
                         continue
                     if rec.get("type") == "model" and rec.get("model"):
                         info["model"] = rec["model"]
@@ -277,11 +318,15 @@ class SessionStore:
     def preview(path: Path, limit: int = 80) -> str:
         """First user message in the file, for session listings."""
         try:
-            with path.open(encoding="utf-8", errors="replace") as f:
-                for line in f:
+            with path.open("rb") as f:
+                for raw in f:
+                    if len(raw) > MAX_SESSION_LINE_BYTES:
+                        return "(session record is too large)"
                     try:
-                        rec = json.loads(line)
+                        rec = json.loads(raw.decode("utf-8", errors="replace"))
                     except json.JSONDecodeError:
+                        continue
+                    if not isinstance(rec, dict):
                         continue
                     if rec.get("type") == "message" and rec.get("message", {}).get("role") == "user":
                         content = str(rec["message"].get("content", ""))
@@ -296,11 +341,15 @@ class SessionStore:
     def has_messages(path: Path) -> bool:
         """True when a transcript holds at least one message record."""
         try:
-            with path.open(encoding="utf-8", errors="replace") as f:
-                for line in f:
+            with path.open("rb") as f:
+                for raw in f:
+                    if len(raw) > MAX_SESSION_LINE_BYTES:
+                        return False
                     try:
-                        rec = json.loads(line)
+                        rec = json.loads(raw.decode("utf-8", errors="replace"))
                     except json.JSONDecodeError:
+                        continue
+                    if not isinstance(rec, dict):
                         continue
                     if rec.get("type") == "message":
                         return True
@@ -398,11 +447,24 @@ class SessionStore:
         batches = sorted((p for p in _trash_dir().iterdir() if p.is_dir()), reverse=True)
         if not batches:
             return 0
+        if batch and (
+            "/" in batch or "\\" in batch or batch.startswith(".") or Path(batch).name != batch
+        ):
+            return 0
         folder = _trash_dir() / batch if batch else batches[0]
+        try:
+            if folder.resolve().parent != _trash_dir().resolve():
+                return 0
+        except OSError:
+            return 0
         if not folder.is_dir():
             return 0
         try:
-            manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+            manifest_path = folder / "manifest.json"
+            if manifest_path.stat().st_size > MAX_METADATA_BYTES:
+                manifest = {"sessions": {}}
+            else:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             manifest = {"sessions": {}}
         SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
@@ -460,7 +522,7 @@ def update_session_metadata(
     """Set any of a session's organizer fields and return the new state."""
     fields: dict[str, Any] = {}
     if title is not None:
-        fields["title"] = title.strip() or None
+        fields["title"] = " ".join(title.split())[:120] or None
     if pinned is not None:
         fields["pinned"] = bool(pinned) or None
     if archived is not None:

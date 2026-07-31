@@ -23,7 +23,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "httpx>=0.27"]
+dev = ["pytest>=8.0", "httpx2>=2.9,<3", "pip-audit>=2.9,<3", "ruff>=0.12"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = [
+    # FastAPI's dependency marker calls are the framework's documented API.
+    "B008",
+    # Long human-facing prompts and JSON schemas are clearer left intact.
+    "E501",
+]
 
 [project.scripts]
 ollama-code = "ollama_code.app:main"

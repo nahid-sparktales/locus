@@ -26,9 +26,10 @@ import os
 import platform
 import threading
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from .config import (
     DEFAULTS,
@@ -47,14 +48,18 @@ from .ollama import (
     effective_context_length,
 )
 from .permissions import PermissionManager, build_preview
-from .remote import RemoteClient, normalize_base_url, resolve_auth_style
+from .remote import (
+    RemoteClient,
+    normalize_base_url,
+    resolve_auth_style,
+    validate_remote_url,
+)
 from .render import ThinkFilter, strip_think
 from .sessions import (
     SessionMeta,
     SessionStore,
     clear_saved_sessions,
     strip_prompt_decoration,
-    update_session_metadata,
 )
 from .tools import TOOL_SCHEMAS, ToolContext, execute_tool
 
@@ -231,6 +236,7 @@ class AgentCore:
         self._trained_window_for = ""
         self._event_handler: EventHandler | None = None
         self._interrupt = threading.Event()
+        self.tool_ctx.should_stop = self._interrupt.is_set
         self._last_user_message: str | None = None
         #: The server's ground-truth size of the last completed model call
         #: (prompt + reply tokens) and the message count at that moment. The
@@ -499,10 +505,20 @@ class AgentCore:
         update the URL or model without re-sending the secret. ``auth_style``
         and ``account_label`` follow the same rule: ``None`` leaves them alone.
         """
+        normalized_url = normalize_base_url(base_url)
+        effective_key = (
+            api_key.strip()
+            if api_key is not None
+            else str(self.config.get("remote_api_key") or "")
+        )
+        # Validate before mutating provider, model, URL, or context state. A
+        # rejected credential transport must leave the working provider intact.
+        validate_remote_url(normalized_url, effective_key)
+        self.apply_context_window(context_window_tokens)
         self.provider = "remote"
         self.config["provider"] = "remote"
         previous_url = str(self.config.get("remote_base_url") or "")
-        self.config["remote_base_url"] = normalize_base_url(base_url)
+        self.config["remote_base_url"] = normalized_url
         if api_key is not None:
             self.config["remote_api_key"] = api_key.strip()
         if model:
@@ -520,7 +536,6 @@ class AgentCore:
             self.config["remote_account_label"] = account_label.strip()
         if lists_models is not None:
             self.config["remote_lists_models"] = bool(lists_models)
-        self.apply_context_window(context_window_tokens)
         self._build_remote_client()
         # _build_remote_client only adopts a non-empty model, so clearing the
         # config above is not enough on its own: self.model would keep the
@@ -627,6 +642,13 @@ class AgentCore:
         total = 0
         for message in self.messages:
             total += len(str(message.get("content", "")))
+            total += len(str(message.get("reasoning_content", "")))
+            for block in message.get("anthropic_content") or []:
+                if isinstance(block, dict) and block.get("type") in {
+                    "thinking",
+                    "redacted_thinking",
+                }:
+                    total += len(str(block.get("thinking") or block.get("data") or ""))
             for call in message.get("tool_calls") or []:
                 function = call.get("function") or {}
                 total += len(str(function.get("name", "")))
@@ -870,6 +892,7 @@ class AgentCore:
                 break
         if index is None:
             self._emit({"type": "error", "message": "Nothing to regenerate yet."})
+            self._emit({"type": "turn_done", "reason": "error"})
             return False
         self.messages = self.messages[: index + 1]
         self._interrupt.clear()
@@ -914,9 +937,18 @@ class AgentCore:
                 reason = "error"
                 break
             assistant_msg: dict[str, Any] = {"role": "assistant", "content": strip_think(resp.content)}
+            if self.provider == "remote" and resp.thinking:
+                assistant_msg["reasoning_content"] = resp.thinking
+            anthropic_content = resp.provider_fields.get("anthropic_content")
+            if self.provider == "remote" and isinstance(anthropic_content, list):
+                assistant_msg["anthropic_content"] = anthropic_content
             if resp.tool_calls:
                 assistant_msg["tool_calls"] = [
-                    {"type": "function", "function": {"name": tc.name, "arguments": tc.arguments}}
+                    {
+                        "id": tc.call_id or tc.name,
+                        "type": "function",
+                        "function": {"name": tc.name, "arguments": tc.arguments},
+                    }
                     for tc in resp.tool_calls
                 ]
             self._add_message(assistant_msg)
@@ -955,11 +987,17 @@ class AgentCore:
                         self._add_message({
                             "role": "tool",
                             "name": skipped.name,
+                            "tool_call_id": skipped.call_id or skipped.name,
                             "content": "Not run: the user interrupted this turn.",
                         })
                     break
                 result = self._run_tool_call(tc, decider)
-                self._add_message({"role": "tool", "name": tc.name, "content": result})
+                self._add_message({
+                    "role": "tool",
+                    "name": tc.name,
+                    "tool_call_id": tc.call_id or tc.name,
+                    "content": result,
+                })
             # Tool output is most of what fills a window, and until this the
             # meter only learned about it when the whole turn ended — so a turn
             # that read twenty files showed a flat meter and then jumped. One
@@ -1045,7 +1083,7 @@ class AgentCore:
 
     def _run_tool_call(self, tc: ToolCall, decider: PermissionDecider | None) -> str:
         call_id = uuid.uuid4().hex[:10]
-        summary, detail = build_preview(tc.name, tc.arguments)
+        summary, detail = build_preview(tc.name, tc.arguments, self.tool_ctx)
         blocked = self.perms.blocked_reason(tc.name, tc.arguments)
         if blocked:
             result = f"Error: {blocked}. Ask the user to run it manually if it is really needed."
@@ -1128,7 +1166,13 @@ class AgentCore:
         Auto-approval is scoped to the project the user opened: reading or
         editing something elsewhere on the disk still asks first.
         """
-        path = tc.arguments.get("path") if isinstance(tc.arguments, dict) else None
+        if not isinstance(tc.arguments, dict):
+            return True
+        path = tc.arguments.get("path")
+        if tc.name == "glob" and (
+            not isinstance(path, str) or not path.strip()
+        ):
+            path = tc.arguments.get("pattern")
         if not isinstance(path, str) or not path.strip():
             return True
         return self.tool_ctx.is_inside_workspace(self.tool_ctx.resolve(path))
@@ -1403,7 +1447,7 @@ class AgentCore:
             raise FileNotFoundError(f"session not found: {session_id}")
         fields: dict[str, Any] = {}
         if title is not None:
-            cleaned = title.strip()
+            cleaned = " ".join(title.split())[:120]
             fields["title"] = cleaned or None
         if pinned is not None:
             fields["pinned"] = bool(pinned) or None

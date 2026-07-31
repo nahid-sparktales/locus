@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import threading
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator
+from typing import Any
 
 import requests
 
@@ -47,6 +49,7 @@ class OllamaError(Exception):
 class ToolCall:
     name: str
     arguments: dict[str, Any]
+    call_id: str = ""
 
 
 @dataclass
@@ -54,6 +57,7 @@ class ChatResponse:
     content_parts: list[str] = field(default_factory=list)
     thinking_parts: list[str] = field(default_factory=list)
     tool_calls: list[ToolCall] = field(default_factory=list)
+    provider_fields: dict[str, Any] = field(default_factory=dict)
     done: bool = False
     done_reason: str = ""
     prompt_eval_count: int = 0
@@ -97,7 +101,13 @@ def process_chunk(chunk: dict[str, Any], resp: ChatResponse) -> str:
         if not isinstance(args, dict):
             args = {"value": args}
         if name:
-            resp.tool_calls.append(ToolCall(name=str(name), arguments=args))
+            resp.tool_calls.append(
+                ToolCall(
+                    name=str(name),
+                    arguments=args,
+                    call_id=str(tc.get("id") or ""),
+                )
+            )
     if chunk.get("done"):
         resp.done = True
         resp.done_reason = str(chunk.get("done_reason") or "")
@@ -300,17 +310,28 @@ class OllamaClient:
         on_thinking: Callable[[str], None] | None = None,
     ) -> ChatResponse:
         resp = ChatResponse()
+        watcher_done = threading.Event()
+        watcher: threading.Thread | None = None
         try:
             with requests.post(
                 f"{self.host}/api/chat",
                 json=payload,
                 stream=True,
-                timeout=self.timeout,
+                timeout=(10, self.timeout),
+                allow_redirects=False,
             ) as r:
                 if r.status_code != 200:
                     raise OllamaError(f"Ollama returned HTTP {r.status_code}: {r.text[:500]}")
+                if should_stop is not None:
+                    watcher = threading.Thread(
+                        target=_close_when_stopped,
+                        args=(r, should_stop, watcher_done),
+                        daemon=True,
+                    )
+                    watcher.start()
                 for line in r.iter_lines(decode_unicode=True):
                     if should_stop is not None and should_stop():
+                        resp.done = True
                         resp.done_reason = resp.done_reason or "interrupted"
                         break
                     if not line:
@@ -329,6 +350,29 @@ class OllamaClient:
                         on_thinking(resp.thinking_parts[-1])
                     if resp.done:
                         break
+                if should_stop is not None and should_stop():
+                    resp.done = True
+                    resp.done_reason = "interrupted"
         except requests.RequestException as e:
+            if should_stop is not None and should_stop():
+                resp.done = True
+                resp.done_reason = "interrupted"
+                return resp
             raise OllamaError(f"chat request failed: {e}") from e
+        finally:
+            watcher_done.set()
+            if watcher is not None:
+                watcher.join(timeout=0.2)
         return resp
+
+
+def _close_when_stopped(
+    response: requests.Response,
+    should_stop: Callable[[], bool],
+    done: threading.Event,
+) -> None:
+    """Close a stalled response so Stop does not wait for the read timeout."""
+    while not done.wait(0.05):
+        if should_stop():
+            response.close()
+            return

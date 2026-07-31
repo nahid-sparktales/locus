@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import re
 import shlex
 from typing import Any
 
@@ -60,10 +61,13 @@ class PermissionManager:
         """
         if tool_name != "bash":
             return None
-        for segment in _command_segments(str(args.get("command", ""))):
+        command = str(args.get("command", ""))
+        for segment in _command_segments(command):
             for pattern in self.deny_commands:
-                if pattern and segment.startswith(pattern.lower()):
+                if pattern and _matches_deny_pattern(segment, pattern):
                     return f"blocked by the deny list: commands matching '{pattern}'"
+        if _dynamic_root_delete(command):
+            return "blocked by the deny list: dynamic construction of a recursive root delete"
         return None
 
     def allow_tool(self, tool_name: str, permanent: bool = False) -> None:
@@ -107,6 +111,55 @@ _PREFIX_WRAPPERS = {"sudo", "doas", "env", "nohup", "time", "command", "exec", "
 #: Separators that start a new command within one shell string.
 _SEPARATORS = ("&&", "||", ";", "|", "&", "\n")
 
+_WRAPPER_OPTIONS_WITH_VALUE = {
+    "sudo": {
+        "-C", "--close-from", "-D", "--chdir", "-g", "--group", "-h", "--host",
+        "-p", "--prompt", "-R", "--chroot", "-r", "--role", "-T", "--command-timeout",
+        "-t", "--type", "-u", "--user",
+    },
+    "doas": {"-C", "-u"},
+    "env": {"-C", "--chdir", "-S", "--split-string", "-u", "--unset"},
+    "time": {"-f", "--format", "-o", "--output"},
+    "xargs": {
+        "-a", "--arg-file", "-d", "--delimiter", "-E", "--eof", "-I", "--replace",
+        "-L", "--max-lines", "-n", "--max-args", "-P", "--max-procs", "-s", "--max-chars",
+    },
+}
+
+
+def _unwrap_command(words: list[str]) -> list[str]:
+    """Remove assignments and common command wrappers, including their options."""
+    remaining = list(words)
+    while remaining:
+        first = remaining[0]
+        name = first.split("=", 1)[0]
+        if "=" in first and not first.startswith("-") and "/" not in name:
+            remaining.pop(0)
+            continue
+        program = first.split("/")[-1].lower()
+        if program not in _PREFIX_WRAPPERS:
+            break
+        remaining.pop(0)
+        options_with_value = _WRAPPER_OPTIONS_WITH_VALUE.get(program, set())
+        while remaining:
+            item = remaining[0]
+            if item == "--":
+                remaining.pop(0)
+                break
+            if item in options_with_value:
+                remaining.pop(0)
+                if remaining:
+                    remaining.pop(0)
+                continue
+            if item.startswith("-"):
+                remaining.pop(0)
+                continue
+            if program in {"env", "sudo", "doas"} and "=" in item:
+                remaining.pop(0)
+                continue
+            break
+    return remaining
+
 
 def _command_segments(command: str) -> list[str]:
     """Split a shell string into normalized, unwrapped command segments."""
@@ -115,32 +168,96 @@ def _command_segments(command: str) -> list[str]:
         text = text.replace(sep, "\n")
     segments: list[str] = []
     for raw in text.split("\n"):
-        words = raw.split()
-        # Drop leading VAR=value assignments and wrapper programs so
-        # "sudo env X=1 rm -rf /" still reads as "rm -rf /".
-        while words:
-            first = words[0]
-            if first in _PREFIX_WRAPPERS:
-                words = words[1:]
-                continue
-            name = first.split("=", 1)[0]
-            if "=" in first and not first.startswith("-") and "/" not in name:
-                words = words[1:]
-                continue
-            break
+        try:
+            words = shlex.split(raw)
+        except ValueError:
+            words = raw.replace("'", "").replace('"', "").split()
+        words = _unwrap_command(words)
         if not words:
             continue
         # Compare on the program's basename so /bin/rm matches "rm".
         words = [words[0].split("/")[-1], *words[1:]]
-        segments.append(" ".join(words).lower())
+        segments.append(shlex.join(words).lower())
+        if words:
+            program = words[0].lower()
+            if program in {"sh", "bash", "zsh", "dash", "ksh"} and "-c" in words:
+                index = words.index("-c")
+                if index + 1 < len(words):
+                    segments.extend(_command_segments(words[index + 1]))
+            elif program == "eval" and len(words) > 1:
+                segments.extend(_command_segments(" ".join(words[1:])))
     return segments
+
+
+def _matches_deny_pattern(segment: str, pattern: str) -> bool:
+    normalized = " ".join(segment.lower().split())
+    target = " ".join(pattern.lower().split())
+    if target.startswith("rm -rf /"):
+        return _is_recursive_root_delete(normalized)
+    if target == "mkfs":
+        words = normalized.split()
+        return bool(words and words[0].split("/")[-1].startswith("mkfs"))
+    if target.startswith("dd if="):
+        words = normalized.split()
+        return bool(
+            words
+            and words[0].split("/")[-1] == "dd"
+            and any(item.startswith("if=") for item in words[1:])
+        )
+    if target.startswith(":(){"):
+        return ":(){:|:&};:" in re.sub(r"\s+", "", normalized)
+    return normalized.startswith(target)
+
+
+def _is_recursive_root_delete(segment: str) -> bool:
+    try:
+        words = shlex.split(segment)
+    except ValueError:
+        words = segment.replace("'", "").replace('"', "").split()
+    if not words or words[0].split("/")[-1] != "rm":
+        return False
+    recursive = False
+    force = False
+    targets: list[str] = []
+    options_done = False
+    for item in words[1:]:
+        if item == "--":
+            options_done = True
+        elif not options_done and item.startswith("--"):
+            recursive = recursive or item == "--recursive"
+            force = force or item == "--force"
+        elif not options_done and item.startswith("-"):
+            flags = item[1:]
+            recursive = recursive or "r" in flags.lower()
+            force = force or "f" in flags.lower()
+        else:
+            targets.append(item)
+    return recursive and force and any(target in {"/", "/*", "//"} for target in targets)
+
+
+def _dynamic_root_delete(command: str) -> bool:
+    if "$(" not in command and "`" not in command:
+        return False
+    flattened = " ".join(command.lower().replace("\\", "").split())
+    has_root_target = bool(re.search(r"(?:^|\s)/(?=\s|$|[;&|])", flattened))
+    has_recursive_force = bool(
+        re.search(
+            r"(?:-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r|--recursive|--force)",
+            flattened,
+        )
+    )
+    return has_root_target and has_recursive_force
 
 
 def _shorten(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + f"… (+{len(text) - limit} chars)"
 
 
-def build_preview(name: str, args: dict[str, Any]) -> tuple[str, str]:
+def build_preview(
+    name: str,
+    args: dict[str, Any],
+    ctx: Any | None = None,
+) -> tuple[str, str]:
     """Return (summary, detail) describing a pending tool call.
 
     ``summary`` is a one-liner shown in the compact log line and as the
@@ -167,7 +284,11 @@ def build_preview(name: str, args: dict[str, Any]) -> tuple[str, str]:
         head = "\n".join(f"+{line}" for line in lines[:30])
         if len(lines) > 30:
             head += f"\n... ({len(lines) - 30} more lines)"
-        return f"write {path} ({len(lines)} lines)", head or "(empty file)"
+        return f"write {path} ({len(lines)} lines)", _target_detail(
+            path,
+            head or "(empty file)",
+            ctx,
+        )
     if name == "edit_file":
         path = str(args.get("path", ""))
         old = str(args.get("old_string", ""))
@@ -181,7 +302,11 @@ def build_preview(name: str, args: dict[str, Any]) -> tuple[str, str]:
         # replace_all changes how many places this rewrites, so it belongs in
         # the summary the user approves — not just in the arguments.
         scope = " (every occurrence)" if args.get("replace_all") else ""
-        return f"edit {path}{scope}", diff or "(no visible change)"
+        return f"edit {path}{scope}", _target_detail(
+            path,
+            diff or "(no visible change)",
+            ctx,
+        )
     if name == "multi_edit":
         path = str(args.get("path", ""))
         edits = args.get("edits")
@@ -205,7 +330,11 @@ def build_preview(name: str, args: dict[str, Any]) -> tuple[str, str]:
                 )
             if count > 5:
                 chunks.append(f"... ({count - 5} more edits)")
-        return f"edit {path} ({count} changes)", "\n".join(chunks) or "(no visible change)"
+        return f"edit {path} ({count} changes)", _target_detail(
+            path,
+            "\n".join(chunks) or "(no visible change)",
+            ctx,
+        )
     if name == "read_file":
         path = str(args.get("path", ""))
         extra = ""
@@ -213,7 +342,7 @@ def build_preview(name: str, args: dict[str, Any]) -> tuple[str, str]:
             extra += f" from line {args['offset']}"
         if args.get("limit"):
             extra += f" ({args['limit']} lines)"
-        return f"read {path}{extra}", ""
+        return f"read {path}{extra}", _target_detail(path, "", ctx)
     if name == "glob":
         return f"glob {args.get('pattern', '')}", ""
     if name == "grep":
@@ -246,3 +375,17 @@ def build_preview(name: str, args: dict[str, Any]) -> tuple[str, str]:
         f"{name} {json.dumps(args, ensure_ascii=False, default=str)[:120]}",
         json.dumps(args, indent=2, ensure_ascii=False, default=str)[:2000],
     )
+
+
+def _target_detail(path: str, detail: str, ctx: Any | None) -> str:
+    if ctx is None or not path:
+        return detail
+    try:
+        lexical = ctx.resolve(path)
+        resolved = lexical.resolve()
+    except (OSError, RuntimeError):
+        return detail
+    if str(lexical) == str(resolved):
+        return detail
+    note = f"[resolves to: {resolved}]"
+    return f"{detail}\n\n{note}" if detail else note

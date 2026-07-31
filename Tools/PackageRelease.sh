@@ -8,25 +8,74 @@
 #   5. zip, extract to a temp dir, verify the extracted copy
 #
 # Usage: PackageRelease.sh /path/to/Locus.app /path/to/Locus-macOS.zip
-# Identity comes from LOCUS_SIGN_IDENTITY, or the first "Apple Development"/
-# "Developer ID Application" identity in the keychain.
+# Identity comes from LOCUS_SIGN_IDENTITY, or the first Developer ID
+# Application identity in the keychain.
 set -euo pipefail
 setopt null_glob
 
 app="${1:?usage: PackageRelease.sh <Locus.app> <output.zip>}"
 zip_out="${2:?usage: PackageRelease.sh <Locus.app> <output.zip>}"
 runtime="${app}/Contents/Resources/AgentRuntime"
+repo_root="${0:A:h:h}"
+resources="${app}/Contents/Resources"
+info_plist="${app}/Contents/Info.plist"
 
 identity="${LOCUS_SIGN_IDENTITY:-}"
 if [[ -z "${identity}" ]]; then
     identity="$(/usr/bin/security find-identity -v -p codesigning \
-        | /usr/bin/awk -F'"' '/Developer ID Application|Apple Development/ { print $2; exit }')"
+        | /usr/bin/awk -F'"' '/Developer ID Application/ { print $2; exit }')"
 fi
 if [[ -z "${identity}" ]]; then
-    echo "error: no codesigning identity found; set LOCUS_SIGN_IDENTITY." >&2
+    echo "error: no Developer ID Application identity found; set LOCUS_SIGN_IDENTITY." >&2
+    exit 1
+fi
+if [[ "${identity}" != Developer\ ID\ Application:* ]]; then
+    echo "error: direct-download releases require a Developer ID Application identity." >&2
     exit 1
 fi
 echo "Signing with: ${identity}"
+
+[[ -f "${info_plist}" ]] || {
+    echo "error: app Info.plist is missing" >&2
+    exit 1
+}
+revision="$(/usr/bin/git -C "${repo_root}" rev-parse HEAD)"
+built_revision="$(
+    /usr/bin/awk -F= '$1 == "source_revision" { print $2; exit }' \
+        "${resources}/BuildProvenance.txt"
+)"
+dirty=0
+if [[ -n "$(/usr/bin/git -C "${repo_root}" status --porcelain)" ]]; then
+    dirty=1
+fi
+if [[ "${LOCUS_NOTARIZE:-0}" == "1" && "${dirty}" == "1" ]]; then
+    echo "error: notarization candidates must be built from a clean source tree." >&2
+    exit 1
+fi
+if [[ "${LOCUS_NOTARIZE:-0}" == "1" && "${built_revision}" != "${revision}" ]]; then
+    echo "error: app was built from ${built_revision:-unknown}, not clean source ${revision}." >&2
+    echo "Rebuild the Release configuration before notarization." >&2
+    exit 1
+fi
+revision_label="${revision}"
+if [[ "${dirty}" == "1" ]]; then
+    revision_label="${revision}-dirty"
+fi
+if ! /usr/bin/plutil -insert LocusSourceRevision -string "${revision_label}" "${info_plist}" \
+    2>/dev/null
+then
+    /usr/bin/plutil -replace LocusSourceRevision -string "${revision_label}" "${info_plist}"
+fi
+/bin/mkdir -p "${resources}"
+{
+    echo "source_revision=${revision_label}"
+    echo "built_source_revision=${built_revision:-unknown}"
+    echo "bundle_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${info_plist}")"
+    echo "short_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${info_plist}")"
+    echo "xcode=$(/usr/bin/xcodebuild -version | /usr/bin/tr '\n' ' ')"
+} > "${resources}/BuildProvenance.txt"
+
+"${repo_root}/Tools/AuditDistribution.sh" "${app}"
 
 if [[ -d "${runtime}" ]]; then
     # --options runtime and --timestamp on every Mach-O: notarization
@@ -87,6 +136,8 @@ if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
     /bin/rm -f "${zip_out}"
     /usr/bin/ditto -c -k --sequesterRsrc --keepParent "${app}" "${zip_out}"
     echo "Notarized and stapled."
+else
+    echo "Notarization deferred: this zip is a private verification artifact, not a public release."
 fi
 
 check_dir="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/locus-zipcheck.XXXXXX")"

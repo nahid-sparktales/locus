@@ -17,6 +17,14 @@ licenses="${resources}/ThirdPartyLicenses/python-build-standalone-20260728"
     echo "error: ThirdPartyNotices.md is missing from the app" >&2
     exit 1
 }
+[[ -f "${resources}/PrivacyInfo.xcprivacy" ]] || {
+    echo "error: PrivacyInfo.xcprivacy is missing from the app" >&2
+    exit 1
+}
+[[ -f "${resources}/BuildProvenance.txt" ]] || {
+    echo "error: BuildProvenance.txt is missing from the app" >&2
+    exit 1
+}
 
 for required in \
     LICENSE \
@@ -49,6 +57,22 @@ fi
 if /usr/bin/grep -R -a -l -m 1 "GNU gdbm" "${runtime}" >/dev/null 2>&1; then
     echo "error: GNU gdbm content remains in the bundled runtime" >&2
     exit 1
+fi
+
+entitlements="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-entitlements.XXXXXX")"
+trap '/bin/rm -f "${entitlements}"' EXIT
+if /usr/bin/codesign -d --entitlements "${entitlements}" "${app}" >/dev/null 2>&1; then
+    for forbidden in \
+        com.apple.security.get-task-allow \
+        com.apple.security.cs.allow-dyld-environment-variables \
+        com.apple.security.cs.disable-library-validation
+    do
+        value="$(/usr/bin/plutil -extract "${forbidden}" raw -o - "${entitlements}" 2>/dev/null || true)"
+        [[ "${value}" != "true" ]] || {
+            echo "error: forbidden release entitlement is enabled: ${forbidden}" >&2
+            exit 1
+        }
+    done
 fi
 
 echo "Distribution audit passed: notices present; gdbm and tkinter absent."

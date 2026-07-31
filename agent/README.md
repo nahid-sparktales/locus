@@ -51,9 +51,9 @@ exactly this layout (`.venv/bin/python` plus the `ollama_code` package).
 
 ## Model providers
 
-By default the agent talks to a local Ollama. It can also talk to any
-OpenAI-compatible endpoint — a Hugging Face Inference Endpoint, the HF
-Inference Providers router, or vLLM/TGI on a rented GPU:
+By default the agent talks to a local Ollama. It can also talk to Anthropic's
+native API or any OpenAI-compatible endpoint — a Hugging Face Inference
+Endpoint, the HF Inference Providers router, or vLLM/TGI on a rented GPU:
 
 ```bash
 .venv/bin/ollama-code-server \
@@ -68,16 +68,20 @@ keychain via `POST /api/provider`. **It is never written to
 `config.json`** — `save_config` strips it — and no endpoint ever returns it;
 `/api/provider` reports only `has_api_key`.
 
+An API key may be sent over HTTP only to loopback (`localhost`, `127.0.0.0/8`,
+or `::1`); every other authenticated endpoint must use HTTPS. Redirects are
+refused rather than followed with credentials.
+
 Endpoints that reject tool calling get one automatic retry without tools, and
 the reply says so instead of failing.
 
 `POST /api/provider` takes two optional fields alongside the endpoint. Both
 follow the same rule as `api_key`: omitting one keeps the current value.
 
-- `auth_style` — `bearer` (the default) or `anthropic`, which adds the
-  `x-api-key` and `anthropic-version` headers Anthropic's native model listing
-  requires. Left unset, it is inferred from the host. Anything unrecognized
-  falls back to `bearer`.
+- `auth_style` — `bearer` (the default) or `anthropic`. The latter uses
+  Anthropic's native Models and Messages APIs with `x-api-key` and
+  `anthropic-version`. Left unset, it is inferred from the host. Anything
+  unrecognized falls back to `bearer`.
 - `account_label` — the app's name for the account in use, such as
   `Claude — Work`. Two accounts can share a host, so this is what tells them
   apart: it comes back in `provider_state` and `session_info`, and it is
@@ -181,7 +185,7 @@ before the user allows it.
 .venv/bin/python -m pytest -q
 ```
 
-153 tests cover the tools (including atomic `multi_edit` and the binary-file
+202 tests cover the tools (including atomic `multi_edit` and the binary-file
 guard), permission modes and the deny list, streaming and `<think>` filtering,
 session metadata and trash recovery, the context window (that the number sent as
 `num_ctx` is the same one compaction budgets against, and that it never reaches

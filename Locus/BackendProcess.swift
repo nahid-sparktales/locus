@@ -51,6 +51,7 @@ final class BackendProcess {
         }
         var environment = ProcessInfo.processInfo.environment
         environment["PYTHONUNBUFFERED"] = "1"
+        environment["LOCUS_AGENT_TOKEN"] = BackendSecurity.launchToken
         // The bundled runtime lives inside the signed, sealed .app. A .pyc
         // written there at import time would invalidate the code signature,
         // so byte-code writing must stay off no matter where we run from.

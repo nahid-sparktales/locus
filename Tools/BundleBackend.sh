@@ -38,6 +38,24 @@ if [[ -z "${resources}" || "${resources}" != *".app/Contents/Resources" ]]; then
     exit 1
 fi
 
+write_provenance() {
+    local revision dirty suffix
+    revision="$(/usr/bin/git -C "${repo_root}" rev-parse HEAD)"
+    dirty="$([ -n "$(/usr/bin/git -C "${repo_root}" status --porcelain)" ] && echo 1 || echo 0)"
+    suffix=""
+    [[ "${dirty}" == "1" ]] && suffix="-dirty"
+    /bin/mkdir -p "${resources}"
+    {
+        echo "source_revision=${revision}${suffix}"
+        echo "bundle_version=${CURRENT_PROJECT_VERSION:-unknown}"
+        echo "short_version=${MARKETING_VERSION:-unknown}"
+        echo "configuration=${CONFIGURATION:-unknown}"
+        echo "xcode=$(/usr/bin/xcodebuild -version | /usr/bin/tr '\n' ' ')"
+    } > "${resources}/BuildProvenance.txt"
+}
+
+write_provenance
+
 bundle_source() {
     /bin/rm -rf "${runtime}"
     /bin/mkdir -p "${runtime}/source"

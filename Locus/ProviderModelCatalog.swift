@@ -13,6 +13,12 @@ enum ProviderModelCatalog {
         let status: ProviderAccountStatus
     }
 
+    private static let session = URLSession(
+        configuration: .ephemeral,
+        delegate: NoRedirectSessionDelegate(),
+        delegateQueue: nil
+    )
+
     static func fetch(for account: ProviderAccount) async -> Result {
         let key = Keychain.get(account: account.keychainAccount) ?? ""
         guard !key.isEmpty else {
@@ -25,6 +31,9 @@ enum ProviderModelCatalog {
             return Result(models: fallbackModels(for: account), status: .keySaved)
         }
         let base = RemoteEndpointTester.normalizeBaseURL(account.resolvedBaseURL)
+        if let error = RemoteEndpointTester.securityError(baseURL: base, apiKey: key) {
+            return Result(models: account.kind.curatedModels, status: .failed(error))
+        }
         guard !base.isEmpty, let url = URL(string: base + "/models") else {
             return Result(
                 models: account.kind.curatedModels,
@@ -43,7 +52,7 @@ enum ProviderModelCatalog {
         }
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await session.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             if status == 401 || status == 403 {
                 return Result(models: account.kind.curatedModels, status: .keyRejected)

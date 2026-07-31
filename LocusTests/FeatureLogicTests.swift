@@ -582,10 +582,10 @@ final class FeatureLogicTests: XCTestCase {
     }
 
     func testCuratedModelsAreListedFirst() {
-        let fetched = ["some-old-model", "claude-sonnet-4-5", "another", "claude-opus-4-1"]
+        let fetched = ["some-old-model", "claude-sonnet-5", "another", "claude-opus-5"]
         XCTAssertEqual(
             ProviderModelFilter.ordered(kind: .claude, fetched: fetched),
-            ["claude-opus-4-1", "claude-sonnet-4-5", "some-old-model", "another"]
+            ["claude-opus-5", "claude-sonnet-5", "some-old-model", "another"]
         )
     }
 
@@ -621,7 +621,7 @@ final class FeatureLogicTests: XCTestCase {
 
     func testAnthropicAccountsSendTheNativeHeadersAsWell() {
         let anthropic = RemoteEndpointTester.authHeaders(apiKey: "sk-ant-x", kind: .claude)
-        XCTAssertEqual(anthropic["Authorization"], "Bearer sk-ant-x")
+        XCTAssertNil(anthropic["Authorization"])
         XCTAssertEqual(anthropic["x-api-key"], "sk-ant-x")
         XCTAssertEqual(anthropic["anthropic-version"], "2023-06-01")
 
@@ -764,6 +764,9 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(ProviderKind.claude.publishedContextWindow(for: "claude-sonnet-4-5"), 200_000)
         XCTAssertEqual(ProviderKind.codex.publishedContextWindow(for: "gpt-5"), 400_000)
         XCTAssertEqual(ProviderKind.kimiCode.publishedContextWindow(for: "k3-256k"), 256_000)
+        XCTAssertEqual(ProviderKind.claude.publishedContextWindow(for: "claude-sonnet-5"), 1_000_000)
+        XCTAssertEqual(ProviderKind.codex.publishedContextWindow(for: "gpt-5.6"), 1_050_000)
+        XCTAssertEqual(ProviderKind.kimiCode.publishedContextWindow(for: "k3"), 1_000_000)
         // Someone else's deployment; only they know how it was configured.
         XCTAssertNil(ProviderKind.custom.publishedContextWindow(for: "anything"))
         XCTAssertNil(ProviderKind.claude.publishedContextWindow(for: "some-future-model"))

@@ -91,16 +91,16 @@ struct ComposerView: View {
         )
         .animation(.easeInOut(duration: 0.18), value: model.activePermissionRequest?.requestID)
         .animation(.easeInOut(duration: 0.18), value: model.planApprovalPending)
-        .onAppear { focused = true }
+        .onAppear { restoreFocus() }
         .onChange(of: model.activePermissionRequest?.requestID) {
             // Focus returns to the editor after any decision — option 3 is
             // "tell Locus what to do differently", so typing must just work.
-            if model.activePermissionRequest == nil { focused = true }
+            if model.activePermissionRequest == nil { restoreFocus() }
         }
         .onChange(of: model.planApprovalPending) {
             // Same for "keep planning": the natural next act is typing the
             // refinement, so the editor takes focus back.
-            if !model.planApprovalPending { focused = true }
+            if !model.planApprovalPending { restoreFocus() }
         }
         .onChange(of: model.draftText) {
             popupSelection = 0
@@ -110,6 +110,13 @@ struct ComposerView: View {
             if WorkspaceIndex.activeMention(in: model.draftText) != nil {
                 model.refreshWorkspaceIndex()
             }
+        }
+    }
+
+    private func restoreFocus() {
+        Task { @MainActor in
+            await Task.yield()
+            focused = true
         }
     }
 

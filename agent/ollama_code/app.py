@@ -200,7 +200,7 @@ class App:
         """Verify Ollama is reachable and pick a model. SystemExit on failure."""
         try:
             self.core.client.check()
-        except OllamaError:
+        except OllamaError as e:
             console.print(
                 Panel(
                     f"[red]Cannot reach Ollama at {escape(self.core.host)}.[/red]\n\n"
@@ -209,7 +209,7 @@ class App:
                     border_style="red",
                 )
             )
-            raise SystemExit(1)
+            raise SystemExit(1) from e
         try:
             warning = self.core.ensure_model()
         except OllamaError as e:
@@ -224,7 +224,7 @@ class App:
                 )
             else:
                 print_error(str(e))
-            raise SystemExit(1)
+            raise SystemExit(1) from e
         if warning:
             console.print(f"[yellow]Warning:[/yellow] {escape(warning)}")
         if self.core.model and not self.core.client.supports_tools(self.core.model):

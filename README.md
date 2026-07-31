@@ -2,7 +2,8 @@
 
 Locus 1.8 is a native workspace for building with local Ollama models. It combines
 conversation, planning, file context, change review, a console, and live preview
-in one calm SwiftUI interface—without sending your code to a hosted model provider.
+in one calm SwiftUI interface. Local Ollama is the default; hosted providers are
+used only after you explicitly add and select an account.
 
 ![Locus workspace](Docs/locus-workspace.jpg)
 
@@ -224,6 +225,11 @@ or a scaled-to-zero GPU that is still waking up. For providers that publish no
 model listing, it sends a one-token completion instead, which is the only thing
 that really proves a key works.
 
+Claude uses Anthropic's native Messages protocol; the other built-in hosted
+providers and custom endpoints use their documented OpenAI-compatible routes.
+Authenticated non-loopback endpoints must use HTTPS, and provider redirects are
+refused so credentials can never follow a response to a different URL.
+
 Locus identifies itself as `Locus/<version>` on every request it makes,
 including the pages the model browses. That is a fixed value rather than a
 setting: Moonshot's Kimi Code terms require third-party tools to identify
@@ -272,6 +278,11 @@ agent falls back to the first of `LOCUS_REMOTE_API_KEY`, `OLLAMA_CODE_API_KEY`,
 environment — that is how you supply one when running the agent from a
 terminal.
 
+The local REST/WebSocket service is loopback-only, rejects browser origins, and
+the app protects each launch with a fresh capability header shared only with
+the child process. That keeps an unrelated page from driving file or shell
+tools through localhost.
+
 ## The local agent runtime
 
 The agent itself is **ollama-code**, a Python service that owns the model
@@ -311,11 +322,12 @@ app, so there is nothing else to install — you only need
 up to 1.5.1 were published from the old `locus-macos` repository and required
 Homebrew's `python@3.14`; builds from this repository do not.
 
-From 1.8.0 the downloadable build is signed with the SparkTales **Developer ID**
-certificate, notarized by Apple, and stapled, so it opens normally on a Mac
-that has never seen it — no Gatekeeper prompt and no quarantine flag to clear.
-Earlier downloads were signed with a development certificate and needed
-**System Settings ▸ Privacy & Security ▸ Open Anyway** on first launch.
+The release pipeline can produce a SparkTales **Developer ID** build that is
+notarized by Apple and stapled, so it opens normally on a Mac that has never
+seen it. Only an archive produced with `LOCUS_NOTARIZE=1` and passing the
+Gatekeeper/ticket checks below may be described as a public release. The
+historical 1.8.0 archive is not evidence that current source has passed that
+gate; private verification archives are labeled and must not be published.
 
 This build is deliberately **not sandboxed**. A container would buy nothing
 outside the App Store and would limit which workspaces the agent can reach; the
@@ -407,7 +419,7 @@ xcodebuild \
 cd agent && .venv/bin/python -m pytest -q
 ```
 
-121 unit tests, 18 UI tests, and 153 backend tests currently pass.
+160 unit tests, 18 UI tests, and 202 backend tests currently pass.
 
 The unit suite covers work modes, lightweight context migration, session
 acknowledgements and retry branches, recoverable session clearing, Hugging Face
@@ -453,6 +465,13 @@ waits, staples the ticket into the `.app`, rebuilds the zip, and then checks
 that a fresh extraction still passes `spctl` and carries the ticket. Signing
 identity comes from `LOCUS_SIGN_IDENTITY`, else the first Developer ID
 Application certificate in the keychain.
+
+Running the script without `LOCUS_NOTARIZE=1` is supported for private
+verification only and is labeled that way. The script still requires a
+Developer ID Application identity, embeds the exact source revision and build
+toolchain, audits privacy and license resources, and verifies the zip
+round-trip. A notarization candidate is additionally required to come from a
+clean source tree.
 
 ## Mac App Store archive
 

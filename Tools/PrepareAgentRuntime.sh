@@ -28,8 +28,14 @@ pbs_tag="${LOCUS_PBS_TAG:-20260728}"
 py_version="${LOCUS_PBS_PYTHON:-3.14.6}"
 
 case "$(/usr/bin/uname -m)" in
-    arm64)  pbs_arch="aarch64" ;;
-    x86_64) pbs_arch="x86_64" ;;
+    arm64)
+        pbs_arch="aarch64"
+        pbs_sha256="f4b47659e2da4b97f38cefdf5ad19f0042946099d843cde60de308708e5b1ac5"
+        ;;
+    x86_64)
+        pbs_arch="x86_64"
+        pbs_sha256="00a22363402a1a15d4fb1327c8259a91118258d5463d10a97d3e56c1f18195f6"
+        ;;
     *) echo "error: unsupported architecture $(/usr/bin/uname -m)" >&2; exit 1 ;;
 esac
 
@@ -43,7 +49,7 @@ manifest_hash="$(
     | /usr/bin/shasum -a 256 \
     | /usr/bin/cut -d' ' -f1
 )"
-stamp_value="v3 ${asset} ${manifest_hash}"
+stamp_value="v4 ${asset} ${pbs_sha256} ${manifest_hash}"
 stamp_file="${cache}/.stamp"
 
 if [[ -f "${stamp_file}" && -x "${cache}/cpython/bin/python3" && -d "${cache}/site-packages" ]] \
@@ -57,16 +63,9 @@ workdir="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/locus-runtime.XXXXXX")"
 trap '/bin/rm -rf "${workdir}"' EXIT
 
 /usr/bin/curl -fsSL --retry 3 -o "${workdir}/${asset}" "${url}"
-sums_url="https://github.com/astral-sh/python-build-standalone/releases/download/${pbs_tag}/SHA256SUMS"
-if /usr/bin/curl -fsSL --max-time 30 -o "${workdir}/SHA256SUMS" "${sums_url}"; then
-    expected="$(/usr/bin/awk -v a="${asset}" '$2 == a { print $1; exit }' "${workdir}/SHA256SUMS")"
-    actual="$(/usr/bin/shasum -a 256 "${workdir}/${asset}" | /usr/bin/cut -d' ' -f1)"
-    if [[ -z "${expected}" || "${expected}" != "${actual}" ]]; then
-        echo "error: checksum mismatch for ${asset}" >&2
-        exit 1
-    fi
-else
-    echo "error: checksums for ${pbs_tag} are unavailable" >&2
+actual="$(/usr/bin/shasum -a 256 "${workdir}/${asset}" | /usr/bin/cut -d' ' -f1)"
+if [[ "${pbs_sha256}" != "${actual}" ]]; then
+    echo "error: pinned checksum mismatch for ${asset}" >&2
     exit 1
 fi
 

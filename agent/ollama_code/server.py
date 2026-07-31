@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
+import os
 import sys
 from concurrent.futures import Future
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
+from threading import RLock
 from typing import Any
 
 import uvicorn
-from fastapi import Body, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from . import __version__, gitinfo
@@ -30,12 +33,19 @@ from .config import (
 )
 from .core import AgentCore
 from .ollama import OllamaError, effective_context_length
-from .sessions import SessionMeta, SessionStore, update_session_metadata
+from .sessions import (
+    SessionMeta,
+    SessionStore,
+    SessionTooLargeError,
+    update_session_metadata,
+)
 from .terminal import TerminalManager, TerminalRejected
-
 
 #: Tools whose success means files on disk may have changed.
 _MUTATING_TOOLS = {"write_file", "edit_file", "multi_edit", "bash"}
+MAX_HTTP_BODY_BYTES = 2 * 1024 * 1024
+MAX_USER_MESSAGE_CHARS = 1_000_000
+MAX_TERMINAL_COMMAND_CHARS = 65_536
 
 
 class ChatService:
@@ -46,8 +56,11 @@ class ChatService:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.ws: WebSocket | None = None
+        self.event_pump: asyncio.Task[Any] | None = None
         self.pending_permissions: dict[str, Future[str]] = {}
         self.turn_future: Any = None
+        self._state_guard = RLock()
+        self._state_mutating = False
         core.on_event(self.emit)
         # Deliberately not sharing `turn_future`: a console command must never
         # occupy the chat's single turn slot.
@@ -115,10 +128,53 @@ class ChatService:
 
     @property
     def busy(self) -> bool:
-        return self.turn_future is not None and not self.turn_future.done()
+        with self._state_guard:
+            return self._state_mutating or (
+                self.turn_future is not None and not self.turn_future.done()
+            )
+
+    @contextmanager
+    def state_mutation(self):
+        """Reserve mutable agent state against turns and other mutations."""
+        with self._state_guard:
+            if self.busy:
+                raise AgentBusyError
+            self._state_mutating = True
+        try:
+            yield
+        finally:
+            with self._state_guard:
+                self._state_mutating = False
+
+    def start_turn(self, loop: asyncio.AbstractEventLoop, call, *args: Any) -> bool:
+        """Atomically reserve the turn slot and submit its worker."""
+        with self._state_guard:
+            if self._state_mutating or (
+                self.turn_future is not None and not self.turn_future.done()
+            ):
+                return False
+            self.turn_future = loop.run_in_executor(None, call, *args)
+            return True
 
     def queue_event(self, event: dict[str, Any]) -> None:
         self.queue.put_nowait(event)
+
+
+class AgentBusyError(RuntimeError):
+    """Raised when a state mutation races with an active turn."""
+
+
+def _busy_http() -> HTTPException:
+    return HTTPException(409, "agent is busy — interrupt the current turn first")
+
+
+def _command_error(svc: ChatService, operation: str, message: str) -> None:
+    """Report a rejected client command without ending the active turn."""
+    svc.queue_event({
+        "type": "command_error",
+        "operation": operation,
+        "message": message,
+    })
 
 
 @asynccontextmanager
@@ -148,6 +204,16 @@ async def block_browser_origins(request: Request, call_next):
         return JSONResponse(
             {"detail": "cross-origin requests are not allowed"}, status_code=403
         )
+    token = str(getattr(app.state, "auth_token", "") or "")
+    if token and request.headers.get("x-locus-token") != token:
+        return JSONResponse({"detail": "local agent authentication failed"}, status_code=401)
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_HTTP_BODY_BYTES:
+                return JSONResponse({"detail": "request body is too large"}, status_code=413)
+        except ValueError:
+            return JSONResponse({"detail": "invalid content-length"}, status_code=400)
     return await call_next(request)
 
 
@@ -201,8 +267,15 @@ def set_provider(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str,
     to the config file and never returned by any endpoint.
     """
     svc = service()
-    if svc.busy:
-        raise HTTPException(409, "agent is busy — interrupt the current turn first")
+    try:
+        with svc.state_mutation():
+            return _apply_provider(svc, body)
+    except AgentBusyError as e:
+        raise _busy_http() from e
+
+
+def _apply_provider(svc: ChatService, body: dict[str, Any]) -> dict[str, Any]:
+    """Apply a provider request after the service has reserved mutable state."""
     provider = str(body.get("provider") or "").strip().lower()
     if provider not in ("ollama", "remote"):
         raise HTTPException(422, "provider must be 'ollama' or 'remote'")
@@ -308,10 +381,18 @@ def models() -> dict[str, Any]:
 
 
 @app.get("/api/sessions")
-def sessions(include_archived: bool = False) -> dict[str, Any]:
+def sessions(
+    include_archived: bool = False,
+    limit: int = Query(100, ge=1, le=500),
+    query: str = Query("", max_length=500),
+) -> dict[str, Any]:
     svc = service()
     return {
-        "sessions": SessionStore.summaries(limit=100, include_archived=include_archived),
+        "sessions": SessionStore.summaries(
+            limit=limit,
+            include_archived=include_archived,
+            query=query,
+        ),
         "current": svc.core.session.session_id,
     }
 
@@ -320,27 +401,38 @@ def sessions(include_archived: bool = False) -> dict[str, Any]:
 def session_new(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     """Start a fresh saved session, preserving the previous transcript on disk."""
     svc = service()
-    if svc.busy:
-        raise HTTPException(409, "agent is busy — interrupt the current turn first")
-    reason = str(body.get("reason") or "new_session")
-    info = svc.core.new_session(reason=reason)
-    return {"ok": True, "reason": reason, "session_info": info}
+    try:
+        with svc.state_mutation():
+            reason = str(body.get("reason") or "new_session")
+            info = svc.core.new_session(reason=reason)
+            return {"ok": True, "reason": reason, "session_info": info}
+    except AgentBusyError as e:
+        raise _busy_http() from e
 
 
 @app.delete("/api/sessions")
 def sessions_clear() -> dict[str, Any]:
     """Move every saved session except the active one to the recovery folder."""
     svc = service()
-    result = svc.core.clear_saved_sessions()
-    return {"ok": True, "job_active": svc.busy, **result}
+    try:
+        with svc.state_mutation():
+            result = svc.core.clear_saved_sessions()
+            return {"ok": True, "job_active": False, **result}
+    except AgentBusyError as e:
+        raise _busy_http() from e
 
 
 @app.post("/api/sessions/restore")
 def sessions_restore(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     """Undo a clear: move a trash batch (default the newest) back."""
-    batch = str(body.get("batch") or "") or None
-    restored = SessionStore.restore_from_trash(batch)
-    return {"ok": True, "restored": restored}
+    svc = service()
+    try:
+        with svc.state_mutation():
+            batch = str(body.get("batch") or "") or None
+            restored = SessionStore.restore_from_trash(batch)
+            return {"ok": True, "restored": restored}
+    except AgentBusyError as e:
+        raise _busy_http() from e
 
 
 @app.get("/api/sessions/{session_id}")
@@ -350,9 +442,13 @@ def session_detail(session_id: str) -> dict[str, Any]:
         raise HTTPException(404, f"session not found: {session_id}")
     header = SessionStore.provenance(path)
     meta = SessionMeta.get(session_id)
+    try:
+        messages = SessionStore.load(path)
+    except SessionTooLargeError as e:
+        raise HTTPException(413, str(e)) from e
     return {
         "id": session_id,
-        "messages": AgentCore.sanitize_messages(SessionStore.load(path)),
+        "messages": AgentCore.sanitize_messages(messages),
         "preview": SessionStore.preview(path),
         "title": meta.get("title"),
         "pinned": bool(meta.get("pinned", False)),
@@ -371,6 +467,9 @@ def session_metadata_update(
     """Set a session's title, pinned or archived flag."""
     if SessionStore.find(session_id) is None:
         raise HTTPException(404, f"session not found: {session_id}")
+    unknown = set(body) - {"title", "pinned", "archived"}
+    if unknown:
+        raise HTTPException(422, f"unknown session field: {sorted(unknown)[0]}")
 
     title = body.get("title")
     if title is not None and not isinstance(title, str):
@@ -402,12 +501,15 @@ session_update = session_metadata_update
 @app.post("/api/sessions/{session_id}/resume")
 def session_resume(session_id: str) -> dict[str, Any]:
     svc = service()
-    if svc.busy:
-        raise HTTPException(409, "agent is busy — interrupt the current turn first")
     try:
-        result = svc.core.resume_session(session_id)
+        with svc.state_mutation():
+            result = svc.core.resume_session(session_id)
+    except AgentBusyError as e:
+        raise _busy_http() from e
     except FileNotFoundError as e:
         raise HTTPException(404, str(e)) from e
+    except SessionTooLargeError as e:
+        raise HTTPException(413, str(e)) from e
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     return {
@@ -471,16 +573,20 @@ def get_permissions() -> dict[str, Any]:
 @app.post("/api/permissions")
 def set_permissions(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
-    mode = str(body.get("mode") or "").strip()
-    if mode:
-        if mode not in ("ask", "accept_edits", "bypass"):
-            raise HTTPException(422, "mode must be ask, accept_edits or bypass")
-        svc.core.perms.set_mode(mode)
-        svc.core.config["permission_mode"] = mode
-    if body.get("reset"):
-        svc.core.perms.reset()
-    svc.queue_event({"type": "session_info", **svc.core.session_info()})
-    return svc.core.perms.state()
+    try:
+        with svc.state_mutation():
+            mode = str(body.get("mode") or "").strip()
+            if mode:
+                if mode not in ("ask", "accept_edits", "bypass"):
+                    raise HTTPException(422, "mode must be ask, accept_edits or bypass")
+                svc.core.perms.set_mode(mode)
+                svc.core.config["permission_mode"] = mode
+            if body.get("reset"):
+                svc.core.perms.reset()
+            svc.queue_event({"type": "session_info", **svc.core.session_info()})
+            return svc.core.perms.state()
+    except AgentBusyError as e:
+        raise _busy_http() from e
 
 
 def _config_state(core: AgentCore) -> dict[str, Any]:
@@ -507,11 +613,15 @@ def post_config(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, 
     # Checked before anything is applied: `set_model` and `set_cwd` both have
     # side effects that persist, and refusing afterwards would leave half the
     # request committed.
-    if "context_window" in body and svc.busy:
-        # Changing this mid-turn changes `num_ctx` between two iterations of the
-        # same turn, and Ollama reloads the model when the window changes — a
-        # stall of tens of seconds, in the middle of the work.
-        raise HTTPException(409, "agent is busy — interrupt the current turn first")
+    try:
+        with svc.state_mutation():
+            return _apply_config(svc, body)
+    except AgentBusyError as e:
+        raise _busy_http() from e
+
+
+def _apply_config(svc: ChatService, body: dict[str, Any]) -> dict[str, Any]:
+    """Apply config after atomically reserving mutable state."""
     model = str(body.get("model") or "").strip()
     cwd = str(body.get("cwd") or "").strip()
     if model:
@@ -569,82 +679,115 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         text = str(msg.get("text", "")).strip()
         if not text:
             return
-        if svc.busy:
-            svc.queue_event({"type": "error", "message": "Agent is busy — press Stop first."})
+        if len(text) > MAX_USER_MESSAGE_CHARS:
+            _command_error(svc, str(mtype), "Message is too large to process safely.")
             return
-        if text.startswith("/"):
-            svc.turn_future = loop.run_in_executor(None, _run_slash, svc, text)
-        else:
-            svc.turn_future = loop.run_in_executor(None, core.run_turn, text, svc.decide)
+        call, args = (
+            (_run_slash, (svc, text))
+            if text.startswith("/")
+            else (core.run_turn, (text, svc.decide))
+        )
+        if not svc.start_turn(loop, call, *args):
+            _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
     elif mtype == "permission_decision":
         svc.answer_permission(str(msg.get("request_id", "")), str(msg.get("decision", "deny")))
     elif mtype == "interrupt":
         core.interrupt()
         svc.deny_all_pending()  # unblock a permission wait so the turn can end
     elif mtype == "retry_last":
-        if svc.busy:
-            svc.queue_event({"type": "error", "message": "Agent is busy — press Stop first."})
-            return
-        svc.turn_future = loop.run_in_executor(None, core.retry_last, svc.decide)
+        if not svc.start_turn(loop, core.retry_last, svc.decide):
+            _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
     elif mtype == "new_session":
-        if svc.busy:
-            svc.queue_event({"type": "error", "message": "Agent is busy — press Stop first."})
-            return
-        reason = str(msg.get("reason") or "new_session")
-        core.new_session(reason=reason)
+        try:
+            with svc.state_mutation():
+                reason = str(msg.get("reason") or "new_session")
+                core.new_session(reason=reason)
+        except AgentBusyError:
+            _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
     elif mtype == "set_model":
         model = str(msg.get("model", "")).strip()
         if not model:
             return
         try:
-            names = [m.get("name") for m in core.client.list_models() if m.get("name")]
+            with svc.state_mutation():
+                names = [
+                    item.get("name")
+                    for item in core.client.list_models()
+                    if item.get("name")
+                ]
+                match = next((name for name in names if name == model), None) or next(
+                    (name for name in names if model in name),
+                    None,
+                )
+                if not match:
+                    _command_error(svc, str(mtype), f"model '{model}' not installed")
+                    return
+                core.set_model(match)
+        except AgentBusyError:
+            _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
         except OllamaError as e:
-            svc.queue_event({"type": "error", "message": str(e)})
-            return
-        match = next((n for n in names if n == model), None) or next(
-            (n for n in names if model in n), None
-        )
-        if not match:
-            svc.queue_event({"type": "error", "message": f"model '{model}' not installed"})
-            return
-        core.set_model(match)
+            _command_error(svc, str(mtype), str(e))
     elif mtype == "set_cwd":
         path = str(msg.get("path", "")).strip()
         try:
-            core.set_cwd(path)
+            with svc.state_mutation():
+                core.set_cwd(path)
+        except AgentBusyError:
+            _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
         except ValueError as e:
-            svc.queue_event({"type": "error", "message": str(e)})
+            _command_error(svc, str(mtype), str(e))
     elif mtype == "set_permission_mode":
         mode = str(msg.get("mode", "")).strip()
-        if mode in ("ask", "accept_edits", "bypass"):
-            core.perms.set_mode(mode)
-            core.config["permission_mode"] = mode
-            svc.queue_event({"type": "session_info", **core.session_info()})
+        try:
+            with svc.state_mutation():
+                if mode in ("ask", "accept_edits", "bypass"):
+                    core.perms.set_mode(mode)
+                    core.config["permission_mode"] = mode
+                    svc.queue_event({"type": "session_info", **core.session_info()})
+        except AgentBusyError:
+            _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
     elif mtype == "clear":
-        core.new_session(reason="clear_chat")
-        svc.queue_event({"type": "slash_result", "command": "clear", "text": "Conversation cleared."})
+        try:
+            with svc.state_mutation():
+                core.new_session(reason="clear_chat")
+                svc.queue_event({
+                    "type": "slash_result",
+                    "command": "clear",
+                    "text": "Conversation cleared.",
+                })
+        except AgentBusyError:
+            _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
     elif mtype == "compact":
-        if svc.busy:
-            svc.queue_event({"type": "error", "message": "Agent is busy — press Stop first."})
-            return
-        svc.turn_future = loop.run_in_executor(None, _run_slash, svc, "/compact")
+        if not svc.start_turn(loop, _run_slash, svc, "/compact"):
+            _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
     elif mtype == "resume":
         session_id = str(msg.get("session_id", "")).strip()
         if not session_id:
-            svc.queue_event({"type": "error", "message": "resume requires a session_id"})
+            _command_error(svc, str(mtype), "resume requires a session_id")
             return
-        if svc.busy:
-            svc.queue_event({"type": "error", "message": "Agent is busy — press Stop first."})
-            return
-        svc.turn_future = loop.run_in_executor(None, _run_slash, svc, f"/resume {session_id}")
+        if not svc.start_turn(loop, _run_slash, svc, f"/resume {session_id}"):
+            _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
     elif mtype == "terminal_run":
         # Outside every `busy` guard: the console and the chat run side by side.
+        command = str(msg.get("command", ""))
+        if len(command) > MAX_TERMINAL_COMMAND_CHARS:
+            svc.queue_event({
+                "type": "terminal_error",
+                "run_id": str(msg.get("run_id") or ""),
+                "code": "too_large",
+                "message": "command is too large to run safely",
+            })
+            return
         try:
             svc.terminal.start(
-                str(msg.get("command", "")),
+                command,
                 cwd=str(msg.get("cwd") or core.cwd),
                 run_id=str(msg.get("run_id") or ""),
                 timeout=int(msg.get("timeout") or 0),
+                # The console is independent from chat state, so capture the
+                # session it started in. A later New Session must not move its
+                # completion record into the replacement transcript.
+                record=core.session.append,
             )
         except TerminalRejected:
             pass  # start() already emitted terminal_error
@@ -661,7 +804,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
     elif mtype == "ping":
         svc.queue_event({"type": "pong"})
     else:
-        svc.queue_event({"type": "error", "message": f"unknown message type: {mtype}"})
+        _command_error(svc, str(mtype or "unknown"), f"unknown message type: {mtype}")
 
 
 @app.websocket("/ws/chat")
@@ -673,17 +816,26 @@ async def ws_chat(ws: WebSocket) -> None:
     if origin and origin not in _allowed_origins():
         await ws.close(code=1008, reason="cross-origin connections are not allowed")
         return
+    token = str(getattr(app.state, "auth_token", "") or "")
+    if token and ws.headers.get("x-locus-token") != token:
+        await ws.close(code=1008, reason="local agent authentication failed")
+        return
     await ws.accept()
     svc = service()
-    if svc.ws is not None and svc.ws is not ws:  # single-client app: replace
+    previous_ws = svc.ws
+    previous_pump = svc.event_pump
+    # Publish the replacement before closing the old socket. Its finally block
+    # can now tell it is stale and cannot interrupt the replacement's turn.
+    svc.ws = ws
+    svc.event_pump = None
+    if previous_pump is not None:
+        previous_pump.cancel()
+    if previous_ws is not None and previous_ws is not ws:  # single-client app: replace
         try:
-            await svc.ws.close()
+            await previous_ws.close()
         except Exception:  # noqa: BLE001
             pass
-    svc.ws = ws
     svc.loop = asyncio.get_running_loop()
-    while not svc.queue.empty():  # drop events from a previous connection
-        svc.queue.get_nowait()
     await ws.send_json({"type": "session_info", **svc.core.session_info()})
     # A console run survives a dropped socket — killing a build because the
     # laptop slept is worse than the state it costs to replay it.
@@ -691,20 +843,36 @@ async def ws_chat(ws: WebSocket) -> None:
     for event in svc.terminal.attach():
         await ws.send_json(event)
     pump = asyncio.create_task(_event_pump(svc, ws))
+    svc.event_pump = pump
     try:
         while True:
             msg = await ws.receive_json()
-            await _handle_client_message(svc, msg)
+            if isinstance(msg, dict):
+                await _handle_client_message(svc, msg)
+            else:
+                _command_error(svc, "invalid", "WebSocket messages must be JSON objects")
     except WebSocketDisconnect:
         pass
     except Exception:  # noqa: BLE001 - e.g. invalid JSON from client
         pass
     finally:
         pump.cancel()
+        if svc.event_pump is pump:
+            svc.event_pump = None
         if svc.ws is ws:  # a newer connection may already have replaced us
             svc.ws = None
-        svc.core.interrupt()
-        svc.deny_all_pending()
+            svc.core.interrupt()
+            svc.deny_all_pending()
+
+
+def _is_loopback_bind(host: str) -> bool:
+    """Whether a server bind target is restricted to this machine."""
+    if host.strip().lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
 
 
 # -------------------------------------------------------------------- main
@@ -757,6 +925,11 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     app.state.allowed_origins = set(args.allow_origin)
+    app.state.auth_token = os.environ.pop("LOCUS_AGENT_TOKEN", "").strip()
+    if not _is_loopback_bind(args.host) and not app.state.auth_token:
+        parser.error(
+            "a non-loopback --host requires LOCUS_AGENT_TOKEN authentication"
+        )
     app.state.service = build_service(
         model=args.model,
         cwd=args.cwd or None,
@@ -776,6 +949,7 @@ def main(argv: list[str] | None = None) -> None:
         port=args.port,
         log_level="warning",
         timeout_graceful_shutdown=2,
+        ws_max_size=2 * 1024 * 1024,
     )
 
 

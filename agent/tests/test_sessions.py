@@ -5,12 +5,15 @@ import tempfile
 from concurrent.futures import Future
 from pathlib import Path
 
-import ollama_code.sessions as sessions_module
+import pytest
 from fastapi import HTTPException
-from ollama_code.core import AgentCore
+
+import ollama_code.sessions as sessions_module
 from ollama_code import server
+from ollama_code.core import AgentCore
 from ollama_code.sessions import (
     SessionStore,
+    SessionTooLargeError,
     clear_saved_sessions,
     session_metadata,
     update_session_metadata,
@@ -86,7 +89,7 @@ def test_clear_saved_sessions_preserves_active_run_and_is_recoverable() -> None:
         assert session_metadata(previous.path.stem)["title"] == ""
 
 
-def test_clear_sessions_endpoint_does_not_interrupt_busy_service() -> None:
+def test_clear_sessions_endpoint_refuses_busy_service() -> None:
     with tempfile.TemporaryDirectory() as directory:
         _isolated_sessions(directory)
         previous = SessionStore(directory)
@@ -95,15 +98,55 @@ def test_clear_sessions_endpoint_does_not_interrupt_busy_service() -> None:
         service.turn_future = Future()
         server.app.state.service = service
 
-        result = server.sessions_clear()
+        try:
+            server.sessions_clear()
+        except HTTPException as error:
+            assert error.status_code == 409
+        else:
+            raise AssertionError("busy session clear should be rejected")
 
-        assert result["ok"] is True
-        assert result["count"] == 1
-        assert result["job_active"] is True
-        assert result["preserved_session_id"] == core.session.path.stem
         assert core.session.path.exists()
-        assert not previous.path.exists()
+        assert previous.path.exists()
         assert service.busy is True
+
+
+def test_session_loading_has_file_and_record_limits(tmp_path, monkeypatch) -> None:
+    _isolated_sessions(str(tmp_path))
+    path = sessions_module.SESSIONS_DIR / "oversized.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text('{"type":"message","message":{"role":"user","content":"long"}}\n')
+
+    monkeypatch.setattr(sessions_module, "MAX_SESSION_BYTES", 16)
+    with pytest.raises(SessionTooLargeError):
+        SessionStore.load(path)
+
+    monkeypatch.setattr(sessions_module, "MAX_SESSION_BYTES", 1_000)
+    monkeypatch.setattr(sessions_module, "MAX_SESSION_LINE_BYTES", 16)
+    with pytest.raises(SessionTooLargeError):
+        SessionStore.load(path)
+
+
+def test_restore_refuses_a_traversal_batch(tmp_path) -> None:
+    _isolated_sessions(str(tmp_path))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "stolen.jsonl").write_text("{}\n")
+
+    assert SessionStore.restore_from_trash("../outside") == 0
+    assert (outside / "stolen.jsonl").exists()
+
+
+def test_session_listing_ignores_symlinks_outside_the_store(tmp_path) -> None:
+    _isolated_sessions(str(tmp_path))
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text(
+        '{"type":"message","message":{"role":"user","content":"private"}}\n'
+    )
+    sessions_module.SESSIONS_DIR.mkdir(parents=True)
+    (sessions_module.SESSIONS_DIR / "linked.jsonl").symlink_to(outside)
+
+    assert SessionStore.list_sessions() == []
+    assert SessionStore.path_for("linked") is None
 
 
 def test_retry_branches_without_modifying_original() -> None:
@@ -187,12 +230,21 @@ def test_metadata_endpoint_validates_and_updates_fields() -> None:
 
         assert result["title"] == "Release notes"
         assert result["pinned"] is True
+        trimmed = server.session_metadata_update(
+            session_id,
+            {"title": "  " + "x " * 100},
+        )
+        assert len(trimmed["title"]) == 120
+        assert "  " not in trimmed["title"]
         try:
             server.session_metadata_update(session_id, {"archived": "yes"})
         except HTTPException as invalid:
             assert invalid.status_code == 422
         else:
             raise AssertionError("invalid archived value was accepted")
+        with pytest.raises(HTTPException) as unknown:
+            server.session_metadata_update(session_id, {"colour": "blue"})
+        assert unknown.value.status_code == 422
         try:
             server.session_metadata_update(session_id, {"archived": True})
         except HTTPException as active:

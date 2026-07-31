@@ -1,5 +1,11 @@
 import Foundation
 
+enum BackendSecurity {
+    /// Browser pages cannot discover or set this per-launch capability.
+    static let launchToken = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+    static let header = "X-Locus-Token"
+}
+
 /// REST + WebSocket client for the local agent. All mutable connection state
 /// is confined to the main actor; URLSession callbacks hop back before
 /// touching it, so connect/receive/heartbeat/reconnect can never race.
@@ -16,12 +22,17 @@ final class BackendService {
     private var intentionallyClosed = false
     private var validatedConnection = false
     private var reconnectAttempt = 0
+    private let authToken: String
 
     var onEvent: EventHandler?
     var onConnectionChange: ConnectionHandler?
 
-    init(baseURL: URL = URL(string: "http://127.0.0.1:8791")!) {
+    init(
+        baseURL: URL = URL(string: "http://127.0.0.1:8791")!,
+        authToken: String = BackendSecurity.launchToken
+    ) {
         self.baseURL = baseURL
+        self.authToken = authToken
     }
 
     func updateBaseURL(_ url: URL) {
@@ -41,7 +52,9 @@ final class BackendService {
         guard let socketURL = components?.url else { return }
 
         validatedConnection = false
-        let task = session.webSocketTask(with: socketURL)
+        var request = URLRequest(url: socketURL)
+        request.setValue(authToken, forHTTPHeaderField: BackendSecurity.header)
+        let task = session.webSocketTask(with: request)
         socket = task
         task.resume()
         receive(from: task)
@@ -85,6 +98,7 @@ final class BackendService {
         let url = try endpointURL(path, query: query)
         var request = URLRequest(url: url)
         request.timeoutInterval = 5
+        request.setValue(authToken, forHTTPHeaderField: BackendSecurity.header)
         let (data, response) = try await session.data(for: request)
         try validate(response, data: data)
         return try JSONDecoder().decode(type, from: data)
@@ -117,6 +131,7 @@ final class BackendService {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = 10
+        request.setValue(authToken, forHTTPHeaderField: BackendSecurity.header)
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)

@@ -1,5 +1,17 @@
 import Foundation
 
+final class NoRedirectSessionDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
+    }
+}
+
 /// How Locus identifies itself to every host the app talks to directly.
 ///
 /// The agent sends its own equivalent (`ollama_code.USER_AGENT`) for provider
@@ -37,6 +49,12 @@ enum RemoteEndpointTester {
         let message: String
     }
 
+    private static let noRedirectSession = URLSession(
+        configuration: .ephemeral,
+        delegate: NoRedirectSessionDelegate(),
+        delegateQueue: nil
+    )
+
     /// Mirrors the backend's `normalize_base_url`: people paste endpoints
     /// with or without `/v1`, with a trailing slash, or with the full
     /// `/v1/chat/completions` path — accept all of them.
@@ -45,7 +63,8 @@ enum RemoteEndpointTester {
         while base.hasSuffix("/") { base.removeLast() }
         guard !base.isEmpty else { return "" }
         if !base.contains("://") { base = "https://" + base }
-        for suffix in ["/chat/completions", "/completions"] where base.hasSuffix(suffix) {
+        for suffix in ["/chat/completions", "/completions", "/messages"]
+        where base.hasSuffix(suffix) {
             base.removeLast(suffix.count)
             break
         }
@@ -54,17 +73,47 @@ enum RemoteEndpointTester {
         return base
     }
 
-    /// The auth headers a provider expects. Anthropic's native model listing
-    /// only accepts `x-api-key`, while its chat completions take the bearer
-    /// token — sending both satisfies either, and other hosts ignore the rest.
+    static func securityError(baseURL: String, apiKey: String) -> String? {
+        let base = normalizeBaseURL(baseURL)
+        guard let url = URL(string: base),
+              let scheme = url.scheme?.lowercased(),
+              let host = url.host?.lowercased(),
+              ["http", "https"].contains(scheme)
+        else {
+            return "The endpoint must be a valid HTTP or HTTPS URL."
+        }
+        if url.user != nil || url.password != nil {
+            return "Put credentials in the API key field, not in the endpoint URL."
+        }
+        if url.query != nil || url.fragment != nil {
+            return "The endpoint URL cannot contain a query or fragment."
+        }
+        guard !apiKey.isEmpty, scheme != "https" else { return nil }
+        let isLoopback = host == "localhost"
+            || host == "::1"
+            || isIPv4Loopback(host)
+        return isLoopback ? nil : "API keys require HTTPS unless the endpoint is on this Mac."
+    }
+
+    private static func isIPv4Loopback(_ host: String) -> Bool {
+        let octets = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard octets.count == 4,
+              octets.first == "127",
+              octets.allSatisfy({ UInt8($0) != nil })
+        else { return false }
+        return true
+    }
+
+    /// The auth headers each provider's native API expects.
     static func authHeaders(apiKey: String, kind: ProviderKind) -> [String: String] {
         guard !apiKey.isEmpty else { return [:] }
-        var headers = ["Authorization": "Bearer \(apiKey)"]
         if kind.authStyle == "anthropic" {
-            headers["x-api-key"] = apiKey
-            headers["anthropic-version"] = "2023-06-01"
+            return [
+                "x-api-key": apiKey,
+                "anthropic-version": "2023-06-01",
+            ]
         }
-        return headers
+        return ["Authorization": "Bearer \(apiKey)"]
     }
 
     static func test(
@@ -74,6 +123,9 @@ enum RemoteEndpointTester {
         kind: ProviderKind = .custom
     ) async -> Outcome {
         let base = normalizeBaseURL(baseURL)
+        if let error = securityError(baseURL: base, apiKey: apiKey) {
+            return Outcome(ok: false, message: error)
+        }
         guard !base.isEmpty, let modelsURL = URL(string: base + "/models") else {
             return Outcome(ok: false, message: "That endpoint URL is not valid.")
         }
@@ -90,7 +142,7 @@ enum RemoteEndpointTester {
             request.setValue(value, forHTTPHeaderField: field)
         }
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await noRedirectSession.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             if (200..<300).contains(status) {
                 return Outcome(ok: true, message: "Connected — \(base) answered.")
@@ -105,7 +157,10 @@ enum RemoteEndpointTester {
                     kind: kind
                 )
             }
-            return Outcome(ok: false, message: failureMessage(status: status, data: data))
+            return Outcome(
+                ok: false,
+                message: failureMessage(status: status, data: data, apiKey: apiKey)
+            )
         } catch {
             return Outcome(ok: false, message: error.localizedDescription)
         }
@@ -117,7 +172,8 @@ enum RemoteEndpointTester {
         apiKey: String,
         kind: ProviderKind
     ) async -> Outcome {
-        guard let url = URL(string: base + "/chat/completions") else {
+        let path = kind.authStyle == "anthropic" ? "/messages" : "/chat/completions"
+        guard let url = URL(string: base + path) else {
             return Outcome(ok: false, message: "That endpoint URL is not valid.")
         }
         var request = URLRequest(url: url)
@@ -135,10 +191,13 @@ enum RemoteEndpointTester {
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await noRedirectSession.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             guard (200..<300).contains(status) else {
-                return Outcome(ok: false, message: failureMessage(status: status, data: data))
+                return Outcome(
+                    ok: false,
+                    message: failureMessage(status: status, data: data, apiKey: apiKey)
+                )
             }
             return Outcome(ok: true, message: "Connected — \(base) answered a chat probe.")
         } catch {
@@ -146,9 +205,12 @@ enum RemoteEndpointTester {
         }
     }
 
-    private static func failureMessage(status: Int, data: Data) -> String {
-        let body = String(data: data.prefix(300), encoding: .utf8)?
+    private static func failureMessage(status: Int, data: Data, apiKey: String) -> String {
+        var body = String(data: data.prefix(300), encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !apiKey.isEmpty {
+            body = body.replacingOccurrences(of: apiKey, with: "[redacted]")
+        }
         let hint = switch status {
         case 401, 403: "The endpoint rejected the API key"
         case 404: "Nothing answered at that path"

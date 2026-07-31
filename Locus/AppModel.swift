@@ -1147,6 +1147,11 @@ final class AppModel: ObservableObject {
     }
 
     func selectModel(_ model: String) {
+        if isBusy {
+            pendingProviderSwitch = (activeAccount?.id, model)
+            showToast("Switching to \(model) after this turn")
+            return
+        }
         guard backend.send(["type": "set_model", "model": model]) else {
             showToast("Reconnect before switching models")
             return
@@ -1227,6 +1232,14 @@ final class AppModel: ObservableObject {
     /// editor so an abandoned sheet leaves nothing behind; `apiKey` nil means
     /// "keep the saved one".
     func saveProviderAccount(_ account: ProviderAccount, apiKey: String?) {
+        let effectiveKey = apiKey ?? Keychain.get(account: account.keychainAccount) ?? ""
+        if let error = RemoteEndpointTester.securityError(
+            baseURL: account.resolvedBaseURL,
+            apiKey: effectiveKey
+        ) {
+            showToast(error)
+            return
+        }
         var updated = account
         updated.name = ProviderAccountStore.uniqueName(
             account.name,
@@ -2621,7 +2634,6 @@ final class AppModel: ObservableObject {
             flushPendingTokens()
             finalizeStreamingBlocks()
             resolveDanglingPermissions()
-            isBusy = false
             pendingRetry = false
             planApprovalPending = false
             planTodosChangedThisTurn = false
@@ -2637,10 +2649,17 @@ final class AppModel: ObservableObject {
                     text: annotatingRejectedKey(event["message"] as? String ?? "Unknown agent error")
                 )
             )
-            // A turn that failed still ended. Held switches must drain here
-            // too: one of them may be a revoked key the agent is still
-            // holding, and dropping it keeps that credential in use.
-            applyPendingProviderSwitchIfNeeded()
+            // `error` describes the failed operation; the backend still emits
+            // `turn_done` after it has finished unwinding. Stay busy until that
+            // terminal event so queued messages and state changes cannot race
+            // the worker's final session writes.
+
+        case "command_error":
+            let message = annotatingRejectedKey(
+                event["message"] as? String ?? "The command was rejected."
+            )
+            blocks.append(ChatBlock(kind: .error, text: message))
+            showToast(message)
 
         case "slash_result":
             isBusy = false

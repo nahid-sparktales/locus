@@ -8,11 +8,13 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 import time
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from ollama_code import config as config_mod
 from ollama_code import sessions as sessions_mod
@@ -47,6 +49,17 @@ def test_config_is_isolated_from_the_real_home(isolated_home):
     config_mod.save_config({"model": "sentinel"})
     assert (isolated_home / "config.json").exists()
     assert config_mod.load_config()["model"] == "sentinel"
+
+
+def test_provider_keys_are_consumed_from_the_environment(monkeypatch):
+    monkeypatch.setenv("LOCUS_REMOTE_API_KEY", "secret-from-env")
+    monkeypatch.setenv("OPENAI_API_KEY", "unused-copy")
+
+    config = config_mod.load_config()
+
+    assert config["remote_api_key"] == "secret-from-env"
+    assert "LOCUS_REMOTE_API_KEY" not in os.environ
+    assert "OPENAI_API_KEY" not in os.environ
 
 
 @pytest.fixture
@@ -113,9 +126,49 @@ def test_multi_edit_is_atomic(ctx, tmp_path):
     assert (tmp_path / "m.txt").read_text() == "ALPHA\nBETA\n"
 
 
+def test_atomic_edit_failure_preserves_original_and_removes_temp(
+    ctx,
+    tmp_path,
+    monkeypatch,
+):
+    from ollama_code import tools as tools_mod
+
+    path = tmp_path / "stable.txt"
+    path.write_text("original")
+
+    def fail_replace(source, destination):
+        raise OSError("simulated disk failure")
+
+    monkeypatch.setattr(tools_mod.os, "replace", fail_replace)
+    result = execute_tool(
+        "edit_file",
+        {"path": "stable.txt", "old_string": "original", "new_string": "changed"},
+        ctx,
+    )
+
+    assert result.startswith("Error")
+    assert path.read_text() == "original"
+    assert list(tmp_path.glob(".stable.txt.*.tmp")) == []
+
+
 def test_read_file_rejects_binary(ctx, tmp_path):
     (tmp_path / "bin.dat").write_bytes(b"\x00\x01\x02binary")
     assert "binary" in execute_tool("read_file", {"path": "bin.dat"}, ctx)
+
+
+def test_text_tools_bound_individual_file_reads(ctx, tmp_path):
+    from ollama_code import tools as tools_mod
+
+    large = tmp_path / "large.txt"
+    with large.open("wb") as handle:
+        handle.seek(tools_mod.MAX_TEXT_FILE_BYTES)
+        handle.write(b"x")
+
+    read = execute_tool("read_file", {"path": "large.txt"}, ctx)
+    grep = execute_tool("grep", {"path": ".", "pattern": "x"}, ctx)
+
+    assert "text-read limit" in read
+    assert "large.txt" not in grep
 
 
 def test_grep_and_glob_respect_cwd(ctx, tmp_path):
@@ -170,6 +223,68 @@ def test_write_file_refuses_to_follow_a_symlink(ctx, tmp_path):
     assert outside.read_text() == "original"
 
 
+def test_all_edit_tools_refuse_a_symlinked_workspace_parent(ctx, tmp_path):
+    target = tmp_path / "real"
+    target.mkdir()
+    original = target / "a.txt"
+    original.write_text("one")
+    link = tmp_path / "linked"
+    link.symlink_to(target, target_is_directory=True)
+
+    edit = execute_tool(
+        "edit_file",
+        {"path": "linked/a.txt", "old_string": "one", "new_string": "two"},
+        ctx,
+    )
+    multi = execute_tool(
+        "multi_edit",
+        {
+            "path": "linked/a.txt",
+            "edits": [{"old_string": "one", "new_string": "three"}],
+        },
+        ctx,
+    )
+    write = execute_tool(
+        "write_file",
+        {"path": "linked/new.txt", "content": "hidden target"},
+        ctx,
+    )
+
+    assert all(result.startswith("Error") for result in (edit, multi, write))
+    assert original.read_text() == "one"
+    assert not (target / "new.txt").exists()
+    _, detail = build_preview("read_file", {"path": "linked/a.txt"}, ctx)
+    assert "resolves to:" in detail
+
+
+def test_recursive_read_tools_do_not_follow_workspace_symlinks(ctx, tmp_path):
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("do not expose")
+    link = tmp_path / "linked"
+    link.symlink_to(outside, target_is_directory=True)
+
+    globbed = execute_tool(
+        "glob",
+        {"pattern": "linked/**/*"},
+        ctx,
+    )
+    grepped = execute_tool(
+        "grep",
+        {"pattern": "do not expose", "path": "."},
+        ctx,
+    )
+    listed = execute_tool(
+        "list_dir",
+        {"path": ".", "depth": 3},
+        ctx,
+    )
+
+    assert "secret.txt" not in globbed
+    assert "do not expose" not in grepped
+    assert "secret.txt" not in listed
+
+
 def test_bash_timeout_kills_the_whole_process_group(ctx, tmp_path):
     marker = tmp_path / "still-running.txt"
     # The shell exits at once; without a process-group kill the background
@@ -179,6 +294,25 @@ def test_bash_timeout_kills_the_whole_process_group(ctx, tmp_path):
     assert "timed out" in result
     time.sleep(4)
     assert not marker.exists(), "a child process outlived the timeout"
+
+
+def test_bash_stop_terminates_the_process_group_promptly(tmp_path):
+    stop = threading.Event()
+    ctx = ToolContext(cwd=str(tmp_path), should_stop=stop.is_set)
+    result = {}
+    worker = threading.Thread(
+        target=lambda: result.setdefault(
+            "text",
+            execute_tool("bash", {"command": "sleep 30"}, ctx),
+        )
+    )
+    worker.start()
+    time.sleep(0.2)
+    stop.set()
+    worker.join(2)
+
+    assert not worker.is_alive()
+    assert "interrupted" in result["text"]
 
 
 def test_web_fetch_identifies_itself_by_its_real_name(monkeypatch, tmp_path):
@@ -194,8 +328,15 @@ def test_web_fetch_identifies_itself_by_its_real_name(monkeypatch, tmp_path):
 
     seen = {}
 
-    def fake_get(url, timeout=None, headers=None):
+    def fake_get(
+        url,
+        timeout=None,
+        headers=None,
+        stream=None,
+        allow_redirects=None,
+    ):
         seen["headers"] = headers or {}
+        seen["allow_redirects"] = allow_redirects
         return FakeResponse(text="<html><body>hello</body></html>")
 
     monkeypatch.setattr(requests, "get", fake_get)
@@ -203,6 +344,7 @@ def test_web_fetch_identifies_itself_by_its_real_name(monkeypatch, tmp_path):
 
     agent = seen["headers"]["User-Agent"]
     assert agent == ollama_code.USER_AGENT
+    assert seen["allow_redirects"] is False
     assert ollama_code.__version__ in agent
     assert agent.startswith("Locus-Agent/")
     # The old literal, and anything claiming to be a client we are not.
@@ -210,6 +352,77 @@ def test_web_fetch_identifies_itself_by_its_real_name(monkeypatch, tmp_path):
     assert "0.2" not in agent
     for impostor in ("claude", "codex", "kimi", "cursor", "curl", "mozilla"):
         assert impostor not in agent.lower()
+
+
+def test_web_fetch_refuses_redirects_and_oversized_responses(monkeypatch, tmp_path):
+    import requests
+
+    from ollama_code import tools as tools_mod
+
+    ctx = ToolContext(cwd=str(tmp_path))
+    monkeypatch.setattr(
+        requests,
+        "get",
+        lambda *args, **kwargs: FakeResponse(status_code=302),
+    )
+    assert "redirects" in execute_tool(
+        "web_fetch",
+        {"url": "https://approved.example"},
+        ctx,
+    )
+
+    monkeypatch.setattr(
+        requests,
+        "get",
+        lambda *args, **kwargs: FakeResponse(
+            text="x" * (tools_mod.MAX_WEB_FETCH_BYTES + 1)
+        ),
+    )
+    assert "safety limit" in execute_tool(
+        "web_fetch",
+        {"url": "https://large.example"},
+        ctx,
+    )
+
+
+def test_web_fetch_stop_closes_a_stalled_response(monkeypatch, tmp_path):
+    import requests
+
+    class StalledResponse(FakeResponse):
+        def __init__(self):
+            super().__init__()
+            self.closed = threading.Event()
+
+        def iter_content(self, chunk_size=64 * 1024):
+            self.closed.wait(2)
+            return iter(())
+
+        def close(self):
+            self.closed.set()
+
+    response = StalledResponse()
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
+    stop = threading.Event()
+    ctx = ToolContext(cwd=str(tmp_path), should_stop=stop.is_set)
+    result = {}
+    worker = threading.Thread(
+        target=lambda: result.setdefault(
+            "text",
+            execute_tool(
+                "web_fetch",
+                {"url": "https://stalled.example"},
+                ctx,
+            ),
+        )
+    )
+    worker.start()
+    time.sleep(0.1)
+    stop.set()
+    worker.join(1)
+
+    assert not worker.is_alive()
+    assert response.closed.is_set()
+    assert "interrupted" in result["text"]
 
 
 # --------------------------------------------------------------- permissions
@@ -260,6 +473,30 @@ def test_deny_list_resists_wrappers_and_chaining():
     for command in blocked:
         assert perms.blocked_reason("bash", {"command": command}) is not None, command
     for command in ["ls -la", "rm -rf ./build", "grep rm -rf ."]:
+        assert perms.blocked_reason("bash", {"command": command}) is None, command
+
+
+def test_default_deny_list_resists_option_reordering_and_nested_shells():
+    perms = PermissionManager(
+        deny_commands=["rm -rf /", "mkfs", "dd if=", ":(){"]
+    )
+    blocked = [
+        "rm -fr /",
+        "rm --recursive --force -- /",
+        "bash -c 'rm -rf /'",
+        "eval 'rm -rf /'",
+        "sudo -u root rm -rf /",
+        "sudo --user=root env -i rm --recursive --force /",
+        "env -u PATH /bin/rm -fr /",
+        "nohup command -- rm -rf /",
+        "xargs -0 rm -rf /",
+        "`printf rm` -rf /",
+        "sudo /sbin/mkfs.ext4 /dev/disk9",
+        "env dd bs=1m if=/dev/zero of=/dev/disk9",
+    ]
+    for command in blocked:
+        assert perms.blocked_reason("bash", {"command": command}) is not None, command
+    for command in ["echo 'rm -rf /'", "printf '%s' mkfs", "rm -rf ./build"]:
         assert perms.blocked_reason("bash", {"command": command}) is None, command
 
 
@@ -417,7 +654,11 @@ def test_session_append_is_thread_safe(tmp_path):
     for t in threads:
         t.join()
 
-    lines = [l for l in store.path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    lines = [
+        line
+        for line in store.path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     for line in lines:
         json.loads(line)  # raises if a write was torn
     assert len(lines) == 20 * 5 + 1  # + the meta header
@@ -461,6 +702,7 @@ class FakeResponse:
         self._payload = payload
         self._lines = lines or []
         self.text = text
+        self.encoding = "utf-8"
 
     def json(self):
         if self._payload is None:
@@ -469,6 +711,17 @@ class FakeResponse:
 
     def iter_lines(self, decode_unicode=False):
         return iter(self._lines)
+
+    def iter_content(self, chunk_size=64 * 1024):
+        raw = self.text.encode(self.encoding)
+        return (
+            raw[index : index + chunk_size]
+            for index in range(0, len(raw), chunk_size)
+        )
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
 
     def __enter__(self):
         return self
@@ -490,6 +743,10 @@ def test_endpoint_urls_are_normalized():
         "abc123.us-east-1.aws.endpoints.huggingface.cloud",
     ]:
         assert normalize_base_url(given) == expected, given
+    assert (
+        normalize_base_url("https://api.anthropic.com/v1/messages")
+        == "https://api.anthropic.com/v1"
+    )
     assert normalize_base_url("") == ""
 
 
@@ -498,7 +755,7 @@ def test_remote_client_sends_bearer_token(monkeypatch):
 
     seen = {}
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, headers=None, timeout=None, allow_redirects=None):
         seen["url"] = url
         seen["headers"] = headers or {}
         return FakeResponse(payload={"data": [{"id": "meta-llama/Llama-3.1-8B-Instruct"}]})
@@ -518,7 +775,7 @@ def test_remote_client_adds_anthropic_headers_for_that_auth_style(monkeypatch):
 
     seen = {}
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, headers=None, timeout=None, allow_redirects=None):
         seen["headers"] = headers or {}
         return FakeResponse(payload={"data": [{"id": "claude-sonnet-4-5"}]})
 
@@ -528,9 +785,7 @@ def test_remote_client_adds_anthropic_headers_for_that_auth_style(monkeypatch):
     )
     client.list_models()
 
-    # The bearer token still travels: chat completions authenticate with it,
-    # and only the native model listing needs the pair below.
-    assert seen["headers"]["Authorization"] == "Bearer sk-ant-secret"
+    assert "Authorization" not in seen["headers"]
     assert seen["headers"]["x-api-key"] == "sk-ant-secret"
     assert seen["headers"]["anthropic-version"] == remote_mod.ANTHROPIC_VERSION
 
@@ -551,6 +806,42 @@ def test_remote_client_identifies_itself_by_its_real_name():
         assert impostor not in agent, f"must not claim to be {impostor}"
 
 
+def test_remote_credentials_require_https_except_on_loopback():
+    from ollama_code import remote as remote_mod
+
+    with pytest.raises(ValueError, match="HTTPS"):
+        remote_mod.RemoteClient("http://provider.example/v1", api_key="secret")
+    assert remote_mod.RemoteClient("http://provider.example/v1").base_url
+    assert remote_mod.RemoteClient(
+        "http://127.0.0.1:8000/v1",
+        api_key="secret",
+    ).base_url
+    with pytest.raises(ValueError, match="API key field"):
+        remote_mod.RemoteClient("https://name:secret@provider.example/v1")
+
+
+def test_rejected_remote_transport_leaves_the_current_provider_intact(tmp_path):
+    core = AgentCore(cwd=str(tmp_path), config={"model": "test-model"})
+    before = (core.provider, core.host, core.model)
+
+    with pytest.raises(ValueError, match="HTTPS"):
+        core.use_remote(
+            "http://provider.example/v1",
+            api_key="secret",
+            model="remote-model",
+        )
+
+    assert (core.provider, core.host, core.model) == before
+    with pytest.raises(ValueError, match="context_window"):
+        core.use_remote(
+            "https://provider.example/v1",
+            api_key="secret",
+            model="remote-model",
+            context_window_tokens=32,
+        )
+    assert (core.provider, core.host, core.model) == before
+
+
 def test_remote_chat_sends_the_user_agent(monkeypatch):
     """The streaming POST is the request that spends the subscription."""
     from ollama_code import USER_AGENT
@@ -558,7 +849,14 @@ def test_remote_chat_sends_the_user_agent(monkeypatch):
 
     seen = {}
 
-    def fake_post(url, headers=None, json=None, stream=None, timeout=None):
+    def fake_post(
+        url,
+        headers=None,
+        json=None,
+        stream=None,
+        timeout=None,
+        allow_redirects=None,
+    ):
         seen["headers"] = headers or {}
         return FakeResponse(lines=_sse([{"choices": [{"delta": {"content": "hi"}}]}]))
 
@@ -569,6 +867,111 @@ def test_remote_chat_sends_the_user_agent(monkeypatch):
     client.chat_stream(model="kimi-for-coding", messages=[{"role": "user", "content": "hi"}])
 
     assert seen["headers"]["User-Agent"] == USER_AGENT
+
+
+def test_anthropic_uses_native_messages_stream_and_tool_schema(monkeypatch):
+    from ollama_code import remote as remote_mod
+
+    seen = {}
+    events = [
+        {
+            "type": "message_start",
+            "message": {"usage": {"input_tokens": 11}},
+        },
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "native reply"},
+        },
+        {
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {"type": "thinking", "thinking": ""},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 1,
+            "delta": {"type": "thinking_delta", "thinking": "private reasoning"},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 1,
+            "delta": {"type": "signature_delta", "signature": "signed-state"},
+        },
+        {
+            "type": "content_block_start",
+            "index": 2,
+            "content_block": {
+                "type": "tool_use",
+                "id": "toolu_native_1",
+                "name": "read_file",
+                "input": {},
+            },
+        },
+        {
+            "type": "content_block_delta",
+            "index": 2,
+            "delta": {"type": "input_json_delta", "partial_json": '{"path":"a.txt"}'},
+        },
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "tool_use"},
+            "usage": {"output_tokens": 7},
+        },
+        {"type": "message_stop"},
+    ]
+
+    def fake_post(url, **kwargs):
+        seen.update(url=url, **kwargs)
+        return FakeResponse(lines=_sse(events))
+
+    monkeypatch.setattr(remote_mod.requests, "post", fake_post)
+    client = remote_mod.RemoteClient(
+        "https://api.anthropic.com/v1",
+        api_key="sk-ant-secret",
+        model="claude-sonnet-5",
+    )
+    response = client.chat_stream(
+        "claude-sonnet-5",
+        [
+            {"role": "system", "content": "system instructions"},
+            {"role": "user", "content": "read it"},
+        ],
+        tools=[{
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read a file",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }],
+    )
+
+    assert seen["url"] == "https://api.anthropic.com/v1/messages"
+    assert seen["allow_redirects"] is False
+    assert seen["headers"]["x-api-key"] == "sk-ant-secret"
+    assert "Authorization" not in seen["headers"]
+    assert seen["json"]["system"] == "system instructions"
+    assert seen["json"]["tools"][0]["input_schema"]["type"] == "object"
+    assert response.content == "native reply"
+    assert response.thinking == "private reasoning"
+    assert response.prompt_eval_count == 11
+    assert response.eval_count == 7
+    assert response.tool_calls[0].name == "read_file"
+    assert response.tool_calls[0].arguments == {"path": "a.txt"}
+    assert response.tool_calls[0].call_id == "toolu_native_1"
+    preserved = response.provider_fields["anthropic_content"]
+    assert preserved[1] == {
+        "type": "thinking",
+        "thinking": "private reasoning",
+        "signature": "signed-state",
+    }
+    assert preserved[2]["input"] == {"path": "a.txt"}
 
 
 def test_kimi_code_endpoints_survive_normalization():
@@ -592,6 +995,12 @@ def test_remote_auth_style_is_inferred_and_coerced():
     # Inferred from the host when unset, explicit when given, and anything
     # unrecognized falls back to a plain bearer token.
     assert remote_mod.RemoteClient("https://api.anthropic.com/v1").auth_style == "anthropic"
+    assert (
+        remote_mod.RemoteClient(
+            "https://api.anthropic.com.attacker.example/v1"
+        ).auth_style
+        == "bearer"
+    )
     assert remote_mod.RemoteClient("https://api.openai.com/v1").auth_style == "bearer"
     assert remote_mod.RemoteClient(
         "https://gateway.example", auth_style="anthropic"
@@ -676,7 +1085,11 @@ def test_remote_assembles_streamed_tool_calls(monkeypatch):
 
     lines = _sse([
         {"choices": [{"delta": {"tool_calls": [
-            {"index": 0, "function": {"name": "write_file", "arguments": '{"path"'}}
+            {
+                "index": 0,
+                "id": "call_openai_1",
+                "function": {"name": "write_file", "arguments": '{"path"'},
+            }
         ]}}]},
         {"choices": [{"delta": {"tool_calls": [
             {"index": 0, "function": {"arguments": ': "a.txt", "content": "hi"}'}}
@@ -694,6 +1107,7 @@ def test_remote_assembles_streamed_tool_calls(monkeypatch):
     call = resp.tool_calls[0]
     assert call.name == "write_file"
     assert call.arguments == {"path": "a.txt", "content": "hi"}
+    assert call.call_id == "call_openai_1"
 
 
 def test_remote_retries_without_tools_when_unsupported(monkeypatch):
@@ -701,7 +1115,14 @@ def test_remote_retries_without_tools_when_unsupported(monkeypatch):
 
     attempts = []
 
-    def fake_post(url, json=None, headers=None, stream=None, timeout=None):
+    def fake_post(
+        url,
+        json=None,
+        headers=None,
+        stream=None,
+        timeout=None,
+        allow_redirects=None,
+    ):
         attempts.append("tools" in (json or {}))
         if "tools" in (json or {}):
             return FakeResponse(
@@ -724,19 +1145,110 @@ def test_remote_retries_without_tools_when_unsupported(monkeypatch):
     assert "rejected tool calling" in resp.content
 
 
+def test_remote_stream_interrupt_closes_a_stalled_response(monkeypatch):
+    from ollama_code import remote as remote_mod
+
+    class StalledResponse(FakeResponse):
+        def __init__(self):
+            super().__init__()
+            self.closed = threading.Event()
+
+        def iter_lines(self, decode_unicode=True):
+            self.closed.wait(2)
+            return iter(())
+
+        def close(self):
+            self.closed.set()
+
+    response = StalledResponse()
+    monkeypatch.setattr(remote_mod.requests, "post", lambda *a, **k: response)
+    stop = threading.Event()
+    result = {}
+    worker = threading.Thread(
+        target=lambda: result.setdefault(
+            "response",
+            remote_mod.RemoteClient(
+                "https://endpoint.example",
+                model="m",
+            ).chat_stream(
+                "m",
+                [{"role": "user", "content": "hi"}],
+                should_stop=stop.is_set,
+            ),
+        )
+    )
+    worker.start()
+    time.sleep(0.1)
+    stop.set()
+    worker.join(1)
+
+    assert not worker.is_alive()
+    assert response.closed.is_set()
+    assert result["response"].done_reason == "interrupted"
+
+
 def test_remote_message_conversion_includes_tool_calls():
-    from ollama_code.remote import _to_openai_message
+    from ollama_code.remote import _to_anthropic_messages, _to_openai_message
 
     converted = _to_openai_message({
         "role": "assistant",
         "content": "",
-        "tool_calls": [{"function": {"name": "bash", "arguments": {"command": "ls"}}}],
+        "reasoning_content": "provider-required state",
+        "tool_calls": [{
+            "id": "call_123",
+            "function": {"name": "bash", "arguments": {"command": "ls"}},
+        }],
     })
     assert converted["tool_calls"][0]["function"]["name"] == "bash"
+    assert converted["tool_calls"][0]["id"] == "call_123"
+    assert converted["reasoning_content"] == "provider-required state"
     assert json.loads(converted["tool_calls"][0]["function"]["arguments"]) == {"command": "ls"}
 
-    tool_result = _to_openai_message({"role": "tool", "name": "bash", "content": "out"})
-    assert tool_result["role"] == "tool" and tool_result["tool_call_id"] == "bash"
+    tool_result = _to_openai_message({
+        "role": "tool",
+        "name": "bash",
+        "tool_call_id": "call_123",
+        "content": "out",
+    })
+    assert tool_result["role"] == "tool"
+    assert tool_result["tool_call_id"] == "call_123"
+
+    _, anthropic = _to_anthropic_messages([{
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{
+            "id": "call_123",
+            "function": {"name": "bash", "arguments": {"command": "ls"}},
+        }],
+    }, {
+        "role": "tool",
+        "name": "bash",
+        "tool_call_id": "call_123",
+        "content": "out",
+    }])
+    assert anthropic[0]["content"][0]["id"] == "call_123"
+    assert anthropic[1]["content"][0]["tool_use_id"] == "call_123"
+
+    preserved = [{
+        "type": "thinking",
+        "thinking": "required state",
+        "signature": "signed-state",
+    }, {
+        "type": "tool_use",
+        "id": "call_123",
+        "name": "bash",
+        "input": {"command": "ls"},
+    }]
+    _, anthropic = _to_anthropic_messages([{
+        "role": "assistant",
+        "content": "",
+        "anthropic_content": preserved,
+        "tool_calls": [{
+            "id": "call_123",
+            "function": {"name": "bash", "arguments": {"command": "ls"}},
+        }],
+    }])
+    assert anthropic[0]["content"] == preserved
 
 
 def test_core_switches_providers_and_keeps_keys_out_of_disk(tmp_path):
@@ -1031,6 +1543,32 @@ def test_terminal_run_does_not_block_the_chat(client, tmp_path):
         svc.terminal.cancel_all(force=True)
 
 
+def test_terminal_record_stays_with_the_session_where_it_started(client):
+    svc = client.app.state.service
+    original = svc.core.session
+    with client.websocket_connect("/ws/chat") as ws:
+        ws.receive_json()
+        ws.receive_json()
+        ws.send_json({
+            "type": "terminal_run",
+            "run_id": "session-bound",
+            "command": "sleep 0.2; echo finished",
+        })
+        while ws.receive_json().get("type") != "terminal_started":
+            pass
+
+        ws.send_json({"type": "new_session", "reason": "new_session"})
+        assert any(event["type"] == "session_started" for event in drain(ws))
+        replacement = svc.core.session
+        assert replacement.session_id != original.session_id
+
+        time.sleep(0.4)
+        drain(ws)
+
+    assert '"run_id": "session-bound"' in original.path.read_text()
+    assert '"run_id": "session-bound"' not in replacement.path.read_text()
+
+
 def test_terminal_ws_roundtrip_and_unknown_run(client):
     with client.websocket_connect("/ws/chat") as ws:
         ws.receive_json()
@@ -1224,6 +1762,27 @@ def test_git_endpoints_are_reachable_and_origin_guarded(client):
     ).status_code == 403
 
 
+def test_local_service_capability_guards_http_and_websocket(client):
+    app = client.app
+    app.state.auth_token = "test-capability"
+    try:
+        assert client.get("/api/health").status_code == 401
+        assert client.get(
+            "/api/health",
+            headers={"X-Locus-Token": "test-capability"},
+        ).status_code == 200
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/ws/chat"):
+                pass
+        with client.websocket_connect(
+            "/ws/chat",
+            headers={"X-Locus-Token": "test-capability"},
+        ) as ws:
+            assert ws.receive_json()["type"] == "session_info"
+    finally:
+        app.state.auth_token = ""
+
+
 def test_git_endpoints_work_while_the_agent_is_busy(client):
     from concurrent.futures import Future
 
@@ -1356,6 +1915,26 @@ def test_changing_the_window_mid_turn_is_refused_before_anything_is_applied(clie
     assert config_mod.non_negative_int(svc.core.config.get("context_window")) != 4_096
 
 
+def test_every_rest_state_mutation_is_rejected_while_busy(client):
+    from concurrent.futures import Future
+
+    svc = client.app.state.service
+    svc.turn_future = Future()
+    session_id = svc.core.session.session_id
+    requests = [
+        client.post("/api/config", json={"model": "other"}),
+        client.post("/api/provider", json={"provider": "ollama"}),
+        client.post("/api/permissions", json={"mode": "bypass"}),
+        client.post("/api/sessions/new", json={"reason": "test"}),
+        client.delete("/api/sessions"),
+        client.post("/api/sessions/restore", json={}),
+    ]
+
+    assert all(response.status_code == 409 for response in requests)
+    assert svc.core.session.session_id == session_id
+    assert svc.core.perms.mode == "ask"
+
+
 def test_new_session_returns_session_info(client):
     before = client.get("/api/sessions").json()["current"]
     body = client.post("/api/sessions/new", json={"reason": "clear_chat"}).json()
@@ -1453,6 +2032,10 @@ def test_reading_outside_the_workspace_requires_permission(tmp_path):
     core = _core(workspace, [
         ChatResponse(tool_calls=[ToolCall("read_file", {"path": str(secret)})], done=True),
         ChatResponse(tool_calls=[ToolCall("read_file", {"path": "inside.txt"})], done=True),
+        ChatResponse(
+            tool_calls=[ToolCall("glob", {"pattern": str(secret.parent / "*")})],
+            done=True,
+        ),
         ChatResponse(content_parts=["done"], done=True),
     ])
     events = []
@@ -1464,7 +2047,8 @@ def test_reading_outside_the_workspace_requires_permission(tmp_path):
     proposals = [e for e in events if e["type"] == "tool_call_proposed"]
     assert proposals[0]["auto"] is False, "a file outside the workspace must ask"
     assert proposals[1]["auto"] is True, "a file inside the workspace stays automatic"
-    assert asked == ["read_file"]
+    assert proposals[2]["auto"] is False, "an absolute glob outside the workspace must ask"
+    assert asked == ["read_file", "glob"]
 
 
 def test_tools_and_permissions_endpoints(client):
@@ -1509,7 +2093,48 @@ def test_websocket_sends_session_info_and_handles_messages(client):
         assert started[0]["session_info"]["session_id"] != first["session_id"]
 
         ws.send_json({"type": "bogus"})
-        assert [e["type"] for e in drain(ws)] == ["error"]
+        assert [e["type"] for e in drain(ws)] == ["command_error"]
+
+
+def test_replaced_websocket_does_not_interrupt_the_active_turn(client, monkeypatch):
+    svc = client.app.state.service
+    interrupts: list[bool] = []
+    monkeypatch.setattr(svc.core, "interrupt", lambda: interrupts.append(True))
+
+    with client.websocket_connect("/ws/chat") as first:
+        first.receive_json()
+        first.receive_json()
+        with client.websocket_connect("/ws/chat") as second:
+            second.receive_json()
+            second.receive_json()
+            time.sleep(0.05)
+            assert interrupts == []
+
+
+def test_reconnect_replays_events_queued_during_the_socket_gap(client):
+    svc = client.app.state.service
+    with client.websocket_connect("/ws/chat") as first:
+        first.receive_json()
+        first.receive_json()
+
+    svc.queue_event({"type": "note", "text": "arrived during reconnect"})
+
+    with client.websocket_connect("/ws/chat") as second:
+        second.receive_json()
+        second.receive_json()
+        assert second.receive_json() == {
+            "type": "note",
+            "text": "arrived during reconnect",
+        }
+
+
+def test_nonloopback_server_bind_requires_a_capability():
+    from ollama_code.server import _is_loopback_bind
+
+    for host in ("127.0.0.1", "::1", "[::1]", "localhost"):
+        assert _is_loopback_bind(host)
+    for host in ("0.0.0.0", "::", "192.0.2.10", "agent.example"):
+        assert not _is_loopback_bind(host)
 
 
 def test_websocket_set_cwd_and_model(client, tmp_path):
@@ -1525,6 +2150,58 @@ def test_websocket_set_cwd_and_model(client, tmp_path):
 
         ws.send_json({"type": "set_model", "model": "test-model"})
         assert any(e.get("type") == "session_info" for e in drain(ws))
+
+
+def test_websocket_state_commands_are_nonterminal_rejections_while_busy(client, tmp_path):
+    from concurrent.futures import Future
+
+    svc = client.app.state.service
+    original = (svc.core.cwd, svc.core.model, svc.core.session.session_id)
+    target = tmp_path / "other"
+    target.mkdir()
+    with client.websocket_connect("/ws/chat") as ws:
+        ws.receive_json()
+        assert ws.receive_json()["type"] == "terminal_state"
+        svc.turn_future = Future()
+        for message in [
+            {"type": "set_cwd", "path": str(target)},
+            {"type": "set_model", "model": "test-model"},
+            {"type": "set_permission_mode", "mode": "bypass"},
+            {"type": "clear"},
+            {"type": "new_session"},
+        ]:
+            ws.send_json(message)
+            events = drain(ws)
+            assert [event["type"] for event in events] == ["command_error"]
+            assert events[0]["operation"] == message["type"]
+
+    assert (svc.core.cwd, svc.core.model, svc.core.session.session_id) == original
+    assert svc.core.perms.mode == "ask"
+
+
+def test_websocket_rejects_malformed_and_oversized_messages(client, monkeypatch):
+    from ollama_code import server as server_mod
+
+    monkeypatch.setattr(server_mod, "MAX_USER_MESSAGE_CHARS", 5)
+    with client.websocket_connect("/ws/chat") as ws:
+        ws.receive_json()
+        ws.receive_json()
+
+        ws.send_json(["not", "an", "object"])
+        assert drain(ws)[0]["operation"] == "invalid"
+
+        ws.send_json({"type": "user_message", "text": "123456"})
+        event = drain(ws)[0]
+        assert event["type"] == "command_error"
+        assert event["operation"] == "user_message"
+
+
+def test_http_request_body_limit_is_enforced(client, monkeypatch):
+    from ollama_code import server as server_mod
+
+    monkeypatch.setattr(server_mod, "MAX_HTTP_BODY_BYTES", 4)
+    response = client.post("/api/config", json={"model": "test-model"})
+    assert response.status_code == 413
 
 
 # ----------------------------------------------------------------- agent loop
@@ -1686,7 +2363,8 @@ def test_retry_without_history_reports_an_error(tmp_path):
     events = []
     core.on_event(events.append)
     assert core.retry_last() is False
-    assert events[-1]["type"] == "error"
+    assert [event["type"] for event in events] == ["error", "turn_done"]
+    assert events[-1]["reason"] == "error"
 
 
 def test_new_session_emits_session_started_and_clears_state(tmp_path):
@@ -1812,9 +2490,10 @@ def test_chat_stream_sends_num_ctx_under_options(monkeypatch):
 
     seen = {}
 
-    def fake_post(url, json=None, stream=None, timeout=None):
+    def fake_post(url, json=None, stream=None, timeout=None, allow_redirects=None):
         seen["url"] = url
         seen["payload"] = json
+        seen["allow_redirects"] = allow_redirects
         return FakeResponse(lines=[
             '{"message":{"content":"hi"},"done":true,"done_reason":"stop"}'
         ])
@@ -1826,6 +2505,7 @@ def test_chat_stream_sends_num_ctx_under_options(monkeypatch):
 
     assert seen["url"] == "http://localhost:11434/api/chat"
     assert seen["payload"]["options"] == {"num_ctx": 49_152}
+    assert seen["allow_redirects"] is False
 
 
 def test_nothing_is_pinned_unless_the_user_asked_for_a_window(tmp_path):
@@ -1900,6 +2580,26 @@ def test_the_remote_provider_is_never_sent_num_ctx(tmp_path):
 
     assert core.client.seen_options == [None]
     assert core.context_limit == 32_768, "still budgeted against, just not sent"
+
+
+def test_remote_reasoning_state_is_preserved_for_the_next_request(tmp_path):
+    core = _core(tmp_path, [
+        ChatResponse(
+            content_parts=["answer"],
+            thinking_parts=["provider-required state"],
+            done=True,
+        ),
+    ])
+    core.provider = "remote"
+
+    core.run_turn("hi")
+
+    assistant = next(
+        message for message in reversed(core.messages)
+        if message.get("role") == "assistant"
+    )
+    assert assistant["reasoning_content"] == "provider-required state"
+    assert core.approx_tokens() >= len("provider-required state") // 4
 
 
 def test_an_unknown_window_is_left_unknown(tmp_path, monkeypatch):

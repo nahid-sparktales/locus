@@ -47,6 +47,12 @@ command -v xcodegen >/dev/null 2>&1 || {
 
 /bin/mkdir -p "${artifact_dir}"
 cd "${repo_root}"
+if [[ "${LOCUS_UPLOAD:-0}" == "1" ]] \
+    && [[ -n "$(/usr/bin/git status --porcelain)" ]]
+then
+    echo "error: App Store uploads must be built from a clean source tree." >&2
+    exit 1
+fi
 xcodegen generate >/dev/null
 
 xcodebuild -quiet \

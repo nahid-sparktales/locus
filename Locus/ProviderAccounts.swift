@@ -2,10 +2,8 @@ import Foundation
 
 /// A hosted model provider Locus knows how to talk to.
 ///
-/// All of them speak the OpenAI chat-completions wire format, which is what the
-/// agent's `RemoteClient` already implements — a provider is therefore a base
-/// URL, a way to present the key, and enough metadata to make the UI specific
-/// rather than generic.
+/// Most use OpenAI chat completions; Claude uses Anthropic's native Messages
+/// protocol. The agent adapter hides that difference from the rest of the app.
 enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     case claude
     case codex
@@ -103,11 +101,11 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     var curatedModels: [String] {
         switch self {
         case .claude:
-            ["claude-opus-4-1", "claude-sonnet-4-5", "claude-haiku-4-5"]
+            ["claude-opus-5", "claude-sonnet-5", "claude-fable-5", "claude-haiku-4-5"]
         case .codex:
-            ["gpt-5", "gpt-5-mini", "gpt-4.1", "o3"]
+            ["gpt-5.6", "gpt-5", "gpt-5-mini", "gpt-4.1", "o3"]
         case .kimi:
-            ["kimi-k2-0905-preview", "kimi-k2-turbo-preview", "moonshot-v1-128k"]
+            ["kimi-k3", "kimi-k2.7-code-highspeed", "kimi-k2.7-code", "kimi-k2.6"]
         case .kimiCode:
             // Order matters: `probeModel` takes the first, and this is the only
             // one every membership tier can reach. Leading with a higher tier
@@ -134,16 +132,26 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
         let name = model.lowercased()
         switch self {
         case .claude:
-            // Anthropic's current generation is 200K.
-            return name.hasPrefix("claude") ? 200_000 : nil
+            if name.contains("opus-5")
+                || name.contains("sonnet-5")
+                || name.contains("fable-5") {
+                return 1_000_000
+            }
+            if name.contains("haiku-4-5") { return 200_000 }
+            if name.hasPrefix("claude-") && name.contains("-4") { return 200_000 }
+            return nil
         case .codex:
-            if name.hasPrefix("gpt-5") { return 400_000 }
+            if name == "gpt-5.6" || name.hasPrefix("gpt-5.6-") { return 1_050_000 }
+            if name == "gpt-5" || name.hasPrefix("gpt-5-") { return 400_000 }
             if name.hasPrefix("gpt-4.1") { return 1_047_576 }
             if name.hasPrefix("o3") || name.hasPrefix("o4") { return 200_000 }
             return nil
         case .kimi, .kimiCode:
-            if name.hasPrefix("k3") || name.contains("256k") { return 256_000 }
-            if name.hasPrefix("kimi-k2") || name.hasPrefix("kimi-for-coding") { return 256_000 }
+            if name.contains("k3-256k") || name.contains("256k") { return 256_000 }
+            if name == "k3" || name.hasPrefix("kimi-k3") { return 1_000_000 }
+            if name.hasPrefix("kimi-k2") || name.hasPrefix("kimi-for-coding") {
+                return 256_000
+            }
             if name.contains("128k") { return 128_000 }
             return nil
         case .custom:

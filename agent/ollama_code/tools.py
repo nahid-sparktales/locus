@@ -5,26 +5,35 @@ local models (8B-class) can follow them reliably.
 """
 from __future__ import annotations
 
-import difflib
+import fcntl
 import fnmatch
 import glob as globmod
 import html as html_module
 import json
 import os
 import re
+import secrets
 import signal
+import stat
 import subprocess
 import tempfile
+import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from . import USER_AGENT
 
 MAX_OUTPUT = 30_000
+MAX_WEB_FETCH_BYTES = 2 * 1024 * 1024
+MAX_TEXT_FILE_BYTES = 8 * 1024 * 1024
 MAX_LIST_ENTRIES = 300
+MAX_DIRECTORY_SCAN = 5_000
 MAX_GREP_MATCHES = 200
 MAX_GLOB_RESULTS = 200
+MAX_GLOB_SCAN = 5_000
 BASH_TIMEOUT = 120
 
 IGNORE_DIRS = {
@@ -48,6 +57,11 @@ class ToolContext:
     cwd: str = ""
     #: Files read this turn, so edit_file can warn about blind edits.
     read_files: set[str] = field(default_factory=set)
+    #: Cooperative cancellation supplied by the agent turn.
+    should_stop: Callable[[], bool] | None = None
+
+    def stopped(self) -> bool:
+        return bool(self.should_stop and self.should_stop())
 
     def resolve(self, path: str) -> Path:
         """Resolve a possibly-relative path against the agent's cwd."""
@@ -71,6 +85,32 @@ class ToolContext:
             return False
         return target == root or root in target.parents
 
+    def symlink_component(self, path: Path) -> Path | None:
+        """First hidden symlink below the workspace, or a linked target."""
+        if path.is_symlink():
+            return path
+        if not self.cwd:
+            return None
+        lexical_root = Path(os.path.abspath(self.cwd))
+        resolved_root = lexical_root.resolve()
+        absolute = Path(os.path.abspath(path))
+        try:
+            relative = absolute.relative_to(lexical_root)
+        except ValueError:
+            try:
+                relative = absolute.relative_to(resolved_root)
+            except ValueError:
+                return None
+        current = resolved_root
+        for part in relative.parts:
+            current /= part
+            try:
+                if current.is_symlink():
+                    return current
+            except OSError:
+                return current
+        return None
+
 
 def _truncate(text: str, limit: int = MAX_OUTPUT) -> str:
     if len(text) <= limit:
@@ -83,6 +123,104 @@ def _as_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _atomic_write_text(
+    path: Path,
+    content: str,
+    workspace_root: Path | None = None,
+) -> None:
+    """Replace a text file atomically without following the final directory."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    directory_flags = os.O_RDONLY
+    directory_flags |= getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_NOFOLLOW", 0)
+    directory_fd = os.open(path.parent, directory_flags)
+    temporary_name = f".{path.name}.{secrets.token_hex(8)}.tmp"
+    try:
+        if workspace_root is not None:
+            opened_parent = _directory_path(directory_fd)
+            root = workspace_root.resolve()
+            if opened_parent is None or (
+                opened_parent != root and root not in opened_parent.parents
+            ):
+                raise OSError("the destination directory moved outside the workspace")
+        temporary_fd = os.open(
+            temporary_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=directory_fd,
+        )
+        with os.fdopen(temporary_fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            current = os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            current = None
+        if current is not None:
+            if stat.S_ISLNK(current.st_mode):
+                raise OSError("the destination became a symlink")
+            os.chmod(
+                temporary_name,
+                stat.S_IMODE(current.st_mode),
+                dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+        else:
+            os.chmod(
+                temporary_name,
+                0o644,
+                dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+        os.replace(
+            temporary_name,
+            path.name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        os.fsync(directory_fd)
+        temporary_name = ""
+    finally:
+        if temporary_name:
+            try:
+                os.unlink(temporary_name, dir_fd=directory_fd)
+            except OSError:
+                pass
+        os.close(directory_fd)
+
+
+def _directory_path(directory_fd: int) -> Path | None:
+    """Resolve an open directory descriptor for a post-open containment check."""
+    try:
+        raw = fcntl.fcntl(directory_fd, 50, b"\0" * 1024)
+        path = Path(raw.split(b"\0", 1)[0].decode())
+        if path.is_dir():
+            return path.resolve()
+    except (OSError, UnicodeDecodeError):
+        pass
+    for prefix in ("/dev/fd", "/proc/self/fd"):
+        try:
+            descriptor_path = f"{prefix}/{directory_fd}"
+            resolved = Path(os.path.realpath(descriptor_path))
+            if str(resolved) != descriptor_path and resolved.is_dir():
+                return resolved
+        except OSError:
+            continue
+    return None
+
+
+def _workspace_write_root(ctx: ToolContext, path: Path) -> Path | None:
+    if not ctx.cwd:
+        return None
+    lexical_root = Path(os.path.abspath(ctx.cwd))
+    try:
+        Path(os.path.abspath(path)).relative_to(lexical_root)
+    except ValueError:
+        return None
+    return lexical_root.resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -98,8 +236,22 @@ def _impl_read_file(args: dict[str, Any], ctx: ToolContext) -> str:
         return f"Error: file not found: {path}"
     if p.is_dir():
         return f"Error: {path} is a directory. Use list_dir instead."
+    if not p.is_file():
+        return f"Error: {path} is not a regular file."
     try:
-        raw = p.read_bytes()
+        size = p.stat().st_size
+        if size > MAX_TEXT_FILE_BYTES:
+            return (
+                f"Error: {path} is larger than the "
+                f"{MAX_TEXT_FILE_BYTES // (1024 * 1024)} MB text-read limit."
+            )
+        with p.open("rb") as handle:
+            raw = handle.read(MAX_TEXT_FILE_BYTES + 1)
+        if len(raw) > MAX_TEXT_FILE_BYTES:
+            return (
+                f"Error: {path} grew beyond the "
+                f"{MAX_TEXT_FILE_BYTES // (1024 * 1024)} MB text-read limit."
+            )
     except OSError as e:
         return f"Error reading {path}: {e}"
     if b"\0" in raw[:4096]:
@@ -131,16 +283,13 @@ def _impl_write_file(args: dict[str, Any], ctx: ToolContext) -> str:
         content = json.dumps(content, indent=2, ensure_ascii=False)
     p = ctx.resolve(path)
     existed = p.is_file()
-    if p.is_symlink():
-        # The permission preview showed this path; writing through a link
-        # would modify a different file than the one the user approved.
+    if link := ctx.symlink_component(p):
         return (
-            f"Error: {path} is a symlink. Write to its target explicitly if that "
-            "is really what you want."
+            f"Error: {path} crosses symlink {link}. Write to the resolved target "
+            "explicitly if that is really what you want."
         )
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content, encoding="utf-8")
+        _atomic_write_text(p, content, _workspace_write_root(ctx, p))
     except OSError as e:
         return f"Error writing {path}: {e}"
     ctx.read_files.add(str(p))
@@ -148,7 +297,13 @@ def _impl_write_file(args: dict[str, Any], ctx: ToolContext) -> str:
     return f"{verb} {p} ({len(content)} chars, {content.count(chr(10)) + 1} lines)."
 
 
-def _apply_edit(p: Path, old: str, new: str, replace_all: bool) -> str:
+def _apply_edit(
+    p: Path,
+    old: str,
+    new: str,
+    replace_all: bool,
+    workspace_root: Path | None = None,
+) -> str:
     text = p.read_text(encoding="utf-8", errors="replace")
     count = text.count(old)
     if count == 0:
@@ -161,7 +316,11 @@ def _apply_edit(p: Path, old: str, new: str, replace_all: bool) -> str:
             f"Error: old_string occurs {count} times in {p}; it must be unique. "
             "Include more surrounding context, or set replace_all to true."
         )
-    p.write_text(text.replace(old, new) if replace_all else text.replace(old, new, 1), encoding="utf-8")
+    _atomic_write_text(
+        p,
+        text.replace(old, new) if replace_all else text.replace(old, new, 1),
+        workspace_root,
+    )
     return f"replaced {count if replace_all else 1} occurrence(s)"
 
 
@@ -174,9 +333,20 @@ def _impl_edit_file(args: dict[str, Any], ctx: ToolContext) -> str:
     if old == new:
         return "Error: old_string and new_string are identical."
     p = ctx.resolve(path)
+    if link := ctx.symlink_component(p):
+        return (
+            f"Error: {path} crosses symlink {link}. Edit the resolved target "
+            "explicitly if that is really what you want."
+        )
     if not p.is_file():
         return f"Error: file not found: {path}"
-    result = _apply_edit(p, old, new, bool(args.get("replace_all")))
+    result = _apply_edit(
+        p,
+        old,
+        new,
+        bool(args.get("replace_all")),
+        _workspace_write_root(ctx, p),
+    )
     if result.startswith("Error"):
         return result
     return f"Edited {p}: {result} ({len(old)} -> {len(new)} chars)."
@@ -189,6 +359,11 @@ def _impl_multi_edit(args: dict[str, Any], ctx: ToolContext) -> str:
     if not path or not isinstance(edits, list) or not edits:
         return "Error: 'path' and a non-empty 'edits' list are required."
     p = ctx.resolve(path)
+    if link := ctx.symlink_component(p):
+        return (
+            f"Error: {path} crosses symlink {link}. Edit the resolved target "
+            "explicitly if that is really what you want."
+        )
     if not p.is_file():
         return f"Error: file not found: {path}"
     try:
@@ -218,7 +393,7 @@ def _impl_multi_edit(args: dict[str, Any], ctx: ToolContext) -> str:
         text = text.replace(old, new) if replace_all else text.replace(old, new, 1)
         applied += count if replace_all else 1
     try:
-        p.write_text(text, encoding="utf-8")
+        _atomic_write_text(p, text, _workspace_write_root(ctx, p))
     except OSError as e:
         return f"Error writing {path}: {e}"
     return f"Edited {p}: applied {len(edits)} edit(s), {applied} replacement(s)."
@@ -249,22 +424,15 @@ def _impl_bash(args: dict[str, Any], ctx: ToolContext) -> str:
             )
         except OSError as e:
             return f"Error running command: {e}"
-        timed_out = False
-        try:
-            proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            _kill_process_group(proc)
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                pass
+        stop_reason = _wait_interruptibly(proc, timeout, ctx)
         stdout = _read_capped(out_file)
         stderr = _read_capped(err_file)
 
-    if timed_out:
+    if stop_reason:
         partial = _truncate((stdout + stderr).strip(), 4000)
         suffix = f"\nPartial output:\n{partial}" if partial else ""
+        if stop_reason == "interrupted":
+            return f"Error: command interrupted and terminated.{suffix}"
         return f"Error: command timed out after {timeout}s and was terminated.{suffix}"
     out = stdout
     if stderr:
@@ -312,6 +480,30 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
     signal_process_group(proc, signal.SIGKILL)
 
 
+def _wait_interruptibly(
+    proc: subprocess.Popen,
+    timeout: int,
+    ctx: ToolContext,
+) -> str | None:
+    """Wait for a child while honoring Stop; return its forced-stop reason."""
+    deadline = time.monotonic() + timeout
+    while proc.poll() is None:
+        reason = None
+        if ctx.stopped():
+            reason = "interrupted"
+        elif time.monotonic() >= deadline:
+            reason = "timeout"
+        if reason:
+            _kill_process_group(proc)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            return reason
+        time.sleep(0.05)
+    return None
+
+
 def _impl_glob(args: dict[str, Any], ctx: ToolContext) -> str:
     pattern = str(args.get("pattern", "")).strip()
     if not pattern:
@@ -319,18 +511,23 @@ def _impl_glob(args: dict[str, Any], ctx: ToolContext) -> str:
     root = str(args.get("path") or ctx.cwd or ".")
     base = ctx.resolve(root) if root else Path(".")
     search = pattern if Path(pattern).is_absolute() else str(base / pattern)
+    timed: list[tuple[float, str]] = []
     try:
-        matches = globmod.glob(search, recursive=True)
+        for scanned, m in enumerate(globmod.iglob(search, recursive=True), 1):
+            if ctx.stopped():
+                return "Error: glob interrupted."
+            if scanned > MAX_GLOB_SCAN:
+                break
+            if any(part in IGNORE_DIRS for part in Path(m).parts):
+                continue
+            if ctx.symlink_component(Path(m)) is not None:
+                continue
+            try:
+                timed.append((Path(m).stat().st_mtime, m))
+            except OSError:
+                timed.append((0.0, m))
     except (re.error, ValueError) as e:
         return f"Error: bad pattern: {e}"
-    timed: list[tuple[float, str]] = []
-    for m in matches:
-        if any(part in IGNORE_DIRS for part in Path(m).parts):
-            continue
-        try:
-            timed.append((Path(m).stat().st_mtime, m))
-        except OSError:
-            timed.append((0.0, m))
     timed.sort(reverse=True)  # newest first
     if not timed:
         return f"No files match '{pattern}'."
@@ -356,24 +553,41 @@ def _impl_grep(args: dict[str, Any], ctx: ToolContext) -> str:
     if base.is_file():
         files = [base]
     elif base.is_dir():
-        for p in sorted(base.rglob("*")):
-            if len(files) >= 5000:
+        for root, directories, names in os.walk(base, followlinks=False):
+            if ctx.stopped():
+                return "Error: grep interrupted."
+            directories[:] = sorted(
+                name
+                for name in directories
+                if name not in IGNORE_DIRS
+                and not name.startswith(".")
+                and not (Path(root) / name).is_symlink()
+            )
+            for name in sorted(names):
+                p = Path(root) / name
+                if name.startswith(".") or p.is_symlink() or not p.is_file():
+                    continue
+                if glob_filter and not (
+                    p.match(glob_filter) or fnmatch.fnmatch(p.name, glob_filter)
+                ):
+                    continue
+                files.append(p)
+                if len(files) >= MAX_DIRECTORY_SCAN:
+                    break
+            if len(files) >= MAX_DIRECTORY_SCAN:
                 break
-            if not p.is_file():
-                continue
-            if any(part in IGNORE_DIRS for part in p.parts):
-                continue
-            if glob_filter and not (
-                p.match(glob_filter) or fnmatch.fnmatch(p.name, glob_filter)
-            ):
-                continue
-            files.append(p)
     else:
         return f"Error: path not found: {path}"
     matches: list[str] = []
     for f in files:
         try:
-            text = f.read_text(encoding="utf-8", errors="replace")
+            if f.stat().st_size > MAX_TEXT_FILE_BYTES:
+                continue
+            with f.open("rb") as handle:
+                raw = handle.read(MAX_TEXT_FILE_BYTES + 1)
+            if len(raw) > MAX_TEXT_FILE_BYTES:
+                continue
+            text = raw.decode("utf-8", errors="replace")
         except OSError:
             continue
         if "\0" in text[:2048]:
@@ -392,17 +606,31 @@ def _impl_list_dir(args: dict[str, Any], ctx: ToolContext) -> str:
     if not base.is_dir():
         return f"Error: not a directory: {path}"
     lines = [str(base) + "/"]
-    state = {"count": 0, "truncated": False}
+    state = {"count": 0, "scanned": 0, "truncated": False}
     max_depth = max(1, min(_as_int(args.get("depth"), 3) or 3, 6))
 
     def walk(d: Path, prefix: str, depth: int) -> None:
         if depth > max_depth or state["truncated"]:
             return
         try:
-            entries = sorted(d.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+            entries: list[Path] = []
+            for entry in d.iterdir():
+                if ctx.stopped():
+                    state["truncated"] = True
+                    return
+                state["scanned"] += 1
+                if state["scanned"] > MAX_DIRECTORY_SCAN:
+                    state["truncated"] = True
+                    break
+                if entry.name in IGNORE_DIRS or entry.name.startswith("."):
+                    continue
+                entries.append(entry)
+                if len(entries) > MAX_LIST_ENTRIES - state["count"]:
+                    state["truncated"] = True
+                    break
+            entries.sort(key=lambda p: (not p.is_dir(), p.name.lower()))
         except OSError:
             return
-        entries = [e for e in entries if e.name not in IGNORE_DIRS and not e.name.startswith(".")]
         for i, e in enumerate(entries):
             if state["count"] >= MAX_LIST_ENTRIES:
                 lines.append(prefix + "... [truncated]")
@@ -413,10 +641,14 @@ def _impl_list_dir(args: dict[str, Any], ctx: ToolContext) -> str:
             suffix = "/" if e.is_dir() else ""
             lines.append(prefix + connector + e.name + suffix)
             state["count"] += 1
-            if e.is_dir():
+            if e.is_dir() and not e.is_symlink():
                 walk(e, prefix + ("    " if last else "│   "), depth + 1)
 
     walk(base, "", 1)
+    if ctx.stopped():
+        return "Error: directory listing interrupted."
+    if state["truncated"] and not lines[-1].endswith("[truncated]"):
+        lines.append("... [truncated]")
     return "\n".join(lines)
 
 
@@ -447,12 +679,52 @@ def _impl_web_fetch(args: dict[str, Any], ctx: ToolContext) -> str:
         url = "https://" + url
     import requests
 
+    watcher_done = threading.Event()
+    watcher: threading.Thread | None = None
     try:
-        r = requests.get(url, timeout=20, headers={"User-Agent": USER_AGENT})
-        r.raise_for_status()
+        with requests.get(
+            url,
+            timeout=(10, 20),
+            headers={"User-Agent": USER_AGENT},
+            stream=True,
+            allow_redirects=False,
+        ) as response:
+            if ctx.should_stop is not None:
+                watcher = threading.Thread(
+                    target=_close_response_when_stopped,
+                    args=(response, ctx.should_stop, watcher_done),
+                    daemon=True,
+                )
+                watcher.start()
+            if 300 <= response.status_code < 400:
+                return (
+                    "Error fetching the approved URL: it redirects elsewhere. "
+                    "Fetch the final URL explicitly."
+                )
+            response.raise_for_status()
+            raw = bytearray()
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if ctx.stopped():
+                    return "Error: web fetch interrupted."
+                if not chunk:
+                    continue
+                if len(raw) + len(chunk) > MAX_WEB_FETCH_BYTES:
+                    return (
+                        "Error fetching the approved URL: response exceeds the "
+                        f"{MAX_WEB_FETCH_BYTES // (1024 * 1024)} MB safety limit."
+                    )
+                raw.extend(chunk)
+            if ctx.stopped():
+                return "Error: web fetch interrupted."
+            text = raw.decode(response.encoding or "utf-8", errors="replace")
     except Exception as e:  # noqa: BLE001 - surface any fetch failure to the model
+        if ctx.stopped():
+            return "Error: web fetch interrupted."
         return f"Error fetching {url}: {e}"
-    text = r.text
+    finally:
+        watcher_done.set()
+        if watcher is not None:
+            watcher.join(timeout=0.2)
     text = re.sub(r"(?is)<(script|style|noscript)[^>]*>.*?</\1>", " ", text)
     text = re.sub(r"(?s)<!--.*?-->", " ", text)
     text = re.sub(r"(?s)<[^>]+>", " ", text)
@@ -463,21 +735,40 @@ def _impl_web_fetch(args: dict[str, Any], ctx: ToolContext) -> str:
 
 
 def _run_git(ctx: ToolContext, *git_args: str) -> str:
-    try:
-        proc = subprocess.run(
-            ["git", *git_args],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            errors="replace",
-            cwd=ctx.cwd or None,
-        )
-    except FileNotFoundError:
-        return "Error: git is not installed."
-    except subprocess.TimeoutExpired:
+    with tempfile.TemporaryFile(mode="w+b") as out_file, \
+            tempfile.TemporaryFile(mode="w+b") as err_file:
+        try:
+            proc = subprocess.Popen(
+                ["git", *git_args],
+                stdout=out_file,
+                stderr=err_file,
+                cwd=ctx.cwd or None,
+                start_new_session=True,
+            )
+        except FileNotFoundError:
+            return "Error: git is not installed."
+        except OSError as e:
+            return f"Error running git: {e}"
+        stop_reason = _wait_interruptibly(proc, 30, ctx)
+        stdout = _read_capped(out_file)
+        stderr = _read_capped(err_file)
+    if stop_reason == "interrupted":
+        return "Error: git interrupted."
+    if stop_reason == "timeout":
         return "Error: git timed out."
-    out = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
+    out = stdout + (("\n" + stderr) if stderr else "")
     return _truncate(out.strip() or "(no output)")
+
+
+def _close_response_when_stopped(
+    response: Any,
+    should_stop: Callable[[], bool],
+    done: threading.Event,
+) -> None:
+    while not done.wait(0.05):
+        if should_stop():
+            response.close()
+            return
 
 
 def _impl_git_status(args: dict[str, Any], ctx: ToolContext) -> str:

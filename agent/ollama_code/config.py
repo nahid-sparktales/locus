@@ -7,6 +7,7 @@ from typing import Any
 from .paths import APP_DIR
 
 CONFIG_PATH = APP_DIR / "config.json"
+MAX_CONFIG_BYTES = 1024 * 1024
 
 DEFAULTS: dict[str, Any] = {
     "model": "",
@@ -99,21 +100,25 @@ def non_negative_int(value: Any) -> int:
     return number if number > 0 else 0
 
 
-def remote_api_key_from_env() -> str:
-    """First API key found in the environment, or an empty string."""
+def remote_api_key_from_env(consume: bool = False) -> str:
+    """First API key found in the environment, optionally removing all copies."""
     import os
 
+    resolved = ""
     for name in REMOTE_API_KEY_ENV:
         value = os.environ.get(name, "").strip()
-        if value:
-            return value
-    return ""
+        if value and not resolved:
+            resolved = value
+    if consume:
+        for name in REMOTE_API_KEY_ENV:
+            os.environ.pop(name, None)
+    return resolved
 
 
 def load_config() -> dict[str, Any]:
     cfg = dict(DEFAULTS)
     try:
-        if CONFIG_PATH.exists():
+        if CONFIG_PATH.exists() and CONFIG_PATH.stat().st_size <= MAX_CONFIG_BYTES:
             data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 cfg.update(data)
@@ -159,7 +164,9 @@ def load_config() -> dict[str, Any]:
     # startup, and refusing to start is how a user loses the ability to fix it.
     cfg["context_window"] = context_window(cfg.get("context_window"))
     if not cfg.get("remote_api_key"):
-        cfg["remote_api_key"] = remote_api_key_from_env()
+        # Keep provider credentials in process memory, but do not let shell
+        # tools or console children inherit them through os.environ.
+        cfg["remote_api_key"] = remote_api_key_from_env(consume=True)
     return cfg
 
 

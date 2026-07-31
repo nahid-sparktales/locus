@@ -65,6 +65,7 @@ struct PermissionPromptView: View {
             selection = 0
             panelFocused = true
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("permission.panel")
     }
 

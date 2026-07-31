@@ -14,7 +14,12 @@ Start it with:
 ```
 
 All WS messages in both directions are single JSON text frames. All REST bodies
-are JSON. CORS is open (`*`) for local development.
+are JSON. Browser origins are denied by default. When the app launches the
+bundled service it also sets a random per-launch capability; every REST request
+and WebSocket handshake must then carry it as `X-Locus-Token`. Command-line
+launches without `LOCUS_AGENT_TOKEN` retain origin protection but do not require
+the header and are restricted to a loopback `--host`; a non-loopback bind is
+refused unless the capability is configured.
 
 ---
 
@@ -59,6 +64,26 @@ that is not currently loaded and any OpenAI-compatible endpoint.
 `trained_context_length` is the window the model was built for, which is what to
 compare models by; it is 0 when it cannot be determined. 502 if Ollama is down.
 
+### `GET/POST /api/provider`
+
+`GET` returns the current routing without credentials:
+
+```json
+{ "provider": "remote", "host": "https://api.anthropic.com/v1",
+  "model": "claude-sonnet-5", "remote_base_url": "https://api.anthropic.com/v1",
+  "remote_model": "claude-sonnet-5", "has_api_key": true,
+  "account_label": "Claude — Work" }
+```
+
+`POST` accepts `provider: "ollama" | "remote"`. Ollama accepts optional `host`
+and `context_window`. Remote requires `base_url` and accepts `api_key`, `model`,
+`auth_style`, `account_label`, `lists_models`, `context_window`, and `verify`.
+Omitting a credential or account field keeps its in-memory value; an explicit
+empty key clears it. Keys are never returned or persisted. Anthropic uses its
+native Messages API; other remote providers use OpenAI chat completions.
+Authenticated non-loopback HTTP and every redirect are rejected. Errors: 409
+busy, 422 invalid configuration, 502 verification failure.
+
 ### `GET /api/sessions`
 
 ```json
@@ -93,14 +118,13 @@ folder under `~/.ollama-code/session-trash/`.
   "count": 12,
   "preserved_session_id": "20260725-212500-123456-users-me",
   "recovery_path": "/Users/me/.ollama-code/session-trash/20260725-220000-123456",
-  "job_active": true
+  "job_active": false
 }
 ```
 
-This endpoint intentionally remains available while the agent is busy. It does
-not replace the active session, change its memory, interrupt generation, close
-the WebSocket, or reset the client. A `manifest.json` beside the recovered JSONL
-files preserves their identifiers and organizer metadata.
+This endpoint returns 409 while the agent is busy, so a clear cannot race with
+records being appended to the active turn. A `manifest.json` beside the
+recovered JSONL files preserves identifiers and organizer metadata.
 
 ### `GET /api/sessions/{session_id}`
 
@@ -111,7 +135,8 @@ files preserves their identifiers and organizer metadata.
   "archived": false }
 ```
 
-`messages` are sanitized (see §4). 404 when the id is unknown.
+`messages` are sanitized (see §4). 404 when the id is unknown; 413 when the
+transcript exceeds the bounded file, record, or message-count limits.
 
 ### `PATCH /api/sessions/{session_id}`
 
@@ -136,7 +161,8 @@ Loads the session into the live conversation. Body: empty (`{}`).
   "session_info": { "...": "..." } }
 ```
 
-Errors: 404 unknown id · 409 agent busy · 422 session file has no messages.
+Errors: 404 unknown id · 409 agent busy · 413 session safety limit exceeded ·
+422 session file has no messages.
 Also emits a `session_info` WS event to the connected client.
 
 ### `POST /api/sessions/new`
@@ -164,6 +190,31 @@ available. Memory, todos, session permissions, interrupts, and token counters
 are reset. A matching `session_started` WebSocket event is also emitted when a
 client is connected.
 
+### `POST /api/sessions/restore`
+
+Body: `{ "batch": "<timestamped batch name>" }`; omitting `batch` restores the
+newest recovery batch. Returns `{ "ok": true, "restored": <count> }`.
+Traversal-like batch names are refused and existing session files are never
+overwritten. Returns 409 while a turn is active.
+
+### `GET /api/git/status` and `GET /api/git/diff`
+
+`status` accepts `untracked=normal|all|no` and returns branch, repository state,
+and changed files. `diff` requires a percent-encoded `path` and accepts
+`staged`, `context`, and bounded `max_bytes`. Paths outside the workspace are
+refused. Both are read-only and remain available during a turn.
+
+### `GET /api/tools`
+
+Returns the live tool names, descriptions, and JSON parameter schemas used for
+model calls.
+
+### `GET/POST /api/permissions`
+
+`GET` returns mode, session/permanent allowances, safe tools, and the shell
+deny list. `POST` accepts `mode: "ask" | "accept_edits" | "bypass"` and/or
+`reset: true`; returns 409 while a turn is active.
+
 ### `GET /api/config`
 
 ```json
@@ -180,9 +231,9 @@ setting resolved to — the number compaction budgets against.
 Body: `{ "model": "<name>", "cwd": "<path>", "context_window": <int> }` — every
 field optional. Response: same shape as `GET /api/config`. 422 for a bad `cwd`,
 or for a `context_window` between 1 and 1023 (almost always a window written in
-thousands); 409 for `context_window` while a turn is running, because changing
-the window mid-turn makes Ollama unload and reload the model — checked before
-any field is applied. Emits `session_info` on the WS when anything changed.
+thousands); 409 for any state-changing config request while a turn is running.
+The busy check is atomic and happens before any field is applied. Emits
+`session_info` on the WS when anything changed.
 `model` and `context_window` are persisted to `~/.ollama-code/config.json`.
 
 ---
@@ -192,15 +243,18 @@ any field is applied. Emits `session_info` on the WS when anything changed.
 Endpoint: `/ws/chat`.
 
 - **Single client.** A new connection closes and replaces the previous one.
-- On connect the server drops any queued events from a previous connection and
-  immediately sends one `session_info` event.
+- Replacing an old socket does not interrupt the turn owned by the new socket.
+- On connect the server immediately sends one `session_info` event, then
+  replays events queued while no socket was attached.
 - On disconnect the server soft-interrupts any running turn and denies all
   pending permission requests (the turn then ends with
   `turn_done {reason: "interrupted"}` or a denied `tool_result`).
-- **Busy rule:** while a turn (or slash command) is running, `user_message`,
-  `new_session`, `retry_last`, `compact` and `resume` are rejected with an `error` event
-  ("Agent is busy — press Stop first."). `interrupt`,
-  `permission_decision`, `set_model`, `set_cwd` and `clear` are always accepted.
+- **Busy rule:** while a turn (or slash command) is running, every command that
+  would replace or mutate turn state is rejected with `command_error`
+  ("Agent is busy — press Stop first."). This includes `user_message`,
+  `new_session`, `retry_last`, `compact`, `resume`, `set_model`, `set_cwd`,
+  `set_permission_mode`, and `clear`. Only `interrupt`, permission decisions,
+  heartbeat traffic, and independent console operations remain accepted.
 
 ---
 
@@ -211,15 +265,22 @@ Endpoint: `/ws/chat`.
 | `user_message` | `text: string` | Runs one agent turn. If `text` starts with `/` it is executed as a slash command and ends with a `slash_result` event instead of `turn_done`. |
 | `permission_decision` | `request_id: string`, `decision: "once" \| "always" \| "deny"` | Answers a `permission_request`. Unknown/invalid values are treated as `deny`. Late answers are ignored. |
 | `interrupt` | — | Soft-interrupts the current turn: streaming stops after the current chunk, pending permission waits are denied, turn ends with `turn_done {reason: "interrupted"}`. Safe to send when idle. |
-| `set_model` | `model: string` | Switches model (substring match allowed). Emits `session_info` on success, `error` if not installed. Persisted to config. |
-| `set_cwd` | `path: string` | Changes the agent working directory. Emits `session_info` on success, `error` otherwise. |
+| `set_model` | `model: string` | Switches model (substring match allowed). Emits `session_info` on success, `command_error` if rejected. Persisted to config. |
+| `set_cwd` | `path: string` | Changes the agent working directory. Emits `session_info` on success, `command_error` otherwise. |
+| `set_permission_mode` | `mode: "ask" \| "accept_edits" \| "bypass"` | Changes the permission mode while idle and emits `session_info`. |
 | `clear` | — | Resets the conversation and todos. Emits `todo_update`, `session_info`, then `slash_result {command: "clear"}`. |
 | `new_session` | — | Creates a different saved-session file and resets memory, todos, session permissions, interrupts, and token counters. Emits `session_started {reason: "clear_chat"}` followed by `session_info`. |
 | `retry_last` | — | Creates a new branch through the latest user message, preserving the original session, then regenerates the response. Emits `session_started {reason: "retry"}` before streaming. |
 | `compact` | — | Summarizes history to free context (runs as a background slash command). Ends with `slash_result {command: "compact"}`. Rejected when busy. |
 | `resume` | `session_id: string` | Resumes a saved session. Ends with `slash_result {command: "resume", data: {messages: [...]}}`. Rejected when busy. |
+| `terminal_run` | `command`, optional `cwd`, `run_id`, `timeout` | Starts one independent console command. It does not occupy the chat turn slot. |
+| `terminal_input` | `run_id`, `text`, optional `newline` | Sends stdin to the active console command. |
+| `terminal_close_stdin` | `run_id` | Closes that command's stdin. |
+| `terminal_cancel` | `run_id`, optional `force` | Sends a graceful cancel, or a force kill when requested. |
+| `ping` | — | Emits `pong`; used as an ordering sentinel. |
 
-Any other `type` produces `error {message: "unknown message type: ..."}`.
+Any other `type` produces
+`command_error {operation: "<type>", message: "unknown message type: ..."}`.
 
 ---
 
@@ -312,6 +373,20 @@ Exactly one per `tool_call_proposed` (after permission, if any).
 — `status` is `pending` | `in_progress` | `completed`. Emitted after every
 `todo_write` tool call and on `clear`.
 
+### `thinking`
+
+`{ "type": "thinking", "text": "..." }` — native reasoning output, separate
+from visible answer tokens. Provider-required continuation state (including
+OpenAI-compatible `reasoning_content` and Anthropic thinking signatures) is
+retained in the private session transcript but omitted from sanitized
+REST/resume payloads shown to the UI.
+
+### `workspace_changed`
+
+`{ "type": "workspace_changed", "reason": "tool", "tool": "edit_file" }` —
+follows a successful mutating tool result so clients can refresh file and git
+views without changing the active inspector tab.
+
 ### `note`
 `{ "type": "note", "text": "...", "error": false }` — advisory commentary on
 the turn in progress: automatic compaction, mid-turn eviction of old tool
@@ -324,10 +399,14 @@ Ends a turn started by `user_message` (non-slash input).
 `reason` is `complete` | `interrupted` | `max_iterations` | `error`.
 A `session_info` event follows immediately.
 
+### `command_error`
+`{ "type": "command_error", "operation": "set_model", "message": "..." }` —
+rejects a client command without changing the active turn's lifecycle. Clients
+must not clear their busy state when this event arrives.
+
 ### `error`
-`{ "type": "error", "message": "..." }` — for Ollama failures, busy rejections,
-bad `set_model`/`set_cwd`, unknown message types. An Ollama error mid-turn is
-also followed by `turn_done {reason: "error"}`.
+`{ "type": "error", "message": "..." }` — a failure inside the active agent
+turn. It is followed by `turn_done {reason: "error"}`.
 
 ### `slash_result`
 Ends a slash command (`/help`, `/model`, `/clear`, `/compact`, `/init`,
@@ -344,6 +423,18 @@ Ends a slash command (`/help`, `/model`, `/clear`, `/compact`, `/init`,
 `text` may be absent; `data` is command-specific (`messages` for resume,
 `todos` for todos, `sessions` for sessions, `summary` for compact, full
 session-info fields for status). `error: true` marks failures.
+
+### Console and heartbeat events
+
+- `terminal_state {runs: [...]}` is sent on every WebSocket connection.
+- `terminal_started` carries `run_id`, command, cwd, pid, shell, timeout,
+  `started_at`, and `resumed`.
+- `terminal_output` carries `run_id`, monotonically increasing `seq`, `text`,
+  and optionally `gap` on reconnect replay.
+- `terminal_exit` carries `run_id`, nullable `exit_code`, signal, reason,
+  duration, truncation, and byte counts.
+- `terminal_error` carries `run_id`, stable `code`, and `message`.
+- `pong` has no additional fields.
 
 ---
 
@@ -387,6 +478,16 @@ Notes:
 
 ## 6. Tools the model can call
 
-`read_file`, `write_file`, `edit_file`, `bash`, `glob`, `grep`, `list_dir`,
-`todo_write`, `web_fetch`. Permission-free: `read_file`, `glob`, `grep`,
-`list_dir`. Everything else asks once (`once` / `always` / `deny`).
+`read_file`, `write_file`, `edit_file`, `multi_edit`, `bash`, `glob`, `grep`,
+`list_dir`, `todo_write`, `web_fetch`, `git_status`, and `git_diff`.
+Workspace-contained `read_file`, `glob`, `grep`, `list_dir`, and `todo_write`
+are permission-free. Everything else follows the selected permission mode.
+Writes through a symlinked workspace component are refused; permission previews
+show the resolved target when it differs. The shell deny list is a final
+catastrophic-command guardrail, not a process sandbox.
+Recursive reads never follow workspace symlinks. Individual text reads are
+limited to 8 MB, directory scans and result lists are bounded, and fetched web
+responses are limited to 2 MB after decompression. `web_fetch` never follows
+redirects: the final URL must be approved explicitly. Stop requests interrupt
+provider streams and long-running shell, git, search, directory, and web-fetch
+operations cooperatively; spawned shell and git process groups are terminated.

@@ -27,7 +27,14 @@ struct AccountEditorView: View {
         // A key is required to reach a provider; an endpoint that has one
         // saved already does not need it typed again.
         let hasKey = keyStored || !apiKey.trimmingCharacters(in: .whitespaces).isEmpty
-        return hasKey && !resolvedBaseURL.isEmpty
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveKey = key.isEmpty && keyStored ? "saved-key" : key
+        return hasKey
+            && !resolvedBaseURL.isEmpty
+            && RemoteEndpointTester.securityError(
+                baseURL: resolvedBaseURL,
+                apiKey: effectiveKey
+            ) == nil
     }
 
     private var resolvedBaseURL: String {
@@ -195,6 +202,16 @@ struct AccountEditorView: View {
     }
 
     private func save() {
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveKey = trimmedKey.isEmpty && keyStored ? "saved-key" : trimmedKey
+        if let error = RemoteEndpointTester.securityError(
+            baseURL: resolvedBaseURL,
+            apiKey: effectiveKey
+        ) {
+            testResult = error
+            testFailed = true
+            return
+        }
         var updated = account
         updated.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         updated.baseURLOverride = kind.allowsBaseURLOverride
@@ -206,7 +223,6 @@ struct AccountEditorView: View {
         // Empty means "use the published figure"; a number overrides it.
         let typed = contextWindow.trimmingCharacters(in: .whitespacesAndNewlines)
         updated.contextWindow = typed.isEmpty ? nil : Int(typed)
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         model.saveProviderAccount(updated, apiKey: trimmedKey.isEmpty ? nil : trimmedKey)
         dismiss()
     }
