@@ -233,6 +233,29 @@ Lambda, and friends. The URL is accepted with or without `/v1`. If the endpoint
 does not support tool calling, Locus retries once without tools and says so —
 the agent can still answer, but it cannot edit files that way.
 
+### Ollama on another machine
+
+Locus talks to whatever Ollama the agent is pointed at, which does not have to
+be this Mac. To use a GPU box on the LAN, set the host in the agent's config —
+there is no setting for this in the app, because it belongs to the agent rather
+than to a provider account:
+
+```jsonc
+// ~/.ollama-code/config.json  (sandboxed App Store build:
+// ~/Library/Application Support/Locus/Agent/config.json)
+{ "host": "http://192.168.1.50:11434" }
+```
+
+The models on that machine then appear in the **Local** section of the picker
+exactly as if they were here, and the app reads its model list, pulls, and
+commit-message drafts from that host too. The remote machine needs Ollama bound
+to something other than loopback (`OLLAMA_HOST=0.0.0.0` on that box); Ollama
+listens on localhost only by default.
+
+Windows measured on one host are remembered for that host alone, so a model
+served at 32K on the LAN box does not report 32K when the same model is served
+at 4K here.
+
 ### About the keys
 
 Each account keeps its key in your login keychain, in its own entry, and passes

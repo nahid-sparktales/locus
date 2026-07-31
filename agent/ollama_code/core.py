@@ -340,12 +340,24 @@ class AgentCore:
         if window > 0 or self.context_limit <= 0:
             self.context_limit = window
 
+    def _window_key(self, model: str) -> str:
+        """Remembered windows are per host as well as per model.
+
+        The same model name runs in different windows on different Ollama
+        hosts — a GPU box on the LAN may serve qwen3:8b at 32768 while this
+        laptop serves it at 4096. Keying on the name alone would carry the
+        big number over to the small host and budget compaction against a
+        window that does not exist, which is the exact failure
+        effective_context_length was written to prevent.
+        """
+        return f"{self.host}|{model}"
+
     def remembered_model_window(self, model: str) -> int:
         """The last window Ollama was seen running this model in, or 0."""
         windows = self.config.get("model_windows")
         if not isinstance(windows, dict):
             return 0
-        value = windows.get(model)
+        value = windows.get(self._window_key(model))
         return value if isinstance(value, int) and value > 0 else 0
 
     def remember_model_window(self, model: str, window: int) -> None:
@@ -360,9 +372,10 @@ class AgentCore:
             return
         current = self.config.get("model_windows")
         windows = dict(current) if isinstance(current, dict) else {}
-        if windows.get(model) == window:
+        key = self._window_key(model)
+        if windows.get(key) == window:
             return  # Unchanged: refreshed twice a turn, so do not rewrite.
-        windows[model] = window
+        windows[key] = window
         self.config["model_windows"] = windows
         save_config(self.config)
 

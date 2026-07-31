@@ -2506,7 +2506,9 @@ def test_a_measured_context_window_survives_the_model_being_evicted(tmp_path, mo
     core.client = Resident()
     core.refresh_context_limit()
     assert core.context_limit == 8192
-    assert core.config["model_windows"]["qwen3:8b"] == 8192
+    # Through the accessor rather than the raw key: how the mapping is keyed
+    # is an implementation detail (it is scoped by host too).
+    assert core.remembered_model_window("qwen3:8b") == 8192
 
     # A fresh process, same config: the model is not loaded and cannot be
     # measured, but it was measured before.
@@ -2607,3 +2609,50 @@ def test_the_listing_capability_reaches_the_client_from_the_provider_call(tmp_pa
     # Missing means keep, like the key and the label.
     core.use_remote("https://api.kimi.com/coding/v1", model="kimi-for-coding")
     assert core.client.lists_models is False
+
+
+def test_a_remembered_window_does_not_follow_a_model_to_another_host(tmp_path, monkeypatch):
+    """The same model runs in different windows on different Ollama hosts.
+
+    A GPU box on the LAN may serve qwen3:8b at 32768 while this laptop serves
+    it at 4096. Carrying the big number to the small host would budget
+    compaction against a window that does not exist — the exact failure
+    effective_context_length prevents everywhere else.
+    """
+    from ollama_code import config as config_mod
+    from ollama_code.core import AgentCore
+
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
+
+    class Serving:
+        def __init__(self, window): self.window = window
+        def loaded_context_length(self, _m): return self.window
+        def context_length(self, _m): return 262144
+
+    class Evicted:
+        def loaded_context_length(self, _m): return 0
+        def context_length(self, _m): return 262144
+
+    # Measured on the LAN box.
+    remote = AgentCore(cwd=str(tmp_path), config={"provider": "ollama", "host": "http://192.168.50.99:11434"})
+    remote.model = "qwen3:8b"
+    remote.client = Serving(32768)
+    remote.refresh_context_limit()
+    assert remote.context_limit == 32768
+
+    # Same model, same config, different host, nothing resident to measure.
+    local = AgentCore(
+        cwd=str(tmp_path),
+        config={**remote.config, "host": "http://localhost:11434"},
+    )
+    local.model = "qwen3:8b"
+    local.client = Evicted()
+    local.refresh_context_limit()
+    assert local.context_limit == 0, "the LAN box's window followed the model home"
+
+    # And the LAN box still remembers its own.
+    again = AgentCore(cwd=str(tmp_path), config=dict(remote.config))
+    again.model = "qwen3:8b"
+    again.client = Evicted()
+    again.refresh_context_limit()
+    assert again.context_limit == 32768
