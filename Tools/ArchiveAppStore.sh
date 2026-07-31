@@ -14,12 +14,11 @@ set -euo pipefail
 script_dir="${0:A:h}"
 repo_root="${script_dir:h}"
 project_yml="${repo_root}/project.yml"
-# Not defaulted in-tree: these are half of an App Store Connect credential
-# pair, and this repository is public. Set them in your shell or a local
-# untracked env file; the values live with the .p8 key, outside the repo.
-key_id="${LOCUS_ASC_KEY_ID:?set LOCUS_ASC_KEY_ID (App Store Connect API key id)}"
-issuer_id="${LOCUS_ASC_ISSUER_ID:?set LOCUS_ASC_ISSUER_ID (App Store Connect issuer id)}"
-key_path="${LOCUS_ASC_KEY_PATH:-${repo_root:h}/SparkTales_Master/api-keys/AuthKey_${key_id}.p8}"
+# SparkTales team-key metadata is not secret. The private key stays in the
+# gitignored local apple-keys directory and may be overridden when necessary.
+key_id="${LOCUS_ASC_KEY_ID:-QYV9PN42QS}"
+issuer_id="${LOCUS_ASC_ISSUER_ID:-3675bb71-8667-42ca-a9ae-2b6091f0c076}"
+key_path="${LOCUS_ASC_KEY_PATH:-${repo_root}/apple-keys/AuthKey_${key_id}.p8}"
 team_id="${LOCUS_TEAM_ID:-4X4RJA7GMD}"
 version="${LOCUS_MARKETING_VERSION:-$(/usr/bin/awk '/MARKETING_VERSION/ { print $2; exit }' "${project_yml}" | /usr/bin/tr -d '"')}"
 build="${LOCUS_BUILD_VERSION:-$(/usr/bin/awk '/CURRENT_PROJECT_VERSION/ { print $2; exit }' "${project_yml}")}"

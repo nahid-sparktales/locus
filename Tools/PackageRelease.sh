@@ -115,10 +115,11 @@ fi
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "${app}" "${zip_out}"
 
 if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
-    # See the note in ArchiveAppStore.sh: not defaulted in a public repo.
-    key_id="${LOCUS_ASC_KEY_ID:?set LOCUS_ASC_KEY_ID (App Store Connect API key id)}"
-    issuer_id="${LOCUS_ASC_ISSUER_ID:?set LOCUS_ASC_ISSUER_ID (App Store Connect issuer id)}"
-    key_path="${LOCUS_ASC_KEY_PATH:-${0:A:h:h:h}/SparkTales_Master/api-keys/AuthKey_${key_id}.p8}"
+    # See ArchiveAppStore.sh: metadata is shared, while the private key remains
+    # local in the gitignored apple-keys directory.
+    key_id="${LOCUS_ASC_KEY_ID:-QYV9PN42QS}"
+    issuer_id="${LOCUS_ASC_ISSUER_ID:-3675bb71-8667-42ca-a9ae-2b6091f0c076}"
+    key_path="${LOCUS_ASC_KEY_PATH:-${0:A:h:h}/apple-keys/AuthKey_${key_id}.p8}"
     [[ -f "${key_path}" ]] || {
         echo "error: App Store Connect key not found at ${key_path}" >&2
         exit 1

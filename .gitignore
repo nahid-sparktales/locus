@@ -28,6 +28,7 @@ agent/build/
 agent/dist/
 
 # Secrets
+/apple-keys/
 .env
 .env.*
 *.p8

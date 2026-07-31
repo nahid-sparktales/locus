@@ -129,5 +129,8 @@ the distribution audit and deep code-signature verification
 - The release script's default ASC key path was corrected to
   `SparkTales_Master/api-keys`; the previous StoryBook2 location no longer
   exists, which is what interrupted the first export run.
+- Current local setup supersedes that historical path: the shared SparkTales
+  team key is stored in each repository's gitignored
+  `apple-keys/AuthKey_QYV9PN42QS.p8` directory.
 - Build 10 is not yet assigned to the **Locus Internal Testers** TestFlight
   group and has not been submitted for review.

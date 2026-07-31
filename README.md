@@ -493,19 +493,26 @@ To upload the exported archive directly to App Store Connect:
 LOCUS_UPLOAD=1 Tools/ArchiveAppStore.sh
 ```
 
-Both release scripts authenticate with an App Store Connect API key. The key id
-and issuer id are **not** defaulted in this repository — they are half of a
-credential pair and this repository is public — so export them alongside the
-`.p8`, which lives outside the tree:
+Both release scripts use the shared SparkTales App Store Connect Admin team
+key. The non-secret team metadata is configured by default:
+
+- key ID: `QYV9PN42QS`
+- issuer ID: `3675bb71-8667-42ca-a9ae-2b6091f0c076`
+- Apple team ID: `4X4RJA7GMD`
+
+On SparkTales development Macs, copy the private key from
+`/Users/andrew/code/StoryBook2/apple-keys/AuthKey_QYV9PN42QS.p8` to the
+gitignored local path `apple-keys/AuthKey_QYV9PN42QS.p8` and restrict it to the
+owner with `chmod 600`. The private key must never be committed. The defaults
+then work without credential environment variables; overrides remain available:
 
 ```bash
-export LOCUS_ASC_KEY_ID=…
-export LOCUS_ASC_ISSUER_ID=…
-export LOCUS_ASC_KEY_PATH=/path/to/AuthKey_<id>.p8   # optional; defaults next to the repo
+export LOCUS_ASC_KEY_ID=QYV9PN42QS
+export LOCUS_ASC_ISSUER_ID=3675bb71-8667-42ca-a9ae-2b6091f0c076
+export LOCUS_ASC_KEY_PATH=/secure/path/to/AuthKey_QYV9PN42QS.p8
 ```
 
-A missing value fails the script immediately with the variable's name rather
-than a confusing authentication error later.
+A missing private-key file fails the script before archiving.
 
 Every archive runs `Tools/AuditDistribution.sh` before export. The audit
 rejects unused GPL-licensed GNU gdbm content, the broken Tk extension, and
