@@ -614,6 +614,9 @@ struct AppSettings: Codable, Hashable {
     /// The accounts themselves live under `ProviderAccountStore.defaultsKey` —
     /// they carry keychain side effects that must not ride the settings draft.
     var activeAccountID: String?
+    /// A context window for local Ollama, when the user wants to pin one
+    /// rather than let it be measured. nil keeps the measured behaviour.
+    var localContextWindow: Int?
     var inspectorWidth: Double = AppSettings.defaultInspectorWidth
     /// The inspector starts collapsed: the conversation is the point, and
     /// ⌘1–⌘5 or ⌘⌥I bring the panel back the moment it is needed.
@@ -667,6 +670,7 @@ struct AppSettings: Codable, Hashable {
             ?? defaults.remoteModel
         activeAccountID = try container.decodeIfPresent(String.self, forKey: .activeAccountID)
             ?? defaults.activeAccountID
+        localContextWindow = try container.decodeIfPresent(Int.self, forKey: .localContextWindow)
         // Clamped on the way in as well as on the way out: a corrupt or
         // out-of-range stored value must not produce an unusable panel.
         inspectorWidth = Self.clampInspectorWidth(

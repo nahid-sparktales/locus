@@ -208,7 +208,13 @@ def set_provider(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str,
         raise HTTPException(422, "provider must be 'ollama' or 'remote'")
 
     if provider == "ollama":
-        svc.core.use_ollama(host=str(body.get("host") or "") or None)
+        try:
+            svc.core.use_ollama(
+                host=str(body.get("host") or "") or None,
+                context_window_tokens=body.get("context_window"),
+            )
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
         return svc.core.provider_state()
 
     base_url = str(body.get("base_url") or body.get("remote_base_url") or "").strip()
@@ -223,14 +229,18 @@ def set_provider(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str,
     raw_style = body.get("auth_style")
     raw_label = body.get("account_label")
     raw_lists = body.get("lists_models")
-    svc.core.use_remote(
-        base_url=base_url,
-        api_key=api_key,
-        model=str(body.get("model") or ""),
-        auth_style=None if raw_style is None else str(raw_style),
-        account_label=None if raw_label is None else str(raw_label),
-        lists_models=None if raw_lists is None else bool(raw_lists),
-    )
+    try:
+        svc.core.use_remote(
+            base_url=base_url,
+            api_key=api_key,
+            model=str(body.get("model") or ""),
+            auth_style=None if raw_style is None else str(raw_style),
+            account_label=None if raw_label is None else str(raw_label),
+            lists_models=None if raw_lists is None else bool(raw_lists),
+            context_window_tokens=body.get("context_window"),
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
     if body.get("verify"):
         try:
             svc.core.client.check()

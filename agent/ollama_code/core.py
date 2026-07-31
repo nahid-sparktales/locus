@@ -30,7 +30,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from .config import DEFAULTS, context_window, load_config, save_config
+from .config import (
+    DEFAULTS,
+    MINIMUM_CONTEXT_WINDOW,
+    context_window,
+    load_config,
+    non_negative_int,
+    save_config,
+)
 from .ollama import (
     DEFAULT_HOST,
     ChatResponse,
@@ -216,6 +223,8 @@ class AgentCore:
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
         self.context_limit = 0
+        #: Which model `context_limit` was settled for; see refresh_context_limit.
+        self._context_limit_for = ""
         #: `/api/show`'s answer, memoised per model — it describes the file on
         #: disk, which does not change while the model does not.
         self._trained_window = 0
@@ -337,6 +346,15 @@ class AgentCore:
         # unknown again. Forgetting the window at that point would quietly
         # switch compaction off for the rest of the session, so a number once
         # known is never downgraded to unknown.
+        #
+        # Scoped to the model it was measured for, not to the process. Without
+        # that, picking a different model in the header kept the previous one's
+        # number: a 4K model would read ~12% at ~96% of its real window and
+        # budget compaction against a window that does not exist — the failure
+        # effective_context_length exists to prevent, one layer up.
+        if self.model != self._context_limit_for:
+            self.context_limit = 0
+            self._context_limit_for = self.model
         if window > 0 or self.context_limit <= 0:
             self.context_limit = window
 
@@ -425,8 +443,29 @@ class AgentCore:
         if remote_model:
             self.model = remote_model
 
-    def use_ollama(self, host: str | None = None) -> None:
+    def apply_context_window(self, requested: Any) -> None:
+        """Set the configured window, or clear it when 0/None.
+
+        Same coercion as POST /api/config, so a value typed in the app and one
+        sent over that endpoint cannot disagree. Below MINIMUM_CONTEXT_WINDOW
+        the value is not usable at all — it could not hold the system prompt
+        and the tool schemas — so it is rejected rather than silently honoured.
+        """
+        if requested is None:
+            return
+        resolved = context_window(requested)
+        if resolved <= 0 and non_negative_int(requested) > 0:
+            raise ValueError(
+                f"context_window must be at least {MINIMUM_CONTEXT_WINDOW} tokens, "
+                "or 0 to let the provider size the window"
+            )
+        self.config["context_window"] = resolved
+
+    def use_ollama(
+        self, host: str | None = None, context_window_tokens: Any = None
+    ) -> None:
         """Switch back to the local Ollama runtime."""
+        self.apply_context_window(context_window_tokens)
         self.provider = "ollama"
         self.host = (host or str(self.config.get("host") or DEFAULT_HOST)).rstrip("/")
         self.client = OllamaClient(self.host)
@@ -452,6 +491,7 @@ class AgentCore:
         auth_style: str | None = None,
         account_label: str | None = None,
         lists_models: bool | None = None,
+        context_window_tokens: Any = None,
     ) -> None:
         """Point the agent at an OpenAI-compatible endpoint.
 
@@ -480,6 +520,7 @@ class AgentCore:
             self.config["remote_account_label"] = account_label.strip()
         if lists_models is not None:
             self.config["remote_lists_models"] = bool(lists_models)
+        self.apply_context_window(context_window_tokens)
         self._build_remote_client()
         # _build_remote_client only adopts a non-empty model, so clearing the
         # config above is not enough on its own: self.model would keep the

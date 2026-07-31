@@ -1814,6 +1814,9 @@ final class AppModel: ObservableObject {
         // that can arrive with the draft is a different active account.
         let providerChanged = settings.provider != newSettings.provider
             || settings.activeAccountID != newSettings.activeAccountID
+            // The window rides the provider call, so a change to it alone
+            // still has to be pushed or it never reaches the agent.
+            || settings.localContextWindow != newSettings.localContextWindow
         settings = newSettings
         persistSettings()
         settingsPresented = false
@@ -1842,7 +1845,12 @@ final class AppModel: ObservableObject {
     /// contributes its endpoint, key, auth style, and label; no account means
     /// the local runtime.
     func providerRequestBody(verify: Bool = false) -> [String: Any] {
-        guard let account = activeAccount else { return ["provider": "ollama"] }
+        guard let account = activeAccount else {
+            var body: [String: Any] = ["provider": "ollama"]
+            // Sent every launch, so clearing the field really clears it.
+            body["context_window"] = settings.localContextWindow ?? 0
+            return body
+        }
         return [
             "provider": "remote",
             "base_url": account.resolvedBaseURL,
@@ -1854,6 +1862,9 @@ final class AppModel: ObservableObject {
             // health probe reads its auth error on /models as a rejected
             // key and reports a working account as permanently offline.
             "lists_models": account.kind.listsModels,
+            // A hosted endpoint advertises no window, so without this the meter
+            // is dead and auto-compaction never engages for the account.
+            "context_window": account.resolvedContextWindow ?? 0,
             "verify": verify,
         ]
     }

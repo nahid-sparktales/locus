@@ -264,6 +264,7 @@ struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var draft = AppSettings()
+    @State private var localWindow = ""
     @State private var addingAccount: ProviderAccount?
     @State private var editingAccount: ProviderAccount?
     @State private var accountPendingRemoval: ProviderAccount?
@@ -302,6 +303,14 @@ struct SettingsView: View {
                     )
                     .font(.system(size: 10))
                     .foregroundStyle(LocusTheme.muted)
+
+                    TextField("Local context window in tokens (optional)", text: $localWindow)
+                        .accessibilityIdentifier("settings.localContextWindow")
+
+                    Text("Leave empty to use the window Ollama is really running the model in, measured once it is loaded. Set a value to pin one — it is requested as num_ctx and is what compaction budgets against.")
+                        .font(.system(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     ForEach(model.providerAccounts) { account in
                         HStack(spacing: 10) {
@@ -452,7 +461,10 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.cancel")
                 Spacer()
                 Button("Save") {
-                    model.applySettings(draft)
+                    var saved = draft
+                    let typed = localWindow.trimmingCharacters(in: .whitespacesAndNewlines)
+                    saved.localContextWindow = typed.isEmpty ? nil : Int(typed)
+                    model.applySettings(saved)
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)

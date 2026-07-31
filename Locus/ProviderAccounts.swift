@@ -118,6 +118,40 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// The published context window for one of this provider's models, or nil
+    /// when it is not a model we have a documented figure for.
+    ///
+    /// Unlike Ollama — where the runtime window genuinely differs from the
+    /// trained one and has to be measured — a hosted model's window is a
+    /// published property of the API. Shipping the documented number is not the
+    /// guess that `effective_context_length` warns about; it is the spec. It is
+    /// still only a default: an account's own value wins, and the meter says
+    /// where the figure came from so a stale entry here is visible rather than
+    /// silently wrong.
+    ///
+    /// Verify against vendor documentation when adding a model.
+    func publishedContextWindow(for model: String) -> Int? {
+        let name = model.lowercased()
+        switch self {
+        case .claude:
+            // Anthropic's current generation is 200K.
+            return name.hasPrefix("claude") ? 200_000 : nil
+        case .codex:
+            if name.hasPrefix("gpt-5") { return 400_000 }
+            if name.hasPrefix("gpt-4.1") { return 1_047_576 }
+            if name.hasPrefix("o3") || name.hasPrefix("o4") { return 200_000 }
+            return nil
+        case .kimi, .kimiCode:
+            if name.hasPrefix("k3") || name.contains("256k") { return 256_000 }
+            if name.hasPrefix("kimi-k2") || name.hasPrefix("kimi-for-coding") { return 256_000 }
+            if name.contains("128k") { return 128_000 }
+            return nil
+        case .custom:
+            // Someone else's deployment; only they know how it was configured.
+            return nil
+        }
+    }
+
     /// A model this provider will accept for a one-token connection probe.
     var probeModel: String { curatedModels.first ?? "" }
 
@@ -244,6 +278,10 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
     var baseURLOverride: String?
     /// The model last used through this account, re-applied when it is chosen.
     var preferredModel: String
+    /// A context window the user set for this account, overriding the
+    /// provider's published figure. Optional so accounts stored before this
+    /// existed decode unchanged.
+    var contextWindow: Int?
     var createdAt: Date
     /// Set only by the migration, for the account made from the single remote
     /// endpoint that existed before accounts: it keeps pointing at the old
@@ -256,6 +294,7 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
         name: String = "",
         baseURLOverride: String? = nil,
         preferredModel: String = "",
+        contextWindow: Int? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -263,6 +302,7 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
         self.name = name
         self.baseURLOverride = baseURLOverride
         self.preferredModel = preferredModel
+        self.contextWindow = contextWindow
         self.createdAt = createdAt
     }
 
@@ -293,6 +333,13 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
     }
 
     var hasKey: Bool { Keychain.has(account: keychainAccount) }
+
+    /// The window to budget this account against: what the user set, else
+    /// the provider's published figure for the selected model, else none.
+    var resolvedContextWindow: Int? {
+        if let contextWindow, contextWindow > 0 { return contextWindow }
+        return kind.publishedContextWindow(for: preferredModel)
+    }
 }
 
 /// The saved accounts, and the rules for reading a list that may have been

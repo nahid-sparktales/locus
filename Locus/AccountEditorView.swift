@@ -19,6 +19,7 @@ struct AccountEditorView: View {
     @State private var isTesting = false
     @State private var testResult: String?
     @State private var testFailed = false
+    @State private var contextWindow = ""
 
     private var kind: ProviderKind { account.kind }
 
@@ -102,6 +103,17 @@ struct AccountEditorView: View {
                         }
                     }
 
+                    TextField(
+                        windowPlaceholder,
+                        text: $contextWindow
+                    )
+                    .accessibilityIdentifier("accountEditor.contextWindow")
+
+                    Text(windowHelp)
+                        .font(.system(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+
                     HStack(spacing: 10) {
                         Button("Test Connection") { testConnection() }
                             .disabled(isTesting || resolvedBaseURL.isEmpty)
@@ -157,7 +169,29 @@ struct AccountEditorView: View {
             name = account.name
             baseURL = account.baseURLOverride ?? ""
             keyStored = account.hasKey
+            contextWindow = account.contextWindow.map(String.init) ?? ""
         }
+    }
+
+    private var windowPlaceholder: String {
+        if let published = kind.publishedContextWindow(for: account.preferredModel) {
+            return "Context window — \(published.formatted()) by default"
+        }
+        return "Context window in tokens (optional)"
+    }
+
+    private var windowHelp: String {
+        if kind.publishedContextWindow(for: account.preferredModel) != nil {
+            return """
+            Locus uses this provider's published window for the selected model. \
+            Set a value to override it — the meter and automatic compaction both \
+            budget against whatever is used here.
+            """
+        }
+        return """
+        This provider advertises no window, so without a value here the meter \
+        shows a plain token count and automatic compaction stays off.
+        """
     }
 
     private func save() {
@@ -169,6 +203,9 @@ struct AccountEditorView: View {
         if updated.preferredModel.isEmpty {
             updated.preferredModel = kind.probeModel
         }
+        // Empty means "use the published figure"; a number overrides it.
+        let typed = contextWindow.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.contextWindow = typed.isEmpty ? nil : Int(typed)
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         model.saveProviderAccount(updated, apiKey: trimmedKey.isEmpty ? nil : trimmedKey)
         dismiss()

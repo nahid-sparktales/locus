@@ -2656,3 +2656,102 @@ def test_a_remembered_window_does_not_follow_a_model_to_another_host(tmp_path, m
     again.client = Evicted()
     again.refresh_context_limit()
     assert again.context_limit == 32768
+
+
+def test_a_new_model_does_not_inherit_the_previous_models_window(tmp_path, monkeypatch):
+    """The never-downgrade rule is scoped to the model, not the process.
+
+    Without that, picking a different model in the header kept the previous
+    one's number: a 4K model reads ~12% at ~96% of its real window and budgets
+    compaction against a window that does not exist.
+    """
+    from ollama_code import config as config_mod
+    from ollama_code.core import AgentCore
+
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
+
+    class Ollama:
+        def __init__(self): self.resident = {"model-a": 32768}
+        def loaded_context_length(self, model): return self.resident.get(model, 0)
+        def context_length(self, _model): return 262144
+
+    core = AgentCore(cwd=str(tmp_path), config={"provider": "ollama"})
+    core.client = Ollama()
+
+    core.model = "model-a"
+    core.refresh_context_limit()
+    assert core.context_limit == 32768
+
+    core.model = "model-b"
+    core.refresh_context_limit()
+    assert core.context_limit == 0, "model B inherited model A's window"
+
+    # The guard it must not have broken: an evicted model keeps what was
+    # measured for it, so compaction does not quietly switch off.
+    core.model = "model-a"
+    core.client.resident = {}
+    core.refresh_context_limit()
+    assert core.context_limit == 32768, "an evicted model lost its own window"
+
+
+def test_a_hosted_account_can_finally_have_a_window(tmp_path, monkeypatch):
+    """A hosted endpoint advertises no window, so before this the meter was
+    dead and auto-compaction never engaged for any account."""
+    from ollama_code import config as config_mod
+    from ollama_code.core import AgentCore
+
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
+    core = AgentCore(cwd=str(tmp_path), config={"provider": "ollama"})
+
+    core.use_remote("https://api.anthropic.com/v1", api_key="k", model="claude-sonnet-4-5")
+    assert core.context_limit == 0, "no window set yet"
+
+    core.use_remote(
+        "https://api.anthropic.com/v1", model="claude-sonnet-4-5",
+        context_window_tokens=200_000,
+    )
+    assert core.context_limit == 200_000
+    assert core.session_info()["context_limit"] == 200_000
+
+
+def test_a_window_below_the_floor_is_refused_not_quietly_honoured(tmp_path, monkeypatch):
+    """Below the floor it cannot hold the system prompt and the tool schemas,
+    so honouring it would truncate every request with nothing to point at."""
+    import pytest as _pytest
+
+    from ollama_code import config as config_mod
+    from ollama_code.config import MINIMUM_CONTEXT_WINDOW
+    from ollama_code.core import AgentCore
+
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
+    core = AgentCore(cwd=str(tmp_path), config={"provider": "ollama"})
+
+    with _pytest.raises(ValueError, match=str(MINIMUM_CONTEXT_WINDOW)):
+        core.apply_context_window(500)
+
+    core.apply_context_window(0)          # clearing is always allowed
+    assert core.config["context_window"] == 0
+    core.apply_context_window(None)       # "not specified" leaves it alone
+    assert core.config["context_window"] == 0
+    core.apply_context_window(8192)
+    assert core.config["context_window"] == 8192
+
+
+def test_a_configured_window_lets_compaction_engage_on_a_hosted_account(tmp_path, monkeypatch):
+    from ollama_code import config as config_mod
+    from ollama_code.core import AgentCore
+
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
+    core = AgentCore(cwd=str(tmp_path), config={"provider": "ollama", "auto_compact": True})
+    core.use_remote("https://api.openai.com/v1", api_key="k", model="gpt-5")
+
+    # No window: the budget check bails out before looking at anything.
+    core.messages = [core.system_message()] + [
+        {"role": "user", "content": "x" * 40_000} for _ in range(20)
+    ]
+    assert core.context_limit == 0
+    assert core._over_budget() is False
+
+    core.use_remote("https://api.openai.com/v1", context_window_tokens=8192)
+    assert core.context_limit == 8192
+    assert core._over_budget() is True, "a window was set; compaction must see it"
