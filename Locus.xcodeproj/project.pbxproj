@@ -32,6 +32,8 @@
 		77D7EC97E924FD976475CB02 /* PlanApprovalPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEF0BEF00F2EA8083877CC21 /* PlanApprovalPromptView.swift */; };
 		7B87C08B32EA786673C34F3F /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76FC0F4F0C6864707814EAA5 /* Keychain.swift */; };
 		A6D846A90EED0F655A108FE8 /* Sheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11B2324D330884AA4555A92 /* Sheets.swift */; };
+		AA6E4C9486B5434F9D27F4A1 /* InspectorAgentsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB7F5D8397C6542E8A16E3B2 /* InspectorAgentsTab.swift */; };
+		AB71D42C5E924B72A4F5D681 /* InspectorWorkflowsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC82E53D6FA35C83B506E792 /* InspectorWorkflowsTab.swift */; };
 		BEAFCBFDAE33591C970B5E98 /* BackendProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */; };
 		C0EB8EF86FF9954D89CC082E /* InspectorPlanTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */; };
 		C214A77B64E488AE82DCFB59 /* WorkspaceAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAAE8017A82BDD5DBCA5F587 /* WorkspaceAccess.swift */; };
@@ -96,7 +98,10 @@
 		B082AFE6729F96D2D8606AC9 /* WorkspaceIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceIndex.swift; sourceTree = "<group>"; };
 		B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendProcess.swift; sourceTree = "<group>"; };
 		BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorPlanTab.swift; sourceTree = "<group>"; };
+		BB7F5D8397C6542E8A16E3B2 /* InspectorAgentsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorAgentsTab.swift; sourceTree = "<group>"; };
+		BC82E53D6FA35C83B506E792 /* InspectorWorkflowsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorWorkflowsTab.swift; sourceTree = "<group>"; };
 		BCCEF7CD29A9C6F9C3E1472F /* LocusApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocusApp.swift; sourceTree = "<group>"; };
+		BE7F27B06F0AA98E893C2E9B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		BEF0BEF00F2EA8083877CC21 /* PlanApprovalPromptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanApprovalPromptView.swift; sourceTree = "<group>"; };
 		C004E70BA7359786D8E54133 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		C41E39F35E0F75A05095B5EC /* AppModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelTests.swift; sourceTree = "<group>"; };
@@ -160,11 +165,14 @@
 				E18BD6EB5EBD180B3E69FBD6 /* ComposerView.swift */,
 				06DD9A63C8FBDB42368F8A0C /* GitClient.swift */,
 				63EA24EB82248151706E566E /* GitStatusModels.swift */,
+				BE7F27B06F0AA98E893C2E9B /* Info.plist */,
+				BB7F5D8397C6542E8A16E3B2 /* InspectorAgentsTab.swift */,
 				CCCD81AAF0691EDC3F6B0D64 /* InspectorChangesTab.swift */,
 				10D6D002C03E3AA6EB9FEFD0 /* InspectorFilesTab.swift */,
 				BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */,
 				264A4A5A5DB18E19BD6A2741 /* InspectorPreviewTab.swift */,
 				9C90DE8FC778C6A106DF35EB /* InspectorTerminalTab.swift */,
+				BC82E53D6FA35C83B506E792 /* InspectorWorkflowsTab.swift */,
 				CF3D3389D598BBECBE77E38F /* InspectorView.swift */,
 				76FC0F4F0C6864707814EAA5 /* Keychain.swift */,
 				BCCEF7CD29A9C6F9C3E1472F /* LocusApp.swift */,
@@ -352,11 +360,13 @@
 				E6B5E9C34E90B735A5A84C22 /* ComposerView.swift in Sources */,
 				404AF919F8C0790788D0A26B /* GitClient.swift in Sources */,
 				0F72DE71A4842FDA1E802CC0 /* GitStatusModels.swift in Sources */,
+				AA6E4C9486B5434F9D27F4A1 /* InspectorAgentsTab.swift in Sources */,
 				D586AEB96691BDCC5A9F0418 /* InspectorChangesTab.swift in Sources */,
 				56B2392CBBC3354BD5A6E359 /* InspectorFilesTab.swift in Sources */,
 				C0EB8EF86FF9954D89CC082E /* InspectorPlanTab.swift in Sources */,
 				FDE94DBD1929144B43AB6156 /* InspectorPreviewTab.swift in Sources */,
 				4C25B8F53E842CD8D5556308 /* InspectorTerminalTab.swift in Sources */,
+				AB71D42C5E924B72A4F5D681 /* InspectorWorkflowsTab.swift in Sources */,
 				35872DC7D25B9CE5D3A43C6E /* InspectorView.swift in Sources */,
 				7B87C08B32EA786673C34F3F /* Keychain.swift in Sources */,
 				CB22892B835E59A99C4FA35D /* LocusApp.swift in Sources */,
@@ -575,13 +585,8 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Config/Locus.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Locus;
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "Locus needs access to your Documents folder to open coding workspaces and start the local Ollama agent.";
-				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Locus needs access when you choose files or projects from Downloads.";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 SparkTales Inc.";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Locus/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -614,13 +619,8 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Locus;
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "Locus needs access to your Documents folder to open coding workspaces and start the local Ollama agent.";
-				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Locus needs access when you choose files or projects from Downloads.";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 SparkTales Inc.";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Locus/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -741,13 +741,8 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Locus;
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "Locus needs access to your Documents folder to open coding workspaces and start the local Ollama agent.";
-				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Locus needs access when you choose files or projects from Downloads.";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 SparkTales Inc.";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Locus/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

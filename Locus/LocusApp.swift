@@ -1,15 +1,20 @@
+import AppKit
 import SwiftUI
 
 @main
 struct LocusApp: App {
+    @NSApplicationDelegateAdaptor(LocusApplicationDelegate.self) private var appDelegate
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        WindowGroup {
+        Window("Locus", id: "main") {
             RootView()
                 .environmentObject(model)
                 .preferredColorScheme(.light)
                 .frame(minWidth: 1_080, minHeight: 700)
+                .background {
+                    MainWindowMarker()
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unifiedCompact(showsTitle: false))
@@ -50,6 +55,7 @@ struct LocusApp: App {
                 ForEach(InspectorTab.allCases) { tab in
                     Button(tab.title) { model.selectInspectorTab(tab) }
                         .keyboardShortcut(KeyEquivalent(tab.shortcutKey), modifiers: .command)
+                        .disabled(model.justChatEnabled)
                 }
                 Button(model.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar") {
                     model.toggleSidebar()
@@ -59,8 +65,9 @@ struct LocusApp: App {
                     withAnimation(.easeInOut(duration: 0.18)) { model.toggleInspector() }
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
+                .disabled(model.justChatEnabled)
                 Divider()
-                Button("Ask Mode") { model.selectedMode = .ask }
+                Button("Just Chat") { model.selectedMode = .ask }
                     .keyboardShortcut("a", modifiers: .option)
                 Button("Plan Mode") { model.selectedMode = .plan }
                     .keyboardShortcut("p", modifiers: .option)
@@ -73,6 +80,76 @@ struct LocusApp: App {
             SettingsView()
                 .environmentObject(model)
         }
+    }
+}
+
+@MainActor
+final class LocusApplicationDelegate: NSObject, NSApplicationDelegate {
+    static let mainWindowIdentifier = NSUserInterfaceItemIdentifier("locus.main")
+
+    static func mainWindow(in windows: [NSWindow]) -> NSWindow? {
+        windows.first { $0.identifier == mainWindowIdentifier }
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowWillClose(_:)),
+            name: NSWindow.willCloseNotification,
+            object: nil
+        )
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        guard let window = Self.mainWindow(in: sender.windows) else {
+            // If reopening races initial scene creation, allow SwiftUI to
+            // finish presenting the unique Window scene normally.
+            return true
+        }
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        window.makeKeyAndOrderFront(nil)
+        sender.activate(ignoringOtherApps: true)
+        // The existing main window handled the reopen. Returning false keeps
+        // AppKit from asking SwiftUI to create or restore another scene.
+        return false
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+
+    @objc private func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window.identifier == Self.mainWindowIdentifier else {
+            return
+        }
+        NSApp.terminate(nil)
+    }
+}
+
+private struct MainWindowMarker: NSViewRepresentable {
+    func makeNSView(context: Context) -> MainWindowMarkerView {
+        MainWindowMarkerView()
+    }
+
+    func updateNSView(_ nsView: MainWindowMarkerView, context: Context) {
+        nsView.markWindow()
+    }
+}
+
+private final class MainWindowMarkerView: NSView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        markWindow()
+    }
+
+    func markWindow() {
+        window?.identifier = LocusApplicationDelegate.mainWindowIdentifier
     }
 }
 
@@ -90,7 +167,7 @@ struct RootView: View {
             WorkspaceView()
                 .frame(minWidth: 520)
 
-            if !model.inspectorCollapsed {
+            if !model.inspectorCollapsed && !model.justChatEnabled {
                 InspectorView()
                     .frame(width: model.inspectorWidth)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -134,6 +211,14 @@ struct RootView: View {
         }
         .sheet(isPresented: $model.shortcutsPresented) {
             ShortcutsSheet()
+        }
+        .sheet(isPresented: $model.graphStudioPresented) {
+            GraphStudioView()
+                .environmentObject(model)
+        }
+        .sheet(isPresented: $model.workflowRunPresented) {
+            WorkflowRunSheet()
+                .environmentObject(model)
         }
         .alert("Clear this chat?", isPresented: $model.clearChatConfirmationPresented) {
             Button("Cancel", role: .cancel) {}

@@ -13,7 +13,8 @@ Event types emitted:
     permission_request                      {request_id, id, tool, preview}
     tool_result                             {id, tool, summary, result, ok, denied}
     todo_update                             {todos}
-    turn_done                               {reason: complete|interrupted|max_iterations|error}
+    turn_done                               {reason: complete|interrupted|max_iterations|error,
+                                             duration_ms}
     error                                   {message}
     session_info                            full session_info() dict
     session_started                         {reason, session_info}
@@ -21,10 +22,12 @@ Event types emitted:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from datetime import datetime
@@ -39,6 +42,9 @@ from .config import (
     non_negative_int,
     save_config,
 )
+from .extensions import ExtensionManager
+from .langgraph_runtime import ClassicEngine, LangGraphEngine
+from .mcp_runtime import MCPManager
 from .ollama import (
     DEFAULT_HOST,
     ChatResponse,
@@ -61,17 +67,16 @@ from .sessions import (
     clear_saved_sessions,
     strip_prompt_decoration,
 )
-from .tools import TOOL_SCHEMAS, ToolContext, execute_tool
+from .tool_registry import ToolRegistry
+from .tools import ToolContext, execute_tool
 
 EventHandler = Callable[[dict[str, Any]], None]
 PermissionDecider = Callable[[str, str, str, str], str]
 """(tool_name, summary, detail, request_id) -> "once" | "always" | "deny"."""
 
-CONTEXT_FILES = ("OLLAMA.md", "CLAUDE.md", "AGENTS.md")
-
-#: Rough token cost of the tool schemas. They ride along on every request but
-#: are not part of `self.messages`, so `approx_tokens` cannot see them.
-TOOL_SCHEMA_TOKENS = len(json.dumps(TOOL_SCHEMAS)) // 4
+# AGENTS.md is Locus's native/Codex-compatible instruction file. Older
+# OLLAMA.md and CLAUDE.md workspaces remain compatible when it is absent.
+CONTEXT_FILES = ("AGENTS.md", "OLLAMA.md", "CLAUDE.md")
 
 #: Room kept back for the model's reply. One `edit_file` call carries two whole
 #: blocks of code as JSON-escaped strings; running out of window partway through
@@ -150,6 +155,11 @@ Environment:
 - Date: {date}
 """
 
+JUST_CHAT_SYSTEM_PROMPT = """You are Locus in Just Chat mode.
+
+Answer the user's question conversationally using only the conversation shown to you. This mode has no workspace access: do not inspect, read, search, create, edit, or delete files; do not run commands; and do not use skills, plugins, MCP servers, or other tools. If the answer requires workspace or external information, explain that the user must turn off Just Chat first. Be concise and directly helpful.
+"""
+
 INIT_PROMPT = (
     "Analyze this project and create an OLLAMA.md file that will help future AI "
     "coding sessions in this directory. First list the directory, read the key "
@@ -221,6 +231,18 @@ class AgentCore:
         # ToolContext.is_inside_workspace.
         self.cwd = str(Path(cwd).expanduser()) if cwd else os.getcwd()
         self.tool_ctx = ToolContext(cwd=self.cwd)
+        self._event_handler: EventHandler | None = None
+        self.extensions = ExtensionManager(self.cwd)
+        self.mcp = MCPManager(self.extensions, self._emit)
+        self.tool_registry = ToolRegistry(self.extensions, self.mcp)
+        # Graph state follows the relocated session home. This keeps app
+        # containers and tests isolated without introducing a second path
+        # configuration surface.
+        from . import sessions as session_paths
+
+        graph_root = session_paths.SESSIONS_DIR.parent / "langgraph"
+        self.classic_engine = ClassicEngine(self)
+        self.langgraph_engine = LangGraphEngine(self, graph_root)
         self.project_context: tuple[str, str] | None = None
         self.reload_context()
         self.messages: list[dict[str, Any]] = []
@@ -234,7 +256,6 @@ class AgentCore:
         #: disk, which does not change while the model does not.
         self._trained_window = 0
         self._trained_window_for = ""
-        self._event_handler: EventHandler | None = None
         self._interrupt = threading.Event()
         self.tool_ctx.should_stop = self._interrupt.is_set
         self._last_user_message: str | None = None
@@ -243,6 +264,11 @@ class AgentCore:
         #: mid-turn budget guard extends this with whatever was appended since.
         self._last_call_tokens = 0
         self._messages_at_last_call = 0
+        # Just Chat is enforced at the model boundary, not merely suggested in
+        # its prompt. These are separate so Retry preserves the safety mode of
+        # the answer being regenerated.
+        self._turn_allows_tools = True
+        self._last_turn_allowed_tools = True
 
     # --------------------------------------------------------------- events
 
@@ -259,6 +285,10 @@ class AgentCore:
     def interrupt(self) -> None:
         """Soft-interrupt the current turn (safe to call from any thread)."""
         self._interrupt.set()
+
+    def close(self) -> None:
+        """Release extension transports and their child processes."""
+        self.mcp.close()
 
     # ---------------------------------------------------------------- setup
 
@@ -597,11 +627,14 @@ class AgentCore:
         os.chdir(p)
         self.cwd = os.getcwd()
         self.tool_ctx.cwd = self.cwd
+        self.extensions.set_cwd(self.cwd)
+        self.langgraph_engine.registry.set_cwd(self.cwd)
         self.reload_context()
         self.session = self._new_session_store()
         self.messages = [self.system_message()]
         self.tool_ctx.todos = []
         self._emit({"type": "todo_update", "todos": []})
+        self.mcp.refresh(wait=False)
         self._emit_info()
 
     def reset_conversation(self) -> None:
@@ -693,12 +726,51 @@ class AgentCore:
 
     # ----------------------------------------------------------- agentic loop
 
-    def _add_message(self, message: dict[str, Any]) -> None:
+    def _add_message(
+        self,
+        message: dict[str, Any],
+        persisted_message: dict[str, Any] | None = None,
+        *,
+        event_id: str = "",
+    ) -> None:
+        record = {
+            "type": "message",
+            "message": persisted_message if persisted_message is not None else message,
+        }
+        if event_id and not self.session.append_once(record, event_id):
+            return
         self.messages.append(message)
-        self.session.append({"type": "message", "message": message})
+        if not event_id:
+            self.session.append(record)
 
-    def run_turn(self, user_text: str, decider: PermissionDecider | None = None) -> None:
+    def run_turn(
+        self,
+        user_text: str,
+        decider: PermissionDecider | None = None,
+        *,
+        allow_tools: bool = True,
+        attachments: list[dict[str, str]] | None = None,
+    ) -> None:
+        """Run a turn through the backwards-compatible Classic engine."""
+        self.classic_engine.run_turn(
+            user_text,
+            decider,
+            allow_tools=allow_tools,
+            attachments=attachments,
+        )
+
+    def _run_classic_turn(
+        self,
+        user_text: str,
+        decider: PermissionDecider | None = None,
+        *,
+        allow_tools: bool = True,
+        attachments: list[dict[str, str]] | None = None,
+    ) -> None:
         """One user turn: stream model responses and run tools until done."""
+        started_at = time.monotonic()
+        self._turn_allows_tools = allow_tools
+        self._last_turn_allowed_tools = allow_tools
         self._interrupt.clear()
         self.tool_ctx.read_files.clear()
         self._last_user_message = user_text
@@ -706,20 +778,45 @@ class AgentCore:
         # budget projection.
         self._last_call_tokens = 0
         self._messages_at_last_call = 0
-        # Ollama only says what window it chose once the model is resident, so
-        # the first turn budgets against nothing and every turn after that
-        # against the truth. One cheap local call, once per user turn.
-        self.refresh_context_limit()
-        self.auto_compact_if_needed()
-        self._add_message({"role": "user", "content": user_text})
-        self._run_response_loop(decider)
-        # And again now the model is certainly resident, so the next turn's
-        # compaction check has a real number rather than having to wait a turn
-        # for one. Announced so clients tracking session_info see it change.
-        before = self.context_limit
-        self.refresh_context_limit()
-        if self.context_limit != before:
-            self._emit_info()
+        if allow_tools:
+            # AGENTS.md is user-editable while the app is open. Re-read it at
+            # the Work boundary so edits made in Locus or another editor never
+            # require a backend restart, while Just Chat remains isolated from
+            # workspace instructions.
+            self.reload_context()
+            self.reset_system_message()
+            self.tool_registry.begin_turn(user_text, self.cwd)
+        try:
+            # Ollama only says what window it chose once the model is resident, so
+            # the first turn budgets against nothing and every turn after that
+            # against the truth. One cheap local call, once per user turn.
+            self.refresh_context_limit()
+            self.auto_compact_if_needed()
+            user_message: dict[str, Any] = {"role": "user", "content": user_text}
+            if attachments:
+                # Image bytes stay in the in-memory conversation so a follow-up
+                # can refer to them, but are intentionally omitted from the
+                # JSONL transcript. Persisting base64 would make session files
+                # enormous and is unnecessary for rendering chat history.
+                user_message["attachments"] = [dict(item) for item in attachments]
+                persisted = {
+                    "role": "user",
+                    "content": user_text,
+                }
+            else:
+                persisted = None
+            self._add_message(user_message, persisted)
+            self._run_response_loop(decider, started_at=started_at)
+            # And again now the model is certainly resident, so the next turn's
+            # compaction check has a real number rather than having to wait a turn
+            # for one. Announced so clients tracking session_info see it change.
+            before = self.context_limit
+            self.refresh_context_limit()
+            if self.context_limit != before:
+                self._emit_info()
+        finally:
+            self.tool_registry.end_turn()
+            self._turn_allows_tools = True
 
     def _reply_room(self) -> int:
         """Window share held back for the model's reply; scales down on small windows."""
@@ -739,7 +836,12 @@ class AgentCore:
         # allowance scales: reserving 4k of an 8k window would leave no room to
         # hold a conversation in.
         reply_room = self._reply_room()
-        budget = int((self.context_limit - TOOL_SCHEMA_TOKENS - reply_room) * ESTIMATE_OPTIMISM)
+        budget = int((
+            self.context_limit
+            - self._tool_schema_tokens()
+            - self._extension_prompt_tokens()
+            - reply_room
+        ) * ESTIMATE_OPTIMISM)
         # Compacting leaves the system prompt — project context and all — plus
         # the summary it just wrote. That is the floor: below it there is
         # nothing left to reclaim, and compacting anyway would summarize on
@@ -783,7 +885,12 @@ class AgentCore:
         if self.context_limit <= 0:
             return 0
         reply_room = self._reply_room() + headroom_tokens
-        budget = int((self.context_limit - TOOL_SCHEMA_TOKENS - reply_room) * ESTIMATE_OPTIMISM)
+        budget = int((
+            self.context_limit
+            - self._tool_schema_tokens()
+            - self._extension_prompt_tokens()
+            - reply_room
+        ) * ESTIMATE_OPTIMISM)
         return max(budget, 0)
 
     def _over_budget(self, headroom_tokens: int = 0) -> bool:
@@ -892,8 +999,9 @@ class AgentCore:
                 break
         if index is None:
             self._emit({"type": "error", "message": "Nothing to regenerate yet."})
-            self._emit({"type": "turn_done", "reason": "error"})
+            self._emit({"type": "turn_done", "reason": "error", "duration_ms": 0})
             return False
+        started_at = time.monotonic()
         self.messages = self.messages[: index + 1]
         self._interrupt.clear()
         self.tool_ctx.read_files.clear()
@@ -906,13 +1014,27 @@ class AgentCore:
             "reason": "retry",
             "session_info": self.session_info(),
         })
-        self._run_response_loop(decider)
+        user_text = str(self.messages[index].get("content") or "")
+        self._turn_allows_tools = self._last_turn_allowed_tools
+        if self._turn_allows_tools:
+            self.tool_registry.begin_turn(user_text, self.cwd)
+        try:
+            self._run_response_loop(decider, started_at=started_at)
+        finally:
+            self.tool_registry.end_turn()
+            self._turn_allows_tools = True
         return True
 
     #: Shorter alias used by the WebSocket handler.
     retry_last = retry_last_response
 
-    def _run_response_loop(self, decider: PermissionDecider | None = None) -> None:
+    def _run_response_loop(
+        self,
+        decider: PermissionDecider | None = None,
+        *,
+        started_at: float | None = None,
+    ) -> None:
+        started_at = time.monotonic() if started_at is None else started_at
         reason = "complete"
         for _ in range(self.max_iterations):
             if self._interrupt.is_set():
@@ -976,6 +1098,23 @@ class AgentCore:
                 if self._interrupt.is_set():
                     reason = "interrupted"
                 break
+            if not self._turn_allows_tools:
+                # Providers should not return tool calls when no schemas were
+                # sent, but this is a security boundary rather than an API
+                # assumption. Complete the call/result pairing without running
+                # anything, then give the model one more chance to answer.
+                self._emit({
+                    "type": "note",
+                    "text": "Just Chat blocked a workspace or external tool request.",
+                })
+                for skipped in resp.tool_calls:
+                    self._add_message({
+                        "role": "tool",
+                        "name": skipped.name,
+                        "tool_call_id": skipped.call_id or skipped.name,
+                        "content": "Not run: Just Chat has no tool or workspace access.",
+                    })
+                continue
             interrupted = False
             for index, tc in enumerate(resp.tool_calls):
                 if self._interrupt.is_set():
@@ -1009,8 +1148,59 @@ class AgentCore:
                 break
         else:
             reason = "max_iterations"
-        self._emit({"type": "turn_done", "reason": reason})
+        self._emit({
+            "type": "turn_done",
+            "reason": reason,
+            "duration_ms": max(int((time.monotonic() - started_at) * 1000), 0),
+        })
         self._emit_info()
+
+    def _extension_prompt(self) -> str:
+        """Build the ephemeral extension index and any explicitly loaded skill."""
+        if not self._turn_allows_tools:
+            return ""
+        sections = [
+            "Extension capabilities:\n"
+            "- Use load_skill before following a skill from the available index.\n"
+            "- MCP tools are deferred. Use search_extension_tools when an installed "
+            "external integration may help, then call one of the returned tools.\n"
+            "- Loading a skill provides instructions only; it never executes its scripts."
+        ]
+        index = self.tool_registry.skill_index(self.context_limit)
+        if index:
+            sections.append(index)
+        if self.tool_registry.explicit_skill_context:
+            skill_context = self.tool_registry.explicit_skill_context
+            limit = min(self.context_limit or 32_000, 64_000)
+            if len(skill_context) > limit:
+                skill_context = (
+                    skill_context[:limit]
+                    + "\n[Skill instructions truncated to fit this model's context window.]"
+                )
+            sections.append(skill_context)
+        return "\n\n".join(sections)
+
+    def _extension_prompt_tokens(self) -> int:
+        return len(self._extension_prompt()) // 4
+
+    def _tool_schema_tokens(self) -> int:
+        return self.tool_registry.schema_tokens() if self._turn_allows_tools else 0
+
+    def _request_messages(self) -> list[dict[str, Any]]:
+        """Return a request-only copy with extension context in the system prompt."""
+        messages = [dict(message) for message in self.messages]
+        if not self._turn_allows_tools:
+            if messages and messages[0].get("role") == "system":
+                messages[0]["content"] = JUST_CHAT_SYSTEM_PROMPT
+            else:
+                messages.insert(0, {"role": "system", "content": JUST_CHAT_SYSTEM_PROMPT})
+            return messages
+        prompt = self._extension_prompt()
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = f"{messages[0].get('content', '')}\n\n{prompt}"
+        else:
+            messages.insert(0, {"role": "system", "content": prompt})
+        return messages
 
     def _stream_response(self, allow_overflow_retry: bool = True) -> ChatResponse | None:
         self._emit({"type": "message_start"})
@@ -1029,8 +1219,8 @@ class AgentCore:
         try:
             resp = self.client.chat_stream(
                 model=self.model,
-                messages=self.messages,
-                tools=TOOL_SCHEMAS,
+                messages=self._request_messages(),
+                tools=self.tool_registry.schemas() if self._turn_allows_tools else [],
                 on_token=on_token,
                 should_stop=self._interrupt.is_set,
                 on_thinking=on_thinking,
@@ -1084,6 +1274,25 @@ class AgentCore:
     def _run_tool_call(self, tc: ToolCall, decider: PermissionDecider | None) -> str:
         call_id = uuid.uuid4().hex[:10]
         summary, detail = build_preview(tc.name, tc.arguments, self.tool_ctx)
+        info = self.tool_registry.tool_info(tc.name) or {"origin": "builtin"}
+        event_info = {
+            key: value for key, value in info.items()
+            if key in {
+                "origin", "server_id", "server_name", "annotations", "schema_digest",
+                "server_fingerprint", "approval_mode",
+            }
+            and value is not None
+        }
+        schema_digest = str(info.get("schema_digest") or "")
+        server_fingerprint = str(info.get("server_fingerprint") or "")
+        permission_material = f"{server_fingerprint}:{schema_digest}".strip(":")
+        permission_fingerprint = (
+            hashlib.sha256(permission_material.encode()).hexdigest()[:24]
+            if permission_material else ""
+        )
+        permission_key = (
+            f"{tc.name}@{permission_fingerprint}" if permission_fingerprint else tc.name
+        )
         blocked = self.perms.blocked_reason(tc.name, tc.arguments)
         if blocked:
             result = f"Error: {blocked}. Ask the user to run it manually if it is really needed."
@@ -1094,6 +1303,7 @@ class AgentCore:
                 "summary": summary,
                 "detail": detail,
                 "auto": True,
+                **event_info,
             })
             self._emit({
                 "type": "tool_result",
@@ -1103,10 +1313,11 @@ class AgentCore:
                 "result": result,
                 "ok": False,
                 "denied": True,
+                **event_info,
             })
             return result
-        auto = self.perms.is_auto_allowed(
-            tc.name, inside_workspace=self._targets_workspace(tc)
+        auto = self.tool_registry.is_safe(tc.name) or self.perms.is_auto_allowed(
+            permission_key, inside_workspace=self._targets_workspace(tc)
         )
         self._emit({
             "type": "tool_call_proposed",
@@ -1115,6 +1326,7 @@ class AgentCore:
             "summary": summary,
             "detail": detail,
             "auto": auto,
+            **event_info,
         })
         if not auto:
             request_id = uuid.uuid4().hex[:12]
@@ -1126,10 +1338,11 @@ class AgentCore:
                 "summary": summary,
                 "detail": detail,
                 "preview": {"summary": summary, "detail": detail},
+                **event_info,
             })
             decision = decider(tc.name, summary, detail, request_id) if decider else "deny"
             if decision == "always":
-                self.perms.allow_tool(tc.name)
+                self.perms.allow_tool(permission_key)
             if decision not in ("once", "always"):
                 result = (
                     f"Permission denied: the user did not allow running {tc.name}. "
@@ -1143,9 +1356,14 @@ class AgentCore:
                     "result": result,
                     "ok": False,
                     "denied": True,
+                    **event_info,
                 })
                 return result
-        result = execute_tool(tc.name, tc.arguments, self.tool_ctx)
+        result = (
+            execute_tool(tc.name, tc.arguments, self.tool_ctx)
+            if info.get("origin") == "builtin"
+            else self.tool_registry.execute(tc.name, tc.arguments, self.tool_ctx)
+        )
         ok = not result.startswith("Error")
         self._emit({
             "type": "tool_result",
@@ -1155,6 +1373,7 @@ class AgentCore:
             "result": result,
             "ok": ok,
             "denied": False,
+            **event_info,
         })
         if tc.name == "todo_write":
             self._emit({"type": "todo_update", "todos": self.tool_ctx.todos})
@@ -1201,10 +1420,11 @@ class AgentCore:
         if cmd == "/todos":
             return {"command": "todos", "data": {"todos": self.tool_ctx.todos}}
         if cmd == "/tools":
-            names = [s["function"]["name"] for s in TOOL_SCHEMAS]
+            schemas = self.tool_registry.schemas()
+            names = [s["function"]["name"] for s in schemas]
             listing = "\n".join(
                 f"  {s['function']['name']:<12} {s['function']['description']}"
-                for s in TOOL_SCHEMAS
+                for s in schemas
             )
             return {
                 "command": "tools",
@@ -1434,7 +1654,14 @@ class AgentCore:
 
     def clear_saved_sessions(self) -> dict[str, Any]:
         """Move every session except the active one into the recovery folder."""
-        return clear_saved_sessions(self.session.session_id)
+        session_ids = [
+            path.stem
+            for path in SessionStore.list_sessions()
+            if path.stem != self.session.session_id
+        ]
+        result = clear_saved_sessions(self.session.session_id)
+        result["discarded_graph_runs"] = self.langgraph_engine.runs.discard_sessions(session_ids)
+        return result
 
     @staticmethod
     def update_session_metadata(

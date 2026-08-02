@@ -14,140 +14,210 @@ struct InspectorPlanTab: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    ContextWindowInfoCard()
+                        .environmentObject(model)
+
+                    Divider().overlay(LocusTheme.line)
+
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("CURRENT RUN")
+                                .font(.system(size: 8, weight: .bold))
+                                .tracking(0.8)
+                                .foregroundStyle(LocusTheme.muted)
+                            Text(model.todos.isEmpty ? "No active plan" : "Agent implementation plan")
+                                .font(.system(size: 11, weight: .bold))
+                        }
+                        Spacer()
+                    }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("plan.activePlan")
+
+                    if model.todos.isEmpty {
+                        VStack(spacing: 11) {
+                            Image(systemName: "list.bullet.clipboard")
+                                .font(.system(size: 23))
+                                .foregroundStyle(LocusTheme.muted)
+                            Text("Plans appear here as the agent breaks work into steps.")
+                                .font(.system(size: 9))
+                                .foregroundStyle(LocusTheme.muted)
+                                .multilineTextAlignment(.center)
+                            Button("Create a plan") {
+                                suggestionsPresented = true
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(LocusTheme.ink)
+                            .controlSize(.small)
+                            .disabled(model.isBusy || model.hasPendingPermission)
+                            .accessibilityIdentifier("plan.create")
+                            .popover(isPresented: $suggestionsPresented, arrowEdge: .bottom) {
+                                PlanSuggestionsPopover { prompt in
+                                    suggestionsPresented = false
+                                    model.requestPlan(prompt: prompt)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 28)
+                        .locusCard(radius: 9)
+                    } else {
+                        VStack(spacing: 6) {
+                            GeometryReader { proxy in
+                                ZStack(alignment: .leading) {
+                                    Capsule().fill(LocusTheme.line)
+                                    Capsule()
+                                        .fill(LocusTheme.signalDeep)
+                                        .frame(width: proxy.size.width * progress)
+                                }
+                            }
+                            .frame(height: 4)
+                            HStack {
+                                Text("\(completedCount) of \(model.todos.count) complete")
+                                Spacer()
+                                Text(progress.formatted(.percent.precision(.fractionLength(0))))
+                            }
+                            .font(.system(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                        }
+
+                        VStack(spacing: 0) {
+                            ForEach(Array(model.todos.enumerated()), id: \.element.id) { index, todo in
+                                PlanRow(todo: todo, isLast: index == model.todos.count - 1)
+                            }
+                        }
+                    }
+                }
+                .padding(17)
+            }
+            .frame(maxHeight: .infinity)
+
+            Divider().overlay(LocusTheme.line)
+
+            PermissionGuardCard()
+                .environmentObject(model)
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
+                .padding(.horizontal, 17)
+                .padding(.top, 12)
+                .padding(.bottom, 17)
+                .background(LocusTheme.paper)
+        }
+    }
+}
+
+struct InspectorCheckpointsTab: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var title = ""
+
+    var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("CURRENT RUN")
-                            .font(.system(size: 8, weight: .bold))
-                            .tracking(0.8)
-                            .foregroundStyle(LocusTheme.muted)
-                        Text(model.todos.isEmpty ? "No active plan" : "Agent implementation plan")
-                            .font(.system(size: 11, weight: .bold))
-                    }
-                    Spacer()
-                }
-
-                if model.todos.isEmpty {
-                    VStack(spacing: 11) {
-                        Image(systemName: "list.bullet.clipboard")
-                            .font(.system(size: 23))
-                            .foregroundStyle(LocusTheme.muted)
-                        Text("Plans appear here as the agent breaks work into steps.")
-                            .font(.system(size: 9))
-                            .foregroundStyle(LocusTheme.muted)
-                            .multilineTextAlignment(.center)
-                        Button("Create a plan") {
-                            suggestionsPresented = true
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(LocusTheme.ink)
-                        .controlSize(.small)
-                        .disabled(model.isBusy || model.hasPendingPermission)
-                        .accessibilityIdentifier("plan.create")
-                        .popover(isPresented: $suggestionsPresented, arrowEdge: .bottom) {
-                            PlanSuggestionsPopover { prompt in
-                                suggestionsPresented = false
-                                model.requestPlan(prompt: prompt)
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 28)
-                    .locusCard(radius: 9)
-                } else {
-                    VStack(spacing: 6) {
-                        GeometryReader { proxy in
-                            ZStack(alignment: .leading) {
-                                Capsule().fill(LocusTheme.line)
-                                Capsule()
-                                    .fill(LocusTheme.signalDeep)
-                                    .frame(width: proxy.size.width * progress)
-                            }
-                        }
-                        .frame(height: 4)
-                        HStack {
-                            Text("\(completedCount) of \(model.todos.count) complete")
-                            Spacer()
-                            Text(progress.formatted(.percent.precision(.fractionLength(0))))
-                        }
-                        .font(.system(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
-                    }
-
-                    VStack(spacing: 0) {
-                        ForEach(Array(model.todos.enumerated()), id: \.element.id) { index, todo in
-                            PlanRow(todo: todo, isLast: index == model.todos.count - 1)
-                        }
-                    }
-                }
-
-                Divider().overlay(LocusTheme.line)
-
-                HStack {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("SESSION CHECKPOINTS")
                         .font(.system(size: 8, weight: .bold))
                         .tracking(0.8)
                         .foregroundStyle(LocusTheme.muted)
-                    Spacer()
-                    Button {
-                        model.checkpointPresented = true
-                    } label: {
-                        Label("Manage", systemImage: "plus")
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 8, weight: .semibold))
-                    .accessibilityIdentifier("plan.manageCheckpoints")
+                    Text("Save and restore this session")
+                        .font(.system(size: 11, weight: .bold))
+                    Text("Checkpoints preserve the conversation, active plan, workspace, model, and context pack.")
+                        .font(.system(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
-                if let latest = model.checkpoints.first {
-                    HStack(spacing: 10) {
-                        Image(systemName: "clock.arrow.circlepath")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(LocusTheme.signal)
-                            .frame(width: 34, height: 34)
-                            .background(LocusTheme.ink)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(latest.title)
-                                .font(.system(size: 9, weight: .bold))
-                                .lineLimit(1)
-                            Text(latest.createdAt, style: .relative)
-                                .font(.system(size: 7))
-                                .foregroundStyle(LocusTheme.muted)
-                        }
-                        Spacer()
-                        Button {
-                            model.restore(latest)
-                        } label: {
-                            Image(systemName: "arrow.counterclockwise")
-                        }
-                        .buttonStyle(.plain)
-                        .help("Restore this session checkpoint")
-                        .accessibilityLabel("Restore latest checkpoint")
-                        .accessibilityIdentifier("plan.restoreLatest")
-                    }
-                    .padding(10)
-                    .locusCard(radius: 9)
-                } else {
+                VStack(spacing: 8) {
+                    TextField("Checkpoint name (optional)", text: $title)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("checkpointTab.title")
                     Button {
-                        model.createCheckpoint()
+                        model.createCheckpoint(title: title)
+                        title = ""
                     } label: {
-                        Label("Create the first checkpoint", systemImage: "plus")
-                            .font(.system(size: 9, weight: .semibold))
+                        Label("Create Checkpoint", systemImage: "plus")
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
                     }
-                    .buttonStyle(.plain)
-                    .locusCard(radius: 8)
-                    .accessibilityIdentifier("plan.createCheckpoint")
+                    .buttonStyle(.borderedProminent)
+                    .tint(LocusTheme.ink)
+                    .disabled(model.isBusy || model.hasPendingPermission)
+                    .accessibilityIdentifier("checkpointTab.create")
                 }
 
-                PermissionGuardCard()
-                    .environmentObject(model)
+                Divider().overlay(LocusTheme.line)
+
+                if model.checkpoints.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "clock.badge.questionmark")
+                            .font(.system(size: 25))
+                            .foregroundStyle(LocusTheme.muted)
+                        Text("No checkpoints yet")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Create one before a risky or exploratory turn.")
+                            .font(.system(size: 9))
+                            .foregroundStyle(LocusTheme.muted)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 28)
+                    .locusCard(radius: 9)
+                    .accessibilityIdentifier("checkpointTab.empty")
+                } else {
+                    LazyVStack(spacing: 8) {
+                        ForEach(model.checkpoints) { checkpoint in
+                            checkpointRow(checkpoint)
+                        }
+                    }
+                }
             }
             .padding(17)
         }
+        .accessibilityIdentifier("checkpointTab.content")
+    }
+
+    private func checkpointRow(_ checkpoint: SessionCheckpoint) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(LocusTheme.signal)
+                .frame(width: 34, height: 34)
+                .background(LocusTheme.ink)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(checkpoint.title)
+                    .font(.system(size: 9, weight: .bold))
+                    .lineLimit(1)
+                Text(checkpoint.createdAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.system(size: 7))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            Spacer(minLength: 4)
+            Button {
+                model.restore(checkpoint)
+            } label: {
+                Image(systemName: "arrow.counterclockwise")
+            }
+            .buttonStyle(.plain)
+            .disabled(model.isBusy || model.hasPendingPermission)
+            .help("Restore this session checkpoint")
+            .accessibilityLabel("Restore \(checkpoint.title)")
+            .accessibilityIdentifier("checkpointTab.restore.\(checkpoint.id)")
+            Button {
+                model.delete(checkpoint)
+            } label: {
+                Image(systemName: "trash")
+                    .foregroundStyle(LocusTheme.coral)
+            }
+            .buttonStyle(.plain)
+            .disabled(model.isBusy || model.hasPendingPermission)
+            .help("Delete this checkpoint")
+            .accessibilityLabel("Delete \(checkpoint.title)")
+            .accessibilityIdentifier("checkpointTab.delete.\(checkpoint.id)")
+        }
+        .padding(10)
+        .locusCard(radius: 9)
     }
 }
 
@@ -282,6 +352,112 @@ struct PermissionGuardCard: View {
                         : Color(red: 0.84, green: 0.78, blue: 0.73),
                     lineWidth: 1
                 )
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("plan.permissions")
+    }
+}
+
+struct ContextWindowInfoCard: View {
+    @EnvironmentObject private var model: AppModel
+
+    private var fraction: Double? { model.contextWindowUsageFraction }
+
+    private var accent: Color {
+        (fraction ?? 0) > 0.8 ? LocusTheme.warning : LocusTheme.signalDeep
+    }
+
+    private var remainingTokens: Int? {
+        guard let usable = model.contextUsableTokens else { return nil }
+        return max(usable - model.contextUsedTokens, 0)
+    }
+
+    private var usageLabel: String {
+        if let fraction {
+            return fraction.formatted(.percent.precision(.fractionLength(0))) + " USED"
+        }
+        return "WINDOW UNKNOWN"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "circle.dotted.circle")
+                Text("Context window")
+                Spacer()
+                Text(usageLabel)
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .tracking(0.45)
+                    .foregroundStyle(accent)
+            }
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(LocusTheme.inkSoft)
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(LocusTheme.line)
+                    if let fraction {
+                        Capsule()
+                            .fill(accent)
+                            .frame(width: proxy.size.width * fraction)
+                    }
+                }
+            }
+            .frame(height: 5)
+
+            VStack(spacing: 7) {
+                statRow("This conversation", "~\(model.contextUsedTokens.formatted()) tokens")
+                statRow(
+                    "Remaining",
+                    remainingTokens.map { "~\($0.formatted()) tokens" } ?? "Unknown"
+                )
+                statRow(
+                    "Model window",
+                    model.contextWindowTokens.map { "\($0.formatted()) tokens" } ?? "Unknown"
+                )
+                if let graphModel = model.graphContextModelLabel {
+                    statRow("Workflow final model", graphModel)
+                }
+                if let usable = model.contextUsableTokens,
+                   let window = model.contextWindowTokens,
+                   usable < window {
+                    statRow("Usable for chat", "\(usable.formatted()) tokens")
+                }
+                statRow(
+                    "Context pack next send",
+                    "\(model.includedContextTokens.formatted()) · \(model.includedContextCount) files"
+                )
+                statRow("Messages", "\(model.sessionInfo?.messages ?? 0)")
+            }
+
+            Text("Locus compacts the conversation when it reaches the usable limit, preserving room for tools and the next response.")
+                .font(.system(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(11)
+        .background(LocusTheme.white.opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(LocusTheme.line, lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Context window information")
+        .accessibilityIdentifier("plan.contextWindow")
+    }
+
+    private func statRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .font(.system(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+            Spacer(minLength: 4)
+            Text(value)
+                .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                .foregroundStyle(LocusTheme.inkSoft)
+                .multilineTextAlignment(.trailing)
         }
     }
 }

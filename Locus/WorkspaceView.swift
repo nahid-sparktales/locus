@@ -201,7 +201,7 @@ struct WorkspaceView: View {
             .accessibilityLabel("Workspace actions")
             .accessibilityIdentifier("workspace.actions")
 
-            if model.inspectorCollapsed {
+            if model.inspectorCollapsed && !model.justChatEnabled {
                 HeaderIconButton(
                     symbol: "sidebar.right",
                     label: "Show inspector",
@@ -246,6 +246,81 @@ struct WorkspaceView: View {
         .overlay(alignment: .bottom) {
             Rectangle().fill(LocusTheme.coral.opacity(0.25)).frame(height: 1)
         }
+    }
+}
+
+/// Codex-style Chat/Work segmented control. This intentionally uses custom
+/// capsule styling instead of the native macOS segmented picker so it matches
+/// the compact dark control used in Codex.
+struct JustChatControl: View {
+    let isChatSelected: Bool
+    let setChatSelected: (Bool) -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            segment(
+                title: "Chat",
+                selected: isChatSelected,
+                identifier: "workspace.mode.chat"
+            ) {
+                setChatSelected(true)
+            }
+
+            segment(
+                title: "Work",
+                selected: !isChatSelected,
+                identifier: "workspace.mode.work"
+            ) {
+                setChatSelected(false)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 32)
+        .background(LocusTheme.paperDeep)
+        .clipShape(Capsule())
+        .overlay {
+            Capsule()
+                .stroke(LocusTheme.line, lineWidth: 1)
+        }
+        .shadow(color: LocusTheme.ink.opacity(0.08), radius: 2, y: 1)
+        .layoutPriority(2)
+        .animation(.easeInOut(duration: 0.16), value: isChatSelected)
+        .help(
+            isChatSelected
+                ? "Just Chat is on — no workspace files, commands, skills, or MCP tools"
+                : "Work mode can plan, inspect, and change the workspace"
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Chat or Work mode")
+        .accessibilityValue(isChatSelected ? "Chat" : "Work")
+        .accessibilityIdentifier("workspace.justChat")
+    }
+
+    private func segment(
+        title: String,
+        selected: Bool,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(selected ? LocusTheme.white : LocusTheme.muted)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background {
+                    if selected {
+                        Capsule()
+                            .fill(LocusTheme.inkSoft)
+                            .shadow(color: LocusTheme.ink.opacity(0.16), radius: 1, y: 1)
+                    }
+                }
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier(identifier)
     }
 }
 
@@ -574,13 +649,17 @@ private struct MessageBlockView: View {
                 }
 
             case .note:
-                Label(block.text, systemImage: "info.circle")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(LocusTheme.paperDeep.opacity(0.7))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                if let completion = block.completion {
+                    TurnCompletionMarker(completion: completion)
+                } else {
+                    Label(block.text, systemImage: "info.circle")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(LocusTheme.paperDeep.opacity(0.7))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
 
             case .error:
                 Label(block.text, systemImage: "xmark.octagon.fill")
@@ -597,7 +676,11 @@ private struct MessageBlockView: View {
             }
         }
         .onHover { isHovering = $0 }
-        .accessibilityIdentifier("message.\(block.id.uuidString)")
+        .accessibilityIdentifier(
+            block.completion == nil
+                ? "message.\(block.id.uuidString)"
+                : "turnCompletion.\(block.id.uuidString)"
+        )
         .contextMenu {
             if block.kind == .user || block.kind == .assistant {
                 Button("Copy Message") { model.copyMessage(block.text) }
@@ -698,6 +781,56 @@ private struct MessageBlockView: View {
     }
 }
 
+private struct TurnCompletionMarker: View {
+    let completion: TurnCompletion
+
+    private var color: Color {
+        switch completion.outcome {
+        case .complete: LocusTheme.success
+        case .interrupted, .maxIterations: LocusTheme.warning
+        case .error: LocusTheme.coral
+        }
+    }
+
+    private var symbol: String {
+        switch completion.outcome {
+        case .complete: "checkmark.circle.fill"
+        case .interrupted: "stop.circle.fill"
+        case .maxIterations: "exclamationmark.circle.fill"
+        case .error: "xmark.circle.fill"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Rectangle()
+                .fill(LocusTheme.line)
+                .frame(height: 1)
+
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(color)
+
+            Text(completion.title)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(LocusTheme.inkSoft)
+                .fixedSize()
+
+            Text("· Worked for \(completion.durationText)")
+                .font(.system(size: 8, design: .monospaced))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize()
+
+            Rectangle()
+                .fill(LocusTheme.line)
+                .frame(height: 1)
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(completion.title). Worked for \(completion.durationText).")
+    }
+}
+
 /// The bordered icon button used for the panel-restore controls in the header.
 /// Shared so the two cannot drift apart.
 private struct HeaderIconButton: View {
@@ -767,6 +900,11 @@ private struct ContextUsageChip: View {
                 Text(chipText)
                     .font(.system(size: 9, weight: .semibold, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
+                if model.graphUsesMixedModels, model.activeGraphRunID != nil {
+                    Text("MIXED")
+                        .font(.system(size: 6, weight: .bold, design: .monospaced))
+                        .foregroundStyle(LocusTheme.blue)
+                }
             }
             .padding(.horizontal, 9)
             .frame(height: 32)
@@ -795,6 +933,9 @@ private struct ContextUsageChip: View {
                     "Model window",
                     model.contextWindowTokens.map { "\($0.formatted()) tokens" } ?? "Unknown"
                 )
+                if let graphModel = model.graphContextModelLabel {
+                    statRow("Workflow final model", graphModel)
+                }
                 statRow("Session so far", "~\(model.contextUsedTokens.formatted()) tokens")
                 if let usable = model.contextUsableTokens,
                    let window = model.contextWindowTokens, usable < window {

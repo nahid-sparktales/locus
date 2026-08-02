@@ -4,8 +4,30 @@ import XCTest
 final class AppModelTests: XCTestCase {
     func testWorkModeInstructionsAreDistinct() {
         XCTAssertEqual(Set(WorkMode.allCases.map(\.instruction)).count, WorkMode.allCases.count)
+        XCTAssertTrue(WorkMode.ask.instruction.contains("explicitly attached"))
+        XCTAssertTrue(WorkMode.ask.instruction.contains("Do not inspect attachment paths"))
         XCTAssertTrue(WorkMode.plan.instruction.contains("do not modify"))
         XCTAssertTrue(WorkMode.build.instruction.contains("Implement"))
+    }
+
+    func testChatAttachmentRepresentsTextAndImageInputs() {
+        let text = ChatAttachment(
+            url: URL(fileURLWithPath: "/tmp/notes.txt"),
+            kind: .text,
+            textContent: "A supplied note"
+        )
+        let image = ChatAttachment(
+            url: URL(fileURLWithPath: "/tmp/photo.png"),
+            kind: .image,
+            imageData: Data([0x89, 0x50, 0x4e, 0x47]),
+            mimeType: "image/png"
+        )
+
+        XCTAssertTrue(text.isAvailable)
+        XCTAssertEqual(text.name, "notes.txt")
+        XCTAssertTrue(text.detail.contains("tokens"))
+        XCTAssertTrue(image.isAvailable)
+        XCTAssertEqual(image.mimeType, "image/png")
     }
 
     func testContextTokenEstimateUsesReadableMinimum() {
@@ -1230,6 +1252,82 @@ final class AppModelTests: XCTestCase {
     // MARK: - Plan approval
 
     @MainActor
+    func testJustChatToggleReturnsToThePreviousAgenticMode() {
+        let model = AppModel(startImmediately: false)
+        model.selectedMode = .plan
+        model.selectInspectorTab(.files)
+        XCTAssertFalse(model.inspectorCollapsed)
+
+        model.setJustChatEnabled(true)
+        XCTAssertTrue(model.justChatEnabled)
+        XCTAssertEqual(model.selectedMode, .ask)
+        XCTAssertTrue(model.inspectorCollapsed, "Just Chat closes the workspace inspector")
+
+        model.selectInspectorTab(.changes)
+        XCTAssertEqual(model.inspectorTab, .files, "inspector shortcuts stay inert in Just Chat")
+        XCTAssertTrue(model.inspectorCollapsed)
+
+        model.setJustChatEnabled(false)
+        XCTAssertFalse(model.justChatEnabled)
+        XCTAssertEqual(model.selectedMode, .plan)
+        XCTAssertFalse(model.inspectorCollapsed, "leaving Just Chat restores the previously open inspector")
+        XCTAssertEqual(model.inspectorTab, .files)
+    }
+
+    @MainActor
+    func testJustChatKeepsInspectorClosedWhenItWasAlreadyClosed() {
+        let model = AppModel(startImmediately: false)
+        model.selectedMode = .build
+        model.inspectorCollapsed = true
+
+        model.setJustChatEnabled(true)
+        XCTAssertTrue(model.inspectorCollapsed)
+
+        model.setJustChatEnabled(false)
+        XCTAssertEqual(model.selectedMode, .build)
+        XCTAssertTrue(model.inspectorCollapsed, "leaving Just Chat preserves a previously closed inspector")
+    }
+
+    @MainActor
+    func testCompletedBuildTurnAddsTimingMarkerAndFinishesTheActivePlanStep() {
+        let model = AppModel(startImmediately: false)
+        model.turnDispatchedMode = .build
+        model.todos = [
+            TodoItem(content: "Inspect the sidebar", status: .completed),
+            TodoItem(content: "Add the completion cue", status: .inProgress),
+            TodoItem(content: "Optional follow-up", status: .pending),
+        ]
+
+        model.handleEventForTesting([
+            "type": "turn_done",
+            "reason": "complete",
+            "duration_ms": 84_000,
+        ])
+
+        XCTAssertEqual(model.todos.map(\.status), [.completed, .completed, .pending])
+        let completion = model.blocks.last?.completion
+        XCTAssertEqual(completion?.title, "Task finished")
+        XCTAssertEqual(completion?.durationText, "1m 24s")
+        XCTAssertEqual(completion?.outcome, .complete)
+    }
+
+    @MainActor
+    func testInterruptedBuildTurnDoesNotClaimTheActivePlanStepFinished() {
+        let model = AppModel(startImmediately: false)
+        model.turnDispatchedMode = .build
+        model.todos = [TodoItem(content: "Verify the app", status: .inProgress)]
+
+        model.handleEventForTesting([
+            "type": "turn_done",
+            "reason": "interrupted",
+            "duration_ms": 2_400,
+        ])
+
+        XCTAssertEqual(model.todos.first?.status, .inProgress)
+        XCTAssertEqual(model.blocks.last?.completion?.title, "Stopped")
+    }
+
+    @MainActor
     func testCompletedPlanTurnOffersToImplementThePlan() {
         let model = AppModel(startImmediately: false)
         armPlanApproval(model)
@@ -1446,6 +1544,127 @@ final class AppModelTests: XCTestCase {
             "todos": [["content": "Audit the sidebar", "status": "pending"]],
         ])
         model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
+    }
+
+    @MainActor
+    func testGraphEventsPopulateWorkflowInspectorWithoutLeakingSpecialistTextIntoChat() {
+        let model = AppModel(startImmediately: false)
+        let initialBlocks = model.blocks.count
+
+        model.handleEventForTesting([
+            "type": "graph_run_started",
+            "run_id": "run-1",
+            "workflow_id": "builder-team",
+        ])
+        model.handleEventForTesting([
+            "type": "graph_node_state",
+            "run_id": "run-1",
+            "node_id": "review",
+            "agent": "Reviewer",
+            "status": "running",
+        ])
+        model.handleEventForTesting([
+            "type": "graph_node_token",
+            "run_id": "run-1",
+            "node_id": "review",
+            "agent": "Reviewer",
+            "text": "private specialist output",
+            "model": "specialist-model",
+            "prompt_tokens": 120,
+            "completion_tokens": 30,
+            "context_limit": 32768,
+            "final_node": false,
+        ])
+        model.handleEventForTesting([
+            "type": "graph_node_token",
+            "run_id": "run-1",
+            "node_id": "final",
+            "agent": "Final Answer",
+            "text": "",
+            "model": "final-model",
+            "prompt_tokens": 80,
+            "completion_tokens": 20,
+            "context_limit": 16384,
+            "final_node": true,
+        ])
+
+        XCTAssertEqual(model.activeGraphRunID, "run-1")
+        XCTAssertEqual(model.inspectorTab, .workflows)
+        XCTAssertEqual(model.graphNodeActivities.first?.output, "private specialist output")
+        XCTAssertEqual(model.graphNodeActivities.first?.promptTokens, 120)
+        XCTAssertTrue(model.graphUsesMixedModels)
+        XCTAssertEqual(model.graphContextModelLabel, "final-model · mixed-model run")
+        XCTAssertEqual(model.blocks.count, initialBlocks, "specialist streams belong only in graph activity cards")
+    }
+
+    @MainActor
+    func testGraphReviewEventCreatesDurableReviewPrompt() {
+        let model = AppModel(startImmediately: false)
+        model.handleEventForTesting([
+            "type": "graph_review_request",
+            "request_id": "review-1",
+            "run_id": "run-1",
+            "node_id": "approval",
+            "title": "Review completion",
+            "message": "Approve this branch",
+            "summary": "Two specialists completed",
+        ])
+
+        XCTAssertEqual(model.activeGraphStatus, "waiting_review")
+        XCTAssertEqual(model.graphReviewRequest?.requestID, "review-1")
+        XCTAssertEqual(model.graphReviewRequest?.summary, "Two specialists completed")
+    }
+
+    func testRecoverableRunDecodesUncertainSideEffectPreview() throws {
+        let data = #"""
+        {
+          "id":"run-1","session_id":"session-1","workflow_id":"builder-team",
+          "workflow_digest":"digest","mode":"build","goal":"Update an issue","status":"uncertain",
+          "state":{},"error":"A side effect may have completed.",
+          "created_at":"2026-08-02T10:00:00Z","updated_at":"2026-08-02T10:01:00Z",
+          "side_effects":[{
+            "effect_id":"effect-1","node_id":"tools","tool":"mcp__linear__update_issue",
+            "preview":"Set ENG-42 to Done","status":"started","result":"",
+            "created_at":"2026-08-02T10:00:30Z","updated_at":"2026-08-02T10:00:30Z"
+          }]
+        }
+        """#.data(using: .utf8)!
+
+        let run = try JSONDecoder().decode(GraphRunSummary.self, from: data)
+        XCTAssertEqual(run.sideEffects?.first?.tool, "mcp__linear__update_issue")
+        XCTAssertEqual(run.sideEffects?.first?.preview, "Set ENG-42 to Done")
+    }
+
+    func testExtensionSnapshotDecodesPluginSkillAndOAuthServer() throws {
+        let data = #"""
+        {
+          "capabilities": {"streamable_http":true,"stdio":false,"oauth":true,"mcp_apps":false,"hooks":false,"sandboxed":true},
+          "marketplaces": [{"id":"local","name":"Local","kind":"local","source":"/tmp/market","error":null,"workspace_discovered":false}],
+          "plugins": [{
+            "id":"local/demo","name":"demo","display_name":"Demo","description":"A demo","version":"1.0.0","author":"Locus",
+            "digest":"abc","enabled_global":true,"enabled_workspaces":[],"disabled_workspaces":[],"previous_versions":[],
+            "skills":[],"mcp_servers":[],"scripts":[],"unsupported":[],"error":null
+          }],
+          "skills": [{
+            "id":"demo:review","name":"review","display_name":"Review","description":"Review changes","source":"plugin",
+            "plugin_id":"local/demo","allow_implicit_invocation":true,"enabled":true,"error":null
+          }],
+          "mcp_servers": [{
+            "id":"plugin:demo:remote","name":"remote","transport":"streamable_http","url":"https://example.com/mcp","command":"",
+            "origin":"plugin","plugin_id":"local/demo","active":true,"enabled":true,"enabled_global":true,"enabled_workspaces":[],
+            "disabled_workspaces":[],"state":"connected","error":null,"tool_count":2,"has_credentials":true,"approval_mode":"annotations",
+            "auth":"oauth","oauth":{"authorization_endpoint":"https://example.com/authorize","token_endpoint":"https://example.com/token","client_id":"client","scopes":["tools"],"redirect_uri":"locus://mcp/oauth"}
+          }],
+          "errors":[],"pending_updates":0
+        }
+        """#.data(using: .utf8)!
+
+        let response = try JSONDecoder().decode(ExtensionsResponse.self, from: data)
+
+        XCTAssertEqual(response.plugins.first?.displayName, "Demo")
+        XCTAssertEqual(response.skills.first?.id, "demo:review")
+        XCTAssertEqual(response.mcpServers.first?.oauth?.clientID, "client")
+        XCTAssertFalse(response.capabilities.stdio)
     }
 
     private func sessionInfo(id: String) -> [String: Any] {
