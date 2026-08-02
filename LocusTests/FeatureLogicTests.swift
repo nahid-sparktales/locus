@@ -1,7 +1,32 @@
+import AppKit
 import XCTest
 @testable import Locus
 
 final class FeatureLogicTests: XCTestCase {
+    // MARK: - Application lifecycle
+
+    func testApplicationProhibitsMultipleProcesses() {
+        XCTAssertEqual(
+            Bundle.main.object(forInfoDictionaryKey: "LSMultipleInstancesProhibited") as? Bool,
+            true
+        )
+    }
+
+    @MainActor
+    func testApplicationDelegateTargetsOnlyTheMarkedMainWindow() {
+        let settings = NSWindow()
+        settings.identifier = NSUserInterfaceItemIdentifier("locus.settings")
+        let main = NSWindow()
+        main.identifier = LocusApplicationDelegate.mainWindowIdentifier
+
+        XCTAssertTrue(
+            LocusApplicationDelegate.mainWindow(in: [settings, main]) === main
+        )
+        XCTAssertTrue(
+            LocusApplicationDelegate().applicationShouldTerminateAfterLastWindowClosed(.shared)
+        )
+    }
+
     // MARK: - Slash commands
 
     func testSlashQueryDetection() {
@@ -126,7 +151,7 @@ final class FeatureLogicTests: XCTestCase {
     // MARK: - Inspector chrome
 
     func testInspectorTabsAreStableAndUnique() {
-        XCTAssertEqual(InspectorTab.allCases.count, 5)
+        XCTAssertEqual(InspectorTab.allCases.count, 8)
         let raws = InspectorTab.allCases.map(\.rawValue)
         XCTAssertEqual(Set(raws).count, raws.count)
         XCTAssertEqual(Set(InspectorTab.allCases.map(\.symbol)).count, raws.count)
@@ -134,10 +159,47 @@ final class FeatureLogicTests: XCTestCase {
         // rawValue is the accessibility-identifier and persistence contract.
         XCTAssertEqual(InspectorTab(rawValue: "plan"), .plan)
         XCTAssertEqual(InspectorTab(rawValue: "terminal"), .terminal)
+        XCTAssertEqual(InspectorTab(rawValue: "checkpoints"), .checkpoints)
+        XCTAssertEqual(InspectorTab(rawValue: "agents"), .agents)
+        XCTAssertEqual(InspectorTab(rawValue: "workflows"), .workflows)
     }
 
-    func testInspectorShortcutsAreOneThroughFive() {
-        XCTAssertEqual(InspectorTab.allCases.map(\.shortcutKey), ["1", "2", "3", "4", "5"])
+    func testInspectorShortcutsAreOneThroughEight() {
+        XCTAssertEqual(
+            InspectorTab.allCases.map(\.shortcutKey),
+            ["1", "2", "3", "4", "5", "6", "7", "8"]
+        )
+    }
+
+    func testAgentInstructionsFileRoundTripsAndRejectsEscapingSymlinks() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let workspace = base.appending(path: "workspace", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        XCTAssertEqual(AgentInstructionsFile.load(from: workspace.path), .init(
+            exists: false,
+            content: "",
+            error: nil
+        ))
+
+        try AgentInstructionsFile.save("# Rules\n\n- Run tests.\n", in: workspace.path)
+        XCTAssertEqual(
+            AgentInstructionsFile.load(from: workspace.path).content,
+            "# Rules\n\n- Run tests.\n"
+        )
+
+        let outside = base.appending(path: "outside.md")
+        try "do not overwrite".write(to: outside, atomically: true, encoding: .utf8)
+        try FileManager.default.removeItem(at: AgentInstructionsFile.url(for: workspace.path))
+        try FileManager.default.createSymbolicLink(
+            at: AgentInstructionsFile.url(for: workspace.path),
+            withDestinationURL: outside
+        )
+        XCTAssertNotNil(AgentInstructionsFile.load(from: workspace.path).error)
+        XCTAssertThrowsError(try AgentInstructionsFile.save("escaped", in: workspace.path))
+        XCTAssertEqual(try String(contentsOf: outside, encoding: .utf8), "do not overwrite")
     }
 
     func testInspectorWidthIsClampedToTheUsableRange() {
@@ -836,6 +898,76 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(restored.count, 1)
         XCTAssertNil(restored[0].accountID, "an old profile means the local runtime")
         XCTAssertEqual(restored[0].model, "qwen3:8b")
+        XCTAssertNil(restored[0].executionEngine, "Classic remains the legacy decode default")
+        XCTAssertNil(restored[0].planWorkflowID)
+        XCTAssertNil(restored[0].buildWorkflowID)
+    }
+
+    func testWorkspaceProfilePersistsLangGraphSelectionsWithoutCredentials() throws {
+        let profile = WorkspaceProfile(
+            path: "/tmp/ws",
+            lastOpened: .now,
+            model: "local-model",
+            accountID: nil,
+            mode: .build,
+            previewURL: "http://localhost:3000",
+            contextFiles: [],
+            draft: "",
+            executionEngine: .langgraph,
+            planWorkflowID: "planner-team",
+            buildWorkflowID: "builder-team"
+        )
+        let data = try JSONEncoder().encode(profile)
+        let restored = try JSONDecoder().decode(WorkspaceProfile.self, from: data)
+        XCTAssertEqual(restored.executionEngine, .langgraph)
+        XCTAssertEqual(restored.planWorkflowID, "planner-team")
+        XCTAssertEqual(restored.buildWorkflowID, "builder-team")
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("api_key"))
+    }
+
+    func testGraphWorkflowDecodesTypedPortsAndToleratesLegacyNodes() throws {
+        let typed = #"""
+        {
+          "schema_version":1,"id":"typed","slug":"typed","name":"Typed","description":"",
+          "supported_modes":["build"],"revision":1,
+          "nodes":[{
+            "id":"join","type":"join","label":"Join","position":{"x":1,"y":2},"config":{},
+            "input_ports":[{"id":"branches","type":"text","multiple":true}],
+            "output_ports":[{"id":"out","type":"context"}]
+          }],
+          "edges":[],"settings":{"max_steps":20,"failure_policy":"fail"},
+          "capability_diff":{"first_trust":false,"prompts_changed":true,
+            "tools_added":["mcp__linear__update_issue"],"tools_removed":[],
+            "models_added":[],"models_removed":[],"provider_accounts_added":[],
+            "provider_accounts_removed":[],"mutation_before":false,"mutation_after":true,
+            "parallel_width_before":1,"parallel_width_after":2,"changed":true}
+        }
+        """#.data(using: .utf8)!
+        let workflow = try JSONDecoder().decode(GraphWorkflow.self, from: typed)
+        XCTAssertEqual(workflow.nodes[0].resolvedInputPorts[0].id, "branches")
+        XCTAssertEqual(workflow.nodes[0].resolvedInputPorts[0].type, "text")
+        XCTAssertEqual(workflow.nodes[0].resolvedInputPorts[0].multiple, true)
+        XCTAssertEqual(workflow.capabilityDiff?.toolsAdded, ["mcp__linear__update_issue"])
+        XCTAssertEqual(workflow.capabilityDiff?.mutationAfter, true)
+
+        let legacy = #"""
+        {
+          "schema_version":1,"id":"legacy","slug":"legacy","name":"Legacy","description":"",
+          "supported_modes":["plan"],"revision":1,
+          "nodes":[{"id":"agent","type":"agent","label":"Agent","position":{"x":0,"y":0},"config":{}}],
+          "edges":[],"settings":{"max_steps":20,"failure_policy":"fail"}
+        }
+        """#.data(using: .utf8)!
+        let oldWorkflow = try JSONDecoder().decode(GraphWorkflow.self, from: legacy)
+        XCTAssertEqual(oldWorkflow.nodes[0].resolvedOutputPorts.map(\.id), ["out", "tools", "final"])
+    }
+
+    func testGraphRouteRuleDecodesSafeLegacyScalarValues() throws {
+        let numeric = Data(#"{"operation":"equals","value":42,"target":"answer"}"#.utf8)
+        let rule = try JSONDecoder().decode(GraphRouteRule.self, from: numeric)
+        XCTAssertEqual(rule.path, "outputs")
+        XCTAssertEqual(rule.value, "42.0")
+        XCTAssertEqual(rule.target, "answer")
     }
 
     func testSettingsCarryTheActiveAccountAndOldOnesDecodeWithout() throws {

@@ -11,11 +11,18 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
+import binascii
+import hashlib
 import ipaddress
+import json
 import os
+import re
 import sys
+import uuid
 from concurrent.futures import Future
 from contextlib import asynccontextmanager, contextmanager
+from copy import deepcopy
 from threading import RLock
 from typing import Any
 
@@ -32,6 +39,8 @@ from .config import (
     save_config,
 )
 from .core import AgentCore
+from .extensions import ExtensionError
+from .langgraph_runtime import WorkflowError, validate_workflow, workflow_capabilities
 from .ollama import OllamaError, effective_context_length
 from .sessions import (
     SessionMeta,
@@ -46,6 +55,10 @@ _MUTATING_TOOLS = {"write_file", "edit_file", "multi_edit", "bash"}
 MAX_HTTP_BODY_BYTES = 2 * 1024 * 1024
 MAX_USER_MESSAGE_CHARS = 1_000_000
 MAX_TERMINAL_COMMAND_CHARS = 65_536
+MAX_CHAT_IMAGE_ATTACHMENTS = 10
+MAX_CHAT_IMAGE_BYTES = 15 * 1024 * 1024
+MAX_CHAT_IMAGE_TOTAL_BYTES = 25 * 1024 * 1024
+CHAT_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 
 
 class ChatService:
@@ -129,8 +142,9 @@ class ChatService:
     @property
     def busy(self) -> bool:
         with self._state_guard:
-            return self._state_mutating or (
-                self.turn_future is not None and not self.turn_future.done()
+            worker_busy = self.turn_future is not None and not self.turn_future.done()
+            return self._state_mutating or worker_busy or bool(
+                self.core.langgraph_engine.active_run_id
             )
 
     @contextmanager
@@ -148,6 +162,16 @@ class ChatService:
 
     def start_turn(self, loop: asyncio.AbstractEventLoop, call, *args: Any) -> bool:
         """Atomically reserve the turn slot and submit its worker."""
+        with self._state_guard:
+            if self._state_mutating or (
+                self.turn_future is not None and not self.turn_future.done()
+            ) or self.core.langgraph_engine.active_run_id:
+                return False
+            self.turn_future = loop.run_in_executor(None, call, *args)
+            return True
+
+    def start_graph_step(self, loop: asyncio.AbstractEventLoop, call, *args: Any) -> bool:
+        """Resume the already-reserved graph without treating it as a new turn."""
         with self._state_guard:
             if self._state_mutating or (
                 self.turn_future is not None and not self.turn_future.done()
@@ -184,6 +208,7 @@ async def lifespan(app: FastAPI):
     svc: ChatService | None = getattr(app.state, "service", None)
     if svc is not None:
         svc.terminal.cancel_all(force=True)
+        svc.core.close()
 
 
 app = FastAPI(title="ollama-code", version=__version__, lifespan=lifespan)
@@ -551,18 +576,573 @@ def git_diff(
 
 @app.get("/api/tools")
 def list_tools() -> dict[str, Any]:
-    from .tools import TOOL_SCHEMAS
+    registry = service().core.tool_registry
+    registry.refresh()
+    return {"tools": registry.metadata()}
 
+
+# -------------------------------------------------------------- LangGraph
+
+
+def _workflow_failure(exc: WorkflowError) -> HTTPException:
+    return HTTPException(422, str(exc))
+
+
+@app.get("/api/langgraph")
+def get_langgraph() -> dict[str, Any]:
+    return service().core.langgraph_engine.snapshot()
+
+
+@app.get("/api/langgraph/workflows")
+def get_langgraph_workflows() -> dict[str, Any]:
+    engine = service().core.langgraph_engine
+    engine.registry.set_cwd(service().core.cwd)
+    return {"workflows": engine.registry.list()}
+
+
+@app.post("/api/langgraph/workflows/validate")
+def validate_langgraph_workflow(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    definition = body.get("definition") if isinstance(body.get("definition"), dict) else body
+    try:
+        normalized = validate_workflow(definition)
+    except WorkflowError as exc:
+        raise _workflow_failure(exc) from exc
     return {
-        "tools": [
-            {
-                "name": s["function"]["name"],
-                "description": s["function"]["description"],
-                "parameters": s["function"]["parameters"],
-            }
-            for s in TOOL_SCHEMAS
-        ]
+        "valid": True,
+        "definition": normalized,
+        "digest": hashlib.sha256(
+            json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "capabilities": workflow_capabilities(normalized),
     }
+
+
+@app.post("/api/langgraph/workflows")
+def create_langgraph_workflow(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    svc = service()
+    try:
+        with svc.state_mutation():
+            definition = body.get("definition")
+            if not isinstance(definition, dict):
+                raise WorkflowError("definition must be an object")
+            item = svc.core.langgraph_engine.registry.save(
+                definition,
+                str(body.get("scope") or "global"),
+            )
+            svc.queue_event({"type": "workflows_changed", "reason": "saved"})
+            return {"ok": True, "workflow": item}
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except WorkflowError as exc:
+        raise _workflow_failure(exc) from exc
+
+
+@app.put("/api/langgraph/workflows/{workflow_id}")
+def update_langgraph_workflow(
+    workflow_id: str,
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    definition = body.get("definition")
+    if not isinstance(definition, dict):
+        raise _workflow_failure(WorkflowError("definition must be an object"))
+    definition = {**definition, "id": workflow_id}
+    return create_langgraph_workflow({**body, "definition": definition})
+
+
+@app.post("/api/langgraph/workflows/{workflow_id}/duplicate")
+def duplicate_langgraph_workflow(
+    workflow_id: str,
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    svc = service()
+    try:
+        source = svc.core.langgraph_engine.registry.get(workflow_id)
+        name = str(body.get("name") or f"{source['name']} Copy")[:120]
+        definition = {
+            key: deepcopy(value)
+            for key, value in source.items()
+            if key in {
+                "schema_version", "slug", "name", "description", "supported_modes",
+                "revision", "nodes", "edges", "settings",
+            }
+        }
+        definition.update({
+            "id": uuid.uuid4().hex,
+            "name": name,
+            "slug": re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:80] or "workflow-copy",
+            "revision": 1,
+        })
+        return create_langgraph_workflow({
+            "definition": definition,
+            "scope": str(body.get("scope") or "global"),
+        })
+    except WorkflowError as exc:
+        raise _workflow_failure(exc) from exc
+
+
+@app.post("/api/langgraph/workflows/{workflow_id}/trust")
+def trust_langgraph_workflow(
+    workflow_id: str,
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    svc = service()
+    try:
+        with svc.state_mutation():
+            item = svc.core.langgraph_engine.registry.trust(
+                workflow_id,
+                str(body.get("digest") or ""),
+            )
+            svc.queue_event({"type": "workflows_changed", "reason": "trusted"})
+            return {"ok": True, "workflow": item}
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except WorkflowError as exc:
+        raise _workflow_failure(exc) from exc
+
+
+@app.get("/api/langgraph/workflows/{workflow_id}/export")
+def export_langgraph_workflow(workflow_id: str) -> dict[str, Any]:
+    try:
+        item = service().core.langgraph_engine.registry.get(workflow_id)
+        return {
+            "definition": {
+                key: deepcopy(value)
+                for key, value in item.items()
+                if key in {
+                    "schema_version", "id", "slug", "name", "description",
+                    "supported_modes", "revision", "nodes", "edges", "settings",
+                }
+            }
+        }
+    except WorkflowError as exc:
+        raise _workflow_failure(exc) from exc
+
+
+@app.delete("/api/langgraph/workflows/{workflow_id}")
+def delete_langgraph_workflow(workflow_id: str) -> dict[str, Any]:
+    svc = service()
+    try:
+        with svc.state_mutation():
+            svc.core.langgraph_engine.registry.delete(workflow_id)
+            svc.queue_event({"type": "workflows_changed", "reason": "deleted"})
+            return {"ok": True}
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except WorkflowError as exc:
+        raise _workflow_failure(exc) from exc
+
+
+@app.get("/api/langgraph/runs")
+def get_langgraph_runs(
+    session_id: str = Query("", max_length=200),
+    recoverable: bool = False,
+) -> dict[str, Any]:
+    return {
+        "runs": service().core.langgraph_engine.runs.list(
+            session_id=session_id,
+            recoverable_only=recoverable,
+        )
+    }
+
+
+@app.get("/api/langgraph/runs/{run_id}")
+def get_langgraph_run(run_id: str) -> dict[str, Any]:
+    try:
+        return service().core.langgraph_engine.runs.get(run_id)
+    except WorkflowError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/langgraph/runs/{run_id}/resume", status_code=202)
+async def resume_langgraph_run(run_id: str) -> dict[str, Any]:
+    svc = service()
+    if not svc.start_graph_step(
+        asyncio.get_running_loop(),
+        _run_graph_operation,
+        svc,
+        svc.core.langgraph_engine.resume,
+        run_id,
+        svc.decide,
+    ):
+        raise _busy_http()
+    return {"ok": True, "accepted": True, "run_id": run_id}
+
+
+@app.post("/api/langgraph/runs/{run_id}/cancel")
+def cancel_langgraph_run(run_id: str) -> dict[str, Any]:
+    active = service().core.langgraph_engine.active_run_id
+    if active != run_id:
+        raise HTTPException(409, "that graph run is not active")
+    service().core.langgraph_engine.interrupt_active()
+    return {"ok": True, "run_id": run_id, "status": "interrupted"}
+
+
+@app.post("/api/langgraph/runs/{run_id}/resolve-uncertain")
+def resolve_uncertain_langgraph_run(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    try:
+        run = service().core.langgraph_engine.runs.resolve_uncertain(
+            run_id,
+            str(body.get("action") or ""),
+        )
+        service().queue_event({"type": "graph_recovery_available", "run_id": run_id})
+        return run
+    except WorkflowError as exc:
+        raise _workflow_failure(exc) from exc
+
+
+@app.delete("/api/langgraph/runs/{run_id}")
+def discard_langgraph_run(run_id: str) -> dict[str, Any]:
+    try:
+        service().core.langgraph_engine.discard(run_id)
+        return {"ok": True}
+    except WorkflowError as exc:
+        raise _workflow_failure(exc) from exc
+
+
+def _extension_snapshot(svc: ChatService) -> dict[str, Any]:
+    snapshot = svc.core.extensions.snapshot()
+    statuses = {item["id"]: item for item in svc.core.mcp.statuses()}
+    for server in snapshot["mcp_servers"]:
+        server.update(statuses.get(str(server.get("id"))) or {})
+        server["has_credentials"] = bool(
+            svc.core.extensions.credentials(str(server.get("id") or ""))
+        )
+    snapshot["pending_updates"] = sum(
+        1 for plugin in snapshot["plugins"] if plugin.get("update_available")
+    )
+    return snapshot
+
+
+def _announce_extensions(svc: ChatService, reason: str) -> None:
+    svc.core.tool_registry.refresh()
+    svc.queue_event({"type": "extensions_changed", "reason": reason})
+
+
+def _extension_failure(exc: ExtensionError) -> HTTPException:
+    return HTTPException(422, str(exc))
+
+
+@app.get("/api/extensions")
+def get_extensions() -> dict[str, Any]:
+    return _extension_snapshot(service())
+
+
+@app.get("/api/extensions/catalog")
+def get_extension_catalog(
+    query: str = Query("", max_length=500),
+    marketplace_id: str = Query("", max_length=200),
+) -> dict[str, Any]:
+    return {
+        "entries": service().core.extensions.catalog(query, marketplace_id),
+        "marketplace_id": marketplace_id,
+    }
+
+
+@app.get("/api/extensions/catalog/trust")
+def inspect_extension_plugin(
+    marketplace_id: str = Query(..., max_length=200),
+    plugin: str = Query(..., max_length=200),
+) -> dict[str, Any]:
+    try:
+        return service().core.extensions.inspect_catalog_plugin(marketplace_id, plugin)
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+@app.post("/api/extensions/marketplaces")
+def add_extension_marketplace(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    try:
+        value = service().core.extensions.add_marketplace(
+            str(body.get("source") or ""),
+            name=str(body.get("name") or ""),
+            ref=str(body.get("ref") or ""),
+            sparse_paths=[str(value) for value in body.get("sparse_paths") or []],
+        )
+        _announce_extensions(service(), "marketplace_added")
+        return value
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+@app.post("/api/extensions/marketplaces/{marketplace_id}/refresh")
+def refresh_extension_marketplace(marketplace_id: str) -> dict[str, Any]:
+    try:
+        value = service().core.extensions.refresh_marketplace(marketplace_id)
+        _announce_extensions(service(), "marketplace_refreshed")
+        return value
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+@app.delete("/api/extensions/marketplaces/{marketplace_id}")
+def delete_extension_marketplace(marketplace_id: str) -> dict[str, Any]:
+    try:
+        service().core.extensions.remove_marketplace(marketplace_id)
+        _announce_extensions(service(), "marketplace_removed")
+        return {"ok": True}
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+@app.post("/api/extensions/plugins/install")
+def install_extension_plugin(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    svc = service()
+    try:
+        with svc.state_mutation():
+            value = svc.core.extensions.install_plugin(
+                str(body.get("marketplace_id") or ""),
+                str(body.get("plugin") or body.get("name") or ""),
+                scope=str(body.get("scope") or "global"),
+                workspace=str(body.get("workspace") or svc.core.cwd),
+                expected_digest=str(body.get("expected_digest") or ""),
+            )
+            svc.core.mcp.refresh(wait=False)
+            _announce_extensions(svc, "plugin_installed")
+            return value
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+@app.post("/api/extensions/plugins/enable")
+def enable_extension_plugin(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    svc = service()
+    try:
+        with svc.state_mutation():
+            value = svc.core.extensions.set_plugin_enabled(
+                str(body.get("id") or ""),
+                bool(body.get("enabled", True)),
+                scope=str(body.get("scope") or "global"),
+                workspace=str(body.get("workspace") or svc.core.cwd),
+            )
+            svc.core.mcp.refresh(wait=False)
+            _announce_extensions(svc, "plugin_activation_changed")
+            return value
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+@app.post("/api/extensions/plugins/update")
+def update_extension_plugin(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    svc = service()
+    try:
+        with svc.state_mutation():
+            value = svc.core.extensions.update_plugin(
+                str(body.get("id") or ""),
+                expected_digest=str(body.get("expected_digest") or ""),
+            )
+            svc.core.mcp.refresh(wait=False)
+            _announce_extensions(svc, "plugin_updated")
+            return value
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+@app.post("/api/extensions/plugins/rollback")
+def rollback_extension_plugin(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    svc = service()
+    try:
+        with svc.state_mutation():
+            value = svc.core.extensions.rollback_plugin(str(body.get("id") or ""))
+            svc.core.mcp.refresh(wait=False)
+            _announce_extensions(svc, "plugin_rolled_back")
+            return value
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+@app.delete("/api/extensions/plugins/{plugin_id:path}")
+def uninstall_extension_plugin(plugin_id: str) -> dict[str, Any]:
+    svc = service()
+    try:
+        with svc.state_mutation():
+            svc.core.extensions.uninstall_plugin(plugin_id)
+            svc.core.mcp.refresh(wait=False)
+            _announce_extensions(svc, "plugin_uninstalled")
+            return {"ok": True}
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+@app.post("/api/extensions/skills/import")
+def import_extension_skill(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    svc = service()
+    try:
+        with svc.state_mutation():
+            value = svc.core.extensions.import_skill(
+                str(body.get("source") or ""),
+                scope=str(body.get("scope") or "global"),
+                workspace=str(body.get("workspace") or svc.core.cwd),
+            )
+            _announce_extensions(svc, "skill_imported")
+            return value
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+@app.post("/api/extensions/skills/enable")
+def enable_extension_skill(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    svc = service()
+    try:
+        with svc.state_mutation():
+            value = svc.core.extensions.set_skill_enabled(
+                str(body.get("id") or ""),
+                bool(body.get("enabled", True)),
+                scope=str(body.get("scope") or "global"),
+                workspace=str(body.get("workspace") or svc.core.cwd),
+            )
+            _announce_extensions(svc, "skill_activation_changed")
+            return value
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+@app.delete("/api/extensions/skills/{skill_id:path}")
+def remove_extension_skill(skill_id: str) -> dict[str, Any]:
+    svc = service()
+    try:
+        with svc.state_mutation():
+            svc.core.extensions.remove_skill(skill_id)
+            _announce_extensions(svc, "skill_removed")
+            return {"ok": True}
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+@app.post("/api/extensions/mcp")
+def upsert_extension_mcp(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    svc = service()
+    try:
+        with svc.state_mutation():
+            value = svc.core.extensions.upsert_mcp_server(
+                body, server_id=str(body.get("id") or "")
+            )
+            svc.core.mcp.refresh(wait=False)
+            _announce_extensions(svc, "mcp_saved")
+            return value
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+@app.post("/api/extensions/mcp/enable")
+def enable_extension_mcp(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    svc = service()
+    try:
+        with svc.state_mutation():
+            value = svc.core.extensions.set_mcp_enabled(
+                str(body.get("id") or ""),
+                bool(body.get("enabled", True)),
+                scope=str(body.get("scope") or "global"),
+                workspace=str(body.get("workspace") or svc.core.cwd),
+            )
+            svc.core.mcp.refresh(wait=False)
+            _announce_extensions(svc, "mcp_activation_changed")
+            return value
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+@app.post("/api/extensions/mcp/credentials")
+def set_extension_mcp_credentials(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    svc = service()
+    server_id = str(body.get("id") or "")
+    values = body.get("credentials") if isinstance(body.get("credentials"), dict) else {}
+    try:
+        svc.core.extensions.set_credentials(server_id, values)
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+    svc.core.mcp.refresh(wait=False)
+    svc.queue_event({"type": "mcp_credential_refresh", "server_id": server_id})
+    return {"ok": True, "id": server_id, "has_credentials": bool(values)}
+
+
+@app.post("/api/extensions/mcp/policy")
+def set_extension_mcp_policy(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    svc = service()
+    try:
+        with svc.state_mutation():
+            value = svc.core.extensions.set_mcp_policy(
+                str(body.get("id") or ""),
+                str(body.get("mode") or "annotations"),
+                tool_name=str(body.get("tool") or ""),
+            )
+            svc.core.mcp.refresh(wait=False)
+            _announce_extensions(svc, "mcp_policy_changed")
+            return value
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+@app.post("/api/extensions/mcp/test")
+def test_extension_mcp(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    svc = service()
+    svc.core.mcp.refresh(wait=True)
+    server_id = str(body.get("id") or "")
+    svc.core.tool_registry.refresh()
+    return {
+        "status": svc.core.mcp.status(server_id),
+        "tools": [
+            item for item in svc.core.tool_registry.metadata()
+            if item.get("server_id") == server_id
+        ],
+    }
+
+
+@app.post("/api/extensions/mcp/reconnect")
+def reconnect_extension_mcp(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    svc = service()
+    server_id = str(body.get("id") or "")
+    try:
+        with svc.state_mutation():
+            svc.core.mcp.reconnect(server_id, wait=True)
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+    svc.core.tool_registry.refresh()
+    return {
+        "status": svc.core.mcp.status(server_id),
+        "tools": [
+            item for item in svc.core.tool_registry.metadata()
+            if item.get("server_id") == server_id
+        ],
+    }
+
+
+@app.delete("/api/extensions/mcp/{server_id:path}")
+def delete_extension_mcp(server_id: str) -> dict[str, Any]:
+    svc = service()
+    try:
+        with svc.state_mutation():
+            svc.core.extensions.remove_mcp_server(server_id)
+            svc.core.mcp.refresh(wait=False)
+            _announce_extensions(svc, "mcp_removed")
+            return {"ok": True}
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
 
 
 @app.get("/api/permissions")
@@ -653,6 +1233,23 @@ def _apply_config(svc: ChatService, body: dict[str, Any]) -> dict[str, Any]:
     return _config_state(svc.core)
 
 
+@app.post("/api/context/reload")
+def reload_project_context() -> dict[str, Any]:
+    """Reload AGENTS.md/compatible project context after an editor save."""
+    svc = service()
+    try:
+        with svc.state_mutation():
+            svc.core.reload_context()
+            svc.core.reset_system_message()
+            svc.queue_event({"type": "session_info", **svc.core.session_info()})
+            return {
+                "ok": True,
+                "file": svc.core.project_context[0] if svc.core.project_context else None,
+            }
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+
+
 # ---------------------------------------------------------------- WebSocket
 
 
@@ -671,6 +1268,116 @@ def _run_slash(svc: ChatService, text: str) -> None:
     svc._on_core_event({"type": "slash_result", **result})
 
 
+def _run_user_turn(
+    svc: ChatService,
+    text: str,
+    just_chat: bool,
+    attachments: list[dict[str, str]] | None = None,
+) -> None:
+    """Worker entry that makes the UI's chat-only boundary explicit."""
+    svc.core.run_turn(
+        text,
+        svc.decide,
+        allow_tools=not just_chat,
+        attachments=attachments,
+    )
+
+
+def _run_graph_turn(
+    svc: ChatService,
+    text: str,
+    mode: str,
+    workflow_id: str,
+) -> None:
+    try:
+        svc.core.langgraph_engine.start(text, mode, workflow_id, svc.decide)
+    except WorkflowError as exc:
+        _report_graph_failure(svc, exc)
+
+
+def _run_independent_graph(
+    svc: ChatService,
+    text: str,
+    mode: str,
+    workflow_id: str,
+) -> None:
+    try:
+        workflow = svc.core.langgraph_engine.registry.get(workflow_id, require_trust=True)
+        if mode not in workflow["supported_modes"]:
+            raise WorkflowError(f"{workflow['name']} does not support {mode.title()} mode")
+        svc.core.new_session(reason="workflow_run")
+        svc.core.langgraph_engine.start(text, mode, workflow_id, svc.decide)
+    except WorkflowError as exc:
+        _report_graph_failure(svc, exc)
+
+
+def _run_graph_operation(
+    svc: ChatService,
+    operation: Any,
+    run_id: str,
+    *args: Any,
+) -> None:
+    try:
+        result = operation(run_id, *args)
+        if isinstance(result, tuple) and result and result[0] is False:
+            raise WorkflowError("that workflow interruption is no longer pending")
+    except WorkflowError as exc:
+        _report_graph_failure(svc, exc, run_id)
+
+
+def _report_graph_failure(svc: ChatService, error: Exception, run_id: str = "") -> None:
+    message = svc.core.langgraph_engine._redact(str(error), run_id) if run_id else str(error)[:4000]
+    svc.core._emit({"type": "error", "message": message, **({"run_id": run_id} if run_id else {})})
+    if run_id:
+        try:
+            run = svc.core.langgraph_engine.runs.get(run_id)
+            svc.core._emit({
+                "type": "graph_run_state",
+                "run_id": run_id,
+                "status": run["status"],
+                "error": message,
+            })
+        except WorkflowError:
+            pass
+    svc.core._emit({
+        "type": "turn_done",
+        "reason": "error",
+        "duration_ms": 0,
+        **({"run_id": run_id} if run_id else {}),
+    })
+
+
+def _validated_chat_attachments(value: Any) -> list[dict[str, str]]:
+    if value in (None, []):
+        return []
+    if not isinstance(value, list) or len(value) > MAX_CHAT_IMAGE_ATTACHMENTS:
+        raise ValueError("A chat message can include up to 10 image attachments.")
+    output: list[dict[str, str]] = []
+    total_bytes = 0
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError("An image attachment is malformed.")
+        mime_type = str(item.get("mime_type") or "").lower()
+        data = str(item.get("data") or "")
+        if mime_type not in CHAT_IMAGE_MIME_TYPES or not data:
+            raise ValueError("That image format is not supported.")
+        try:
+            decoded = base64.b64decode(data, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("An image attachment is malformed.") from exc
+        if len(decoded) > MAX_CHAT_IMAGE_BYTES:
+            raise ValueError("An image attachment is larger than 15 MB.")
+        total_bytes += len(decoded)
+        if total_bytes > MAX_CHAT_IMAGE_TOTAL_BYTES:
+            raise ValueError("The image attachments are larger than 25 MB in total.")
+        output.append({
+            "name": str(item.get("name") or "image")[:255],
+            "mime_type": mime_type,
+            "data": data,
+        })
+    return output
+
+
 async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
     mtype = msg.get("type")
     core = svc.core
@@ -682,18 +1389,110 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         if len(text) > MAX_USER_MESSAGE_CHARS:
             _command_error(svc, str(mtype), "Message is too large to process safely.")
             return
-        call, args = (
-            (_run_slash, (svc, text))
-            if text.startswith("/")
-            else (core.run_turn, (text, svc.decide))
-        )
+        mode = str(msg.get("mode") or "").strip().lower()
+        if mode not in {"", "ask", "plan", "build"}:
+            _command_error(svc, str(mtype), "Unknown conversation mode.")
+            return
+        just_chat = mode == "ask"
+        try:
+            attachments = _validated_chat_attachments(msg.get("attachments"))
+        except ValueError as exc:
+            _command_error(svc, str(mtype), str(exc))
+            return
+        if attachments and not just_chat:
+            _command_error(svc, str(mtype), "Message attachments require Chat mode.")
+            return
+        engine = str(msg.get("engine") or "classic").strip().lower()
+        workflow_id = str(msg.get("workflow_id") or "").strip()
+        if engine not in {"classic", "langgraph"}:
+            _command_error(svc, str(mtype), "Unknown execution engine.")
+            return
+        if just_chat and engine != "classic":
+            _command_error(svc, str(mtype), "Just Chat cannot run workflows.")
+            return
+        if engine == "langgraph":
+            if mode not in {"plan", "build"} or not workflow_id:
+                _command_error(svc, str(mtype), "LangGraph requires Plan or Build mode and a workflow.")
+                return
+            call, args = _run_graph_turn, (svc, text, mode, workflow_id)
+        else:
+            call, args = (
+                (_run_slash, (svc, text))
+                if text.startswith("/") and not just_chat
+                else (_run_user_turn, (svc, text, just_chat, attachments))
+            )
         if not svc.start_turn(loop, call, *args):
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
     elif mtype == "permission_decision":
-        svc.answer_permission(str(msg.get("request_id", "")), str(msg.get("decision", "deny")))
+        request_id = str(msg.get("request_id", ""))
+        decision = str(msg.get("decision", "deny"))
+        if svc.answer_permission(request_id, decision):
+            return
+        run_id = core.langgraph_engine.active_run_id
+        if run_id and not svc.start_graph_step(
+            loop,
+            _run_graph_operation,
+            svc,
+            core.langgraph_engine.record_decision,
+            run_id,
+            request_id,
+            decision,
+            svc.decide,
+        ):
+            _command_error(svc, str(mtype), "The workflow is already resuming.")
+    elif mtype == "graph_review_decision":
+        run_id = str(msg.get("run_id") or core.langgraph_engine.active_run_id)
+        if not run_id or not svc.start_graph_step(
+            loop,
+            _run_graph_operation,
+            svc,
+            core.langgraph_engine.record_decision,
+            run_id,
+            str(msg.get("request_id") or ""),
+            str(msg.get("decision") or "reject"),
+            svc.decide,
+        ):
+            _command_error(svc, str(mtype), "The workflow review cannot be resumed right now.")
+    elif mtype == "graph_credentials":
+        run_id = str(msg.get("run_id") or "")
+        bindings = msg.get("bindings") or []
+        if not isinstance(bindings, list) or len(bindings) > 32:
+            _command_error(svc, str(mtype), "Provider bindings are malformed.")
+            return
+        if not svc.start_graph_step(
+            loop,
+            _run_graph_operation,
+            svc,
+            core.langgraph_engine.provide_credentials,
+            run_id,
+            bindings,
+            svc.decide,
+        ):
+            _command_error(svc, str(mtype), "The workflow is already resuming.")
+    elif mtype == "graph_resume":
+        run_id = str(msg.get("run_id") or "")
+        if not run_id or not svc.start_graph_step(
+            loop,
+            _run_graph_operation,
+            svc,
+            core.langgraph_engine.resume,
+            run_id,
+            svc.decide,
+        ):
+            _command_error(svc, str(mtype), "The workflow cannot be resumed right now.")
+    elif mtype == "workflow_run":
+        text = str(msg.get("text") or "").strip()
+        mode = str(msg.get("mode") or "build").strip().lower()
+        workflow_id = str(msg.get("workflow_id") or "").strip()
+        if not text or mode not in {"plan", "build"} or not workflow_id:
+            _command_error(svc, str(mtype), "A workflow run needs a goal, mode, and workflow.")
+            return
+        if not svc.start_turn(loop, _run_independent_graph, svc, text, mode, workflow_id):
+            _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
     elif mtype == "interrupt":
-        core.interrupt()
-        svc.deny_all_pending()  # unblock a permission wait so the turn can end
+        if not core.langgraph_engine.interrupt_active():
+            core.interrupt()
+            svc.deny_all_pending()  # unblock a permission wait so the turn can end
     elif mtype == "retry_last":
         if not svc.start_turn(loop, core.retry_last, svc.decide):
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
@@ -901,7 +1700,9 @@ def build_service(
         label = "endpoint" if core.provider == "remote" else "Ollama"
         print(f"warning: {label} not ready ({e}); /api/health will report it", file=sys.stderr)
     core.messages = [core.system_message()]
-    return ChatService(core)
+    svc = ChatService(core)
+    core.mcp.refresh(wait=False)
+    return svc
 
 
 def main(argv: list[str] | None = None) -> None:

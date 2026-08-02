@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import PDFKit
 import UniformTypeIdentifiers
 import UserNotifications
 
@@ -34,8 +35,32 @@ final class AppModel: ObservableObject {
             // Changing modes is taking a stance on what happens next, so a
             // pending "implement this plan?" prompt would only contradict it.
             if selectedMode != oldValue { planApprovalPending = false }
+            if selectedMode != .ask { lastAgenticMode = selectedMode }
+            // Just Chat is deliberately not a workspace surface. Remember the
+            // inspector's prior state so leaving Chat restores exactly what
+            // the user had before, regardless of which mode control they use.
+            if selectedMode == .ask, oldValue != .ask {
+                restoreInspectorAfterJustChat = !inspectorCollapsed
+                inspectorCollapsed = true
+            } else if selectedMode != .ask, oldValue == .ask {
+                let shouldRestoreInspector = restoreInspectorAfterJustChat
+                restoreInspectorAfterJustChat = false
+                if shouldRestoreInspector { inspectorCollapsed = false }
+            }
             scheduleWorkspacePersistence()
         }
+    }
+    @Published var executionEngine: ExecutionEngine = .classic {
+        didSet {
+            guard executionEngine != oldValue else { return }
+            scheduleWorkspacePersistence()
+        }
+    }
+    @Published var planWorkflowID = "planner-team" {
+        didSet { scheduleWorkspacePersistence() }
+    }
+    @Published var buildWorkflowID = "single-agent" {
+        didSet { scheduleWorkspacePersistence() }
     }
     /// Only `selectInspectorTab(_:)` may change this. Backend events set a
     /// badge instead, so a run can never yank the panel out from under you.
@@ -66,7 +91,16 @@ final class AppModel: ObservableObject {
     @Published var fileQuery = ""
     @Published private(set) var previewedFilePath: String?
     @Published private(set) var previewedFileContents: String?
+    @Published private(set) var agentInstructionsExists = false
+    @Published var agentInstructionsDraft = ""
+    @Published private(set) var savedAgentInstructions = ""
+    @Published private(set) var agentInstructionsError: String?
+    @Published private(set) var isLoadingAgentInstructions = false
+    @Published private(set) var isSavingAgentInstructions = false
     @Published var contextFiles: [ContextFile] = []
+    @Published var chatAttachments: [ChatAttachment] = []
+    @Published var chatAttachmentNotice: String?
+    @Published var isLoadingChatAttachments = false
     @Published var checkpoints: [SessionCheckpoint] = []
     @Published var workspaceProfiles: [WorkspaceProfile] = []
     @Published var draftText = "" {
@@ -96,6 +130,7 @@ final class AppModel: ObservableObject {
         }
     }
     @Published var settingsPresented = false
+    @Published var settingsPage: SettingsPage = .general
     @Published var modelLibraryPresented = false
     @Published var commandPalettePresented = false
     @Published var checkpointPresented = false
@@ -115,6 +150,23 @@ final class AppModel: ObservableObject {
     @Published var backendLogHint = ""
     @Published var contextNotice: String?
     @Published var isLoadingContext = false
+    @Published private(set) var extensions = ExtensionsResponse.empty
+    @Published private(set) var extensionCatalog: [ExtensionCatalogEntry] = []
+    @Published private(set) var extensionTools: [ExtensionToolMetadata] = []
+    @Published var extensionErrorMessage: String?
+    @Published private(set) var isLoadingExtensions = false
+    @Published private(set) var langGraphAvailable = false
+    @Published private(set) var langGraphVersion = ""
+    @Published private(set) var graphWorkflows: [GraphWorkflow] = []
+    @Published private(set) var graphRuns: [GraphRunSummary] = []
+    @Published private(set) var recoverableGraphRuns: [GraphRunSummary] = []
+    @Published private(set) var activeGraphRunID: String?
+    @Published private(set) var activeGraphStatus: String?
+    @Published private(set) var graphNodeActivities: [GraphNodeActivity] = []
+    @Published var graphReviewRequest: GraphReviewRequest?
+    @Published var graphErrorMessage: String?
+    @Published var graphStudioPresented = false
+    @Published var workflowRunPresented = false
 
     /// Console state. A `let` on its own ObservableObject, not @Published
     /// here: republishing AppModel on every output chunk would redraw the
@@ -123,6 +175,7 @@ final class AppModel: ObservableObject {
 
     private let backend: BackendService
     private let backendProcess = BackendProcess()
+    private let mcpAuthCoordinator = MCPAuthCoordinator()
     private let workspaceAccess: WorkspaceAccess
     private var initialWorkspacePath: String?
     private var streamingAssistantID: UUID?
@@ -133,6 +186,7 @@ final class AppModel: ObservableObject {
     private var streamedCharsThisTurn = 0
     private var streamFlushTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
+    private var extensionRefreshTask: Task<Void, Never>?
     private var restoredTranscriptContext: String?
     private var toastTask: Task<Void, Never>?
     private var profilePersistenceTask: Task<Void, Never>?
@@ -144,6 +198,18 @@ final class AppModel: ObservableObject {
     /// is offered only for turns that actually produced a plan — a Plan-mode
     /// chat answer must not re-offer a plan left over from an earlier run.
     private var planTodosChangedThisTurn = false
+    /// What the user actually dispatched, kept separate from the live picker
+    /// so a mid-run mode change cannot relabel the completion marker or alter
+    /// plan reconciliation.
+    var turnDispatchedMode: WorkMode?
+    /// Client-side fallback for agents from before `turn_done.duration_ms`.
+    private var turnStartedAt: Date?
+    /// Turning Just Chat off returns to the last mode that could act on the
+    /// workspace instead of always making the user reselect Build or Plan.
+    private var lastAgenticMode: WorkMode = .build
+    /// Just Chat temporarily hides the inspector. This records whether it was
+    /// visible so Work mode can restore the user's layout on exit.
+    private var restoreInspectorAfterJustChat = false
     /// Whether the turn in flight was dispatched in Plan mode. The approval
     /// offer is keyed to this latch, not the live picker — switching modes
     /// while a Build run streams must not turn that run's todo bookkeeping
@@ -161,6 +227,7 @@ final class AppModel: ObservableObject {
     private var diffTask: Task<Void, Never>?
     private var commitDraftTask: Task<Void, Never>?
     private var filePreviewTask: Task<Void, Never>?
+    private var agentInstructionsTask: Task<Void, Never>?
     private var indexedWorkspacePath: String?
     private var terminationObserver: NSObjectProtocol?
     private let persistenceEnabled: Bool
@@ -390,6 +457,10 @@ final class AppModel: ObservableObject {
         contextFiles.filter { $0.isIncluded && $0.isAvailable }.count
     }
 
+    var availableChatAttachments: [ChatAttachment] {
+        chatAttachments.filter(\.isAvailable)
+    }
+
     /// The only place a window may be assumed: the context pack needs *some*
     /// cap even when no real window is known.
     static let assumedContextWindowTokens = 32_768
@@ -407,6 +478,37 @@ final class AppModel: ObservableObject {
     var thinkingVisibility: ThinkingVisibility {
         get { settings.resolvedThinkingVisibility }
         set { settings.thinkingVisibilityRaw = newValue.rawValue }
+    }
+
+    var justChatEnabled: Bool { selectedMode == .ask }
+
+    var selectedWorkflowID: String {
+        get { selectedMode == .plan ? planWorkflowID : buildWorkflowID }
+        set {
+            if selectedMode == .plan {
+                planWorkflowID = newValue
+            } else {
+                buildWorkflowID = newValue
+            }
+        }
+    }
+
+    var compatibleGraphWorkflows: [GraphWorkflow] {
+        graphWorkflows.filter { workflow in
+            workflow.supportedModes.contains(selectedMode) && workflow.valid != false
+        }
+    }
+
+    var selectedGraphWorkflow: GraphWorkflow? {
+        graphWorkflows.first { $0.id == selectedWorkflowID || $0.slug == selectedWorkflowID }
+    }
+
+    func setJustChatEnabled(_ enabled: Bool) {
+        if enabled {
+            selectedMode = .ask
+        } else if selectedMode == .ask {
+            selectedMode = lastAgenticMode
+        }
     }
 
     /// The permission request the composer prompt shows now — the oldest
@@ -452,6 +554,18 @@ final class AppModel: ObservableObject {
     var contextWindowUsageFraction: Double? {
         guard let usable = contextUsableTokens, usable > 0 else { return nil }
         return min(max(Double(contextUsedTokens) / Double(usable), 0), 1)
+    }
+
+    var graphUsesMixedModels: Bool {
+        Set(graphNodeActivities.compactMap(\.model).filter { !$0.isEmpty }).count > 1
+    }
+
+    var graphContextModelLabel: String? {
+        guard activeGraphRunID != nil else { return nil }
+        let finalModel = graphNodeActivities.first(where: { $0.isFinal })?.model
+            ?? graphNodeActivities.compactMap(\.model).last
+            ?? selectedModel
+        return graphUsesMixedModels ? "\(finalModel) · mixed-model run" : finalModel
     }
 
     var recentWorkspaceProfiles: [WorkspaceProfile] {
@@ -569,6 +683,7 @@ final class AppModel: ObservableObject {
         settingsPersistenceTask?.cancel()
         sessionResetWatchdog?.cancel()
         indexTask?.cancel()
+        agentInstructionsTask?.cancel()
         backend.disconnect()
         backendProcess.stop()
     }
@@ -613,6 +728,117 @@ final class AppModel: ObservableObject {
         if !contextFiles.contains(where: { $0.url.standardizedFileURL == standardized }) {
             loadContext(from: [url])
         }
+    }
+
+    // MARK: - Workspace AGENTS.md
+
+    var agentInstructionsHasUnsavedChanges: Bool {
+        agentInstructionsDraft != savedAgentInstructions
+    }
+
+    var agentInstructionsURL: URL {
+        AgentInstructionsFile.url(for: workspacePath)
+    }
+
+    /// Reads the workspace-root AGENTS.md without ever wandering outside the
+    /// selected folder. A dirty editor is protected unless the user explicitly
+    /// chooses Revert.
+    func refreshAgentInstructions(discardingChanges: Bool = false) {
+        guard !isUITesting else { return }
+        if agentInstructionsHasUnsavedChanges, !discardingChanges {
+            showToast("Save or revert the AGENTS.md edits first")
+            return
+        }
+
+        let root = workspacePath
+        agentInstructionsTask?.cancel()
+        isLoadingAgentInstructions = true
+        agentInstructionsError = nil
+        agentInstructionsTask = Task { [weak self] in
+            let snapshot = await Task.detached(priority: .utility) {
+                AgentInstructionsFile.load(from: root)
+            }.value
+            guard let self, self.workspacePath == root, !Task.isCancelled else { return }
+            self.isLoadingAgentInstructions = false
+            self.agentInstructionsExists = snapshot.exists
+            self.agentInstructionsError = snapshot.error
+            guard snapshot.error == nil else { return }
+            self.savedAgentInstructions = snapshot.content
+            self.agentInstructionsDraft = snapshot.content
+        }
+    }
+
+    func createAgentInstructions() {
+        guard !agentInstructionsExists else {
+            refreshAgentInstructions()
+            return
+        }
+        agentInstructionsDraft = "# Workspace instructions\n\n"
+        saveAgentInstructions()
+    }
+
+    func saveAgentInstructions() {
+        guard !isBusy, !hasPendingPermission else {
+            showToast("Wait for the current run to finish before saving AGENTS.md")
+            return
+        }
+        guard agentInstructionsHasUnsavedChanges || !agentInstructionsExists else { return }
+
+        let root = workspacePath
+        let contents = agentInstructionsDraft
+        isSavingAgentInstructions = true
+        agentInstructionsError = nil
+        agentInstructionsTask?.cancel()
+        agentInstructionsTask = Task { [weak self] in
+            let errorMessage = await Task.detached(priority: .utility) { () -> String? in
+                do {
+                    try AgentInstructionsFile.save(contents, in: root)
+                    return nil
+                } catch {
+                    return error.localizedDescription
+                }
+            }.value
+            guard let self, self.workspacePath == root, !Task.isCancelled else { return }
+            self.isSavingAgentInstructions = false
+            if let errorMessage {
+                self.agentInstructionsError = errorMessage
+                self.showToast("Could not save AGENTS.md")
+                return
+            }
+
+            self.agentInstructionsExists = true
+            self.savedAgentInstructions = contents
+            self.refreshWorkspaceIndex(force: true)
+
+            do {
+                let _: ProjectContextReloadResponse = try await self.backend.post(
+                    "/api/context/reload",
+                    body: [:],
+                    as: ProjectContextReloadResponse.self
+                )
+                self.showToast("Saved AGENTS.md — instructions reloaded")
+            } catch {
+                // The file is already safely on disk. The backend also reloads
+                // project instructions at the next Work turn, so a reconnect or
+                // narrow race with a finishing turn never loses the edit.
+                self.showToast("Saved AGENTS.md — applies on the next Work turn")
+            }
+        }
+    }
+
+    func revertAgentInstructions() {
+        if agentInstructionsExists {
+            refreshAgentInstructions(discardingChanges: true)
+        } else {
+            agentInstructionsDraft = ""
+            savedAgentInstructions = ""
+            agentInstructionsError = nil
+        }
+    }
+
+    func revealAgentInstructionsInFinder() {
+        guard agentInstructionsExists else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([agentInstructionsURL])
     }
 
     // MARK: - Git branch
@@ -724,7 +950,668 @@ final class AppModel: ObservableObject {
             // Preserve the last-known list during reconnects.
         }
 
+        await refreshExtensions()
+        await refreshLangGraph()
+
         refreshGitBranch()
+    }
+
+    // MARK: - LangGraph workflows
+
+    func refreshLangGraph() async {
+        guard !isUITesting else { return }
+        do {
+            let status = try await backend.get("/api/langgraph", as: LangGraphStatusResponse.self)
+            langGraphAvailable = status.available
+            langGraphVersion = status.version
+            activeGraphRunID = status.activeRun?.id
+            activeGraphStatus = status.activeRun?.status
+            recoverableGraphRuns = status.recoverableRuns
+            if !status.available, !status.error.isEmpty {
+                graphErrorMessage = status.error
+            }
+        } catch {
+            langGraphAvailable = false
+            graphErrorMessage = error.localizedDescription
+        }
+        do {
+            graphWorkflows = try await backend.get(
+                "/api/langgraph/workflows",
+                as: GraphWorkflowsResponse.self
+            ).workflows
+            normalizeSelectedWorkflows()
+        } catch {
+            graphErrorMessage = error.localizedDescription
+        }
+        do {
+            graphRuns = try await backend.get(
+                "/api/langgraph/runs",
+                as: GraphRunsResponse.self
+            ).runs
+        } catch {
+            // Preserve the last run history during reconnects.
+        }
+    }
+
+    private func normalizeSelectedWorkflows() {
+        if !graphWorkflows.contains(where: {
+            ($0.id == planWorkflowID || $0.slug == planWorkflowID)
+                && $0.supportedModes.contains(.plan)
+        }), let fallback = graphWorkflows.first(where: { $0.supportedModes.contains(.plan) }) {
+            planWorkflowID = fallback.id
+        }
+        if !graphWorkflows.contains(where: {
+            ($0.id == buildWorkflowID || $0.slug == buildWorkflowID)
+                && $0.supportedModes.contains(.build)
+        }), let fallback = graphWorkflows.first(where: { $0.slug == "single-agent" })
+            ?? graphWorkflows.first(where: { $0.supportedModes.contains(.build) }) {
+            buildWorkflowID = fallback.id
+        }
+    }
+
+    func setExecutionEngine(_ engine: ExecutionEngine) {
+        guard selectedMode != .ask else { return }
+        if engine == .langgraph, !langGraphAvailable {
+            showToast("LangGraph is unavailable in the local agent runtime")
+            return
+        }
+        executionEngine = engine
+        if engine == .langgraph { normalizeSelectedWorkflows() }
+        showToast("Using \(engine.title)")
+    }
+
+    func selectGraphWorkflow(_ workflow: GraphWorkflow) {
+        guard workflow.supportedModes.contains(selectedMode) else { return }
+        guard workflow.isRunnable else {
+            graphErrorMessage = workflow.errors?.first
+                ?? "Trust this project workflow before running it."
+            selectInspectorTab(.workflows)
+            return
+        }
+        selectedWorkflowID = workflow.id
+        scheduleWorkspacePersistence()
+    }
+
+    func saveGraphWorkflow(_ workflow: GraphWorkflow, scope: String) async -> Bool {
+        guard let definition = Self.jsonObject(workflow) else {
+            graphErrorMessage = "The workflow could not be encoded."
+            return false
+        }
+        // Catalog-only fields are response metadata, not part of a portable definition.
+        let portableKeys = Set([
+            "schema_version", "id", "slug", "name", "description",
+            "supported_modes", "revision", "nodes", "edges", "settings",
+        ])
+        let portable = definition.filter { portableKeys.contains($0.key) }
+        do {
+            _ = try await backend.post(
+                "/api/langgraph/workflows",
+                body: ["definition": portable, "scope": scope],
+                as: GraphWorkflowOperationResponse.self
+            )
+            await refreshLangGraph()
+            showToast("Workflow saved")
+            return true
+        } catch {
+            graphErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func duplicateGraphWorkflow(_ workflow: GraphWorkflow) async {
+        do {
+            _ = try await backend.post(
+                "/api/langgraph/workflows/\(workflow.id)/duplicate",
+                body: ["scope": "global"],
+                as: GraphWorkflowOperationResponse.self
+            )
+            await refreshLangGraph()
+            showToast("Workflow duplicated")
+        } catch {
+            graphErrorMessage = error.localizedDescription
+        }
+    }
+
+    func deleteGraphWorkflow(_ workflow: GraphWorkflow) async {
+        do {
+            _ = try await backend.delete(
+                "/api/langgraph/workflows/\(workflow.id)",
+                as: GraphOperationResponse.self
+            )
+            await refreshLangGraph()
+            showToast("Workflow deleted")
+        } catch {
+            graphErrorMessage = error.localizedDescription
+        }
+    }
+
+    func trustGraphWorkflow(_ workflow: GraphWorkflow) async {
+        guard let digest = workflow.digest else { return }
+        do {
+            _ = try await backend.post(
+                "/api/langgraph/workflows/\(workflow.id)/trust",
+                body: ["digest": digest],
+                as: GraphWorkflowOperationResponse.self
+            )
+            await refreshLangGraph()
+            showToast("Project workflow trusted")
+        } catch {
+            graphErrorMessage = error.localizedDescription
+        }
+    }
+
+    func resumeGraphRun(_ run: GraphRunSummary) {
+        guard !isBusy else { return }
+        isBusy = true
+        activeGraphRunID = run.id
+        activeGraphStatus = "running"
+        guard backend.send(["type": "graph_resume", "run_id": run.id]) else {
+            isBusy = false
+            showToast("Reconnect before resuming the workflow")
+            return
+        }
+    }
+
+    func discardGraphRun(_ run: GraphRunSummary) async {
+        do {
+            _ = try await backend.delete(
+                "/api/langgraph/runs/\(run.id)",
+                as: GraphOperationResponse.self
+            )
+            await refreshLangGraph()
+        } catch {
+            graphErrorMessage = error.localizedDescription
+        }
+    }
+
+    func resolveUncertainGraphRun(_ run: GraphRunSummary, action: String) async {
+        guard run.status == "uncertain", ["skip", "retry"].contains(action) else { return }
+        do {
+            _ = try await backend.post(
+                "/api/langgraph/runs/\(run.id)/resolve-uncertain",
+                body: ["action": action],
+                as: GraphRunSummary.self
+            )
+            await refreshLangGraph()
+            showToast(action == "retry" ? "Retry authorized — resume when ready" : "Uncertain effect will be skipped")
+        } catch {
+            graphErrorMessage = error.localizedDescription
+        }
+    }
+
+    func launchWorkflow(_ workflow: GraphWorkflow, goal: String, mode: WorkMode) {
+        guard !isBusy, mode != .ask, workflow.isRunnable else { return }
+        let text = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        isBusy = true
+        turnStartedAt = Date()
+        turnDispatchedMode = mode
+        guard backend.send([
+            "type": "workflow_run",
+            "text": text,
+            "mode": mode.rawValue,
+            "workflow_id": workflow.id,
+        ]) else {
+            isBusy = false
+            showToast("Reconnect before starting the workflow")
+            return
+        }
+        workflowRunPresented = false
+    }
+
+    private func sendGraphCredentials(runID: String, accountIDs: [String]) {
+        var bindings: [[String: Any]] = []
+        var missing: [String] = []
+        for accountID in accountIDs {
+            guard let account = providerAccounts.first(where: { $0.id.uuidString == accountID }),
+                  account.hasKey
+            else {
+                missing.append(accountID)
+                continue
+            }
+            bindings.append([
+                "account_id": accountID,
+                "provider": "remote",
+                "base_url": account.resolvedBaseURL,
+                "model": account.preferredModel,
+                "api_key": Keychain.get(account: account.keychainAccount) ?? "",
+                "auth_style": account.kind.authStyle,
+                "account_label": account.displayName,
+                "lists_models": account.kind.listsModels,
+                "context_window": account.resolvedContextWindow ?? 0,
+            ])
+        }
+        if !missing.isEmpty {
+            graphErrorMessage = "A workflow model account is missing or has no API key. Remap it in Graph Studio."
+            showToast("Workflow needs a model account")
+            return
+        }
+        guard backend.send([
+            "type": "graph_credentials",
+            "run_id": runID,
+            "bindings": bindings,
+        ]) else {
+            graphErrorMessage = "Reconnect before supplying workflow credentials."
+            return
+        }
+    }
+
+    func answerGraphReview(approved: Bool) {
+        guard let request = graphReviewRequest else { return }
+        guard backend.send([
+            "type": "graph_review_decision",
+            "run_id": request.runID,
+            "request_id": request.requestID,
+            "decision": approved ? "approve" : "reject",
+        ]) else {
+            showToast("Reconnect before answering the workflow review")
+            return
+        }
+        graphReviewRequest = nil
+        activeGraphStatus = "running"
+    }
+
+    nonisolated private static func jsonObject<T: Encodable>(_ value: T) -> [String: Any]? {
+        guard let data = try? JSONEncoder().encode(value),
+              let object = try? JSONSerialization.jsonObject(with: data)
+        else { return nil }
+        return object as? [String: Any]
+    }
+
+    // MARK: - Plugins, skills, and MCP
+
+    func refreshExtensions() async {
+        guard !isUITesting else { return }
+        isLoadingExtensions = true
+        defer { isLoadingExtensions = false }
+        do {
+            let response = try await backend.get("/api/extensions", as: ExtensionsResponse.self)
+            extensions = response
+            extensionErrorMessage = response.errors.first
+            await restoreExtensionCredentials(for: response.mcpServers)
+            if let response = try? await backend.get("/api/tools", as: ExtensionToolsResponse.self) {
+                extensionTools = response.tools
+            }
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func refreshExtensionCatalog(query: String = "", marketplaceID: String = "") async {
+        do {
+            let response = try await backend.get(
+                "/api/extensions/catalog",
+                query: [
+                    URLQueryItem(name: "query", value: query),
+                    URLQueryItem(name: "marketplace_id", value: marketplaceID),
+                ],
+                as: ExtensionCatalogResponse.self
+            )
+            extensionCatalog = response.entries
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func addMarketplace(source: String, name: String = "") async {
+        do {
+            _ = try await backend.post(
+                "/api/extensions/marketplaces",
+                body: ["source": source, "name": name],
+                timeout: 190,
+                as: ExtensionMarketplace.self
+            )
+            await refreshExtensions()
+            await refreshExtensionCatalog()
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func refreshMarketplace(_ id: String) async {
+        do {
+            _ = try await backend.post(
+                "/api/extensions/marketplaces/\(id)/refresh",
+                body: [:],
+                timeout: 190,
+                as: ExtensionMarketplace.self
+            )
+            await refreshExtensions()
+            await refreshExtensionCatalog()
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func removeMarketplace(_ id: String) async {
+        do {
+            _ = try await backend.delete(
+                "/api/extensions/marketplaces/\(id)",
+                as: ExtensionOperationResponse.self
+            )
+            await refreshExtensions()
+            await refreshExtensionCatalog()
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func inspectPlugin(_ entry: ExtensionCatalogEntry) async -> PluginTrustResponse? {
+        do {
+            return try await backend.get(
+                "/api/extensions/catalog/trust",
+                query: [
+                    URLQueryItem(name: "marketplace_id", value: entry.marketplaceID),
+                    URLQueryItem(name: "plugin", value: entry.name),
+                ],
+                as: PluginTrustResponse.self
+            )
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    func inspectUpdate(
+        for plugin: ExtensionPlugin
+    ) async -> (ExtensionCatalogEntry, PluginTrustResponse)? {
+        await refreshExtensionCatalog()
+        guard let entry = extensionCatalog.first(where: { $0.id == plugin.id }) else {
+            extensionErrorMessage = "The plugin is no longer available from its marketplace."
+            return nil
+        }
+        guard let trust = await inspectPlugin(entry) else { return nil }
+        return (entry, trust)
+    }
+
+    func installPlugin(
+        _ entry: ExtensionCatalogEntry,
+        trust: PluginTrustResponse,
+        scope: String = "global"
+    ) async {
+        do {
+            let path = entry.installed
+                ? "/api/extensions/plugins/update"
+                : "/api/extensions/plugins/install"
+            let body: [String: Any] = entry.installed
+                ? ["id": entry.id, "expected_digest": trust.digest]
+                : [
+                    "marketplace_id": entry.marketplaceID,
+                    "plugin": entry.name,
+                    "expected_digest": trust.digest,
+                    "scope": scope,
+                    "workspace": workspacePath,
+                ]
+            _ = try await backend.post(
+                path,
+                body: body,
+                timeout: 190,
+                as: ExtensionPlugin.self
+            )
+            await refreshExtensions()
+            await refreshExtensionCatalog()
+            showToast(entry.installed ? "Plugin updated" : "Plugin installed")
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func setPlugin(_ id: String, enabled: Bool, scope: String) async {
+        do {
+            _ = try await backend.post(
+                "/api/extensions/plugins/enable",
+                body: [
+                    "id": id, "enabled": enabled, "scope": scope,
+                    "workspace": workspacePath,
+                ],
+                as: ExtensionPlugin.self
+            )
+            await refreshExtensions()
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func rollbackPlugin(_ id: String) async {
+        do {
+            _ = try await backend.post(
+                "/api/extensions/plugins/rollback",
+                body: ["id": id],
+                as: ExtensionPlugin.self
+            )
+            await refreshExtensions()
+            showToast("Plugin rolled back")
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func uninstallPlugin(_ id: String) async {
+        let credentialAccounts = extensions.mcpServers
+            .filter { $0.pluginID == id }
+            .map { Keychain.mcpCredentialKey($0.id) }
+        do {
+            _ = try await backend.delete(
+                "/api/extensions/plugins/\(id)",
+                as: ExtensionOperationResponse.self
+            )
+            for account in credentialAccounts { Keychain.remove(account: account) }
+            await refreshExtensions()
+            await refreshExtensionCatalog()
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func importSkill(from source: String, scope: String = "global") async {
+        do {
+            _ = try await backend.post(
+                "/api/extensions/skills/import",
+                body: ["source": source, "scope": scope, "workspace": workspacePath],
+                as: ExtensionSkill.self
+            )
+            await refreshExtensions()
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func setSkill(_ id: String, enabled: Bool, scope: String) async {
+        do {
+            _ = try await backend.post(
+                "/api/extensions/skills/enable",
+                body: [
+                    "id": id, "enabled": enabled, "scope": scope,
+                    "workspace": workspacePath,
+                ],
+                as: ExtensionSkill.self
+            )
+            await refreshExtensions()
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func removeSkill(_ id: String) async {
+        do {
+            _ = try await backend.delete(
+                "/api/extensions/skills/\(id)",
+                as: ExtensionOperationResponse.self
+            )
+            await refreshExtensions()
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func saveMCPServer(_ body: [String: Any]) async {
+        do {
+            _ = try await backend.post(
+                "/api/extensions/mcp",
+                body: body,
+                as: ExtensionMCPServer.self
+            )
+            await refreshExtensions()
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func setMCPServer(_ id: String, enabled: Bool, scope: String) async {
+        do {
+            _ = try await backend.post(
+                "/api/extensions/mcp/enable",
+                body: [
+                    "id": id, "enabled": enabled, "scope": scope,
+                    "workspace": workspacePath,
+                ],
+                as: ExtensionMCPServer.self
+            )
+            await refreshExtensions()
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func testMCPServer(_ id: String) async {
+        do {
+            let response = try await backend.post(
+                "/api/extensions/mcp/test",
+                body: ["id": id],
+                timeout: 135,
+                as: MCPTestResponse.self
+            )
+            await refreshExtensions()
+            showToast(response.status?.state == "connected" ? "MCP server connected" : "MCP test finished")
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func reconnectMCPServer(_ id: String) async {
+        do {
+            let response = try await backend.post(
+                "/api/extensions/mcp/reconnect",
+                body: ["id": id],
+                timeout: 135,
+                as: MCPTestResponse.self
+            )
+            await refreshExtensions()
+            showToast(response.status?.state == "connected" ? "MCP server reconnected" : "MCP reconnect finished")
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func setMCPPolicy(serverID: String, tool: String? = nil, mode: String) async {
+        do {
+            var body: [String: Any] = ["id": serverID, "mode": mode]
+            if let tool { body["tool"] = tool }
+            _ = try await backend.post(
+                "/api/extensions/mcp/policy",
+                body: body,
+                as: ExtensionMCPServer.self
+            )
+            await refreshExtensions()
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func removeMCPServer(_ id: String) async {
+        do {
+            _ = try await backend.delete(
+                "/api/extensions/mcp/\(id)",
+                as: ExtensionOperationResponse.self
+            )
+            Keychain.remove(account: Keychain.mcpCredentialKey(id))
+            await refreshExtensions()
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func setMCPCredentials(serverID: String, values: [String: Any]) async {
+        guard JSONSerialization.isValidJSONObject(values),
+              let data = try? JSONSerialization.data(withJSONObject: values),
+              let encoded = String(data: data, encoding: .utf8)
+        else {
+            extensionErrorMessage = "The MCP credentials could not be saved."
+            return
+        }
+        let account = Keychain.mcpCredentialKey(serverID)
+        let previous = Keychain.get(account: account)
+        guard Keychain.set(encoded, account: account) else {
+            extensionErrorMessage = "The MCP credentials could not be saved to Keychain."
+            return
+        }
+        do {
+            _ = try await backend.post(
+                "/api/extensions/mcp/credentials",
+                body: ["id": serverID, "credentials": values],
+                as: MCPStatusCredentialResponse.self
+            )
+            await refreshExtensions()
+        } catch {
+            if let previous {
+                Keychain.set(previous, account: account)
+            } else {
+                Keychain.remove(account: account)
+            }
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func clearMCPCredentials(serverID: String) async {
+        do {
+            _ = try await backend.post(
+                "/api/extensions/mcp/credentials",
+                body: ["id": serverID, "credentials": [String: Any]()],
+                as: MCPStatusCredentialResponse.self
+            )
+            Keychain.remove(account: Keychain.mcpCredentialKey(serverID))
+            await refreshExtensions()
+            showToast("MCP credentials removed")
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+        }
+    }
+
+    func authenticateMCPServer(_ server: ExtensionMCPServer) {
+        mcpAuthCoordinator.authorize(server: server) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let values):
+                Task { await self.setMCPCredentials(serverID: server.id, values: values) }
+            case .failure(let error):
+                self.extensionErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func restoreExtensionCredentials(for servers: [ExtensionMCPServer]) async {
+        for server in servers {
+            guard let encoded = Keychain.get(account: Keychain.mcpCredentialKey(server.id)),
+                  let data = encoded.data(using: .utf8),
+                  let storedValues = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+            let values = (try? await mcpAuthCoordinator.refreshedCredentialsIfNeeded(storedValues))
+                ?? storedValues
+            var refreshedToken = false
+            if JSONSerialization.isValidJSONObject(values),
+               let refreshedData = try? JSONSerialization.data(withJSONObject: values),
+               let refreshed = String(data: refreshedData, encoding: .utf8),
+               refreshed != encoded {
+                Keychain.set(refreshed, account: Keychain.mcpCredentialKey(server.id))
+                refreshedToken = true
+            }
+            guard server.hasCredentials != true || refreshedToken else { continue }
+            _ = try? await backend.post(
+                "/api/extensions/mcp/credentials",
+                body: ["id": server.id, "credentials": values],
+                as: MCPStatusCredentialResponse.self
+            )
+        }
     }
 
     /// Reads the local runtime directly. With an account active the agent has
@@ -795,11 +1682,12 @@ final class AppModel: ObservableObject {
         requeueingOnFailure: Bool = false
     ) {
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        let hasChatAttachments = selectedMode == .ask && !availableChatAttachments.isEmpty
+        guard !text.isEmpty || hasChatAttachments else { return }
 
         // Slash commands that Locus can run itself execute immediately, even
         // mid-run; anything else starting with "/" goes to the agent verbatim.
-        if let command = SlashCommand.command(invokedBy: text) {
+        if !text.isEmpty, let command = SlashCommand.command(invokedBy: text) {
             if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
                 draftText = ""
             }
@@ -809,6 +1697,10 @@ final class AppModel: ObservableObject {
         }
 
         if isBusy || hasPendingPermission {
+            if hasChatAttachments {
+                showToast("Wait for the current reply before sending attachments")
+                return
+            }
             queuedMessages.append(text)
             if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
                 draftText = ""
@@ -826,27 +1718,103 @@ final class AppModel: ObservableObject {
         }
 
         let isSlashPassthrough = SlashCommand.query(from: text) != nil
+        // Capture the mode before any asynchronous context work. A user can
+        // change the picker while that work is pending; the dispatched turn
+        // must keep the safety contract it started with.
+        let dispatchedMode = selectedMode
+        let dispatchedEngine: ExecutionEngine = (
+            isSlashPassthrough || dispatchedMode == .ask
+        ) ? .classic : executionEngine
+        let dispatchedWorkflowID = dispatchedMode == .plan ? planWorkflowID : buildWorkflowID
+        if dispatchedEngine == .langgraph {
+            guard langGraphAvailable,
+                  let workflow = graphWorkflows.first(where: {
+                      $0.id == dispatchedWorkflowID || $0.slug == dispatchedWorkflowID
+                  }),
+                  workflow.isRunnable,
+                  workflow.supportedModes.contains(dispatchedMode)
+            else {
+                graphErrorMessage = "Choose a valid, trusted workflow before sending."
+                selectInspectorTab(.workflows)
+                return
+            }
+        }
+        let dispatchedAttachments = dispatchedMode == .ask ? availableChatAttachments : []
+        let messageText = text.isEmpty ? "Please analyze the attached files." : text
         isBusy = true
+        turnStartedAt = Date()
         planApprovalPending = false
         planTodosChangedThisTurn = false
         // Agent-side slash commands (/init and friends) may write todos, but
         // running one is housekeeping, never a plan worth offering to build.
-        turnDispatchedInPlanMode = selectedMode == .plan && !isSlashPassthrough
+        turnDispatchedInPlanMode = dispatchedMode == .plan && !isSlashPassthrough
+        turnDispatchedMode = isSlashPassthrough ? nil : dispatchedMode
         Task { [weak self] in
             guard let self else { return }
-            await refreshContextFiles()
-            let payload = isSlashPassthrough ? text : decoratedPrompt(text)
-            guard backend.send(["type": "user_message", "text": payload]) else {
+            // Just Chat never reaches into the workspace, including through a
+            // context pack selected during an earlier agentic turn.
+            if dispatchedMode != .ask {
+                await refreshContextFiles()
+            }
+            let payload = isSlashPassthrough
+                ? text
+                : decoratedPrompt(
+                    messageText,
+                    mode: dispatchedMode,
+                    chatAttachments: dispatchedAttachments
+                )
+            var request: [String: Any] = [
+                "type": "user_message",
+                "text": payload,
+                "mode": dispatchedMode.rawValue,
+                "engine": dispatchedEngine.rawValue,
+            ]
+            if dispatchedEngine == .langgraph {
+                request["workflow_id"] = dispatchedWorkflowID
+            }
+            let imageAttachments: [[String: Any]] = dispatchedAttachments.compactMap { attachment in
+                guard attachment.kind == .image,
+                      let data = attachment.imageData,
+                      let mimeType = attachment.mimeType
+                else { return nil }
+                return [
+                    "name": attachment.name,
+                    "mime_type": mimeType,
+                    "data": data.base64EncodedString(),
+                ]
+            }
+            if !imageAttachments.isEmpty {
+                request["attachments"] = imageAttachments
+            }
+            guard backend.send(request) else {
                 isBusy = false
+                turnStartedAt = nil
+                turnDispatchedMode = nil
+                turnDispatchedInPlanMode = false
                 stashUnsent(text, requeue: requeueingOnFailure, preserveDraft: preservingDraftOnFailure)
                 return
             }
-            blocks.append(ChatBlock(kind: .user, text: text))
-            recordPrompt(text)
+            if !dispatchedAttachments.isEmpty {
+                let sentIDs = Set(dispatchedAttachments.map(\.id))
+                chatAttachments.removeAll { sentIDs.contains($0.id) }
+                chatAttachmentNotice = nil
+            }
+            let attachmentLine = dispatchedAttachments.isEmpty
+                ? nil
+                : "Attached: \(dispatchedAttachments.map(\.name).joined(separator: ", "))"
+            let visibleText = [text.nilIfEmpty, attachmentLine]
+                .compactMap { $0 }
+                .joined(separator: "\n\n")
+            blocks.append(ChatBlock(kind: .user, text: visibleText))
+            if !text.isEmpty { recordPrompt(text) }
             if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
                 draftText = ""
             }
-            if selectedMode == .plan { selectInspectorTab(.plan) }
+            if dispatchedEngine == .langgraph {
+                selectInspectorTab(.workflows)
+            } else if dispatchedMode == .plan {
+                selectInspectorTab(.plan)
+            }
         }
     }
 
@@ -882,9 +1850,11 @@ final class AppModel: ObservableObject {
             return
         }
         isBusy = true
+        turnStartedAt = Date()
         planApprovalPending = false
         planTodosChangedThisTurn = false
         turnDispatchedInPlanMode = false
+        turnDispatchedMode = nil
         blocks.append(ChatBlock(kind: .user, text: text))
     }
 
@@ -974,9 +1944,11 @@ final class AppModel: ObservableObject {
         }
         pendingRetry = true
         isBusy = true
+        turnStartedAt = Date()
         planApprovalPending = false
         planTodosChangedThisTurn = false
         turnDispatchedInPlanMode = selectedMode == .plan
+        turnDispatchedMode = selectedMode
         showToast("Regenerating the last response")
     }
 
@@ -1001,7 +1973,7 @@ final class AppModel: ObservableObject {
             requestClearChat()
         case .setMode(let mode):
             selectedMode = mode
-            showToast("Switched to \(mode.rawValue.capitalized) mode")
+            showToast(mode == .ask ? "Just Chat is on" : "Switched to \(mode.rawValue.capitalized) mode")
         case .selectModel:
             selectModelMatching(argument)
         case .browseModels:
@@ -1662,6 +2634,52 @@ final class AppModel: ObservableObject {
         loadContext(from: panel.urls)
     }
 
+    func addChatAttachments() {
+        let panel = NSOpenPanel()
+        panel.title = "Attach files to this chat message"
+        panel.message = "Locus will send only the files you choose. Chat mode cannot browse their folders."
+        panel.prompt = "Attach"
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        loadChatAttachments(from: panel.urls)
+    }
+
+    func loadChatAttachments(from urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        let remainingSlots = max(10 - chatAttachments.count, 0)
+        guard remainingSlots > 0 else {
+            chatAttachmentNotice = "A chat message can include up to 10 attachments."
+            return
+        }
+        isLoadingChatAttachments = true
+        chatAttachmentNotice = "Preparing attachments…"
+        let existing = Set(chatAttachments.map { $0.url.standardizedFileURL })
+        let selected = Array(urls.prefix(remainingSlots))
+        let scopedURLs = selected.filter { $0.startAccessingSecurityScopedResource() }
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                Self.readChatAttachments(selected, excluding: existing)
+            }.value
+            scopedURLs.forEach { $0.stopAccessingSecurityScopedResource() }
+            guard let self else { return }
+            chatAttachments.append(contentsOf: result.attachments)
+            chatAttachmentNotice = result.notice
+            isLoadingChatAttachments = false
+            showToast(
+                result.attachments.isEmpty
+                    ? (result.notice ?? "No supported attachments were added")
+                    : "Attached \(result.attachments.count) file\(result.attachments.count == 1 ? "" : "s")"
+            )
+        }
+    }
+
+    func removeChatAttachment(_ attachment: ChatAttachment) {
+        chatAttachments.removeAll { $0.id == attachment.id }
+        if chatAttachments.isEmpty { chatAttachmentNotice = nil }
+    }
+
     func loadContext(from urls: [URL]) {
         guard !urls.isEmpty else { return }
         isLoadingContext = true
@@ -1930,8 +2948,9 @@ final class AppModel: ObservableObject {
 
     // MARK: - Inspector
 
-    /// Labels only fit alongside five icons once the panel is this wide.
-    var inspectorShowsLabels: Bool { inspectorWidth >= 440 }
+    /// Seven tab labels need almost the full inspector width; below this the
+    /// icon-first strip keeps every target comfortably clickable.
+    var inspectorShowsLabels: Bool { inspectorWidth >= 500 }
 
     /// Files changed in the workspace, for the Changes badge.
     var changedFileCount: Int { gitChanges.count }
@@ -2264,6 +3283,7 @@ final class AppModel: ObservableObject {
     }
 
     func selectInspectorTab(_ tab: InspectorTab) {
+        guard !justChatEnabled else { return }
         inspectorTab = tab
         if inspectorCollapsed {
             inspectorCollapsed = false
@@ -2274,10 +3294,12 @@ final class AppModel: ObservableObject {
             refreshGitStatus()
         }
         if tab == .files { refreshWorkspaceIndex() }
+        if tab == .agents { refreshAgentInstructions() }
         settings.inspectorLastTab = tab.rawValue
     }
 
     func toggleInspector() {
+        guard !justChatEnabled else { return }
         inspectorCollapsed.toggle()
     }
 
@@ -2411,14 +3433,18 @@ final class AppModel: ObservableObject {
         (try? await backend.get("/api/health", as: HealthResponse.self)) != nil
     }
 
-    private func decoratedPrompt(_ text: String) -> String {
+    private func decoratedPrompt(
+        _ text: String,
+        mode: WorkMode,
+        chatAttachments: [ChatAttachment] = []
+    ) -> String {
         var sections = [
-            "[Locus mode: \(selectedMode.rawValue.capitalized)]",
-            selectedMode.instruction,
+            "[Locus mode: \(mode.rawValue.capitalized)]",
+            mode.instruction,
         ]
 
         let included = contextFiles.filter { $0.isIncluded && $0.isAvailable }
-        if !included.isEmpty {
+        if mode != .ask, !included.isEmpty {
             let context = included.map {
                 """
                 --- \($0.displayPath) ---
@@ -2426,6 +3452,36 @@ final class AppModel: ObservableObject {
                 """
             }.joined(separator: "\n\n")
             sections.append("Use this explicitly selected context:\n\(context)")
+        }
+
+        if mode == .ask {
+            let suppliedText = chatAttachments.filter {
+                $0.kind == .text && $0.isAvailable
+            }
+            if !suppliedText.isEmpty {
+                let contents = suppliedText.compactMap { attachment -> String? in
+                    guard let content = attachment.textContent else { return nil }
+                    return """
+                    --- Attached file: \(attachment.name) ---
+                    \(content)
+                    """
+                }.joined(separator: "\n\n")
+                sections.append(
+                    "The user explicitly attached the following files to this message. "
+                    + "Analyze only the supplied content; do not inspect their paths or access "
+                    + "any other workspace data:\n\(contents)"
+                )
+            }
+            let imageNames = chatAttachments.filter {
+                $0.kind == .image && $0.isAvailable
+            }.map(\.name)
+            if !imageNames.isEmpty {
+                sections.append(
+                    "The user explicitly attached these images to this message: "
+                    + imageNames.joined(separator: ", ")
+                    + ". Analyze the attached image data without accessing their paths."
+                )
+            }
         }
 
         if let restoredTranscriptContext {
@@ -2564,6 +3620,109 @@ final class AppModel: ObservableObject {
             // The agent touched the tree; the Changes panel is now stale.
             refreshGitStatus()
 
+        case "graph_run_started":
+            activeGraphRunID = event["run_id"] as? String
+            activeGraphStatus = "running"
+            graphNodeActivities = []
+            graphReviewRequest = nil
+            isBusy = true
+            if !justChatEnabled { selectInspectorTab(.workflows) }
+
+        case "graph_credentials_required":
+            guard let runID = event["run_id"] as? String,
+                  let accountIDs = event["account_ids"] as? [String]
+            else { return }
+            sendGraphCredentials(runID: runID, accountIDs: accountIDs)
+
+        case "graph_node_state":
+            let nodeID = event["node_id"] as? String ?? "node"
+            let agent = event["agent"] as? String ?? nodeID
+            if let index = graphNodeActivities.firstIndex(where: { $0.nodeID == nodeID }) {
+                graphNodeActivities[index].agent = agent
+                graphNodeActivities[index].status = event["status"] as? String ?? "running"
+                graphNodeActivities[index].durationMilliseconds = event["duration_ms"] as? Int
+                graphNodeActivities[index].error = event["error"] as? String
+            } else {
+                graphNodeActivities.append(GraphNodeActivity(
+                    nodeID: nodeID,
+                    agent: agent,
+                    status: event["status"] as? String ?? "running",
+                    output: "",
+                    durationMilliseconds: event["duration_ms"] as? Int,
+                    error: event["error"] as? String
+                ))
+            }
+
+        case "graph_node_token":
+            let nodeID = event["node_id"] as? String ?? "node"
+            let text = event["text"] as? String ?? ""
+            if let index = graphNodeActivities.firstIndex(where: { $0.nodeID == nodeID }) {
+                graphNodeActivities[index].output += text
+                graphNodeActivities[index].model = event["model"] as? String
+                    ?? graphNodeActivities[index].model
+                graphNodeActivities[index].promptTokens = event["prompt_tokens"] as? Int
+                    ?? graphNodeActivities[index].promptTokens
+                graphNodeActivities[index].completionTokens = event["completion_tokens"] as? Int
+                    ?? graphNodeActivities[index].completionTokens
+                graphNodeActivities[index].contextLimit = event["context_limit"] as? Int
+                    ?? graphNodeActivities[index].contextLimit
+                graphNodeActivities[index].isFinal = event["final_node"] as? Bool
+                    ?? graphNodeActivities[index].isFinal
+            } else {
+                graphNodeActivities.append(GraphNodeActivity(
+                    nodeID: nodeID,
+                    agent: event["agent"] as? String ?? nodeID,
+                    status: "running",
+                    output: text,
+                    durationMilliseconds: nil,
+                    error: nil,
+                    model: event["model"] as? String,
+                    promptTokens: event["prompt_tokens"] as? Int,
+                    completionTokens: event["completion_tokens"] as? Int,
+                    contextLimit: event["context_limit"] as? Int,
+                    isFinal: event["final_node"] as? Bool ?? false
+                ))
+            }
+
+        case "graph_review_request":
+            guard let requestID = event["request_id"] as? String,
+                  let runID = event["run_id"] as? String
+            else { return }
+            graphReviewRequest = GraphReviewRequest(
+                requestID: requestID,
+                runID: runID,
+                nodeID: event["node_id"] as? String ?? "",
+                title: event["title"] as? String ?? "Review workflow",
+                message: event["message"] as? String ?? "",
+                summary: event["summary"] as? String ?? ""
+            )
+            activeGraphStatus = "waiting_review"
+            notifyPermissionRequestIfInactive()
+
+        case "graph_run_state":
+            activeGraphRunID = event["run_id"] as? String
+            activeGraphStatus = event["status"] as? String
+            if let error = event["error"] as? String, !error.isEmpty {
+                graphErrorMessage = error
+            }
+            Task { await refreshLangGraph() }
+
+        case "workflows_changed", "graph_recovery_available":
+            Task { await refreshLangGraph() }
+
+        case "extensions_changed", "mcp_status", "mcp_credential_refresh":
+            extensionRefreshTask?.cancel()
+            extensionRefreshTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(180))
+                guard !Task.isCancelled else { return }
+                await self?.refreshExtensions()
+            }
+
+        case "mcp_auth_required":
+            let name = event["server_name"] as? String ?? "MCP server"
+            extensionErrorMessage = "\(name) needs authentication in Settings → Extensions."
+            showToast("MCP authentication needed")
+
         case "note":
             // Backend-side commentary: auto-compaction, truncated output.
             if let text = (event["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -2600,6 +3759,17 @@ final class AppModel: ObservableObject {
             flushPendingTokens()
             finalizeStreamingBlocks()
             resolveDanglingPermissions()
+            let reason = event["reason"] as? String ?? "complete"
+            let dispatchedMode = turnDispatchedMode
+                ?? (turnDispatchedInPlanMode ? .plan : nil)
+            if reason == "complete", dispatchedMode == .build {
+                reconcileFinishedPlanStep()
+            }
+            appendTurnCompletion(
+                reason: reason,
+                mode: dispatchedMode,
+                backendDurationMilliseconds: event["duration_ms"] as? Int
+            )
             isBusy = false
             pendingRetry = false
             streamingAssistantID = nil
@@ -2609,7 +3779,7 @@ final class AppModel: ObservableObject {
             // dispatched in Plan mode and is still being read in it, and
             // never over a queued message, which the user has already
             // decided comes next.
-            if (event["reason"] as? String ?? "complete") == "complete",
+            if reason == "complete",
                turnDispatchedInPlanMode,
                selectedMode == .plan,
                planTodosChangedThisTurn,
@@ -2619,6 +3789,11 @@ final class AppModel: ObservableObject {
             }
             planTodosChangedThisTurn = false
             turnDispatchedInPlanMode = false
+            turnDispatchedMode = nil
+            turnStartedAt = nil
+            if ["completed", "failed", "interrupted"].contains(activeGraphStatus ?? "") {
+                activeGraphRunID = nil
+            }
             notifyTurnCompleteIfInactive()
             if persistenceEnabled {
                 Task { await refreshMetadata() }
@@ -2638,6 +3813,7 @@ final class AppModel: ObservableObject {
             planApprovalPending = false
             planTodosChangedThisTurn = false
             turnDispatchedInPlanMode = false
+            turnDispatchedMode = nil
             pendingSessionReset = false
             pendingCheckpointRestore = nil
             pendingRewindDraft = nil
@@ -2775,6 +3951,40 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// A normally completed Build turn is authoritative evidence that the
+    /// step it left active has finished. Pending steps remain pending: this
+    /// fixes the common final-step bookkeeping omission without claiming work
+    /// the model never started.
+    private func reconcileFinishedPlanStep() {
+        guard todos.contains(where: { $0.status == .inProgress }) else { return }
+        todos = todos.map { todo in
+            guard todo.status == .inProgress else { return todo }
+            return TodoItem(content: todo.content, status: .completed)
+        }
+        if inspectorTab != .plan || inspectorCollapsed {
+            planHasUnseenUpdate = true
+        }
+    }
+
+    private func appendTurnCompletion(
+        reason: String,
+        mode: WorkMode?,
+        backendDurationMilliseconds: Int?
+    ) {
+        let measured = turnStartedAt.map {
+            max(Int(Date().timeIntervalSince($0) * 1_000), 0)
+        }
+        guard let duration = backendDurationMilliseconds ?? measured else { return }
+        // A repeated terminal event must not leave a row of duplicate marks.
+        guard blocks.last?.completion == nil else { return }
+        let completion = TurnCompletion(
+            outcome: .init(reason: reason),
+            mode: mode,
+            durationMilliseconds: duration
+        )
+        blocks.append(ChatBlock(kind: .note, completion: completion))
+    }
+
     /// No card may stay awaiting once the turn is over: a decision can no
     /// longer matter, and a stuck awaiting card would disable send and
     /// clear-chat forever.
@@ -2792,6 +4002,7 @@ final class AppModel: ObservableObject {
         finalizeStreamingBlocks()
         streamingAssistantID = nil
         streamedCharsThisTurn = 0
+        turnStartedAt = nil
         isBusy = false
         pendingRetry = false
         // A pending "implement this plan?" survives the blip on purpose: the
@@ -2799,6 +4010,7 @@ final class AppModel: ObservableObject {
         // still disconnected is caught by resolvePlanApproval's guard.
         planTodosChangedThisTurn = false
         turnDispatchedInPlanMode = false
+        turnDispatchedMode = nil
         pendingSessionReset = false
         pendingCheckpointRestore = nil
         pendingRewindDraft = nil
@@ -2872,6 +4084,9 @@ final class AppModel: ObservableObject {
             selectedMode = profile.mode
             settings.previewURL = profile.previewURL
             contextFiles = profile.contextFiles
+            executionEngine = profile.executionEngine ?? .classic
+            planWorkflowID = profile.planWorkflowID ?? "planner-team"
+            buildWorkflowID = profile.buildWorkflowID ?? "single-agent"
             applyProfileRoute(profile, currentModel: info.model)
             Task { await refreshContextFiles() }
         }
@@ -2916,7 +4131,10 @@ final class AppModel: ObservableObject {
                     mode: selectedMode,
                     previewURL: settings.previewURL,
                     contextFiles: contextFiles,
-                    draft: draftText
+                    draft: draftText,
+                    executionEngine: executionEngine,
+                    planWorkflowID: planWorkflowID,
+                    buildWorkflowID: buildWorkflowID
                 )
             )
         }
@@ -2958,7 +4176,10 @@ final class AppModel: ObservableObject {
             mode: selectedMode,
             previewURL: settings.previewURL,
             contextFiles: contextFiles,
-            draft: draftText
+            draft: draftText,
+            executionEngine: executionEngine,
+            planWorkflowID: planWorkflowID,
+            buildWorkflowID: buildWorkflowID
         )
         if let index = workspaceProfiles.firstIndex(where: { $0.path == path }) {
             workspaceProfiles[index] = profile
@@ -3014,7 +4235,7 @@ final class AppModel: ObservableObject {
             switch block.kind {
             case .user: "User: \(block.text)"
             case .assistant: "Assistant: \(block.text)"
-            case .note: "Note: \(block.text)"
+            case .note: block.completion == nil ? "Note: \(block.text)" : nil
             case .tool, .error: nil
             }
         }
@@ -3089,6 +4310,15 @@ final class AppModel: ObservableObject {
                 kind: .assistant,
                 text: "The workspace is ready for a focused review."
             ),
+            ChatBlock(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000103")!,
+                kind: .note,
+                completion: TurnCompletion(
+                    outcome: .complete,
+                    mode: .build,
+                    durationMilliseconds: 84_000
+                )
+            ),
         ]
         promptHistory = ["Audit the current changes", "Review the workspace"]
 
@@ -3129,6 +4359,9 @@ final class AppModel: ObservableObject {
             "Locus/TerminalSession.swift",
             "docs/console.md",
         ].map { URL(fileURLWithPath: workspace).appending(path: $0) }
+        agentInstructionsExists = true
+        savedAgentInstructions = "# Workspace instructions\n\n- Keep changes focused.\n"
+        agentInstructionsDraft = savedAgentInstructions
         terminal.handle([
             "type": "terminal_output",
             "text": "On branch main\nnothing to commit, working tree clean\n",
@@ -3194,6 +4427,135 @@ final class AppModel: ObservableObject {
               let data = try? JSONSerialization.data(withJSONObject: object)
         else { return nil }
         return try? JSONDecoder().decode(type, from: data)
+    }
+
+    nonisolated private static func readChatAttachments(
+        _ selected: [URL],
+        excluding existing: Set<URL>
+    ) -> ChatAttachmentLoadResult {
+        let directImageTypes = [
+            "png": "image/png",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "gif": "image/gif",
+            "webp": "image/webp",
+        ]
+        var attachments: [ChatAttachment] = []
+        var unsupported = 0
+        var oversized = 0
+        var unreadable = 0
+        var truncatedPDFs = 0
+        var totalImageBytes = 0
+        var totalTextBytes = 0
+
+        for selectedURL in selected {
+            let url = selectedURL.standardizedFileURL
+            guard !existing.contains(url) else { continue }
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            guard values?.isRegularFile == true else {
+                unsupported += 1
+                continue
+            }
+            let size = values?.fileSize ?? 0
+            let ext = url.pathExtension.lowercased()
+
+            if ext == "pdf" {
+                guard size <= 10_000_000, totalTextBytes < 750_000 else {
+                    oversized += 1
+                    continue
+                }
+                guard let document = PDFDocument(url: url),
+                      let rawText = document.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !rawText.isEmpty
+                else {
+                    unreadable += 1
+                    continue
+                }
+                let remaining = max(750_000 - totalTextBytes, 0)
+                let content = String(rawText.prefix(min(500_000, remaining)))
+                if content.count < rawText.count { truncatedPDFs += 1 }
+                totalTextBytes += content.utf8.count
+                attachments.append(
+                    ChatAttachment(url: url, kind: .text, textContent: content)
+                )
+                continue
+            }
+
+            let type = UTType(filenameExtension: ext)
+            if type?.conforms(to: .image) == true {
+                guard size <= 15_000_000, totalImageBytes < 25_000_000 else {
+                    oversized += 1
+                    continue
+                }
+                let imageData: Data?
+                let mimeType: String?
+                if let directMIME = directImageTypes[ext] {
+                    imageData = try? Data(contentsOf: url, options: .mappedIfSafe)
+                    mimeType = directMIME
+                } else if let image = NSImage(contentsOf: url),
+                          let tiff = image.tiffRepresentation,
+                          let bitmap = NSBitmapImageRep(data: tiff),
+                          let jpeg = bitmap.representation(
+                              using: .jpeg,
+                              properties: [.compressionFactor: 0.88]
+                          ) {
+                    imageData = jpeg
+                    mimeType = "image/jpeg"
+                } else {
+                    imageData = nil
+                    mimeType = nil
+                }
+                guard let imageData, let mimeType,
+                      imageData.count <= 15_000_000,
+                      totalImageBytes + imageData.count <= 25_000_000
+                else {
+                    unreadable += 1
+                    continue
+                }
+                totalImageBytes += imageData.count
+                attachments.append(
+                    ChatAttachment(
+                        url: url,
+                        kind: .image,
+                        imageData: imageData,
+                        mimeType: mimeType
+                    )
+                )
+                continue
+            }
+
+            if ContextFileTypes.allowedExtensions.contains(ext)
+                || type?.conforms(to: .text) == true {
+                guard size <= 500_000,
+                      totalTextBytes + size <= 750_000
+                else {
+                    oversized += 1
+                    continue
+                }
+                guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+                      let content = String(data: data, encoding: .utf8),
+                      !content.isEmpty
+                else {
+                    unreadable += 1
+                    continue
+                }
+                totalTextBytes += data.count
+                attachments.append(
+                    ChatAttachment(url: url, kind: .text, textContent: content)
+                )
+                continue
+            }
+
+            unsupported += 1
+        }
+
+        var warnings: [String] = []
+        if unsupported > 0 { warnings.append("\(unsupported) unsupported") }
+        if oversized > 0 { warnings.append("\(oversized) over the size limit") }
+        if unreadable > 0 { warnings.append("\(unreadable) unreadable") }
+        if truncatedPDFs > 0 { warnings.append("\(truncatedPDFs) PDF truncated") }
+        let notice = warnings.isEmpty ? nil : "Skipped or limited: \(warnings.joined(separator: ", "))."
+        return ChatAttachmentLoadResult(attachments: attachments, notice: notice)
     }
 
     nonisolated private static func readContextSelection(
@@ -3441,7 +4803,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .clearSessions: "Clear saved sessions"
         case .reviewChanges: "Review file changes"
         case .createCheckpoint: "Create a session checkpoint"
-        case .askMode: "Switch to Ask mode"
+        case .askMode: "Turn on Just Chat"
         case .planMode: "Switch to Plan mode"
         case .buildMode: "Switch to Build mode"
         case .chooseWorkspace: "Choose a workspace"
@@ -3462,7 +4824,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .clearSessions: "trash"
         case .reviewChanges: "doc.text.magnifyingglass"
         case .createCheckpoint: "clock.arrow.circlepath"
-        case .askMode: "questionmark.circle"
+        case .askMode: "bubble.left"
         case .planMode: "list.bullet.clipboard"
         case .buildMode: "hammer"
         case .chooseWorkspace: "folder"
@@ -3555,6 +4917,11 @@ private struct SessionDetailResponse: Codable {
 
 private struct ContextLoadResult: Sendable {
     let files: [ContextFile]
+    let notice: String?
+}
+
+private struct ChatAttachmentLoadResult: Sendable {
+    let attachments: [ChatAttachment]
     let notice: String?
 }
 

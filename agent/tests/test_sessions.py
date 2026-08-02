@@ -165,7 +165,7 @@ def test_retry_branches_without_modifying_original() -> None:
         original_path = core.session.path
         events: list[dict] = []
         core.on_event(events.append)
-        core._run_response_loop = lambda decider=None: None  # type: ignore[method-assign]
+        core._run_response_loop = lambda decider=None, **kwargs: None  # type: ignore[method-assign]
 
         core.retry_last_response()
 

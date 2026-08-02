@@ -689,9 +689,27 @@ def _to_openai_message(message: dict[str, Any]) -> dict[str, Any]:
                 message.get("tool_call_id") or message.get("name") or "tool"
             ),
         }
+    content: Any = str(message.get("content") or "")
+    attachments = message.get("attachments") or []
+    if role == "user" and attachments:
+        blocks: list[dict[str, Any]] = []
+        if content:
+            blocks.append({"type": "text", "text": content})
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                continue
+            data = str(attachment.get("data") or "")
+            mime_type = str(attachment.get("mime_type") or "")
+            if data and mime_type.startswith("image/"):
+                blocks.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime_type};base64,{data}"},
+                })
+        if blocks:
+            content = blocks
     out: dict[str, Any] = {
         "role": role,
-        "content": str(message.get("content") or ""),
+        "content": content,
     }
     reasoning = message.get("reasoning_content")
     if isinstance(reasoning, str) and reasoning:
@@ -772,7 +790,23 @@ def _to_anthropic_messages(
                     })
         else:
             native_role = "user"
-            blocks = [{"type": "text", "text": content}]
+            blocks = []
+            if content:
+                blocks.append({"type": "text", "text": content})
+            for attachment in message.get("attachments") or []:
+                if not isinstance(attachment, dict):
+                    continue
+                data = str(attachment.get("data") or "")
+                mime_type = str(attachment.get("mime_type") or "")
+                if data and mime_type.startswith("image/"):
+                    blocks.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": mime_type,
+                            "data": data,
+                        },
+                    })
         if not blocks:
             continue
         if converted and converted[-1]["role"] == native_role:
