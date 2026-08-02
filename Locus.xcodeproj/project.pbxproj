@@ -17,12 +17,14 @@
 		35872DC7D25B9CE5D3A43C6E /* InspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF3D3389D598BBECBE77E38F /* InspectorView.swift */; };
 		3C3E46189C3441DA21CB8E5A /* TerminalSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = F95947ACE0751337457A57CD /* TerminalSession.swift */; };
 		3C65E1B7BF3636F225DFF183 /* ThirdPartyLicenses in Resources */ = {isa = PBXBuildFile; fileRef = 40301E70BE817C7039EA22EB /* ThirdPartyLicenses */; };
+		3E8FCEE6168C5A89B6B45BC1 /* InspectorAgentsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E2B58EEFFFA7A86BC2AF7F6 /* InspectorAgentsTab.swift */; };
 		3EB73A207975893878E53D8B /* MessageContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA164EE10426EF2AD4E606A /* MessageContent.swift */; };
 		404AF919F8C0790788D0A26B /* GitClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06DD9A63C8FBDB42368F8A0C /* GitClient.swift */; };
 		4679DAB70FE7B88A97E3F6D9 /* RemoteEndpointTester.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01EE3ED166C864419A854532 /* RemoteEndpointTester.swift */; };
 		4C25B8F53E842CD8D5556308 /* InspectorTerminalTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C90DE8FC778C6A106DF35EB /* InspectorTerminalTab.swift */; };
 		4C716EA94327E1CAE0B35444 /* ProviderAccounts.swift in Sources */ = {isa = PBXBuildFile; fileRef = D99C4113009BE46AB55CB21C /* ProviderAccounts.swift */; };
 		56B2392CBBC3354BD5A6E359 /* InspectorFilesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10D6D002C03E3AA6EB9FEFD0 /* InspectorFilesTab.swift */; };
+		56D327D5611A810FDF7457C3 /* InspectorWorkflowsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9B06E303CEB29EEAD778199 /* InspectorWorkflowsTab.swift */; };
 		62A955375EBFA6E5A70A6C85 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0204C24A0102A8D20E3A23CE /* Theme.swift */; };
 		6777453D22A87B5DF2E89B0C /* ShortcutsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CBA85D1FB7286E08482ED76 /* ShortcutsSheet.swift */; };
 		686A434D611B736A8BC449A2 /* SlashCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78188AFFEC80498E68C2EE3A /* SlashCommands.swift */; };
@@ -32,8 +34,6 @@
 		77D7EC97E924FD976475CB02 /* PlanApprovalPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEF0BEF00F2EA8083877CC21 /* PlanApprovalPromptView.swift */; };
 		7B87C08B32EA786673C34F3F /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76FC0F4F0C6864707814EAA5 /* Keychain.swift */; };
 		A6D846A90EED0F655A108FE8 /* Sheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11B2324D330884AA4555A92 /* Sheets.swift */; };
-		AA6E4C9486B5434F9D27F4A1 /* InspectorAgentsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB7F5D8397C6542E8A16E3B2 /* InspectorAgentsTab.swift */; };
-		AB71D42C5E924B72A4F5D681 /* InspectorWorkflowsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC82E53D6FA35C83B506E792 /* InspectorWorkflowsTab.swift */; };
 		BEAFCBFDAE33591C970B5E98 /* BackendProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */; };
 		C0EB8EF86FF9954D89CC082E /* InspectorPlanTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */; };
 		C214A77B64E488AE82DCFB59 /* WorkspaceAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAAE8017A82BDD5DBCA5F587 /* WorkspaceAccess.swift */; };
@@ -79,6 +79,7 @@
 		264A4A5A5DB18E19BD6A2741 /* InspectorPreviewTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorPreviewTab.swift; sourceTree = "<group>"; };
 		28BF95EE575D10DBDE8FA1B3 /* PermissionPromptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionPromptView.swift; sourceTree = "<group>"; };
 		2D4CA41C622A34E45EF21F54 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		2E2B58EEFFFA7A86BC2AF7F6 /* InspectorAgentsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorAgentsTab.swift; sourceTree = "<group>"; };
 		3793FC69B1D813ED07567A2E /* BackendService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendService.swift; sourceTree = "<group>"; };
 		38EED4FF1CBA575694CE08AA /* LocusTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocusTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		40301E70BE817C7039EA22EB /* ThirdPartyLicenses */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ThirdPartyLicenses; path = Locus/Resources/ThirdPartyLicenses; sourceTree = SOURCE_ROOT; };
@@ -94,12 +95,11 @@
 		9C90DE8FC778C6A106DF35EB /* InspectorTerminalTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorTerminalTab.swift; sourceTree = "<group>"; };
 		9FEDB7872CF5F644CE91EC65 /* LocusUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocusUITests.swift; sourceTree = "<group>"; };
 		A2CC3300CABBD87F954E4C63 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
+		A9B06E303CEB29EEAD778199 /* InspectorWorkflowsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorWorkflowsTab.swift; sourceTree = "<group>"; };
 		AEFB9A10F8784355D5344D95 /* Locus.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Locus.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B082AFE6729F96D2D8606AC9 /* WorkspaceIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceIndex.swift; sourceTree = "<group>"; };
 		B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendProcess.swift; sourceTree = "<group>"; };
 		BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorPlanTab.swift; sourceTree = "<group>"; };
-		BB7F5D8397C6542E8A16E3B2 /* InspectorAgentsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorAgentsTab.swift; sourceTree = "<group>"; };
-		BC82E53D6FA35C83B506E792 /* InspectorWorkflowsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorWorkflowsTab.swift; sourceTree = "<group>"; };
 		BCCEF7CD29A9C6F9C3E1472F /* LocusApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocusApp.swift; sourceTree = "<group>"; };
 		BE7F27B06F0AA98E893C2E9B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		BEF0BEF00F2EA8083877CC21 /* PlanApprovalPromptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanApprovalPromptView.swift; sourceTree = "<group>"; };
@@ -166,14 +166,14 @@
 				06DD9A63C8FBDB42368F8A0C /* GitClient.swift */,
 				63EA24EB82248151706E566E /* GitStatusModels.swift */,
 				BE7F27B06F0AA98E893C2E9B /* Info.plist */,
-				BB7F5D8397C6542E8A16E3B2 /* InspectorAgentsTab.swift */,
+				2E2B58EEFFFA7A86BC2AF7F6 /* InspectorAgentsTab.swift */,
 				CCCD81AAF0691EDC3F6B0D64 /* InspectorChangesTab.swift */,
 				10D6D002C03E3AA6EB9FEFD0 /* InspectorFilesTab.swift */,
 				BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */,
 				264A4A5A5DB18E19BD6A2741 /* InspectorPreviewTab.swift */,
 				9C90DE8FC778C6A106DF35EB /* InspectorTerminalTab.swift */,
-				BC82E53D6FA35C83B506E792 /* InspectorWorkflowsTab.swift */,
 				CF3D3389D598BBECBE77E38F /* InspectorView.swift */,
+				A9B06E303CEB29EEAD778199 /* InspectorWorkflowsTab.swift */,
 				76FC0F4F0C6864707814EAA5 /* Keychain.swift */,
 				BCCEF7CD29A9C6F9C3E1472F /* LocusApp.swift */,
 				8FA164EE10426EF2AD4E606A /* MessageContent.swift */,
@@ -360,14 +360,14 @@
 				E6B5E9C34E90B735A5A84C22 /* ComposerView.swift in Sources */,
 				404AF919F8C0790788D0A26B /* GitClient.swift in Sources */,
 				0F72DE71A4842FDA1E802CC0 /* GitStatusModels.swift in Sources */,
-				AA6E4C9486B5434F9D27F4A1 /* InspectorAgentsTab.swift in Sources */,
+				3E8FCEE6168C5A89B6B45BC1 /* InspectorAgentsTab.swift in Sources */,
 				D586AEB96691BDCC5A9F0418 /* InspectorChangesTab.swift in Sources */,
 				56B2392CBBC3354BD5A6E359 /* InspectorFilesTab.swift in Sources */,
 				C0EB8EF86FF9954D89CC082E /* InspectorPlanTab.swift in Sources */,
 				FDE94DBD1929144B43AB6156 /* InspectorPreviewTab.swift in Sources */,
 				4C25B8F53E842CD8D5556308 /* InspectorTerminalTab.swift in Sources */,
-				AB71D42C5E924B72A4F5D681 /* InspectorWorkflowsTab.swift in Sources */,
 				35872DC7D25B9CE5D3A43C6E /* InspectorView.swift in Sources */,
+				56D327D5611A810FDF7457C3 /* InspectorWorkflowsTab.swift in Sources */,
 				7B87C08B32EA786673C34F3F /* Keychain.swift in Sources */,
 				CB22892B835E59A99C4FA35D /* LocusApp.swift in Sources */,
 				3EB73A207975893878E53D8B /* MessageContent.swift in Sources */,
