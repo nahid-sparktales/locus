@@ -189,7 +189,14 @@ struct ModelLibraryView: View {
         }
         .frame(width: 900, height: 620)
         .background(LocusTheme.panel)
-        .task { await library.loadInitial() }
+        .task {
+            let initialQuery = model.modelLibraryInitialQuery
+            if !initialQuery.isEmpty {
+                library.query = initialQuery
+                model.modelLibraryInitialQuery = ""
+            }
+            await library.loadInitial()
+        }
         .onDisappear { library.cancelDownload() }
         .onExitCommand {
             dismiss()

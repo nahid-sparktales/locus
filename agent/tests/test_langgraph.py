@@ -15,12 +15,14 @@ from ollama_code import extensions as extensions_mod
 from ollama_code import sessions as sessions_mod
 from ollama_code.core import AgentCore
 from ollama_code.langgraph_runtime import (
+    GraphPreflightError,
     GraphRunStore,
     SideEffectCoordinator,
     WorkflowError,
     WorkflowRegistry,
     builtin_templates,
     validate_workflow,
+    workflow_capabilities,
 )
 from ollama_code.ollama import ChatResponse
 
@@ -101,6 +103,37 @@ class WorkflowClient:
         return [{"name": "test-model"}]
 
 
+class LocalWorkflowClient(WorkflowClient):
+    def __init__(self, models=("local-model",), *, loaded=32_768):
+        super().__init__()
+        self.models = list(models)
+        self.loaded = loaded
+        self.host = "http://local-ollama:11434"
+        self.options: list[dict | None] = []
+
+    def list_models(self):
+        return [{"name": name, "details": {"parameter_size": "8B"}} for name in self.models]
+
+    def running_models(self):
+        return [
+            {"name": name, "model": name, "context_length": self.loaded}
+            for name in self.models if self.loaded > 0
+        ]
+
+    def context_length(self, name):
+        return 32_768
+
+    def loaded_context_length(self, name):
+        return self.loaded if name in self.models else 0
+
+    def supports_tools(self, name):
+        return name != "no-tools"
+
+    def chat_stream(self, *args, **kwargs):
+        self.options.append(kwargs.get("options"))
+        return super().chat_stream(*args, **kwargs)
+
+
 def graph_core(tmp_path: Path, *, delay: float = 0.0) -> tuple[AgentCore, WorkflowClient, list[dict]]:
     workspace = tmp_path / "workspace"
     workspace.mkdir(exist_ok=True)
@@ -121,6 +154,125 @@ def test_builtin_templates_have_typed_ports_and_validate():
         assert len([node for node in workflow["nodes"] if node["type"] == "input"]) == 1
         assert any(node["type"] == "final" for node in workflow["nodes"])
         assert all("input_ports" in node and "output_ports" in node for node in workflow["nodes"])
+
+
+def test_model_binding_schema_is_additive_and_validates_sources():
+    legacy = builtin_templates()[0]
+    final = next(node for node in legacy["nodes"] if node["type"] == "final")
+    final["config"]["model_binding"] = {
+        "account_id": "remote-account",
+        "model": "remote-model",
+    }
+    normalized = validate_workflow(legacy)
+    binding = next(node for node in normalized["nodes"] if node["type"] == "final")["config"]["model_binding"]
+    assert "source" not in binding, "legacy workflow digests must remain stable"
+    capabilities = workflow_capabilities(normalized)
+    assert capabilities["model_sources"] == ["account", "inherit"]
+    assert "account:remote-account:remote-model" in capabilities["models"]
+
+    local = builtin_templates()[0]
+    final = next(node for node in local["nodes"] if node["type"] == "final")
+    final["config"]["model_binding"] = {"source": "ollama", "model": "qwen3:8b"}
+    capabilities = workflow_capabilities(validate_workflow(local))
+    assert capabilities["local_models"] == ["qwen3:8b"]
+    assert "ollama:qwen3:8b" in capabilities["models"]
+
+    invalid = builtin_templates()[0]
+    next(node for node in invalid["nodes"] if node["type"] == "final")["config"]["model_binding"] = {
+        "source": "ollama"
+    }
+    with pytest.raises(WorkflowError, match="needs an Ollama model"):
+        validate_workflow(invalid)
+
+    invalid = builtin_templates()[0]
+    next(node for node in invalid["nodes"] if node["type"] == "final")["config"]["model_binding"] = {
+        "source": "account"
+    }
+    with pytest.raises(WorkflowError, match="needs an account_id"):
+        validate_workflow(invalid)
+
+
+def test_explicit_ollama_nodes_ignore_active_remote_provider_and_send_local_options(tmp_path):
+    core, remote, events = graph_core(tmp_path)
+    core.provider = "remote"
+    core.host = "https://remote.example/v1"
+    core.config["provider"] = "remote"
+    core.config["host"] = "http://local-ollama:11434"
+    core.config["context_window"] = 16_384
+    local = LocalWorkflowClient(loaded=0)
+    core.langgraph_engine._ollama_clients["http://local-ollama:11434"] = local
+
+    workflow = builtin_templates()[0]
+    workflow["id"] = "local-workflow"
+    workflow["slug"] = "local-workflow"
+    for node in workflow["nodes"]:
+        if node["type"] in {"model", "supervisor", "agent", "final"}:
+            node["config"]["model_binding"] = {
+                "source": "ollama",
+                "model": "local-model",
+                "display_hint": "Local Ollama",
+            }
+    core.langgraph_engine.registry.save(workflow, "global")
+    result = core.langgraph_engine.start("Use my Mac", "build", "local-workflow")
+
+    assert result["status"] == "completed"
+    assert not remote.calls
+    assert local.calls
+    assert local.options and all(item == {"num_ctx": 16_384} for item in local.options)
+    usage = [event for event in events if event["type"] == "graph_node_token" and event.get("model")]
+    assert usage
+    assert all(event["model"] == "local-model" for event in usage)
+    assert all(event["model_source"] == "ollama" for event in usage)
+
+
+def test_missing_local_model_blocks_before_run_or_transcript_mutation(tmp_path):
+    core, _remote, events = graph_core(tmp_path)
+    core.config["host"] = "http://local-ollama:11434"
+    core.langgraph_engine._ollama_clients["http://local-ollama:11434"] = LocalWorkflowClient()
+    workflow = builtin_templates()[0]
+    workflow["id"] = "missing-local"
+    workflow["slug"] = "missing-local"
+    final = next(node for node in workflow["nodes"] if node["type"] == "final")
+    final["config"]["model_binding"] = {"source": "ollama", "model": "not-installed"}
+    core.langgraph_engine.registry.save(workflow, "global")
+    before = list(core.messages)
+
+    with pytest.raises(GraphPreflightError, match="not installed"):
+        core.langgraph_engine.start("Do not persist this", "build", "missing-local")
+
+    assert core.messages == before
+    assert core.langgraph_engine.runs.list() == []
+    assert core.langgraph_engine._credentials == {}
+    failure = next(event for event in events if event["type"] == "graph_preflight_failed")
+    assert failure["workflow_id"] == "missing-local"
+    assert failure["issues"][0]["reason"] == "model_missing"
+    assert not any(event["type"] in {"graph_run_started", "graph_credentials_required"} for event in events)
+
+
+def test_recovery_rechecks_local_model_without_changing_run_status(tmp_path):
+    core, _remote, events = graph_core(tmp_path)
+    core.config["host"] = "http://local-ollama:11434"
+    core.langgraph_engine._ollama_clients["http://local-ollama:11434"] = LocalWorkflowClient(models=())
+    workflow = builtin_templates()[0]
+    workflow["id"] = "recover-local"
+    workflow["slug"] = "recover-local"
+    final = next(node for node in workflow["nodes"] if node["type"] == "final")
+    final["config"]["model_binding"] = {"source": "ollama", "model": "removed-model"}
+    normalized = validate_workflow(workflow)
+    run = core.langgraph_engine.runs.create(
+        run_id="recover-run",
+        session_id=core.session.session_id,
+        workflow=normalized,
+        mode="build",
+        goal="Resume safely",
+        status="interrupted",
+    )
+
+    with pytest.raises(GraphPreflightError):
+        core.langgraph_engine.resume(run["id"])
+
+    assert core.langgraph_engine.runs.get(run["id"])["status"] == "interrupted"
+    assert next(event for event in events if event["type"] == "graph_preflight_failed")["run_id"] == run["id"]
 
 
 def test_validation_rejects_unsafe_routes_mismatched_ports_and_secrets():
@@ -167,11 +319,16 @@ def test_project_workflow_shadows_global_and_digest_change_revokes_trust(tmp_pat
     changed["description"] = "Changed after trust"
     changed["nodes"][2]["config"]["prompt"] = "Use the Linear MCP server"
     changed["nodes"][2]["config"]["tools"] = ["mcp__linear__update_issue"]
+    changed["nodes"][2]["config"]["model_binding"] = {
+        "source": "ollama",
+        "model": "qwen3:8b",
+    }
     path.write_text(json.dumps(changed))
     changed_item = registry.get("single-agent")
     assert changed_item["trusted"] is False
     assert changed_item["capability_diff"]["prompts_changed"] is True
     assert changed_item["capability_diff"]["tools_added"] == ["mcp__linear__update_issue"]
+    assert "ollama:qwen3:8b" in changed_item["capability_diff"]["models_added"]
     assert changed_item["capability_diff"]["mutation_after"] is True
     with pytest.raises(WorkflowError, match="trust"):
         registry.get("single-agent", require_trust=True)
@@ -419,11 +576,18 @@ def test_langgraph_rest_catalog_validation_and_uncertain_resolution(tmp_path):
     from ollama_code import server as server_mod
 
     core, _client, _events = graph_core(tmp_path)
+    core.config["host"] = "http://local-ollama:11434"
+    core.langgraph_engine._ollama_clients["http://local-ollama:11434"] = LocalWorkflowClient()
     server_mod.app.state.service = server_mod.ChatService(core)
     with TestClient(server_mod.app) as client:
         status = client.get("/api/langgraph")
         assert status.status_code == 200
         assert status.json()["version"] == "1.2.9"
+
+        local_models = client.get("/api/langgraph/models")
+        assert local_models.status_code == 200
+        assert local_models.json()["available"] is True
+        assert local_models.json()["models"][0]["name"] == "local-model"
 
         catalog = client.get("/api/langgraph/workflows")
         assert catalog.status_code == 200
