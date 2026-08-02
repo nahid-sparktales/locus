@@ -69,8 +69,13 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus
         PRODUCT_NAME: Locus
-        GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_FILE: Locus/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Locus
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        INFOPLIST_KEY_NSDocumentsFolderUsageDescription: "Locus needs access to your Documents folder to open coding workspaces and start the local Ollama agent."
+        INFOPLIST_KEY_NSDownloadsFolderUsageDescription: "Locus needs access when you choose files or projects from Downloads."
+        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 SparkTales Inc."
         COMBINE_HIDPI_IMAGES: YES
       configs:
         ReleaseMAS:

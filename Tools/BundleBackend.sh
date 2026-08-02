@@ -126,7 +126,7 @@ sign_runtime_if_needed() {
     #
     # Hardened runtime turns on library validation, which requires everything
     # the interpreter loads to share its Team ID. A Release build signs with a
-    # real certificate, so the interpreter and all pinned packages' extension
+    # real certificate, so the interpreter and all 24 packages' extension
     # modules match and it holds. A Debug build signs ad-hoc, where there is no
     # Team ID to match — so forcing it there produced an interpreter that could
     # not load its own pydantic_core, and the app silently had no agent at all:

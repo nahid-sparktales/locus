@@ -104,25 +104,16 @@ final class BackendService {
         return try JSONDecoder().decode(type, from: data)
     }
 
-    func post<T: Decodable>(
-        _ path: String,
-        body: [String: Any],
-        timeout: TimeInterval = 10,
-        as type: T.Type
-    ) async throws -> T {
-        try await request(path, method: "POST", body: body, timeout: timeout, as: type)
+    func post<T: Decodable>(_ path: String, body: [String: Any], as type: T.Type) async throws -> T {
+        try await request(path, method: "POST", body: body, as: type)
     }
 
     func patch<T: Decodable>(_ path: String, body: [String: Any], as type: T.Type) async throws -> T {
-        try await request(path, method: "PATCH", body: body, timeout: 10, as: type)
-    }
-
-    func put<T: Decodable>(_ path: String, body: [String: Any], as type: T.Type) async throws -> T {
-        try await request(path, method: "PUT", body: body, timeout: 10, as: type)
+        try await request(path, method: "PATCH", body: body, as: type)
     }
 
     func delete<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
-        try await request(path, method: "DELETE", body: nil, timeout: 10, as: type)
+        try await request(path, method: "DELETE", body: nil, as: type)
     }
 
     nonisolated static func reconnectDelay(for attempt: Int) -> TimeInterval {
@@ -134,13 +125,12 @@ final class BackendService {
         _ path: String,
         method: String,
         body: [String: Any]?,
-        timeout: TimeInterval,
         as type: T.Type
     ) async throws -> T {
         let url = try endpointURL(path)
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.timeoutInterval = timeout
+        request.timeoutInterval = 10
         request.setValue(authToken, forHTTPHeaderField: BackendSecurity.header)
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

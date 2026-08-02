@@ -10,7 +10,6 @@ struct ComposerView: View {
     private enum Popup {
         case slash([SlashCommand])
         case mention([URL])
-        case skill([ExtensionSkill])
     }
 
     var body: some View {
@@ -43,10 +42,7 @@ struct ComposerView: View {
                             }
                     }
 
-                    if !model.justChatEnabled {
-                        modeRow
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    }
+                    modeRow
 
                     ZStack(alignment: .topLeading) {
                         if model.draftText.isEmpty {
@@ -111,8 +107,7 @@ struct ComposerView: View {
             if let dismissed = popupDismissedDraft, dismissed != model.draftText {
                 popupDismissedDraft = nil
             }
-            if !model.justChatEnabled,
-               WorkspaceIndex.activeMention(in: model.draftText) != nil {
+            if WorkspaceIndex.activeMention(in: model.draftText) != nil {
                 model.refreshWorkspaceIndex()
             }
         }
@@ -136,9 +131,6 @@ struct ComposerView: View {
             let matches = Array(SlashCommand.matches(for: query).prefix(8))
             return matches.isEmpty ? nil : .slash(matches)
         }
-        // Just Chat is conversation-only. Merely typing @ or $ must not index
-        // the workspace or offer a skill that can instruct agentic work.
-        guard !model.justChatEnabled else { return nil }
         if let mention = WorkspaceIndex.activeMention(in: model.draftText) {
             let matches = WorkspaceIndex.matches(
                 query: mention.query,
@@ -147,35 +139,13 @@ struct ComposerView: View {
             )
             return matches.isEmpty ? nil : .mention(matches)
         }
-        if let query = activeSkillQuery {
-            let matches = model.extensions.skills.filter {
-                $0.enabled && $0.error == nil
-                    && (query.isEmpty || $0.id.localizedCaseInsensitiveContains(query))
-            }
-            .prefix(8)
-            return matches.isEmpty ? nil : .skill(Array(matches))
-        }
         return nil
-    }
-
-    private var activeSkillQuery: String? {
-        let text = model.draftText
-        guard let dollar = text.lastIndex(of: "$"),
-              dollar == text.startIndex || text[text.index(before: dollar)].isWhitespace
-        else { return nil }
-        let queryStart = text.index(after: dollar)
-        let query = String(text[queryStart...])
-        guard !query.contains(where: { $0.isWhitespace }),
-              query.allSatisfy({ $0.isLetter || $0.isNumber || ".:_-".contains($0) })
-        else { return nil }
-        return query
     }
 
     private func popupCount(_ popup: Popup) -> Int {
         switch popup {
         case .slash(let commands): commands.count
         case .mention(let files): files.count
-        case .skill(let skills): skills.count
         }
     }
 
@@ -187,8 +157,6 @@ struct ComposerView: View {
         case .mention(let files):
             let index = min(popupSelection, files.count - 1)
             model.applyMention(files[index])
-        case .skill(let skills):
-            applySkill(skills[min(popupSelection, skills.count - 1)])
         }
     }
 
@@ -210,15 +178,7 @@ struct ComposerView: View {
             model.draftText = "/\(command.name)\(command.argumentHint != nil ? " " : "")"
         case .mention(let files):
             model.applyMention(files[min(popupSelection, files.count - 1)])
-        case .skill(let skills):
-            applySkill(skills[min(popupSelection, skills.count - 1)])
         }
-    }
-
-    private func applySkill(_ skill: ExtensionSkill) {
-        guard let dollar = model.draftText.lastIndex(of: "$") else { return }
-        model.draftText.replaceSubrange(dollar..., with: "$\(skill.id) ")
-        focused = true
     }
 
     // MARK: - Key handling
@@ -337,19 +297,6 @@ struct ComposerView: View {
                         focused = true
                     }
                 }
-            case .skill(let skills):
-                ForEach(Array(skills.enumerated()), id: \.element.id) { index, skill in
-                    popupRow(
-                        index: index,
-                        symbol: "sparkles",
-                        title: "$\(skill.id)",
-                        subtitle: skill.description,
-                        identifier: "composer.skill.\(skill.id)"
-                    ) {
-                        popupSelection = index
-                        applySkill(skill)
-                    }
-                }
             }
         }
         // No container identifier here: on macOS it propagates onto the row
@@ -400,7 +347,7 @@ struct ComposerView: View {
 
     private var modeRow: some View {
         HStack(spacing: 3) {
-            ForEach([WorkMode.plan, WorkMode.build]) { mode in
+            ForEach(WorkMode.allCases) { mode in
                 Button {
                     model.selectedMode = mode
                 } label: {
@@ -418,58 +365,9 @@ struct ComposerView: View {
                 .accessibilityIdentifier("composer.mode.\(mode.rawValue)")
             }
             Spacer()
-            Menu {
-                ForEach(ExecutionEngine.allCases) { engine in
-                    Button {
-                        model.setExecutionEngine(engine)
-                    } label: {
-                        if model.executionEngine == engine {
-                            Label(engine.title, systemImage: "checkmark")
-                        } else {
-                            Text(engine.title)
-                        }
-                    }
-                    .disabled(engine == .langgraph && !model.langGraphAvailable)
-                }
-            } label: {
-                Label(model.executionEngine.title, systemImage: model.executionEngine == .langgraph
-                      ? "point.3.connected.trianglepath.dotted" : "person.crop.circle")
-                    .font(.system(size: 8, weight: .semibold))
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .accessibilityIdentifier("composer.executionEngine")
-
-            if model.executionEngine == .langgraph {
-                Menu {
-                    ForEach(model.compatibleGraphWorkflows) { workflow in
-                        Button {
-                            model.selectGraphWorkflow(workflow)
-                        } label: {
-                            if model.selectedGraphWorkflow?.id == workflow.id {
-                                Label(workflow.name, systemImage: "checkmark")
-                            } else {
-                                Text(workflow.name)
-                            }
-                        }
-                    }
-                    Divider()
-                    Button("Open Graph Studio…") {
-                        model.graphStudioPresented = true
-                    }
-                } label: {
-                    Text(model.selectedGraphWorkflow?.name ?? "Choose workflow")
-                        .font(.system(size: 8, weight: .semibold))
-                        .lineLimit(1)
-                }
-                .menuStyle(.borderlessButton)
-                .frame(maxWidth: 150)
-                .accessibilityIdentifier("composer.workflow")
-            } else {
-                Text(model.selectedMode.description)
-                    .font(.system(size: 8))
-                    .foregroundStyle(LocusTheme.muted.opacity(0.75))
-            }
+            Text(model.selectedMode.description)
+                .font(.system(size: 8))
+                .foregroundStyle(LocusTheme.muted.opacity(0.75))
         }
         .padding(.horizontal, 10)
         .frame(height: 37)
@@ -480,108 +378,53 @@ struct ComposerView: View {
 
     private var actionRow: some View {
         HStack(spacing: 7) {
-            if model.justChatEnabled {
-                Button {
-                    contextPresented.toggle()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "paperclip")
-                        Text("\(model.availableChatAttachments.count) attached")
-                    }
-                    .font(.system(size: 8, weight: .semibold))
-                    .padding(.horizontal, 8)
-                    .frame(height: 27)
-                    .background(LocusTheme.paperDeep.opacity(0.75))
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .stroke(LocusTheme.line, lineWidth: 1)
-                    }
+            Button {
+                contextPresented.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "doc.on.doc")
+                    Text("\(model.includedContextCount) files")
+                    Text(model.includedContextTokens.formatted(.number.notation(.compactName)))
+                        .foregroundStyle(LocusTheme.muted.opacity(0.68))
                 }
-                .buttonStyle(.plain)
-                .popover(isPresented: $contextPresented, arrowEdge: .bottom) {
-                    ChatAttachmentsPopover()
-                        .environmentObject(model)
+                .font(.system(size: 8, weight: .semibold))
+                .padding(.horizontal, 8)
+                .frame(height: 27)
+                .background(LocusTheme.paperDeep.opacity(0.75))
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(LocusTheme.line, lineWidth: 1)
                 }
-                .accessibilityLabel("Open chat attachments")
-                .accessibilityIdentifier("composer.chatAttachments")
-
-                Button {
-                    model.addChatAttachments()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
-                        .frame(width: 27, height: 27)
-                        .background(LocusTheme.paperDeep.opacity(0.75))
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .stroke(LocusTheme.line, lineWidth: 1)
-                        }
-                }
-                .buttonStyle(.plain)
-                .help("Attach files, PDFs, or images to this message")
-                .accessibilityLabel("Add chat attachments")
-                .accessibilityIdentifier("composer.addChatAttachment")
-                .disabled(model.isLoadingChatAttachments)
-
-                Label("Chat only", systemImage: "lock.fill")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(LocusTheme.muted)
-                    .padding(.horizontal, 8)
-                    .frame(height: 27)
-                    .background(LocusTheme.paperDeep.opacity(0.75))
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .accessibilityIdentifier("composer.justChatBoundary")
-            } else {
-                Button {
-                    contextPresented.toggle()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "doc.on.doc")
-                        Text("\(model.includedContextCount) files")
-                        Text(model.includedContextTokens.formatted(.number.notation(.compactName)))
-                            .foregroundStyle(LocusTheme.muted.opacity(0.68))
-                    }
-                    .font(.system(size: 8, weight: .semibold))
-                    .padding(.horizontal, 8)
-                    .frame(height: 27)
-                    .background(LocusTheme.paperDeep.opacity(0.75))
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .stroke(LocusTheme.line, lineWidth: 1)
-                    }
-                }
-                .buttonStyle(.plain)
-                .popover(isPresented: $contextPresented, arrowEdge: .bottom) {
-                    ContextPopover()
-                        .environmentObject(model)
-                }
-                .accessibilityLabel("Open context pack")
-                .accessibilityIdentifier("composer.context")
-
-                Button {
-                    model.addContext()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
-                        .frame(width: 27, height: 27)
-                        .background(LocusTheme.paperDeep.opacity(0.75))
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .stroke(LocusTheme.line, lineWidth: 1)
-                        }
-                }
-                .buttonStyle(.plain)
-                .help("Add files or folders to context")
-                .accessibilityLabel("Add context")
-                .accessibilityIdentifier("composer.addContext")
-                .disabled(model.isLoadingContext)
-
-                permissionChip
             }
+            .buttonStyle(.plain)
+            .popover(isPresented: $contextPresented, arrowEdge: .bottom) {
+                ContextPopover()
+                    .environmentObject(model)
+            }
+            .accessibilityLabel("Open context pack")
+            .accessibilityIdentifier("composer.context")
+
+            Button {
+                model.addContext()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 27, height: 27)
+                    .background(LocusTheme.paperDeep.opacity(0.75))
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .stroke(LocusTheme.line, lineWidth: 1)
+                    }
+            }
+            .buttonStyle(.plain)
+            .help("Add files or folders to context")
+            .accessibilityLabel("Add context")
+            .accessibilityIdentifier("composer.addContext")
+            .disabled(model.isLoadingContext)
+
+            permissionChip
 
             Spacer()
 
@@ -618,13 +461,13 @@ struct ComposerView: View {
                 } label: {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(canSubmit ? LocusTheme.signal : LocusTheme.paper)
+                        .foregroundStyle(promptTrimmed.isEmpty ? LocusTheme.paper : LocusTheme.signal)
                         .frame(width: 30, height: 30)
-                        .background(LocusTheme.ink.opacity(canSubmit ? 1 : 0.22))
+                        .background(LocusTheme.ink.opacity(promptTrimmed.isEmpty ? 0.22 : 1))
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                .disabled(!canSubmit || model.hasPendingPermission)
+                .disabled(promptTrimmed.isEmpty || model.hasPendingPermission)
                 .keyboardShortcut(.return, modifiers: .command)
                 .help(
                     model.hasPendingPermission
@@ -697,11 +540,6 @@ struct ComposerView: View {
         model.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var canSubmit: Bool {
-        !promptTrimmed.isEmpty
-            || (model.justChatEnabled && !model.availableChatAttachments.isEmpty)
-    }
-
     private var sendHint: String {
         // No permission branch: while a request is pending the whole card —
         // including this hint — is replaced by the permission panel.
@@ -710,140 +548,16 @@ struct ComposerView: View {
 
     private var placeholder: String {
         switch model.selectedMode {
-        case .ask: "Ask anything…  (attach files or images · no workspace tools)"
+        case .ask: "Ask about this codebase…  ( / commands · @ files )"
         case .plan: "Describe the change you want to plan…  ( / commands · @ files )"
         case .build: "What should we build next?  ( / commands · @ files )"
         }
     }
 
     private func submit() {
-        guard canSubmit else { return }
+        guard !promptTrimmed.isEmpty else { return }
         model.submitDraft()
         focused = true
-    }
-}
-
-private struct ChatAttachmentsPopover: View {
-    @EnvironmentObject private var model: AppModel
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("CHAT ATTACHMENTS")
-                        .font(.system(size: 8, weight: .bold))
-                        .tracking(0.8)
-                        .foregroundStyle(LocusTheme.muted)
-                    Text("Files sent with this message")
-                        .font(.system(size: 11, weight: .bold))
-                }
-                Spacer()
-                Button {
-                    model.addChatAttachments()
-                } label: {
-                    Label("Add", systemImage: "plus")
-                }
-                .buttonStyle(.borderless)
-                .font(.system(size: 9, weight: .semibold))
-                .accessibilityIdentifier("chatAttachments.add")
-                .disabled(model.isLoadingChatAttachments)
-            }
-            .padding(13)
-
-            Label(
-                "Only these files are supplied to the model. Chat cannot browse their folders, use tools, or edit anything.",
-                systemImage: "lock.shield"
-            )
-            .font(.system(size: 8))
-            .foregroundStyle(LocusTheme.muted)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 13)
-            .padding(.vertical, 9)
-            .background(LocusTheme.paperDeep.opacity(0.7))
-
-            if model.isLoadingChatAttachments {
-                VStack(spacing: 10) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Preparing attachments…")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
-                }
-                .padding(.vertical, 28)
-                .accessibilityIdentifier("chatAttachments.loading")
-            } else if model.chatAttachments.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "paperclip")
-                        .font(.system(size: 19))
-                        .foregroundStyle(LocusTheme.muted)
-                    Text("No attachments yet")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text("Attach text or source files, PDFs, and common image formats.")
-                        .font(.system(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                }
-                .padding(.vertical, 28)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 3) {
-                        ForEach(model.chatAttachments) { attachment in
-                            HStack(spacing: 8) {
-                                Image(systemName: attachment.kind == .image ? "photo" : "doc.text")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(
-                                        attachment.isAvailable ? LocusTheme.muted : LocusTheme.warning
-                                    )
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(attachment.name)
-                                        .font(.system(size: 9, weight: .semibold))
-                                        .foregroundStyle(
-                                            attachment.isAvailable ? LocusTheme.ink : LocusTheme.muted
-                                        )
-                                        .lineLimit(1)
-                                    Text(attachment.detail)
-                                        .font(.system(size: 7))
-                                        .foregroundStyle(
-                                            attachment.issue == nil ? LocusTheme.muted : LocusTheme.warning
-                                        )
-                                        .lineLimit(1)
-                                }
-                                Spacer()
-                                Button {
-                                    model.removeChatAttachment(attachment)
-                                } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 9, weight: .semibold))
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(LocusTheme.muted)
-                                .accessibilityLabel("Remove \(attachment.name)")
-                                .accessibilityIdentifier(
-                                    "chatAttachments.file.\(attachment.id.uuidString).remove"
-                                )
-                            }
-                            .padding(.horizontal, 11)
-                            .frame(height: 40)
-                            .background(Color.white.opacity(0.001))
-                        }
-                    }
-                    .padding(5)
-                }
-                .frame(maxHeight: 260)
-            }
-
-            if let notice = model.chatAttachmentNotice {
-                Label(notice, systemImage: "info.circle")
-                    .font(.system(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 8)
-                    .background(LocusTheme.paperDeep.opacity(0.45))
-            }
-        }
-        .frame(width: 370)
-        .background(LocusTheme.white)
     }
 }
 

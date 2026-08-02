@@ -1,25 +1,15 @@
-import AppKit
 import SwiftUI
-
-private let locusIsUITesting = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1"
 
 @main
 struct LocusApp: App {
-    @NSApplicationDelegateAdaptor(LocusApplicationDelegate.self) private var appDelegate
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        Window("Locus", id: "main") {
+        WindowGroup {
             RootView()
                 .environmentObject(model)
                 .preferredColorScheme(.light)
-                .frame(
-                    minWidth: locusIsUITesting ? 920 : 1_080,
-                    minHeight: locusIsUITesting ? 620 : 700
-                )
-                .background {
-                    MainWindowMarker()
-                }
+                .frame(minWidth: 1_080, minHeight: 700)
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unifiedCompact(showsTitle: false))
@@ -60,7 +50,6 @@ struct LocusApp: App {
                 ForEach(InspectorTab.allCases) { tab in
                     Button(tab.title) { model.selectInspectorTab(tab) }
                         .keyboardShortcut(KeyEquivalent(tab.shortcutKey), modifiers: .command)
-                        .disabled(model.justChatEnabled)
                 }
                 Button(model.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar") {
                     model.toggleSidebar()
@@ -70,9 +59,8 @@ struct LocusApp: App {
                     withAnimation(.easeInOut(duration: 0.18)) { model.toggleInspector() }
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
-                .disabled(model.justChatEnabled)
                 Divider()
-                Button("Just Chat") { model.selectedMode = .ask }
+                Button("Ask Mode") { model.selectedMode = .ask }
                     .keyboardShortcut("a", modifiers: .option)
                 Button("Plan Mode") { model.selectedMode = .plan }
                     .keyboardShortcut("p", modifiers: .option)
@@ -88,99 +76,6 @@ struct LocusApp: App {
     }
 }
 
-@MainActor
-final class LocusApplicationDelegate: NSObject, NSApplicationDelegate {
-    static let mainWindowIdentifier = NSUserInterfaceItemIdentifier("locus.main")
-
-    static func mainWindow(in windows: [NSWindow]) -> NSWindow? {
-        windows.first { $0.identifier == mainWindowIdentifier }
-    }
-
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(windowWillClose(_:)),
-            name: NSWindow.willCloseNotification,
-            object: nil
-        )
-    }
-
-    func applicationShouldHandleReopen(
-        _ sender: NSApplication,
-        hasVisibleWindows flag: Bool
-    ) -> Bool {
-        guard let window = Self.mainWindow(in: sender.windows) else {
-            // If reopening races initial scene creation, allow SwiftUI to
-            // finish presenting the unique Window scene normally.
-            return true
-        }
-        if window.isMiniaturized {
-            window.deminiaturize(nil)
-        }
-        window.makeKeyAndOrderFront(nil)
-        sender.activate(ignoringOtherApps: true)
-        // The existing main window handled the reopen. Returning false keeps
-        // AppKit from asking SwiftUI to create or restore another scene.
-        return false
-    }
-
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
-    }
-
-    @objc private func windowWillClose(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow,
-              window.identifier == Self.mainWindowIdentifier else {
-            return
-        }
-        NSApp.terminate(nil)
-    }
-}
-
-private struct MainWindowMarker: NSViewRepresentable {
-    func makeNSView(context: Context) -> MainWindowMarkerView {
-        MainWindowMarkerView()
-    }
-
-    func updateNSView(_ nsView: MainWindowMarkerView, context: Context) {
-        nsView.markWindow()
-    }
-}
-
-private final class MainWindowMarkerView: NSView {
-    private var preparedUITestWindow = false
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        markWindow()
-    }
-
-    func markWindow() {
-        guard let window else { return }
-        window.identifier = LocusApplicationDelegate.mainWindowIdentifier
-
-        // GitHub's macOS UI-test display is smaller than Locus's normal
-        // 1420×860 default. Keep the test window entirely on-screen so the
-        // tests exercise real clickable controls instead of clipped elements.
-        // Production sizing and user-restored frames remain untouched.
-        guard locusIsUITesting,
-              !preparedUITestWindow,
-              let visibleFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame else {
-            return
-        }
-        preparedUITestWindow = true
-        let size = NSSize(
-            width: min(1_000, visibleFrame.width),
-            height: min(680, visibleFrame.height)
-        )
-        let origin = NSPoint(
-            x: visibleFrame.midX - size.width / 2,
-            y: visibleFrame.midY - size.height / 2
-        )
-        window.setFrame(NSRect(origin: origin, size: size), display: true)
-    }
-}
-
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
 
@@ -188,16 +83,16 @@ struct RootView: View {
         HStack(spacing: 0) {
             if !model.sidebarCollapsed {
                 SessionSidebarView()
-                    .frame(width: locusIsUITesting ? 240 : 260)
+                    .frame(width: 260)
                     .transition(.move(edge: .leading).combined(with: .opacity))
             }
 
             WorkspaceView()
-                .frame(minWidth: locusIsUITesting ? 400 : 520)
+                .frame(minWidth: 520)
 
-            if !model.inspectorCollapsed && !model.justChatEnabled {
+            if !model.inspectorCollapsed {
                 InspectorView()
-                    .frame(width: locusIsUITesting ? 280 : model.inspectorWidth)
+                    .frame(width: model.inspectorWidth)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
@@ -239,14 +134,6 @@ struct RootView: View {
         }
         .sheet(isPresented: $model.shortcutsPresented) {
             ShortcutsSheet()
-        }
-        .sheet(isPresented: $model.graphStudioPresented) {
-            GraphStudioView()
-                .environmentObject(model)
-        }
-        .sheet(isPresented: $model.workflowRunPresented) {
-            WorkflowRunSheet()
-                .environmentObject(model)
         }
         .alert("Clear this chat?", isPresented: $model.clearChatConfirmationPresented) {
             Button("Cancel", role: .cancel) {}

@@ -3,7 +3,4 @@ rich==15.0.0
 prompt_toolkit==3.0.53
 fastapi==0.141.1
 uvicorn==0.52.0
-websockets==15.0.1
-mcp==2.0.0
-langgraph==1.2.9
-langgraph-checkpoint-sqlite==3.1.1
+websockets==17.0

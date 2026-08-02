@@ -57,8 +57,8 @@ struct SlashCommand: Identifiable, Hashable {
         ),
         SlashCommand(
             name: "ask", aliases: [],
-            summary: "Turn on Just Chat",
-            argumentHint: nil, symbol: "bubble.left", action: .setMode(.ask)
+            summary: "Switch to Ask mode",
+            argumentHint: nil, symbol: "questionmark.circle", action: .setMode(.ask)
         ),
         SlashCommand(
             name: "plan", aliases: [],

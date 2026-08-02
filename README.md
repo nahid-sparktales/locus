@@ -18,12 +18,7 @@ used only after you explicitly add and select an account.
 - **Local or rented GPU.** Point Locus at local Ollama, or at any
   OpenAI-compatible endpoint — a Hugging Face Inference Endpoint, vLLM, or TGI
   on a rented box — with an API key kept in your keychain.
-- **Chat and Work stay visibly separate.** Chat answers from the conversation
-  and files explicitly attached to the current message, while keeping tools,
-  skills, integrations, workspace browsing, and edits disabled. It accepts
-  text and source files, PDFs, and common image formats (with a vision-capable
-  model). Work restores the Plan and Build controls and the prior inspector
-  layout.
+- **Ask, Plan, and Build modes** adapt the agent to the job at hand.
 - **Slash commands** (`/clear`, `/model`, `/plan`, `/checkpoint`, `/export`,
   `/help`, …) with an autocomplete popup; unknown commands pass through to the
   local agent.
@@ -92,19 +87,13 @@ used only after you explicitly add and select an account.
 ## The inspector
 
 The right-hand panel keeps execution visible beside the conversation: **Plan,
-Changes, Files, Console, Preview, Checkpoints, and AGENTS.md**, selected with
-`⌘1`–`⌘7`. It starts hidden — the conversation gets the room until you need it, and `⌘1`–`⌘7` or
+Changes, Files, Console, and Preview**, selected with `⌘1`–`⌘5`. It starts
+hidden — the conversation gets the room until you need it, and `⌘1`–`⌘5` or
 `⌘⌥I` bring it back; a restore control also sits in the workspace header. It
 drags to any width between 280 and 520 points, and the width, the collapsed
 state, and the last open tab are remembered across launches. Tab labels appear once the
 panel is wide enough to fit them; below that the strip is icons only. A run
 never switches your tab: new work raises a badge and leaves you where you were.
-
-The **Plan** tab puts context-window usage first, the active implementation plan
-below it, and keeps permission controls pinned to the bottom edge. **Checkpoints** has its own tab for
-naming, creating, restoring, and deleting session snapshots. **AGENTS.md**
-explains workspace instructions and provides a safe root-file editor with create,
-refresh, revert, save, and Finder actions.
 
 **Changes reads git**, not the chat log. It shows the real working tree with
 per-file diffs and staged, modified, and untracked counts — including edits made
@@ -430,7 +419,7 @@ xcodebuild \
 cd agent && .venv/bin/python -m pytest -q
 ```
 
-169 unit tests, 24 UI tests, and 220 backend tests currently pass.
+160 unit tests, 18 UI tests, and 202 backend tests currently pass.
 
 The unit suite covers work modes, lightweight context migration, session
 acknowledgements and retry branches, recoverable session clearing, Hugging Face
@@ -445,7 +434,7 @@ to it. The UI suite checks Clear Chat, Clear Saved Sessions, the Local Model
 Library, message actions and rewind, session organization, archived filtering,
 recent workspaces, context controls, prompt history, the slash command popup,
 the shortcuts sheet, command-palette keyboard navigation, and the inspector —
-collapse and restore, `⌘1`–`⌘7`, the Changes, Files, Checkpoints, and AGENTS.md tabs, and the console —
+collapse and restore, `⌘1`–`⌘5`, the Changes and Files tabs, and the console —
 through accessibility identifiers. The backend suite covers the tools,
 permission modes and the deny list, streaming, session metadata and trash
 recovery, most HTTP endpoints, the git status and diff endpoints, the console
@@ -556,7 +545,7 @@ not grant rights to the project's trademarks. The name *Locus* and the SparkTale
 identity are not part of what the license gives away.
 
 The app bundles third-party components — CPython and its statically linked
-libraries, and 66 pinned Python packages — which remain under their own licenses.
+libraries, and 24 pinned Python packages — which remain under their own licenses.
 The inventory, versions and licenses are in
 [Locus/Resources/ThirdPartyNotices.md](Locus/Resources/ThirdPartyNotices.md), the
 full texts ship inside the app, and `Tools/AuditDistribution.sh` fails a release

@@ -5,7 +5,6 @@ Sessions and config are redirected to a temp directory so a developer's real
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import subprocess
@@ -1252,33 +1251,6 @@ def test_remote_message_conversion_includes_tool_calls():
     assert anthropic[0]["content"] == preserved
 
 
-def test_remote_message_conversion_includes_explicit_chat_images():
-    from ollama_code.remote import _to_anthropic_messages, _to_openai_message
-
-    image = {
-        "name": "diagram.png",
-        "mime_type": "image/png",
-        "data": "cG5n",
-    }
-    converted = _to_openai_message({
-        "role": "user",
-        "content": "Explain this image.",
-        "attachments": [image],
-    })
-    assert converted["content"][0] == {"type": "text", "text": "Explain this image."}
-    assert converted["content"][1]["image_url"]["url"] == "data:image/png;base64,cG5n"
-
-    _, anthropic = _to_anthropic_messages([{
-        "role": "user",
-        "content": "Explain this image.",
-        "attachments": [image],
-    }])
-    assert anthropic[0]["content"][1] == {
-        "type": "image",
-        "source": {"type": "base64", "media_type": "image/png", "data": "cG5n"},
-    }
-
-
 def test_core_switches_providers_and_keeps_keys_out_of_disk(tmp_path):
     core = _core(tmp_path, [])
     core.use_remote(
@@ -1914,20 +1886,6 @@ def test_setting_the_context_window_takes_effect_without_a_restart(client):
     assert client.get("/api/config").json()["context_window"] == 16_384
 
 
-def test_project_context_can_be_reloaded_without_restarting(client, tmp_path):
-    core = client.app.state.service.core
-    assert core.project_context is None
-    (tmp_path / "OLLAMA.md").write_text("legacy fallback")
-    (tmp_path / "AGENTS.md").write_text("Run the focused verification suite.")
-
-    body = client.post("/api/context/reload").json()
-
-    assert body == {"ok": True, "file": "AGENTS.md"}
-    assert core.project_context == ("AGENTS.md", "Run the focused verification suite.")
-    assert "Run the focused verification suite." in core.messages[0]["content"]
-    assert core.session_info()["has_project_context"] is True
-
-
 def test_a_configured_window_is_only_claimed_for_the_model_in_use(client, monkeypatch):
     """`num_ctx` is sent for the current model alone, so saying the others run
     in that window too would be a guess about models nobody has loaded."""
@@ -1965,7 +1923,6 @@ def test_every_rest_state_mutation_is_rejected_while_busy(client):
     session_id = svc.core.session.session_id
     requests = [
         client.post("/api/config", json={"model": "other"}),
-        client.post("/api/context/reload"),
         client.post("/api/provider", json={"provider": "ollama"}),
         client.post("/api/permissions", json={"mode": "bypass"}),
         client.post("/api/sessions/new", json={"reason": "test"}),
@@ -2239,61 +2196,6 @@ def test_websocket_rejects_malformed_and_oversized_messages(client, monkeypatch)
         assert event["operation"] == "user_message"
 
 
-def test_websocket_ask_mode_routes_through_the_tool_free_turn_boundary(client, monkeypatch):
-    from ollama_code import server as server_mod
-
-    service = client.app.state.service
-    captured = []
-
-    def capture_start(loop, call, *args):
-        captured.append((call, args))
-        return True
-
-    monkeypatch.setattr(service, "start_turn", capture_start)
-    asyncio.run(server_mod._handle_client_message(service, {
-        "type": "user_message",
-        "text": "/init",
-        "mode": "ask",
-    }))
-
-    assert captured == [(server_mod._run_user_turn, (service, "/init", True, []))]
-
-
-def test_websocket_ask_mode_validates_and_routes_image_attachments(client, monkeypatch):
-    from ollama_code import server as server_mod
-
-    service = client.app.state.service
-    captured = []
-
-    def capture_start(loop, call, *args):
-        captured.append((call, args))
-        return True
-
-    monkeypatch.setattr(service, "start_turn", capture_start)
-    asyncio.run(server_mod._handle_client_message(service, {
-        "type": "user_message",
-        "text": "What is in this image?",
-        "mode": "ask",
-        "attachments": [{
-            "name": "photo.png",
-            "mime_type": "image/png",
-            "data": "cG5n",
-        }],
-    }))
-
-    call, args = captured[0]
-    assert call is server_mod._run_user_turn
-    assert args[:3] == (service, "What is in this image?", True)
-    assert args[3][0]["name"] == "photo.png"
-    assert args[3][0]["data"] == "cG5n"
-
-    with pytest.raises(ValueError, match="malformed"):
-        server_mod._validated_chat_attachments([{
-            "mime_type": "image/png",
-            "data": "not base64!",
-        }])
-
-
 def test_http_request_body_limit_is_enforced(client, monkeypatch):
     from ollama_code import server as server_mod
 
@@ -2315,8 +2217,6 @@ class FakeClient:
         #: only correct if it reaches the client, and a stub that swallows it
         #: makes the suite pass while proving nothing.
         self.seen_options: list[dict | None] = []
-        self.seen_messages: list[list[dict]] = []
-        self.seen_tools: list[list[dict] | None] = []
         #: What Ollama would report for a resident model, as /api/ps does, and
         #: the window the model was trained for, as /api/show does.
         self.loaded_window = 0
@@ -2326,8 +2226,6 @@ class FakeClient:
                     on_thinking=None, think=False, options=None):
         self.calls += 1
         self.seen_options.append(options)
-        self.seen_messages.append(messages)
-        self.seen_tools.append(tools)
         resp = self._responses.pop(0)
         for part in resp.content_parts:
             if on_token:
@@ -2364,7 +2262,6 @@ def test_run_turn_emits_streaming_and_turn_done(tmp_path):
     assert "message_end" in types
     done = next(e for e in events if e["type"] == "turn_done")
     assert done["reason"] == "complete"
-    assert isinstance(done["duration_ms"], int) and done["duration_ms"] >= 0
     assert core.messages[-1]["content"] == "Hello world"
 
 
@@ -2386,55 +2283,6 @@ def test_tool_call_runs_and_reports(tmp_path):
     result = next(e for e in events if e["type"] == "tool_result")
     assert result["ok"] is True
     assert core.messages[-2]["role"] == "tool"
-
-
-def test_just_chat_has_no_tools_or_project_context_even_if_provider_requests_one(tmp_path):
-    from ollama_code.ollama import ToolCall
-
-    (tmp_path / "AGENTS.md").write_text("workspace-secret-instruction")
-    responses = [
-        ChatResponse(
-            tool_calls=[ToolCall("write_file", {"path": "should-not-exist", "content": "no"})],
-            done=True,
-        ),
-        ChatResponse(content_parts=["A conversational answer."], done=True),
-    ]
-    core = _core(tmp_path, responses)
-    events = []
-    core.on_event(events.append)
-
-    core.run_turn("What does this concept mean?", allow_tools=False)
-
-    assert core.client.seen_tools == [[], []]
-    assert all(
-        "workspace-secret-instruction" not in str(messages)
-        for messages in core.client.seen_messages
-    )
-    assert all("Extension capabilities" not in str(messages) for messages in core.client.seen_messages)
-    assert not (tmp_path / "should-not-exist").exists()
-    assert not any(event["type"] == "tool_call_proposed" for event in events)
-    assert any("Just Chat blocked" in event.get("text", "") for event in events)
-    assert core.messages[-1]["content"] == "A conversational answer."
-
-
-def test_just_chat_images_reach_the_model_but_not_the_saved_transcript(tmp_path):
-    encoded = "cHJpdmF0ZS1pbWFnZS1ieXRlcw=="
-    core = _core(tmp_path, [ChatResponse(content_parts=["I can see it."], done=True)])
-
-    core.run_turn(
-        "Describe the attached image.",
-        allow_tools=False,
-        attachments=[{
-            "name": "photo.png",
-            "mime_type": "image/png",
-            "data": encoded,
-        }],
-    )
-
-    request = core.client.seen_messages[0][-1]
-    assert request["attachments"][0]["data"] == encoded
-    assert core.client.seen_tools == [[]]
-    assert encoded not in core.session.path.read_text(encoding="utf-8")
 
 
 def test_permission_denial_is_reported_to_the_model(tmp_path):
@@ -2660,34 +2508,6 @@ def test_chat_stream_sends_num_ctx_under_options(monkeypatch):
     assert seen["allow_redirects"] is False
 
 
-def test_chat_stream_maps_explicit_images_to_ollamas_native_shape(monkeypatch):
-    from ollama_code import ollama as ollama_mod
-
-    seen = {}
-
-    def fake_post(url, json=None, stream=None, timeout=None, allow_redirects=None):
-        seen["payload"] = json
-        return FakeResponse(lines=[
-            '{"message":{"content":"described"},"done":true,"done_reason":"stop"}'
-        ])
-
-    monkeypatch.setattr(ollama_mod.requests, "post", fake_post)
-    client = ollama_mod.OllamaClient("http://localhost:11434")
-    client.chat_stream("vision-model", [{
-        "role": "user",
-        "content": "Describe it.",
-        "attachments": [{
-            "name": "photo.png",
-            "mime_type": "image/png",
-            "data": "cG5n",
-        }],
-    }])
-
-    message = seen["payload"]["messages"][0]
-    assert message["images"] == ["cG5n"]
-    assert "attachments" not in message
-
-
 def test_nothing_is_pinned_unless_the_user_asked_for_a_window(tmp_path):
     """Ollama sizes the window itself, and overriding that with a guess would
     evict a resident runner for a number we can simply read back instead."""
@@ -2897,6 +2717,7 @@ def test_compaction_leaves_room_for_the_schemas_and_the_reply(tmp_path):
     from ollama_code.core import (
         ESTIMATE_OPTIMISM,
         RESERVED_REPLY_TOKENS,
+        TOOL_SCHEMA_TOKENS,
     )
 
     core = _core(tmp_path, [ChatResponse(content_parts=["a summary"], done=True)])
@@ -2912,11 +2733,8 @@ def test_compaction_leaves_room_for_the_schemas_and_the_reply(tmp_path):
     assert core.approx_tokens() < int(core.context_limit * 0.75)
     # The new one takes the schemas and a reply out of the window first, then
     # discounts for `approx_tokens` being an optimistic count of code and JSON.
-    request_overhead = (
-        core.tool_registry.schema_tokens() + core._extension_prompt_tokens()
-    )
     budget = int(
-        (core.context_limit - request_overhead - RESERVED_REPLY_TOKENS)
+        (core.context_limit - TOOL_SCHEMA_TOKENS - RESERVED_REPLY_TOKENS)
         * ESTIMATE_OPTIMISM
     )
     assert budget < core.approx_tokens()
