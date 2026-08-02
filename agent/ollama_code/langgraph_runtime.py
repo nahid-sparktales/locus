@@ -18,13 +18,11 @@ import uuid
 from collections.abc import Callable, Iterable
 from contextlib import closing
 from copy import deepcopy
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any, TypedDict
 
-from .config import context_window, save_config
-from .ollama import DEFAULT_HOST, OllamaClient, OllamaError, effective_context_length
+from .ollama import OllamaClient
 from .paths import APP_DIR
 from .permissions import build_preview
 from .remote import RemoteClient
@@ -69,8 +67,6 @@ ACTIVE_STATUSES = {
 }
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
 ROUTE_OPERATIONS = {"equals", "contains", "exists", "success", "failure"}
-MODEL_NODE_TYPES = {"model", "supervisor", "agent", "final"}
-MODEL_SOURCES = {"inherit", "ollama", "account"}
 
 NODE_PORTS: dict[str, tuple[list[dict[str, Any]], list[dict[str, Any]]]] = {
     "input": ([], [{"id": "out", "type": "state"}]),
@@ -98,43 +94,6 @@ NODE_PORTS: dict[str, tuple[list[dict[str, Any]], list[dict[str, Any]]]] = {
 
 class WorkflowError(ValueError):
     """A workflow definition, trust decision or run request is invalid."""
-
-
-class GraphPreflightError(WorkflowError):
-    """A run cannot start because one or more local model bindings are unavailable."""
-
-    def __init__(
-        self,
-        workflow_id: str,
-        issues: list[dict[str, str]],
-        *,
-        run_id: str = "",
-    ) -> None:
-        self.workflow_id = workflow_id
-        self.issues = issues
-        self.run_id = run_id
-        message = issues[0].get("message") if issues else "The workflow's local models are unavailable."
-        super().__init__(message)
-
-    def event(self) -> dict[str, Any]:
-        return {
-            "type": "graph_preflight_failed",
-            "workflow_id": self.workflow_id,
-            "issues": deepcopy(self.issues),
-            **({"run_id": self.run_id} if self.run_id else {}),
-        }
-
-
-@dataclass(frozen=True)
-class ResolvedModelBinding:
-    """A workflow node's concrete provider without persisting credentials or hosts."""
-
-    client: Any
-    source: str
-    model: str
-    context_limit: int
-    options: dict[str, Any] | None
-    label: str
 
 
 def _utc_now() -> str:
@@ -481,40 +440,6 @@ class WorkflowRegistry:
                 pass
 
 
-def _normalized_model_binding(raw: Any, node_id: str, node_type: str) -> dict[str, str] | None:
-    if raw is None:
-        return None
-    if node_type not in MODEL_NODE_TYPES:
-        raise WorkflowError(f"node {node_id} cannot have a model binding")
-    if not isinstance(raw, dict):
-        raise WorkflowError(f"node {node_id} model_binding must be an object")
-    account_id = str(raw.get("account_id") or "").strip()[:200]
-    model = str(raw.get("model") or "").strip()[:500]
-    explicit_source = str(raw.get("source") or "").strip().lower()
-    source = explicit_source or ("account" if account_id else "inherit")
-    display_hint = str(raw.get("display_hint") or "").strip()[:200]
-    if source not in MODEL_SOURCES:
-        raise WorkflowError(f"node {node_id} has unsupported model source {source!r}")
-    if source == "ollama":
-        if not model:
-            raise WorkflowError(f"node {node_id} needs an Ollama model")
-        if account_id:
-            raise WorkflowError(f"node {node_id} Ollama binding may not include an account")
-    elif source == "account":
-        if not account_id:
-            raise WorkflowError(f"node {node_id} account binding needs an account_id")
-    elif account_id:
-        raise WorkflowError(f"node {node_id} inherited binding may not include an account")
-    return {
-        # Keep source absent on legacy definitions so their normalized digest
-        # and existing project trust remain stable. New editors always write it.
-        **({"source": source} if explicit_source else {}),
-        **({"account_id": account_id} if account_id else {}),
-        **({"model": model} if model else {}),
-        **({"display_hint": display_hint} if display_hint else {}),
-    }
-
-
 def validate_workflow(raw: dict[str, Any]) -> dict[str, Any]:
     """Return a normalized workflow or raise a user-facing validation error."""
     if not isinstance(raw, dict):
@@ -569,9 +494,6 @@ def validate_workflow(raw: dict[str, Any]) -> dict[str, Any]:
             raise WorkflowError(f"node {node_id} prompt exceeds {MAX_PROMPT_CHARS:,} characters")
         if any(key.lower() in {"api_key", "token", "password", "secret"} for key in config):
             raise WorkflowError(f"node {node_id} may not contain credentials")
-        model_binding = _normalized_model_binding(config.get("model_binding"), node_id, node_type)
-        if model_binding is not None:
-            config = {**config, "model_binding": model_binding}
         try:
             retry_count = int(config.get("retry_count") or 0)
         except (TypeError, ValueError) as exc:
@@ -761,8 +683,6 @@ def workflow_capabilities(definition: dict[str, Any]) -> dict[str, Any]:
     tools: set[str] = set()
     accounts: set[str] = set()
     models: set[str] = set()
-    local_models: set[str] = set()
-    model_sources: set[str] = set()
     prompts = 0
     prompt_material: list[dict[str, str]] = []
     for node in definition.get("nodes") or []:
@@ -771,17 +691,10 @@ def workflow_capabilities(definition: dict[str, Any]) -> dict[str, Any]:
         binding = config.get("model_binding") or {}
         account_id = str(binding.get("account_id") or "")
         model = str(binding.get("model") or "")
-        source = str(binding.get("source") or ("account" if account_id else "inherit"))
         if account_id:
             accounts.add(account_id)
-        if node.get("type") in MODEL_NODE_TYPES:
-            model_sources.add(source)
-            if source == "ollama" and model:
-                local_models.add(model)
-            if source == "account":
-                models.add(f"account:{account_id}:{model or 'default'}")
-            else:
-                models.add(f"{source}:{model or 'default'}")
+        if account_id or model:
+            models.add(f"{account_id or 'inherited'}:{model or 'default'}")
         prompt = str(config.get("prompt") or "")
         prompts += len(prompt)
         if prompt:
@@ -794,8 +707,6 @@ def workflow_capabilities(definition: dict[str, Any]) -> dict[str, Any]:
         "tools": sorted(tools),
         "provider_account_ids": sorted(accounts),
         "models": sorted(models),
-        "local_models": sorted(local_models),
-        "model_sources": sorted(model_sources),
         "may_mutate": not tools or bool(tools & mutation_names) or any(name.startswith("mcp__") for name in tools),
         "prompt_characters": prompts,
         "prompt_digest": _digest(prompt_material),
@@ -1201,7 +1112,6 @@ class LangGraphEngine:
         self.side_effects = SideEffectCoordinator()
         self._credentials: dict[str, dict[str, dict[str, Any]]] = {}
         self._pending_decisions: dict[str, dict[str, str]] = {}
-        self._ollama_clients: dict[str, OllamaClient] = {}
         self._active_run_id = ""
         self._guard = threading.RLock()
 
@@ -1243,155 +1153,6 @@ class LangGraphEngine:
     def required_accounts(self, workflow: dict[str, Any]) -> list[str]:
         return list(workflow_capabilities(workflow).get("provider_account_ids") or [])
 
-    def _ollama_host(self) -> str:
-        return str(self.core.config.get("host") or DEFAULT_HOST).rstrip("/")
-
-    def _ollama_client(self) -> OllamaClient:
-        host = self._ollama_host()
-        with self._guard:
-            client = self._ollama_clients.get(host)
-            if client is None:
-                client = OllamaClient(host)
-                self._ollama_clients[host] = client
-            return client
-
-    def _remembered_local_window(self, model: str) -> int:
-        windows = self.core.config.get("model_windows")
-        if not isinstance(windows, dict):
-            return 0
-        value = windows.get(f"{self._ollama_host()}|{model}")
-        return value if isinstance(value, int) and value > 0 else 0
-
-    def _remember_local_window(self, model: str, window: int) -> None:
-        if not model or window <= 0:
-            return
-        with self._guard:
-            current = self.core.config.get("model_windows")
-            windows = dict(current) if isinstance(current, dict) else {}
-            key = f"{self._ollama_host()}|{model}"
-            if windows.get(key) == window:
-                return
-            windows[key] = window
-            self.core.config["model_windows"] = windows
-            save_config(self.core.config)
-
-    def _local_context(
-        self,
-        client: OllamaClient,
-        model: str,
-    ) -> tuple[int, dict[str, Any] | None]:
-        configured = context_window(self.core.config.get("context_window"))
-        loaded = 0 if configured > 0 else client.loaded_context_length(model)
-        if loaded > 0:
-            self._remember_local_window(model, loaded)
-        trained = client.context_length(model)
-        limit = effective_context_length(loaded, trained, configured)
-        if limit <= 0:
-            limit = self._remembered_local_window(model)
-        options = {"num_ctx": limit} if configured > 0 and limit > 0 else None
-        return limit, options
-
-    def local_model_catalog(self) -> dict[str, Any]:
-        """Return the configured Ollama catalog even while the session uses a remote account."""
-        host = self._ollama_host()
-        client = self._ollama_client()
-        try:
-            raw = client.list_models()
-            resident: dict[str, int] = {}
-            try:
-                for entry in client.running_models():
-                    window = entry.get("context_length")
-                    if isinstance(window, int) and window > 0:
-                        for key in (entry.get("name"), entry.get("model")):
-                            if key:
-                                resident[str(key)] = window
-            except OllamaError:
-                pass
-            models: list[dict[str, Any]] = []
-            configured = context_window(self.core.config.get("context_window"))
-            for entry in raw:
-                name = str(entry.get("name") or entry.get("model") or "")
-                if not name:
-                    continue
-                trained = client.context_length(name)
-                window = effective_context_length(resident.get(name, 0), trained, configured)
-                if window <= 0:
-                    window = self._remembered_local_window(name)
-                details = entry.get("details") if isinstance(entry.get("details"), dict) else {}
-                models.append({
-                    "name": name,
-                    "size": entry.get("size") or 0,
-                    "parameter_size": details.get("parameter_size") or "",
-                    "context_length": window,
-                    "trained_context_length": trained,
-                })
-            return {"available": True, "host": host, "models": models, "error": ""}
-        except OllamaError as exc:
-            return {"available": False, "host": host, "models": [], "error": str(exc)[:1000]}
-
-    def local_preflight_issues(self, workflow: dict[str, Any]) -> list[dict[str, str]]:
-        local_nodes = [
-            node for node in workflow.get("nodes") or []
-            if str(((node.get("config") or {}).get("model_binding") or {}).get("source") or "") == "ollama"
-        ]
-        if not local_nodes:
-            return []
-        client = self._ollama_client()
-        issues: list[dict[str, str]] = []
-        try:
-            installed = {
-                str(item.get("name") or item.get("model") or "")
-                for item in client.list_models()
-            }
-        except OllamaError as exc:
-            for node in local_nodes:
-                binding = (node.get("config") or {}).get("model_binding") or {}
-                issues.append({
-                    "node_id": str(node.get("id") or ""),
-                    "node_label": str(node.get("label") or node.get("id") or "Model node"),
-                    "source": "ollama",
-                    "model": str(binding.get("model") or ""),
-                    "reason": "ollama_unreachable",
-                    "message": f"Ollama is unavailable at {self._ollama_host()}: {exc}",
-                })
-            return issues
-        for node in local_nodes:
-            config = node.get("config") or {}
-            binding = config.get("model_binding") or {}
-            model = str(binding.get("model") or "")
-            base = {
-                "node_id": str(node.get("id") or ""),
-                "node_label": str(node.get("label") or node.get("id") or "Model node"),
-                "source": "ollama",
-                "model": model,
-            }
-            if model not in installed:
-                issues.append({
-                    **base,
-                    "reason": "model_missing",
-                    "message": f"Local model {model!r} is not installed in Ollama.",
-                })
-            elif node.get("type") == "agent" and config.get("tools") and not client.supports_tools(model):
-                issues.append({
-                    **base,
-                    "reason": "tools_unsupported",
-                    "message": f"Local model {model!r} does not support the tools exposed by this Agent node.",
-                })
-        return issues
-
-    def preflight_local_models(
-        self,
-        workflow: dict[str, Any],
-        *,
-        run_id: str = "",
-    ) -> None:
-        issues = self.local_preflight_issues(workflow)
-        if not issues:
-            return
-        error = GraphPreflightError(str(workflow.get("id") or ""), issues, run_id=run_id)
-        self.core._emit(error.event())
-        raise error
-
     def start(
         self,
         goal: str,
@@ -1413,7 +1174,6 @@ class LangGraphEngine:
         if current and current.get("id") != existing_run_id:
             raise WorkflowError("another graph run is active")
         run_id = existing_run_id or uuid.uuid4().hex
-        self.preflight_local_models(workflow, run_id=existing_run_id)
         supplied = {
             str(item.get("account_id") or ""): self._sanitize_credential(item)
             for item in credentials or []
@@ -1533,7 +1293,6 @@ class LangGraphEngine:
         if unanswered:
             self._emit_interrupt(run_id, unanswered[0])
             return True, None
-        self.preflight_local_models(run["workflow"], run_id=run_id)
         self._prepare_run_context(run)
         result = self._execute(
             run_id, run["workflow"], run["goal"], run["mode"],
@@ -1555,7 +1314,6 @@ class LangGraphEngine:
             raise WorkflowError(
                 "this run has an uncertain external side effect; inspect it and explicitly discard or retry it"
             )
-        self.preflight_local_models(current, run_id=run_id)
         missing = [account for account in self.required_accounts(current) if account not in self._credentials.get(run_id, {})]
         if missing:
             self.runs.update(run_id, status="awaiting_credentials", state={**run["state"], "required_account_ids": missing})
@@ -1835,10 +1593,7 @@ class LangGraphEngine:
         node_id = str(node["id"])
         node_type = str(node["type"])
         config = dict(node.get("config") or {})
-        provider = self._provider_for(node, run_id)
-        client = provider.client
-        model = provider.model
-        context_limit = provider.context_limit
+        client, model, context_limit = self._provider_for(node, run_id)
         system = self.core.system_message().get("content", "")
         prompt = str(config.get("prompt") or "")
         if mode == "plan":
@@ -1863,7 +1618,6 @@ class LangGraphEngine:
             event = {
                 "run_id": run_id, "node_id": node_id, "agent": node["label"],
                 "text": token, "model": model, "context_limit": context_limit,
-                "model_source": provider.source, "model_label": provider.label,
                 "final_node": final_node,
             }
             if final_node:
@@ -1882,14 +1636,8 @@ class LangGraphEngine:
             on_token=on_token,
             should_stop=self.core._interrupt.is_set,
             on_thinking=on_thinking,
-            options=provider.options or {},
+            options=self.core.chat_options() if client is self.core.client else {},
         )
-        if provider.source == "ollama":
-            # A model that was cold at preflight now has an authoritative
-            # resident window. Remember it for recovery and future runs.
-            refreshed_limit, _ = self._local_context(client, model)
-            if refreshed_limit > 0:
-                context_limit = refreshed_limit
         if final_node:
             self.core._emit({"type": "message_end", "run_id": run_id, "node_id": node_id, "agent": node["label"]})
         content = response.content or "".join(content_parts)
@@ -1897,8 +1645,6 @@ class LangGraphEngine:
             "prompt_tokens": int(response.prompt_eval_count or 0),
             "completion_tokens": int(response.eval_count or 0),
             "model": model,
-            "model_source": provider.source,
-            "model_label": provider.label,
             "context_limit": context_limit,
         }
         self.core._emit({
@@ -1908,8 +1654,6 @@ class LangGraphEngine:
             "agent": node["label"],
             "text": "",
             "model": model,
-            "model_source": provider.source,
-            "model_label": provider.label,
             "context_limit": context_limit,
             "prompt_tokens": usage["prompt_tokens"],
             "completion_tokens": usage["completion_tokens"],
@@ -2073,32 +1817,12 @@ class LangGraphEngine:
 
         return self.side_effects.run(not initial_read_only, authorize_and_execute)
 
-    def _provider_for(self, node: dict[str, Any], run_id: str) -> ResolvedModelBinding:
+    def _provider_for(self, node: dict[str, Any], run_id: str) -> tuple[Any, str, int]:
         binding = (node.get("config") or {}).get("model_binding") or {}
         account_id = str(binding.get("account_id") or "")
         requested_model = str(binding.get("model") or "")
-        source = str(binding.get("source") or ("account" if account_id else "inherit"))
-        display_hint = str(binding.get("display_hint") or "")
-        if source == "inherit":
-            return ResolvedModelBinding(
-                client=self.core.client,
-                source="inherit",
-                model=requested_model or self.core.model,
-                context_limit=self.core.context_limit,
-                options=self.core.chat_options(),
-                label=display_hint or "Inherited session model",
-            )
-        if source == "ollama":
-            client = self._ollama_client()
-            context_limit, options = self._local_context(client, requested_model)
-            return ResolvedModelBinding(
-                client=client,
-                source="ollama",
-                model=requested_model,
-                context_limit=context_limit,
-                options=options,
-                label=display_hint or "Local Ollama",
-            )
+        if not account_id:
+            return self.core.client, requested_model or self.core.model, self.core.context_limit
         credential = self._credentials.get(run_id, {}).get(account_id)
         if credential is None:
             raise WorkflowError(f"provider credentials are missing for account {account_id}")
@@ -2106,15 +1830,7 @@ class LangGraphEngine:
         model = requested_model or str(credential.get("model") or "")
         context_limit = int(credential.get("context_window") or 0)
         if provider == "ollama":
-            client = OllamaClient(str(credential.get("host") or self._ollama_host()))
-            return ResolvedModelBinding(
-                client=client,
-                source="account",
-                model=model,
-                context_limit=context_limit,
-                options={"num_ctx": context_limit} if context_limit > 0 else None,
-                label=display_hint or str(credential.get("account_label") or "Model account"),
-            )
+            return OllamaClient(str(credential.get("host") or self.core.host)), model, context_limit
         client = RemoteClient(
             base_url=str(credential.get("base_url") or ""),
             api_key=str(credential.get("api_key") or ""),
@@ -2122,14 +1838,7 @@ class LangGraphEngine:
             auth_style=str(credential.get("auth_style") or ""),
             lists_models=bool(credential.get("lists_models", True)),
         )
-        return ResolvedModelBinding(
-            client=client,
-            source="account",
-            model=model,
-            context_limit=context_limit,
-            options=None,
-            label=display_hint or str(credential.get("account_label") or "Model account"),
-        )
+        return client, model, context_limit
 
     def _schemas_for(self, requested: list[str], mode: str, run_id: str) -> list[dict[str, Any]]:
         snapshot = (self.runs.get(run_id).get("state") or {}).get("tool_schema_snapshot") or {}

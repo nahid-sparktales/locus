@@ -29,56 +29,6 @@ final class FeatureLogicTests: XCTestCase {
 
     // MARK: - Slash commands
 
-    func testGraphModelBindingDecodesLegacySourcesAndEncodesExplicitOllama() throws {
-        let decoder = JSONDecoder()
-        let legacyAccount = try decoder.decode(
-            GraphModelBinding.self,
-            from: Data(#"{"account_id":"account-1","model":"remote-model"}"#.utf8)
-        )
-        XCTAssertNil(legacyAccount.source)
-        XCTAssertEqual(legacyAccount.resolvedSource, .account)
-
-        let legacyInherited = try decoder.decode(
-            GraphModelBinding.self,
-            from: Data(#"{"model":"session-override"}"#.utf8)
-        )
-        XCTAssertEqual(legacyInherited.resolvedSource, .inheritSession)
-
-        let local = GraphModelBinding(
-            source: .ollama,
-            model: "qwen3:8b",
-            displayHint: "Local Ollama"
-        )
-        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(local)) as? [String: Any]
-        XCTAssertEqual(encoded?["source"] as? String, "ollama")
-        XCTAssertEqual(encoded?["model"] as? String, "qwen3:8b")
-        XCTAssertNil(encoded?["account_id"])
-    }
-
-    func testGraphWorkflowRoutingLabelDistinguishesLocalRemoteAndMixed() throws {
-        func workflow(sources: [String]) throws -> GraphWorkflow {
-            let data = try JSONSerialization.data(withJSONObject: [
-                "schema_version": 1,
-                "id": "w",
-                "slug": "w",
-                "name": "Workflow",
-                "description": "",
-                "supported_modes": ["build"],
-                "revision": 1,
-                "nodes": [],
-                "edges": [],
-                "settings": ["max_steps": 10, "failure_policy": "fail"],
-                "capabilities": ["model_sources": sources],
-            ])
-            return try JSONDecoder().decode(GraphWorkflow.self, from: data)
-        }
-
-        XCTAssertEqual(try workflow(sources: ["ollama"]).modelRoutingLabel, "Local")
-        XCTAssertEqual(try workflow(sources: ["account"]).modelRoutingLabel, "Remote")
-        XCTAssertEqual(try workflow(sources: ["inherit"]).modelRoutingLabel, "Inherited")
-        XCTAssertEqual(try workflow(sources: ["ollama", "account"]).modelRoutingLabel, "Mixed")
-    }
-
     func testSlashQueryDetection() {
         XCTAssertEqual(SlashCommand.query(from: "/"), "")
         XCTAssertEqual(SlashCommand.query(from: "/mod"), "mod")

@@ -447,9 +447,9 @@ struct ComposerView: View {
                             model.selectGraphWorkflow(workflow)
                         } label: {
                             if model.selectedGraphWorkflow?.id == workflow.id {
-                                Label("\(workflow.name) · \(workflow.modelRoutingLabel)", systemImage: "checkmark")
+                                Label(workflow.name, systemImage: "checkmark")
                             } else {
-                                Text("\(workflow.name) · \(workflow.modelRoutingLabel)")
+                                Text(workflow.name)
                             }
                         }
                     }
@@ -458,9 +458,7 @@ struct ComposerView: View {
                         model.graphStudioPresented = true
                     }
                 } label: {
-                    Text(model.selectedGraphWorkflow.map {
-                        "\($0.name) · \($0.modelRoutingLabel)"
-                    } ?? "Choose workflow")
+                    Text(model.selectedGraphWorkflow?.name ?? "Choose workflow")
                         .font(.system(size: 8, weight: .semibold))
                         .lineLimit(1)
                 }

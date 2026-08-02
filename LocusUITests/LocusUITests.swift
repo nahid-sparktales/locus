@@ -349,32 +349,6 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(anyElement("checkpointTab.content").exists)
     }
 
-    func testGraphStudioCanPinAnInstalledLocalOllamaModel() {
-        let engine = anyElement("composer.executionEngine")
-        XCTAssertTrue(engine.waitForExistence(timeout: 3))
-        engine.click()
-        XCTAssertTrue(app.menuItems["LangGraph"].waitForExistence(timeout: 2))
-        app.menuItems["LangGraph"].click()
-
-        app.typeKey("8", modifierFlags: .command)
-        let openStudio = anyElement("workflows.openStudio")
-        XCTAssertTrue(openStudio.waitForExistence(timeout: 3))
-        openStudio.click()
-
-        let finalNode = anyElement("graphStudio.node.final")
-        XCTAssertTrue(finalNode.waitForExistence(timeout: 3))
-        finalNode.click()
-
-        let source = anyElement("graphStudio.modelSource")
-        XCTAssertTrue(source.waitForExistence(timeout: 3))
-        source.click()
-        XCTAssertTrue(app.menuItems["Local Ollama"].waitForExistence(timeout: 2))
-        app.menuItems["Local Ollama"].click()
-
-        XCTAssertTrue(anyElement("graphStudio.localModel").waitForExistence(timeout: 2))
-        XCTAssertTrue(anyElement("graphStudio.localModels").exists)
-    }
-
     func testChangesTabShowsSeededWorkingTreeAndOpensADiff() {
         app.typeKey("2", modifierFlags: .command)
 

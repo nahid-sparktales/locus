@@ -132,7 +132,6 @@ final class AppModel: ObservableObject {
     @Published var settingsPresented = false
     @Published var settingsPage: SettingsPage = .general
     @Published var modelLibraryPresented = false
-    @Published var modelLibraryInitialQuery = ""
     @Published var commandPalettePresented = false
     @Published var checkpointPresented = false
     @Published var clearChatConfirmationPresented = false
@@ -164,15 +163,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var activeGraphRunID: String?
     @Published private(set) var activeGraphStatus: String?
     @Published private(set) var graphNodeActivities: [GraphNodeActivity] = []
-    @Published private(set) var graphLocalModels: [ModelInfo] = []
-    @Published private(set) var graphOllamaAvailable = false
-    @Published private(set) var graphOllamaError = ""
-    @Published private(set) var graphPreflightIssues: [GraphPreflightIssue] = []
     @Published var graphReviewRequest: GraphReviewRequest?
     @Published var graphErrorMessage: String?
     @Published var graphStudioPresented = false
-    @Published var graphStudioFocusWorkflowID: String?
-    @Published var graphStudioFocusNodeID: String?
     @Published var workflowRunPresented = false
 
     /// Console state. A `let` on its own ObservableObject, not @Published
@@ -998,41 +991,6 @@ final class AppModel: ObservableObject {
         } catch {
             // Preserve the last run history during reconnects.
         }
-        await refreshGraphLocalModels()
-    }
-
-    func refreshGraphLocalModels() async {
-        guard !isUITesting else { return }
-        do {
-            let response = try await backend.get(
-                "/api/langgraph/models",
-                as: GraphLocalModelsResponse.self
-            )
-            graphLocalModels = response.models
-            graphOllamaAvailable = response.available
-            graphOllamaError = response.error
-            if activeAccount == nil, response.available {
-                localModels = response.models
-            }
-        } catch {
-            graphOllamaAvailable = false
-            graphOllamaError = error.localizedDescription
-        }
-    }
-
-    func openModelLibrary(for issue: GraphPreflightIssue) {
-        modelLibraryInitialQuery = issue.model
-        modelLibraryPresented = true
-    }
-
-    func remapGraphModel(for issue: GraphPreflightIssue) {
-        graphStudioFocusWorkflowID = graphStudioFocusWorkflowID ?? selectedGraphWorkflow?.id
-        graphStudioFocusNodeID = issue.nodeID
-        graphStudioPresented = true
-    }
-
-    func clearGraphPreflightIssues() {
-        graphPreflightIssues = []
     }
 
     private func normalizeSelectedWorkflows() {
@@ -3667,7 +3625,6 @@ final class AppModel: ObservableObject {
             activeGraphStatus = "running"
             graphNodeActivities = []
             graphReviewRequest = nil
-            graphPreflightIssues = []
             isBusy = true
             if !justChatEnabled { selectInspectorTab(.workflows) }
 
@@ -3676,17 +3633,6 @@ final class AppModel: ObservableObject {
                   let accountIDs = event["account_ids"] as? [String]
             else { return }
             sendGraphCredentials(runID: runID, accountIDs: accountIDs)
-
-        case "graph_preflight_failed":
-            let rawIssues = event["issues"] as? [[String: Any]] ?? []
-            graphPreflightIssues = rawIssues.compactMap(GraphPreflightIssue.init(dictionary:))
-            graphErrorMessage = graphPreflightIssues.first?.message
-                ?? "A workflow model is unavailable."
-            if let workflowID = event["workflow_id"] as? String, !workflowID.isEmpty {
-                graphStudioFocusWorkflowID = workflowID
-            }
-            selectInspectorTab(.workflows)
-            showToast("Workflow needs a local model")
 
         case "graph_node_state":
             let nodeID = event["node_id"] as? String ?? "node"
@@ -3720,10 +3666,6 @@ final class AppModel: ObservableObject {
                     ?? graphNodeActivities[index].completionTokens
                 graphNodeActivities[index].contextLimit = event["context_limit"] as? Int
                     ?? graphNodeActivities[index].contextLimit
-                graphNodeActivities[index].modelSource = event["model_source"] as? String
-                    ?? graphNodeActivities[index].modelSource
-                graphNodeActivities[index].modelLabel = event["model_label"] as? String
-                    ?? graphNodeActivities[index].modelLabel
                 graphNodeActivities[index].isFinal = event["final_node"] as? Bool
                     ?? graphNodeActivities[index].isFinal
             } else {
@@ -3735,8 +3677,6 @@ final class AppModel: ObservableObject {
                     durationMilliseconds: nil,
                     error: nil,
                     model: event["model"] as? String,
-                    modelSource: event["model_source"] as? String,
-                    modelLabel: event["model_label"] as? String,
                     promptTokens: event["prompt_tokens"] as? Int,
                     completionTokens: event["completion_tokens"] as? Int,
                     contextLimit: event["context_limit"] as? Int,
@@ -4323,27 +4263,6 @@ final class AppModel: ObservableObject {
         // The picker reads the local list, which a live refresh would normally
         // fill in.
         localModels = models
-        graphLocalModels = models
-        graphOllamaAvailable = true
-        langGraphAvailable = true
-        langGraphVersion = "1.2.9"
-        let workflowFixture = #"""
-        {
-          "schema_version":1,"id":"single-agent","slug":"single-agent","name":"Single Agent",
-          "description":"One durable local agent.","supported_modes":["plan","build"],"revision":1,
-          "nodes":[
-            {"id":"input","type":"input","label":"Input","position":{"x":40,"y":120},"config":{}},
-            {"id":"final","type":"final","label":"Final Answer","position":{"x":360,"y":120},"config":{"prompt":"Answer the user."}}
-          ],
-          "edges":[{"id":"input-final","source":"input","source_port":"out","target":"final","target_port":"in"}],
-          "settings":{"max_steps":20,"failure_policy":"fail"},"scope":"builtin","valid":true,"trusted":true,
-          "capabilities":{"node_count":2,"edge_count":1,"parallel_width":1,"model_sources":["inherit"]}
-        }
-        """#
-        graphWorkflows = (try? JSONDecoder().decode(
-            [GraphWorkflow].self,
-            from: Data("[\(workflowFixture)]".utf8)
-        )) ?? []
         sessionInfo = SessionInfo(
             model: "qwen3:8b",
             host: "http://localhost:11434",
