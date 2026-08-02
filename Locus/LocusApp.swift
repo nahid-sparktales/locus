@@ -1,6 +1,8 @@
 import AppKit
 import SwiftUI
 
+private let locusIsUITesting = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1"
+
 @main
 struct LocusApp: App {
     @NSApplicationDelegateAdaptor(LocusApplicationDelegate.self) private var appDelegate
@@ -11,7 +13,10 @@ struct LocusApp: App {
             RootView()
                 .environmentObject(model)
                 .preferredColorScheme(.light)
-                .frame(minWidth: 1_080, minHeight: 700)
+                .frame(
+                    minWidth: locusIsUITesting ? 920 : 1_080,
+                    minHeight: locusIsUITesting ? 620 : 700
+                )
                 .background {
                     MainWindowMarker()
                 }
@@ -143,13 +148,36 @@ private struct MainWindowMarker: NSViewRepresentable {
 }
 
 private final class MainWindowMarkerView: NSView {
+    private var preparedUITestWindow = false
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         markWindow()
     }
 
     func markWindow() {
-        window?.identifier = LocusApplicationDelegate.mainWindowIdentifier
+        guard let window else { return }
+        window.identifier = LocusApplicationDelegate.mainWindowIdentifier
+
+        // GitHub's macOS UI-test display is smaller than Locus's normal
+        // 1420×860 default. Keep the test window entirely on-screen so the
+        // tests exercise real clickable controls instead of clipped elements.
+        // Production sizing and user-restored frames remain untouched.
+        guard locusIsUITesting,
+              !preparedUITestWindow,
+              let visibleFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame else {
+            return
+        }
+        preparedUITestWindow = true
+        let size = NSSize(
+            width: min(1_000, visibleFrame.width),
+            height: min(680, visibleFrame.height)
+        )
+        let origin = NSPoint(
+            x: visibleFrame.midX - size.width / 2,
+            y: visibleFrame.midY - size.height / 2
+        )
+        window.setFrame(NSRect(origin: origin, size: size), display: true)
     }
 }
 
@@ -160,16 +188,16 @@ struct RootView: View {
         HStack(spacing: 0) {
             if !model.sidebarCollapsed {
                 SessionSidebarView()
-                    .frame(width: 260)
+                    .frame(width: locusIsUITesting ? 240 : 260)
                     .transition(.move(edge: .leading).combined(with: .opacity))
             }
 
             WorkspaceView()
-                .frame(minWidth: 520)
+                .frame(minWidth: locusIsUITesting ? 400 : 520)
 
             if !model.inspectorCollapsed && !model.justChatEnabled {
                 InspectorView()
-                    .frame(width: model.inspectorWidth)
+                    .frame(width: locusIsUITesting ? 280 : model.inspectorWidth)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
