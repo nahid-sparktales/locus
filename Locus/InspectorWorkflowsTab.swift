@@ -12,6 +12,7 @@ struct InspectorWorkflowsTab: View {
                 engineControls
                 if model.executionEngine == .langgraph {
                     workflowControls
+                    preflightFailures
                     activeRun
                     reviewRequest
                     recoverableRuns
@@ -93,7 +94,8 @@ struct InspectorWorkflowsTab: View {
                 }
             )) {
                 ForEach(model.compatibleGraphWorkflows) { workflow in
-                    Text(workflow.name + (workflow.trusted == false ? " · Trust required" : ""))
+                    Text(workflow.name + " · " + workflow.modelRoutingLabel
+                         + (workflow.trusted == false ? " · Trust required" : ""))
                         .tag(workflow.id)
                 }
             }
@@ -113,6 +115,7 @@ struct InspectorWorkflowsTab: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(LocusTheme.ink)
+                .accessibilityIdentifier("workflows.openStudio")
                 Button {
                     model.workflowRunPresented = true
                 } label: {
@@ -124,6 +127,51 @@ struct InspectorWorkflowsTab: View {
         .padding(11)
         .background(LocusTheme.paper)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var preflightFailures: some View {
+        if !model.graphPreflightIssues.isEmpty {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack {
+                    Label("Local model required", systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(LocusTheme.coral)
+                    Spacer()
+                    Button { model.clearGraphPreflightIssues() } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.plain)
+                }
+                ForEach(model.graphPreflightIssues) { issue in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(issue.nodeLabel)
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(issue.message)
+                            .font(.system(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: 7) {
+                            Button("Refresh") {
+                                Task { await model.refreshGraphLocalModels() }
+                            }
+                            if issue.reason == "model_missing" {
+                                Button("Find model") { model.openModelLibrary(for: issue) }
+                            }
+                            Button("Remap") { model.remapGraphModel(for: issue) }
+                        }
+                        .font(.system(size: 8))
+                    }
+                    .padding(8)
+                    .background(LocusTheme.paper)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            .padding(11)
+            .background(LocusTheme.coral.opacity(0.08))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(LocusTheme.coral.opacity(0.35)))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
     }
 
     @ViewBuilder
@@ -151,7 +199,10 @@ struct InspectorWorkflowsTab: View {
                         }
                         if let nodeModel = activity.model {
                             HStack(spacing: 8) {
-                                Label(nodeModel, systemImage: "cpu")
+                                Label(
+                                    [activity.modelLabel, nodeModel].compactMap { $0 }.joined(separator: " · "),
+                                    systemImage: activity.modelSource == "ollama" ? "desktopcomputer" : "cpu"
+                                )
                                 if let prompt = activity.promptTokens,
                                    let completion = activity.completionTokens {
                                     Text("\(prompt) in · \(completion) out")
@@ -291,6 +342,7 @@ struct InspectorWorkflowsTab: View {
         return HStack(spacing: 9) {
             Label("\(capabilities?.nodeCount ?? workflow.nodes.count) nodes", systemImage: "circle.grid.3x3")
             Label("\(capabilities?.parallelWidth ?? 1) parallel", systemImage: "arrow.triangle.branch")
+            Label(workflow.modelRoutingLabel, systemImage: "cpu")
             if capabilities?.mayMutate == true {
                 Label("May write", systemImage: "pencil")
                     .foregroundStyle(LocusTheme.coral)
@@ -416,6 +468,7 @@ struct GraphStudioView: View {
         .frame(minWidth: 980, idealWidth: 1180, minHeight: 680, idealHeight: 760)
         .background(LocusTheme.paper)
         .onAppear { selectInitialWorkflow() }
+        .task { await model.refreshGraphLocalModels() }
         .onChange(of: selectedWorkflowID) { _, newValue in loadWorkflow(newValue) }
         .accessibilityIdentifier("graphStudio.content")
     }
@@ -606,6 +659,8 @@ struct GraphStudioView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 9))
         .contentShape(Rectangle())
+        .accessibilityIdentifier("graphStudio.node.\(node.id)")
+        .accessibilityAddTraits(.isButton)
         .onTapGesture { selectedNodeID = node.id }
         .gesture(
             DragGesture()
@@ -825,30 +880,7 @@ struct GraphStudioView: View {
             if [.model, .supervisor, .agent, .final].contains(node.wrappedValue.type) {
                 Divider()
                 Text("Model").font(.system(size: 8, weight: .semibold)).foregroundStyle(LocusTheme.muted)
-                Picker("Account", selection: Binding(
-                    get: { node.wrappedValue.config.modelBinding?.accountID ?? "" },
-                    set: { accountID in
-                        var binding = node.wrappedValue.config.modelBinding ?? GraphModelBinding()
-                        binding.accountID = accountID.isEmpty ? nil : accountID
-                        binding.displayHint = model.providerAccounts.first(where: {
-                            $0.id.uuidString == accountID
-                        })?.displayName
-                        node.wrappedValue.config.modelBinding = binding
-                    }
-                )) {
-                    Text("Inherit session model").tag("")
-                    ForEach(model.providerAccounts) { account in
-                        Text(account.displayName).tag(account.id.uuidString)
-                    }
-                }
-                TextField("Model override", text: Binding(
-                    get: { node.wrappedValue.config.modelBinding?.model ?? "" },
-                    set: { value in
-                        var binding = node.wrappedValue.config.modelBinding ?? GraphModelBinding()
-                        binding.model = value.isEmpty ? nil : value
-                        node.wrappedValue.config.modelBinding = binding
-                    }
-                ))
+                modelBindingEditor(node)
             }
             if [.agent, .toolSet].contains(node.wrappedValue.type) {
                 Divider()
@@ -881,6 +913,130 @@ struct GraphStudioView: View {
                 .foregroundStyle(LocusTheme.muted)
                 .textSelection(.enabled)
         }
+    }
+
+    @ViewBuilder
+    private func modelBindingEditor(_ node: Binding<GraphWorkflowNode>) -> some View {
+        let source = node.wrappedValue.config.modelBinding?.resolvedSource ?? .inheritSession
+        Picker("Source", selection: Binding(
+            get: { node.wrappedValue.config.modelBinding?.resolvedSource ?? .inheritSession },
+            set: { newSource in
+                switch newSource {
+                case .inheritSession:
+                    node.wrappedValue.config.modelBinding = GraphModelBinding(source: .inheritSession)
+                case .ollama:
+                    let existing = source == .ollama ? node.wrappedValue.config.modelBinding?.model : nil
+                    node.wrappedValue.config.modelBinding = GraphModelBinding(
+                        source: .ollama,
+                        model: existing ?? model.graphLocalModels.first?.name,
+                        displayHint: "Local Ollama"
+                    )
+                case .account:
+                    let account = model.providerAccounts.first
+                    node.wrappedValue.config.modelBinding = GraphModelBinding(
+                        source: .account,
+                        accountID: account?.id.uuidString,
+                        model: account?.preferredModel,
+                        displayHint: account?.displayName
+                    )
+                }
+            }
+        )) {
+            ForEach(GraphModelSource.allCases) { item in
+                Text(item.title).tag(item)
+            }
+        }
+        .accessibilityIdentifier("graphStudio.modelSource")
+
+        switch source {
+        case .inheritSession:
+            Text("Uses the model selected in the main composer when the run starts.")
+                .font(.system(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+
+        case .ollama:
+            TextField("Ollama model", text: Binding(
+                get: { node.wrappedValue.config.modelBinding?.model ?? "" },
+                set: { value in setLocalModel(value, on: node) }
+            ))
+            .accessibilityIdentifier("graphStudio.localModel")
+            Menu("Installed models") {
+                if model.graphLocalModels.isEmpty {
+                    Text(model.graphOllamaAvailable ? "No Ollama models installed" : "Ollama unavailable")
+                } else {
+                    ForEach(model.graphLocalModels) { localModel in
+                        Button(localModel.name) { setLocalModel(localModel.name, on: node) }
+                    }
+                }
+            }
+            .accessibilityIdentifier("graphStudio.localModels")
+            if let selected = node.wrappedValue.config.modelBinding?.model,
+               !selected.isEmpty,
+               !model.graphLocalModels.contains(where: { $0.name == selected }) {
+                Label("Not currently installed", systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 8))
+                    .foregroundStyle(LocusTheme.coral)
+            }
+            Button("Manage local models…") {
+                model.modelLibraryInitialQuery = node.wrappedValue.config.modelBinding?.model ?? ""
+                dismiss()
+                model.graphStudioPresented = false
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(180))
+                    model.modelLibraryPresented = true
+                }
+            }
+
+        case .account:
+            Picker("Account", selection: Binding(
+                get: { node.wrappedValue.config.modelBinding?.accountID ?? "" },
+                set: { accountID in
+                    let account = model.providerAccounts.first(where: { $0.id.uuidString == accountID })
+                    var binding = node.wrappedValue.config.modelBinding ?? GraphModelBinding(source: .account)
+                    binding.source = .account
+                    binding.accountID = accountID.isEmpty ? nil : accountID
+                    binding.model = account?.preferredModel ?? binding.model
+                    binding.displayHint = account?.displayName
+                    node.wrappedValue.config.modelBinding = binding
+                }
+            )) {
+                Text("Choose an account").tag("")
+                ForEach(model.providerAccounts) { account in
+                    Text(account.displayName).tag(account.id.uuidString)
+                }
+            }
+            TextField("Account model", text: Binding(
+                get: { node.wrappedValue.config.modelBinding?.model ?? "" },
+                set: { value in
+                    var binding = node.wrappedValue.config.modelBinding ?? GraphModelBinding(source: .account)
+                    binding.source = .account
+                    binding.model = value.isEmpty ? nil : value
+                    node.wrappedValue.config.modelBinding = binding
+                }
+            ))
+            if let rawID = node.wrappedValue.config.modelBinding?.accountID,
+               let id = UUID(uuidString: rawID),
+               let available = model.accountModels[id], !available.isEmpty {
+                Menu("Available models") {
+                    ForEach(available, id: \.self) { name in
+                        Button(name) {
+                            var binding = node.wrappedValue.config.modelBinding ?? GraphModelBinding(source: .account)
+                            binding.model = name
+                            node.wrappedValue.config.modelBinding = binding
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func setLocalModel(_ value: String, on node: Binding<GraphWorkflowNode>) {
+        var binding = node.wrappedValue.config.modelBinding ?? GraphModelBinding(source: .ollama)
+        binding.source = .ollama
+        binding.accountID = nil
+        binding.model = value.isEmpty ? nil : value
+        binding.displayHint = "Local Ollama"
+        node.wrappedValue.config.modelBinding = binding
     }
 
     private func routerEditor(_ node: Binding<GraphWorkflowNode>) -> some View {
@@ -994,6 +1150,18 @@ struct GraphStudioView: View {
         if draft.nodes.count > 64 { errors.append("Maximum 64 nodes") }
         if draft.edges.count > 256 { errors.append("Maximum 256 edges") }
         if draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { errors.append("Name is required") }
+        for node in draft.nodes where [.model, .supervisor, .agent, .final].contains(node.type) {
+            guard let binding = node.config.modelBinding else { continue }
+            switch binding.resolvedSource {
+            case .inheritSession:
+                if binding.accountID != nil { errors.append("\(node.label) cannot inherit an account") }
+            case .ollama:
+                if binding.model?.isEmpty != false { errors.append("\(node.label) needs an Ollama model") }
+                if binding.accountID != nil { errors.append("\(node.label) local binding cannot include an account") }
+            case .account:
+                if binding.accountID?.isEmpty != false { errors.append("\(node.label) needs a model account") }
+            }
+        }
         for edge in draft.edges {
             guard let source = draft.nodes.first(where: { $0.id == edge.source }),
                   let target = draft.nodes.first(where: { $0.id == edge.target }),
@@ -1011,11 +1179,18 @@ struct GraphStudioView: View {
     }
 
     private func selectInitialWorkflow() {
-        let preferred = model.selectedGraphWorkflow?.id
+        let preferred = model.graphStudioFocusWorkflowID
+            ?? model.selectedGraphWorkflow?.id
             ?? model.graphWorkflows.first?.id
             ?? ""
         selectedWorkflowID = preferred
         loadWorkflow(preferred)
+        if let focus = model.graphStudioFocusNodeID,
+           draft?.nodes.contains(where: { $0.id == focus }) == true {
+            selectedNodeID = focus
+        }
+        model.graphStudioFocusWorkflowID = nil
+        model.graphStudioFocusNodeID = nil
     }
 
     private func loadWorkflow(_ id: String) {

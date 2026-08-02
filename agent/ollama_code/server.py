@@ -40,7 +40,12 @@ from .config import (
 )
 from .core import AgentCore
 from .extensions import ExtensionError
-from .langgraph_runtime import WorkflowError, validate_workflow, workflow_capabilities
+from .langgraph_runtime import (
+    GraphPreflightError,
+    WorkflowError,
+    validate_workflow,
+    workflow_capabilities,
+)
 from .ollama import OllamaError, effective_context_length
 from .sessions import (
     SessionMeta,
@@ -591,6 +596,11 @@ def _workflow_failure(exc: WorkflowError) -> HTTPException:
 @app.get("/api/langgraph")
 def get_langgraph() -> dict[str, Any]:
     return service().core.langgraph_engine.snapshot()
+
+
+@app.get("/api/langgraph/models")
+def get_langgraph_models() -> dict[str, Any]:
+    return service().core.langgraph_engine.local_model_catalog()
 
 
 @app.get("/api/langgraph/workflows")
@@ -1305,6 +1315,7 @@ def _run_independent_graph(
         workflow = svc.core.langgraph_engine.registry.get(workflow_id, require_trust=True)
         if mode not in workflow["supported_modes"]:
             raise WorkflowError(f"{workflow['name']} does not support {mode.title()} mode")
+        svc.core.langgraph_engine.preflight_local_models(workflow)
         svc.core.new_session(reason="workflow_run")
         svc.core.langgraph_engine.start(text, mode, workflow_id, svc.decide)
     except WorkflowError as exc:
@@ -1326,6 +1337,16 @@ def _run_graph_operation(
 
 
 def _report_graph_failure(svc: ChatService, error: Exception, run_id: str = "") -> None:
+    if isinstance(error, GraphPreflightError):
+        # The engine already emitted a structured, actionable failure. Avoid
+        # duplicating it as a generic chat error or manufacturing a failed run.
+        svc.core._emit({
+            "type": "turn_done",
+            "reason": "error",
+            "duration_ms": 0,
+            **({"run_id": run_id} if run_id else {}),
+        })
+        return
     message = svc.core.langgraph_engine._redact(str(error), run_id) if run_id else str(error)[:4000]
     svc.core._emit({"type": "error", "message": message, **({"run_id": run_id} if run_id else {})})
     if run_id:

@@ -236,6 +236,27 @@ The busy check is atomic and happens before any field is applied. Emits
 `session_info` on the WS when anything changed.
 `model` and `context_window` are persisted to `~/.ollama-code/config.json`.
 
+### LangGraph local models
+
+`GET /api/langgraph/models` always queries the configured Ollama host, even
+when the active session is routed through a remote account. It returns:
+
+```json
+{ "available": true, "host": "http://localhost:11434", "models": [], "error": "" }
+```
+
+Model-capable workflow nodes may include a version-1 additive binding:
+
+```json
+{ "model_binding": { "source": "ollama", "model": "qwen3:8b",
+  "display_hint": "Local Ollama" } }
+```
+
+`source` is `inherit`, `ollama`, or `account`. Legacy definitions without the
+field keep their previous meaning: an `account_id` selects an account and its
+absence inherits the session. Explicit Ollama bindings never persist a host or
+credentials; the engine uses the app's configured local endpoint.
+
 ---
 
 ## 2. WebSocket lifecycle
@@ -407,6 +428,17 @@ must not clear their busy state when this event arrives.
 ### `error`
 `{ "type": "error", "message": "..." }` — a failure inside the active agent
 turn. It is followed by `turn_done {reason: "error"}`.
+
+### `graph_preflight_failed`
+
+Emitted when an explicit local workflow binding cannot run. `issues` contains
+`node_id`, `node_label`, `source`, `model`, `reason`, and a user-facing
+`message`; reasons are `ollama_unreachable`, `model_missing`, or
+`tools_unsupported`. No run or transcript record is created. A terminal
+`turn_done {reason: "error"}` follows.
+
+Graph node token/usage events may also include `model_source` and
+`model_label`; older clients may ignore both fields.
 
 ### `slash_result`
 Ends a slash command (`/help`, `/model`, `/clear`, `/compact`, `/init`,

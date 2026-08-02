@@ -1209,13 +1209,34 @@ struct GraphPosition: Codable, Hashable {
     var y: Double
 }
 
+enum GraphModelSource: String, Codable, CaseIterable, Identifiable {
+    case inheritSession = "inherit"
+    case ollama
+    case account
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .inheritSession: "Inherit session"
+        case .ollama: "Local Ollama"
+        case .account: "Remote account"
+        }
+    }
+}
+
 struct GraphModelBinding: Codable, Hashable {
+    var source: GraphModelSource? = nil
     var accountID: String? = nil
     var model: String? = nil
     var displayHint: String? = nil
 
+    var resolvedSource: GraphModelSource {
+        source ?? (accountID == nil ? .inheritSession : .account)
+    }
+
     enum CodingKeys: String, CodingKey {
-        case model
+        case source, model
         case accountID = "account_id"
         case displayHint = "display_hint"
     }
@@ -1409,12 +1430,16 @@ struct GraphWorkflowCapabilities: Codable, Hashable {
     let tools: [String]?
     let providerAccountIDs: [String]?
     let models: [String]?
+    let localModels: [String]?
+    let modelSources: [String]?
     let mayMutate: Bool?
     let promptCharacters: Int?
     let promptDigest: String?
 
     enum CodingKeys: String, CodingKey {
         case tools, models
+        case localModels = "local_models"
+        case modelSources = "model_sources"
         case nodeCount = "node_count"
         case edgeCount = "edge_count"
         case parallelWidth = "parallel_width"
@@ -1486,6 +1511,19 @@ struct GraphWorkflow: Codable, Hashable, Identifiable {
     }
 
     var isRunnable: Bool { valid != false && trusted != false }
+
+    var modelRoutingLabel: String {
+        let sources = Set(capabilities?.modelSources ?? nodes.compactMap {
+            guard [.model, .supervisor, .agent, .final].contains($0.type) else { return nil }
+            return $0.config.modelBinding?.resolvedSource.rawValue ?? GraphModelSource.inheritSession.rawValue
+        })
+        if sources.count > 1 { return "Mixed" }
+        switch sources.first {
+        case GraphModelSource.ollama.rawValue: return "Local"
+        case GraphModelSource.account.rawValue: return "Remote"
+        default: return "Inherited"
+        }
+    }
 }
 
 struct GraphWorkflowsResponse: Codable {
@@ -1586,10 +1624,41 @@ struct GraphNodeActivity: Identifiable, Hashable {
     var durationMilliseconds: Int?
     var error: String?
     var model: String? = nil
+    var modelSource: String? = nil
+    var modelLabel: String? = nil
     var promptTokens: Int? = nil
     var completionTokens: Int? = nil
     var contextLimit: Int? = nil
     var isFinal: Bool = false
+}
+
+struct GraphLocalModelsResponse: Codable, Hashable {
+    let available: Bool
+    let host: String
+    let models: [ModelInfo]
+    let error: String
+}
+
+struct GraphPreflightIssue: Identifiable, Hashable {
+    var id: String { "\(nodeID):\(reason):\(model)" }
+    let nodeID: String
+    let nodeLabel: String
+    let source: String
+    let model: String
+    let reason: String
+    let message: String
+
+    init?(dictionary: [String: Any]) {
+        guard let nodeID = dictionary["node_id"] as? String,
+              let reason = dictionary["reason"] as? String
+        else { return nil }
+        self.nodeID = nodeID
+        nodeLabel = dictionary["node_label"] as? String ?? nodeID
+        source = dictionary["source"] as? String ?? "ollama"
+        model = dictionary["model"] as? String ?? ""
+        self.reason = reason
+        message = dictionary["message"] as? String ?? "This workflow model is unavailable."
+    }
 }
 
 struct GraphReviewRequest: Identifiable, Hashable {

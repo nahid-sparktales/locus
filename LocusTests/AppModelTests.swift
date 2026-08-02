@@ -1570,6 +1570,8 @@ final class AppModelTests: XCTestCase {
             "agent": "Reviewer",
             "text": "private specialist output",
             "model": "specialist-model",
+            "model_source": "ollama",
+            "model_label": "Local Ollama",
             "prompt_tokens": 120,
             "completion_tokens": 30,
             "context_limit": 32768,
@@ -1592,9 +1594,38 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.inspectorTab, .workflows)
         XCTAssertEqual(model.graphNodeActivities.first?.output, "private specialist output")
         XCTAssertEqual(model.graphNodeActivities.first?.promptTokens, 120)
+        XCTAssertEqual(model.graphNodeActivities.first?.modelSource, "ollama")
+        XCTAssertEqual(model.graphNodeActivities.first?.modelLabel, "Local Ollama")
         XCTAssertTrue(model.graphUsesMixedModels)
         XCTAssertEqual(model.graphContextModelLabel, "final-model · mixed-model run")
         XCTAssertEqual(model.blocks.count, initialBlocks, "specialist streams belong only in graph activity cards")
+    }
+
+    @MainActor
+    func testGraphPreflightFailureExposesRefreshPullAndRemapContext() {
+        let model = AppModel(startImmediately: false)
+        model.handleEventForTesting([
+            "type": "graph_preflight_failed",
+            "workflow_id": "builder-team",
+            "issues": [[
+                "node_id": "review",
+                "node_label": "Reviewer",
+                "source": "ollama",
+                "model": "qwen3:8b",
+                "reason": "model_missing",
+                "message": "Local model 'qwen3:8b' is not installed in Ollama.",
+            ]],
+        ])
+
+        XCTAssertEqual(model.inspectorTab, .workflows)
+        XCTAssertEqual(model.graphPreflightIssues.first?.nodeID, "review")
+        XCTAssertEqual(model.graphPreflightIssues.first?.model, "qwen3:8b")
+        XCTAssertEqual(model.graphStudioFocusWorkflowID, "builder-team")
+        XCTAssertEqual(model.graphErrorMessage, "Local model 'qwen3:8b' is not installed in Ollama.")
+
+        model.openModelLibrary(for: model.graphPreflightIssues[0])
+        XCTAssertTrue(model.modelLibraryPresented)
+        XCTAssertEqual(model.modelLibraryInitialQuery, "qwen3:8b")
     }
 
     @MainActor
