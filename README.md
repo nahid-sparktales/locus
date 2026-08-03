@@ -342,7 +342,7 @@ The release pipeline can produce a SparkTales **Developer ID** build that is
 notarized by Apple and stapled, so it opens normally on a Mac that has never
 seen it. Only an archive produced with `LOCUS_NOTARIZE=1` and passing the
 Gatekeeper/ticket checks below may be described as a public release. The
-historical 1.8.0 archive is not evidence that current source has passed that
+historical 1.9.0 archive is not evidence that current source has passed that
 gate; private verification archives are labeled and must not be published.
 
 This build is deliberately **not sandboxed**. A container would buy nothing
