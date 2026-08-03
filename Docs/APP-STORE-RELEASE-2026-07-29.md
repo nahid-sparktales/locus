@@ -131,3 +131,58 @@ the distribution audit and deep code-signature verification
   exists, which is what interrupted the first export run.
 - Build 10 is not yet assigned to the **Locus Internal Testers** TestFlight
   group and has not been submitted for review.
+
+## 1.8.0 (11) upload — 2026-07-31
+
+Marketing version 1.8.0, build 11, was uploaded to App Store Connect at
+09:05 PDT on July 31, 2026 and processed to state **VALID**. Built from clean
+source revision `f5e57fd`; the archive is at
+`artifacts/appstore/Locus-1.8.0-11.xcarchive`.
+
+- 160 Swift unit tests and 202 Python backend tests passed before the archive.
+- Build 11 is attached to App Store version 1.8.0, which closes the "selection
+  of the processed replacement build" item listed above.
+- The export emits `Upload Symbols Failed` warnings for the bundled Python
+  runtime's prebuilt binaries (`python3.14`, `libpython3.14.dylib`, and the C
+  extension modules), which ship without dSYMs. These affect crash
+  symbolication for those components only and do not fail the upload.
+- Version 1.8.0 remains in `PREPARE_FOR_SUBMISSION` with `releaseType: MANUAL`.
+  It has **not** been submitted for review: description, keywords, screenshots,
+  and the age-rating declaration are all still empty.
+
+## Developer ID notarization is blocked — as of 2026-08-03
+
+The direct-download channel has **never** completed a notarization. Three
+submissions are stuck `In Progress` with no submission log ever produced:
+
+| Submission | Created (UTC) | Source |
+|---|---|---|
+| `3cc83fa3-972a-4301-842c-1d3c223d85ec` | 2026-07-30 20:11 | 1.8.0 |
+| `303ceda7-a0e8-4bd2-8124-14cbdfcb5d0c` | 2026-07-31 16:00 | 1.8.0 (`f5e57fd`) |
+| `5970d664-8a42-4c9c-9673-bbf456346e9e` | 2026-08-03 04:10 | 1.8.0 (`8e91939`) |
+
+The third was submitted deliberately as a control: a different source revision,
+independently signed, with a changed bundled-dependency set and a different
+SHA-256. It stalled identically, which rules out the binary.
+
+Apple's system status page reported Developer ID Notary Service as operational
+throughout. The same binary uploaded to App Store Connect as build 11 and
+processed to `VALID` using the same API key and team, so the account,
+credentials, and binary are all acceptable to App Store ingestion — only the
+notary service fails to process them.
+
+`PackageRelease.sh` exits 1 on the `notarytool --wait` timeout **before**
+stapling, so the zip it leaves in `artifacts/direct/` is signed and
+seal-verified but carries no ticket. Per the rule in the README, such an
+archive is not a public release. A support case has been prepared; until Apple
+resolves it, the App Store channel is the only one that can ship.
+
+## 1.9.0 (12) — 2026-08-03
+
+`project.yml` was bumped to marketing version 1.9.0, build 12, and the
+CHANGELOG's `Unreleased` section rolled into a `1.9.0` entry covering local
+runtime supervision, the compact launch size, and the permission-panel
+background, alongside the context-meter fixes. LangGraph runtime work that was
+merged and then reverted on main is deliberately absent from the release notes.
+
+- 176 Swift unit tests and 222 Python backend tests passed before the build.

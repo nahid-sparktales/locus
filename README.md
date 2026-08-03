@@ -352,6 +352,11 @@ App Store build (`ReleaseMAS`) keeps the sandbox and its entitlements.
 On first launch:
 
 1. Confirm that the sidebar footer says **Agent ready** and **Ollama ready**.
+   Both pills track a supervised runtime and also report *starting*,
+   *recovering*, and *offline*, so a runtime that is not actually up says which
+   state it is in rather than failing at your first message. The second pill
+   names the active provider once you select an account — **Claude ready**,
+   **Endpoint ready**, and so on.
 2. Choose a workspace from the workspace row at the bottom of the sidebar.
 3. Select an installed model.
 4. Start in Ask, Plan, or Build mode.
