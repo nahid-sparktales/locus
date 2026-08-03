@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/nahid-sparktales/locus/security/advisories/new
+    about: Report privately. Please do not open a public issue.
+  - name: Ollama itself, or a model
+    url: https://github.com/ollama/ollama/issues
+    about: Locus drives Ollama but does not maintain it. Model and daemon problems belong upstream.

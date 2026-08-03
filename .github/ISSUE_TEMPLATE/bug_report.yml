@@ -1,0 +1,69 @@
+name: Bug report
+description: Something in Locus behaves incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not report security problems here — see
+        [SECURITY.md](https://github.com/nahid-sparktales/locus/blob/main/.github/SECURITY.md).
+
+        Never paste an API key, token, or the contents of `~/.locus/auth.json`
+        into an issue. Redact them from logs before attaching anything.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a workspace at …
+        2. Select model …
+        3. …
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Locus version
+      description: The version in the About window, and whether it came from the direct download or the Mac App Store.
+      placeholder: "1.10.0 (14), direct download"
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and chip
+      placeholder: "macOS 15.2, M2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Which model was in use
+      options:
+        - Local Ollama
+        - Claude
+        - Codex
+        - Kimi / Kimi Code
+        - Another OpenAI-compatible endpoint
+        - Not relevant
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console output or agent logs
+      description: The inspector's Console tab, with anything sensitive removed.
+      render: shell
