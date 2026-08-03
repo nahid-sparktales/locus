@@ -265,9 +265,22 @@ class OllamaClient:
         ``should_stop`` gives callers a soft-interrupt: the stream ends after
         the current chunk and the response is marked done_reason=interrupted.
         """
+        native_messages: list[dict[str, Any]] = []
+        for message in messages:
+            native = dict(message)
+            attachments = native.pop("attachments", None) or []
+            images = [
+                str(item.get("data") or "")
+                for item in attachments
+                if isinstance(item, dict) and item.get("data")
+            ]
+            if images:
+                native["images"] = images
+            native_messages.append(native)
+
         payload: dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            "messages": native_messages,
             "stream": True,
             "think": think,
         }

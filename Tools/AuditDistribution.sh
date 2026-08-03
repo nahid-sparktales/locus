@@ -26,6 +26,24 @@ licenses="${resources}/ThirdPartyLicenses/python-build-standalone-20260728"
     exit 1
 }
 
+for notice in \
+    "| websockets | 15.0.1 |"
+do
+    /usr/bin/grep -Fq -- "${notice}" "${resources}/ThirdPartyNotices.md" || {
+        echo "error: runtime notice is missing the pinned component: ${notice}" >&2
+        exit 1
+    }
+done
+
+PYTHONPATH="${runtime}/site-packages:${runtime}/source" \
+    "${runtime}/python/bin/python3" -c '
+from importlib.metadata import version
+assert version("websockets") == "15.0.1"
+' || {
+    echo "error: bundled runtime failed its pinned-version audit" >&2
+    exit 1
+}
+
 for required in \
     LICENSE \
     LICENSE.bzip2.txt \

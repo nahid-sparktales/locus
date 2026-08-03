@@ -8,6 +8,7 @@ struct SessionSidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            primaryNavigation
             controls
 
             ScrollView {
@@ -88,6 +89,7 @@ struct SessionSidebarView: View {
             Text("Locus")
                 .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(LocusTheme.ink)
+                .accessibilityIdentifier("sidebar.brand")
 
             Spacer(minLength: 4)
 
@@ -109,6 +111,40 @@ struct SessionSidebarView: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 60)
+    }
+
+    private var primaryNavigation: some View {
+        VStack(spacing: 6) {
+            JustChatControl(isChatSelected: model.justChatEnabled) { enabled in
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    model.setJustChatEnabled(enabled)
+                }
+            }
+
+            Button {
+                model.settingsPage = .extensions
+                model.settingsPresented = true
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "puzzlepiece.extension")
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: 12)
+                    Text("Plugins & MCP")
+                        .font(.system(size: 10, weight: .semibold))
+                    Spacer(minLength: 4)
+                }
+                .foregroundStyle(LocusTheme.inkSoft)
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Manage plugins, MCP servers, and skills")
+            .accessibilityLabel("Plugins, MCP servers, and skills")
+            .accessibilityIdentifier("sidebar.extensions")
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 10)
     }
 
     // MARK: - Controls

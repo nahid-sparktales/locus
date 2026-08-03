@@ -1,7 +1,32 @@
+import AppKit
 import XCTest
 @testable import Locus
 
 final class FeatureLogicTests: XCTestCase {
+    // MARK: - Application lifecycle
+
+    func testApplicationProhibitsMultipleProcesses() {
+        XCTAssertEqual(
+            Bundle.main.object(forInfoDictionaryKey: "LSMultipleInstancesProhibited") as? Bool,
+            true
+        )
+    }
+
+    @MainActor
+    func testApplicationDelegateTargetsOnlyTheMarkedMainWindow() {
+        let settings = NSWindow()
+        settings.identifier = NSUserInterfaceItemIdentifier("locus.settings")
+        let main = NSWindow()
+        main.identifier = LocusApplicationDelegate.mainWindowIdentifier
+
+        XCTAssertTrue(
+            LocusApplicationDelegate.mainWindow(in: [settings, main]) === main
+        )
+        XCTAssertTrue(
+            LocusApplicationDelegate().applicationShouldTerminateAfterLastWindowClosed(.shared)
+        )
+    }
+
     // MARK: - Slash commands
 
     func testSlashQueryDetection() {
@@ -126,7 +151,7 @@ final class FeatureLogicTests: XCTestCase {
     // MARK: - Inspector chrome
 
     func testInspectorTabsAreStableAndUnique() {
-        XCTAssertEqual(InspectorTab.allCases.count, 5)
+        XCTAssertEqual(InspectorTab.allCases.count, 7)
         let raws = InspectorTab.allCases.map(\.rawValue)
         XCTAssertEqual(Set(raws).count, raws.count)
         XCTAssertEqual(Set(InspectorTab.allCases.map(\.symbol)).count, raws.count)
@@ -134,10 +159,46 @@ final class FeatureLogicTests: XCTestCase {
         // rawValue is the accessibility-identifier and persistence contract.
         XCTAssertEqual(InspectorTab(rawValue: "plan"), .plan)
         XCTAssertEqual(InspectorTab(rawValue: "terminal"), .terminal)
+        XCTAssertEqual(InspectorTab(rawValue: "checkpoints"), .checkpoints)
+        XCTAssertEqual(InspectorTab(rawValue: "agents"), .agents)
     }
 
-    func testInspectorShortcutsAreOneThroughFive() {
-        XCTAssertEqual(InspectorTab.allCases.map(\.shortcutKey), ["1", "2", "3", "4", "5"])
+    func testInspectorShortcutsAreOneThroughSeven() {
+        XCTAssertEqual(
+            InspectorTab.allCases.map(\.shortcutKey),
+            ["1", "2", "3", "4", "5", "6", "7"]
+        )
+    }
+
+    func testAgentInstructionsFileRoundTripsAndRejectsEscapingSymlinks() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let workspace = base.appending(path: "workspace", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        XCTAssertEqual(AgentInstructionsFile.load(from: workspace.path), .init(
+            exists: false,
+            content: "",
+            error: nil
+        ))
+
+        try AgentInstructionsFile.save("# Rules\n\n- Run tests.\n", in: workspace.path)
+        XCTAssertEqual(
+            AgentInstructionsFile.load(from: workspace.path).content,
+            "# Rules\n\n- Run tests.\n"
+        )
+
+        let outside = base.appending(path: "outside.md")
+        try "do not overwrite".write(to: outside, atomically: true, encoding: .utf8)
+        try FileManager.default.removeItem(at: AgentInstructionsFile.url(for: workspace.path))
+        try FileManager.default.createSymbolicLink(
+            at: AgentInstructionsFile.url(for: workspace.path),
+            withDestinationURL: outside
+        )
+        XCTAssertNotNil(AgentInstructionsFile.load(from: workspace.path).error)
+        XCTAssertThrowsError(try AgentInstructionsFile.save("escaped", in: workspace.path))
+        XCTAssertEqual(try String(contentsOf: outside, encoding: .utf8), "do not overwrite")
     }
 
     func testInspectorWidthIsClampedToTheUsableRange() {

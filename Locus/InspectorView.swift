@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// The right-hand inspector: a tab shell around the Plan, Changes, Files,
-/// Terminal and Preview panels, with a drag handle on its leading edge.
+/// The right-hand inspector: a tab shell around workspace run state, files,
+/// instructions, terminal, preview and checkpoints, with a drag handle on its
+/// leading edge.
 struct InspectorView: View {
     @EnvironmentObject private var model: AppModel
 
@@ -23,6 +24,10 @@ struct InspectorView: View {
                     InspectorTerminalTab()
                 case .preview:
                     InspectorPreviewTab()
+                case .checkpoints:
+                    InspectorCheckpointsTab()
+                case .agents:
+                    InspectorAgentsTab()
                 }
             }
             .environmentObject(model)

@@ -196,6 +196,32 @@ class SessionStore:
         except OSError:
             pass  # session logging must never crash the app
 
+    def append_once(self, record: dict[str, Any], event_id: str) -> bool:
+        """Append a recoverable event once, even if a graph checkpoint replays it."""
+        if not event_id:
+            self.append(record)
+            return True
+        value = {**record, "event_id": event_id}
+        line = json.dumps(value, ensure_ascii=False, default=str) + "\n"
+        try:
+            with _APPEND_LOCK:
+                if self.path.is_file():
+                    with self.path.open("rb") as existing:
+                        for raw in existing:
+                            if len(raw) > MAX_SESSION_LINE_BYTES or event_id.encode() not in raw:
+                                continue
+                            try:
+                                item = json.loads(raw.decode("utf-8", errors="replace"))
+                            except json.JSONDecodeError:
+                                continue
+                            if isinstance(item, dict) and item.get("event_id") == event_id:
+                                return False
+                with self.path.open("a", encoding="utf-8") as handle:
+                    handle.write(line)
+        except OSError:
+            return True  # preserve the in-memory conversation if logging is unavailable
+        return True
+
     # ------------------------------------------------------------------ reads
 
     @staticmethod

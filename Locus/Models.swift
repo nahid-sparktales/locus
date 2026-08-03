@@ -9,7 +9,7 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
 
     var description: String {
         switch self {
-        case .ask: "Answers without changing files"
+        case .ask: "Answers without workspace access"
         case .plan: "Maps the work before editing"
         case .build: "Can edit files and run commands"
         }
@@ -18,7 +18,7 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
     var instruction: String {
         switch self {
         case .ask:
-            "Answer the request using the available context. Do not modify files or run destructive commands."
+            "Answer conversationally using only the conversation and files or images the user explicitly attached to this message. Do not inspect attachment paths or browse, read, search, or modify any other workspace files. Do not call tools, skills, or external integrations."
         case .plan:
             "Create a concise, ordered implementation plan. Inspect files if useful, but do not modify anything."
         case .build:
@@ -76,6 +76,8 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     case files
     case terminal
     case preview
+    case checkpoints
+    case agents
 
     var id: String { rawValue }
 
@@ -89,6 +91,8 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .files: "Files"
         case .terminal: "Console"
         case .preview: "Preview"
+        case .checkpoints: "Checkpoints"
+        case .agents: "AGENTS.md"
         }
     }
 
@@ -99,10 +103,12 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .files: "folder"
         case .terminal: "terminal"
         case .preview: "safari"
+        case .checkpoints: "clock.arrow.circlepath"
+        case .agents: "doc.text.fill"
         }
     }
 
-    /// ⌘1…⌘5, in declaration order.
+    /// ⌘1…⌘7, in declaration order. Existing shortcuts stay stable.
     var shortcutKey: Character {
         switch self {
         case .plan: "1"
@@ -110,6 +116,22 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .files: "3"
         case .terminal: "4"
         case .preview: "5"
+        case .checkpoints: "6"
+        case .agents: "7"
+        }
+    }
+}
+
+enum SettingsPage: String, CaseIterable, Identifiable {
+    case general = "General"
+    case extensions = "Extensions"
+
+    var id: String { rawValue }
+
+    var symbol: String {
+        switch self {
+        case .general: "gearshape"
+        case .extensions: "puzzlepiece.extension"
         }
     }
 }
@@ -124,6 +146,55 @@ struct TodoItem: Codable, Hashable, Identifiable {
     var id: String { "\(content)-\(status.rawValue)" }
     let content: String
     let status: Status
+}
+
+/// The terminal state of one user turn. Kept on a transcript block so the
+/// small "worked for" marker stays between the turn it closes and whatever
+/// the user sends next (and survives local checkpoints).
+struct TurnCompletion: Codable, Hashable {
+    enum Outcome: String, Codable, Hashable {
+        case complete
+        case interrupted
+        case maxIterations = "max_iterations"
+        case error
+
+        init(reason: String) {
+            self = Outcome(rawValue: reason) ?? .complete
+        }
+    }
+
+    let outcome: Outcome
+    let mode: WorkMode?
+    let durationMilliseconds: Int
+
+    var isSuccessful: Bool { outcome == .complete }
+
+    var title: String {
+        switch outcome {
+        case .complete:
+            switch mode {
+            case .ask: "Chat finished"
+            case .plan: "Plan finished"
+            case .build: "Task finished"
+            case nil: "Finished"
+            }
+        case .interrupted: "Stopped"
+        case .maxIterations: "Iteration limit reached"
+        case .error: "Run failed"
+        }
+    }
+
+    var durationText: String {
+        guard durationMilliseconds >= 1_000 else { return "<1s" }
+        let seconds = max(Int((Double(durationMilliseconds) / 1_000).rounded()), 1)
+        if seconds < 60 { return "\(seconds)s" }
+        let minutes = seconds / 60
+        let remainder = seconds % 60
+        if minutes < 60 { return remainder == 0 ? "\(minutes)m" : "\(minutes)m \(remainder)s" }
+        let hours = minutes / 60
+        let minuteRemainder = minutes % 60
+        return minuteRemainder == 0 ? "\(hours)h" : "\(hours)h \(minuteRemainder)m"
+    }
 }
 
 /// How much of the model's streamed reasoning the transcript shows.
@@ -457,6 +528,7 @@ struct HealthResponse: Codable {
     let host: String?
     let model: String?
     let error: String?
+    let updateAvailable: Bool?
 }
 
 struct HistoryMessage: Codable {
@@ -505,19 +577,24 @@ struct ChatBlock: Identifiable, Codable, Hashable {
     var text: String
     var isStreaming: Bool
     var tool: ToolPayload?
+    /// Present only for the quiet end-of-turn note rendered after a run.
+    /// Optional keeps checkpoints written by older Locus releases decodable.
+    var completion: TurnCompletion?
 
     init(
         id: UUID = UUID(),
         kind: Kind,
         text: String = "",
         isStreaming: Bool = false,
-        tool: ToolPayload? = nil
+        tool: ToolPayload? = nil,
+        completion: TurnCompletion? = nil
     ) {
         self.id = id
         self.kind = kind
         self.text = text
         self.isStreaming = isStreaming
         self.tool = tool
+        self.completion = completion
     }
 }
 
@@ -569,6 +646,64 @@ struct ContextFile: Identifiable, Codable, Hashable {
         try container.encode(id, forKey: .id)
         try container.encode(url, forKey: .url)
         try container.encode(isIncluded, forKey: .isIncluded)
+    }
+}
+
+enum ChatAttachmentKind: String, Hashable, Sendable {
+    case text
+    case image
+}
+
+/// An explicitly selected, one-message input for Just Chat. Unlike a Work
+/// context pack, these attachments do not grant access to their path or to any
+/// neighboring workspace files, and they are removed after a successful send.
+struct ChatAttachment: Identifiable, Hashable, Sendable {
+    let id: UUID
+    let url: URL
+    let kind: ChatAttachmentKind
+    let textContent: String?
+    let imageData: Data?
+    let mimeType: String?
+    let issue: String?
+
+    init(
+        id: UUID = UUID(),
+        url: URL,
+        kind: ChatAttachmentKind,
+        textContent: String? = nil,
+        imageData: Data? = nil,
+        mimeType: String? = nil,
+        issue: String? = nil
+    ) {
+        self.id = id
+        self.url = url
+        self.kind = kind
+        self.textContent = textContent
+        self.imageData = imageData
+        self.mimeType = mimeType
+        self.issue = issue
+    }
+
+    var name: String { url.lastPathComponent }
+    var isAvailable: Bool {
+        guard issue == nil else { return false }
+        switch kind {
+        case .text: return !(textContent?.isEmpty ?? true)
+        case .image: return !(imageData?.isEmpty ?? true) && mimeType != nil
+        }
+    }
+
+    var detail: String {
+        if let issue { return issue }
+        switch kind {
+        case .text:
+            return "\(max((textContent?.count ?? 0) / 4, 1).formatted()) estimated tokens"
+        case .image:
+            return ByteCountFormatter.string(
+                fromByteCount: Int64(imageData?.count ?? 0),
+                countStyle: .file
+            )
+        }
     }
 }
 
@@ -626,7 +761,7 @@ struct AppSettings: Codable, Hashable {
     var localContextWindow: Int?
     var inspectorWidth: Double = AppSettings.defaultInspectorWidth
     /// The inspector starts collapsed: the conversation is the point, and
-    /// ⌘1–⌘5 or ⌘⌥I bring the panel back the moment it is needed.
+    /// ⌘1–⌘8 or ⌘⌥I bring the panel back the moment it is needed.
     var inspectorCollapsed = true
     /// The session sidebar starts open, the way Claude keeps the
     /// conversation list at hand; ⌘0 collapses it for focus.
@@ -706,6 +841,328 @@ struct PermissionStateResponse: Codable {
     }
 }
 
+// MARK: - Extensions
+
+struct ExtensionCapabilities: Codable, Hashable {
+    var streamableHTTP = true
+    var stdio = false
+    var oauth = true
+    var mcpApps = false
+    var hooks = false
+    var sandboxed = false
+
+    enum CodingKeys: String, CodingKey {
+        case stdio, oauth, hooks, sandboxed
+        case streamableHTTP = "streamable_http"
+        case mcpApps = "mcp_apps"
+    }
+}
+
+struct ExtensionMarketplace: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let kind: String
+    let source: String
+    let error: String?
+    let workspaceDiscovered: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, kind, source, error
+        case workspaceDiscovered = "workspace_discovered"
+    }
+}
+
+struct ExtensionMCPComponent: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let transport: String
+    let url: String?
+    let command: String?
+    let args: [String]?
+    let cwd: String?
+}
+
+struct ExtensionSkill: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let displayName: String?
+    let description: String
+    let source: String
+    let pluginID: String?
+    let allowImplicitInvocation: Bool?
+    let enabled: Bool
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, description, source, enabled, error
+        case displayName = "display_name"
+        case pluginID = "plugin_id"
+        case allowImplicitInvocation = "allow_implicit_invocation"
+    }
+}
+
+struct ExtensionPlugin: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let displayName: String?
+    let description: String?
+    let version: String?
+    let author: String?
+    let digest: String?
+    let enabledGlobal: Bool
+    let enabledWorkspaces: [String]
+    let disabledWorkspaces: [String]
+    let previousVersions: [String]?
+    let skills: [ExtensionSkill]?
+    let mcpServers: [ExtensionMCPComponent]?
+    let scripts: [String]?
+    let unsupported: [String]?
+    let updateAvailable: Bool?
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, description, version, author, digest, skills, scripts, unsupported, error
+        case displayName = "display_name"
+        case enabledGlobal = "enabled_global"
+        case enabledWorkspaces = "enabled_workspaces"
+        case disabledWorkspaces = "disabled_workspaces"
+        case previousVersions = "previous_versions"
+        case mcpServers = "mcp_servers"
+        case updateAvailable = "update_available"
+    }
+}
+
+struct ExtensionMCPServer: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let transport: String
+    let url: String?
+    let command: String?
+    let args: [String]?
+    let cwd: String?
+    let origin: String?
+    let pluginID: String?
+    let active: Bool?
+    let enabled: Bool?
+    let enabledGlobal: Bool?
+    let enabledWorkspaces: [String]?
+    let disabledWorkspaces: [String]?
+    let state: String?
+    let error: String?
+    let toolCount: Int?
+    let hasCredentials: Bool?
+    let approvalMode: String?
+    let auth: String?
+    let oauth: MCPOAuthConfiguration?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, transport, url, command, args, cwd, origin, active, enabled, state, error, auth, oauth
+        case pluginID = "plugin_id"
+        case enabledGlobal = "enabled_global"
+        case enabledWorkspaces = "enabled_workspaces"
+        case disabledWorkspaces = "disabled_workspaces"
+        case toolCount = "tool_count"
+        case hasCredentials = "has_credentials"
+        case approvalMode = "approval_mode"
+    }
+}
+
+struct MCPOAuthConfiguration: Codable, Hashable {
+    let authorizationEndpoint: String
+    let tokenEndpoint: String
+    let clientID: String
+    let scopes: [String]
+    let redirectURI: String?
+
+    enum CodingKeys: String, CodingKey {
+        case scopes
+        case authorizationEndpoint = "authorization_endpoint"
+        case tokenEndpoint = "token_endpoint"
+        case clientID = "client_id"
+        case redirectURI = "redirect_uri"
+    }
+}
+
+struct ExtensionsResponse: Codable, Hashable {
+    let capabilities: ExtensionCapabilities
+    let marketplaces: [ExtensionMarketplace]
+    let plugins: [ExtensionPlugin]
+    let skills: [ExtensionSkill]
+    let mcpServers: [ExtensionMCPServer]
+    let errors: [String]
+    let pendingUpdates: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case capabilities, marketplaces, plugins, skills, errors
+        case mcpServers = "mcp_servers"
+        case pendingUpdates = "pending_updates"
+    }
+
+    static let empty = ExtensionsResponse(
+        capabilities: ExtensionCapabilities(),
+        marketplaces: [],
+        plugins: [],
+        skills: [],
+        mcpServers: [],
+        errors: [],
+        pendingUpdates: 0
+    )
+}
+
+struct ExtensionCatalogEntry: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let displayName: String?
+    let description: String?
+    let category: String?
+    let marketplaceID: String
+    let available: Bool
+    let installed: Bool
+    let installedVersion: String?
+    let version: String?
+    let author: String?
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, description, category, available, installed, version, author, error
+        case displayName = "display_name"
+        case marketplaceID = "marketplace_id"
+        case installedVersion = "installed_version"
+    }
+}
+
+struct ExtensionCatalogResponse: Codable {
+    let entries: [ExtensionCatalogEntry]
+}
+
+struct PluginTrustMCPServer: Codable, Hashable {
+    let name: String
+    let transport: String
+    let url: String?
+    let command: String?
+    let args: [String]?
+    let cwd: String?
+    let requestedEnv: [String]
+    let requestedHeaders: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case name, transport, url, command, args, cwd
+        case requestedEnv = "requested_env"
+        case requestedHeaders = "requested_headers"
+    }
+}
+
+struct PluginTrustSummary: Codable, Hashable {
+    let skills: Int
+    let skillScripts: [String]
+    let mcpServers: [PluginTrustMCPServer]
+    let unsupported: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case skills, unsupported
+        case skillScripts = "skill_scripts"
+        case mcpServers = "mcp_servers"
+    }
+}
+
+struct PluginTrustDescription: Codable, Hashable {
+    let name: String
+    let displayName: String?
+    let description: String?
+    let version: String?
+    let author: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name, description, version, author
+        case displayName = "display_name"
+    }
+}
+
+struct PluginTrustResponse: Codable, Hashable, Identifiable {
+    var id: String { digest }
+    let plugin: PluginTrustDescription
+    let digest: String
+    let trust: PluginTrustSummary
+    let source: [String: String]?
+    let capabilityDiff: PluginCapabilityDiff?
+
+    enum CodingKeys: String, CodingKey {
+        case plugin, digest, trust, source
+        case capabilityDiff = "capability_diff"
+    }
+}
+
+struct PluginCapabilityDiff: Codable, Hashable {
+    let kind: String
+    let requiresRenewedTrust: Bool
+    let changes: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case kind, changes
+        case requiresRenewedTrust = "requires_renewed_trust"
+    }
+}
+
+struct ExtensionOperationResponse: Codable {
+    let ok: Bool
+}
+
+struct ProjectContextReloadResponse: Codable {
+    let ok: Bool
+    let file: String?
+}
+
+struct MCPTestResponse: Codable {
+    let status: MCPStatusResponse?
+}
+
+struct MCPStatusResponse: Codable {
+    let id: String
+    let name: String
+    let state: String
+    let error: String?
+    let toolCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, state, error
+        case toolCount = "tool_count"
+    }
+}
+
+struct MCPStatusCredentialResponse: Codable {
+    let ok: Bool
+    let id: String
+    let hasCredentials: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case ok, id
+        case hasCredentials = "has_credentials"
+    }
+}
+
+struct ExtensionToolMetadata: Codable, Identifiable, Hashable {
+    var id: String { name }
+    let name: String
+    let description: String
+    let origin: String
+    let serverID: String?
+    let serverName: String?
+    let active: Bool
+    let deferred: Bool
+    let approvalMode: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name, description, origin, active, deferred
+        case serverID = "server_id"
+        case serverName = "server_name"
+        case approvalMode = "approval_mode"
+    }
+}
+
+struct ExtensionToolsResponse: Codable {
+    let tools: [ExtensionToolMetadata]
+}
+
 struct ProviderStateResponse: Codable {
     let provider: String
     let host: String
@@ -735,7 +1192,6 @@ struct WorkspaceProfile: Identifiable, Codable, Hashable {
     var previewURL: String
     var contextFiles: [ContextFile]
     var draft: String
-
     var displayName: String {
         URL(fileURLWithPath: path).lastPathComponent
     }

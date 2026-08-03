@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 final class LocusUITests: XCTestCase {
@@ -37,6 +38,43 @@ final class LocusUITests: XCTestCase {
         } else {
             app.buttons["Cancel"].firstMatch.click()
         }
+    }
+
+    func testReopeningLocusKeepsOneMainWindowAndItsPresentedSheet() throws {
+        anyElement("workspace.commandPalette").click()
+        let search = app.textFields["palette.search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        search.typeText("keep this state")
+
+        let running = try XCTUnwrap(
+            NSRunningApplication.runningApplications(
+                withBundleIdentifier: "io.sparktales.locus"
+            ).first
+        )
+        let appURL = try XCTUnwrap(running.bundleURL)
+        let reopened = expectation(description: "Launch Services reopened Locus")
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, error in
+            XCTAssertNil(error)
+            reopened.fulfill()
+        }
+        wait(for: [reopened], timeout: 5)
+
+        XCTAssertEqual(app.windows.count, 1)
+        XCTAssertTrue(search.exists)
+        XCTAssertEqual(search.value as? String, "keep this state")
+    }
+
+    func testClosingTheUniqueMainWindowTerminatesLocus() {
+        XCTAssertEqual(app.windows.count, 1)
+
+        app.typeKey("w", modifierFlags: .command)
+
+        XCTAssertTrue(
+            app.wait(for: .notRunning, timeout: 5),
+            "closing the main Window scene should terminate Locus and its backend owner"
+        )
     }
 
     func testClearChatControlShowsNonDestructiveConfirmation() {
@@ -133,6 +171,22 @@ final class LocusUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
     }
 
+    func testExtensionsSettingsExposesAllExtensionCenters() {
+        anyElement("workspace.modelPicker").click()
+        app.menuItems["Manage Accounts…"].click()
+
+        let extensionsPage = anyElement("settings.page.extensions")
+        XCTAssertTrue(extensionsPage.waitForExistence(timeout: 3))
+        extensionsPage.click()
+
+        for tab in ["installed", "marketplace", "mcp-servers", "skills"] {
+            let control = anyElement("extensions.tab.\(tab)")
+            XCTAssertTrue(control.waitForExistence(timeout: 3))
+            control.click()
+        }
+        XCTAssertTrue(app.staticTexts["Reusable workflows"].exists)
+    }
+
     func testHuggingFaceModelLibraryIsAvailableFromModelPicker() {
         let picker = anyElement("workspace.modelPicker")
         XCTAssertTrue(picker.waitForExistence(timeout: 3))
@@ -178,6 +232,57 @@ final class LocusUITests: XCTestCase {
 
     // MARK: - Inspector
 
+    func testSidebarPlacesChatWorkAndExtensionsBelowTheBrand() {
+        let brand = anyElement("sidebar.brand")
+        let chat = app.buttons["workspace.mode.chat"]
+        let work = app.buttons["workspace.mode.work"]
+        let extensions = anyElement("sidebar.extensions")
+
+        XCTAssertTrue(brand.waitForExistence(timeout: 3))
+        XCTAssertTrue(chat.exists)
+        XCTAssertTrue(work.exists)
+        XCTAssertTrue(extensions.exists)
+        XCTAssertLessThan(brand.frame.maxY, chat.frame.minY)
+        XCTAssertLessThan(chat.frame.maxY, extensions.frame.minY)
+
+        extensions.click()
+        XCTAssertTrue(anyElement("extensions.tab.installed").waitForExistence(timeout: 3))
+    }
+
+    func testRunAwarenessControlsAreVisibleAndJustChatHidesAgenticWorkspaceUI() {
+        let chat = app.buttons["workspace.mode.chat"]
+        let work = app.buttons["workspace.mode.work"]
+        XCTAssertTrue(chat.waitForExistence(timeout: 3))
+        XCTAssertTrue(work.exists)
+        XCTAssertTrue(work.isSelected)
+
+        chat.click()
+        XCTAssertTrue(chat.isSelected)
+        XCTAssertTrue(anyElement("composer.justChatBoundary").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("composer.chatAttachments").exists)
+        XCTAssertTrue(app.buttons["composer.addChatAttachment"].exists)
+        XCTAssertFalse(anyElement("composer.context").exists)
+        XCTAssertFalse(anyElement("composer.mode.plan").exists)
+        XCTAssertFalse(anyElement("composer.mode.build").exists)
+        XCTAssertFalse(anyElement("inspector.tab.plan").exists)
+        XCTAssertFalse(anyElement("workspace.showInspector").exists)
+
+        XCTAssertTrue(
+            anyElement("turnCompletion.00000000-0000-0000-0000-000000000103")
+                .waitForExistence(timeout: 3)
+        )
+
+        app.typeKey("1", modifierFlags: .command)
+        XCTAssertFalse(anyElement("inspector.tab.plan").exists)
+
+        work.click()
+        XCTAssertTrue(work.isSelected)
+        XCTAssertTrue(anyElement("composer.mode.plan").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("composer.mode.build").exists)
+        XCTAssertTrue(anyElement("plan.contextWindow").waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("workspace.showInspector").exists)
+    }
+
     func testInspectorCollapsesAndRestoresFromWorkspaceHeader() {
         let collapse = anyElement("inspector.collapse")
         XCTAssertTrue(collapse.waitForExistence(timeout: 3))
@@ -205,9 +310,39 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("terminal.output").waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("terminal.empty").exists)
 
+        // ⌘6 — Checkpoints, with its own creation and history panel.
+        app.typeKey("6", modifierFlags: .command)
+        XCTAssertTrue(anyElement("checkpointTab.content").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("checkpointTab.create").exists)
+
+        // ⌘7 — AGENTS.md, with an explanation and the workspace editor.
+        app.typeKey("7", modifierFlags: .command)
+        XCTAssertTrue(anyElement("agents.content").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("agents.editor").exists)
+        XCTAssertTrue(anyElement("agents.save").exists)
+
         // ⌘1 — back to Plan, which shows its empty state (no seeded todos).
         app.typeKey("1", modifierFlags: .command)
         XCTAssertTrue(anyElement("plan.create").waitForExistence(timeout: 3))
+    }
+
+    func testPlanTabOrdersContextThenActivePlanThenPermissions() {
+        let context = anyElement("plan.contextWindow")
+        let activePlan = anyElement("plan.activePlan")
+        let permissionControl = anyElement("plan.permissionMode")
+        let window = app.windows.firstMatch
+
+        XCTAssertTrue(context.waitForExistence(timeout: 3))
+        XCTAssertTrue(activePlan.exists)
+        XCTAssertTrue(permissionControl.exists)
+        XCTAssertLessThan(context.frame.minY, activePlan.frame.minY)
+        XCTAssertLessThan(activePlan.frame.minY, permissionControl.frame.minY)
+        XCTAssertLessThan(
+            window.frame.maxY - permissionControl.frame.maxY,
+            110,
+            "Permissions should stay anchored at the bottom of the inspector"
+        )
+        XCTAssertFalse(anyElement("checkpointTab.content").exists)
     }
 
     func testChangesTabShowsSeededWorkingTreeAndOpensADiff() {
