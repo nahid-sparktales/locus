@@ -148,8 +148,14 @@ trap '/bin/rm -rf "${check_dir}"' EXIT
 echo "Zip round-trip verified."
 if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
     # The real question is not whether it is signed but whether a Mac that has
-    # never seen it will run it.
-    /usr/bin/spctl --assess --type execute -vv "${check_dir}/$(basename "${app}")" \
+    # never seen it will run it. spctl lives in /usr/sbin, not /usr/bin — the
+    # wrong path here reported a missing binary as a Gatekeeper rejection, and
+    # went unnoticed because no notarization had ever got this far to run it.
+    [[ -x /usr/sbin/spctl ]] || {
+        echo "error: /usr/sbin/spctl not found; cannot assess Gatekeeper." >&2
+        exit 1
+    }
+    /usr/sbin/spctl --assess --type execute -vv "${check_dir}/$(basename "${app}")" \
         || { echo "error: Gatekeeper rejected the packaged app." >&2; exit 1; }
     /usr/bin/xcrun stapler validate "${check_dir}/$(basename "${app}")" \
         || { echo "error: the notarization ticket did not survive the zip." >&2; exit 1; }
