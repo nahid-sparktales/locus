@@ -187,6 +187,19 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Reusable workflows"].exists)
     }
 
+    func testRuntimeSettingsShowAutomaticOnlineServices() {
+        anyElement("workspace.modelPicker").click()
+        app.menuItems["Manage Accounts…"].click()
+
+        let agentStatus = app.staticTexts["settings.agentStatus"].firstMatch
+        let modelStatus = app.staticTexts["settings.modelStatus"].firstMatch
+        XCTAssertTrue(agentStatus.waitForExistence(timeout: 3))
+        XCTAssertEqual(agentStatus.value as? String, "Online")
+        XCTAssertEqual(modelStatus.value as? String, "Online")
+        XCTAssertFalse(anyElement("settings.autoLaunch").exists)
+        XCTAssertFalse(anyElement("settings.retryLocalServices").exists)
+    }
+
     func testHuggingFaceModelLibraryIsAvailableFromModelPicker() {
         let picker = anyElement("workspace.modelPicker")
         XCTAssertTrue(picker.waitForExistence(timeout: 3))

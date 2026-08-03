@@ -7,15 +7,10 @@ import UserNotifications
 
 @MainActor
 final class AppModel: ObservableObject {
-    enum ConnectionPhase: Equatable {
-        case starting
-        case connected
-        case disconnected(String)
-    }
-
-    @Published var connectionPhase: ConnectionPhase = .starting
-    @Published var ollamaOnline = false
-    @Published var ollamaErrorMessage: String?
+    @Published var agentRuntimePhase: RuntimePhase = .starting("Starting the local agent…")
+    @Published var modelRuntimePhase: RuntimePhase = .starting("Checking the model provider…")
+    var isAgentOnline: Bool { agentRuntimePhase.isOnline }
+    var isModelOnline: Bool { modelRuntimePhase.isOnline }
     @Published var models: [ModelInfo] = []
     /// The local Ollama models, kept separately because `models` reflects
     /// whichever provider the agent is currently pointed at — with an account
@@ -150,6 +145,7 @@ final class AppModel: ObservableObject {
 
     private let backend: BackendService
     private let backendProcess = BackendProcess()
+    private let ollamaRuntime = OllamaRuntime()
     private let mcpAuthCoordinator = MCPAuthCoordinator()
     private let workspaceAccess: WorkspaceAccess
     private var initialWorkspacePath: String?
@@ -161,6 +157,8 @@ final class AppModel: ObservableObject {
     private var streamedCharsThisTurn = 0
     private var streamFlushTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
+    private var runtimeRecoveryTask: Task<Void, Never>?
+    private var runtimeRecoveryAttempt = 0
     private var extensionRefreshTask: Task<Void, Never>?
     private var restoredTranscriptContext: String?
     private var toastTask: Task<Void, Never>?
@@ -205,8 +203,10 @@ final class AppModel: ObservableObject {
     private var agentInstructionsTask: Task<Void, Never>?
     private var indexedWorkspacePath: String?
     private var terminationObserver: NSObjectProtocol?
+    private var activationObserver: NSObjectProtocol?
     private let persistenceEnabled: Bool
     private let isUITesting: Bool
+    private var isShuttingDown = false
 
     init(startImmediately: Bool = true) {
         let isUITesting = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1"
@@ -322,10 +322,12 @@ final class AppModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 if connected {
-                    self.connectionPhase = .connected
-                } else if case .connected = self.connectionPhase {
-                    self.connectionPhase = .disconnected("Reconnecting to the local agent…")
+                    self.agentRuntimePhase = .online
+                    self.runtimeRecoveryAttempt = 0
+                } else if self.agentRuntimePhase.isOnline, !self.isShuttingDown {
+                    self.agentRuntimePhase = .recovering("Reconnecting to the local agent…")
                     self.recoverFromLostConnection()
+                    self.scheduleRuntimeRecovery(reason: "The local agent connection was lost.")
                 }
             }
         }
@@ -336,6 +338,19 @@ final class AppModel: ObservableObject {
         }
 
         terminal.transport = self
+
+        backendProcess.onUnexpectedExit = { [weak self] code, output in
+            Task { @MainActor in
+                guard let self, !self.isShuttingDown else { return }
+                self.recoverFromLostConnection()
+                let detail = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.backendLogHint = detail.isEmpty
+                    ? "The local agent exited with status \(code)."
+                    : String(detail.suffix(1_000))
+                self.agentRuntimePhase = .recovering("Restarting the local agent…")
+                self.scheduleRuntimeRecovery(reason: "The local agent stopped unexpectedly.")
+            }
+        }
 
         if isUITesting {
             seedUITestState()
@@ -349,6 +364,21 @@ final class AppModel: ObservableObject {
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
                     self?.shutdown()
+                }
+            }
+            activationObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self,
+                          !self.agentRuntimePhase.isOnline || !self.modelRuntimePhase.isOnline
+                    else { return }
+                    self.scheduleRuntimeRecovery(
+                        reason: "Checking local services after Locus became active.",
+                        immediate: true
+                    )
                 }
             }
             Task { await bootstrap() }
@@ -568,58 +598,192 @@ final class AppModel: ObservableObject {
     }
 
     func bootstrap() async {
-        connectionPhase = .starting
-        if !(await backendIsHealthy()), settings.launchBackendAutomatically {
-            let port = URL(string: settings.backendURL)?.port ?? 8791
-            let started = backendProcess.start(
-                root: settings.backendRoot,
-                port: port,
-                cwd: workspacePath
-            )
-            backendLogHint = started
-                ? "Started the bundled local agent service."
-                : "Could not find the agent backend at \(settings.backendRoot)."
+        let recovery = scheduleRuntimeRecovery(
+            reason: "Starting the local services…",
+            immediate: true
+        )
+        await recovery?.value
+        requestNotificationAuthorization()
+        startRuntimeMonitor()
+    }
 
-            if started {
-                // Up to 15s: a previous agent releasing the port, or a cold
-                // Python start, can take longer than a couple of seconds.
-                for _ in 0..<60 {
-                    try? await Task.sleep(for: .milliseconds(250))
-                    if await backendIsHealthy() { break }
+    @discardableResult
+    private func scheduleRuntimeRecovery(
+        reason: String,
+        immediate: Bool = false
+    ) -> Task<Void, Never>? {
+        guard !isShuttingDown else { return nil }
+        if let runtimeRecoveryTask { return runtimeRecoveryTask }
+
+        let attempt = runtimeRecoveryAttempt
+        let delay = immediate ? 0 : BackendService.reconnectDelay(for: attempt)
+        let task = Task { [weak self] in
+            guard let self else { return }
+            if delay > 0 {
+                self.agentRuntimePhase = .recovering(
+                    "Restarting the local agent in \(Int(delay)) second\(delay == 1 ? "" : "s")…"
+                )
+                try? await Task.sleep(for: .seconds(delay))
+            }
+            guard !Task.isCancelled, !self.isShuttingDown else {
+                self.runtimeRecoveryTask = nil
+                return
+            }
+            let recovered = await self.performRuntimeRecovery(reason: reason)
+            self.runtimeRecoveryTask = nil
+            if recovered {
+                self.runtimeRecoveryAttempt = 0
+            } else if !self.isShuttingDown {
+                self.runtimeRecoveryAttempt += 1
+                self.scheduleRuntimeRecovery(reason: "Retrying the local agent.")
+            }
+        }
+        runtimeRecoveryTask = task
+        return task
+    }
+
+    private func performRuntimeRecovery(reason: String) async -> Bool {
+        agentRuntimePhase = runtimeRecoveryAttempt == 0
+            ? .starting(reason)
+            : .recovering(reason)
+
+        if !(await backendIsHealthy()) {
+            guard let configuredURL = URL(string: settings.backendURL),
+                  OllamaRuntime.isLoopback(configuredURL)
+            else {
+                agentRuntimePhase = .unavailable(
+                    "The configured agent is unavailable. Locus only auto-starts loopback agents."
+                )
+                return false
+            }
+
+            if backendProcess.isRunning {
+                await backendProcess.stopAndWait()
+            }
+            let preferredPort = backend.currentBaseURL.port ?? configuredURL.port ?? 8791
+            switch backendProcess.start(
+                root: settings.backendRoot,
+                port: preferredPort,
+                cwd: workspacePath
+            ) {
+            case .running(let endpoint):
+                if endpoint != backend.currentBaseURL {
+                    backend.updateBaseURL(endpoint)
                 }
+                backendLogHint = endpoint.port == configuredURL.port
+                    ? "Started the bundled local agent service."
+                    : "Port \(configuredURL.port ?? 8791) was occupied; started the local agent on port \(endpoint.port ?? 0)."
+            case .failed(let message):
+                backendLogHint = message
+                agentRuntimePhase = .unavailable(message)
+                return false
+            }
+
+            // A cold bundled Python runtime can take several seconds. An
+            // immediate child exit is noticed by the process callback and the
+            // failed health check below keeps the same recovery loop moving.
+            for _ in 0..<60 {
+                guard !Task.isCancelled else { return false }
+                if await backendIsHealthy() { break }
+                try? await Task.sleep(for: .milliseconds(250))
             }
         }
 
         guard await backendIsHealthy() else {
-            connectionPhase = .disconnected(
-                "Local agent unavailable. Check the backend path in Settings."
-            )
-            return
+            let output = backendProcess.recentOutput
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let message = output.isEmpty
+                ? "The local agent did not become ready."
+                : String(output.suffix(1_000))
+            backendLogHint = message
+            agentRuntimePhase = .unavailable(message)
+            return false
         }
 
-        // The app is the source of truth for the provider: the agent persists
-        // its last choice (never the API key), so both the remote key and a
-        // switch back to local have to be re-applied on every launch.
+        agentRuntimePhase = .online
+        // The app is the source of truth for provider routing and credentials,
+        // so it must reapply them after every agent restart.
         await applyProvider(announce: false)
-        await refreshMetadata()
-        requestNotificationAuthorization()
         backend.connect()
-        refreshTask?.cancel()
+        return true
+    }
+
+    private func startRuntimeMonitor() {
+        guard refreshTask == nil else { return }
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(15))
-                guard !Task.isCancelled else { return }
-                await self?.refreshMetadata()
+                guard !Task.isCancelled, let self, !self.isShuttingDown else { return }
+                if await self.backendIsHealthy() {
+                    self.agentRuntimePhase = .online
+                    self.runtimeRecoveryAttempt = 0
+                    var ollamaFailure: RuntimePhase?
+                    if self.activeAccount == nil {
+                        await self.ensureLocalOllama(at: self.lastOllamaHost)
+                        if !self.modelRuntimePhase.isOnline {
+                            ollamaFailure = self.modelRuntimePhase
+                        }
+                    }
+                    await self.refreshMetadata()
+                    if let ollamaFailure, !self.modelRuntimePhase.isOnline {
+                        self.modelRuntimePhase = ollamaFailure
+                    }
+                    self.backend.connect()
+                } else {
+                    if self.agentRuntimePhase.isOnline {
+                        self.recoverFromLostConnection()
+                    }
+                    self.agentRuntimePhase = .recovering("Restarting the local agent…")
+                    self.scheduleRuntimeRecovery(reason: "The local agent health check failed.")
+                }
             }
         }
     }
 
+    private func ensureLocalOllama(at hostValue: String) async {
+        guard activeAccount == nil else { return }
+        var normalized = hostValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !normalized.contains("://") { normalized = "http://\(normalized)" }
+        guard let host = URL(string: normalized), OllamaRuntime.isLoopback(host) else {
+            modelRuntimePhase = .unavailable(
+                "The configured Ollama host is not local, so Locus will not launch it automatically."
+            )
+            return
+        }
+        lastOllamaHost = host.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if await OllamaRuntime.isHealthy(at: host) {
+            modelRuntimePhase = .online
+            return
+        }
+
+        modelRuntimePhase = modelRuntimePhase.isOnline
+            ? .recovering("Restarting Ollama…")
+            : .starting("Starting Ollama…")
+        switch await ollamaRuntime.ensureRunning(at: host) {
+        case .online(let message):
+            backendLogHint = message
+            modelRuntimePhase = .online
+        case .unavailable(let message):
+            modelRuntimePhase = .unavailable(message)
+        }
+    }
+
+    func retryLocalServices() {
+        guard !isShuttingDown else { return }
+        runtimeRecoveryTask?.cancel()
+        runtimeRecoveryTask = nil
+        runtimeRecoveryAttempt = 0
+        scheduleRuntimeRecovery(reason: "Retrying local services…", immediate: true)
+    }
+
     func shutdown() {
+        isShuttingDown = true
         persistCurrentWorkspaceProfile()
         // Flush rather than cancel: a debounced settings write that is still
         // pending at quit would otherwise be dropped.
         persistSettings()
         refreshTask?.cancel()
+        runtimeRecoveryTask?.cancel()
         streamFlushTask?.cancel()
         profilePersistenceTask?.cancel()
         settingsPersistenceTask?.cancel()
@@ -628,6 +792,11 @@ final class AppModel: ObservableObject {
         agentInstructionsTask?.cancel()
         backend.disconnect()
         backendProcess.stop()
+        ollamaRuntime.stopOwnedCLI()
+        if let activationObserver {
+            NotificationCenter.default.removeObserver(activationObserver)
+            self.activationObserver = nil
+        }
     }
 
     // MARK: - Workspace file index (@ mentions)
@@ -864,11 +1033,16 @@ final class AppModel: ObservableObject {
         guard !isUITesting else { return }
         do {
             let health = try await backend.get("/api/health", as: HealthResponse.self)
-            ollamaOnline = health.ollama
-            ollamaErrorMessage = health.error
+            if activeAccount == nil, let host = health.host, !host.isEmpty {
+                lastOllamaHost = host.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            }
+            modelRuntimePhase = health.ollama
+                ? .online
+                : .unavailable(health.error ?? "The model provider is unavailable.")
         } catch {
-            ollamaOnline = false
-            ollamaErrorMessage = error.localizedDescription
+            modelRuntimePhase = agentRuntimePhase.isOnline
+                ? .unavailable(error.localizedDescription)
+                : .recovering("Waiting for the local agent…")
         }
 
         do {
@@ -1390,7 +1564,7 @@ final class AppModel: ObservableObject {
             )
             return
         }
-        guard case .connected = connectionPhase else {
+        guard isAgentOnline else {
             stashUnsent(text, requeue: requeueingOnFailure, preserveDraft: preservingDraftOnFailure)
             return
         }
@@ -1498,7 +1672,7 @@ final class AppModel: ObservableObject {
             showToast("Queued — sends when this turn finishes")
             return
         }
-        guard case .connected = connectionPhase,
+        guard isAgentOnline,
               backend.send(["type": "user_message", "text": text])
         else {
             showToast("Reconnect the local agent to run \(text)")
@@ -1524,7 +1698,7 @@ final class AppModel: ObservableObject {
 
     private func drainQueuedMessages() {
         guard !isBusy, !hasPendingPermission, !queuedMessages.isEmpty else { return }
-        guard case .connected = connectionPhase else { return }
+        guard isAgentOnline else { return }
         send(queuedMessages.removeFirst(), preservingDraftOnFailure: false, requeueingOnFailure: true)
     }
 
@@ -2440,7 +2614,7 @@ final class AppModel: ObservableObject {
             showToast("Finish the active run before creating a plan")
             return
         }
-        guard case .connected = connectionPhase else {
+        guard isAgentOnline else {
             showToast("Reconnect the local agent to create a plan")
             return
         }
@@ -2458,7 +2632,7 @@ final class AppModel: ObservableObject {
         case .keepPlanning:
             planApprovalPending = false
         case .implementAutoAccepting, .implementReviewing:
-            guard case .connected = connectionPhase else {
+            guard isAgentOnline else {
                 showToast("Reconnect the local agent to implement the plan")
                 return
             }
@@ -2582,7 +2756,18 @@ final class AppModel: ObservableObject {
                 body: providerRequestBody(verify: verify),
                 as: ProviderStateResponse.self
             )
+            var ollamaFailure: RuntimePhase?
+            if state.provider == "ollama" {
+                lastOllamaHost = state.host.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                await ensureLocalOllama(at: state.host)
+                if !modelRuntimePhase.isOnline {
+                    ollamaFailure = modelRuntimePhase
+                }
+            }
             await refreshMetadata()
+            if let ollamaFailure, !modelRuntimePhase.isOnline {
+                modelRuntimePhase = ollamaFailure
+            }
             guard announce else { return }
             showToast(
                 state.provider == "remote"
@@ -2759,7 +2944,7 @@ final class AppModel: ObservableObject {
         }
         isDraftingCommitMessage = true
         let client = gitClient
-        let useLocalModel = settings.provider == .ollama && ollamaOnline
+        let useLocalModel = settings.provider == .ollama && isModelOnline
         let host = ollamaHost
         let modelName = selectedModel
         commitDraftTask = Task { [weak self] in
@@ -3035,11 +3220,18 @@ final class AppModel: ObservableObject {
     }
 
     var providerLabel: String {
+        let status: String
+        switch modelRuntimePhase {
+        case .starting: status = "starting"
+        case .online: status = "ready"
+        case .recovering: status = "recovering"
+        case .unavailable: status = "offline"
+        }
         guard let account = activeAccount else {
-            return ollamaOnline ? "Ollama ready" : "Ollama offline"
+            return "Ollama \(status)"
         }
         let name = account.kind == .custom ? "Endpoint" : account.kind.marketingName
-        return ollamaOnline ? "\(name) ready" : "\(name) offline"
+        return "\(name) \(status)"
     }
 
     func runCommand(_ command: CommandAction) {
@@ -3800,8 +3992,8 @@ final class AppModel: ObservableObject {
         // A fixed path so UI tests see a deterministic workspace name ("tmp")
         // regardless of the runner's TMPDIR.
         let workspace = "/tmp"
-        connectionPhase = .connected
-        ollamaOnline = true
+        agentRuntimePhase = .online
+        modelRuntimePhase = .online
         // The suite's inspector tests assume the panel starts open; the
         // collapsed default is covered by a settings unit test instead.
         inspectorCollapsed = false

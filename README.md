@@ -168,11 +168,13 @@ sandbox: the agent runs with your privileges by design.
 
 - Apple Silicon Mac
 - macOS 14 or newer
-- [Ollama](https://ollama.com) running locally
+- [Ollama](https://ollama.com) installed locally (the app or command-line tool)
 - At least one installed, tool-capable model
 
 That is the whole list — the app bundles its own agent runtime, so there is
-nothing else to install. No Python, no Homebrew.
+nothing else to install. No Python, no Homebrew. Locus starts its agent and
+local Ollama automatically; the selected model remains unloaded until the first
+prompt.
 
 New models can also be installed without leaving Locus: open the model picker,
 choose **Browse Hugging Face Models…**, search or paste a repository URL,

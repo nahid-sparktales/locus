@@ -1811,6 +1811,37 @@ def test_local_service_capability_guards_http_and_websocket(client):
         app.state.auth_token = ""
 
 
+def test_parent_pid_configuration_is_tolerant_and_rejects_self(monkeypatch):
+    from ollama_code import server
+
+    monkeypatch.setenv("LOCUS_PARENT_PID", "not-a-pid")
+    assert server._configured_parent_pid() == 0
+    monkeypatch.setenv("LOCUS_PARENT_PID", str(os.getpid()))
+    assert server._configured_parent_pid() == 0
+    monkeypatch.setenv("LOCUS_PARENT_PID", str(os.getppid()))
+    assert server._configured_parent_pid() == os.getppid()
+
+
+def test_parent_watchdog_terminates_after_reparenting(monkeypatch):
+    import asyncio
+    import signal
+
+    from ollama_code import server
+
+    killed: list[tuple[int, int]] = []
+
+    async def immediate_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(server.asyncio, "sleep", immediate_sleep)
+    monkeypatch.setattr(server.os, "getppid", lambda: 1)
+    monkeypatch.setattr(server.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+
+    asyncio.run(server._watch_parent(12345))
+
+    assert killed == [(os.getpid(), signal.SIGTERM)]
+
+
 def test_git_endpoints_work_while_the_agent_is_busy(client):
     from concurrent.futures import Future
 

@@ -1,9 +1,72 @@
 import AppKit
+import Darwin
 import XCTest
 @testable import Locus
 
 final class FeatureLogicTests: XCTestCase {
     // MARK: - Application lifecycle
+
+    func testRuntimePhasesDistinguishRecoveryFromFailure() {
+        XCTAssertFalse(RuntimePhase.starting("starting").isOnline)
+        XCTAssertTrue(RuntimePhase.online.isOnline)
+        XCTAssertEqual(RuntimePhase.recovering("retrying").message, "retrying")
+        XCTAssertEqual(RuntimePhase.unavailable("missing").message, "missing")
+        XCTAssertNil(RuntimePhase.online.message)
+    }
+
+    func testOllamaAutomaticLaunchIsRestrictedToLoopback() {
+        XCTAssertTrue(OllamaRuntime.isLoopback(URL(string: "http://127.0.0.1:11434")!))
+        XCTAssertTrue(OllamaRuntime.isLoopback(URL(string: "http://localhost:11434")!))
+        XCTAssertTrue(OllamaRuntime.isLoopback(URL(string: "http://[::1]:11434")!))
+        XCTAssertFalse(OllamaRuntime.isLoopback(URL(string: "https://models.example.com")!))
+    }
+
+    func testOllamaExecutableSelectionUsesTheFirstInstalledCandidate() {
+        XCTAssertEqual(
+            OllamaRuntime.firstExecutable(in: ["/definitely/missing/ollama", "/bin/sh"]),
+            URL(fileURLWithPath: "/bin/sh")
+        )
+    }
+
+    func testAgentLaunchFallsBackWhenThePreferredPortIsOccupied() throws {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        defer { close(descriptor) }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = 0
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        let bound = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        XCTAssertEqual(bound, 0)
+        XCTAssertEqual(listen(descriptor, 1), 0)
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let read = withUnsafeMutablePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(descriptor, $0, &length)
+            }
+        }
+        XCTAssertEqual(read, 0)
+        let occupiedPort = Int(UInt16(bigEndian: address.sin_port))
+
+        XCTAssertFalse(BackendProcess.portIsAvailable(occupiedPort))
+        let fallback = try XCTUnwrap(BackendProcess.resolvedLaunchPort(preferred: occupiedPort))
+        XCTAssertNotEqual(fallback, occupiedPort)
+        XCTAssertTrue(BackendProcess.portIsAvailable(fallback))
+    }
+
+    func testLegacyAutomaticLaunchSettingIsIgnoredAndNotReencoded() throws {
+        let legacy = #"{"backendURL":"http://127.0.0.1:8791","launchBackendAutomatically":false}"#
+        let settings = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
+        XCTAssertEqual(settings.backendURL, "http://127.0.0.1:8791")
+        let encoded = String(decoding: try JSONEncoder().encode(settings), as: UTF8.self)
+        XCTAssertFalse(encoded.contains("launchBackendAutomatically"))
+    }
 
     func testApplicationProhibitsMultipleProcesses() {
         XCTAssertEqual(

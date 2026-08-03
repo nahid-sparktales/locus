@@ -358,7 +358,7 @@ struct SessionSidebarView: View {
             )
             statusPill(
                 label: model.providerLabel,
-                color: model.ollamaOnline ? LocusTheme.success : LocusTheme.coral,
+                color: runtimeColor(model.modelRuntimePhase),
                 identifier: "sidebar.ollamaStatus"
             )
         }
@@ -380,18 +380,23 @@ struct SessionSidebarView: View {
     }
 
     private var backendStatusColor: Color {
-        switch model.connectionPhase {
-        case .starting: LocusTheme.warning
-        case .connected: LocusTheme.success
-        case .disconnected: LocusTheme.coral
-        }
+        runtimeColor(model.agentRuntimePhase)
     }
 
     private var backendStatusText: String {
-        switch model.connectionPhase {
+        switch model.agentRuntimePhase {
         case .starting: "Agent starting"
-        case .connected: "Agent ready"
-        case .disconnected: "Agent offline"
+        case .online: "Agent ready"
+        case .recovering: "Agent recovering"
+        case .unavailable: "Agent offline"
+        }
+    }
+
+    private func runtimeColor(_ phase: RuntimePhase) -> Color {
+        switch phase {
+        case .starting, .recovering: LocusTheme.warning
+        case .online: LocusTheme.success
+        case .unavailable: LocusTheme.coral
         }
     }
 }

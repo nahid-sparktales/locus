@@ -1086,8 +1086,6 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings.backendURL")
                     TextField("Fallback backend folder", text: $draft.backendRoot)
                         .accessibilityIdentifier("settings.backendRoot")
-                    Toggle("Start the local agent automatically", isOn: $draft.launchBackendAutomatically)
-                        .accessibilityIdentifier("settings.autoLaunch")
                     HStack {
                         Button("Choose Folder…") { chooseBackendFolder() }
                             .accessibilityIdentifier("settings.chooseBackend")
@@ -1113,23 +1111,21 @@ struct SettingsView: View {
 
                 Section("Status") {
                     LabeledContent("Agent") {
-                        Text(connectionLabel)
-                            .foregroundStyle(connectionColor)
+                        Text(runtimeLabel(model.agentRuntimePhase))
+                            .foregroundStyle(runtimeColor(model.agentRuntimePhase))
+                            .accessibilityIdentifier("settings.agentStatus")
+                            .accessibilityLabel(runtimeLabel(model.agentRuntimePhase))
                     }
-                    LabeledContent("Ollama") {
-                        Text(model.ollamaOnline ? "Online" : "Unavailable")
-                            .foregroundStyle(model.ollamaOnline ? LocusTheme.success : LocusTheme.coral)
+                    LabeledContent(model.activeAccount?.displayName ?? "Ollama") {
+                        Text(runtimeLabel(model.modelRuntimePhase))
+                            .foregroundStyle(runtimeColor(model.modelRuntimePhase))
+                            .accessibilityIdentifier("settings.modelStatus")
+                            .accessibilityLabel(runtimeLabel(model.modelRuntimePhase))
                     }
-                    // The reason, not just the state: Ollama's own error (a
-                    // model too large to load, a dead server) used to be
-                    // captured and then shown nowhere.
-                    if !model.ollamaOnline,
-                       let reason = model.ollamaErrorMessage,
-                       !reason.isEmpty
-                    {
+                    if let reason = model.modelRuntimePhase.message, !reason.isEmpty {
                         Text(reason)
                             .font(.system(size: 9))
-                            .foregroundStyle(LocusTheme.coral)
+                            .foregroundStyle(runtimeColor(model.modelRuntimePhase))
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("settings.ollamaError")
                     }
@@ -1137,6 +1133,10 @@ struct SettingsView: View {
                         Text(model.backendLogHint)
                             .font(.system(size: 9))
                             .foregroundStyle(LocusTheme.muted)
+                    }
+                    if !model.isAgentOnline || !model.isModelOnline {
+                        Button("Retry Now") { model.retryLocalServices() }
+                            .accessibilityIdentifier("settings.retryLocalServices")
                     }
                 }
                     }
@@ -1212,19 +1212,20 @@ struct SettingsView: View {
         return [host, status.summary].compactMap { $0 }.joined(separator: " · ")
     }
 
-    private var connectionLabel: String {
-        switch model.connectionPhase {
+    private func runtimeLabel(_ phase: RuntimePhase) -> String {
+        switch phase {
         case .starting: "Starting"
-        case .connected: "Connected"
-        case .disconnected: "Disconnected"
+        case .online: "Online"
+        case .recovering: "Recovering"
+        case .unavailable: "Unavailable"
         }
     }
 
-    private var connectionColor: Color {
-        switch model.connectionPhase {
-        case .starting: LocusTheme.warning
-        case .connected: LocusTheme.success
-        case .disconnected: LocusTheme.coral
+    private func runtimeColor(_ phase: RuntimePhase) -> Color {
+        switch phase {
+        case .starting, .recovering: LocusTheme.warning
+        case .online: LocusTheme.success
+        case .unavailable: LocusTheme.coral
         }
     }
 

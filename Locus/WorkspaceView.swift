@@ -12,8 +12,13 @@ struct WorkspaceView: View {
         VStack(spacing: 0) {
             header
 
-            if case .disconnected(let message) = model.connectionPhase {
-                disconnectedBanner(message)
+            switch model.agentRuntimePhase {
+            case .recovering(let message):
+                runtimeBanner(message, recovering: true)
+            case .unavailable(let message):
+                runtimeBanner(message, recovering: false)
+            case .starting, .online:
+                EmptyView()
             }
 
             if model.transcriptSearchPresented {
@@ -221,10 +226,10 @@ struct WorkspaceView: View {
         }
     }
 
-    private func disconnectedBanner(_ message: String) -> some View {
+    private func runtimeBanner(_ message: String, recovering: Bool) -> some View {
         HStack(spacing: 9) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(LocusTheme.coral)
+            Image(systemName: recovering ? "arrow.clockwise" : "exclamationmark.triangle.fill")
+                .foregroundStyle(recovering ? LocusTheme.warning : LocusTheme.coral)
             Text(message)
                 .font(.system(size: 10, weight: .medium))
                 .lineLimit(1)
@@ -235,16 +240,18 @@ struct WorkspaceView: View {
                 .underline()
                 .accessibilityIdentifier("banner.settings")
             Button("Retry") {
-                Task { await model.bootstrap() }
+                model.retryLocalServices()
             }
             .font(.system(size: 9, weight: .semibold))
             .accessibilityIdentifier("banner.retry")
         }
         .padding(.horizontal, 18)
         .frame(height: 38)
-        .background(LocusTheme.coral.opacity(0.09))
+        .background((recovering ? LocusTheme.warning : LocusTheme.coral).opacity(0.09))
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.coral.opacity(0.25)).frame(height: 1)
+            Rectangle()
+                .fill((recovering ? LocusTheme.warning : LocusTheme.coral).opacity(0.25))
+                .frame(height: 1)
         }
     }
 }
@@ -544,9 +551,9 @@ private struct EmptyConversationView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
                 Circle()
-                    .fill(model.ollamaOnline ? LocusTheme.success : LocusTheme.warning)
+                    .fill(runtimeColor)
                     .frame(width: 7, height: 7)
-                Text("LOCAL AGENT · READY WHEN YOU ARE")
+                Text(runtimeStatus)
                     .font(.system(size: 8, weight: .bold))
                     .tracking(0.9)
                     .foregroundStyle(LocusTheme.muted)
@@ -602,6 +609,27 @@ private struct EmptyConversationView: View {
             }
         }
         .frame(maxWidth: 700, alignment: .leading)
+    }
+
+    private var activeRuntimePhase: RuntimePhase {
+        model.isAgentOnline ? model.modelRuntimePhase : model.agentRuntimePhase
+    }
+
+    private var runtimeColor: Color {
+        switch activeRuntimePhase {
+        case .starting, .recovering: LocusTheme.warning
+        case .online: LocusTheme.success
+        case .unavailable: LocusTheme.coral
+        }
+    }
+
+    private var runtimeStatus: String {
+        switch activeRuntimePhase {
+        case .starting: "LOCAL SERVICES · STARTING"
+        case .online: "LOCAL SERVICES · READY WHEN YOU ARE"
+        case .recovering: "LOCAL SERVICES · RECOVERING"
+        case .unavailable: "LOCAL SERVICES · UNAVAILABLE"
+        }
     }
 }
 

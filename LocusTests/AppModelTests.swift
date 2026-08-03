@@ -257,7 +257,7 @@ final class AppModelTests: XCTestCase {
     @MainActor
     func testProviderLabelNamesTheAccountInUse() {
         let model = AppModel(startImmediately: false)
-        model.ollamaOnline = true
+        model.modelRuntimePhase = .online
         XCTAssertEqual(model.providerLabel, "Ollama ready")
 
         let account = seedAccount(model, kind: .claude, name: "Work")
@@ -441,7 +441,7 @@ final class AppModelTests: XCTestCase {
     @MainActor
     func testSendWhileBusyQueuesInsteadOfDropping() {
         let model = AppModel(startImmediately: false)
-        model.connectionPhase = .connected
+        model.agentRuntimePhase = .online
         model.isBusy = true
 
         model.send("follow-up request")
@@ -454,7 +454,7 @@ final class AppModelTests: XCTestCase {
     @MainActor
     func testQueueDrainsAfterTurnDone() async throws {
         let model = AppModel(startImmediately: false)
-        model.connectionPhase = .connected
+        model.agentRuntimePhase = .online
         model.isBusy = true
         model.send("queued message")
         XCTAssertEqual(model.queuedMessages.count, 1)
@@ -1369,7 +1369,7 @@ final class AppModelTests: XCTestCase {
     @MainActor
     func testPlanModeDispatchLatchesTheTurnMode() {
         let model = AppModel(startImmediately: false)
-        model.connectionPhase = .connected
+        model.agentRuntimePhase = .online
 
         model.selectedMode = .plan
         model.send("Sketch the work")
@@ -1379,7 +1379,7 @@ final class AppModelTests: XCTestCase {
     @MainActor
     func testForwardedSlashTurnIsNeverAPlanDispatch() {
         let model = AppModel(startImmediately: false)
-        model.connectionPhase = .connected
+        model.agentRuntimePhase = .online
         model.selectedMode = .plan
 
         model.send("/init")
@@ -1492,7 +1492,7 @@ final class AppModelTests: XCTestCase {
     @MainActor
     func testImplementingThePlanSwitchesToBuildMode() {
         let model = AppModel(startImmediately: false)
-        model.connectionPhase = .connected
+        model.agentRuntimePhase = .online
         armPlanApproval(model)
 
         model.resolvePlanApproval(.implementReviewing)
@@ -1504,7 +1504,7 @@ final class AppModelTests: XCTestCase {
     @MainActor
     func testImplementingWhileDisconnectedKeepsThePromptPending() {
         let model = AppModel(startImmediately: false)
-        model.connectionPhase = .disconnected("gone")
+        model.agentRuntimePhase = .unavailable("gone")
         armPlanApproval(model)
 
         model.resolvePlanApproval(.implementReviewing)

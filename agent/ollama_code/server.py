@@ -15,6 +15,7 @@ import base64
 import binascii
 import ipaddress
 import os
+import signal
 import sys
 from concurrent.futures import Future
 from contextlib import asynccontextmanager, contextmanager
@@ -183,14 +184,40 @@ def _command_error(svc: ChatService, operation: str, message: str) -> None:
     })
 
 
+def _configured_parent_pid() -> int:
+    """Return the Locus parent PID, or 0 for standalone/CLI servers."""
+    try:
+        value = int(os.environ.get("LOCUS_PARENT_PID", "0"))
+    except ValueError:
+        return 0
+    return value if value > 1 and value != os.getpid() else 0
+
+
+async def _watch_parent(expected_pid: int) -> None:
+    """Stop an app-owned server after Locus disappears unexpectedly."""
+    while True:
+        await asyncio.sleep(1)
+        # macOS reparents an orphan to launchd (PID 1). Checking the direct
+        # parent avoids signalling an unrelated process if a PID is reused.
+        if os.getppid() != expected_pid:
+            os.kill(os.getpid(), signal.SIGTERM)
+            return
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield
-    # Never leave a console command orphaned by a clean shutdown.
-    svc: ChatService | None = getattr(app.state, "service", None)
-    if svc is not None:
-        svc.terminal.cancel_all(force=True)
-        svc.core.close()
+    parent_pid = _configured_parent_pid()
+    parent_watch = asyncio.create_task(_watch_parent(parent_pid)) if parent_pid else None
+    try:
+        yield
+    finally:
+        if parent_watch is not None:
+            parent_watch.cancel()
+        # Never leave a console command orphaned by a clean shutdown.
+        svc: ChatService | None = getattr(app.state, "service", None)
+        if svc is not None:
+            svc.terminal.cancel_all(force=True)
+            svc.core.close()
 
 
 app = FastAPI(title="ollama-code", version=__version__, lifespan=lifespan)

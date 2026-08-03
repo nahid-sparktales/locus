@@ -1,10 +1,20 @@
+import Darwin
 import Foundation
+
+enum BackendLaunchResult: Equatable {
+    case running(URL)
+    case failed(String)
+}
 
 final class BackendProcess {
     private var process: Process?
     private var outputPipe: Pipe?
+    private var runningPort: Int?
+    private var stopping = false
     private let logLock = NSLock()
     private var logBuffer = Data()
+
+    var onUnexpectedExit: ((Int32, String) -> Void)?
 
     var isRunning: Bool { process?.isRunning == true }
 
@@ -16,16 +26,28 @@ final class BackendProcess {
     }
 
     @discardableResult
-    func start(root: String, port: Int, cwd: String) -> Bool {
-        if isRunning { return true }
+    func start(root: String, port preferredPort: Int, cwd: String) -> BackendLaunchResult {
+        if isRunning, let runningPort,
+           let url = URL(string: "http://127.0.0.1:\(runningPort)")
+        {
+            return .running(url)
+        }
 
         let launch = bundledRuntime() ?? externalRuntime(root: root)
         guard let launch else {
-            return false
+            return .failed("Could not find the bundled agent runtime or a development runtime at \(root).")
+        }
+        guard let port = Self.resolvedLaunchPort(preferred: preferredPort),
+              let endpoint = URL(string: "http://127.0.0.1:\(port)")
+        else {
+            return .failed("Could not reserve a local port for the agent.")
         }
 
         let process = Process()
         let pipe = Pipe()
+        logLock.lock()
+        logBuffer.removeAll(keepingCapacity: true)
+        logLock.unlock()
         // Launching the venv's symlinked interpreter directly from a Finder app
         // can stall while Python resolves its embedded runtime. `env` preserves
         // the venv path as argv[0] and behaves consistently from Xcode or Finder.
@@ -52,6 +74,7 @@ final class BackendProcess {
         var environment = ProcessInfo.processInfo.environment
         environment["PYTHONUNBUFFERED"] = "1"
         environment["LOCUS_AGENT_TOKEN"] = BackendSecurity.launchToken
+        environment["LOCUS_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
         // The bundled runtime lives inside the signed, sealed .app. A .pyc
         // written there at import time would invalidate the code signature,
         // so byte-code writing must stay off no matter where we run from.
@@ -78,18 +101,82 @@ final class BackendProcess {
             ].joined(separator: ":")
         }
         process.environment = environment
+        process.terminationHandler = { [weak self, weak process] terminated in
+            guard let self, let process, process === terminated else { return }
+            let output = self.recentOutput
+            DispatchQueue.main.async { [weak self, weak process] in
+                guard let self, let process, self.process === process else { return }
+                let expected = self.stopping
+                self.process = nil
+                self.outputPipe?.fileHandleForReading.readabilityHandler = nil
+                self.outputPipe = nil
+                self.runningPort = nil
+                self.stopping = false
+                if !expected {
+                    self.onUnexpectedExit?(terminated.terminationStatus, output)
+                }
+            }
+        }
 
         do {
             try process.run()
+            stopping = false
             self.process = process
             outputPipe = pipe
-            return true
+            runningPort = port
+            return .running(endpoint)
         } catch {
             pipe.fileHandleForReading.readabilityHandler = nil
             self.process = nil
             outputPipe = nil
-            return false
+            runningPort = nil
+            return .failed("Could not launch the local agent: \(error.localizedDescription)")
         }
+    }
+
+    static func resolvedLaunchPort(preferred: Int) -> Int? {
+        if preferred > 0, portIsAvailable(preferred) { return preferred }
+        return availableLoopbackPort()
+    }
+
+    static func portIsAvailable(_ port: Int) -> Bool {
+        boundLoopbackPort(requested: port) != nil
+    }
+
+    private static func availableLoopbackPort() -> Int? {
+        boundLoopbackPort(requested: 0)
+    }
+
+    /// Binds briefly to loopback to ask the kernel for an unused port. The
+    /// socket is closed before Python starts; the remaining race is tiny, and
+    /// an immediate bind failure is still caught by process-exit recovery.
+    private static func boundLoopbackPort(requested port: Int) -> Int? {
+        guard (0...Int(UInt16.max)).contains(port) else { return nil }
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { return nil }
+        defer { close(descriptor) }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = in_port_t(UInt16(port).bigEndian)
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+
+        let didBind = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard didBind == 0 else { return nil }
+
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let didRead = withUnsafeMutablePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(descriptor, $0, &length)
+            }
+        }
+        guard didRead == 0 else { return nil }
+        return Int(UInt16(bigEndian: address.sin_port))
     }
 
     private func appendLog(_ data: Data) {
@@ -149,10 +236,13 @@ final class BackendProcess {
 
     /// Asks the child to exit and returns immediately.
     private func terminate() -> Process? {
+        stopping = true
         outputPipe?.fileHandleForReading.readabilityHandler = nil
         outputPipe = nil
         guard let process, process.isRunning else {
             self.process = nil
+            runningPort = nil
+            stopping = false
             return nil
         }
         process.terminate()
@@ -166,6 +256,7 @@ final class BackendProcess {
     func stopAndWait() async {
         guard let process = terminate() else { return }
         self.process = nil
+        runningPort = nil
         await Task.detached(priority: .userInitiated) {
             if !Self.waitForExit(process, timeout: 3) {
                 kill(process.processIdentifier, SIGKILL)
@@ -180,6 +271,7 @@ final class BackendProcess {
     func stop(maxWait: TimeInterval = 0.5) {
         guard let process = terminate() else { return }
         self.process = nil
+        runningPort = nil
         if !Self.waitForExit(process, timeout: maxWait) {
             kill(process.processIdentifier, SIGKILL)
         }

@@ -743,7 +743,6 @@ struct AppSettings: Codable, Hashable {
     var backendURL = "http://127.0.0.1:8791"
     var backendRoot = NSString(string: "~/Documents/locus/agent").expandingTildeInPath
     var previewURL = "http://localhost:3000"
-    var launchBackendAutomatically = true
     var notifyOnCompletion = true
     var provider: ModelProvider = .ollama
     /// Endpoint base URL. The API key is not stored here — see `Keychain`.
@@ -800,8 +799,6 @@ struct AppSettings: Codable, Hashable {
         backendURL = try container.decodeIfPresent(String.self, forKey: .backendURL) ?? defaults.backendURL
         backendRoot = try container.decodeIfPresent(String.self, forKey: .backendRoot) ?? defaults.backendRoot
         previewURL = try container.decodeIfPresent(String.self, forKey: .previewURL) ?? defaults.previewURL
-        launchBackendAutomatically = try container.decodeIfPresent(Bool.self, forKey: .launchBackendAutomatically)
-            ?? defaults.launchBackendAutomatically
         notifyOnCompletion = try container.decodeIfPresent(Bool.self, forKey: .notifyOnCompletion)
             ?? defaults.notifyOnCompletion
         provider = try container.decodeIfPresent(ModelProvider.self, forKey: .provider)

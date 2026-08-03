@@ -218,7 +218,7 @@ struct ModelLibraryView: View {
 
             Spacer()
 
-            if model.ollamaOnline {
+            if model.isModelOnline {
                 Label("Ollama ready", systemImage: "checkmark.circle.fill")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(LocusTheme.success)
@@ -512,7 +512,7 @@ struct ModelLibraryView: View {
                     .tint(LocusTheme.ink)
                     .disabled(
                         library.selectedVariant == nil
-                            || !model.ollamaOnline
+                            || !model.isModelOnline
                             || library.isLoadingVariants
                     )
                     .accessibilityIdentifier("modelLibrary.download")
