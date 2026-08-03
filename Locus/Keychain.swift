@@ -42,8 +42,11 @@ enum Keychain {
         ]
         let attributes: [String: Any] = [
             kSecValueData as String: data,
-            // Available without unlocking on every app launch, but never
-            // synced to iCloud or another device.
+            // Never synced to iCloud or another device: kSecAttrSynchronizable
+            // is unset, and that alone is what keeps the key on this Mac.
+            // kSecAttrAccessible is set for the day these move to the
+            // data-protection keychain — on macOS it binds only there, and is
+            // ignored for the legacy items this stores today.
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
         ]
 
