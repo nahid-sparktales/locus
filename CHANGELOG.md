@@ -4,6 +4,19 @@
 
 ### Added
 
+- **Extensions — plugins, skills, and MCP servers.** Locus can install plugins
+  and skills from a marketplace catalog, and connect to Model Context Protocol
+  servers whose tools then appear to the model alongside the built-in ones.
+  Remote servers support OAuth, with tokens held in the macOS Keychain and
+  handed to the local agent only through a transient credential endpoint; each
+  server carries its own default tool-approval policy. The App Store build is
+  sandboxed, so it connects to remote servers only — `stdio` servers, which run
+  a local command, are refused there. Managed under **Settings ▸ Extensions**.
+- **Image attachments in Just Chat.** Paste or attach PNG, JPEG, GIF, or WebP
+  images — up to 10 per message, 15 MB each and 25 MB in total — and they are
+  sent to any model that accepts them. Attachments count toward the context
+  meter and the compaction budget like any other content, because they stay in
+  the conversation and are re-sent on every following turn.
 - **Local runtimes are supervised instead of assumed.** Locus now starts the
   shared Ollama application when it is installed, falls back when it is not, and
   carries an explicit runtime phase — starting, online, recovering, unavailable —

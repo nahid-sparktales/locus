@@ -427,3 +427,29 @@ def test_marketplace_plugin_skill_mcp_and_restart_end_to_end(tmp_path):
     assert any(item["id"] == installed["id"] for item in restarted.snapshot()["plugins"])
     assert any(item["id"] == "fixture:review" for item in restarted.skills())
     assert any(item["id"] == "plugin:fixture:fixture" for item in restarted.mcp_servers())
+
+
+def test_degraded_state_read_is_reported_in_snapshot_errors(tmp_path):
+    # The app reclaims orphaned MCP Keychain entries against snapshot()["errors"]:
+    # an empty list means "this server list is complete, anything missing from it
+    # is an orphan". A silently degraded read would therefore delete live OAuth
+    # refresh tokens, so a read that loses servers has to say so.
+    state = tmp_path / "state"
+    manager = ExtensionManager(str(tmp_path), root=state, sandboxed=False)
+    manager.upsert_mcp_server({"name": "remote", "transport": "streamable_http",
+                               "url": "https://example.com/mcp"})
+    assert manager.snapshot()["errors"] == []
+    assert manager.snapshot()["mcp_servers"]
+
+    # Corrupt the state file the way a truncated write or a reset container would.
+    (state / "state.json").write_text("{ not json")
+    degraded = ExtensionManager(str(tmp_path), root=state, sandboxed=False)
+    assert degraded.snapshot()["mcp_servers"] == []
+    assert degraded.snapshot()["errors"], "a lost server list must be reported"
+
+
+def test_missing_state_file_is_not_an_error(tmp_path):
+    # A first run genuinely has no servers; reporting that as degraded would
+    # permanently disable orphan reclamation.
+    fresh = ExtensionManager(str(tmp_path), root=tmp_path / "nothing-here", sandboxed=False)
+    assert fresh.snapshot()["errors"] == []

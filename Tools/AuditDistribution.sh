@@ -27,7 +27,7 @@ licenses="${resources}/ThirdPartyLicenses/python-build-standalone-20260728"
 }
 
 for notice in \
-    "| websockets | 15.0.1 |"
+    "| websockets | 17.0 |"
 do
     /usr/bin/grep -Fq -- "${notice}" "${resources}/ThirdPartyNotices.md" || {
         echo "error: runtime notice is missing the pinned component: ${notice}" >&2
@@ -40,7 +40,7 @@ done
 # signed as an inheriting sandbox helper, so launching it standalone is killed
 # by the kernel (SIGTRAP) — an exec-based check could only ever pass for the
 # direct-download build, and failed every ReleaseMAS archive.
-for pin in websockets:15.0.1
+for pin in websockets:17.0
 do
     name="${pin%%:*}"
     want="${pin##*:}"

@@ -37,7 +37,7 @@ struct ShortcutsSheet: View {
         ]),
         Group(name: "Panels", shortcuts: [
             Shortcut(keys: "⌘0", title: "Show/hide sidebar"),
-            Shortcut(keys: "⌘1–⌘8", title: "Plan · Changes · Files · Console · Preview · Checkpoints · AGENTS.md · Workflows"),
+            Shortcut(keys: "⌘1–⌘7", title: "Plan · Changes · Files · Console · Preview · Checkpoints · AGENTS.md"),
             Shortcut(keys: "⌘⌥I", title: "Show/hide inspector"),
         ]),
         Group(name: "Modes", shortcuts: [

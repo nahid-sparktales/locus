@@ -1080,6 +1080,17 @@ final class AppModel: ObservableObject {
             let response = try await backend.get("/api/extensions", as: ExtensionsResponse.self)
             extensions = response
             extensionErrorMessage = response.errors.first
+            // Reclaim OAuth tokens whose server is gone — but only from a
+            // clean read. An empty `errors` is the agent's promise that this
+            // list is complete (ExtensionManager._load_state reports a
+            // degraded read through it); without that promise a truncated or
+            // unreadable state file would present as "no servers" and this
+            // would delete live third-party refresh tokens rather than orphans.
+            if response.errors.isEmpty {
+                Keychain.removeOrphanedMCPCredentials(
+                    keeping: Set(response.mcpServers.map(\.id))
+                )
+            }
             await restoreExtensionCredentials(for: response.mcpServers)
             if let response = try? await backend.get("/api/tools", as: ExtensionToolsResponse.self) {
                 extensionTools = response.tools

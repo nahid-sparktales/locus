@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from ollama_code import config as config_mod
+from ollama_code import core as core_module
 from ollama_code import sessions as sessions_mod
 from ollama_code.core import AgentCore
 from ollama_code.ollama import ChatResponse, OllamaError, process_chunk
@@ -2600,6 +2601,53 @@ def test_approx_tokens_counts_tool_call_arguments(tmp_path):
         {"type": "function", "function": {"name": "write_file", "arguments": {"content": "z" * 4000}}}
     ]}]
     assert core.approx_tokens() > 900
+
+
+def test_approx_tokens_counts_image_attachments(tmp_path):
+    # Attachments stay in the conversation and are re-sent every turn, so
+    # leaving them out let a chat sit near the window with the meter reading
+    # almost empty and compaction never firing.
+    core = _core(tmp_path, [])
+    core.messages = [{
+        "role": "user",
+        "content": "what is in this screenshot?",
+        "attachments": [{"mime_type": "image/png", "data": "z" * 40_000}],
+    }]
+    assert core.approx_tokens() > core_module.IMAGE_TOKENS_BASE
+
+
+def test_image_attachments_can_never_exhaust_the_budget(tmp_path):
+    # Charging encoded length as tokens overstated a screenshot by orders of
+    # magnitude, which put every image-bearing session over budget and made
+    # compaction destroy the very image it was accounting for. The charge is
+    # bounded so an attachment can never be the reason a session compacts.
+    core = _core(tmp_path, [])
+    # The largest single image the chat endpoint accepts, base64-encoded.
+    core.messages = [{
+        "role": "user",
+        "content": "",
+        "attachments": [{"mime_type": "image/png", "data": "z" * (15 * 1024 * 1024 * 4 // 3)}],
+    }]
+    assert core.approx_tokens() <= core_module.IMAGE_TOKENS_MAX
+    # And the full advertised batch still leaves a normal window usable.
+    core.messages = [{
+        "role": "user",
+        "content": "",
+        "attachments": [
+            {"mime_type": "image/png", "data": "z" * (2 * 1024 * 1024)} for _ in range(10)
+        ],
+    }]
+    assert core.approx_tokens() <= 10 * core_module.IMAGE_TOKENS_MAX
+
+
+def test_ws_frame_cap_admits_the_largest_advertised_message(tmp_path):
+    # The transport cap has to clear the limits the chat endpoint advertises,
+    # or an oversized image is a 1009 socket close instead of the friendly
+    # validation error, and the validators are unreachable.
+    from ollama_code import server as server_module
+
+    base64_expansion = server_module.MAX_CHAT_IMAGE_TOTAL_BYTES * 4 // 3
+    assert server_module.MAX_WS_MESSAGE_BYTES > base64_expansion
 
 
 # -------------------------------------------------------- context window

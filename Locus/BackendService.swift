@@ -118,10 +118,6 @@ final class BackendService {
         try await request(path, method: "PATCH", body: body, timeout: 10, as: type)
     }
 
-    func put<T: Decodable>(_ path: String, body: [String: Any], as type: T.Type) async throws -> T {
-        try await request(path, method: "PUT", body: body, timeout: 10, as: type)
-    }
-
     func delete<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
         try await request(path, method: "DELETE", body: nil, timeout: 10, as: type)
     }
@@ -224,13 +220,33 @@ final class BackendService {
 
     private func validate(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "Unknown backend error"
             throw NSError(
                 domain: "Locus.Backend",
                 code: (response as? HTTPURLResponse)?.statusCode ?? -1,
-                userInfo: [NSLocalizedDescriptionKey: message]
+                userInfo: [NSLocalizedDescriptionKey: Self.backendMessage(from: data)]
             )
         }
+    }
+
+    /// The agent reports failures as FastAPI does — `{"detail": "…"}` for a
+    /// raised error, `{"detail": [{"msg": "…"}, …]}` for request validation.
+    /// Surfacing the body verbatim put the braces in front of the user, so the
+    /// carefully worded messages the agent sends arrived as machine output.
+    nonisolated static func backendMessage(from data: Data) -> String {
+        let fallback = String(data: data, encoding: .utf8) ?? ""
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let body = object as? [String: Any],
+              let detail = body["detail"]
+        else { return fallback.isEmpty ? "Unknown backend error" : fallback }
+
+        if let message = detail as? String {
+            return message.isEmpty ? fallback : message
+        }
+        if let items = detail as? [[String: Any]] {
+            let messages = items.compactMap { $0["msg"] as? String }
+            if !messages.isEmpty { return messages.joined(separator: "\n") }
+        }
+        return fallback.isEmpty ? "Unknown backend error" : fallback
     }
 
     /// Characters allowed unescaped in a query value. `urlQueryAllowed` alone

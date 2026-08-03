@@ -566,7 +566,7 @@ not grant rights to the project's trademarks. The name *Locus* and the SparkTale
 identity are not part of what the license gives away.
 
 The app bundles third-party components — CPython and its statically linked
-libraries, and 66 pinned Python packages — which remain under their own licenses.
+libraries, and 41 pinned Python packages — which remain under their own licenses.
 The inventory, versions and licenses are in
 [Locus/Resources/ThirdPartyNotices.md](Locus/Resources/ThirdPartyNotices.md), the
 full texts ship inside the app, and `Tools/AuditDistribution.sh` fails a release

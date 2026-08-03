@@ -93,6 +93,20 @@ SUMMARY_ALLOWANCE_TOKENS = 512
 #: The budget is scaled to absorb the bias rather than pretending otherwise.
 ESTIMATE_OPTIMISM = 0.75
 
+#: An image is billed by its pixel dimensions, not its byte count, so the
+#: encoded length is the wrong scale entirely — a 5 MB lossless PNG of a small
+#: crop costs a model less than a compressed 200 KB photo of a large one, and
+#: charging base64 characters as tokens overstates a screenshot by a factor of
+#: hundreds. That matters more than the inaccuracy: one image would exceed the
+#: whole budget, and compaction would fire and destroy the very image it was
+#: accounting for. So the charge is bounded — large enough that an attachment
+#: is never invisible to the meter, small enough that it can never be the
+#: reason a session is over budget.
+IMAGE_TOKENS_BASE = 700
+IMAGE_TOKENS_MAX = 3_000
+#: Decoded bytes per additional token of the size signal.
+IMAGE_TOKENS_BYTES_EACH = 6_000
+
 #: Tool outputs shorter than this are cheaper to keep than to stub: interrupt
 #: notices, denials and empty results carry signal the model still needs, and
 #: skipping them makes eviction idempotent — a stub is never re-stubbed.
@@ -129,6 +143,20 @@ def _different_host(before: str, after: str) -> bool:
         return rest.split("/", 1)[0].lower()
 
     return bool(before) and bool(after) and host(before) != host(after)
+
+
+def _attachment_tokens(encoded: str) -> int:
+    """Bounded token estimate for one base64 image attachment.
+
+    Scales gently with the decoded size so a large paste is not free, and caps
+    hard so no number of attachments can push a session over its budget on
+    weight alone.
+    """
+    decoded_bytes = len(encoded) * 3 // 4
+    return min(
+        IMAGE_TOKENS_MAX,
+        IMAGE_TOKENS_BASE + decoded_bytes // IMAGE_TOKENS_BYTES_EACH,
+    )
 
 
 def _looks_like_window_overflow(error_text: str) -> bool:
@@ -661,11 +689,21 @@ class AgentCore:
         Tool-call arguments are included: they are often the largest part of a
         message, and leaving them out made the context meter read low exactly
         when the window was filling up.
+
+        Image attachments are included for the same reason. They stay in the
+        conversation and are re-sent on every subsequent request, so a chat
+        with one screenshot in it can sit near the window while the meter reads
+        almost empty and compaction never fires. They are charged a bounded
+        estimate rather than their encoded length — see IMAGE_TOKENS_MAX.
         """
         total = 0
+        image_tokens = 0
         for message in self.messages:
             total += len(str(message.get("content", "")))
             total += len(str(message.get("reasoning_content", "")))
+            for attachment in message.get("attachments") or []:
+                if isinstance(attachment, dict) and attachment.get("data"):
+                    image_tokens += _attachment_tokens(str(attachment["data"]))
             for block in message.get("anthropic_content") or []:
                 if isinstance(block, dict) and block.get("type") in {
                     "thinking",
@@ -686,7 +724,9 @@ class AgentCore:
                     except (TypeError, ValueError):
                         arguments = str(arguments)
                 total += len(str(arguments))
-        return total // 4
+        # Image tokens are added after the divide: they are already a token
+        # count, not a character count.
+        return total // 4 + image_tokens
 
     def session_info(self) -> dict[str, Any]:
         approx = self.approx_tokens()

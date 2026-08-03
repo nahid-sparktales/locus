@@ -686,7 +686,10 @@ private struct MCPServerEditorView: View {
     @Environment(\.dismiss) private var dismiss
     let server: ExtensionMCPServer?
     @State private var name = ""
-    @State private var transport = "streamable-http"
+    // Must match the agent's own spelling (extensions.py writes "streamable_http");
+    // the hyphenated form matched neither Picker tag nor the saved value, so the
+    // control rendered blank when editing a correctly configured server.
+    @State private var transport = "streamable_http"
     @State private var url = ""
     @State private var command = ""
     @State private var arguments = ""
@@ -704,7 +707,7 @@ private struct MCPServerEditorView: View {
             Form {
                 TextField("Name", text: $name)
                 Picker("Transport", selection: $transport) {
-                    Text("Remote (Streamable HTTP)").tag("streamable-http")
+                    Text("Remote (Streamable HTTP)").tag("streamable_http")
                     Text("Local command (stdio)").tag("stdio")
                 }
                 if transport == "stdio" {

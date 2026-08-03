@@ -236,6 +236,55 @@ The busy check is atomic and happens before any field is applied. Emits
 `session_info` on the WS when anything changed.
 `model` and `context_window` are persisted to `~/.ollama-code/config.json`.
 
+### `POST /api/context/reload`
+
+Re-reads the workspace context files (`AGENTS.md` and friends) without
+restarting the session. Response reports what was reloaded.
+
+### Extensions: plugins, skills, MCP servers and marketplaces
+
+The extension surface shares one error and concurrency contract:
+
+- A rejected request raises `ExtensionError`, which becomes **HTTP 422** with
+  the message in `detail` (`{"detail": "remote MCP URLs must use HTTPS"}`).
+  Clients should render `detail`, not the raw body.
+- The plugin, skill and MCP mutation routes run under `state_mutation()`, which
+  returns **409** while a turn is in flight, the same rule `POST /api/config`
+  uses. The three marketplace routes, `POST /api/extensions/mcp/test` and
+  `POST /api/extensions/mcp/credentials` are **not** gated and are accepted
+  mid-turn.
+- Those gated changes refresh the tool registry and emit `extensions_changed`
+  on the WebSocket, so clients re-read state rather than tracking it locally.
+  The exception is `POST /api/extensions/mcp/credentials`, which emits
+  `mcp_credential_refresh` with a `server_id` instead.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/extensions` | Full snapshot: plugins, skills, MCP servers, marketplaces, and any load `errors`. A non-empty `errors` means the lists may be partial. |
+| GET | `/api/extensions/catalog` | Catalog entries; optional `query` and `marketplace_id` filters. |
+| GET | `/api/extensions/catalog/trust` | Trust review of one catalog plugin before installing it. Requires both `marketplace_id` and `plugin` query parameters. |
+| POST | `/api/extensions/marketplaces` | Add a marketplace source. |
+| POST | `/api/extensions/marketplaces/{marketplace_id}/refresh` | Re-fetch one marketplace. |
+| DELETE | `/api/extensions/marketplaces/{marketplace_id}` | Remove a marketplace. |
+| POST | `/api/extensions/plugins/install` | Install a plugin from a catalog entry or source. |
+| POST | `/api/extensions/plugins/enable` | Enable or disable an installed plugin. |
+| POST | `/api/extensions/plugins/update` | Update a plugin to its newest version. |
+| POST | `/api/extensions/plugins/rollback` | Restore the previously installed version. |
+| DELETE | `/api/extensions/plugins/{plugin_id:path}` | Uninstall a plugin. |
+| POST | `/api/extensions/skills/import` | Import a skill. |
+| POST | `/api/extensions/skills/enable` | Enable or disable a skill. |
+| DELETE | `/api/extensions/skills/{skill_id:path}` | Remove a skill. |
+| POST | `/api/extensions/mcp` | Create or update an MCP server. `transport` is `"streamable_http"` or `"stdio"` — note the underscore. |
+| POST | `/api/extensions/mcp/enable` | Enable or disable a server. |
+| POST | `/api/extensions/mcp/test` | Probe a server's connectivity. |
+| POST | `/api/extensions/mcp/reconnect` | Drop and re-establish a server's session. |
+| POST | `/api/extensions/mcp/policy` | Set a server's default tool-approval mode. |
+| POST | `/api/extensions/mcp/credentials` | Hand transient credentials to the agent. Secrets are held in memory only — the app stores them in the macOS Keychain and replays them here. |
+| DELETE | `/api/extensions/mcp/{server_id:path}` | Remove a server. Clients must also delete the matching Keychain entry. |
+
+`stdio` transport is refused when the agent is sandboxed, so App Store builds
+can only use remote servers.
+
 ---
 
 ## 2. WebSocket lifecycle

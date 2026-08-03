@@ -22,8 +22,10 @@ enum Keychain {
     static let providerAccountPrefix = "provider-account-"
 
     static func mcpCredentialKey(_ serverID: String) -> String {
-        "mcp-server-\(serverID)"
+        "\(mcpCredentialPrefix)\(serverID)"
     }
+
+    static let mcpCredentialPrefix = "mcp-server-"
 
     private static let service = "io.sparktales.locus"
 
@@ -107,6 +109,19 @@ enum Keychain {
     static func removeOrphanedProviderKeys(keeping liveAccounts: Set<String>) {
         for account in allAccounts()
         where account.hasPrefix(providerAccountPrefix) && !liveAccounts.contains(account) {
+            remove(account: account)
+        }
+    }
+
+    /// The same reclamation for MCP credentials. These hold OAuth access and
+    /// refresh tokens for third-party servers, so a key left behind by a
+    /// server removed outside the app — a hand-edited or reset extensions
+    /// state file, or a crash between the backend delete and the Keychain
+    /// delete — is a live third-party token nothing else would ever collect.
+    static func removeOrphanedMCPCredentials(keeping liveServerIDs: Set<String>) {
+        let live = Set(liveServerIDs.map(mcpCredentialKey))
+        for account in allAccounts()
+        where account.hasPrefix(mcpCredentialPrefix) && !live.contains(account) {
             remove(account: account)
         }
     }

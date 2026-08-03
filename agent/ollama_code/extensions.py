@@ -390,9 +390,10 @@ class ExtensionManager:
         self.sandboxed = bool(os.environ.get("APP_SANDBOX_CONTAINER_ID")) \
             if sandboxed is None else sandboxed
         self._guard = threading.RLock()
+        # Before _load_state, which reports a degraded read through it.
+        self._errors: list[str] = []
         self._state = self._load_state()
         self._credential_values: dict[str, dict[str, Any]] = {}
-        self._errors: list[str] = []
         self.discover_workspace_marketplaces()
 
     @staticmethod
@@ -407,16 +408,33 @@ class ExtensionManager:
         }
 
     def _load_state(self) -> dict[str, Any]:
+        """Read the on-disk state, degrading to defaults rather than failing.
+
+        A degraded read is recorded in ``self._errors`` so the snapshot can say
+        so. Clients treat a snapshot with errors as possibly-partial — the app
+        reclaims orphaned MCP credentials against this list, and reclaiming
+        against a silently empty one would delete live OAuth tokens. No file at
+        all is not a degradation: that is a first run, and the empty lists are
+        the truth.
+        """
         defaults = self._defaults()
         try:
             if not self.state_path.is_file():
                 return defaults
             value = _read_json(self.state_path, 4 * 1024 * 1024)
-        except ExtensionError:
+        except ExtensionError as exc:
+            self._errors.append(
+                f"Extension state at {self.state_path} could not be read ({exc}). "
+                "Installed extensions are not listed."
+            )
             return defaults
         for key in ("marketplaces", "plugins", "standalone_skills", "mcp_servers"):
             if isinstance(value.get(key), list):
                 defaults[key] = value[key]
+            elif key in value:
+                self._errors.append(
+                    f"Extension state key {key!r} is not a list; that section is not listed."
+                )
         if isinstance(value.get("mcp_policies"), dict):
             defaults["mcp_policies"] = value["mcp_policies"]
         return defaults

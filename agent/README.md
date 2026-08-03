@@ -191,5 +191,8 @@ session metadata and trash recovery, the context window (that the number sent as
 `num_ctx` is the same one compaction budgets against, and that it never reaches
 the remote provider), the remote provider (URL normalization, bearer auth,
 streamed tool-call assembly, the no-tools retry, and that the API key reaches
-neither disk nor any response), every HTTP endpoint, the WebSocket handshake, and
-the agent loop end to end against a scripted model.
+neither disk nor any response), the session, config, git, permissions and
+provider HTTP endpoints, the WebSocket handshake, and the agent loop end to end
+against a scripted model. The extensions surface — plugins, skills, MCP servers
+and marketplaces — is covered at the unit level in `test_extensions.py`, but
+most of its routes have no HTTP-level test yet.

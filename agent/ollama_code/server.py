@@ -38,6 +38,7 @@ from .core import AgentCore
 from .extensions import ExtensionError
 from .ollama import OllamaError, effective_context_length
 from .sessions import (
+    MAX_SESSION_LINE_BYTES,
     SessionMeta,
     SessionStore,
     SessionTooLargeError,
@@ -49,11 +50,25 @@ from .terminal import TerminalManager, TerminalRejected
 _MUTATING_TOOLS = {"write_file", "edit_file", "multi_edit", "bash"}
 MAX_HTTP_BODY_BYTES = 2 * 1024 * 1024
 MAX_USER_MESSAGE_CHARS = 1_000_000
+#: Code points are not bytes: a message at the limit above made entirely of
+#: 4-byte characters encodes to 4 MB, and the transcript reader skips any line
+#: over MAX_SESSION_LINE_BYTES — so the turn would be written and then be
+#: unreadable on restore. Held below that limit to leave room for the record's
+#: own JSON envelope. Only reachable since the WebSocket frame cap was raised
+#: to admit image attachments; the old 2 MiB frame was the accidental bound.
+MAX_USER_MESSAGE_BYTES = MAX_SESSION_LINE_BYTES // 2
 MAX_TERMINAL_COMMAND_CHARS = 65_536
 MAX_CHAT_IMAGE_ATTACHMENTS = 10
 MAX_CHAT_IMAGE_BYTES = 15 * 1024 * 1024
 MAX_CHAT_IMAGE_TOTAL_BYTES = 25 * 1024 * 1024
 CHAT_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+#: The WebSocket frame has to hold the largest message the chat endpoint says
+#: it accepts. Attachments arrive base64-encoded — a 4/3 expansion — inside a
+#: JSON envelope, so a cap below that is enforced by the transport as a 1009
+#: close *before* the validators below can run, and the user loses the socket
+#: instead of being told the image was too large. Derived rather than written
+#: as a literal so the two limits cannot drift apart again.
+MAX_WS_MESSAGE_BYTES = (MAX_CHAT_IMAGE_TOTAL_BYTES * 4) // 3 + MAX_HTTP_BODY_BYTES
 
 
 class ChatService:
@@ -1113,7 +1128,8 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         text = str(msg.get("text", "")).strip()
         if not text:
             return
-        if len(text) > MAX_USER_MESSAGE_CHARS:
+        if len(text) > MAX_USER_MESSAGE_CHARS \
+                or len(text.encode("utf-8")) > MAX_USER_MESSAGE_BYTES:
             _command_error(svc, str(mtype), "Message is too large to process safely.")
             return
         mode = str(msg.get("mode") or "").strip().lower()
@@ -1401,7 +1417,7 @@ def main(argv: list[str] | None = None) -> None:
         port=args.port,
         log_level="warning",
         timeout_graceful_shutdown=2,
-        ws_max_size=2 * 1024 * 1024,
+        ws_max_size=MAX_WS_MESSAGE_BYTES,
     )
 
 

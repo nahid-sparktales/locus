@@ -71,7 +71,7 @@ Each package's complete license text is retained in its installed
 | urllib3 | 2.7.0 | MIT |
 | uvicorn | 0.52.0 | BSD-3-Clause |
 | wcwidth | 0.8.2 | MIT |
-| websockets | 15.0.1 | BSD-3-Clause |
+| websockets | 17.0 | BSD-3-Clause |
 
 Ollama, Hugging Face services, hosted models, and model weights are not
 distributed with Locus. Locus only connects to services configured by the
