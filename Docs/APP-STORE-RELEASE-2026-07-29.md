@@ -150,10 +150,26 @@ source revision `f5e57fd`; the archive is at
   It has **not** been submitted for review: description, keywords, screenshots,
   and the age-rating declaration are all still empty.
 
-## Developer ID notarization is blocked — as of 2026-08-03
+## Developer ID notarization — resolved 2026-08-03
 
-The direct-download channel has **never** completed a notarization. Three
-submissions are stuck `In Progress` with no submission log ever produced:
+**Outcome: all submissions were Accepted.** The delay below was Apple-side queue
+latency, not a defect in the build, the signing, or the account. Nothing was
+changed to fix it and no support case was filed; the queue drained on its own
+after roughly three days, and the three submissions that had appeared stuck all
+completed as `Accepted`. A fourth submission made the same afternoon
+(`2cd1fce1-0da7-4465-b00f-3a9fa199321f`, 1.9.0 build 13) was accepted in about
+two minutes, stapled, and verified: `spctl --assess` reports `accepted` with
+`source=Notarized Developer ID`, and `stapler validate` passes on a fresh
+extraction. That is the project's first publishable notarized release.
+
+Keep the record below: a submission sitting `In Progress` for days with no log
+is not evidence of a broken build, and the reflex to resubmit or escalate was
+the wrong one.
+
+### What the delay looked like
+
+The direct-download channel had not completed a notarization. Three
+submissions sat `In Progress` with no submission log produced:
 
 | Submission | Created (UTC) | Source |
 |---|---|---|
@@ -163,19 +179,25 @@ submissions are stuck `In Progress` with no submission log ever produced:
 
 The third was submitted deliberately as a control: a different source revision,
 independently signed, with a changed bundled-dependency set and a different
-SHA-256. It stalled identically, which rules out the binary.
+SHA-256. It stalled identically, which correctly ruled out the binary — the
+control was sound, but the conclusion drawn from it (that something was wrong
+with the account) was not. All three were simply queued.
 
 Apple's system status page reported Developer ID Notary Service as operational
-throughout. The same binary uploaded to App Store Connect as build 11 and
-processed to `VALID` using the same API key and team, so the account,
-credentials, and binary are all acceptable to App Store ingestion — only the
-notary service fails to process them.
+throughout, which in hindsight was accurate.
 
-`PackageRelease.sh` exits 1 on the `notarytool --wait` timeout **before**
-stapling, so the zip it leaves in `artifacts/direct/` is signed and
-seal-verified but carries no ticket. Per the rule in the README, such an
-archive is not a public release. A support case has been prepared; until Apple
-resolves it, the App Store channel is the only one that can ship.
+Two things to carry forward:
+
+1. `PackageRelease.sh` exits 1 on the `notarytool --wait` timeout **before**
+   stapling, so a timed-out run leaves a signed, seal-verified zip with no
+   ticket in `artifacts/direct/`. That is not a public release. Re-running the
+   script resubmits from scratch; `xcrun notarytool info <id>` on the existing
+   submission is the cheaper check.
+2. The Gatekeeper assessment in that script had hardcoded `/usr/bin/spctl`,
+   which does not exist — `spctl` is in `/usr/sbin`. It reported the missing
+   binary as "Gatekeeper rejected the packaged app". The bug had been
+   unreachable because no submission had ever been accepted, and it fired on
+   the first one that was. Fixed.
 
 ## 1.9.0 (12) — 2026-08-03
 
@@ -186,3 +208,22 @@ background, alongside the context-meter fixes. LangGraph runtime work that was
 merged and then reverted on main is deliberately absent from the release notes.
 
 - 176 Swift unit tests and 222 Python backend tests passed before the build.
+
+## 1.9.0 (13) — 2026-08-03
+
+Build 13 carries the fixes from the audit of `8262018` (commit `d68062d`) and
+supersedes build 12, which was already `VALID` on App Store Connect and so
+could not be reused.
+
+- Uploaded 12:24 PDT 2026-08-03, processed to **VALID**. Archive at
+  `artifacts/appstore/Locus-1.9.0-13.xcarchive`.
+- Built from clean source `0c052bb`; 227 Python and 175 Swift tests passed.
+- **Notarized and stapled** as submission
+  `2cd1fce1-0da7-4465-b00f-3a9fa199321f`. `artifacts/direct/Locus-1.9.0.zip`
+  passes `codesign --verify --deep --strict`, `spctl --assess --type execute`
+  (`accepted`, `source=Notarized Developer ID`), and `stapler validate` on a
+  fresh extraction. This is the first archive that satisfies the README's
+  public-release rule.
+- The App Store version record is 1.9.0 in `PREPARE_FOR_SUBMISSION`,
+  `releaseType: MANUAL`. Description, keywords, screenshots and the age-rating
+  declaration are still empty, so it cannot be submitted for review yet.
