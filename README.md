@@ -5,6 +5,8 @@ conversation, planning, file context, change review, a console, and live preview
 in one calm SwiftUI interface. Local Ollama is the default; hosted providers are
 used only after you explicitly add and select an account.
 
+**[locushost.co](https://locushost.co)**
+
 ![Locus workspace](Docs/locus-workspace.jpg)
 
 Locus opens in a compact 1200×760 workspace by default. Resize it whenever you
@@ -340,12 +342,13 @@ folder**. The bundled copy wins whenever its files are present.
 
 ## Install the app
 
-Download `Locus-macOS.zip` from this repository's Releases page, move Locus
-to Applications, and open it. The agent runtime and its Python are inside the
-app, so there is nothing else to install — you only need
-[Ollama](https://ollama.com) (or a remote endpoint) for the models. Releases
-up to 1.5.1 were published from the old `locus-macos` repository and required
-Homebrew's `python@3.14`; builds from this repository do not.
+Download `Locus-macOS.zip` from [locushost.co](https://locushost.co) or this
+repository's Releases page, move Locus to Applications, and open it. The agent
+runtime and its Python are inside the app, so there is nothing else to install —
+you only need [Ollama](https://ollama.com) (or a remote endpoint) for the
+models. Releases up to 1.5.1 were published from the old `locus-macos`
+repository and required Homebrew's `python@3.14`; builds from this repository
+do not.
 
 The release pipeline can produce a SparkTales **Developer ID** build that is
 notarized by Apple and stapled, so it opens normally on a Mac that has never
