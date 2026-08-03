@@ -64,7 +64,7 @@ Endpoint, the HF Inference Providers router, or vLLM/TGI on a rented GPU:
 The URL may be given with or without `/v1`. The API key is read from
 `LOCUS_REMOTE_API_KEY`, `OLLAMA_CODE_API_KEY`, `HF_TOKEN`,
 `HUGGING_FACE_HUB_TOKEN`, or `OPENAI_API_KEY`, or supplied by the app from its
-keychain via `POST /api/provider`. **It is never written to
+credential file via `POST /api/provider`. **It is never written to
 `config.json`** — `save_config` strips it — and no endpoint ever returns it;
 `/api/provider` reports only `has_api_key`.
 

@@ -541,22 +541,146 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertTrue(ModelProvider.remote.detail.contains("GPU"))
     }
 
-    func testKeychainRoundTripsAndClearsTheAPIKey() {
+    func testCredentialStoreRoundTripsAndClearsTheAPIKey() {
         let account = "unit-test-\(UUID().uuidString)"
-        defer { Keychain.remove(account: account) }
+        defer { CredentialStore.remove(account: account) }
 
-        XCTAssertNil(Keychain.get(account: account))
-        XCTAssertTrue(Keychain.set("hf_secret_value", account: account))
-        XCTAssertEqual(Keychain.get(account: account), "hf_secret_value")
-        XCTAssertTrue(Keychain.has(account: account))
+        XCTAssertNil(CredentialStore.get(account: account))
+        XCTAssertTrue(CredentialStore.set("hf_secret_value", account: account))
+        XCTAssertEqual(CredentialStore.get(account: account), "hf_secret_value")
+        XCTAssertTrue(CredentialStore.has(account: account))
 
-        XCTAssertTrue(Keychain.set("replacement", account: account))
-        XCTAssertEqual(Keychain.get(account: account), "replacement")
+        XCTAssertTrue(CredentialStore.set("replacement", account: account))
+        XCTAssertEqual(CredentialStore.get(account: account), "replacement")
 
         // Saving an empty value removes the item rather than storing a blank.
-        XCTAssertTrue(Keychain.set("   ", account: account))
-        XCTAssertNil(Keychain.get(account: account))
-        XCTAssertFalse(Keychain.has(account: account))
+        XCTAssertTrue(CredentialStore.set("   ", account: account))
+        XCTAssertNil(CredentialStore.get(account: account))
+        XCTAssertFalse(CredentialStore.has(account: account))
+    }
+
+    /// File permissions are the only thing protecting these secrets now, so
+    /// they are the app's responsibility rather than the keychain's.
+    func testCredentialFileIsNotReadableByOtherUsers() throws {
+        let account = "unit-test-\(UUID().uuidString)"
+        defer { CredentialStore.remove(account: account) }
+        XCTAssertTrue(CredentialStore.set("sk-permission-check", account: account))
+
+        let file = CredentialStore.fileURL
+        let directory = file.deletingLastPathComponent()
+        let fileMode = try FileManager.default
+            .attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
+        let directoryMode = try FileManager.default
+            .attributesOfItem(atPath: directory.path)[.posixPermissions] as? NSNumber
+
+        XCTAssertEqual(fileMode?.int16Value, 0o600, "the credential file must be owner-only")
+        XCTAssertEqual(directoryMode?.int16Value, 0o700, "its directory must be owner-only")
+    }
+
+    /// The secret is the point: it must never be legible in the surrounding
+    /// structure, and a second account must not disturb the first.
+    func testCredentialsPersistIndependentlyAcrossAReload() throws {
+        let first = "unit-test-\(UUID().uuidString)"
+        let second = "unit-test-\(UUID().uuidString)"
+        defer {
+            CredentialStore.remove(account: first)
+            CredentialStore.remove(account: second)
+        }
+        XCTAssertTrue(CredentialStore.set("sk-first", account: first))
+        XCTAssertTrue(CredentialStore.set("sk-second", account: second))
+
+        // Drop the in-memory copy so this reads what actually reached disk.
+        CredentialStore.resetCacheForTesting()
+        XCTAssertEqual(CredentialStore.get(account: first), "sk-first")
+        XCTAssertEqual(CredentialStore.get(account: second), "sk-second")
+
+        XCTAssertTrue(CredentialStore.remove(account: first))
+        CredentialStore.resetCacheForTesting()
+        XCTAssertNil(CredentialStore.get(account: first))
+        XCTAssertEqual(CredentialStore.get(account: second), "sk-second", "removal is surgical")
+    }
+
+    /// A truncated or hand-edited file must not read as "every account was
+    /// deleted" — that is exactly the state in which a sweep would destroy
+    /// live credentials.
+    func testUnreadableCredentialFileSuppressesOrphanSweeps() throws {
+        let survivor = "\(CredentialStore.mcpCredentialPrefix)unit-test-\(UUID().uuidString)"
+        let file = CredentialStore.fileURL
+        let backup = file.appendingPathExtension("testbackup")
+        let hadFile = FileManager.default.fileExists(atPath: file.path)
+        if hadFile { try? FileManager.default.moveItem(at: file, to: backup) }
+        defer {
+            try? FileManager.default.removeItem(at: file)
+            if hadFile { try? FileManager.default.moveItem(at: backup, to: file) }
+            CredentialStore.resetCacheForTesting()
+        }
+
+        try "{ not json".write(to: file, atomically: true, encoding: .utf8)
+        CredentialStore.resetCacheForTesting()
+        XCTAssertTrue(CredentialStore.isDegraded, "an unparseable file must report itself")
+
+        // Sweeping against a list we could not read would delete live tokens.
+        CredentialStore.removeOrphanedMCPCredentials(keeping: [])
+        CredentialStore.removeOrphanedProviderKeys(keeping: [])
+
+        // The unreadable file is preserved rather than overwritten in place.
+        XCTAssertTrue(CredentialStore.set("sk-after-corruption", account: survivor))
+        let salvage = file.deletingLastPathComponent().appendingPathComponent("auth.json.corrupt")
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: salvage.path),
+            "the file we could not parse must be kept, not silently destroyed"
+        )
+        try? FileManager.default.removeItem(at: salvage)
+        CredentialStore.remove(account: survivor)
+    }
+
+    /// A file that parses as JSON but holds one unreadable value is the more
+    /// likely corruption — a hand-edit, or a future format. Reading the section
+    /// as a whole made a single bad value drop every sibling key silently, and
+    /// the next write then overwrote them for good.
+    func testOneBadValueDoesNotDiscardTheRestOfTheFile() throws {
+        let file = CredentialStore.fileURL
+        let backup = file.appendingPathExtension("testbackup")
+        let hadFile = FileManager.default.fileExists(atPath: file.path)
+        if hadFile { try? FileManager.default.moveItem(at: file, to: backup) }
+        defer {
+            try? FileManager.default.removeItem(at: file)
+            if hadFile { try? FileManager.default.moveItem(at: backup, to: file) }
+            CredentialStore.resetCacheForTesting()
+        }
+
+        // Valid JSON; one value is null rather than a string.
+        try """
+        {
+          "version": 1,
+          "provider_accounts": {
+            "provider-account-LIVE": "sk-must-not-vanish",
+            "provider-account-BROKEN": null
+          },
+          "mcp_servers": {}
+        }
+        """.write(to: file, atomically: true, encoding: .utf8)
+        CredentialStore.resetCacheForTesting()
+
+        XCTAssertTrue(
+            CredentialStore.isDegraded,
+            "a value we cannot read must degrade the whole file, not vanish quietly"
+        )
+        // And because it degraded, the sweeps must not run against it.
+        CredentialStore.removeOrphanedProviderKeys(keeping: [])
+        let onDisk = try String(contentsOf: file, encoding: .utf8)
+        XCTAssertTrue(
+            onDisk.contains("sk-must-not-vanish"),
+            "a sweep must never act on a file it could not fully read"
+        )
+
+        // The first write salvages the original rather than overwriting it.
+        XCTAssertTrue(CredentialStore.set("sk-new", account: "provider-account-NEW"))
+        let salvage = file.deletingLastPathComponent().appendingPathComponent("auth.json.corrupt")
+        let salvaged = try String(contentsOf: salvage, encoding: .utf8)
+        XCTAssertTrue(salvaged.contains("sk-must-not-vanish"), "the original must be recoverable")
+        try? FileManager.default.removeItem(at: salvage)
+        CredentialStore.remove(account: "provider-account-NEW")
     }
 
     // MARK: - Provider accounts
@@ -575,7 +699,7 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(restored[0].kind, .claude)
         XCTAssertEqual(restored[0].displayName, "Claude — Work")
         XCTAssertEqual(restored[0].resolvedBaseURL, "https://api.anthropic.com/v1")
-        XCTAssertEqual(restored[0].keychainAccount, Keychain.providerAccountKey(account.id))
+        XCTAssertEqual(restored[0].keychainAccount, CredentialStore.providerAccountKey(account.id))
         XCTAssertFalse(encoded.contains("apikey"))
         XCTAssertFalse(encoded.contains("sk-"))
     }
@@ -631,7 +755,7 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(account?.preferredModel, settings.remoteModel)
         // The key is not copied: the account points at the entry that is
         // already there, so an interrupted migration cannot lose it.
-        XCTAssertEqual(account?.keychainAccount, Keychain.remoteAPIKeyAccount)
+        XCTAssertEqual(account?.keychainAccount, CredentialStore.remoteAPIKeyAccount)
     }
 
     func testMigrationSkipsWhenThereIsNothingToMoveOrAccountsExist() {

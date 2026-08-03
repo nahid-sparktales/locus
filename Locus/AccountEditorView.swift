@@ -86,7 +86,7 @@ struct AccountEditorView: View {
                     }
 
                     SecureField(
-                        keyStored && apiKey.isEmpty ? "Saved in your keychain" : kind.keyPlaceholder,
+                        keyStored && apiKey.isEmpty ? "Saved on this Mac" : kind.keyPlaceholder,
                         text: $apiKey
                     )
                     .accessibilityIdentifier("accountEditor.apiKey")
@@ -147,7 +147,7 @@ struct AccountEditorView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    Text("The key is kept in your login keychain and passed to the local agent in memory. It is never written to a config file, and it is only ever sent to this provider.")
+                    Text("The key is written to \(CredentialStore.displayPath), readable only by your macOS user account, and passed to the local agent in memory. It is only ever sent to this provider. Anything else running as you can read that file.")
                         .font(.system(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -233,7 +233,7 @@ struct AccountEditorView: View {
         isTesting = true
         testResult = nil
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? (Keychain.get(account: account.keychainAccount) ?? "")
+            ? (CredentialStore.get(account: account.keychainAccount) ?? "")
             : apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let base = resolvedBaseURL
         let probeModel = account.preferredModel.isEmpty ? kind.probeModel : account.preferredModel

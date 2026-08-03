@@ -20,7 +20,7 @@ like; macOS remembers the size you choose for later launches.
   **New Workspace…**, which names a folder, creates it, and opens it.
 - **Local or rented GPU.** Point Locus at local Ollama, or at any
   OpenAI-compatible endpoint — a Hugging Face Inference Endpoint, vLLM, or TGI
-  on a rented box — with an API key kept in your keychain.
+  on a rented box — with an API key kept in a file only you can read.
 - **Chat and Work stay visibly separate.** Chat answers from the conversation
   and files explicitly attached to the current message, while keeping tools,
   skills, integrations, workspace browsing, and edits disabled. It accepts
@@ -285,10 +285,19 @@ at 4K here.
 
 ### About the keys
 
-Each account keeps its key in your login keychain, in its own entry, and passes
-it to the local agent process in memory. A key is never written to a config
-file, never returned by any API, and only ever sent to its own provider.
-Removing an account deletes its key with it. If no key is passed that way, the
+Each account keeps its key in `~/.locus/auth.json`, in its own entry, and passes
+it to the local agent process in memory. The file is mode `0600` inside a `0700`
+directory, so no other account on the Mac can read it; in the sandboxed App
+Store build it lives in the app container instead. A key is never written to the
+agent's config, never returned by any API, and only ever sent to its own
+provider. Removing an account deletes its key with it.
+
+Be clear about what that does and does not buy you. File permissions keep the
+keys away from *other users* of the machine. They do not keep them away from
+anything running as **you** — any program you launch can read that file. Earlier
+releases used the login keychain, which added per-application access control and
+an authorization prompt; this does not. That is the same trade Codex makes with
+`~/.codex/auth.json`, and it is a real reduction in protection, not a wash. If no key is passed that way, the
 agent falls back to the first of `LOCUS_REMOTE_API_KEY`, `OLLAMA_CODE_API_KEY`,
 `HF_TOKEN`, `HUGGING_FACE_HUB_TOKEN`, or `OPENAI_API_KEY` in its own
 environment — that is how you supply one when running the agent from a

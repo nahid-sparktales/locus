@@ -42,7 +42,7 @@ enum LocusClientIdentity {
 
 /// Verifies a remote OpenAI-compatible endpoint straight from the app, so
 /// "Test Connection" in Settings has no side effects: it must not commit the
-/// unsaved draft, write the keychain, or switch the live agent's provider.
+/// unsaved draft, write the credential file, or switch the live agent's provider.
 enum RemoteEndpointTester {
     struct Outcome {
         let ok: Bool

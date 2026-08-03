@@ -60,9 +60,12 @@ change will be overwritten.
   that ships unused copyleft components or omits license texts. If you add a
   Python dependency, pin it in `agent/requirements-runtime.lock` and add it to
   `Locus/Resources/ThirdPartyNotices.md` with its version and license.
-- **Never commit credentials.** API keys belong in the keychain and reach the
-  agent in memory only; nothing key-bearing should ever reach a config file or a
-  session transcript.
+- **Never commit credentials.** API keys belong in `~/.locus/auth.json`, written
+  mode `0600` through `CredentialStore`, and reach the agent in memory only.
+  Nothing key-bearing may reach the agent's `config.json`, a session transcript,
+  `UserDefaults`, or any API response. That file is the *only* place a secret is
+  persisted — if you add a new kind of credential, put it there rather than
+  inventing a second store.
 
 ## Reporting a security issue
 

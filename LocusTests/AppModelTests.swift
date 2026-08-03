@@ -150,7 +150,7 @@ final class AppModelTests: XCTestCase {
     ) -> ProviderAccount {
         let account = ProviderAccount(kind: kind, name: name, preferredModel: preferredModel)
         model.saveProviderAccount(account, apiKey: key)
-        addTeardownBlock { Keychain.remove(account: account.keychainAccount) }
+        addTeardownBlock { CredentialStore.remove(account: account.keychainAccount) }
         return model.providerAccounts.first { $0.id == account.id } ?? account
     }
 
@@ -223,7 +223,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.providerAccounts.contains { $0.id == account.id })
         XCTAssertNil(model.settings.activeAccountID)
         XCTAssertEqual(model.settings.provider, .ollama)
-        XCTAssertNil(Keychain.get(account: account.keychainAccount), "the key goes with it")
+        XCTAssertNil(CredentialStore.get(account: account.keychainAccount), "the key goes with it")
     }
 
     @MainActor

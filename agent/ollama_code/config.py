@@ -30,8 +30,9 @@ DEFAULTS: dict[str, Any] = {
     # listing (Kimi Code), so the health probe does not read its auth
     # error on /models as a rejected key.
     "remote_lists_models": True,
-    # The API key is NEVER written here. It comes from the keychain via the
-    # app, or from one of REMOTE_API_KEY_ENV at the command line.
+    # The API key is NEVER written here. It comes from the app's credential
+    # file via /api/provider, or from one of REMOTE_API_KEY_ENV at the command
+    # line.
     "remote_api_key": "",
     # "ask" prompts for every non-safe tool, "accept_edits" also auto-allows
     # file writes/edits, "bypass" auto-allows everything (equivalent to

@@ -263,14 +263,15 @@ final class AppModel: ObservableObject {
             // ones whose keys would look orphaned — deleting those would turn a
             // recoverable parse failure into permanent credential loss, and
             // Anthropic and the Kimi Code console each show a key once. The
-            // same guard covers an empty read: a container reset clears
-            // UserDefaults while the keychain survives, and that must not be
-            // read as "every account was deleted".
+            // same guard covers an empty read. Note the credential file now
+            // lives beside UserDefaults rather than in the keychain, so a
+            // container reset takes both — the guard no longer protects against
+            // that, only against a lossy decode.
             if persistenceEnabled,
                let stored = ProviderAccountStore.storedCount(in: defaults),
                stored == accounts.count
             {
-                Keychain.removeOrphanedProviderKeys(
+                CredentialStore.removeOrphanedProviderKeys(
                     keeping: Set(accounts.map(\.keychainAccount))
                 )
             }
@@ -1087,7 +1088,7 @@ final class AppModel: ObservableObject {
             // unreadable state file would present as "no servers" and this
             // would delete live third-party refresh tokens rather than orphans.
             if response.errors.isEmpty {
-                Keychain.removeOrphanedMCPCredentials(
+                CredentialStore.removeOrphanedMCPCredentials(
                     keeping: Set(response.mcpServers.map(\.id))
                 )
             }
@@ -1252,13 +1253,13 @@ final class AppModel: ObservableObject {
     func uninstallPlugin(_ id: String) async {
         let credentialAccounts = extensions.mcpServers
             .filter { $0.pluginID == id }
-            .map { Keychain.mcpCredentialKey($0.id) }
+            .map { CredentialStore.mcpCredentialKey($0.id) }
         do {
             _ = try await backend.delete(
                 "/api/extensions/plugins/\(id)",
                 as: ExtensionOperationResponse.self
             )
-            for account in credentialAccounts { Keychain.remove(account: account) }
+            for account in credentialAccounts { CredentialStore.remove(account: account) }
             await refreshExtensions()
             await refreshExtensionCatalog()
         } catch {
@@ -1387,7 +1388,7 @@ final class AppModel: ObservableObject {
                 "/api/extensions/mcp/\(id)",
                 as: ExtensionOperationResponse.self
             )
-            Keychain.remove(account: Keychain.mcpCredentialKey(id))
+            CredentialStore.remove(account: CredentialStore.mcpCredentialKey(id))
             await refreshExtensions()
         } catch {
             extensionErrorMessage = error.localizedDescription
@@ -1402,10 +1403,10 @@ final class AppModel: ObservableObject {
             extensionErrorMessage = "The MCP credentials could not be saved."
             return
         }
-        let account = Keychain.mcpCredentialKey(serverID)
-        let previous = Keychain.get(account: account)
-        guard Keychain.set(encoded, account: account) else {
-            extensionErrorMessage = "The MCP credentials could not be saved to Keychain."
+        let account = CredentialStore.mcpCredentialKey(serverID)
+        let previous = CredentialStore.get(account: account)
+        guard CredentialStore.set(encoded, account: account) else {
+            extensionErrorMessage = "The MCP credentials could not be saved."
             return
         }
         do {
@@ -1417,9 +1418,9 @@ final class AppModel: ObservableObject {
             await refreshExtensions()
         } catch {
             if let previous {
-                Keychain.set(previous, account: account)
+                CredentialStore.set(previous, account: account)
             } else {
-                Keychain.remove(account: account)
+                CredentialStore.remove(account: account)
             }
             extensionErrorMessage = error.localizedDescription
         }
@@ -1432,7 +1433,7 @@ final class AppModel: ObservableObject {
                 body: ["id": serverID, "credentials": [String: Any]()],
                 as: MCPStatusCredentialResponse.self
             )
-            Keychain.remove(account: Keychain.mcpCredentialKey(serverID))
+            CredentialStore.remove(account: CredentialStore.mcpCredentialKey(serverID))
             await refreshExtensions()
             showToast("MCP credentials removed")
         } catch {
@@ -1454,7 +1455,7 @@ final class AppModel: ObservableObject {
 
     private func restoreExtensionCredentials(for servers: [ExtensionMCPServer]) async {
         for server in servers {
-            guard let encoded = Keychain.get(account: Keychain.mcpCredentialKey(server.id)),
+            guard let encoded = CredentialStore.get(account: CredentialStore.mcpCredentialKey(server.id)),
                   let data = encoded.data(using: .utf8),
                   let storedValues = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             else { continue }
@@ -1465,7 +1466,7 @@ final class AppModel: ObservableObject {
                let refreshedData = try? JSONSerialization.data(withJSONObject: values),
                let refreshed = String(data: refreshedData, encoding: .utf8),
                refreshed != encoded {
-                Keychain.set(refreshed, account: Keychain.mcpCredentialKey(server.id))
+                CredentialStore.set(refreshed, account: CredentialStore.mcpCredentialKey(server.id))
                 refreshedToken = true
             }
             guard server.hasCredentials != true || refreshedToken else { continue }
@@ -2044,7 +2045,7 @@ final class AppModel: ObservableObject {
     /// editor so an abandoned sheet leaves nothing behind; `apiKey` nil means
     /// "keep the saved one".
     func saveProviderAccount(_ account: ProviderAccount, apiKey: String?) {
-        let effectiveKey = apiKey ?? Keychain.get(account: account.keychainAccount) ?? ""
+        let effectiveKey = apiKey ?? CredentialStore.get(account: account.keychainAccount) ?? ""
         if let error = RemoteEndpointTester.securityError(
             baseURL: account.resolvedBaseURL,
             apiKey: effectiveKey
@@ -2065,7 +2066,7 @@ final class AppModel: ObservableObject {
             providerAccounts.append(updated)
         }
         if let apiKey {
-            Keychain.set(apiKey, account: updated.keychainAccount)
+            CredentialStore.set(apiKey, account: updated.keychainAccount)
         }
         persistProviderAccounts()
         forgetAccountCatalog(updated.id)
@@ -2084,7 +2085,7 @@ final class AppModel: ObservableObject {
     /// routing that depended on it.
     func removeProviderAccount(_ account: ProviderAccount) {
         providerAccounts.removeAll { $0.id == account.id }
-        Keychain.remove(account: account.keychainAccount)
+        CredentialStore.remove(account: account.keychainAccount)
         persistProviderAccounts()
         forgetAccountCatalog(account.id)
         guard account.id.uuidString == settings.activeAccountID else {
@@ -2104,7 +2105,7 @@ final class AppModel: ObservableObject {
     /// agent is told at once: it holds the key in memory, so leaving it be
     /// would keep spending a credential the user just revoked.
     func removeProviderAccountKey(_ account: ProviderAccount) {
-        Keychain.remove(account: account.keychainAccount)
+        CredentialStore.remove(account: account.keychainAccount)
         accountStatus[account.id] = .noKey
         forgetAccountCatalog(account.id)
         guard account.id.uuidString == settings.activeAccountID else { return }
@@ -2736,7 +2737,7 @@ final class AppModel: ObservableObject {
             "provider": "remote",
             "base_url": account.resolvedBaseURL,
             "model": account.preferredModel,
-            "api_key": Keychain.get(account: account.keychainAccount) ?? "",
+            "api_key": CredentialStore.get(account: account.keychainAccount) ?? "",
             "auth_style": account.kind.authStyle,
             "account_label": account.displayName,
             // Kimi Code serves no model listing; without this the agent's
@@ -2750,9 +2751,9 @@ final class AppModel: ObservableObject {
         ]
     }
 
-    /// Pushes the chosen provider to the local agent. The API key travels from
-    /// the keychain to the agent process only — it is never written to disk by
-    /// either side, so it is re-sent on every launch.
+    /// Pushes the chosen provider to the local agent. The key travels from the
+    /// app's credential file to the agent process in memory — the agent never
+    /// writes it to its own config, so it is re-sent on every launch.
     func applyProvider(verify: Bool = false, announce: Bool = true) async {
         let account = activeAccount
         if let account, account.resolvedBaseURL.isEmpty {

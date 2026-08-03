@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **API keys and MCP tokens now live in `~/.locus/auth.json` instead of the
+  login keychain.** The file is mode `0600` inside a `0700` directory, so no
+  other account on the Mac can read it; in the sandboxed App Store build it sits
+  in the app container. This matches how Codex keeps `~/.codex/auth.json`.
+
+  **You will need to re-enter each account's API key once, and re-supply every
+  MCP server credential** — re-authorizing OAuth servers and re-entering any
+  bearer token, header value, or environment secret you typed in by hand.
+  Existing keychain entries are not migrated and are left where they are;
+  nothing reads them any more, and you can delete them from Keychain Access if
+  you want them gone.
+
+  This is a real reduction in protection and worth understanding before you
+  upgrade. The keychain enforced *per-application* access — a different program
+  reading your key triggered an authorization prompt. File permissions do not:
+  they keep the keys away from other users of the Mac, but anything running as
+  **you** can read that file. What you get in exchange is that Locus stops
+  asking for your keychain password when you run a build signed differently from
+  the one that stored the key.
+
 ## 1.9.0 — 2026-08-03
 
 ### Added

@@ -273,7 +273,7 @@ enum ProviderModelFilter {
 }
 
 /// One signed-in provider account. The API key is not here — it lives in the
-/// keychain under `Keychain.providerAccountKey(id)`.
+/// credential file under `CredentialStore.providerAccountKey(id)`.
 struct ProviderAccount: Identifiable, Codable, Hashable {
     let id: UUID
     /// Stored raw, not as the enum: a kind added by a future version must not
@@ -293,7 +293,7 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
     var createdAt: Date
     /// Set only by the migration, for the account made from the single remote
     /// endpoint that existed before accounts: it keeps pointing at the old
-    /// keychain entry so the key never has to be re-entered.
+    /// credential entry so the key never has to be re-entered.
     var legacyKeychainAccount: String?
 
     init(
@@ -337,10 +337,10 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
     }
 
     var keychainAccount: String {
-        legacyKeychainAccount ?? Keychain.providerAccountKey(id)
+        legacyKeychainAccount ?? CredentialStore.providerAccountKey(id)
     }
 
-    var hasKey: Bool { Keychain.has(account: keychainAccount) }
+    var hasKey: Bool { CredentialStore.has(account: keychainAccount) }
 
     /// The window to budget this account against: what the user set, else
     /// the provider's published figure for the selected model, else none.
@@ -425,14 +425,14 @@ enum ProviderAccountStore {
     /// Turns the single pre-accounts remote endpoint into a `.custom` account.
     ///
     /// Returns nil when there is nothing to migrate. The key is not copied: the
-    /// new account points at the existing keychain entry, so an interrupted
+    /// new account points at the existing credential entry, so an interrupted
     /// migration cannot lose it.
     static func migrateLegacyEndpoint(settings: AppSettings, existing: [ProviderAccount])
         -> ProviderAccount?
     {
         guard existing.isEmpty else { return nil }
         let base = settings.remoteBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !base.isEmpty || Keychain.has(account: Keychain.remoteAPIKeyAccount) else {
+        guard !base.isEmpty || CredentialStore.has(account: CredentialStore.remoteAPIKeyAccount) else {
             return nil
         }
         var account = ProviderAccount(
@@ -441,7 +441,7 @@ enum ProviderAccountStore {
             baseURLOverride: base,
             preferredModel: settings.remoteModel.trimmingCharacters(in: .whitespacesAndNewlines)
         )
-        account.legacyKeychainAccount = Keychain.remoteAPIKeyAccount
+        account.legacyKeychainAccount = CredentialStore.remoteAPIKeyAccount
         return account
     }
 }

@@ -745,7 +745,7 @@ struct AppSettings: Codable, Hashable {
     var previewURL = "http://localhost:3000"
     var notifyOnCompletion = true
     var provider: ModelProvider = .ollama
-    /// Endpoint base URL. The API key is not stored here — see `Keychain`.
+    /// Endpoint base URL. The API key is not stored here — see `CredentialStore`.
     ///
     /// Superseded by provider accounts: the migration moves this into a
     /// `.custom` account on first launch. Kept so a downgrade still decodes.
@@ -753,7 +753,7 @@ struct AppSettings: Codable, Hashable {
     var remoteModel = ""
     /// The provider account in use, as a UUID string, or nil for local Ollama.
     /// The accounts themselves live under `ProviderAccountStore.defaultsKey` —
-    /// they carry keychain side effects that must not ride the settings draft.
+    /// they carry credential-file side effects that must not ride the settings draft.
     var activeAccountID: String?
     /// A context window for local Ollama, when the user wants to pin one
     /// rather than let it be measured. nil keeps the measured behaviour.

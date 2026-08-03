@@ -31,9 +31,9 @@
 		6CB6F6C625981B438BD534AB /* AppModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C41E39F35E0F75A05095B5EC /* AppModelTests.swift */; };
 		74A5BCF6953128864737A070 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2D4CA41C622A34E45EF21F54 /* Assets.xcassets */; };
 		77D7EC97E924FD976475CB02 /* PlanApprovalPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEF0BEF00F2EA8083877CC21 /* PlanApprovalPromptView.swift */; };
-		7B87C08B32EA786673C34F3F /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76FC0F4F0C6864707814EAA5 /* Keychain.swift */; };
 		A6D846A90EED0F655A108FE8 /* Sheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11B2324D330884AA4555A92 /* Sheets.swift */; };
 		B302C713CDCD5A21C3CF431C /* LocalRuntimeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C55065A982A7FB563B8DEA87 /* LocalRuntimeCoordinator.swift */; };
+		B47489F53435C4FB56730215 /* CredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D427058C21A8F1993C532E8 /* CredentialStore.swift */; };
 		BEAFCBFDAE33591C970B5E98 /* BackendProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */; };
 		C0EB8EF86FF9954D89CC082E /* InspectorPlanTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */; };
 		C214A77B64E488AE82DCFB59 /* WorkspaceAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAAE8017A82BDD5DBCA5F587 /* WorkspaceAccess.swift */; };
@@ -88,8 +88,8 @@
 		5CBA85D1FB7286E08482ED76 /* ShortcutsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsSheet.swift; sourceTree = "<group>"; };
 		63EA24EB82248151706E566E /* GitStatusModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitStatusModels.swift; sourceTree = "<group>"; };
 		73FB5B7D276424050FE55E24 /* LocusUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocusUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		76FC0F4F0C6864707814EAA5 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
 		78188AFFEC80498E68C2EE3A /* SlashCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlashCommands.swift; sourceTree = "<group>"; };
+		7D427058C21A8F1993C532E8 /* CredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialStore.swift; sourceTree = "<group>"; };
 		8FA164EE10426EF2AD4E606A /* MessageContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageContent.swift; sourceTree = "<group>"; };
 		9C24AE13FC7723F12A5F2380 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		9C90DE8FC778C6A106DF35EB /* InspectorTerminalTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorTerminalTab.swift; sourceTree = "<group>"; };
@@ -163,6 +163,7 @@
 				B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */,
 				3793FC69B1D813ED07567A2E /* BackendService.swift */,
 				E18BD6EB5EBD180B3E69FBD6 /* ComposerView.swift */,
+				7D427058C21A8F1993C532E8 /* CredentialStore.swift */,
 				06DD9A63C8FBDB42368F8A0C /* GitClient.swift */,
 				63EA24EB82248151706E566E /* GitStatusModels.swift */,
 				BE7F27B06F0AA98E893C2E9B /* Info.plist */,
@@ -173,7 +174,6 @@
 				264A4A5A5DB18E19BD6A2741 /* InspectorPreviewTab.swift */,
 				9C90DE8FC778C6A106DF35EB /* InspectorTerminalTab.swift */,
 				CF3D3389D598BBECBE77E38F /* InspectorView.swift */,
-				76FC0F4F0C6864707814EAA5 /* Keychain.swift */,
 				C55065A982A7FB563B8DEA87 /* LocalRuntimeCoordinator.swift */,
 				BCCEF7CD29A9C6F9C3E1472F /* LocusApp.swift */,
 				8FA164EE10426EF2AD4E606A /* MessageContent.swift */,
@@ -358,6 +358,7 @@
 				BEAFCBFDAE33591C970B5E98 /* BackendProcess.swift in Sources */,
 				F9405ED899AAD041CF6BAD66 /* BackendService.swift in Sources */,
 				E6B5E9C34E90B735A5A84C22 /* ComposerView.swift in Sources */,
+				B47489F53435C4FB56730215 /* CredentialStore.swift in Sources */,
 				404AF919F8C0790788D0A26B /* GitClient.swift in Sources */,
 				0F72DE71A4842FDA1E802CC0 /* GitStatusModels.swift in Sources */,
 				3E8FCEE6168C5A89B6B45BC1 /* InspectorAgentsTab.swift in Sources */,
@@ -367,7 +368,6 @@
 				FDE94DBD1929144B43AB6156 /* InspectorPreviewTab.swift in Sources */,
 				4C25B8F53E842CD8D5556308 /* InspectorTerminalTab.swift in Sources */,
 				35872DC7D25B9CE5D3A43C6E /* InspectorView.swift in Sources */,
-				7B87C08B32EA786673C34F3F /* Keychain.swift in Sources */,
 				B302C713CDCD5A21C3CF431C /* LocalRuntimeCoordinator.swift in Sources */,
 				CB22892B835E59A99C4FA35D /* LocusApp.swift in Sources */,
 				3EB73A207975893878E53D8B /* MessageContent.swift in Sources */,

@@ -279,8 +279,8 @@ The extension surface shares one error and concurrency contract:
 | POST | `/api/extensions/mcp/test` | Probe a server's connectivity. |
 | POST | `/api/extensions/mcp/reconnect` | Drop and re-establish a server's session. |
 | POST | `/api/extensions/mcp/policy` | Set a server's default tool-approval mode. |
-| POST | `/api/extensions/mcp/credentials` | Hand transient credentials to the agent. Secrets are held in memory only — the app stores them in the macOS Keychain and replays them here. |
-| DELETE | `/api/extensions/mcp/{server_id:path}` | Remove a server. Clients must also delete the matching Keychain entry. |
+| POST | `/api/extensions/mcp/credentials` | Hand transient credentials to the agent. Secrets are held in memory only — the app stores them in its own credential file (`~/.locus/auth.json`, mode 0600, or the equivalent inside the app container in the sandboxed build) and replays them here. |
+| DELETE | `/api/extensions/mcp/{server_id:path}` | Remove a server. Clients must also delete the matching credential-file entry. |
 
 `stdio` transport is refused when the agent is sandboxed, so App Store builds
 can only use remote servers.

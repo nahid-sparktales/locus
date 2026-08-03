@@ -808,7 +808,7 @@ private struct MCPCredentialView: View {
                 TextField(server.transport == "stdio" ? "Environment variable" : "Header name", text: $fieldName)
             }
             SecureField(server.auth == "bearer" ? "Bearer token" : "Secret value", text: $secret)
-            Text("The value is stored in your login Keychain and sent to the local agent only in memory.")
+            Text("The value is written to \(CredentialStore.displayPath), readable only by your macOS user account, and sent to the local agent only in memory.")
                 .font(.system(size: 9)).foregroundStyle(LocusTheme.muted)
             HStack {
                 Button("Cancel") { dismiss() }
@@ -1039,7 +1039,7 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings.accounts.add")
 
-                    Text("Each account keeps its API key in your login keychain. Keys are passed to the local agent in memory, never written to a config file, and only ever sent to their own provider.")
+                    Text("Each account keeps its API key in \(CredentialStore.displayPath), a file readable only by your macOS user account. Keys are passed to the local agent in memory and only ever sent to their own provider. Any program running as you can read that file.")
                         .font(.system(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1183,7 +1183,7 @@ struct SettingsView: View {
             model.settingsPresented = false
         }
         // Accounts are saved as they are edited rather than with the rest of
-        // the draft: they write the keychain, and Cancel cannot un-write it.
+        // the draft: they write the credential file, and Cancel cannot un-write it.
         .sheet(item: $addingAccount) { account in
             AccountEditorView(account: account, isNew: true)
                 .environmentObject(model)
@@ -1197,8 +1197,8 @@ struct SettingsView: View {
                 title: Text("Remove \(account.displayName)?"),
                 message: Text(
                     account.id.uuidString == model.settings.activeAccountID
-                        ? "The API key is deleted from your keychain and Locus switches back to local Ollama. Saved transcripts are kept."
-                        : "The API key is deleted from your keychain. Saved transcripts are kept."
+                        ? "The API key is deleted from \(CredentialStore.displayPath) and Locus switches back to local Ollama. Saved transcripts are kept."
+                        : "The API key is deleted from \(CredentialStore.displayPath). Saved transcripts are kept."
                 ),
                 primaryButton: .destructive(Text("Remove")) {
                     model.removeProviderAccount(account)

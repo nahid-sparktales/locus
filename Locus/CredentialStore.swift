@@ -2,19 +2,27 @@ import Foundation
 import AuthenticationServices
 import AppKit
 import CryptoKit
-import Security
 
-/// Keychain storage for provider API keys.
+/// Credential storage for provider API keys and MCP server tokens.
 ///
-/// A key never goes into UserDefaults or the agent's config file: it lives in
-/// the login keychain and is handed to the local agent process in memory.
-enum Keychain {
+/// One JSON file, `~/.locus/auth.json`, mode `0600` inside a `0700` directory —
+/// the same shape Codex uses for `~/.codex/auth.json`. In the sandboxed App
+/// Store build `~` is the app container, so the file lands there instead.
+///
+/// Be clear about what this protects against: file permissions keep the secrets
+/// away from *other* users on the Mac. They do not keep them away from anything
+/// running as you. There is no per-application access control and no
+/// authorization prompt — that is what the login keychain provided, and this
+/// deliberately does not. The UI says so where the user enters a secret.
+enum CredentialStore {
     /// The single pre-accounts endpoint key. Kept for the one-time migration
-    /// that turns it into a provider account.
+    /// that turns it into a provider account, and because an account migrated
+    /// that way keeps pointing at this name forever.
     static let remoteAPIKeyAccount = "remote-api-key"
 
     /// One entry per provider account, so two accounts for the same provider
-    /// never share a secret.
+    /// never share a secret. Derived from the account's immutable id, so a
+    /// rename never moves the secret.
     static func providerAccountKey(_ id: UUID) -> String {
         "\(providerAccountPrefix)\(id.uuidString)"
     }
@@ -27,53 +35,193 @@ enum Keychain {
 
     static let mcpCredentialPrefix = "mcp-server-"
 
-    private static let service = "io.sparktales.locus"
+    static var fileURL: URL {
+        URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".locus", isDirectory: true)
+            .appendingPathComponent("auth.json")
+    }
+
+    /// The location to show the user. In the sandboxed App Store build
+    /// `NSHomeDirectory()` is the container, so this is not always
+    /// `~/.locus/auth.json` — never hardcode that in a string.
+    static var displayPath: String {
+        (fileURL.path as NSString).abbreviatingWithTildeInPath
+    }
+
+    // MARK: - Cache
+
+    /// `hasKey` is read during SwiftUI body evaluation — once per account per
+    /// render — so every lookup must stay in memory. The file is read once and
+    /// written through on change.
+    private static let lock = NSLock()
+    private static var cache: [String: String]?
+    /// Set when a file exists but could not be understood. Anything
+    /// destructive must refuse to act on that, because the entries it could
+    /// not read are exactly the ones that would look orphaned.
+    private static var readDegraded = false
+
+    /// True when the stored file could not be parsed. Callers that delete must
+    /// not act while this holds.
+    static var isDegraded: Bool {
+        lock.lock(); defer { lock.unlock() }
+        _ = loadLocked()
+        return readDegraded
+    }
+
+    private static func loadLocked() -> [String: String] {
+        if let cache { return cache }
+        guard let data = try? Data(contentsOf: fileURL) else {
+            // No file is a first run, not a degradation.
+            cache = [:]
+            readDegraded = false
+            return [:]
+        }
+        guard
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            readDegraded = true
+            cache = [:]
+            return [:]
+        }
+        // Read entry by entry. `as? [String: String]` on a whole section is
+        // all-or-nothing — one `null` or number anywhere in it and the entire
+        // section casts to nil, which would look like "these accounts have no
+        // keys" and let the next write overwrite the survivors.
+        var merged: [String: String] = [:]
+        for section in [providerSection, mcpSection] {
+            guard let raw = root[section] else { continue }
+            guard let entries = raw as? [String: Any] else {
+                return degradedLocked()
+            }
+            for (key, value) in entries {
+                guard let string = value as? String else {
+                    return degradedLocked()
+                }
+                merged[key] = string
+            }
+        }
+        readDegraded = false
+        cache = merged
+        return merged
+    }
+
+    /// Refuse to serve a partial view of a file we only half understood: the
+    /// entries that failed to read are exactly the ones a sweep would treat as
+    /// orphans, and the ones a write would drop.
+    private static func degradedLocked() -> [String: String] {
+        readDegraded = true
+        cache = [:]
+        return [:]
+    }
+
+    private static let providerSection = "provider_accounts"
+    private static let mcpSection = "mcp_servers"
+
+    /// A name no earlier salvage already owns, so corrupting the file twice
+    /// never destroys the first copy.
+    private static func uniqueSalvageURL(in directory: URL) -> URL {
+        let base = directory.appendingPathComponent("auth.json.corrupt")
+        guard FileManager.default.fileExists(atPath: base.path) else { return base }
+        for suffix in 2...999 {
+            let candidate = directory.appendingPathComponent("auth.json.corrupt.\(suffix)")
+            if !FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+        }
+        return directory.appendingPathComponent("auth.json.corrupt.\(UUID().uuidString)")
+    }
+
+    // MARK: - Persistence
+
+    @discardableResult
+    private static func writeLocked(_ entries: [String: String]) -> Bool {
+        var provider: [String: String] = [:]
+        var mcp: [String: String] = [:]
+        for (key, value) in entries {
+            if key.hasPrefix(mcpCredentialPrefix) { mcp[key] = value } else { provider[key] = value }
+        }
+        let root: [String: Any] = [
+            "version": 1,
+            providerSection: provider,
+            mcpSection: mcp,
+        ]
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: root, options: [.prettyPrinted, .sortedKeys]
+        ) else { return false }
+
+        let directory = fileURL.deletingLastPathComponent()
+        do {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            // Re-assert on an existing directory, which createDirectory leaves alone.
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o700], ofItemAtPath: directory.path
+            )
+
+            // A file we could not parse may still hold recoverable secrets, so
+            // moving it aside is a precondition of writing, not a courtesy: if
+            // it cannot be saved, do not overwrite it. The name is unique so a
+            // second corruption never destroys the first salvage.
+            var salvaged = false
+            if readDegraded, FileManager.default.fileExists(atPath: fileURL.path) {
+                let salvage = uniqueSalvageURL(in: directory)
+                do {
+                    try FileManager.default.moveItem(at: fileURL, to: salvage)
+                    salvaged = true
+                } catch {
+                    return false
+                }
+            }
+
+            // Create the temp file already restricted rather than writing it
+            // wide and narrowing after — otherwise the secret exists, however
+            // briefly, at mode 0644 & ~umask. Same ordering the agent uses in
+            // extensions.py::_save.
+            let temporary = directory.appendingPathComponent("auth.json.\(UUID().uuidString).tmp")
+            // A failed rename must not strand a plaintext copy of every secret.
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            guard FileManager.default.createFile(
+                atPath: temporary.path,
+                contents: data,
+                attributes: [.posixPermissions: 0o600]
+            ) else { return false }
+
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                _ = try FileManager.default.replaceItemAt(fileURL, withItemAt: temporary)
+            } else {
+                try FileManager.default.moveItem(at: temporary, to: fileURL)
+            }
+            // replaceItemAt can carry the *replaced* file's attributes over, so
+            // re-assert rather than trusting the temp file's mode to survive.
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o600], ofItemAtPath: fileURL.path
+            )
+            // Only now is the old file genuinely superseded.
+            if salvaged { readDegraded = false }
+            cache = entries
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    // MARK: - API
 
     @discardableResult
     static func set(_ value: String, account: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return remove(account: account) }
-        guard let data = trimmed.data(using: .utf8) else { return false }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        let attributes: [String: Any] = [
-            kSecValueData as String: data,
-            // Never synced to iCloud or another device: kSecAttrSynchronizable
-            // is unset, and that alone is what keeps the key on this Mac.
-            // kSecAttrAccessible is set for the day these move to the
-            // data-protection keychain — on macOS it binds only there, and is
-            // ignored for the legacy items this stores today.
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
-        ]
-
-        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if status == errSecSuccess { return true }
-        if status == errSecItemNotFound {
-            var insert = query
-            insert.merge(attributes) { current, _ in current }
-            return SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
-        }
-        return false
+        lock.lock(); defer { lock.unlock() }
+        var entries = loadLocked()
+        entries[account] = trimmed
+        return writeLocked(entries)
     }
 
     static func get(account: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data,
-              let value = String(data: data, encoding: .utf8)
-        else { return nil }
-        return value
+        lock.lock(); defer { lock.unlock() }
+        let value = loadLocked()[account]
+        return (value?.isEmpty ?? true) ? nil : value
     }
 
     static func has(account: String) -> Bool {
@@ -82,57 +230,63 @@ enum Keychain {
 
     @discardableResult
     static func remove(account: String) -> Bool {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        let status = SecItemDelete(query as CFDictionary)
-        return status == errSecSuccess || status == errSecItemNotFound
+        lock.lock(); defer { lock.unlock() }
+        var entries = loadLocked()
+        guard entries.removeValue(forKey: account) != nil else { return true }
+        return writeLocked(entries)
     }
 
     /// Every account name Locus has stored. Used to sweep up keys whose
     /// account was deleted while the app was not running to see it.
     static func allAccounts() -> [String] {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecReturnAttributes as String: true,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let entries = item as? [[String: Any]]
-        else { return [] }
-        return entries.compactMap { $0[kSecAttrAccount as String] as? String }
+        lock.lock(); defer { lock.unlock() }
+        return Array(loadLocked().keys)
     }
 
     /// Deletes provider-account keys with no matching account — the residue of
     /// a crash between writing the key and saving the account list.
     static func removeOrphanedProviderKeys(keeping liveAccounts: Set<String>) {
-        for account in allAccounts()
-        where account.hasPrefix(providerAccountPrefix) && !liveAccounts.contains(account) {
-            remove(account: account)
+        lock.lock(); defer { lock.unlock() }
+        var entries = loadLocked()
+        guard !readDegraded else { return }
+        let doomed = entries.keys.filter {
+            $0.hasPrefix(providerAccountPrefix) && !liveAccounts.contains($0)
         }
+        guard !doomed.isEmpty else { return }
+        doomed.forEach { entries.removeValue(forKey: $0) }
+        writeLocked(entries)
     }
 
     /// The same reclamation for MCP credentials. These hold OAuth access and
-    /// refresh tokens for third-party servers, so a key left behind by a
+    /// refresh tokens for third-party servers, so an entry left behind by a
     /// server removed outside the app — a hand-edited or reset extensions
-    /// state file, or a crash between the backend delete and the Keychain
-    /// delete — is a live third-party token nothing else would ever collect.
+    /// state file, or a crash between the backend delete and the local delete —
+    /// is a live third-party token nothing else would ever collect.
     static func removeOrphanedMCPCredentials(keeping liveServerIDs: Set<String>) {
+        lock.lock(); defer { lock.unlock() }
+        var entries = loadLocked()
+        guard !readDegraded else { return }
         let live = Set(liveServerIDs.map(mcpCredentialKey))
-        for account in allAccounts()
-        where account.hasPrefix(mcpCredentialPrefix) && !live.contains(account) {
-            remove(account: account)
+        let doomed = entries.keys.filter {
+            $0.hasPrefix(mcpCredentialPrefix) && !live.contains($0)
         }
+        guard !doomed.isEmpty else { return }
+        doomed.forEach { entries.removeValue(forKey: $0) }
+        writeLocked(entries)
+    }
+
+    /// Drops the in-memory copy. Tests use this to observe a fresh read.
+    static func resetCacheForTesting() {
+        lock.lock(); defer { lock.unlock() }
+        cache = nil
+        readDegraded = false
     }
 }
 
 /// OAuth 2.0 authorization-code + PKCE broker for remote MCP servers.
-/// Tokens are returned to AppModel, which stores them in Keychain and hands
-/// them to the local agent only through its transient credential endpoint.
+/// Tokens are returned to AppModel, which stores them in the credential file
+/// and hands them to the local agent only through its transient credential
+/// endpoint.
 @MainActor
 final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContextProviding {
     private var session: ASWebAuthenticationSession?
