@@ -1,6 +1,6 @@
 # Locus for macOS
 
-Locus 1.9 is a native workspace for building with local Ollama models. It combines
+Locus 1.10 is a native workspace for building with local Ollama models. It combines
 conversation, planning, file context, change review, a console, and live preview
 in one calm SwiftUI interface. Local Ollama is the default; hosted providers are
 used only after you explicitly add and select an account.
@@ -351,7 +351,7 @@ The release pipeline can produce a SparkTales **Developer ID** build that is
 notarized by Apple and stapled, so it opens normally on a Mac that has never
 seen it. Only an archive produced with `LOCUS_NOTARIZE=1` and passing the
 Gatekeeper/ticket checks below may be described as a public release. The
-historical 1.9.0 archive is not evidence that current source has passed that
+historical 1.10.0 archive is not evidence that current source has passed that
 gate; private verification archives are labeled and must not be published.
 
 This build is deliberately **not sandboxed**. A container would buy nothing
