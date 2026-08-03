@@ -103,7 +103,7 @@ struct InspectorPlanTab: View {
                 .padding(.horizontal, 17)
                 .padding(.top, 12)
                 .padding(.bottom, 17)
-                .background(LocusTheme.paper)
+                .background(LocusTheme.paperDeep)
         }
     }
 }
@@ -338,18 +338,14 @@ struct PermissionGuardCard: View {
             }
         }
         .padding(11)
-        .background(
-            mode.isRisky
-                ? LocusTheme.coral.opacity(0.1)
-                : Color(red: 0.953, green: 0.91, blue: 0.875)
-        )
+        .background(LocusTheme.paperDeep)
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .stroke(
                     mode.isRisky
                         ? LocusTheme.coral.opacity(0.4)
-                        : Color(red: 0.84, green: 0.78, blue: 0.73),
+                        : LocusTheme.line,
                     lineWidth: 1
                 )
         }
