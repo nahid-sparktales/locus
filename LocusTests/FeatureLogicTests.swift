@@ -6,6 +6,25 @@ import XCTest
 final class FeatureLogicTests: XCTestCase {
     // MARK: - Application lifecycle
 
+    func testMainWindowUsesTheCompactDefaultSize() {
+        XCTAssertEqual(LocusWindowSizing.defaultSize.width, 1_200)
+        XCTAssertEqual(LocusWindowSizing.defaultSize.height, 760)
+
+        let visibleFrame = NSRect(x: 20, y: 40, width: 1_600, height: 1_000)
+        let frame = LocusWindowSizing.centeredFrame(in: visibleFrame)
+        XCTAssertEqual(frame.size, LocusWindowSizing.defaultSize)
+        XCTAssertEqual(frame.midX, visibleFrame.midX)
+        XCTAssertEqual(frame.midY, visibleFrame.midY)
+    }
+
+    func testMainWindowFitsSmallerDisplays() {
+        let visibleFrame = NSRect(x: 0, y: 24, width: 980, height: 650)
+        XCTAssertEqual(
+            LocusWindowSizing.centeredFrame(in: visibleFrame),
+            visibleFrame
+        )
+    }
+
     func testRuntimePhasesDistinguishRecoveryFromFailure() {
         XCTAssertFalse(RuntimePhase.starting("starting").isOnline)
         XCTAssertTrue(RuntimePhase.online.isOnline)

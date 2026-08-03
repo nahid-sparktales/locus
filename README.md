@@ -7,6 +7,9 @@ used only after you explicitly add and select an account.
 
 ![Locus workspace](Docs/locus-workspace.jpg)
 
+Locus opens in a compact 1200×760 workspace by default. Resize it whenever you
+like; macOS remembers the size you choose for later launches.
+
 ## Designed for real project work
 
 - **One calm sidebar** holds the conversation list: New chat, search, recents,

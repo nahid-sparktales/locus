@@ -3,6 +3,24 @@ import SwiftUI
 
 private let locusIsUITesting = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1"
 
+enum LocusWindowSizing {
+    static let defaultSize = NSSize(width: 1_200, height: 760)
+    static let normalizationKey = "Locus.didNormalizeMainWindow.1200x760"
+
+    static func centeredFrame(in visibleFrame: NSRect) -> NSRect {
+        let size = NSSize(
+            width: min(defaultSize.width, visibleFrame.width),
+            height: min(defaultSize.height, visibleFrame.height)
+        )
+        return NSRect(
+            x: visibleFrame.midX - size.width / 2,
+            y: visibleFrame.midY - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+    }
+}
+
 @main
 struct LocusApp: App {
     @NSApplicationDelegateAdaptor(LocusApplicationDelegate.self) private var appDelegate
@@ -23,7 +41,10 @@ struct LocusApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unifiedCompact(showsTitle: false))
-        .defaultSize(width: 1_420, height: 860)
+        .defaultSize(
+            width: LocusWindowSizing.defaultSize.width,
+            height: LocusWindowSizing.defaultSize.height
+        )
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Session") { model.newSession() }
@@ -149,6 +170,7 @@ private struct MainWindowMarker: NSViewRepresentable {
 
 private final class MainWindowMarkerView: NSView {
     private var preparedUITestWindow = false
+    private var normalizedLaunchWindow = false
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -159,25 +181,30 @@ private final class MainWindowMarkerView: NSView {
         guard let window else { return }
         window.identifier = LocusApplicationDelegate.mainWindowIdentifier
 
-        // GitHub's macOS UI-test display is smaller than Locus's normal
-        // 1420×860 default. Keep the test window entirely on-screen so the
-        // tests exercise real clickable controls instead of clipped elements.
-        // Production sizing and user-restored frames remain untouched.
-        guard locusIsUITesting,
-              !preparedUITestWindow,
-              let visibleFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame else {
+        guard let visibleFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame else {
             return
         }
-        preparedUITestWindow = true
-        let size = NSSize(
-            width: min(1_000, visibleFrame.width),
-            height: min(680, visibleFrame.height)
-        )
-        let origin = NSPoint(
-            x: visibleFrame.midX - size.width / 2,
-            y: visibleFrame.midY - size.height / 2
-        )
-        window.setFrame(NSRect(origin: origin, size: size), display: true)
+
+        // UI tests and documentation captures use the same frame customers
+        // see, clamped only when the available display is smaller.
+        if locusIsUITesting {
+            guard !preparedUITestWindow else { return }
+            preparedUITestWindow = true
+            window.setFrame(LocusWindowSizing.centeredFrame(in: visibleFrame), display: true)
+            return
+        }
+
+        // SwiftUI restores the previous window frame before applying the
+        // scene's default. Normalize that saved oversized frame once for this
+        // release, then leave every resize the customer makes alone.
+        let defaults = UserDefaults.standard
+        guard !normalizedLaunchWindow,
+              !defaults.bool(forKey: LocusWindowSizing.normalizationKey) else {
+            return
+        }
+        normalizedLaunchWindow = true
+        window.setFrame(LocusWindowSizing.centeredFrame(in: visibleFrame), display: true)
+        defaults.set(true, forKey: LocusWindowSizing.normalizationKey)
     }
 }
 
