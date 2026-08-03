@@ -1,6 +1,6 @@
 # Locus for macOS
 
-Locus 1.8 is a native workspace for building with local Ollama models. It combines
+Locus 1.9 is a native workspace for building with local Ollama models. It combines
 conversation, planning, file context, change review, a console, and live preview
 in one calm SwiftUI interface. Local Ollama is the default; hosted providers are
 used only after you explicitly add and select an account.
