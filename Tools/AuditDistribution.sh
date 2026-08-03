@@ -35,14 +35,27 @@ do
     }
 done
 
-PYTHONPATH="${runtime}/site-packages:${runtime}/source" \
-    "${runtime}/python/bin/python3" -c '
-from importlib.metadata import version
-assert version("websockets") == "15.0.1"
-' || {
-    echo "error: bundled runtime failed its pinned-version audit" >&2
-    exit 1
-}
+# Read each pinned version from the wheel's own metadata rather than by running
+# the bundled interpreter. In the App Store configuration that interpreter is
+# signed as an inheriting sandbox helper, so launching it standalone is killed
+# by the kernel (SIGTRAP) — an exec-based check could only ever pass for the
+# direct-download build, and failed every ReleaseMAS archive.
+for pin in websockets:15.0.1
+do
+    name="${pin%%:*}"
+    want="${pin##*:}"
+    metadata=("${runtime}/site-packages/${name}-"*.dist-info/METADATA(N))
+    (( ${#metadata} == 1 )) || {
+        echo "error: expected exactly one ${name} dist-info in the bundled runtime, found ${#metadata}" >&2
+        exit 1
+    }
+    got="$(/usr/bin/awk -F': ' '$1 == "Version" { print $2; exit }' "${metadata[1]}" \
+        | /usr/bin/tr -d '\r')"
+    [[ "${got}" == "${want}" ]] || {
+        echo "error: bundled ${name} is ${got:-unknown}, expected ${want}" >&2
+        exit 1
+    }
+done
 
 for required in \
     LICENSE \
