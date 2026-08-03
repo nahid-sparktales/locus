@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 1.9.0 — 2026-08-03
+
+### Added
+
+- **Local runtimes are supervised instead of assumed.** Locus now starts the
+  shared Ollama application when it is installed, falls back when it is not, and
+  carries an explicit runtime phase — starting, online, recovering, unavailable —
+  through the UI. A local model whose runtime is not actually up now says so,
+  and says which state it is in, rather than accepting a prompt and failing at
+  the first message.
 
 ### Fixed
 
@@ -25,6 +34,11 @@
   when the permission mode is changed during a run.
 - Windows measured before they were scoped by host are re-keyed rather than
   discarded, so upgrading does not blank the meter.
+- The window opens at 1200×760 rather than 1420×860, so first launch fits a
+  smaller display without the user having to resize it. Frames you have already
+  moved or resized are left alone.
+- The permission panel is drawn on the inspector's own background instead of a
+  slightly different one, so it no longer reads as a separate surface.
 
 ## 1.8.0 — 2026-07-30
 
