@@ -39,6 +39,108 @@ AUTH_STYLES = (AUTH_BEARER, AUTH_ANTHROPIC)
 
 ANTHROPIC_VERSION = "2023-06-01"
 
+#: Anthropic's Messages API requires `max_tokens`, so an agent that does not know
+#: its window still has to name one. Only a default: a session with a settled
+#: window sends the room it actually reserved for a reply instead, so a full
+#: reply cannot overrun the budget compaction was planning around.
+ANTHROPIC_MAX_OUTPUT_TOKENS = 8_192
+
+#: Fields that name the window a deployment actually serves, most authoritative
+#: first. A bare ``max_tokens`` is deliberately absent: several gateways use it
+#: for the *output* cap, so reading it as the context window would understate a
+#: 128k model as an 8k one and compact away most of a working conversation.
+WINDOW_KEYS = (
+    "max_model_len",        # vLLM — exact, and the common case for rented GPUs
+    "max_total_tokens",     # TGI
+    "context_length",       # most gateways
+    "context_window",
+    "max_context_length",
+    "n_ctx",                # llama.cpp
+    "max_input_tokens",     # LiteLLM proxy — input only, so conservative
+)
+
+#: Fields that name an architectural ceiling rather than what is being served.
+CEILING_KEYS = ("max_position_embeddings", "trained_context_length")
+
+#: TGI's ``GET /info``. `max_total_tokens` is prompt + generation, which is the
+#: window; `max_input_length` is the prompt-only bound, used when it is all there
+#: is.
+TGI_WINDOW_KEYS = ("max_total_tokens", "max_input_length")
+
+#: llama.cpp's ``GET /props``. The per-slot value is the right one: it is the
+#: window a single request gets.
+LLAMA_CPP_WINDOW_KEYS = ("n_ctx", "default_generation_settings")
+
+#: Vendor APIs that serve neither runtime metadata route. Probing them would
+#: send an authenticated GET to a path they never published, for no answer.
+NO_RUNTIME_PROBE_HOSTS = frozenset({
+    "api.anthropic.com",
+    "api.openai.com",
+    "api.moonshot.ai",
+    "api.moonshot.cn",
+    "api.kimi.com",
+    "router.huggingface.co",
+})
+
+#: Bounds for a plausible window. Below the first, a "window" is a unit mix-up
+#: or a boolean; above the second it is a byte count or a token *budget* rather
+#: than a context length.
+MIN_PLAUSIBLE_WINDOW = 1_024
+MAX_PLAUSIBLE_WINDOW = 4_000_000
+
+
+def _as_window(value: Any) -> int:
+    """A plausible window from a JSON scalar, else 0."""
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, str):
+        try:
+            value = int(value.strip())
+        except (TypeError, ValueError):
+            return 0
+    if not isinstance(value, int):
+        return 0
+    return value if MIN_PLAUSIBLE_WINDOW <= value <= MAX_PLAUSIBLE_WINDOW else 0
+
+
+def parse_context_length(
+    entry: Any, keys: tuple[str, ...] = WINDOW_KEYS, _depth: int = 3
+) -> int:
+    """The first plausible window named by ``keys`` anywhere in ``entry``.
+
+    Gateways nest this differently — LiteLLM under ``model_info``, OpenRouter
+    under ``top_provider``, llama.cpp under ``default_generation_settings``, the
+    Hugging Face router under ``providers[]`` — so rather than enumerate paths
+    that will be wrong again next quarter, the walk is bounded and looks for the
+    keys wherever they are. Bounded because this parses a response from a remote
+    server: depth 3 and 64 nodes, then it gives up.
+    """
+    budget = [64]
+
+    def walk(node: Any, depth: int) -> int:
+        if budget[0] <= 0 or depth < 0:
+            return 0
+        budget[0] -= 1
+        if isinstance(node, dict):
+            for key in keys:
+                if key in node:
+                    window = _as_window(node[key])
+                    if window:
+                        return window
+            for value in node.values():
+                if isinstance(value, (dict, list)):
+                    found = walk(value, depth - 1)
+                    if found:
+                        return found
+        elif isinstance(node, list):
+            for value in node:
+                found = walk(value, depth - 1)
+                if found:
+                    return found
+        return 0
+
+    return walk(entry, _depth)
+
 
 def resolve_auth_style(style: str, base_url: str) -> str:
     """Return the auth style to use, inferring it from the host when unset."""
@@ -120,6 +222,13 @@ class RemoteClient:
         #: endpoint that answers 401 there would read as a rejected key on
         #: every health poll.
         self.lists_models = lists_models
+        #: Discovered windows, per model id, and the ceiling if one was stated.
+        self._windows: dict[str, int] = {}
+        self._ceilings: dict[str, int] = {}
+        #: A single-model deployment (TGI, llama.cpp) has one window for the
+        #: whole endpoint rather than one per id.
+        self._host_window = 0
+        self._discovered = False
 
     # ----------------------------------------------------------------- meta
 
@@ -210,6 +319,12 @@ class RemoteClient:
     def list_models(self) -> list[dict[str, Any]]:
         if not self.base_url:
             raise OllamaError("no endpoint URL is configured")
+        if not self.lists_models:
+            # Same reasoning as `check`: this provider does not serve the route.
+            # Asking anyway produced an auth error that the caller reported as a
+            # rejected key, which then failed model switching for a key that
+            # works perfectly well for chat.
+            return self._fallback_models()
         try:
             response = requests.get(
                 f"{self.base_url}/models",
@@ -231,28 +346,109 @@ class RemoteClient:
         models: list[dict[str, Any]] = []
         for entry in entries or []:
             name = (entry or {}).get("id")
-            if name:
-                models.append({"name": str(name), "size": 0, "details": {}})
+            if not name:
+                continue
+            window = parse_context_length(entry)
+            ceiling = parse_context_length(entry, CEILING_KEYS)
+            if window:
+                self._windows[str(name)] = window
+            if ceiling:
+                self._ceilings[str(name)] = ceiling
+            models.append({
+                "name": str(name),
+                "size": 0,
+                "details": {},
+                "context_length": window,
+                "trained_context_length": ceiling or window,
+            })
         return models or self._fallback_models()
 
     def _fallback_models(self) -> list[dict[str, Any]]:
         if self.configured_model:
-            return [{"name": self.configured_model, "size": 0, "details": {}}]
+            window = self.loaded_context_length(self.configured_model)
+            return [{
+                "name": self.configured_model,
+                "size": 0,
+                "details": {},
+                "context_length": window,
+                "trained_context_length": window,
+            }]
         return []
+
+    # ------------------------------------------------------- context windows
+
+    def discover_windows(self) -> None:
+        """Find out what window this endpoint serves. One pass, never raises.
+
+        Deployments that run open models — vLLM, TGI, llama.cpp, a Hugging Face
+        Inference Endpoint — do state their window; the ids in `/v1/models` are
+        simply the only field anyone bothered to read. So the listing is parsed
+        first, since that request is being made anyway for the model picker, and
+        only when it yields nothing are the two runtime metadata routes tried.
+
+        Vendor APIs are skipped entirely: they serve neither route, so probing
+        them means sending an authenticated GET to a path they never published,
+        for no answer.
+        """
+        if self._discovered:
+            return
+        self._discovered = True
+        try:
+            self.list_models()          # fills _windows / _ceilings as a side effect
+        except OllamaError:
+            pass
+        if self._windows or self._host_window or self._skips_runtime_probes():
+            return
+        self._probe_runtime()
+
+    def _skips_runtime_probes(self) -> bool:
+        host = urlsplit(self.base_url).hostname or ""
+        return host.lower() in NO_RUNTIME_PROBE_HOSTS
+
+    def _runtime_root(self) -> str:
+        """The base URL without the OpenAI-compatibility suffix."""
+        base = self.base_url
+        return base[: -len("/v1")] if base.endswith("/v1") else base
+
+    def _probe_runtime(self) -> None:
+        root = self._runtime_root()
+        for path, keys in (("/info", TGI_WINDOW_KEYS), ("/props", LLAMA_CPP_WINDOW_KEYS)):
+            payload = self._get_json(f"{root}{path}")
+            if not isinstance(payload, dict):
+                continue
+            window = parse_context_length(payload, keys)
+            if window:
+                self._host_window = window
+                return
+
+    def _get_json(self, url: str) -> Any:
+        """A best-effort metadata read. Any failure means "it did not say"."""
+        try:
+            response = requests.get(
+                url, headers=self._headers(), timeout=(5, 5), allow_redirects=False
+            )
+            if response.status_code >= 300:
+                return None
+            return response.json()
+        except (requests.RequestException, ValueError):
+            return None
 
     def show_model(self, name: str) -> dict[str, Any]:
         return {}
 
     def context_length(self, name: str) -> int:
-        # OpenAI-compatible servers do not advertise a window; the app falls
-        # back to its own default when this is 0.
-        return 0
+        """The ceiling this endpoint reported, if it reported one. Cache read."""
+        key = (name or self.configured_model).strip()
+        return self._ceilings.get(key) or self.loaded_context_length(key)
 
     def loaded_context_length(self, name: str) -> int:
-        # Nor do they report the window a model is being served in. Set
-        # `context_window` in the config to give compaction a number to work
-        # against on a remote endpoint.
-        return 0
+        """The window this endpoint serves, 0 when it never said. Cache read.
+
+        Never does HTTP: `refresh_context_limit` calls this on every turn, and
+        `discover_windows` is the one place a request is made.
+        """
+        key = (name or self.configured_model).strip()
+        return self._windows.get(key) or self._host_window
 
     def supports_tools(self, name: str) -> bool:
         return True
@@ -275,7 +471,10 @@ class RemoteClient:
             payload: dict[str, Any] = {
                 "model": model or self.configured_model,
                 "messages": native_messages,
-                "max_tokens": 8_192,
+                # Anthropic requires an output cap. The caller overrides it
+                # through `options` with the room the budget actually reserved;
+                # this default is for callers that have no window to reason from.
+                "max_tokens": ANTHROPIC_MAX_OUTPUT_TOKENS,
                 "stream": True,
             }
             if system:

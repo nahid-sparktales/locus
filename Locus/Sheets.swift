@@ -945,6 +945,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft = AppSettings()
     @State private var localWindow = ""
+    @State private var iterationLimit = ""
     @State private var addingAccount: ProviderAccount?
     @State private var editingAccount: ProviderAccount?
     @State private var accountPendingRemoval: ProviderAccount?
@@ -999,7 +1000,7 @@ struct SettingsView: View {
                     TextField("Local context window in tokens (optional)", text: $localWindow)
                         .accessibilityIdentifier("settings.localContextWindow")
 
-                    Text("Leave empty to use the window Ollama is really running the model in, measured once it is loaded. Set a value to pin one — it is requested as num_ctx and is what compaction budgets against.")
+                    Text("Leave empty and Locus asks Ollama for the largest window the model was built for, up to 32,768 tokens — Ollama's own default is 4,096, most of which a turn spends on tools before the conversation starts. Bigger windows cost memory for the KV cache, and a model that ends up partly on the CPU is backed off automatically. Set a value to pin one exactly; it is requested as num_ctx and is what compaction budgets against.")
                         .font(.system(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1076,6 +1077,16 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings.resetPermissions")
 
                     Text("Reading, searching and listing inside the workspace never ask. Anything outside it always does, in every mode.")
+                        .font(.system(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Section("Agent") {
+                    TextField("Maximum tool steps per turn (optional)", text: $iterationLimit)
+                        .accessibilityIdentifier("settings.maxIterations")
+
+                    Text("Leave empty for 40. A turn that reaches the limit stops and says so — if turns are ending early for no obvious reason, this is the number to check.")
                         .font(.system(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1162,6 +1173,8 @@ struct SettingsView: View {
                         var saved = draft
                         let typed = localWindow.trimmingCharacters(in: .whitespacesAndNewlines)
                         saved.localContextWindow = typed.isEmpty ? nil : Int(typed)
+                        let steps = iterationLimit.trimmingCharacters(in: .whitespacesAndNewlines)
+                        saved.maxIterations = steps.isEmpty ? nil : Int(steps)
                         model.applySettings(saved)
                         dismiss()
                     }
@@ -1177,7 +1190,15 @@ struct SettingsView: View {
         }
         .frame(width: 780, height: 620)
         .background(LocusTheme.panel)
-        .onAppear { draft = model.settings }
+        .onAppear {
+            draft = model.settings
+            // Seeded, not left blank: these two are held as text rather than in
+            // the draft, and an empty field means "clear it" on save — so
+            // without this, opening Settings and pressing Save wiped a pinned
+            // context window that the user could still see in the meter.
+            localWindow = model.settings.localContextWindow.map(String.init) ?? ""
+            iterationLimit = model.settings.maxIterations.map(String.init) ?? ""
+        }
         .onExitCommand {
             dismiss()
             model.settingsPresented = false

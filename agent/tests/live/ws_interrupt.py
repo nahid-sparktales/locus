@@ -1,14 +1,22 @@
 """WS interrupt verification: stop a long generation mid-stream.
-Run with the server up: .venv/bin/python tests/ws_interrupt.py"""
+
+Manual smoke test against a real model. Starts its own server:
+    agent/.venv/bin/python tests/live/ws_interrupt.py --model qwen3.6:27b
+"""
 import asyncio
 import json
+import sys
 import time
+from pathlib import Path
 
 import websockets
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _server import live_server, parse_args  # noqa: E402
 
-async def main() -> None:
-    async with websockets.connect("ws://localhost:8791/ws/chat") as ws:
+
+async def run(ws_url: str) -> None:
+    async with websockets.connect(ws_url) as ws:
 
         async def recv(timeout=90):
             return json.loads(await asyncio.wait_for(ws.recv(), timeout))
@@ -59,4 +67,10 @@ async def main() -> None:
                 return
 
 
-asyncio.run(main())
+def main() -> None:
+    args = parse_args(__doc__ or "")
+    with live_server(args.model) as (_base, ws_url, _workdir):
+        asyncio.run(run(ws_url))
+
+
+main()

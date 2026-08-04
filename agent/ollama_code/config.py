@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from .paths import APP_DIR
@@ -30,6 +31,12 @@ DEFAULTS: dict[str, Any] = {
     # listing (Kimi Code), so the health probe does not read its auth
     # error on /models as a rejected key.
     "remote_lists_models": True,
+    # The vendor's documented window for the remote model in use, pushed by the
+    # app from its own table. Kept apart from context_window because it is an
+    # assumption, not an instruction: it is used only when the endpoint reports
+    # nothing, it is reported to clients as "published", and it is never written
+    # to model_windows.
+    "published_context_window": 0,
     # The API key is NEVER written here. It comes from the app's credential
     # file via /api/provider, or from one of REMOTE_API_KEY_ENV at the command
     # line.
@@ -46,6 +53,17 @@ DEFAULTS: dict[str, Any] = {
     # model name. Measured from /api/ps, never guessed — see
     # AgentCore.refresh_context_limit.
     "model_windows": {},
+    # Largest window each model was seen to fit in without spilling to CPU,
+    # keyed the same way. Written only after a measured spill, and kept apart
+    # from model_windows because these are ceilings this machine imposed, not
+    # windows anything was observed serving.
+    "model_window_caps": {},
+    # Ceiling for the window the agent asks Ollama for when the user has not
+    # pinned one. Bigger windows cost KV-cache memory: a 27B model at 32768
+    # needs several GB of it on top of the weights, so this is deliberately
+    # short of what most models were trained for. A model that spills to CPU at
+    # this size gets its own lower ceiling recorded in model_window_caps.
+    "context_window_cap": 32_768,
     "auto_compact": True,
     # Context window in tokens, and the single source of truth for both what
     # the agent asks Ollama for (`num_ctx`) and what it budgets against. 0 means
@@ -85,6 +103,28 @@ def context_window(value: Any) -> int:
     """The configured window in tokens, or 0 when there is no usable one."""
     number = non_negative_int(value)
     return number if number >= MINIMUM_CONTEXT_WINDOW else 0
+
+
+#: A turn that is allowed thousands of tool calls is a hang, not a feature: the
+#: limit exists so a model looping on a failing edit stops and says so.
+MAX_ITERATIONS_CEILING = 1_000
+
+
+def iteration_limit(value: Any) -> int:
+    """Tool iterations allowed in one turn, falling back to the default.
+
+    `non_negative_int` already survives a hand-edited file. What matters here is
+    that "no usable value" must land on the default rather than on `range(0)`:
+    a bare `int()` gave two silent failures instead. A negative value yielded
+    `range(-1)`, so every turn ended immediately with reason "max_iterations"
+    and no tool calls — indistinguishable, from the app, from a model that
+    refused to work. A non-numeric string raised ValueError inside AgentCore's
+    constructor, so the agent never started at all.
+    """
+    number = non_negative_int(value)
+    if number <= 0:
+        return int(DEFAULTS["max_iterations"])
+    return min(number, MAX_ITERATIONS_CEILING)
 
 
 def non_negative_int(value: Any) -> int:
@@ -139,6 +179,16 @@ def load_config() -> dict[str, Any]:
         if isinstance(windows, dict)
         else {}
     )
+    caps = cfg.get("model_window_caps")
+    cfg["model_window_caps"] = (
+        {
+            str(name): int(value)
+            for name, value in caps.items()
+            if isinstance(value, int) and value > 0
+        }
+        if isinstance(caps, dict)
+        else {}
+    )
     # Entries written before windows were scoped by host carry a bare model
     # name. They were measured against the host in this same config, so re-key
     # them to it rather than discarding a real measurement and leaving the
@@ -164,6 +214,10 @@ def load_config() -> dict[str, Any]:
     # Silently, rather than raising: a hand-edited config reaches here at
     # startup, and refusing to start is how a user loses the ability to fix it.
     cfg["context_window"] = context_window(cfg.get("context_window"))
+    cfg["max_iterations"] = iteration_limit(cfg.get("max_iterations"))
+    cfg["context_window_cap"] = context_window(cfg.get("context_window_cap")) or int(
+        DEFAULTS["context_window_cap"]
+    )
     if not cfg.get("remote_api_key"):
         # Keep provider credentials in process memory, but do not let shell
         # tools or console children inherit them through os.environ.
@@ -176,9 +230,13 @@ def save_config(cfg: dict[str, Any]) -> None:
     try:
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         safe = {k: v for k, v in cfg.items() if k != "remote_api_key"}
-        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         tmp = CONFIG_PATH.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(safe, indent=2) + "\n", encoding="utf-8")
         tmp.replace(CONFIG_PATH)
-    except OSError:
-        pass
+    except OSError as error:
+        # Still swallowed: refusing to start is how a user loses the ability to
+        # fix a bad config. But a silent failure here is how a misdirected write
+        # went unnoticed for a week, so say so once.
+        logging.getLogger(__name__).warning(
+            "could not save config to %s: %s", CONFIG_PATH, error
+        )

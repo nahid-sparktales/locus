@@ -38,6 +38,7 @@ from .config import (
     DEFAULTS,
     MINIMUM_CONTEXT_WINDOW,
     context_window,
+    iteration_limit,
     load_config,
     non_negative_int,
     save_config,
@@ -51,9 +52,12 @@ from .ollama import (
     OllamaError,
     ToolCall,
     effective_context_length,
+    pinned_context_length,
 )
 from .permissions import PermissionManager, build_preview
 from .remote import (
+    ANTHROPIC_MAX_OUTPUT_TOKENS,
+    AUTH_ANTHROPIC,
     RemoteClient,
     normalize_base_url,
     resolve_auth_style,
@@ -81,6 +85,40 @@ CONTEXT_FILES = ("AGENTS.md", "OLLAMA.md", "CLAUDE.md")
 #: blocks of code as JSON-escaped strings; running out of window partway through
 #: is what makes Ollama reject a tool call with "unexpected end of JSON input".
 RESERVED_REPLY_TOKENS = 4_096
+
+#: Where a settled context window came from. Reported in `session_info` so a
+#: client can say which of these it is showing, because they are not equally
+#: trustworthy and the difference matters to anyone reading a fullness meter:
+#:
+#: * ``configured`` — the user pinned this number.
+#: * ``pinned``     — the agent chose it and asked Ollama for it as `num_ctx`.
+#: * ``measured``   — Ollama reported serving it (`/api/ps`).
+#: * ``reported``   — a hosted endpoint stated it in its own metadata.
+#: * ``remembered`` — a `measured` or `reported` number from an earlier session.
+#: * ``published``  — a vendor's documented figure for a model. An assumption:
+#:                    nothing was observed, and a model renamed behind the same
+#:                    id would change it silently.
+#: * ``unknown``    — nothing to budget against; compaction stays off.
+#:
+#: Only `measured` and `reported` values are ever written to `model_windows`, so
+#: `remembered` can never launder a guess into something that looks observed.
+SOURCE_CONFIGURED = "configured"
+SOURCE_PINNED = "pinned"
+SOURCE_MEASURED = "measured"
+SOURCE_REPORTED = "reported"
+SOURCE_REMEMBERED = "remembered"
+SOURCE_PUBLISHED = "published"
+SOURCE_UNKNOWN = "unknown"
+
+CONTEXT_SOURCES = (
+    SOURCE_CONFIGURED,
+    SOURCE_PINNED,
+    SOURCE_MEASURED,
+    SOURCE_REPORTED,
+    SOURCE_REMEMBERED,
+    SOURCE_PUBLISHED,
+    SOURCE_UNKNOWN,
+)
 
 #: What compacting leaves behind on top of the system prompt: the summary it
 #: just wrote. Part of the floor below which compacting reclaims nothing.
@@ -246,7 +284,9 @@ class AgentCore:
         self.model: str = model or str(self.config.get("model") or "")
         if self.provider == "remote":
             self._build_remote_client()
-        self.max_iterations = int(max_iterations or self.config.get("max_iterations") or 40)
+        self.max_iterations = iteration_limit(
+            max_iterations or self.config.get("max_iterations")
+        )
         self.perms = PermissionManager(
             skip_all=skip_permissions,
             mode=str(self.config.get("permission_mode") or "ask"),
@@ -271,6 +311,15 @@ class AgentCore:
         self.context_limit = 0
         #: Which model `context_limit` was settled for; see refresh_context_limit.
         self._context_limit_for = ""
+        #: Where `context_limit` came from, reported to clients so an assumed
+        #: number is never displayed as a measured one. See CONTEXT_SOURCES.
+        self._context_source = SOURCE_UNKNOWN
+        #: The window actually requested as `num_ctx`, 0 when nothing is asked
+        #: for. Distinct from `context_limit`: a window can be known by
+        #: observation without having been requested.
+        self._context_requested = 0
+        #: Last `/api/ps` reading for the current model, for the spill check.
+        self._last_resident: dict[str, int] = {}
         #: `/api/show`'s answer, memoised per model — it describes the file on
         #: disk, which does not change while the model does not.
         self._trained_window = 0
@@ -368,11 +417,11 @@ class AgentCore:
         """Settle on the window this session is really running in.
 
         Whatever this ends up being is both what gets requested as ``num_ctx``
-        (when the user asked for a specific window) and what compaction budgets
-        against, so the budget and the runtime window cannot drift apart. An
-        OpenAI-compatible endpoint advertises no window and takes no per-request
-        override, so there the limit is only what the user configured — 0, and
-        no budgeting, when they configured nothing.
+        (on Ollama) and what compaction budgets against, so the budget and the
+        runtime window cannot drift apart. Both providers resolve through the
+        same shape — a number, and where it came from — because a hosted
+        endpoint that states its own window deserves a working meter just as
+        much as a local model does.
         """
         if not self.model:
             return
@@ -381,22 +430,9 @@ class AgentCore:
         # unvalidated.
         configured = context_window(self.config.get("context_window"))
         if self.provider == "remote":
-            self.context_limit = configured
-            return
-        # Asking Ollama what it loaded is only needed when we are not telling
-        # it what to load.
-        loaded = 0 if configured > 0 else self.client.loaded_context_length(self.model)
-        if loaded > 0:
-            self.remember_model_window(self.model, loaded)
-        window = effective_context_length(loaded, self._trained_context_length(), configured)
-        if window <= 0:
-            # Nothing resident to measure, but this model may have been
-            # measured before. A remembered window is still an observation
-            # rather than a guess, and it is what lets the meter work from
-            # launch instead of staying blank until the first turn loads a
-            # model — Ollama evicts after five idle minutes, so "not resident"
-            # is the normal state, not the exception.
-            window = self.remembered_model_window(self.model)
+            window, source, requested = self._remote_context_limit(configured)
+        else:
+            window, source, requested = self._ollama_context_limit(configured)
         # A model Ollama has since evicted drops off /api/ps and reads as
         # unknown again. Forgetting the window at that point would quietly
         # switch compaction off for the rest of the session, so a number once
@@ -410,8 +446,190 @@ class AgentCore:
         if self.model != self._context_limit_for:
             self.context_limit = 0
             self._context_limit_for = self.model
-        if window > 0 or self.context_limit <= 0:
+            self._context_source = SOURCE_UNKNOWN
+            self._context_requested = 0
+        if window > 0:
             self.context_limit = window
+            self._context_source = source
+            self._context_requested = requested
+        elif self.context_limit <= 0:
+            self.context_limit = 0
+            self._context_source = SOURCE_UNKNOWN
+            self._context_requested = 0
+
+    def _resident_state(self) -> dict[str, int]:
+        """What the client can say about the resident model, tolerantly.
+
+        A client that reports only the window — an older one, or one that cannot
+        see memory at all — still supplies the number this must have. The spill
+        check simply has nothing to measure in that case.
+        """
+        reader = getattr(self.client, "resident_state", None)
+        if callable(reader):
+            return dict(reader(self.model))
+        return {
+            "context_length": self.client.loaded_context_length(self.model),
+            "size": 0,
+            "size_vram": 0,
+        }
+
+    def _ollama_context_limit(self, configured: int) -> tuple[int, str, int]:
+        """(window, source, requested) for a local model."""
+        resident = self._resident_state()
+        self._last_resident = resident
+        loaded = resident.get("context_length") or 0
+        if loaded > 0:
+            self.remember_model_window(self.model, loaded)
+        trained = self._trained_context_length()
+        if configured > 0:
+            window = effective_context_length(0, trained, configured)
+            return window, SOURCE_CONFIGURED, window
+        cap, cap_was_measured = self._window_cap(self.model)
+        # A measured cap ignores the resident window on purpose: that window is
+        # the one that spilled, so adopting it would undo the back-off.
+        pin = pinned_context_length(trained, cap, 0 if cap_was_measured else loaded)
+        if pin >= MINIMUM_CONTEXT_WINDOW:
+            window = effective_context_length(loaded, trained, pin)
+            # A resident runner that is already larger supplied the number; we
+            # only echo it back so Ollama keeps the runner it has.
+            source = SOURCE_MEASURED if loaded > 0 and pin == loaded else SOURCE_PINNED
+            return window, source, window
+        if loaded > 0:
+            return effective_context_length(loaded, trained, 0), SOURCE_MEASURED, 0
+        # Nothing resident to measure and no ceiling to pin against, but this
+        # model may have been measured before. A remembered window is still an
+        # observation rather than a guess, and it is what lets the meter work
+        # from launch instead of staying blank until the first turn loads a
+        # model — Ollama evicts after five idle minutes, so "not resident" is
+        # the normal state, not the exception.
+        return self.remembered_model_window(self.model), SOURCE_REMEMBERED, 0
+
+    def _remote_context_limit(self, configured: int) -> tuple[int, str, int]:
+        """(window, source, requested) for an OpenAI-compatible endpoint.
+
+        Nothing is ever requested: `num_ctx` is meaningless in an OpenAI-style
+        payload and some servers reject unknown fields outright. The window is
+        discovered instead — from the model listing the client already fetches,
+        or from a runtime metadata route — and clamped by whatever ceiling the
+        endpoint reported, which is the same protection local models have always
+        had against a figure that is too large to be real.
+        """
+        reported = self.client.loaded_context_length(self.model)
+        ceiling = self.client.context_length(self.model)
+        if reported > 0:
+            self.remember_model_window(self.model, reported)
+        window = effective_context_length(reported, ceiling, configured)
+        if window > 0:
+            source = SOURCE_CONFIGURED if configured > 0 else SOURCE_REPORTED
+            return window, source, 0
+        remembered = self.remembered_model_window(self.model)
+        if remembered > 0:
+            return remembered, SOURCE_REMEMBERED, 0
+        # Last resort: what the vendor documents for this model, pushed by the
+        # app. Never written to `model_windows` — it was not observed.
+        published = context_window(self.config.get("published_context_window"))
+        return published, SOURCE_PUBLISHED, 0
+
+    def resolve_context_limit_soon(self) -> None:
+        """Settle the window off-thread, announcing it if it changed.
+
+        Discovery is HTTP: asking a hosted endpoint what window it serves means
+        up to three requests, each with its own timeout. `use_ollama` and
+        `use_remote` cannot pay for that — the app awaits them, and they run
+        while mutable state is reserved, so a switch that probed inline would
+        hold the lock across three network stalls. So the provider call returns
+        with whatever it can settle for nothing, and this brings the real answer
+        a moment later.
+
+        Called from the server layer rather than from `use_*` itself, so the
+        object that owns the request lifecycle also owns the background work.
+        """
+        def run() -> None:
+            try:
+                discover = getattr(self.client, "discover_windows", None)
+                if callable(discover):
+                    discover()
+                before = (self.context_limit, self._context_source)
+                self.refresh_context_limit()
+                if (self.context_limit, self._context_source) != before:
+                    self._emit_info()
+            except Exception:
+                # Advisory: a window nobody could discover leaves the meter
+                # exactly as it was, which is the pre-existing behaviour.
+                pass
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _window_cap(self, model: str) -> tuple[int, bool]:
+        """(ceiling, was_measured) for a window this agent asks for.
+
+        The general cap is a preference, and a preference should not evict a
+        larger runner somebody else deliberately loaded. A per-model cap is a
+        different kind of statement: this machine was seen failing to hold that
+        window. That one has to win even over a resident runner, because the
+        resident runner is the thing being backed away from.
+        """
+        caps = self.config.get("model_window_caps")
+        if isinstance(caps, dict):
+            measured = caps.get(self._window_key(model))
+            if isinstance(measured, int) and measured > 0:
+                return measured, True
+        return context_window(self.config.get("context_window_cap")), False
+
+    def remember_window_cap(self, model: str, cap: int) -> None:
+        """Record that this machine could not hold a larger window for a model."""
+        if not model or cap <= 0:
+            return
+        current = self.config.get("model_window_caps")
+        caps = dict(current) if isinstance(current, dict) else {}
+        key = self._window_key(model)
+        if caps.get(key) == cap:
+            return
+        caps[key] = cap
+        self.config["model_window_caps"] = caps
+        save_config(self.config)
+
+    def check_context_spill(self) -> bool:
+        """Back off a pinned window that pushed the model out of GPU memory.
+
+        Asking for a large window costs KV cache, and past a point Ollama keeps
+        the model loaded by leaving layers on the CPU — which it does silently,
+        and which makes generation several times slower. Predicting that from
+        GGUF metadata is not reliable (a hybrid attention/SSM model does not
+        publish `head_count_kv`, and does not pay per-token KV on every layer
+        when it does), so the cost is measured after the fact instead: `/api/ps`
+        reports the resident total and how much of it the GPU holds.
+        """
+        # Keyed on having asked for a window, not on the label: once a pinned
+        # window is confirmed resident the source becomes `measured`, and that is
+        # exactly the turn on which the cost can first be seen. Checking for
+        # `pinned` alone meant the spill was never noticed at all.
+        #
+        # A window the user pinned themselves is left alone: they asked for it
+        # explicitly, and quietly halving it would be a worse surprise than a
+        # slow model they can see the reason for.
+        if self._context_requested <= 0 or self._context_source == SOURCE_CONFIGURED:
+            return False
+        resident = self._last_resident or {}
+        size = resident.get("size") or 0
+        in_vram = resident.get("size_vram") or 0
+        if size <= 0 or in_vram <= 0 or in_vram >= size:
+            return False
+        reduced = max(self._context_requested // 2, MINIMUM_CONTEXT_WINDOW)
+        if reduced >= self._context_requested:
+            return False
+        held = 100 * in_vram // size
+        self.remember_window_cap(self.model, reduced)
+        self._emit({
+            "type": "note",
+            "text": (
+                f"A {self._context_requested:,}-token window left only {held}% of "
+                f"{self.model} on the GPU, so the next turn asks for "
+                f"{reduced:,} instead."
+            ),
+        })
+        self.refresh_context_limit()
+        return True
 
     def _window_key(self, model: str) -> str:
         """Remembered windows are per host as well as per model.
@@ -466,21 +684,28 @@ class AgentCore:
     def chat_options(self) -> dict[str, Any] | None:
         """Per-request model options, or None when there are none to send.
 
-        Nothing is sent unless the user asked for a specific window. Ollama
-        sizes the window itself otherwise, and overriding that with a guess
-        would second-guess its memory accounting and evict a resident runner
-        that was loaded with different options — for a number we can simply
-        read back instead.
+        `_context_requested` is the whole answer: it is set by
+        `refresh_context_limit`, and it is non-zero exactly when the window was
+        chosen rather than observed — pinned by the agent, or pinned by the user.
+        A window that was merely measured is not echoed back as an instruction:
+        Ollama already chose it, and re-stating a number nobody asked for would
+        be a way to accidentally evict a runner that is serving fine.
 
-        Only Ollama takes options at all: `RemoteClient` merges the dict into
-        the top level of an OpenAI-style payload, where `num_ctx` is meaningless
-        and some servers reject unknown fields outright.
+        `RemoteClient` merges the dict into the top level of the payload, where
+        `num_ctx` is meaningless and some servers reject unknown fields outright
+        — so the only option sent remotely is Anthropic's required output cap,
+        and only once there is a window to derive it from. Nothing is sent on the
+        OpenAI path: newer reasoning models reject `max_tokens` in favour of
+        `max_completion_tokens`, and gateways default to the window anyway.
         """
-        if self.provider == "remote" or self.context_limit <= 0:
+        if self.provider == "remote":
+            room = self._reply_room()
+            if getattr(self.client, "auth_style", "") == AUTH_ANTHROPIC and room > 0:
+                return {"max_tokens": room}
             return None
-        if context_window(self.config.get("context_window")) <= 0:
+        if self._context_requested <= 0:
             return None
-        return {"num_ctx": self.context_limit}
+        return {"num_ctx": self._context_requested}
 
     # ------------------------------------------------------------- provider
 
@@ -531,9 +756,12 @@ class AgentCore:
         self.config["remote_account_label"] = ""
         self.model = str(self.config.get("model") or "")
         # Left unknown rather than resolved here: resolving costs Ollama I/O and
-        # the app awaits this endpoint on a short timeout. `run_turn` settles it
-        # before anything can use it.
+        # the app awaits this endpoint on a short timeout. `resolve_context_limit_soon`
+        # settles it off-thread, and `run_turn` settles it before anything can
+        # use it either way.
         self.context_limit = 0
+        self._context_source = SOURCE_UNKNOWN
+        self._context_requested = 0
         self._trained_window_for = ""
         save_config(self.config)
         self._emit_info()
@@ -547,12 +775,19 @@ class AgentCore:
         account_label: str | None = None,
         lists_models: bool | None = None,
         context_window_tokens: Any = None,
+        published_context_window: Any = None,
     ) -> None:
         """Point the agent at an OpenAI-compatible endpoint.
 
         ``api_key=None`` keeps the key already in memory, so the app can
         update the URL or model without re-sending the secret. ``auth_style``
         and ``account_label`` follow the same rule: ``None`` leaves them alone.
+
+        ``context_window_tokens`` is a window the *user* asked for;
+        ``published_context_window`` is what the vendor documents for this model.
+        They arrive separately because they are not equally trustworthy: the
+        first clamps and is reported as configured, the second is a labelled
+        fallback used only when the endpoint says nothing about itself.
         """
         normalized_url = normalize_base_url(base_url)
         effective_key = (
@@ -577,6 +812,12 @@ class AgentCore:
             # it here is how a Kimi model name ends up pointed at Anthropic,
             # failing with a model-not-found that names neither problem.
             self.config["remote_model"] = ""
+            # Same reasoning for the vendor figure: it described that model.
+            self.config["published_context_window"] = 0
+        if published_context_window is not None:
+            self.config["published_context_window"] = context_window(
+                published_context_window
+            )
         if auth_style is not None:
             self.config["remote_auth_style"] = resolve_auth_style(
                 auth_style, self.config["remote_base_url"]
@@ -591,8 +832,15 @@ class AgentCore:
         # previous endpoint's name and get sent to this one. Empty is the
         # honest value — ensure_model settles it against the new endpoint.
         self.model = str(self.config.get("remote_model") or "")
-        self.context_limit = context_window(self.config.get("context_window"))
         self._trained_window_for = ""
+        # Settles against the client's discovery cache, which is cold on a
+        # freshly built client — so this lands on the configured or published
+        # figure now, and `resolve_context_limit_soon` upgrades it to a reported
+        # one once the endpoint has been asked. No HTTP happens here: the app
+        # awaits this call.
+        self.context_limit = 0
+        self._context_limit_for = ""
+        self.refresh_context_limit()
         save_config(self.config)  # never writes the key
         self._emit_info()
 
@@ -742,6 +990,10 @@ class AgentCore:
             "completion_tokens": self.total_completion_tokens,
             "max_iterations": self.max_iterations,
             "context_limit": self.context_limit,
+            # Where that number came from, so a client can mark an assumed
+            # window as assumed instead of drawing it like a measurement.
+            "context_source": self._context_source,
+            "context_requested": self._context_requested,
             # What a conversation may actually occupy, which is what the
             # meter should divide by — see budget_tokens.
             "usable_tokens": self.budget_tokens(),
@@ -842,6 +1094,9 @@ class AgentCore:
             # for one. Announced so clients tracking session_info see it change.
             before = self.context_limit
             self.refresh_context_limit()
+            # The model is certainly resident now, so this is the moment the
+            # cost of a pinned window can be measured rather than guessed.
+            self.check_context_spill()
             if self.context_limit != before:
                 self._emit_info()
         finally:
@@ -850,7 +1105,18 @@ class AgentCore:
 
     def _reply_room(self) -> int:
         """Window share held back for the model's reply; scales down on small windows."""
-        return min(RESERVED_REPLY_TOKENS, self.context_limit // 4)
+        return min(self._output_cap(), self.context_limit // 4)
+
+    def _output_cap(self) -> int:
+        """Most tokens a single reply may occupy.
+
+        Anthropic's protocol names its own ceiling and will use all of it, so
+        the room reserved has to match what the endpoint is allowed to send —
+        otherwise a full-length reply is twice the size the budget planned for.
+        """
+        if self.provider == "remote" and getattr(self.client, "auth_style", "") == AUTH_ANTHROPIC:
+            return ANTHROPIC_MAX_OUTPUT_TOKENS
+        return RESERVED_REPLY_TOKENS
 
     def auto_compact_if_needed(self) -> bool:
         """Summarize the conversation before it overflows the model window.

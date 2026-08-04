@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse
 
 from . import __version__, gitinfo
 from .config import (
+    MAX_ITERATIONS_CEILING,
     MINIMUM_CONTEXT_WINDOW,
     context_window,
     non_negative_int,
@@ -74,6 +75,12 @@ MAX_WS_MESSAGE_BYTES = (MAX_CHAT_IMAGE_TOTAL_BYTES * 4) // 3 + MAX_HTTP_BODY_BYT
 class ChatService:
     """Holds the core plus the state needed to bridge it to a WebSocket."""
 
+    #: Whether provider changes may reach out to discover a context window.
+    #: A class attribute so a whole test session can switch probing off in one
+    #: place, rather than each fixture remembering to — and rather than the suite
+    #: discovering the default by making real requests to a real endpoint.
+    background_probes = True
+
     def __init__(self, core: AgentCore) -> None:
         self.core = core
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -93,6 +100,11 @@ class ChatService:
             record=lambda record: self.core.session.append(record),
             config=core.config,
         )
+
+    def resolve_context_limit_soon(self) -> None:
+        """Ask the core to settle its window off-thread, if probing is allowed."""
+        if self.background_probes:
+            self.core.resolve_context_limit_soon()
 
     # -- core event bridge (called from the worker thread) --
     def emit(self, event: dict[str, Any]) -> None:
@@ -337,6 +349,7 @@ def _apply_provider(svc: ChatService, body: dict[str, Any]) -> dict[str, Any]:
             )
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
+        svc.resolve_context_limit_soon()
         return svc.core.provider_state()
 
     base_url = str(body.get("base_url") or body.get("remote_base_url") or "").strip()
@@ -360,6 +373,7 @@ def _apply_provider(svc: ChatService, body: dict[str, Any]) -> dict[str, Any]:
             account_label=None if raw_label is None else str(raw_label),
             lists_models=None if raw_lists is None else bool(raw_lists),
             context_window_tokens=body.get("context_window"),
+            published_context_window=body.get("published_context_window"),
         )
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
@@ -368,6 +382,7 @@ def _apply_provider(svc: ChatService, body: dict[str, Any]) -> dict[str, Any]:
             svc.core.client.check()
         except OllamaError as e:
             raise HTTPException(502, str(e)) from e
+    svc.resolve_context_limit_soon()
     return svc.core.provider_state()
 
 
@@ -397,19 +412,18 @@ def models() -> dict[str, Any]:
         name = m.get("name")
         if not name:
             continue
-        trained = svc.core.client.context_length(name)
         # The window this model is really running in, not the one it was
         # trained for. The GUI meters against this, and metering against the
         # trained window reads reassuringly low right up to the point where
         # replies start getting truncated. 0 still means "not known", which is
         # the honest answer for a model that is not loaded and for an endpoint
-        # that advertises nothing.
+        # that says nothing about itself.
         #
         # A configured window only describes the model the agent is actually
         # running: `num_ctx` is sent for that one alone, so claiming the rest
         # run in it too would be a guess about models nobody has loaded.
-        window = 0
         if is_ollama:
+            trained = svc.core.client.context_length(name)
             model_configured = configured if name == svc.core.model else 0
             window = effective_context_length(
                 resident.get(name, 0), trained, model_configured
@@ -418,6 +432,18 @@ def models() -> dict[str, Any]:
                 # Measured on an earlier run and remembered since. Still an
                 # observation, and it keeps the meter alive for a model Ollama
                 # has evicted rather than blanking it every five idle minutes.
+                window = svc.core.remembered_model_window(name)
+        else:
+            # Whatever the endpoint stated about itself, parsed out of the
+            # listing this call already fetched — no extra request, and no
+            # `/api/show`, which a remote client cannot answer. Zeroing this was
+            # why a hosted account could never fill the meter from the model
+            # list, only from session_info.
+            window = int(m.get("context_length") or 0)
+            trained = int(m.get("trained_context_length") or 0) or window
+            if name == svc.core.model:
+                window = svc.core.context_limit or window
+            if window <= 0:
                 window = svc.core.remembered_model_window(name)
         out.append({
             "name": name,
@@ -1036,6 +1062,22 @@ def _apply_config(svc: ChatService, body: dict[str, Any]) -> dict[str, Any]:
         svc.core.refresh_context_limit()
         save_config(svc.core.config)
         svc.emit({"type": "session_info", **svc.core.session_info()})
+    if "max_iterations" in body:
+        requested = body.get("max_iterations")
+        resolved = non_negative_int(requested)
+        # Rejected rather than coerced, for the same reason as the window above:
+        # this setting has no visible effect until a turn happens to reach it,
+        # so a silently altered value would be discovered days later, as a
+        # turn that stops early for no stated reason.
+        if resolved <= 0 or resolved > MAX_ITERATIONS_CEILING:
+            raise HTTPException(
+                422,
+                f"max_iterations must be between 1 and {MAX_ITERATIONS_CEILING}",
+            )
+        svc.core.max_iterations = resolved
+        svc.core.config["max_iterations"] = resolved
+        save_config(svc.core.config)
+        svc.emit({"type": "session_info", **svc.core.session_info()})
     return _config_state(svc.core)
 
 
@@ -1369,6 +1411,10 @@ def build_service(
     core.messages = [core.system_message()]
     svc = ChatService(core)
     core.mcp.refresh(wait=False)
+    # A hosted endpoint has to be asked what window it serves, and that is HTTP.
+    # Off-thread, so startup is not held up by an endpoint that is slow to answer
+    # a question nothing is waiting on yet.
+    svc.resolve_context_limit_soon()
     return svc
 
 

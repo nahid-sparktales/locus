@@ -1,5 +1,78 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Local models now run in a window Locus asks for, instead of Ollama's
+  4,096-token default.** The agent requests the model's own trained ceiling,
+  capped at 32,768 tokens, so the context meter and automatic compaction work
+  from the first message rather than from the second. At Ollama's default, a turn
+  had under a thousand tokens left for the conversation once the tool schemas,
+  system prompt and reply room were accounted for — not enough to hold a single
+  file read.
+
+  Two consequences worth knowing. The first turn after upgrading reloads each
+  model once, because Ollama keys a loaded runner by the options it was given.
+  And a larger window costs memory for the KV cache: if a model ends up partly on
+  the CPU as a result, Locus notices from `/api/ps`, halves what it asks for,
+  remembers the lower ceiling for that model on this Mac, and says so in the
+  transcript. Pin an exact window under **Settings ▸ Model providers** to opt out
+  of all of it.
+
+- **Hosted endpoints now report their own context window.** vLLM, TGI and
+  llama.cpp deployments — including Hugging Face Inference Endpoints — state
+  their window in metadata Locus was already fetching and then discarding. It is
+  read from the model listing, or from TGI's `/info` and llama.cpp's `/props`
+  when the listing is bare, and cached per endpoint and model. Custom accounts
+  that previously had no window therefore get a live meter and automatic
+  compaction, where before both were switched off.
+
+- **The context meter says where its number came from.** A window measured from
+  the runtime or reported by an endpoint is drawn as before; a vendor's published
+  figure for a model — an assumption, since nothing was observed — now shows a
+  `≈` prefix and a dashed ring, and the source is named in the popover and the
+  inspector. "Window unknown" still means unknown.
+
+### Fixed
+
+- **Switching model within one hosted account kept the previous model's context
+  window.** Moving a Claude account from a 1,000,000-token model to a
+  200,000-token one left the agent budgeting against 1,000,000: it would not
+  compact until roughly five times over the real window, and every request past
+  the real one failed.
+- **A turn that hits the tool-step limit now names the limit** — "Iteration limit
+  reached (40 steps)" — and the limit is editable under **Settings ▸ Agent** and
+  over `POST /api/config`. It was previously settable only by hand-editing the
+  agent's config file, and invisible from inside the app, so a wrong value looked
+  like the model giving up. An unusable value (zero, negative, non-numeric) now
+  falls back to 40 instead of producing turns that could take no action at all,
+  or preventing the agent from starting.
+- **Opening Settings and pressing Save no longer clears a pinned context
+  window.** The field was never filled in from the saved value, and an empty
+  field means "clear it".
+- **A Kimi Code account no longer reports a working key as rejected.** The model
+  listing is not requested for a provider that does not serve one, matching what
+  the health probe already did.
+- **The context meter no longer blanks for a moment on every permission
+  decision**, and local models keep their window in the picker while a hosted
+  account is active.
+- `GET /api/models` asked Ollama to describe every installed model on every call,
+  which the app makes every 15 seconds. Those descriptions are now cached until a
+  model is pulled or deleted.
+
+### Internal
+
+- The agent's test suite can no longer write to a developer's real
+  `~/.ollama-code`. Every data path is redirected per test by
+  `agent/tests/conftest.py`, and an audit hook fails the suite if anything tries.
+  Two test modules previously had no isolation at all: one wrote real session
+  transcripts, and a config clobbered this way is what left `max_iterations: 5`
+  in a working install. `Tools/PruneAgentTestLitter.py` repairs an affected
+  `~/.ollama-code`.
+- Unit tests no longer read the accounts saved by the developer's own copy of
+  Locus, which made account tests pass on CI and fail on a real machine.
+
 ## 1.10.0 — 2026-08-03
 
 ### Changed

@@ -41,6 +41,28 @@ def effective_context_length(loaded: int, trained: int, configured: int = 0) -> 
     return min(loaded, trained) if trained > 0 else loaded
 
 
+def pinned_context_length(trained: int, cap: int, loaded: int = 0) -> int:
+    """The window to request as ``num_ctx``, or 0 to leave Ollama in charge.
+
+    Ollama defaults to a 4096-token window, and a turn spends most of that
+    before the conversation starts: the tool schemas alone are around 1,500
+    tokens, plus the system prompt, the skill index and the room reserved for a
+    reply. What is left cannot hold a single file read, so the agent asks for
+    something workable instead of accepting a default that was chosen for chat.
+
+    `trained` is the ceiling the model was built for and `cap` the ceiling this
+    machine is willing to pay for in KV cache. A resident runner that is already
+    larger is adopted rather than shrunk: asking for less than what is loaded
+    would evict a working runner to build a smaller one.
+
+    0 when the trained window is unknown — that is the one case where a request
+    would be a guess, and Ollama's own accounting is better than a guess.
+    """
+    if trained <= 0 or cap <= 0:
+        return max(loaded, 0)
+    return max(min(trained, cap), max(loaded, 0))
+
+
 class OllamaError(Exception):
     """Raised when the Ollama server is unreachable or returns an error."""
 
@@ -120,6 +142,10 @@ class OllamaClient:
     def __init__(self, host: str = DEFAULT_HOST, timeout: int = 600) -> None:
         self.host = host.rstrip("/")
         self.timeout = timeout
+        # `/api/show` describes a file on disk, so its answer only changes when a
+        # model is pulled or deleted. Without this, listing models asked once per
+        # installed model per call, and the app polls that list every 15s.
+        self._show_cache: dict[str, dict[str, Any]] = {}
 
     def check(self) -> None:
         """Raise OllamaError if the server is unreachable."""
@@ -154,6 +180,36 @@ class OllamaClient:
         except requests.RequestException as e:
             raise OllamaError(f"failed to list running models: {e}") from e
 
+    def resident_state(self, name: str) -> dict[str, int]:
+        """What `/api/ps` says about a resident model, as one read.
+
+        Returns ``{"context_length", "size", "size_vram"}``, all 0 when the model
+        is not loaded. `size` is the total the runner occupies and `size_vram` how
+        much of that the GPU holds — the two numbers `ollama ps` renders as
+        "100% GPU" or "48%/52% CPU/GPU". A window that made the model spill to
+        CPU is measurable from them, which is the only honest way to find out:
+        predicting the KV-cache cost from GGUF metadata does not survive contact
+        with real models, since a hybrid attention/SSM architecture does not
+        publish `head_count_kv` at all and does not pay per-token KV on every
+        layer even when it does.
+        """
+        empty = {"context_length": 0, "size": 0, "size_vram": 0}
+        if not name:
+            return empty
+        try:
+            running = self.running_models()
+        except OllamaError:
+            return empty
+        for entry in running:
+            if name in (entry.get("name"), entry.get("model")):
+                return {
+                    key: int(entry.get(key) or 0)
+                    if isinstance(entry.get(key), int) and int(entry.get(key) or 0) > 0
+                    else 0
+                    for key in empty
+                }
+        return empty
+
     def loaded_context_length(self, name: str) -> int:
         """The window a resident model was loaded with, 0 when it is not loaded.
 
@@ -161,26 +217,28 @@ class OllamaClient:
         which is not the one the model was trained for and not necessarily any
         documented default either.
         """
-        if not name:
-            return 0
-        try:
-            running = self.running_models()
-        except OllamaError:
-            return 0
-        for entry in running:
-            if name in (entry.get("name"), entry.get("model")):
-                value = entry.get("context_length")
-                return value if isinstance(value, int) and value > 0 else 0
-        return 0
+        return self.resident_state(name)["context_length"]
 
     def show_model(self, name: str) -> dict[str, Any]:
-        """POST /api/show — model details incl. context length."""
+        """POST /api/show — model details incl. context length. Memoised."""
+        cached = self._show_cache.get(name)
+        if cached is not None:
+            return cached
         try:
             r = requests.post(f"{self.host}/api/show", json={"name": name}, timeout=15)
             r.raise_for_status()
-            return dict(r.json())
+            details = dict(r.json())
         except requests.RequestException as e:
             raise OllamaError(f"failed to inspect model {name}: {e}") from e
+        self._show_cache[name] = details
+        return details
+
+    def forget_model_details(self, name: str = "") -> None:
+        """Drop memoised `/api/show` answers — a pull or delete changed them."""
+        if name:
+            self._show_cache.pop(name, None)
+        else:
+            self._show_cache.clear()
 
     def context_length(self, name: str) -> int:
         """The window a model was trained for, 0 when unknown.
@@ -240,6 +298,10 @@ class OllamaClient:
                     yield chunk
         except requests.RequestException as e:
             raise OllamaError(f"pull request failed: {e}") from e
+        finally:
+            # The file on disk is new, so anything memoised about it is stale —
+            # including the trained window the pinned window is derived from.
+            self.forget_model_details(name)
 
     def delete_model(self, name: str) -> None:
         try:
@@ -247,6 +309,8 @@ class OllamaClient:
             r.raise_for_status()
         except requests.RequestException as e:
             raise OllamaError(f"failed to delete {name}: {e}") from e
+        finally:
+            self.forget_model_details(name)
 
     def chat_stream(
         self,

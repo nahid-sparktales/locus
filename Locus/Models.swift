@@ -166,6 +166,11 @@ struct TurnCompletion: Codable, Hashable {
     let outcome: Outcome
     let mode: WorkMode?
     let durationMilliseconds: Int
+    /// The limit that was reached, when that is why the turn ended. Naming the
+    /// number is the whole point: a config carrying `max_iterations: 5` stopped
+    /// turns early for a week, and the app said only "Iteration limit reached" —
+    /// which reads like the model gave up rather than like a setting to check.
+    var iterationLimit: Int?
 
     var isSuccessful: Bool { outcome == .complete }
 
@@ -179,7 +184,12 @@ struct TurnCompletion: Codable, Hashable {
             case nil: "Finished"
             }
         case .interrupted: "Stopped"
-        case .maxIterations: "Iteration limit reached"
+        case .maxIterations:
+            if let iterationLimit, iterationLimit > 0 {
+                "Iteration limit reached (\(iterationLimit) steps)"
+            } else {
+                "Iteration limit reached"
+            }
         case .error: "Run failed"
         }
     }
@@ -320,6 +330,9 @@ struct SessionInfo: Codable, Hashable {
     /// What a conversation may actually occupy, which is what the meter
     /// divides by. Optional: an older agent does not send it.
     let usableTokens: Int?
+    /// Where `contextLimit` came from, so an assumed window is never drawn as a
+    /// measured one. Optional: an older agent does not send it.
+    let contextSource: String?
     let maxIterations: Int
     let hasProjectContext: Bool
     let provider: String?
@@ -337,6 +350,7 @@ struct SessionInfo: Codable, Hashable {
         completionTokens: Int,
         contextLimit: Int = 0,
         usableTokens: Int? = nil,
+        contextSource: String? = nil,
         maxIterations: Int,
         hasProjectContext: Bool,
         provider: String? = nil,
@@ -353,6 +367,7 @@ struct SessionInfo: Codable, Hashable {
         self.completionTokens = completionTokens
         self.contextLimit = contextLimit
         self.usableTokens = usableTokens
+        self.contextSource = contextSource
         self.maxIterations = maxIterations
         self.hasProjectContext = hasProjectContext
         self.provider = provider
@@ -360,6 +375,11 @@ struct SessionInfo: Codable, Hashable {
     }
 
     /// A copy with different permissions, for optimistic local updates.
+    ///
+    /// Every other field has to be carried across explicitly. `usableTokens` and
+    /// `contextSource` were both easy to miss here, and missing them blanked the
+    /// context meter for a moment on every permission decision — a bug that
+    /// looked like the meter flickering rather than like this function.
     func replacingPermissions(_ permissions: SessionPermissions) -> SessionInfo {
         SessionInfo(
             model: model,
@@ -372,6 +392,8 @@ struct SessionInfo: Codable, Hashable {
             promptTokens: promptTokens,
             completionTokens: completionTokens,
             contextLimit: contextLimit,
+            usableTokens: usableTokens,
+            contextSource: contextSource,
             maxIterations: maxIterations,
             hasProjectContext: hasProjectContext,
             provider: provider,
@@ -387,6 +409,7 @@ struct SessionInfo: Codable, Hashable {
         case completionTokens = "completion_tokens"
         case contextLimit = "context_limit"
         case usableTokens = "usable_tokens"
+        case contextSource = "context_source"
         case maxIterations = "max_iterations"
         case hasProjectContext = "has_project_context"
     }
@@ -407,6 +430,7 @@ struct SessionInfo: Codable, Hashable {
         completionTokens = try container.decodeIfPresent(Int.self, forKey: .completionTokens) ?? 0
         contextLimit = try container.decodeIfPresent(Int.self, forKey: .contextLimit) ?? 0
         usableTokens = try container.decodeIfPresent(Int.self, forKey: .usableTokens)
+        contextSource = try container.decodeIfPresent(String.self, forKey: .contextSource)
         maxIterations = try container.decodeIfPresent(Int.self, forKey: .maxIterations) ?? 0
         hasProjectContext = try container.decodeIfPresent(Bool.self, forKey: .hasProjectContext) ?? false
         provider = try? container.decodeIfPresent(String.self, forKey: .provider)
@@ -756,8 +780,13 @@ struct AppSettings: Codable, Hashable {
     /// they carry credential-file side effects that must not ride the settings draft.
     var activeAccountID: String?
     /// A context window for local Ollama, when the user wants to pin one
-    /// rather than let it be measured. nil keeps the measured behaviour.
+    /// exactly rather than let Locus choose from the model's own ceiling.
     var localContextWindow: Int?
+    /// Tool steps one turn may take. nil uses the agent's default of 40. Exposed
+    /// because a bad value here is otherwise undiagnosable from inside the app:
+    /// the turn just stops, and until this setting existed the only way to see
+    /// or change the number was to hand-edit the agent's config file.
+    var maxIterations: Int?
     var inspectorWidth: Double = AppSettings.defaultInspectorWidth
     /// The inspector starts collapsed: the conversation is the point, and
     /// ⌘1–⌘8 or ⌘⌥I bring the panel back the moment it is needed.
@@ -810,6 +839,7 @@ struct AppSettings: Codable, Hashable {
         activeAccountID = try container.decodeIfPresent(String.self, forKey: .activeAccountID)
             ?? defaults.activeAccountID
         localContextWindow = try container.decodeIfPresent(Int.self, forKey: .localContextWindow)
+        maxIterations = try container.decodeIfPresent(Int.self, forKey: .maxIterations)
         // Clamped on the way in as well as on the way out: a corrupt or
         // out-of-range stored value must not produce an unusable panel.
         inspectorWidth = Self.clampInspectorWidth(
@@ -1107,6 +1137,20 @@ struct ExtensionOperationResponse: Codable {
 struct ProjectContextReloadResponse: Codable {
     let ok: Bool
     let file: String?
+}
+
+/// `GET`/`POST /api/config`. Only the fields the app reads back — the route also
+/// echoes the model, host and cwd, which the app already knows.
+struct ConfigStateResponse: Codable {
+    let contextWindow: Int?
+    let maxIterations: Int?
+    let sessionInfo: SessionInfo?
+
+    enum CodingKeys: String, CodingKey {
+        case contextWindow = "context_window"
+        case maxIterations = "max_iterations"
+        case sessionInfo = "session_info"
+    }
 }
 
 struct MCPTestResponse: Codable {

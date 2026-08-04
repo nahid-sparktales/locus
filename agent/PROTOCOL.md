@@ -228,13 +228,20 @@ setting resolved to — the number compaction budgets against.
 
 ### `POST /api/config`
 
-Body: `{ "model": "<name>", "cwd": "<path>", "context_window": <int> }` — every
-field optional. Response: same shape as `GET /api/config`. 422 for a bad `cwd`,
-or for a `context_window` between 1 and 1023 (almost always a window written in
-thousands); 409 for any state-changing config request while a turn is running.
-The busy check is atomic and happens before any field is applied. Emits
-`session_info` on the WS when anything changed.
-`model` and `context_window` are persisted to `~/.ollama-code/config.json`.
+Body:
+`{ "model": "<name>", "cwd": "<path>", "context_window": <int>, "max_iterations": <int> }`
+— every field optional. Response: same shape as `GET /api/config`. 422 for a bad
+`cwd`, for a `context_window` between 1 and 1023 (almost always a window written
+in thousands), or for a `max_iterations` outside 1–1000; 409 for any
+state-changing config request while a turn is running. The busy check is atomic
+and happens before any field is applied. Emits `session_info` on the WS when
+anything changed. `model`, `context_window` and `max_iterations` are persisted to
+`~/.ollama-code/config.json`.
+
+`max_iterations` caps the tool iterations in a single turn; reaching it ends the
+turn with `turn_done` `reason: "max_iterations"`. A value that cannot be used
+(absent, zero, negative, non-numeric) falls back to the default of 40 rather than
+producing a turn that can take no action at all.
 
 ### `POST /api/context/reload`
 

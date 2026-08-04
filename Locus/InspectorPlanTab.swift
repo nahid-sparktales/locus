@@ -368,11 +368,19 @@ struct ContextWindowInfoCard: View {
         return max(usable - model.contextUsedTokens, 0)
     }
 
+    /// The window is a vendor's published figure rather than anything observed.
+    private var isAssumed: Bool {
+        !model.contextWindowProvenance.isMeasured && fraction != nil
+    }
+
     private var usageLabel: String {
-        if let fraction {
-            return fraction.formatted(.percent.precision(.fractionLength(0))) + " USED"
+        guard let fraction else {
+            // The one honest signal this card has when nothing is known. It has
+            // to survive: a percentage here would be invented.
+            return "WINDOW UNKNOWN"
         }
-        return "WINDOW UNKNOWN"
+        let percent = fraction.formatted(.percent.precision(.fractionLength(0)))
+        return (isAssumed ? "≈ " : "") + percent + " USED"
     }
 
     var body: some View {
@@ -411,6 +419,7 @@ struct ContextWindowInfoCard: View {
                     "Model window",
                     model.contextWindowTokens.map { "\($0.formatted()) tokens" } ?? "Unknown"
                 )
+                statRow("Source", model.contextWindowProvenance.label)
                 if let usable = model.contextUsableTokens,
                    let window = model.contextWindowTokens,
                    usable < window {

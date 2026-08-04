@@ -427,6 +427,10 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
+The suite runs against a throwaway `OLLAMA_CODE_HOME`, so it never reads or
+writes your real `~/.ollama-code`; an audit hook fails the suite if anything
+tries.
+
 ## Tests
 
 ```bash
@@ -452,7 +456,7 @@ xcodebuild \
 cd agent && .venv/bin/python -m pytest -q
 ```
 
-169 unit tests, 24 UI tests, and 220 backend tests currently pass.
+186 unit tests, 24 UI tests, and 248 backend tests currently pass.
 
 The unit suite covers work modes, lightweight context migration, session
 acknowledgements and retry branches, recoverable session clearing, Hugging Face

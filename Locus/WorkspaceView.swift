@@ -896,17 +896,26 @@ private struct ContextUsageChip: View {
         model.contextWindowUsageFraction
     }
 
+    /// True when the percentage is being divided by a number nothing measured,
+    /// which the chip marks rather than presenting as fact.
+    private var isAssumed: Bool {
+        !model.contextWindowProvenance.isMeasured && fraction != nil
+    }
+
     private var chipText: String {
         if let fraction {
-            return fraction.formatted(.percent.precision(.fractionLength(0)))
+            let percent = fraction.formatted(.percent.precision(.fractionLength(0)))
+            return isAssumed ? "≈" + percent : percent
         }
         return "~" + model.contextUsedTokens.formatted(.number.notation(.compactName))
     }
 
     private var helpText: String {
-        fraction == nil
-            ? "Context used — the model's window is unknown"
-            : "Context window usage"
+        if fraction == nil { return "Context used — the model's window is unknown" }
+        if isAssumed {
+            return "Context window usage — assumed from the published window for this model"
+        }
+        return "Context window usage"
     }
 
     var body: some View {
@@ -918,7 +927,12 @@ private struct ContextUsageChip: View {
                     .trim(from: 0, to: fraction.map { max($0, 0.02) } ?? 0)
                     .stroke(
                         (fraction ?? 0) > 0.8 ? LocusTheme.warning : LocusTheme.signalDeep,
-                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
+                        // Dashed for a window nobody measured: the ring reads as
+                        // precise, and this one is only as good as a vendor's
+                        // documentation for a model id.
+                        style: isAssumed
+                            ? StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [2, 2])
+                            : StrokeStyle(lineWidth: 2.5, lineCap: .round)
                     )
                     .rotationEffect(.degrees(-90))
                     .background {
@@ -956,6 +970,7 @@ private struct ContextUsageChip: View {
                     "Model window",
                     model.contextWindowTokens.map { "\($0.formatted()) tokens" } ?? "Unknown"
                 )
+                statRow("Source", model.contextWindowProvenance.label)
                 statRow("Session so far", "~\(model.contextUsedTokens.formatted()) tokens")
                 if let usable = model.contextUsableTokens,
                    let window = model.contextWindowTokens, usable < window {

@@ -20,8 +20,6 @@ from typing import Any
 from .paths import APP_DIR
 
 SESSIONS_DIR = APP_DIR / "sessions"
-TRASH_DIR = APP_DIR / "session-trash"
-META_PATH = APP_DIR / "session-metadata.json"
 
 _META_LOCK = threading.Lock()
 _APPEND_LOCK = threading.Lock()

@@ -1073,6 +1073,80 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(newer.usableTokens, 5000)
     }
 
+    func testSessionInfoWithoutAProvenanceFieldDecodes() throws {
+        let older = #"{"model":"m","host":"h","context_limit":8192}"#
+        let info = try JSONDecoder().decode(SessionInfo.self, from: Data(older.utf8))
+        XCTAssertNil(info.contextSource)
+
+        let current = #"{"model":"m","host":"h","context_limit":8192,"context_source":"reported"}"#
+        let newer = try JSONDecoder().decode(SessionInfo.self, from: Data(current.utf8))
+        XCTAssertEqual(newer.contextSource, "reported")
+    }
+
+    func testAPublishedWindowIsTheOnlyOneMarkedAssumed() {
+        typealias Provenance = AppModel.ContextWindowProvenance
+        for measured in [Provenance.configured, .pinned, .measured, .reported, .remembered] {
+            XCTAssertTrue(measured.isMeasured, "\(measured.rawValue) came from something real")
+        }
+        XCTAssertFalse(Provenance.published.isMeasured, "a vendor's documentation is not a measurement")
+        XCTAssertFalse(Provenance.unknown.isMeasured)
+    }
+
+    @MainActor
+    func testAnOlderAgentsWindowIsNotMarkedAssumed() {
+        // No provenance field at all: the window it reports is still real, and
+        // marking every such session "assumed" would cry wolf.
+        let model = AppModel(startImmediately: false)
+        model.sessionInfo = SessionInfo(
+            model: "m", host: "h", cwd: "/tmp", session: "s", sessionID: "s",
+            messages: 1, approxTokens: 10, promptTokens: 5, completionTokens: 5,
+            contextLimit: 8_192, maxIterations: 40, hasProjectContext: false,
+            permissions: SessionPermissions(skipAll: false, allowed: [])
+        )
+        XCTAssertEqual(model.contextWindowProvenance, AppModel.ContextWindowProvenance.measured)
+        XCTAssertTrue(model.contextWindowProvenance.isMeasured)
+    }
+
+    func testReplacingPermissionsKeepsTheWindowFields() {
+        // Every field has to be carried by hand here, and two were not — which
+        // blanked the context meter for a moment on every permission decision.
+        let info = SessionInfo(
+            model: "m", host: "h", cwd: "/tmp", session: "s", sessionID: "s",
+            messages: 3, approxTokens: 100, promptTokens: 60, completionTokens: 40,
+            contextLimit: 32_768, usableTokens: 18_400, contextSource: "pinned",
+            maxIterations: 40, hasProjectContext: false,
+            permissions: SessionPermissions(skipAll: false, allowed: [])
+        )
+
+        let updated = info.replacingPermissions(SessionPermissions(skipAll: true, allowed: ["bash"]))
+
+        XCTAssertEqual(updated.usableTokens, 18_400)
+        XCTAssertEqual(updated.contextSource, "pinned")
+        XCTAssertEqual(updated.contextLimit, 32_768)
+        XCTAssertTrue(updated.permissions.skipAll)
+    }
+
+    func testTheIterationLimitIsNamedWhenItStopsATurn() {
+        // "Iteration limit reached" alone reads as the model giving up. Naming
+        // the number is what points at a setting instead — a config carrying
+        // max_iterations: 5 stopped turns early for a week without saying so.
+        let named = TurnCompletion(
+            outcome: .maxIterations, mode: .build, durationMilliseconds: 1_000,
+            iterationLimit: 5
+        )
+        XCTAssertEqual(named.title, "Iteration limit reached (5 steps)")
+
+        let unknown = TurnCompletion(
+            outcome: .maxIterations, mode: .build, durationMilliseconds: 1_000
+        )
+        XCTAssertEqual(unknown.title, "Iteration limit reached", "no number, no parenthetical")
+
+        let finished = TurnCompletion(
+            outcome: .complete, mode: .build, durationMilliseconds: 1_000
+        )
+        XCTAssertEqual(finished.title, "Task finished")
+    }
+
     func testLocusIdentifiesItselfHonestlyToProviders() {
         XCTAssertEqual(
             LocusClientIdentity.userAgent(version: "1.7.0"),

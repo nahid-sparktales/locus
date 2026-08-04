@@ -45,6 +45,21 @@ cd agent && python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/python -m pytest -q
 ```
 
+The suite runs against a throwaway `OLLAMA_CODE_HOME` created by
+`agent/tests/conftest.py`, so it cannot read or write your real `~/.ollama-code`
+— and a session-wide audit hook fails the suite if anything tries. Do not
+hand-roll isolation in a test module; add the constant to `_APP_DIR_CONSTANTS`
+in that conftest instead.
+
+`agent/tests/live/` holds manual smoke tests that drive a real model over the
+WebSocket protocol. They are not collected by pytest. Each one starts its own
+server on its own port against a throwaway agent home, and refuses to run if
+`OLLAMA_CODE_HOME` overlaps your real one:
+
+```bash
+agent/.venv/bin/python agent/tests/live/ws_verify.py --model qwen3.6:27b
+```
+
 `project.yml` is the source of truth for the Xcode project — edit it and re-run
 `xcodegen generate` rather than editing `Locus.xcodeproj` directly, or your
 change will be overwritten.

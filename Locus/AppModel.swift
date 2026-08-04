@@ -223,7 +223,12 @@ final class AppModel: ObservableObject {
             loadedSettings = AppSettings()
         }
 
-        if !isUITesting {
+        // `persistenceEnabled` is false only for tests and UI testing, and a
+        // model that will never write must not read either: loading here meant a
+        // unit test started with whatever accounts the developer happened to have
+        // saved, so account tests passed on CI and failed on a real machine —
+        // counting two accounts that belonged to the person running the suite.
+        if !isUITesting, persistenceEnabled {
             var accounts = ProviderAccountStore.load(from: defaults)
             var routingRewritten = false
             // The pre-accounts remote endpoint becomes a Custom account, so an
@@ -539,6 +544,46 @@ final class AppModel: ObservableObject {
     var contextWindowUsageFraction: Double? {
         guard let usable = contextUsableTokens, usable > 0 else { return nil }
         return min(max(Double(contextUsedTokens) / Double(usable), 0), 1)
+    }
+
+    /// Where the window the meter divides by came from. These are not equally
+    /// trustworthy, and the difference matters to anyone reading a fullness
+    /// meter: a measured window is what the runtime confirmed, while a published
+    /// one is a vendor's documented figure that nothing has verified.
+    enum ContextWindowProvenance: String {
+        case configured
+        case pinned
+        case measured
+        case reported
+        case remembered
+        case published
+        case unknown
+
+        /// False only for a number nothing observed, which the meter marks.
+        var isMeasured: Bool { self != .published && self != .unknown }
+
+        var label: String {
+            switch self {
+            case .configured: "You set this window"
+            case .pinned: "Requested by Locus"
+            case .measured: "Measured from Ollama"
+            case .reported: "Reported by the endpoint"
+            case .remembered: "Measured earlier this model"
+            case .published: "Published figure — not measured"
+            case .unknown: "Unknown"
+            }
+        }
+    }
+
+    var contextWindowProvenance: ContextWindowProvenance {
+        guard let raw = sessionInfo?.contextSource,
+              let source = ContextWindowProvenance(rawValue: raw)
+        else {
+            // An older agent sends no provenance. The window it reports is real,
+            // so treat it as measured rather than marking every session assumed.
+            return contextWindowTokens == nil ? .unknown : .measured
+        }
+        return source
     }
 
     var recentWorkspaceProfiles: [WorkspaceProfile] {
@@ -1489,13 +1534,21 @@ final class AppModel: ObservableObject {
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let entries = root["models"] as? [[String: Any]]
         else { return }  // Ollama not running is normal; keep the last list.
+        let knownWindows = Dictionary(
+            models.map { ($0.name, $0.contextLength) },
+            uniquingKeysWith: { first, _ in first }
+        )
         localModels = entries.compactMap { entry in
             guard let name = entry["name"] as? String else { return nil }
             return ModelInfo(
                 name: name,
                 size: (entry["size"] as? NSNumber)?.int64Value ?? 0,
                 parameterSize: (entry["details"] as? [String: Any])?["parameter_size"] as? String ?? "",
-                contextLength: 0
+                // This route is Ollama's /api/tags, which carries no window at
+                // all. Zeroing it unconditionally meant that with an account
+                // active, every local model in the picker read as unknown even
+                // though the agent had already reported a window for it.
+                contextLength: knownWindows[name] ?? 0
             )
         }
     }
@@ -1981,8 +2034,23 @@ final class AppModel: ObservableObject {
     func selectModel(account: ProviderAccount?, model: String) {
         let sameSource = account?.id.uuidString == settings.activeAccountID
         guard !sameSource else {
-            selectModel(model)
-            if let account { rememberPreferredModel(model, for: account) }
+            if let account {
+                rememberPreferredModel(model, for: account)
+                // The window belongs to the model, not to the account. Sending
+                // only `set_model` left the agent budgeting against the model we
+                // just switched away from: a Claude account moved from a
+                // 1,000,000-token model to a 200,000-token one kept metering
+                // against 1,000,000 and would not compact until five times over
+                // the real window, failing every request past it.
+                Task { [weak self] in
+                    await self?.applyProvider(announce: false)
+                    // After the provider call, so the transcript records the
+                    // switch against the model the agent has actually adopted.
+                    self?.selectModel(model)
+                }
+            } else {
+                selectModel(model)
+            }
             return
         }
         if let account, !account.hasKey {
@@ -2699,6 +2767,7 @@ final class AppModel: ObservableObject {
             // The window rides the provider call, so a change to it alone
             // still has to be pushed or it never reaches the agent.
             || settings.localContextWindow != newSettings.localContextWindow
+        let iterationLimitChanged = settings.maxIterations != newSettings.maxIterations
         settings = newSettings
         persistSettings()
         settingsPresented = false
@@ -2718,8 +2787,33 @@ final class AppModel: ObservableObject {
             }
             previewReloadID = UUID()
         }
+        if iterationLimitChanged {
+            Task { await applyIterationLimit() }
+        }
         showToast("Settings saved")
     }
+
+    /// Pushes the tool-step cap to the agent. Not part of the provider payload:
+    /// the cap is not provider-scoped, and it takes effect without a restart —
+    /// which matters, because the agent otherwise reads it once at startup.
+    private func applyIterationLimit() async {
+        // 0 is not a legal limit, so "no preference" is expressed by sending the
+        // agent's own default rather than by sending zero and being refused.
+        let steps = settings.maxIterations ?? AppModel.defaultIterationLimit
+        do {
+            let state: ConfigStateResponse = try await backend.post(
+                "/api/config",
+                body: ["max_iterations": steps],
+                as: ConfigStateResponse.self
+            )
+            if let info = state.sessionInfo { sessionInfo = info }
+        } catch {
+            showToast("Could not set the tool-step limit: \(error.localizedDescription)")
+        }
+    }
+
+    /// The agent's default, mirrored so clearing the field restores it.
+    static let defaultIterationLimit = 40
 
     /// The `/api/provider` payload for the current routing choice.
     ///
@@ -2744,9 +2838,18 @@ final class AppModel: ObservableObject {
             // health probe reads its auth error on /models as a rejected
             // key and reports a working account as permanently offline.
             "lists_models": account.kind.listsModels,
-            // A hosted endpoint advertises no window, so without this the meter
-            // is dead and auto-compaction never engages for the account.
-            "context_window": account.resolvedContextWindow ?? 0,
+            // Two separate facts, because they are not equally trustworthy.
+            // `context_window` is a number the user typed: it clamps, and the
+            // agent reports it as configured. `published_context_window` is our
+            // own table's figure for this model: a labelled fallback, used only
+            // when the endpoint says nothing about itself, and never recorded as
+            // a measurement. Collapsing them — which is what
+            // `resolvedContextWindow` does for display — is how a vendor default
+            // reached the agent looking like an instruction, and how a stale
+            // table entry could silently outrank what the endpoint reported.
+            "context_window": account.contextWindow ?? 0,
+            "published_context_window":
+                account.kind.publishedContextWindow(for: account.preferredModel) ?? 0,
             "verify": verify,
         ]
     }
@@ -3743,10 +3846,14 @@ final class AppModel: ObservableObject {
         guard let duration = backendDurationMilliseconds ?? measured else { return }
         // A repeated terminal event must not leave a row of duplicate marks.
         guard blocks.last?.completion == nil else { return }
+        let outcome = TurnCompletion.Outcome(reason: reason)
         let completion = TurnCompletion(
-            outcome: .init(reason: reason),
+            outcome: outcome,
             mode: mode,
-            durationMilliseconds: duration
+            durationMilliseconds: duration,
+            // Carried only for the outcome it explains, so an ordinary finished
+            // turn does not persist a number nothing reads.
+            iterationLimit: outcome == .maxIterations ? sessionInfo?.maxIterations : nil
         )
         blocks.append(ChatBlock(kind: .note, completion: completion))
     }

@@ -181,6 +181,37 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testProviderRequestBodySendsTheUsersWindowAndThePublishedOneSeparately() {
+        // The regression test for the bug at the layer that caused it. These two
+        // facts used to be collapsed into one field, so our own table's figure
+        // reached the agent looking like a number the user had pinned — and a
+        // stale entry could then outrank what the endpoint reported about itself.
+        let model = AppModel(startImmediately: false)
+        let account = seedAccount(
+            model,
+            kind: .claude,
+            name: "Work",
+            preferredModel: "claude-sonnet-5"
+        )
+        model.settings.activeAccountID = account.id.uuidString
+
+        var body = model.providerRequestBody()
+        XCTAssertEqual(body["context_window"] as? Int, 0, "the user pinned nothing")
+        XCTAssertEqual(body["published_context_window"] as? Int, 1_000_000)
+
+        var withWindow = account
+        withWindow.contextWindow = 64_000
+        model.saveProviderAccount(withWindow, apiKey: nil)
+        body = model.providerRequestBody()
+
+        XCTAssertEqual(body["context_window"] as? Int, 64_000)
+        XCTAssertEqual(
+            body["published_context_window"] as? Int, 1_000_000,
+            "both travel: the agent clamps one by the other"
+        )
+    }
+
+    @MainActor
     func testSwitchingAccountsMidTurnIsHeldUntilTheTurnFinishes() {
         let model = AppModel(startImmediately: false)
         let account = seedAccount(model, kind: .kimi, name: "", preferredModel: "kimi-k2")

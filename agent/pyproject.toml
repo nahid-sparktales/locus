@@ -46,5 +46,8 @@ ollama-code-server = "ollama_code.server:main"
 [tool.setuptools.packages.find]
 include = ["ollama_code*"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
+# Deliberately no [tool.pytest.ini_options] here: a second pytest config in this
+# directory made `cd agent && pytest` treat `agent` as the rootdir, which is a
+# different rootdir than CI uses and which put agent/tests/conftest.py outside
+# pytest's confcutdir in some invocations. The repo-root pytest.ini is the only
+# pytest configuration.

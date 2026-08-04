@@ -185,11 +185,20 @@ before the user allows it.
 .venv/bin/python -m pytest -q
 ```
 
-202 tests cover the tools (including atomic `multi_edit` and the binary-file
+`tests/conftest.py` points every agent data path at a throwaway
+`OLLAMA_CODE_HOME` for the run and a fresh directory for each test, and installs
+an audit hook that fails the suite if anything writes to the real
+`~/.ollama-code`. `tests/live/` holds manual real-model smoke tests, not
+collected by pytest; each starts its own server on its own port.
+
+248 tests cover the tools (including atomic `multi_edit` and the binary-file
 guard), permission modes and the deny list, streaming and `<think>` filtering,
 session metadata and trash recovery, the context window (that the number sent as
-`num_ctx` is the same one compaction budgets against, and that it never reaches
-the remote provider), the remote provider (URL normalization, bearer auth,
+`num_ctx` is the same one compaction budgets against, that a window a hosted
+endpoint reports about itself is used and clamps a larger claim, that a published
+vendor figure is labelled as assumed and never remembered as a measurement, and
+that a pinned window which pushes the model off the GPU is backed off), the
+remote provider (URL normalization, bearer auth,
 streamed tool-call assembly, the no-tools retry, and that the API key reaches
 neither disk nor any response), the session, config, git, permissions and
 provider HTTP endpoints, the WebSocket handshake, and the agent loop end to end

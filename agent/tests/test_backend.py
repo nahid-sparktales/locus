@@ -1,7 +1,8 @@
 """Tests for the agent core, tools, sessions and the HTTP/WebSocket contract.
 
-Sessions and config are redirected to a temp directory so a developer's real
-~/.ollama-code is never touched.
+Every agent data path is redirected into a per-test temp directory by
+``conftest.py``, which also fails the suite if anything writes to a developer's
+real ~/.ollama-code. Nothing here needs to arrange that.
 """
 from __future__ import annotations
 
@@ -26,31 +27,6 @@ from ollama_code.permissions import PermissionManager, build_preview
 from ollama_code.render import ThinkFilter, strip_think
 from ollama_code.sessions import SessionMeta, SessionStore, strip_prompt_decoration
 from ollama_code.tools import ToolContext, execute_tool
-
-
-@pytest.fixture(autouse=True)
-def isolated_home(tmp_path, monkeypatch):
-    """Point the session store AND the config file at a throwaway directory.
-
-    Without the config redirect, anything that calls save_config (set_model,
-    /permissions mode) would overwrite the developer's real
-    ~/.ollama-code/config.json while the suite runs.
-    """
-    app_dir = tmp_path / "dot-ollama-code"
-    monkeypatch.setattr(sessions_mod, "APP_DIR", app_dir)
-    monkeypatch.setattr(sessions_mod, "SESSIONS_DIR", app_dir / "sessions")
-    monkeypatch.setattr(sessions_mod, "TRASH_DIR", app_dir / "session-trash")
-    monkeypatch.setattr(sessions_mod, "META_PATH", app_dir / "session-meta.json")
-    monkeypatch.setattr(config_mod, "APP_DIR", app_dir)
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", app_dir / "config.json")
-    return app_dir
-
-
-def test_config_is_isolated_from_the_real_home(isolated_home):
-    """Guards the fixture above: saving config must stay inside tmp_path."""
-    config_mod.save_config({"model": "sentinel"})
-    assert (isolated_home / "config.json").exists()
-    assert config_mod.load_config()["model"] == "sentinel"
 
 
 def test_provider_keys_are_consumed_from_the_environment(monkeypatch):
@@ -1931,9 +1907,77 @@ def test_models_do_not_report_a_local_window_for_a_remote_endpoint(client, monke
 
     entry = client.get("/api/models").json()["models"][0]
 
-    # An OpenAI-compatible endpoint advertises nothing, and a number read off
-    # the local machine would be worse than saying so.
+    # A number read off the local machine would be worse than saying nothing:
+    # this listing comes from the endpoint, and the local /api/show has no
+    # bearing on what a hosted deployment serves.
     assert entry["context_length"] == 0
+
+
+def test_models_report_a_window_the_endpoint_stated(client, monkeypatch):
+    """The listing is already being fetched, and vLLM-style deployments state
+    their window in it. Forcing this to zero for every remote provider is why a
+    hosted account's model list could never fill the meter."""
+    core = client.app.state.service.core
+    core.provider = "remote"
+    asked: list[str] = []
+
+    def listing():
+        asked.append("models")
+        return [{
+            "name": "hosted-model",
+            "size": 0,
+            "details": {},
+            "context_length": 32_768,
+            "trained_context_length": 262_144,
+        }]
+
+    monkeypatch.setattr(core.client, "list_models", listing)
+    # A remote client cannot answer /api/show, and asking would be a bug.
+    monkeypatch.setattr(
+        core.client, "context_length", lambda name: pytest.fail("asked /api/show")
+    )
+
+    entry = client.get("/api/models").json()["models"][0]
+
+    assert entry["context_length"] == 32_768
+    assert entry["trained_context_length"] == 262_144
+    assert asked == ["models"], "one request, no per-model fan-out"
+
+
+def test_model_details_are_asked_for_once_per_model(monkeypatch):
+    """/api/models used to POST /api/show once per installed model, and the app
+    polls that route every 15 seconds — so six installed models meant 24 of those
+    POSTs a minute, each describing a file that had not changed."""
+    from ollama_code.ollama import OllamaClient
+
+    calls: list[str] = []
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"model_info": {"general.architecture": "qwen", "qwen.context_length": 32_768}}
+
+    def fake_post(url, **kwargs):
+        calls.append(str(kwargs.get("json", {}).get("name")))
+        return Response()
+
+    monkeypatch.setattr("ollama_code.ollama.requests.post", fake_post)
+    ollama = OllamaClient("http://localhost:11434")
+
+    for _ in range(5):
+        assert ollama.context_length("qwen3:8b") == 32_768
+    assert ollama.supports_tools("qwen3:8b") in (True, False)
+
+    assert calls == ["qwen3:8b"], "memoised across every reader"
+
+    # A pull replaces the file on disk, so the trained window may really differ.
+    ollama.forget_model_details("qwen3:8b")
+    ollama.context_length("qwen3:8b")
+    assert len(calls) == 2
 
 
 def test_setting_the_context_window_takes_effect_without_a_restart(client):
@@ -2353,6 +2397,11 @@ class FakeClient:
         #: the window the model was trained for, as /api/show does.
         self.loaded_window = 0
         self.trained_window = 262_144
+        #: Resident footprint, as /api/ps reports it. Defaults to fully on the
+        #: GPU: a stub that looked like a spill would make every pinned window
+        #: back off, in every test that never mentions memory.
+        self.resident_size = 0
+        self.resident_size_vram = 0
 
     def chat_stream(self, model, messages, tools=None, on_token=None, should_stop=None,
                     on_thinking=None, think=False, options=None):
@@ -2370,7 +2419,14 @@ class FakeClient:
         return self.trained_window
 
     def loaded_context_length(self, name):
-        return self.loaded_window
+        return self.resident_state(name)["context_length"]
+
+    def resident_state(self, name):
+        return {
+            "context_length": self.loaded_window,
+            "size": self.resident_size,
+            "size_vram": self.resident_size_vram,
+        }
 
     def list_models(self):
         return [{"name": "test-model"}]
@@ -2767,16 +2823,29 @@ def test_chat_stream_maps_explicit_images_to_ollamas_native_shape(monkeypatch):
     assert "attachments" not in message
 
 
-def test_nothing_is_pinned_unless_the_user_asked_for_a_window(tmp_path):
-    """Ollama sizes the window itself, and overriding that with a guess would
-    evict a resident runner for a number we can simply read back instead."""
+def test_the_window_is_pinned_so_the_first_turn_is_already_budgeted(tmp_path):
+    """Ollama defaults to a 4096-token window and a turn spends most of that
+    before the conversation starts: the tool schemas alone are around 1,500
+    tokens, plus the system prompt and the room held back for a reply. What is
+    left cannot hold one file read.
+
+    This reverses the earlier rule that nothing was ever requested. That rule was
+    right about the risk — a guessed `num_ctx` can evict a working runner — and
+    wrong about the cost of doing nothing, which was an agent running in a window
+    chosen for chat. The number is not a guess: it is the model's own trained
+    ceiling, clamped by a cap this machine is willing to pay KV cache for, and a
+    window that turns out not to fit is backed off from a measurement rather than
+    predicted (see the spill test below).
+    """
     core = _core(tmp_path, [ChatResponse(content_parts=["answer"], done=True)])
-    core.client.loaded_window = 32_768
+    core.client.loaded_window = 0        # nothing resident on the first turn
+    core.client.trained_window = 262_144
 
     core.run_turn("hi")
 
-    assert core.context_limit == 32_768, "budgeted against the real window"
-    assert core.client.seen_options == [None], "but nothing forced onto the request"
+    assert core.context_limit == 32_768, "the cap, not the trained maximum"
+    assert core.client.seen_options == [{"num_ctx": 32_768}]
+    assert core._context_source == "pinned", "chosen by us, so labelled as chosen"
 
 
 def test_the_window_is_known_by_the_end_of_the_very_first_turn(tmp_path):
@@ -2841,6 +2910,264 @@ def test_the_remote_provider_is_never_sent_num_ctx(tmp_path):
     assert core.context_limit == 32_768, "still budgeted against, just not sent"
 
 
+def _remote_core(tmp_path, base_url="https://endpoint.example/v1", **config):
+    """A core pointed at a hosted endpoint, with no network involved."""
+    core = AgentCore(cwd=str(tmp_path), config={
+        "provider": "remote",
+        "remote_base_url": base_url,
+        "remote_model": "hosted-model",
+        "remote_api_key": "k",
+        **config,
+    })
+    core.model = "hosted-model"
+    return core
+
+
+def _json_response(payload, status=200):
+    class Response:
+        status_code = status
+
+        def json(self):
+            return payload
+
+    return Response()
+
+
+def test_a_window_reported_by_the_endpoint_is_used(tmp_path, monkeypatch):
+    """vLLM states `max_model_len` in the model listing the picker already
+    fetches. Discarding every field except the id is why a hosted account had a
+    dead meter and no compaction."""
+    seen: list[str] = []
+
+    def fake_get(url, **kwargs):
+        seen.append(url)
+        return _json_response({"data": [{"id": "hosted-model", "max_model_len": 32_768}]})
+
+    monkeypatch.setattr("ollama_code.remote.requests.get", fake_get)
+    core = _remote_core(tmp_path)
+
+    core.client.discover_windows()
+    core.refresh_context_limit()
+
+    assert core.context_limit == 32_768
+    assert core._context_source == "reported"
+    assert core.config["model_windows"] == {
+        "https://endpoint.example/v1|hosted-model": 32_768
+    }, "a reported window is an observation, so it is remembered"
+    assert seen == ["https://endpoint.example/v1/models"], "no runtime probe needed"
+
+
+def test_tgi_info_supplies_the_window_when_the_model_list_does_not(tmp_path, monkeypatch):
+    """A Hugging Face Inference Endpoint lists a bare id and puts the real
+    number on TGI's own /info route."""
+    seen: list[str] = []
+
+    def fake_get(url, **kwargs):
+        seen.append(url)
+        if url.endswith("/models"):
+            return _json_response({"data": [{"id": "hosted-model"}]})
+        if url.endswith("/info"):
+            return _json_response({"max_total_tokens": 32_768, "max_input_length": 30_000})
+        return _json_response({}, status=404)
+
+    monkeypatch.setattr("ollama_code.remote.requests.get", fake_get)
+    core = _remote_core(tmp_path)
+
+    core.client.discover_windows()
+    core.refresh_context_limit()
+
+    assert core.context_limit == 32_768, "max_total_tokens is prompt + generation"
+    assert core._context_source == "reported"
+    assert seen == [
+        "https://endpoint.example/v1/models",
+        "https://endpoint.example/info",
+    ], "the /v1 suffix belongs to the OpenAI surface, not to /info"
+
+
+def test_llama_cpp_props_supplies_the_window(tmp_path, monkeypatch):
+    def fake_get(url, **kwargs):
+        if url.endswith("/models"):
+            return _json_response({"data": [{"id": "hosted-model"}]})
+        if url.endswith("/info"):
+            return _json_response({}, status=404)
+        if url.endswith("/props"):
+            return _json_response({"default_generation_settings": {"n_ctx": 16_384}})
+        return _json_response({}, status=404)
+
+    monkeypatch.setattr("ollama_code.remote.requests.get", fake_get)
+    core = _remote_core(tmp_path)
+
+    core.client.discover_windows()
+    core.refresh_context_limit()
+
+    assert core.context_limit == 16_384, "the per-slot window, not the server total"
+
+
+def test_a_user_window_is_clamped_to_what_the_endpoint_reports(tmp_path, monkeypatch):
+    """The protection local models have always had, finally applied remotely: a
+    figure larger than the deployment can serve fails every request past the real
+    window, and compacts far too late to help."""
+    monkeypatch.setattr(
+        "ollama_code.remote.requests.get",
+        lambda url, **kw: _json_response(
+            {"data": [{"id": "hosted-model", "max_model_len": 32_768}]}
+        ),
+    )
+    core = _remote_core(tmp_path, context_window=1_000_000)
+
+    core.client.discover_windows()
+    core.refresh_context_limit()
+
+    assert core.context_limit == 32_768
+
+
+def test_a_published_window_is_labelled_and_never_remembered(tmp_path, monkeypatch):
+    """A vendor's documented figure is an assumption: nothing was observed, and a
+    model renamed behind the same id would change it silently. It may be
+    budgeted against, but writing it to model_windows would let the next session
+    read it back as `remembered` — a guess laundered into a measurement."""
+    monkeypatch.setattr(
+        "ollama_code.remote.requests.get",
+        lambda url, **kw: _json_response({}, status=404),
+    )
+    core = _remote_core(tmp_path, published_context_window=200_000)
+
+    core.client.discover_windows()
+    core.refresh_context_limit()
+
+    assert core.context_limit == 200_000
+    assert core._context_source == "published"
+    assert core.config["model_windows"] == {}
+
+
+def test_the_endpoint_is_probed_once_not_per_turn(tmp_path, monkeypatch):
+    """refresh_context_limit runs at both ends of every turn. If discovery were
+    wired into it rather than beside it, a hosted session would pay three HTTP
+    timeouts per message."""
+    calls: list[str] = []
+
+    def fake_get(url, **kwargs):
+        calls.append(url)
+        return _json_response({"data": [{"id": "hosted-model", "context_length": 32_768}]})
+
+    monkeypatch.setattr("ollama_code.remote.requests.get", fake_get)
+    core = _remote_core(tmp_path)
+    core.client.discover_windows()
+    after_discovery = len(calls)
+
+    for _ in range(3):
+        core.refresh_context_limit()
+    core.client.discover_windows()  # idempotent
+
+    assert len(calls) == after_discovery == 1
+
+
+def test_context_window_keys_are_found_however_they_are_nested(tmp_path):
+    """Gateways nest this differently and rename it every other quarter, so the
+    walk looks for the keys wherever they are instead of following fixed paths."""
+    from ollama_code.remote import parse_context_length
+
+    assert parse_context_length({"context_length": 32_768}) == 32_768
+    assert parse_context_length({"model_info": {"max_input_tokens": 128_000}}) == 128_000
+    assert parse_context_length({"top_provider": {"context_length": 200_000}}) == 200_000
+    assert parse_context_length({"max_model_len": "32768"}) == 32_768
+    # An output cap is not a context window: reading it as one would understate a
+    # 128k model as an 8k one and compact away most of a working conversation.
+    assert parse_context_length({"max_tokens": 8_192}) == 0
+    assert parse_context_length({"context_length": True}) == 0
+    assert parse_context_length({"context_length": 32}) == 0, "a unit mix-up"
+    assert parse_context_length({"context_length": 10_000_000}) == 0, "not a window"
+    assert parse_context_length({"a": {"b": {"c": {"d": {"n_ctx": 4_096}}}}}) == 0, "bounded"
+
+
+def test_a_provider_that_serves_no_model_listing_is_not_asked_for_one(tmp_path, monkeypatch):
+    """Kimi Code documents chat completions and nothing else. Asking anyway got a
+    401, which the caller reported as a rejected key — and then model switching
+    failed for a key that works perfectly well for chat."""
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "ollama_code.remote.requests.get",
+        lambda url, **kw: calls.append(url) or _json_response({}, status=401),
+    )
+    core = _remote_core(tmp_path)
+    core.client.lists_models = False
+
+    listed = core.client.list_models()
+
+    assert [m["name"] for m in listed] == ["hosted-model"]
+    assert calls == [], "no request was made at all"
+
+
+def test_anthropic_output_cap_matches_the_room_reserved_for_it(tmp_path):
+    """Anthropic will use its whole max_tokens, so reserving less than it is
+    allowed to send makes a full reply twice the size the budget planned for."""
+    core = _remote_core(tmp_path, base_url="https://api.anthropic.com/v1")
+    core.config["published_context_window"] = 200_000
+    core.refresh_context_limit()
+
+    options = core.chat_options()
+
+    assert core.context_limit == 200_000
+    assert options == {"max_tokens": core._reply_room()}
+    assert options["max_tokens"] == 8_192, "the cap Anthropic is given, not 4096"
+    assert "num_ctx" not in options, "meaningless in an OpenAI-style body"
+
+
+def test_a_pinned_window_that_spills_to_the_cpu_is_backed_off(tmp_path):
+    """Asking for a large window costs KV cache, and past a point Ollama keeps
+    the model loaded by leaving layers on the CPU — silently, and several times
+    slower. Predicting that from GGUF metadata does not work: a hybrid
+    attention/SSM model publishes no head_count_kv, and does not pay per-token KV
+    on every layer when it does. So it is measured after the fact."""
+    core = _core(tmp_path, [ChatResponse(content_parts=["answer"], done=True)])
+    core.client.trained_window = 262_144
+    core.client.loaded_window = 32_768
+    core.client.resident_size = 20_000_000_000
+    core.client.resident_size_vram = 12_000_000_000  # 60% on the GPU
+    events: list[dict] = []
+    core.on_event(events.append)
+
+    core.run_turn("hi")
+
+    key = f"{core.host}|test-model"
+    assert core.config["model_window_caps"][key] == 16_384, "halved, and remembered"
+    assert core.context_limit == 16_384, "and applied straight away"
+    notes = [e for e in events if e["type"] == "note" and "GPU" in e.get("text", "")]
+    assert len(notes) == 1 and "16,384" in notes[0]["text"]
+
+
+def test_a_window_that_fits_is_left_alone(tmp_path):
+    """The other half: a model fully resident on the GPU must not be nudged
+    downwards every turn."""
+    core = _core(tmp_path, [ChatResponse(content_parts=["answer"], done=True)])
+    core.client.trained_window = 262_144
+    core.client.loaded_window = 32_768
+    core.client.resident_size = 20_000_000_000
+    core.client.resident_size_vram = 20_000_000_000
+
+    core.run_turn("hi")
+
+    assert core.config["model_window_caps"] == {}
+    assert core.context_limit == 32_768
+
+
+def test_a_measured_cap_survives_into_the_next_session(tmp_path):
+    """A machine that could not hold 32k yesterday cannot hold it today, so the
+    reduced ceiling has to outlive the process that measured it — otherwise every
+    launch spills once before backing off again."""
+    core = _core(tmp_path, [])
+    core.remember_window_cap("test-model", 16_384)
+
+    revived = AgentCore(cwd=str(tmp_path), config=dict(core.config))
+    revived.model = "test-model"
+    revived.client = FakeClient([])
+    revived.client.trained_window = 262_144
+    revived.refresh_context_limit()
+
+    assert revived.context_limit == 16_384
+    assert revived.chat_options() == {"num_ctx": 16_384}
+
+
 def test_remote_reasoning_state_is_preserved_for_the_next_request(tmp_path):
     core = _core(tmp_path, [
         ChatResponse(
@@ -2861,17 +3188,43 @@ def test_remote_reasoning_state_is_preserved_for_the_next_request(tmp_path):
     assert core.approx_tokens() >= len("provider-required state") // 4
 
 
+def test_a_known_ceiling_is_pinned_before_anything_is_resident(tmp_path):
+    """A pin is not a guess, so it does not have to wait for the model to load.
+
+    This is the other half of the rule below: with a ceiling published by the
+    GGUF there is something real to ask for, and asking early is what stops the
+    meter being blank and compaction being off for the whole first turn.
+    """
+    core = _core(tmp_path, [])
+    core.client.trained_window = 262_144
+    core.client.loaded_window = 0
+
+    core.refresh_context_limit()
+
+    assert core.context_limit == 32_768
+    assert core.chat_options() == {"num_ctx": 32_768}
+    assert core._context_source == "pinned"
+
+
 def test_an_unknown_window_is_left_unknown(tmp_path, monkeypatch):
     """A model that is not loaded, or an Ollama that did not answer, must not
-    turn into a confident number the GUI then meters against."""
+    turn into a confident number the GUI then meters against.
+
+    With no ceiling from `/api/show` and nothing resident on `/api/ps`, there is
+    nothing to pin to and nothing to measure — so the honest answer is still no
+    answer, and compaction stays off rather than budgeting against a number
+    somebody made up.
+    """
     core = _core(tmp_path, [])
-    monkeypatch.setattr(core.client, "context_length", lambda name: 262_144)
+    monkeypatch.setattr(core.client, "context_length", lambda name: 0)
+    core.client.trained_window = 0
     core.client.loaded_window = 0
 
     core.refresh_context_limit()
 
     assert core.context_limit == 0
     assert core.chat_options() is None
+    assert core._context_source == "unknown"
 
 
 def test_an_evicted_model_does_not_erase_the_window_we_already_knew(tmp_path):
@@ -2946,8 +3299,11 @@ def test_a_window_written_in_thousands_is_not_honoured_as_tokens(tmp_path):
 
     core.refresh_context_limit()
 
-    assert core.context_limit == 32_768, "falls back to what Ollama chose"
-    assert core.chat_options() is None
+    assert core.context_limit == 32_768, "treated as not configured at all"
+    # It still asks for a window — just never the nonsensical one. `num_ctx: 32`
+    # would truncate every request and point at nothing.
+    assert core.chat_options() == {"num_ctx": 32_768}
+    assert core._context_source != "configured"
 
 
 def test_a_window_written_in_thousands_is_refused_over_http(client):
@@ -2959,6 +3315,57 @@ def test_a_window_written_in_thousands_is_refused_over_http(client):
     assert client.post("/api/config", json={"context_window": 0}).status_code == 200
 
 
+def test_an_unusable_iteration_limit_falls_back_to_the_default(tmp_path):
+    """0 must not mean `range(0)`, and a negative must not mean `range(-1)`.
+
+    A real config carried `max_iterations: 5` for a week after a test run
+    clobbered it, and nothing in the app could say so — hence both the clamp and
+    the ceiling.
+    """
+    from ollama_code.config import DEFAULTS, MAX_ITERATIONS_CEILING, iteration_limit
+
+    default = DEFAULTS["max_iterations"]
+    for unusable in (0, -1, -40, None, "", "abc", {}, [], float("inf"), float("nan")):
+        assert iteration_limit(unusable) == default, unusable
+    assert iteration_limit(2) == 2, "a deliberately small limit is honoured"
+    assert iteration_limit("7") == 7, "a hand-edited string number still works"
+    assert iteration_limit(10_000) == MAX_ITERATIONS_CEILING, "a hang is not a feature"
+
+    core = AgentCore(cwd=str(tmp_path), config={"model": "m", "max_iterations": -1})
+    assert core.max_iterations == default
+
+
+def test_a_hand_edited_iteration_limit_cannot_take_the_agent_down(tmp_path):
+    """The bug that mattered: a non-numeric value raised inside the constructor,
+    so the agent did not start and the app reported only that it could not reach
+    the backend."""
+    from ollama_code.config import DEFAULTS, load_config, save_config
+
+    for bad in ("nonsense", float("inf"), {}, None):
+        core = AgentCore(cwd=str(tmp_path), config={"model": "m", "max_iterations": bad})
+        assert core.max_iterations == DEFAULTS["max_iterations"]
+
+    save_config({"max_iterations": "nonsense"})
+    assert load_config()["max_iterations"] == DEFAULTS["max_iterations"]
+
+
+def test_the_iteration_limit_is_writable_over_http(client):
+    """Reported since forever, settable only by hand-editing a file the app never
+    shows — which is why a clobbered value survived so long."""
+    service = client.app.state.service
+
+    assert client.post("/api/config", json={"max_iterations": 7}).status_code == 200
+    assert service.core.max_iterations == 7
+    assert service.core.config["max_iterations"] == 7
+    assert client.get("/api/config").json()["session_info"]["max_iterations"] == 7
+
+    for refused in (0, -1, 5_000):
+        response = client.post("/api/config", json={"max_iterations": refused})
+        assert response.status_code == 422, refused
+        assert "between 1 and" in response.json()["detail"]
+    assert service.core.max_iterations == 7, "a refused value must not be applied"
+
+
 def test_a_hand_edited_window_cannot_take_the_agent_down(tmp_path):
     core = _core(tmp_path, [])
     core.client.loaded_window = 16_384
@@ -2968,8 +3375,12 @@ def test_a_hand_edited_window_cannot_take_the_agent_down(tmp_path):
     for bad in ("sixty-four thousand", None, -1, {}, float("inf"), float("nan")):
         core.config["context_window"] = bad
         core.refresh_context_limit()  # must not raise
-        # Garbage is treated as "not configured", so the loaded window stands.
-        assert core.context_limit == 16_384
+        # Garbage is treated as "not configured", which now means the window is
+        # pinned from the model's own ceiling rather than left at whatever Ollama
+        # happened to load. The point of the test is that none of these values
+        # reaches the runtime as a window.
+        assert core.context_limit == 32_768
+        assert core._context_source == "pinned"
 
 
 def test_compaction_leaves_room_for_the_schemas_and_the_reply(tmp_path):
@@ -3208,6 +3619,9 @@ def test_mid_turn_eviction_keeps_tool_pairing_and_the_newest_result(tmp_path, mo
         ChatResponse(content_parts=["done"], done=True),
     ])
     core.client.loaded_window = 8_192
+    # A model whose ceiling *is* 8k, so the pin cannot raise the window and the
+    # turn really does have to out-read it.
+    core.client.trained_window = 8_192
     events = []
     core.on_event(events.append)
 
@@ -3330,7 +3744,9 @@ def test_a_cold_turn_learns_its_window_between_iterations(tmp_path):
 
     core.run_turn("look around")
 
-    assert client.seen_limits == [0, 32_768]
+    # Both calls, not just the second: the window is pinned from the model's
+    # ceiling before the first request, so nothing is budgeted against zero.
+    assert client.seen_limits == [32_768, 32_768]
 
 
 def test_compaction_transcript_is_capped_so_it_cannot_overflow_itself(tmp_path):
@@ -3423,10 +3839,8 @@ def test_switching_endpoints_does_not_carry_the_old_model_over(tmp_path, monkeyp
     remote_model "kimi-k2" against an Anthropic base URL, which would have
     surfaced as a model-not-found naming neither the model nor the host.
     """
-    from ollama_code import config as config_mod
     from ollama_code.core import AgentCore
 
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
     core = AgentCore(cwd=str(tmp_path), config={"provider": "ollama"})
 
     core.use_remote("https://api.moonshot.ai/v1", api_key="k", model="kimi-k2")
@@ -3449,20 +3863,21 @@ def test_a_measured_context_window_survives_the_model_being_evicted(tmp_path, mo
     """Ollama evicts after five idle minutes, so "not resident" is the normal
     state. Re-measuring is impossible then, but the last real measurement is
     still an observation and keeps the meter and compaction working."""
-    from ollama_code import config as config_mod
     from ollama_code.core import AgentCore
 
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
     core = AgentCore(cwd=str(tmp_path), config={"provider": "ollama"})
     core.model = "qwen3:8b"
 
+    # No published ceiling, so there is nothing to pin against and a remembered
+    # measurement is the only number there can be — which is exactly the case
+    # this test is about.
     class Resident:
         def loaded_context_length(self, _model): return 8192
-        def context_length(self, _model): return 32768
+        def context_length(self, _model): return 0
 
     class Evicted:
         def loaded_context_length(self, _model): return 0
-        def context_length(self, _model): return 32768
+        def context_length(self, _model): return 0
 
     core.client = Resident()
     core.refresh_context_limit()
@@ -3482,11 +3897,14 @@ def test_a_measured_context_window_survives_the_model_being_evicted(tmp_path, mo
 
 def test_a_window_is_only_remembered_when_it_was_measured(tmp_path, monkeypatch):
     """The trained window is not the running window — remembering it would
-    reinstate exactly the over-reporting effective_context_length prevents."""
-    from ollama_code import config as config_mod
+    reinstate exactly the over-reporting effective_context_length prevents.
+
+    A pinned window is a request, not an observation, so it may be budgeted
+    against but must never be recorded as one. Otherwise the next session reads
+    it back as `remembered`, which claims something was measured that never was.
+    """
     from ollama_code.core import AgentCore
 
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
     core = AgentCore(cwd=str(tmp_path), config={"provider": "ollama"})
     core.model = "qwen3:8b"
 
@@ -3497,7 +3915,8 @@ def test_a_window_is_only_remembered_when_it_was_measured(tmp_path, monkeypatch)
     core.client = NeverLoaded()
     core.refresh_context_limit()
     assert core.config["model_windows"] == {}, "nothing was measured"
-    assert core.context_limit == 0, "unknown stays unknown"
+    assert core.context_limit == 32_768, "pinned from the ceiling"
+    assert core._context_source == "pinned", "and never reported as measured"
 
 
 def test_corrupt_remembered_windows_are_dropped_not_trusted(tmp_path, monkeypatch):
@@ -3523,11 +3942,9 @@ def test_one_agent_does_not_leak_its_windows_into_another(tmp_path, monkeypatch)
     """DEFAULTS holds a real dict and configs are built by shallow-copying it,
     so mutating that mapping in place would share one session's measurements
     with every other core in the process."""
-    from ollama_code import config as config_mod
     from ollama_code.config import DEFAULTS
     from ollama_code.core import AgentCore
 
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
 
     class Resident:
         def loaded_context_length(self, _model): return 4096
@@ -3563,10 +3980,8 @@ def test_a_provider_without_a_model_listing_is_not_reported_offline(monkeypatch)
 
 
 def test_the_listing_capability_reaches_the_client_from_the_provider_call(tmp_path, monkeypatch):
-    from ollama_code import config as config_mod
     from ollama_code.core import AgentCore
 
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
     core = AgentCore(cwd=str(tmp_path), config={"provider": "ollama"})
     core.use_remote("https://api.kimi.com/coding/v1", api_key="k", lists_models=False)
     assert core.client.lists_models is False
@@ -3585,19 +4000,19 @@ def test_a_remembered_window_does_not_follow_a_model_to_another_host(tmp_path, m
     compaction against a window that does not exist — the exact failure
     effective_context_length prevents everywhere else.
     """
-    from ollama_code import config as config_mod
     from ollama_code.core import AgentCore
 
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
 
+    # Ceiling unknown on purpose: with one published, each host would pin its own
+    # window and the question of whose measurement got reused could not arise.
     class Serving:
         def __init__(self, window): self.window = window
         def loaded_context_length(self, _m): return self.window
-        def context_length(self, _m): return 262144
+        def context_length(self, _m): return 0
 
     class Evicted:
         def loaded_context_length(self, _m): return 0
-        def context_length(self, _m): return 262144
+        def context_length(self, _m): return 0
 
     # Measured on the LAN box.
     remote = AgentCore(cwd=str(tmp_path), config={"provider": "ollama", "host": "http://192.168.50.99:11434"})
@@ -3631,15 +4046,16 @@ def test_a_new_model_does_not_inherit_the_previous_models_window(tmp_path, monke
     one's number: a 4K model reads ~12% at ~96% of its real window and budgets
     compaction against a window that does not exist.
     """
-    from ollama_code import config as config_mod
     from ollama_code.core import AgentCore
 
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
 
     class Ollama:
         def __init__(self): self.resident = {"model-a": 32768}
         def loaded_context_length(self, model): return self.resident.get(model, 0)
-        def context_length(self, _model): return 262144
+        # A publishes no ceiling, so its window can only be measured; B publishes
+        # a 4K one. The distinction is the test: B must read as the small model it
+        # is, not inherit the number measured for A.
+        def context_length(self, model): return 4096 if model == "model-b" else 0
 
     core = AgentCore(cwd=str(tmp_path), config={"provider": "ollama"})
     core.client = Ollama()
@@ -3650,7 +4066,7 @@ def test_a_new_model_does_not_inherit_the_previous_models_window(tmp_path, monke
 
     core.model = "model-b"
     core.refresh_context_limit()
-    assert core.context_limit == 0, "model B inherited model A's window"
+    assert core.context_limit == 4096, "model B inherited model A's window"
 
     # The guard it must not have broken: an evicted model keeps what was
     # measured for it, so compaction does not quietly switch off.
@@ -3663,10 +4079,8 @@ def test_a_new_model_does_not_inherit_the_previous_models_window(tmp_path, monke
 def test_a_hosted_account_can_finally_have_a_window(tmp_path, monkeypatch):
     """A hosted endpoint advertises no window, so before this the meter was
     dead and auto-compaction never engaged for any account."""
-    from ollama_code import config as config_mod
     from ollama_code.core import AgentCore
 
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
     core = AgentCore(cwd=str(tmp_path), config={"provider": "ollama"})
 
     core.use_remote("https://api.anthropic.com/v1", api_key="k", model="claude-sonnet-4-5")
@@ -3685,11 +4099,9 @@ def test_a_window_below_the_floor_is_refused_not_quietly_honoured(tmp_path, monk
     so honouring it would truncate every request with nothing to point at."""
     import pytest as _pytest
 
-    from ollama_code import config as config_mod
     from ollama_code.config import MINIMUM_CONTEXT_WINDOW
     from ollama_code.core import AgentCore
 
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
     core = AgentCore(cwd=str(tmp_path), config={"provider": "ollama"})
 
     with _pytest.raises(ValueError, match=str(MINIMUM_CONTEXT_WINDOW)):
@@ -3704,10 +4116,8 @@ def test_a_window_below_the_floor_is_refused_not_quietly_honoured(tmp_path, monk
 
 
 def test_a_configured_window_lets_compaction_engage_on_a_hosted_account(tmp_path, monkeypatch):
-    from ollama_code import config as config_mod
     from ollama_code.core import AgentCore
 
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", tmp_path / "config.json")
     core = AgentCore(cwd=str(tmp_path), config={"provider": "ollama", "auto_compact": True})
     core.use_remote("https://api.openai.com/v1", api_key="k", model="gpt-5")
 

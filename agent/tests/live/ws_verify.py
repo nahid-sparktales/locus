@@ -1,22 +1,25 @@
 """WS end-to-end verification: agentic turn with permission flow over WebSocket.
-Run with the server up: .venv/bin/python tests/ws_verify.py"""
+
+Manual smoke test against a real model. Starts its own server:
+    agent/.venv/bin/python tests/live/ws_verify.py --model qwen3.6:27b
+"""
 import asyncio
 import json
+import sys
 import time
 from collections import Counter
 from pathlib import Path
 
 import websockets
 
-TARGET = Path("/tmp/oc-swarm-test/hello.py")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _server import live_server, parse_args  # noqa: E402
 
 
-async def main() -> None:
-    if TARGET.exists():
-        TARGET.unlink()
+async def run(ws_url: str, target: Path) -> None:
     events: list[dict] = []
 
-    async with websockets.connect("ws://localhost:8791/ws/chat") as ws:
+    async with websockets.connect(ws_url) as ws:
 
         async def recv_until(pred, timeout=240):
             deadline = time.time() + timeout
@@ -42,7 +45,7 @@ async def main() -> None:
 
         await ws.send(json.dumps({
             "type": "user_message",
-            "text": "create a file /tmp/oc-swarm-test/hello.py that prints hello from gui, "
+            "text": f"create a file {target} that prints hello from gui, "
                     "then run it with python3",
         }))
         done = await recv_until(lambda m: m.get("type") == "turn_done", 240)
@@ -62,9 +65,16 @@ async def main() -> None:
         assert counts.get("tool_call_proposed", 0) >= 2, "expected >=2 tool calls"
         assert counts.get("tool_result", 0) >= 2, "expected >=2 tool results"
         assert done.get("reason") == "complete", done
-        assert TARGET.exists(), f"{TARGET} was not created"
+        assert target.exists(), f"{target} was not created"
         assert ran, "the script output never appeared in a tool_result (was it executed?)"
         print("WS VERIFY PASSED")
 
 
-asyncio.run(main())
+def main() -> None:
+    args = parse_args(__doc__ or "")
+    with live_server(args.model) as (_base, ws_url, workdir):
+        # Inside the server's own throwaway cwd, not a shared /tmp path.
+        asyncio.run(run(ws_url, workdir / "hello.py"))
+
+
+main()
