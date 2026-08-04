@@ -987,175 +987,11 @@ struct SettingsView: View {
 
                 Rectangle().fill(LocusTheme.line).frame(width: 1)
 
-                if model.settingsPage == .general {
-                    Form {
-                Section("Model providers") {
-                    Label(
-                        "Local Ollama — models installed on this Mac appear in the picker automatically.",
-                        systemImage: "bolt.fill"
-                    )
-                    .font(.system(size: 10))
-                    .foregroundStyle(LocusTheme.muted)
-
-                    TextField("Local context window in tokens (optional)", text: $localWindow)
-                        .accessibilityIdentifier("settings.localContextWindow")
-
-                    Text("Leave empty and Locus asks Ollama for the largest window the model was built for, up to 32,768 tokens — Ollama's own default is 4,096, most of which a turn spends on tools before the conversation starts. Bigger windows cost memory for the KV cache, and a model that ends up partly on the CPU is backed off automatically. Set a value to pin one exactly; it is requested as num_ctx and is what compaction budgets against.")
-                        .font(.system(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    ForEach(model.providerAccounts) { account in
-                        HStack(spacing: 10) {
-                            Circle()
-                                .fill(
-                                    model.accountStatus[account.id]?.isHealthy ?? account.hasKey
-                                        ? LocusTheme.success
-                                        : LocusTheme.coral
-                                )
-                                .frame(width: 7, height: 7)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(account.displayName)
-                                    .font(.system(size: 11, weight: .semibold))
-                                Text(accountDetail(account))
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(LocusTheme.muted)
-                                    .lineLimit(1)
-                            }
-                            Spacer()
-                            Button("Edit") { editingAccount = account }
-                                .accessibilityIdentifier("settings.accounts.edit")
-                            Button("Remove") { accountPendingRemoval = account }
-                                .accessibilityIdentifier("settings.accounts.remove")
-                        }
-                        .accessibilityIdentifier("settings.accounts.row")
-                    }
-
-                    Menu("Add Account…") {
-                        ForEach(ProviderKind.allCases) { kind in
-                            Button(kind.title) {
-                                addingAccount = ProviderAccount(kind: kind)
-                            }
-                        }
-                    }
-                    .accessibilityIdentifier("settings.accounts.add")
-
-                    Text("Each account keeps its API key in \(CredentialStore.displayPath), a file readable only by your macOS user account. Keys are passed to the local agent in memory and only ever sent to their own provider. Any program running as you can read that file.")
-                        .font(.system(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Section("Permissions") {
-                    Picker("The agent may", selection: Binding(
-                        get: { model.permissionMode },
-                        set: { model.setPermissionMode($0) }
-                    )) {
-                        ForEach(PermissionMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    .accessibilityIdentifier("settings.permissionMode")
-
-                    Text(model.permissionMode.detail)
-                        .font(.system(size: 9))
-                        .foregroundStyle(
-                            model.permissionMode.isRisky ? LocusTheme.coral : LocusTheme.muted
-                        )
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if !model.allowedTools.isEmpty {
-                        LabeledContent("Always allowed") {
-                            Text(model.allowedTools.joined(separator: ", "))
-                                .font(.system(size: 9))
-                                .foregroundStyle(LocusTheme.muted)
-                        }
-                    }
-
-                    Button("Reset session allowances") { model.resetPermissions() }
-                        .disabled(model.allowedTools.isEmpty && model.permissionMode == .ask)
-                        .accessibilityIdentifier("settings.resetPermissions")
-
-                    Text("Reading, searching and listing inside the workspace never ask. Anything outside it always does, in every mode.")
-                        .font(.system(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Section("Agent") {
-                    TextField("Maximum tool steps per turn (optional)", text: $iterationLimit)
-                        .accessibilityIdentifier("settings.maxIterations")
-
-                    Text("Leave empty for 40. A turn that reaches the limit stops and says so — if turns are ending early for no obvious reason, this is the number to check.")
-                        .font(.system(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Section("Local agent") {
-                    Text("The app includes its own local-agent runtime. These settings are used for custom or development backends.")
-                        .font(.system(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                    TextField("Backend URL", text: $draft.backendURL)
-                        .accessibilityIdentifier("settings.backendURL")
-                    TextField("Fallback backend folder", text: $draft.backendRoot)
-                        .accessibilityIdentifier("settings.backendRoot")
-                    HStack {
-                        Button("Choose Folder…") { chooseBackendFolder() }
-                            .accessibilityIdentifier("settings.chooseBackend")
-                        Button("Reveal in Finder") {
-                            NSWorkspace.shared.open(URL(fileURLWithPath: draft.backendRoot))
-                        }
-                        .accessibilityIdentifier("settings.revealBackend")
-                    }
-                }
-
-                Section("Preview") {
-                    TextField("Preview URL", text: $draft.previewURL)
-                        .accessibilityIdentifier("settings.previewURL")
-                }
-
-                Section("Notifications") {
-                    Toggle(
-                        "Notify when a run finishes while Locus is in the background",
-                        isOn: $draft.notifyOnCompletion
-                    )
-                    .accessibilityIdentifier("settings.notifyOnCompletion")
-                }
-
-                Section("Status") {
-                    LabeledContent("Agent") {
-                        Text(runtimeLabel(model.agentRuntimePhase))
-                            .foregroundStyle(runtimeColor(model.agentRuntimePhase))
-                            .accessibilityIdentifier("settings.agentStatus")
-                            .accessibilityLabel(runtimeLabel(model.agentRuntimePhase))
-                    }
-                    LabeledContent(model.activeAccount?.displayName ?? "Ollama") {
-                        Text(runtimeLabel(model.modelRuntimePhase))
-                            .foregroundStyle(runtimeColor(model.modelRuntimePhase))
-                            .accessibilityIdentifier("settings.modelStatus")
-                            .accessibilityLabel(runtimeLabel(model.modelRuntimePhase))
-                    }
-                    if let reason = model.modelRuntimePhase.message, !reason.isEmpty {
-                        Text(reason)
-                            .font(.system(size: 9))
-                            .foregroundStyle(runtimeColor(model.modelRuntimePhase))
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier("settings.ollamaError")
-                    }
-                    if !model.backendLogHint.isEmpty {
-                        Text(model.backendLogHint)
-                            .font(.system(size: 9))
-                            .foregroundStyle(LocusTheme.muted)
-                    }
-                    if !model.isAgentOnline || !model.isModelOnline {
-                        Button("Retry Now") { model.retryLocalServices() }
-                            .accessibilityIdentifier("settings.retryLocalServices")
-                    }
-                }
-                    }
-                    .formStyle(.grouped)
-                } else {
+                switch model.settingsPage {
+                case .general: generalPage
+                case .accounts: accountsPage
+                case .permissions: permissionsPage
+                case .extensions:
                     ExtensionsSettingsView()
                         .environmentObject(model)
                 }
@@ -1227,6 +1063,218 @@ struct SettingsView: View {
                 secondaryButton: .cancel()
             )
         }
+    }
+
+    // MARK: - Pages
+
+    /// Everything saved through the draft, plus the runtime readout. Accounts
+    /// and permissions each own a tab because both write immediately and have
+    /// nothing to do with Cancel/Save.
+    private var generalPage: some View {
+        Form {
+            Section("Local model") {
+                Label(
+                    "Local Ollama — models installed on this Mac appear in the picker automatically.",
+                    systemImage: "bolt.fill"
+                )
+                .font(.system(size: 10))
+                .foregroundStyle(LocusTheme.muted)
+
+                TextField("Local context window in tokens (optional)", text: $localWindow)
+                    .accessibilityIdentifier("settings.localContextWindow")
+
+                Text("Leave empty and Locus asks Ollama for the largest window the model was built for, up to 32,768 tokens — Ollama's own default is 4,096, most of which a turn spends on tools before the conversation starts. Bigger windows cost memory for the KV cache, and a model that ends up partly on the CPU is backed off automatically. Set a value to pin one exactly; it is requested as num_ctx and is what compaction budgets against.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("Agent") {
+                TextField("Maximum tool steps per turn (optional)", text: $iterationLimit)
+                    .accessibilityIdentifier("settings.maxIterations")
+
+                Text("Leave empty for 40. A turn that reaches the limit stops and says so — if turns are ending early for no obvious reason, this is the number to check.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("Local agent") {
+                Text("The app includes its own local-agent runtime. These settings are used for custom or development backends.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                TextField("Backend URL", text: $draft.backendURL)
+                    .accessibilityIdentifier("settings.backendURL")
+                TextField("Fallback backend folder", text: $draft.backendRoot)
+                    .accessibilityIdentifier("settings.backendRoot")
+                HStack {
+                    Button("Choose Folder…") { chooseBackendFolder() }
+                        .accessibilityIdentifier("settings.chooseBackend")
+                    Button("Reveal in Finder") {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: draft.backendRoot))
+                    }
+                    .accessibilityIdentifier("settings.revealBackend")
+                }
+            }
+
+            Section("Preview") {
+                TextField("Preview URL", text: $draft.previewURL)
+                    .accessibilityIdentifier("settings.previewURL")
+            }
+
+            Section("Notifications") {
+                Toggle(
+                    "Notify when a run finishes while Locus is in the background",
+                    isOn: $draft.notifyOnCompletion
+                )
+                .accessibilityIdentifier("settings.notifyOnCompletion")
+            }
+
+            Section("Status") {
+                LabeledContent("Agent") {
+                    Text(runtimeLabel(model.agentRuntimePhase))
+                        .foregroundStyle(runtimeColor(model.agentRuntimePhase))
+                        .accessibilityIdentifier("settings.agentStatus")
+                        .accessibilityLabel(runtimeLabel(model.agentRuntimePhase))
+                }
+                LabeledContent(model.activeAccount?.displayName ?? "Ollama") {
+                    Text(runtimeLabel(model.modelRuntimePhase))
+                        .foregroundStyle(runtimeColor(model.modelRuntimePhase))
+                        .accessibilityIdentifier("settings.modelStatus")
+                        .accessibilityLabel(runtimeLabel(model.modelRuntimePhase))
+                }
+                if let reason = model.modelRuntimePhase.message, !reason.isEmpty {
+                    Text(reason)
+                        .font(.system(size: 9))
+                        .foregroundStyle(runtimeColor(model.modelRuntimePhase))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("settings.ollamaError")
+                }
+                if !model.backendLogHint.isEmpty {
+                    Text(model.backendLogHint)
+                        .font(.system(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                if !model.isAgentOnline || !model.isModelOnline {
+                    Button("Retry Now") { model.retryLocalServices() }
+                        .accessibilityIdentifier("settings.retryLocalServices")
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    /// Remote provider accounts. Edits here write the credential file as they
+    /// happen, so this page has no Cancel/Save bar of its own.
+    private var accountsPage: some View {
+        Form {
+            Section("Provider accounts") {
+                if model.providerAccounts.isEmpty {
+                    Text("No accounts yet — Locus runs on local Ollama until you add one.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(LocusTheme.muted)
+                        .accessibilityIdentifier("settings.accounts.empty")
+                }
+
+                ForEach(model.providerAccounts) { account in
+                    HStack(spacing: 10) {
+                        Circle()
+                            .fill(
+                                model.accountStatus[account.id]?.isHealthy ?? account.hasKey
+                                    ? LocusTheme.success
+                                    : LocusTheme.coral
+                            )
+                            .frame(width: 7, height: 7)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(account.displayName)
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(accountDetail(account))
+                                .font(.system(size: 9))
+                                .foregroundStyle(LocusTheme.muted)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        Button("Edit") { editingAccount = account }
+                            .accessibilityIdentifier("settings.accounts.edit")
+                        Button("Remove") { accountPendingRemoval = account }
+                            .accessibilityIdentifier("settings.accounts.remove")
+                    }
+                    .accessibilityIdentifier("settings.accounts.row")
+                }
+
+                Menu("Add Account…") {
+                    ForEach(ProviderKind.allCases) { kind in
+                        Button(kind.title) {
+                            addingAccount = ProviderAccount(kind: kind)
+                        }
+                    }
+                }
+                .accessibilityIdentifier("settings.accounts.add")
+
+                Text("Each account keeps its API key in \(CredentialStore.displayPath), a file readable only by your macOS user account. Keys are passed to the local agent in memory and only ever sent to their own provider. Any program running as you can read that file.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("Local model") {
+                Label(
+                    "Local Ollama needs no account — models installed on this Mac appear in the picker automatically.",
+                    systemImage: "bolt.fill"
+                )
+                .font(.system(size: 10))
+                .foregroundStyle(LocusTheme.muted)
+
+                Button("Browse Hugging Face Models…") {
+                    model.modelLibraryPresented = true
+                }
+                .accessibilityIdentifier("settings.accounts.browseHuggingFace")
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    /// Permission mode applies the moment it changes — the agent may already be
+    /// mid-turn — so this page, too, stands apart from the draft.
+    private var permissionsPage: some View {
+        Form {
+            Section("Permissions") {
+                Picker("The agent may", selection: Binding(
+                    get: { model.permissionMode },
+                    set: { model.setPermissionMode($0) }
+                )) {
+                    ForEach(PermissionMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .accessibilityIdentifier("settings.permissionMode")
+
+                Text(model.permissionMode.detail)
+                    .font(.system(size: 9))
+                    .foregroundStyle(
+                        model.permissionMode.isRisky ? LocusTheme.coral : LocusTheme.muted
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if !model.allowedTools.isEmpty {
+                    LabeledContent("Always allowed") {
+                        Text(model.allowedTools.joined(separator: ", "))
+                            .font(.system(size: 9))
+                            .foregroundStyle(LocusTheme.muted)
+                    }
+                }
+
+                Button("Reset session allowances") { model.resetPermissions() }
+                    .disabled(model.allowedTools.isEmpty && model.permissionMode == .ask)
+                    .accessibilityIdentifier("settings.resetPermissions")
+
+                Text("Reading, searching and listing inside the workspace never ask. Anything outside it always does, in every mode.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .formStyle(.grouped)
     }
 
     private func accountDetail(_ account: ProviderAccount) -> String {

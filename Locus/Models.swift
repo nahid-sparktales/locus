@@ -124,6 +124,8 @@ enum InspectorTab: String, CaseIterable, Identifiable {
 
 enum SettingsPage: String, CaseIterable, Identifiable {
     case general = "General"
+    case accounts = "Accounts"
+    case permissions = "Permissions"
     case extensions = "Extensions"
 
     var id: String { rawValue }
@@ -131,6 +133,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .general: "gearshape"
+        case .accounts: "person.crop.circle"
+        case .permissions: "lock.shield"
         case .extensions: "puzzlepiece.extension"
         }
     }

@@ -191,6 +191,12 @@ final class LocusUITests: XCTestCase {
         anyElement("workspace.modelPicker").click()
         app.menuItems["Manage Accounts…"].click()
 
+        // Manage Accounts lands on the Accounts tab; the runtime readout lives
+        // on General.
+        let generalPage = anyElement("settings.page.general")
+        XCTAssertTrue(generalPage.waitForExistence(timeout: 3))
+        generalPage.click()
+
         let agentStatus = app.staticTexts["settings.agentStatus"].firstMatch
         let modelStatus = app.staticTexts["settings.modelStatus"].firstMatch
         XCTAssertTrue(agentStatus.waitForExistence(timeout: 3))

@@ -14,10 +14,11 @@ like; macOS remembers the size you choose for later launches.
 
 ## Designed for real project work
 
-- **One calm sidebar** holds the conversation list: New chat, search, recents,
-  and a footer with the workspace selector, connection status, and the rest of
-  the app's actions. It starts open, collapses with `⌘0` or the header button
-  when you want the room, and remembers its state across launches.
+- **One calm sidebar** holds the conversation list: rows for Plugins & MCP,
+  Manage Accounts and Hugging Face, then New chat, search, recents, and a footer
+  with the workspace selector, connection status, and the rest of the app's
+  actions. It starts open, collapses with `⌘0` or the header button when you
+  want the room, and remembers its state across launches.
 - **Workspaces** open from a folder picker that can create folders, or with
   **New Workspace…**, which names a folder, creates it, and opens it.
 - **Local or rented GPU.** Point Locus at local Ollama, or at any
@@ -197,8 +198,8 @@ local. The model picker always opens with the local section first.
 
 Every hosted provider here is authenticated with an **API key you supply**.
 Locus does not sign in to anyone's account and does not carry OAuth
-credentials. In **Settings ▸ Model providers**, choose **Add Account…** and
-pick a provider:
+credentials. In **Settings ▸ Accounts** — or **Manage Accounts** in the
+sidebar — choose **Add Account…** and pick a provider:
 
 | Provider | Endpoint | Where the key comes from |
 | --- | --- | --- |

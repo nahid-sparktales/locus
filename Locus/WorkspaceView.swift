@@ -111,6 +111,7 @@ struct WorkspaceView: View {
                     }
                 }
                 Button("Manage Accounts…") {
+                    model.settingsPage = .accounts
                     model.settingsPresented = true
                 }
                 .accessibilityIdentifier("workspace.modelPicker.manageAccounts")

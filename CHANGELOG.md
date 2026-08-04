@@ -4,6 +4,30 @@
 
 ### Changed
 
+- **Accounts and permissions each have their own Settings tab.** Both used to be
+  sections buried in General, above the backend and preview fields, which is a
+  long way to scroll for the two things people actually open Settings to change.
+  They are now **Settings ▸ Accounts** and **Settings ▸ Permissions**, alongside
+  General and Extensions. Neither takes part in the Cancel/Save bar, which is
+  right: an API key writes `~/.locus/auth.json` the moment it is entered and a
+  permission mode applies to a turn that may already be running, so there was
+  never anything for Cancel to undo. General keeps everything the draft does
+  save. **Manage Accounts…** in the model picker now lands on the Accounts tab
+  rather than the top of General.
+
+- **The sidebar's workspace row is a folder, and the icons line up.** The row at
+  the bottom carried a shipping-box glyph, and its label was centred rather than
+  starting where New chat's plus and the search magnifier start — SwiftUI's
+  borderless menu style centres a custom label the way an `NSPopUpButton` centres
+  a title. It is a folder now, laid out verbatim, and every leading glyph in the
+  sidebar is drawn in a shared fixed-width column at a shared inset, so they sit
+  on one rail whatever each symbol's own width happens to be.
+
+- **Manage Accounts and Hugging Face are one click from the sidebar.** They join
+  Plugins & MCP under the Chat/Work switch: the first opens Settings on the new
+  Accounts tab, the second opens the model library that was previously reachable
+  only through the model picker or `/models`.
+
 - **Local models now run in a window Locus asks for, instead of Ollama's
   4,096-token default.** The agent requests the model's own trained ceiling,
   capped at 32,768 tokens, so the context meter and automatic compaction work
@@ -17,8 +41,8 @@
   And a larger window costs memory for the KV cache: if a model ends up partly on
   the CPU as a result, Locus notices from `/api/ps`, halves what it asks for,
   remembers the lower ceiling for that model on this Mac, and says so in the
-  transcript. Pin an exact window under **Settings ▸ Model providers** to opt out
-  of all of it.
+  transcript. Pin an exact window under **Settings ▸ General ▸ Local model** to
+  opt out of all of it.
 
 - **Hosted endpoints now report their own context window.** vLLM, TGI and
   llama.cpp deployments — including Hugging Face Inference Endpoints — state

@@ -1,5 +1,20 @@
 import SwiftUI
 
+/// The sidebar's shared rail. Every leading glyph — plus, magnifying glass,
+/// folder, and the nav rows above them — is drawn in a fixed-width column at
+/// the same inset, so they line up down the edge whatever each symbol's own
+/// intrinsic width happens to be.
+private enum SidebarMetrics {
+    /// Inset of each control from the sidebar edge.
+    static let gutter: CGFloat = 14
+    /// Padding inside a control, before its icon column.
+    static let rowInset: CGFloat = 10
+    /// Width every leading glyph is centred in.
+    static let iconColumn: CGFloat = 14
+    /// Gap between the icon column and the label.
+    static let iconGap: CGFloat = 8
+}
+
 struct SessionSidebarView: View {
     @EnvironmentObject private var model: AppModel
     @State private var sessionToRename: SessionSummary?
@@ -109,7 +124,7 @@ struct SessionSidebarView: View {
             .accessibilityLabel("Hide sidebar")
             .accessibilityIdentifier("sidebar.collapse")
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, SidebarMetrics.gutter)
         .frame(height: 60)
     }
 
@@ -121,30 +136,70 @@ struct SessionSidebarView: View {
                 }
             }
 
-            Button {
+            navigationRow(
+                symbol: "puzzlepiece.extension",
+                title: "Plugins & MCP",
+                help: "Manage plugins, MCP servers, and skills",
+                accessibilityLabel: "Plugins, MCP servers, and skills",
+                identifier: "sidebar.extensions"
+            ) {
                 model.settingsPage = .extensions
                 model.settingsPresented = true
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "puzzlepiece.extension")
-                        .font(.system(size: 12, weight: .medium))
-                        .frame(width: 12)
-                    Text("Plugins & MCP")
-                        .font(.system(size: 10, weight: .semibold))
-                    Spacer(minLength: 4)
-                }
-                .foregroundStyle(LocusTheme.inkSoft)
-                .padding(.horizontal, 10)
-                .frame(height: 30)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .help("Manage plugins, MCP servers, and skills")
-            .accessibilityLabel("Plugins, MCP servers, and skills")
-            .accessibilityIdentifier("sidebar.extensions")
+
+            navigationRow(
+                symbol: "person.crop.circle",
+                title: "Manage Accounts",
+                help: "Add or edit provider accounts and their API keys",
+                accessibilityLabel: "Manage provider accounts",
+                identifier: "sidebar.accounts"
+            ) {
+                model.settingsPage = .accounts
+                model.settingsPresented = true
+            }
+
+            navigationRow(
+                symbol: "shippingbox",
+                title: "Hugging Face",
+                help: "Browse and install GGUF models from Hugging Face",
+                accessibilityLabel: "Browse Hugging Face models",
+                identifier: "sidebar.huggingFace"
+            ) {
+                model.modelLibraryPresented = true
+            }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, SidebarMetrics.gutter)
         .padding(.bottom, 10)
+    }
+
+    /// One row of the nav stack. They share an icon column with the New chat,
+    /// search and workspace controls so every glyph sits on the same rail.
+    private func navigationRow(
+        symbol: String,
+        title: String,
+        help: String,
+        accessibilityLabel: String,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: SidebarMetrics.iconGap) {
+                Image(systemName: symbol)
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: SidebarMetrics.iconColumn)
+                Text(title)
+                    .font(.system(size: 10, weight: .semibold))
+                Spacer(minLength: 4)
+            }
+            .foregroundStyle(LocusTheme.inkSoft)
+            .padding(.horizontal, SidebarMetrics.rowInset)
+            .frame(height: 30)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityIdentifier(identifier)
     }
 
     // MARK: - Controls
@@ -154,8 +209,9 @@ struct SessionSidebarView: View {
             Button {
                 model.newSession()
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: SidebarMetrics.iconGap) {
                     Image(systemName: "plus")
+                        .frame(width: SidebarMetrics.iconColumn)
                     Text("New chat")
                     Spacer(minLength: 4)
                     Text("⌘N")
@@ -164,7 +220,7 @@ struct SessionSidebarView: View {
                 }
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(LocusTheme.paper)
-                .padding(.horizontal, 11)
+                .padding(.horizontal, SidebarMetrics.rowInset)
                 .frame(height: 36)
                 .background(LocusTheme.ink)
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -172,8 +228,10 @@ struct SessionSidebarView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("sidebar.newSession")
 
-            HStack(spacing: 7) {
+            HStack(spacing: SidebarMetrics.iconGap) {
                 Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11, weight: .medium))
+                    .frame(width: SidebarMetrics.iconColumn)
                     .foregroundStyle(LocusTheme.muted)
                 TextField("Search sessions", text: $model.searchQuery)
                     .textFieldStyle(.plain)
@@ -189,7 +247,7 @@ struct SessionSidebarView: View {
                     .accessibilityLabel("Clear session search")
                 }
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, SidebarMetrics.rowInset)
             .frame(height: 35)
             .background(LocusTheme.white.opacity(0.72))
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -199,7 +257,7 @@ struct SessionSidebarView: View {
             }
             .accessibilityIdentifier("sidebar.search")
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, SidebarMetrics.gutter)
         .padding(.bottom, 12)
     }
 
@@ -237,7 +295,7 @@ struct SessionSidebarView: View {
                 moreMenu
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, SidebarMetrics.gutter)
         .padding(.top, 11)
         .padding(.bottom, 12)
         .overlay(alignment: .top) {
@@ -316,9 +374,10 @@ struct SessionSidebarView: View {
             Divider()
             Button("Settings…") { model.settingsPresented = true }
         } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "shippingbox")
+            HStack(spacing: SidebarMetrics.iconGap) {
+                Image(systemName: "folder")
                     .font(.system(size: 11, weight: .medium))
+                    .frame(width: SidebarMetrics.iconColumn)
                     .foregroundStyle(LocusTheme.muted)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(URL(fileURLWithPath: model.workspacePath).lastPathComponent)
@@ -334,7 +393,8 @@ struct SessionSidebarView: View {
                     .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(LocusTheme.muted)
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, SidebarMetrics.rowInset)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: 40)
             .background(LocusTheme.white.opacity(0.72))
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -343,7 +403,11 @@ struct SessionSidebarView: View {
                     .stroke(LocusTheme.line, lineWidth: 1)
             }
         }
-        .menuStyle(.borderlessButton)
+        // .borderlessButton centres a custom label like an NSPopUpButton title,
+        // which pushed the folder glyph off the rail the New chat and search
+        // icons sit on. The plain button style lays the label out verbatim.
+        .menuStyle(.button)
+        .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .accessibilityLabel("Workspace menu")
         .accessibilityIdentifier("sidebar.workspaceMenu")
