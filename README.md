@@ -24,6 +24,14 @@ like; macOS remembers the size you choose for later launches.
 - **Local or rented GPU.** Point Locus at local Ollama, or at any
   OpenAI-compatible endpoint — a Hugging Face Inference Endpoint, vLLM, or TGI
   on a rented box — with an API key kept in a file only you can read.
+- **Proxy support** for networks that require one. **Settings ▸ Network**
+  follows the macOS proxy configuration or takes an explicit HTTP/HTTPS or
+  SOCKS5 proxy, with optional sign-in and a bypass list, and covers both the
+  app's own requests and everything the bundled agent reaches — providers, the
+  model's web fetches, MCP servers, and git. Loopback and the Ollama host
+  always connect directly, and a proxy that stops answering is an error rather
+  than a quiet direct connection. See [Working behind a
+  proxy](#working-behind-a-proxy).
 - **Chat and Work stay visibly separate.** Chat answers from the conversation
   and files explicitly attached to the current message, while keeping tools,
   skills, integrations, workspace browsing, and edits disabled. It accepts
