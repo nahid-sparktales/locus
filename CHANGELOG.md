@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Added
+
+- **Locus works behind a proxy.** A new **Settings ▸ Network** tab routes
+  outbound traffic — the app's own requests, the agent's model and web traffic,
+  MCP servers, extension installs, git — through an HTTP/HTTPS or SOCKS5 proxy,
+  with optional sign-in and a bypass list. *Use system proxy* mirrors the
+  macOS proxy configuration into the agent's environment; *Manual proxy* names
+  one explicitly. Loopback, the local agent, and the Ollama host always connect
+  directly. A proxy that stops answering is an error, never a silent direct
+  connection, and a **Test Proxy** button probes the draft values before
+  anything is saved.
+
+  The boundaries, stated plainly: the proxy password lives in
+  `~/.locus/auth.json` and is deliberately withheld from anything the model can
+  run — shell commands and stdio MCP servers get the proxy address but cannot
+  answer its sign-in. A PAC-based system proxy applies to app traffic only,
+  because PAC cannot be expressed in the environment variables the agent's
+  libraries read. Proxy changes restart the agent, the same way backend
+  changes always have.
+
 ### Changed
 
 - **Accounts and permissions each have their own Settings tab.** Both used to be

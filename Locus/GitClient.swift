@@ -177,7 +177,7 @@ enum CommitMessageDrafter {
             "prompt": prompt,
             "stream": false,
         ])
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
+        guard let (data, response) = try? await ProxyRuntime.shared.urlSession.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let text = object["response"] as? String

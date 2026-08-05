@@ -35,6 +35,13 @@ enum CredentialStore {
 
     static let mcpCredentialPrefix = "mcp-server-"
 
+    /// The manual proxy's password. One entry, in its own `network` section of
+    /// the file. A version of Locus from before proxy support rebuilds the file
+    /// from the sections it knows on its next credential write, dropping this
+    /// one — the same accepted downgrade behavior the file already has, and the
+    /// cost is re-entering one password.
+    static let proxyCredentialKey = "network-proxy"
+
     static var fileURL: URL {
         URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(".locus", isDirectory: true)
@@ -88,7 +95,7 @@ enum CredentialStore {
         // section casts to nil, which would look like "these accounts have no
         // keys" and let the next write overwrite the survivors.
         var merged: [String: String] = [:]
-        for section in [providerSection, mcpSection] {
+        for section in [providerSection, mcpSection, networkSection] {
             guard let raw = root[section] else { continue }
             guard let entries = raw as? [String: Any] else {
                 return degradedLocked()
@@ -116,6 +123,7 @@ enum CredentialStore {
 
     private static let providerSection = "provider_accounts"
     private static let mcpSection = "mcp_servers"
+    private static let networkSection = "network"
 
     /// A name no earlier salvage already owns, so corrupting the file twice
     /// never destroys the first copy.
@@ -135,13 +143,24 @@ enum CredentialStore {
     private static func writeLocked(_ entries: [String: String]) -> Bool {
         var provider: [String: String] = [:]
         var mcp: [String: String] = [:]
+        var network: [String: String] = [:]
         for (key, value) in entries {
-            if key.hasPrefix(mcpCredentialPrefix) { mcp[key] = value } else { provider[key] = value }
+            if key.hasPrefix(mcpCredentialPrefix) {
+                mcp[key] = value
+            } else if key == proxyCredentialKey {
+                // Its own section, not the provider fallback: the orphan sweep
+                // walks provider keys, and a proxy password that landed there
+                // would be collected as an account nothing owns.
+                network[key] = value
+            } else {
+                provider[key] = value
+            }
         }
         let root: [String: Any] = [
             "version": 1,
             providerSection: provider,
             mcpSection: mcp,
+            networkSection: network,
         ]
         guard let data = try? JSONSerialization.data(
             withJSONObject: root, options: [.prettyPrinted, .sortedKeys]
@@ -234,6 +253,18 @@ enum CredentialStore {
         var entries = loadLocked()
         guard entries.removeValue(forKey: account) != nil else { return true }
         return writeLocked(entries)
+    }
+
+    /// The manual proxy's password, through the same entry API as every other
+    /// secret so writes share the salvage and permission discipline.
+    static func proxyPassword() -> String? {
+        get(account: proxyCredentialKey)
+    }
+
+    /// An empty value deletes the entry, so switching auth off leaves nothing.
+    @discardableResult
+    static func setProxyPassword(_ value: String) -> Bool {
+        set(value, account: proxyCredentialKey)
     }
 
     /// Every account name Locus has stored. Used to sweep up keys whose
@@ -392,7 +423,7 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
             .sorted()
             .joined(separator: "&")
             .data(using: .utf8)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await ProxyRuntime.shared.urlSession.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
               let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let accessToken = root["access_token"] as? String
@@ -439,7 +470,7 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
             .sorted()
             .joined(separator: "&")
             .data(using: .utf8)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await ProxyRuntime.shared.urlSession.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
               let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let accessToken = root["access_token"] as? String,

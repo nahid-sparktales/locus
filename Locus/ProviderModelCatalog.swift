@@ -13,10 +13,9 @@ enum ProviderModelCatalog {
         let status: ProviderAccountStatus
     }
 
-    private static let session = URLSession(
-        configuration: .ephemeral,
-        delegate: NoRedirectSessionDelegate(),
-        delegateQueue: nil
+    private static let session = ProxyAwareSession(
+        configuration: { .ephemeral },
+        delegate: { NoRedirectSessionDelegate() }
     )
 
     static func fetch(for account: ProviderAccount) async -> Result {
@@ -52,7 +51,7 @@ enum ProviderModelCatalog {
         }
 
         do {
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await session.current.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             if status == 401 || status == 403 {
                 return Result(models: account.kind.curatedModels, status: .keyRejected)

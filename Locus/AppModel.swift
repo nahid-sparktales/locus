@@ -204,7 +204,10 @@ final class AppModel: ObservableObject {
     private var indexedWorkspacePath: String?
     private var terminationObserver: NSObjectProtocol?
     private var activationObserver: NSObjectProtocol?
-    private let persistenceEnabled: Bool
+    /// False for unit and UI tests. Views check it before touching the
+    /// credential file: a test must not read — or delete — the secrets of
+    /// whoever is running the suite.
+    let persistenceEnabled: Bool
     private let isUITesting: Bool
     private var isShuttingDown = false
 
@@ -291,6 +294,13 @@ final class AppModel: ObservableObject {
             }
         }
         settings = loadedSettings
+        // The proxy snapshot is what static call sites read; seed it before
+        // anything can make a request. A test model must not read the
+        // credential file, for the same reason it must not read accounts.
+        ProxyRuntime.shared.update(
+            settings: loadedSettings,
+            password: persistenceEnabled ? CredentialStore.proxyPassword() : nil
+        )
 
         if !isUITesting,
            let data = defaults.data(forKey: "Locus.checkpoints"),
@@ -417,7 +427,14 @@ final class AppModel: ObservableObject {
         return sessionInfo?.host ?? lastOllamaHost
     }
 
-    private var lastOllamaHost = "http://127.0.0.1:11434"
+    private var lastOllamaHost = "http://127.0.0.1:11434" {
+        didSet {
+            guard lastOllamaHost != oldValue else { return }
+            // The bypass list keeps Ollama direct, so the proxy layer has to
+            // hear about the real host the agent just reported.
+            ProxyRuntime.shared.noteOllamaHost(lastOllamaHost)
+        }
+    }
     private var accountCatalogFetchedAt: [UUID: Date] = [:]
 
     /// Whether the session is running this model through this source. Both
@@ -710,7 +727,15 @@ final class AppModel: ObservableObject {
             switch backendProcess.start(
                 root: settings.backendRoot,
                 port: preferredPort,
-                cwd: workspacePath
+                cwd: workspacePath,
+                environmentOverlay: ProxyConfigurator.agentEnvironmentOverlay(
+                    settings: settings,
+                    ollamaHost: lastOllamaHost
+                ),
+                proxyCredential: ProxyConfigurator.childCredential(
+                    settings: settings,
+                    password: persistenceEnabled ? CredentialStore.proxyPassword() : nil
+                )
             ) {
             case .running(let endpoint):
                 if endpoint != backend.currentBaseURL {
@@ -1529,7 +1554,7 @@ final class AppModel: ObservableObject {
         guard let url = URL(string: lastOllamaHost + "/api/tags") else { return }
         var request = URLRequest(url: url)
         request.timeoutInterval = 10
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
+        guard let (data, response) = try? await ProxyRuntime.shared.urlSession.data(for: request),
               (200..<300).contains((response as? HTTPURLResponse)?.statusCode ?? -1),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let entries = root["models"] as? [[String: Any]]
@@ -2757,7 +2782,7 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.open(URL(fileURLWithPath: settings.backendRoot))
     }
 
-    func applySettings(_ newSettings: AppSettings) {
+    func applySettings(_ newSettings: AppSettings, proxyCredentialChanged: Bool = false) {
         let backendChanged = settings.backendURL != newSettings.backendURL
             || settings.backendRoot != newSettings.backendRoot
         // Accounts are applied as they are edited, so the only routing change
@@ -2768,18 +2793,44 @@ final class AppModel: ObservableObject {
             // still has to be pushed or it never reaches the agent.
             || settings.localContextWindow != newSettings.localContextWindow
         let iterationLimitChanged = settings.maxIterations != newSettings.maxIterations
+        let proxyChanged = proxyCredentialChanged
+            || settings.proxyModeRaw != newSettings.proxyModeRaw
+            || settings.proxyTypeRaw != newSettings.proxyTypeRaw
+            || settings.proxyHost != newSettings.proxyHost
+            || settings.proxyPort != newSettings.proxyPort
+            || settings.proxyBypass != newSettings.proxyBypass
+            || settings.proxyUsername != newSettings.proxyUsername
         settings = newSettings
         persistSettings()
         settingsPresented = false
 
-        if backendChanged, let url = URL(string: newSettings.backendURL) {
-            backend.updateBaseURL(url)
+        if proxyChanged {
+            // Before any restart, so the relaunched agent and every rebuilt
+            // session see the new configuration, not the one being replaced.
+            ProxyRuntime.shared.update(
+                settings: newSettings,
+                password: persistenceEnabled ? CredentialStore.proxyPassword() : nil
+            )
+        }
+        // A backend change with an unparseable URL never restarted the agent;
+        // keep that, while a proxy change restarts regardless.
+        let backendRestartURL = backendChanged ? URL(string: newSettings.backendURL) : nil
+        if backendRestartURL != nil || proxyChanged {
+            if let backendRestartURL {
+                backend.updateBaseURL(backendRestartURL)
+            }
+            // The agent reads its proxy from the environment at launch, so a
+            // proxy change relaunches it the same way a backend change does.
             // The old child must have released the port before bootstrap
             // relaunches, but that wait may not block the main thread — a
             // stubborn child used to beachball Save for up to four seconds.
             Task { [backendProcess] in
                 await backendProcess.stopAndWait()
                 await self.bootstrap()
+            }
+            if proxyChanged {
+                // The preview webview re-applies its proxy on reload.
+                previewReloadID = UUID()
             }
         } else {
             if providerChanged {

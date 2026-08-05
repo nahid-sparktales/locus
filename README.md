@@ -311,6 +311,59 @@ the app protects each launch with a fresh capability header shared only with
 the child process. That keeps an unrelated page from driving file or shell
 tools through localhost.
 
+## Working behind a proxy
+
+**Settings ▸ Network** routes Locus's outbound traffic through a proxy. Three
+modes:
+
+- **Direct connection** — the default, and exactly what Locus always did.
+- **Use system proxy** — the app's own requests already follow the proxy in
+  System Settings; this mode additionally launches the agent with the matching
+  `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`/`NO_PROXY` environment, which is what
+  its libraries (`requests`, `httpx`, git) actually read. The environment is a
+  snapshot taken when the agent starts — change the system proxy and the agent
+  keeps the old values until its next restart. A **PAC file cannot be expressed
+  in environment variables at all**: with a PAC-based system proxy the agent's
+  traffic stays direct, the Network tab says so, and Manual mode is the fix.
+- **Manual proxy** — an explicit HTTP/HTTPS (CONNECT) or SOCKS5 proxy, applied
+  to everything: the app's requests, the agent's provider and Ollama traffic,
+  the model's `web_fetch`, MCP servers (HTTP and stdio), extension marketplace
+  clones, and the preview pane. SOCKS5 uses `socks5h`, so DNS for proxied hosts
+  resolves at the proxy rather than locally.
+
+What never goes through the proxy: loopback, the app ↔ agent link, and the
+configured Ollama host. Those are Locus's own plumbing — and NDJSON token
+streaming rarely survives a corporate proxy anyway. One more exception worth
+knowing: the **MCP OAuth sign-in window** is the system browser stack
+(`ASWebAuthenticationSession`), which follows the proxy in System Settings
+rather than Locus's own. On a network where only the proxy has egress, set
+the system proxy as well to complete a sign-in; the token exchange and refresh
+requests that follow do go through Locus's proxy.
+
+The bypass field takes comma-separated hostnames, IP addresses, or `.suffix`
+domains for anything else (CIDR ranges are not understood). A proxy that stops
+answering is a visible error, never a silent fall back to direct connections —
+leaking the very traffic a proxy is configured to carry is the one failure this
+feature must not have.
+
+Sign-in, when the proxy requires it, is basic auth. The password is stored in
+`~/.locus/auth.json` (same trade-offs as API keys, above) and used by the app
+and its agent. It is deliberately **not** given to anything the model can run:
+shell commands, the console, git, and stdio MCP servers inherit the proxy
+*address* with the credential stripped, so behind an authenticated proxy those
+child processes get `407` answers rather than the password. The same applies
+to `ollama serve` when Locus starts it — model pulls through an authenticated
+proxy will fail rather than leak. The agent receives the password over an
+inherited pipe rather than an environment variable, precisely so it never
+enters the exec-time environment block that `ps -E` can read for the life of
+the process. NTLM or Kerberos proxy auth is not supported.
+
+Two smaller caveats. Many corporate proxies allow `CONNECT` only to port 443,
+so a plain-HTTP endpoint on an unusual port may be refused by policy rather
+than by Locus. And `Ollama.app` started by macOS rather than by Locus gets no
+environment from anyone — it only ever serves loopback, so this does not
+matter in practice.
+
 ## The local agent runtime
 
 The agent itself is **ollama-code**, a Python service that owns the model

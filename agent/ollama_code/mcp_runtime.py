@@ -4,13 +4,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from . import proxy
 from .extensions import ExtensionError, ExtensionManager
 from .tools import MAX_OUTPUT, _truncate
 
@@ -49,6 +49,80 @@ def _substitute(value: str, server: dict[str, Any], workspace: str) -> str:
     for source, target in replacements.items():
         value = value.replace(source, target)
     return value
+
+
+def _stdio_environment(
+    server: dict[str, Any], credentials: dict[str, Any], workspace: str
+) -> dict[str, str]:
+    """Environment for a stdio MCP server process.
+
+    ``get_default_environment`` is an allowlist (HOME, PATH, …) that silently
+    drops the proxy variables, so without the merge below a stdio server would
+    bypass the app-configured proxy entirely. The proxy variables go in first —
+    credential-free, and unconditionally so: an allowlisted child never had
+    these variables, so ``child_proxy_env`` hands a plugin process the URLs
+    without the password even when the password is the user's own rather than
+    one Locus injected. The server's own ``env`` map, its ``env_vars``
+    passthrough, and stored credentials all still override them, in that order.
+
+    Every read of the parent environment goes through the sanitized snapshot,
+    ``env_vars`` included: a manifest asking for ``HTTP_PROXY`` by name would
+    otherwise be handed the credential activate_from_env folded into this
+    process's URLs. Non-proxy variables are unaffected — the snapshot is a
+    faithful copy of everything else.
+    """
+    from mcp.client.stdio import get_default_environment
+
+    parent = proxy.sanitized_child_environment()
+    # Strip the proxy variables in the snapshot itself, not just in the merge
+    # below: the ``env_vars`` passthrough reads this same snapshot, and a
+    # manifest naming ``HTTP_PROXY`` would otherwise still be handed a
+    # credential the user's own shell had exported. Asking for a variable by
+    # name does not make an allowlisted child one that ever had it.
+    parent.update(proxy.child_proxy_env(parent))
+    environment = get_default_environment()
+    environment.update(proxy.child_proxy_env(parent))
+    environment.update({
+        str(key): _substitute(str(value), server, workspace)
+        for key, value in (server.get("env") or {}).items()
+    })
+    for name in server.get("env_vars") or []:
+        if str(name) in parent:
+            environment[str(name)] = parent[str(name)]
+    environment.update({str(key): str(value) for key, value in (credentials.get("env") or {}).items()})
+    return environment
+
+
+def _http_headers(
+    server: dict[str, Any], credentials: dict[str, Any], workspace: str
+) -> dict[str, str]:
+    """Headers for a streamable-HTTP MCP server.
+
+    Both env-driven sources — the ``env_http_headers`` mapping and
+    ``bearer_token_env_var`` — read the sanitized snapshot rather than
+    ``os.environ``. They copy environment values into *outbound HTTP headers*,
+    so a manifest naming a proxy variable (``env_http_headers:
+    {"X-Meta": "HTTPS_PROXY"}``) would post this process's proxy password to a
+    third-party server. Every other variable resolves exactly as before, and
+    the override order is unchanged: literal headers, then the environment
+    mapping, then stored credentials.
+    """
+    parent = proxy.sanitized_child_environment()
+    headers = {
+        str(key): _substitute(str(value), server, workspace)
+        for key, value in (server.get("http_headers") or {}).items()
+    }
+    for header, env_name in (server.get("env_http_headers") or {}).items():
+        if str(env_name) in parent:
+            headers[str(header)] = parent[str(env_name)]
+    headers.update({str(key): str(value) for key, value in (credentials.get("headers") or {}).items()})
+    access_token = str(credentials.get("access_token") or "")
+    if not access_token:
+        token_env = str(server.get("bearer_token_env_var") or "")
+        access_token = parent.get(token_env, "") if token_env else ""
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
+    return headers
 
 
 class MCPManager:
@@ -153,21 +227,9 @@ class MCPManager:
                 elif isinstance(message, Exception):
                     self._set_status(server, "error", self._error_text(message))
             if server.get("transport") == "stdio":
-                from mcp.client.stdio import (
-                    StdioServerParameters,
-                    get_default_environment,
-                    stdio_client,
-                )
+                from mcp.client.stdio import StdioServerParameters, stdio_client
 
-                environment = get_default_environment()
-                environment.update({
-                    str(key): _substitute(str(value), server, self.extensions.cwd)
-                    for key, value in (server.get("env") or {}).items()
-                })
-                for name in server.get("env_vars") or []:
-                    if name in os.environ:
-                        environment[str(name)] = os.environ[str(name)]
-                environment.update({str(key): str(value) for key, value in (credentials.get("env") or {}).items()})
+                environment = _stdio_environment(server, credentials, self.extensions.cwd)
                 plugin_data = str(server.get("plugin_data") or "")
                 if plugin_data:
                     Path(plugin_data).mkdir(parents=True, exist_ok=True)
@@ -185,20 +247,7 @@ class MCPManager:
                 from mcp.client.streamable_http import streamable_http_client
                 from mcp.shared._httpx_utils import create_mcp_http_client
 
-                headers = {
-                    str(key): _substitute(str(value), server, self.extensions.cwd)
-                    for key, value in (server.get("http_headers") or {}).items()
-                }
-                for header, env_name in (server.get("env_http_headers") or {}).items():
-                    if str(env_name) in os.environ:
-                        headers[str(header)] = os.environ[str(env_name)]
-                headers.update({str(key): str(value) for key, value in (credentials.get("headers") or {}).items()})
-                access_token = str(credentials.get("access_token") or "")
-                if not access_token:
-                    token_env = str(server.get("bearer_token_env_var") or "")
-                    access_token = os.environ.get(token_env, "") if token_env else ""
-                if access_token:
-                    headers["Authorization"] = f"Bearer {access_token}"
+                headers = _http_headers(server, credentials, self.extensions.cwd)
                 transport_http = create_mcp_http_client(headers=headers)
                 await transport_http.__aenter__()
                 transport = streamable_http_client(

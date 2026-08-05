@@ -26,7 +26,13 @@ final class BackendProcess {
     }
 
     @discardableResult
-    func start(root: String, port preferredPort: Int, cwd: String) -> BackendLaunchResult {
+    func start(
+        root: String,
+        port preferredPort: Int,
+        cwd: String,
+        environmentOverlay: [String: String] = [:],
+        proxyCredential: String? = nil
+    ) -> BackendLaunchResult {
         if isRunning, let runningPort,
            let url = URL(string: "http://127.0.0.1:\(runningPort)")
         {
@@ -100,7 +106,30 @@ final class BackendProcess {
                 packages.path,
             ].joined(separator: ":")
         }
+        // Last, so a proxy configured in the app beats one inherited from the
+        // shell — the settings UI is the truth, not launchd's environment. An
+        // empty value is a tombstone: the variable is removed rather than set,
+        // because a leftover HTTPS_PROXY would outrank an ALL_PROXY we set.
+        for (key, value) in environmentOverlay {
+            if value.isEmpty {
+                environment.removeValue(forKey: key)
+            } else {
+                environment[key] = value
+            }
+        }
+        // The proxy password is deliberately absent here. unsetenv in the child
+        // only edits its in-memory copy: KERN_PROCARGS2 — what `ps -E` reads —
+        // keeps the exec-time block for the life of the process, so anything
+        // the model runs could read a secret passed this way. It goes over
+        // stdin below instead, which leaves no such trace.
+        if proxyCredential != nil {
+            environment["LOCUS_PROXY_CREDENTIAL_STDIN"] = "1"
+        }
         process.environment = environment
+        let credentialPipe = proxyCredential.map { _ in Pipe() }
+        if let credentialPipe {
+            process.standardInput = credentialPipe
+        }
         process.terminationHandler = { [weak self, weak process] terminated in
             guard let self, let process, process === terminated else { return }
             let output = self.recentOutput
@@ -120,6 +149,20 @@ final class BackendProcess {
 
         do {
             try process.run()
+            if let credentialPipe, let proxyCredential {
+                // One line, then EOF: the agent reads it once at startup. Far
+                // smaller than the pipe buffer, so this cannot block, and the
+                // close is what lets the agent stop waiting.
+                let handle = credentialPipe.fileHandleForWriting
+                // Foundation closed this side's copy of the read end at spawn,
+                // so a child that already exec-failed leaves the pipe with no
+                // reader — and write(2) then raises SIGPIPE, which is a signal
+                // rather than an error and would take the whole app down past
+                // `try?`. This demotes it to the EPIPE `try?` can swallow.
+                _ = fcntl(handle.fileDescriptor, F_SETNOSIGPIPE, 1)
+                try? handle.write(contentsOf: Data((proxyCredential + "\n").utf8))
+                try? handle.close()
+            }
             stopping = false
             self.process = process
             outputPipe = pipe

@@ -124,6 +124,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
 
 enum SettingsPage: String, CaseIterable, Identifiable {
     case general = "General"
+    case network = "Network"
     case accounts = "Accounts"
     case permissions = "Permissions"
     case extensions = "Extensions"
@@ -133,6 +134,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .general: "gearshape"
+        case .network: "network"
         case .accounts: "person.crop.circle"
         case .permissions: "lock.shield"
         case .extensions: "puzzlepiece.extension"
@@ -767,6 +769,20 @@ enum ModelProvider: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// How outbound traffic leaves the machine. `off` is the pre-proxy behavior:
+/// the app's own requests follow macOS system settings on their own, and the
+/// agent keeps whatever environment the shell provided.
+enum ProxyMode: String, CaseIterable {
+    case off
+    case system
+    case manual
+}
+
+enum ProxyType: String, CaseIterable {
+    case http
+    case socks5
+}
+
 struct AppSettings: Codable, Hashable {
     var backendURL = "http://127.0.0.1:8791"
     var backendRoot = NSString(string: "~/Documents/locus/agent").expandingTildeInPath
@@ -804,6 +820,21 @@ struct AppSettings: Codable, Hashable {
     var inspectorLastTab = InspectorTab.plan.rawValue
     /// Raw string for the same forward-compatibility reason as the tab.
     var thinkingVisibilityRaw = ThinkingVisibility.collapsed.rawValue
+    /// Raw strings, like the tab: an unknown mode or type saved by a future
+    /// version must not fail the whole settings decode.
+    var proxyModeRaw = ProxyMode.off.rawValue
+    var proxyTypeRaw = ProxyType.http.rawValue
+    /// Hostname or IP only — a pasted scheme or path is stripped on save.
+    var proxyHost = ""
+    /// nil is "not configured", which manual mode refuses to save. There is no
+    /// default port, because guessing one would silently send traffic somewhere.
+    var proxyPort: Int?
+    /// Comma- or space-separated hosts that connect directly. Loopback, the
+    /// agent, and the Ollama host are always direct without being listed here.
+    var proxyBypass = ""
+    /// Non-empty means the proxy requires sign-in. The password is not stored
+    /// in settings — see `CredentialStore.proxyPassword`.
+    var proxyUsername = ""
 
     static let defaultInspectorWidth: Double = 340
     static let minimumInspectorWidth: Double = 280
@@ -814,8 +845,23 @@ struct AppSettings: Codable, Hashable {
         return min(max(width, minimumInspectorWidth), maximumInspectorWidth)
     }
 
+    /// Ports outside 1...65535 read back as "not configured" rather than as a
+    /// number the proxy layer would then try to dial.
+    static func clampProxyPort(_ port: Int?) -> Int? {
+        guard let port, (1...65535).contains(port) else { return nil }
+        return port
+    }
+
     var resolvedInspectorTab: InspectorTab {
         InspectorTab(rawValue: inspectorLastTab) ?? .plan
+    }
+
+    var resolvedProxyMode: ProxyMode {
+        ProxyMode(rawValue: proxyModeRaw) ?? .off
+    }
+
+    var resolvedProxyType: ProxyType {
+        ProxyType(rawValue: proxyTypeRaw) ?? .http
     }
 
     var resolvedThinkingVisibility: ThinkingVisibility {
@@ -858,6 +904,21 @@ struct AppSettings: Codable, Hashable {
             ?? defaults.inspectorLastTab
         thinkingVisibilityRaw = try container.decodeIfPresent(String.self, forKey: .thinkingVisibilityRaw)
             ?? defaults.thinkingVisibilityRaw
+        proxyModeRaw = try container.decodeIfPresent(String.self, forKey: .proxyModeRaw)
+            ?? defaults.proxyModeRaw
+        proxyTypeRaw = try container.decodeIfPresent(String.self, forKey: .proxyTypeRaw)
+            ?? defaults.proxyTypeRaw
+        proxyHost = try container.decodeIfPresent(String.self, forKey: .proxyHost)
+            ?? defaults.proxyHost
+        // Clamped on the way in like the inspector width: a corrupt port must
+        // read as unconfigured, not as a destination.
+        proxyPort = Self.clampProxyPort(
+            try container.decodeIfPresent(Int.self, forKey: .proxyPort)
+        )
+        proxyBypass = try container.decodeIfPresent(String.self, forKey: .proxyBypass)
+            ?? defaults.proxyBypass
+        proxyUsername = try container.decodeIfPresent(String.self, forKey: .proxyUsername)
+            ?? defaults.proxyUsername
     }
 }
 

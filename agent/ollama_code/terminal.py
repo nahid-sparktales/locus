@@ -25,6 +25,7 @@ from datetime import datetime
 from typing import Any
 
 from .permissions import PermissionManager
+from .proxy import sanitized_child_environment
 from .tools import signal_process_group
 
 READ_SIZE = 65_536
@@ -157,7 +158,9 @@ class TerminalManager:
             shell = str(self._config.get("terminal_shell") or os.environ.get("SHELL") or "/bin/sh")
             login = bool(self._config.get("terminal_login_shell", True))
             argv = [shell, "-lc", command] if login else [shell, "-c", command]
-            env = {
+            # Console commands are typed by the user but still must not see
+            # the proxy credential embedded in this process's proxy URLs.
+            env = sanitized_child_environment({
                 **os.environ,
                 "PYTHONUNBUFFERED": "1",
                 # No PTY, so tell programs not to expect one.
@@ -165,7 +168,7 @@ class TerminalManager:
                 "PAGER": "cat",
                 "GIT_PAGER": "cat",
                 "GIT_TERMINAL_PROMPT": "0",
-            }
+            })
             try:
                 run.proc = subprocess.Popen(  # noqa: S603 - running commands is the point
                     argv,

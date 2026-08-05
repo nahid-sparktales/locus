@@ -21,6 +21,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .paths import APP_DIR
+from .proxy import sanitized_child_environment
 
 MAX_PLUGIN_FILES = 5_000
 MAX_PLUGIN_BYTES = 250 * 1024 * 1024
@@ -680,7 +681,11 @@ class ExtensionManager:
                 stderr=subprocess.STDOUT,
                 text=True,
                 timeout=180,
-                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                # Marketplace clones go through the proxy like everything
+                # else, but the credential stays out of the child.
+                env=sanitized_child_environment(
+                    {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+                ),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ExtensionError(f"Git failed: {exc}") from exc

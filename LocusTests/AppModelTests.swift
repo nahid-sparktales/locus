@@ -155,6 +155,31 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testSavingAProxyPublishesItBeforeAnythingCanUseIt() {
+        let model = AppModel(startImmediately: false)
+        XCTAssertNil(ProxyRuntime.shared.current, "a test model starts with no proxy")
+
+        var updated = model.settings
+        updated.proxyModeRaw = ProxyMode.manual.rawValue
+        updated.proxyHost = "  HTTP://Proxy.Corp:9/  "
+        updated.proxyPort = 3128
+        model.applySettings(updated)
+
+        // The snapshot is what every session and the relaunched agent read, so
+        // it has to be current the moment applySettings returns — not after
+        // the restart it kicks off.
+        XCTAssertEqual(ProxyRuntime.shared.current?.host, "proxy.corp")
+        XCTAssertEqual(ProxyRuntime.shared.current?.port, 3128)
+        XCTAssertEqual(model.settings.proxyHost, "  HTTP://Proxy.Corp:9/  ",
+                       "normalization is the settings sheet's job, not applySettings'")
+
+        var cleared = model.settings
+        cleared.proxyModeRaw = ProxyMode.off.rawValue
+        model.applySettings(cleared)
+        XCTAssertNil(ProxyRuntime.shared.current, "switching off must not leave a live proxy behind")
+    }
+
+    @MainActor
     func testProviderRequestBodyCarriesTheAccountCredentials() {
         let model = AppModel(startImmediately: false)
         let account = seedAccount(

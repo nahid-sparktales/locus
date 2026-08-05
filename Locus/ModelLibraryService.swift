@@ -165,7 +165,7 @@ actor ModelLibraryService {
         }
         components.queryItems = items
         guard let url = components.url else { throw ModelLibraryError.invalidRepository }
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await ProxyRuntime.shared.urlSession.data(from: url)
         try validate(response, data: data, service: "Hugging Face")
         let decoded = try decoder.decode([HuggingFaceModel].self, from: data)
         let chatPipelines = Set(["text-generation", "conversational", "image-text-to-text"])
@@ -190,7 +190,7 @@ actor ModelLibraryService {
         guard let url = URL(string: "https://huggingface.co/api/models/\(escaped)?blobs=true") else {
             throw ModelLibraryError.invalidRepository
         }
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await ProxyRuntime.shared.urlSession.data(from: url)
         try validate(response, data: data, service: "Hugging Face")
         let detail = try decoder.decode(HuggingFaceModelDetail.self, from: data)
 
@@ -263,7 +263,10 @@ actor ModelLibraryService {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 300
         configuration.timeoutIntervalForResource = 24 * 60 * 60
-        let session = URLSession(configuration: configuration)
+        // The pull talks to Ollama, which the bypass list keeps direct; the
+        // proxy is applied anyway so a deliberately proxied remote Ollama
+        // behaves like every other endpoint.
+        let session = URLSession(configuration: ProxyRuntime.shared.configuration(base: configuration))
         defer { session.finishTasksAndInvalidate() }
         let (bytes, response) = try await session.bytes(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {

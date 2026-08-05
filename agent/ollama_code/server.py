@@ -26,7 +26,7 @@ import uvicorn
 from fastapi import Body, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
-from . import __version__, gitinfo
+from . import __version__, gitinfo, proxy
 from .config import (
     MAX_ITERATIONS_CEILING,
     MINIMUM_CONTEXT_WINDOW,
@@ -1439,6 +1439,14 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     app.state.allowed_origins = set(args.allow_origin)
+    # Both secrets the app injects are consumed before uvicorn starts and
+    # before any outbound request could fire. The proxy credential arrives on
+    # stdin — never in the environment, whose exec-time copy stays readable
+    # through `ps -E` however thoroughly it is popped — and is folded into
+    # this process's proxy URLs; sanitized_child_environment keeps it out of
+    # everything spawned. The auth token is popped, which is weaker but is the
+    # existing contract for it.
+    proxy.activate_from_env()
     app.state.auth_token = os.environ.pop("LOCUS_AGENT_TOKEN", "").strip()
     if not _is_loopback_bind(args.host) and not app.state.auth_token:
         parser.error(

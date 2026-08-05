@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import USER_AGENT
+from . import USER_AGENT, proxy
 
 MAX_OUTPUT = 30_000
 MAX_WEB_FETCH_BYTES = 2 * 1024 * 1024
@@ -419,8 +419,16 @@ def _impl_bash(args: dict[str, Any], ctx: ToolContext) -> str:
                 shell=True,
                 stdout=out_file,
                 stderr=err_file,
+                # Never this process's stdin: that is the pipe the app hands
+                # the proxy credential over. It is consumed and at EOF long
+                # before any tool runs, but a model-authored command has no
+                # business reading the agent's input either way.
+                stdin=subprocess.DEVNULL,
                 cwd=ctx.cwd or None,
                 start_new_session=True,
+                # Model-authored commands must not see the proxy credential
+                # folded into this process's proxy URLs at startup.
+                env=proxy.sanitized_child_environment(),
             )
         except OSError as e:
             return f"Error running command: {e}"
@@ -720,7 +728,9 @@ def _impl_web_fetch(args: dict[str, Any], ctx: ToolContext) -> str:
     except Exception as e:  # noqa: BLE001 - surface any fetch failure to the model
         if ctx.stopped():
             return "Error: web fetch interrupted."
-        return f"Error fetching {url}: {e}"
+        # Redacted because requests names the proxy URL — credential included —
+        # in InvalidURL and connection errors, and this string goes to the model.
+        return proxy.redact(f"Error fetching {url}: {e}")
     finally:
         watcher_done.set()
         if watcher is not None:
@@ -742,8 +752,14 @@ def _run_git(ctx: ToolContext, *git_args: str) -> str:
                 ["git", *git_args],
                 stdout=out_file,
                 stderr=err_file,
+                # As above: git never needs this process's stdin, and that is
+                # where the proxy credential arrives.
+                stdin=subprocess.DEVNULL,
                 cwd=ctx.cwd or None,
                 start_new_session=True,
+                # git may reach the network (and run hooks); like the bash
+                # tool, it gets the proxy URLs without the credential.
+                env=proxy.sanitized_child_environment(),
             )
         except FileNotFoundError:
             return "Error: git is not installed."

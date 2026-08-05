@@ -49,10 +49,11 @@ enum RemoteEndpointTester {
         let message: String
     }
 
-    private static let noRedirectSession = URLSession(
-        configuration: .ephemeral,
-        delegate: NoRedirectSessionDelegate(),
-        delegateQueue: nil
+    /// Proxy-aware: rebuilt when the proxy settings change, so Test
+    /// Connection exercises the same route real traffic will take.
+    private static let noRedirectSession = ProxyAwareSession(
+        configuration: { .ephemeral },
+        delegate: { NoRedirectSessionDelegate() }
     )
 
     /// Mirrors the backend's `normalize_base_url`: people paste endpoints
@@ -142,7 +143,7 @@ enum RemoteEndpointTester {
             request.setValue(value, forHTTPHeaderField: field)
         }
         do {
-            let (data, response) = try await noRedirectSession.data(for: request)
+            let (data, response) = try await noRedirectSession.current.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             if (200..<300).contains(status) {
                 return Outcome(ok: true, message: "Connected — \(base) answered.")
@@ -191,7 +192,7 @@ enum RemoteEndpointTester {
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         do {
-            let (data, response) = try await noRedirectSession.data(for: request)
+            let (data, response) = try await noRedirectSession.current.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             guard (200..<300).contains(status) else {
                 return Outcome(

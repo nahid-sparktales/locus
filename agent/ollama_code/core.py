@@ -34,6 +34,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from . import proxy
 from .config import (
     DEFAULTS,
     MINIMUM_CONTEXT_WINDOW,
@@ -279,6 +280,11 @@ class AgentCore:
         else:
             self.config = {**DEFAULTS, **config}
         self.host = (host or str(self.config.get("host") or DEFAULT_HOST)).rstrip("/")
+        # The app can only guess this host when it builds NO_PROXY at spawn: the
+        # config is read here, and a LAN Ollama is not the loopback default it
+        # assumed. Ollama is the user's own runtime and never goes through a
+        # corporate proxy, so the agent adds its real host to the bypass list.
+        proxy.ensure_no_proxy_host(self.host)
         self.provider = str(self.config.get("provider") or "ollama")
         self.client: Any = OllamaClient(self.host)
         self.model: str = model or str(self.config.get("model") or "")
@@ -748,6 +754,9 @@ class AgentCore:
         self.apply_context_window(context_window_tokens)
         self.provider = "ollama"
         self.host = (host or str(self.config.get("host") or DEFAULT_HOST)).rstrip("/")
+        # A host switch needs no respawn, so the bypass list the app built at
+        # launch can be stale by now; keep it correct for the host in use.
+        proxy.ensure_no_proxy_host(self.host)
         self.client = OllamaClient(self.host)
         self.config["provider"] = "ollama"
         self.config["host"] = self.host

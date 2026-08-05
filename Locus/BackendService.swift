@@ -14,7 +14,14 @@ final class BackendService {
     typealias EventHandler = ([String: Any]) -> Void
     typealias ConnectionHandler = (Bool) -> Void
 
-    private let session = URLSession(configuration: .default)
+    /// Pinned direct, over every proxy layer including the system's: the
+    /// agent is a loopback child of this process, and no proxy configuration
+    /// — however wrong — may ever sit between the app and it.
+    private let session: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.connectionProxyDictionary = [:]
+        return URLSession(configuration: configuration)
+    }()
     private var socket: URLSessionWebSocketTask?
     private var baseURL: URL
     private var reconnectTask: Task<Void, Never>?

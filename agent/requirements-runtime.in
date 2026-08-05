@@ -1,4 +1,6 @@
 requests==2.34.2
+pysocks==1.7.1
+socksio==1.0.0
 rich==15.0.0
 prompt_toolkit==3.0.53
 fastapi==0.141.1

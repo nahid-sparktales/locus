@@ -35,6 +35,7 @@
 		B302C713CDCD5A21C3CF431C /* LocalRuntimeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C55065A982A7FB563B8DEA87 /* LocalRuntimeCoordinator.swift */; };
 		B47489F53435C4FB56730215 /* CredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D427058C21A8F1993C532E8 /* CredentialStore.swift */; };
 		BEAFCBFDAE33591C970B5E98 /* BackendProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */; };
+		C0E82F8A928841455031CFA2 /* ProxyConfigurator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F29AE63F7A646BB5043E54 /* ProxyConfigurator.swift */; };
 		C0EB8EF86FF9954D89CC082E /* InspectorPlanTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */; };
 		C214A77B64E488AE82DCFB59 /* WorkspaceAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAAE8017A82BDD5DBCA5F587 /* WorkspaceAccess.swift */; };
 		CB22892B835E59A99C4FA35D /* LocusApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCCEF7CD29A9C6F9C3E1472F /* LocusApp.swift */; };
@@ -97,6 +98,7 @@
 		A2CC3300CABBD87F954E4C63 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
 		AEFB9A10F8784355D5344D95 /* Locus.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Locus.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B082AFE6729F96D2D8606AC9 /* WorkspaceIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceIndex.swift; sourceTree = "<group>"; };
+		B2F29AE63F7A646BB5043E54 /* ProxyConfigurator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyConfigurator.swift; sourceTree = "<group>"; };
 		B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendProcess.swift; sourceTree = "<group>"; };
 		BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorPlanTab.swift; sourceTree = "<group>"; };
 		BCCEF7CD29A9C6F9C3E1472F /* LocusApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocusApp.swift; sourceTree = "<group>"; };
@@ -184,6 +186,7 @@
 				BEF0BEF00F2EA8083877CC21 /* PlanApprovalPromptView.swift */,
 				D99C4113009BE46AB55CB21C /* ProviderAccounts.swift */,
 				FA2F4D55B6CB8B4C966BACBE /* ProviderModelCatalog.swift */,
+				B2F29AE63F7A646BB5043E54 /* ProxyConfigurator.swift */,
 				01EE3ED166C864419A854532 /* RemoteEndpointTester.swift */,
 				00A37D5FE4583645B552296C /* SessionSidebarView.swift */,
 				E11B2324D330884AA4555A92 /* Sheets.swift */,
@@ -378,6 +381,7 @@
 				77D7EC97E924FD976475CB02 /* PlanApprovalPromptView.swift in Sources */,
 				4C716EA94327E1CAE0B35444 /* ProviderAccounts.swift in Sources */,
 				E5357DCEABE29A7A65F07F06 /* ProviderModelCatalog.swift in Sources */,
+				C0E82F8A928841455031CFA2 /* ProxyConfigurator.swift in Sources */,
 				4679DAB70FE7B88A97E3F6D9 /* RemoteEndpointTester.swift in Sources */,
 				F01F72892D90A52009E99BC3 /* SessionSidebarView.swift in Sources */,
 				A6D846A90EED0F655A108FE8 /* Sheets.swift in Sources */,

@@ -341,6 +341,321 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertFalse(restored.inspectorCollapsed, "an opened inspector stays open across launches")
     }
 
+    // MARK: - Proxy
+
+    func testProxySettingsSurviveARoundTrip() throws {
+        var settings = AppSettings()
+        settings.proxyModeRaw = ProxyMode.manual.rawValue
+        settings.proxyTypeRaw = ProxyType.socks5.rawValue
+        settings.proxyHost = "proxy.corp.example.com"
+        settings.proxyPort = 1080
+        settings.proxyBypass = "*.internal.example.com, 10.0.0.5"
+        settings.proxyUsername = "nahid"
+
+        let restored = try JSONDecoder().decode(
+            AppSettings.self,
+            from: try JSONEncoder().encode(settings)
+        )
+        XCTAssertEqual(restored.resolvedProxyMode, .manual)
+        XCTAssertEqual(restored.resolvedProxyType, .socks5)
+        XCTAssertEqual(restored.proxyHost, "proxy.corp.example.com")
+        XCTAssertEqual(restored.proxyPort, 1080)
+        XCTAssertEqual(restored.proxyBypass, "*.internal.example.com, 10.0.0.5")
+        XCTAssertEqual(restored.proxyUsername, "nahid")
+    }
+
+    func testUnknownProxyModeAndTypeFallBackWithoutTakingTheRest() throws {
+        let future = #"{"proxyModeRaw":"quantum","proxyTypeRaw":"socks9","proxyHost":"p.example"}"#
+        let restored = try JSONDecoder().decode(AppSettings.self, from: Data(future.utf8))
+        XCTAssertEqual(restored.resolvedProxyMode, .off, "an unknown mode must fail safe, to direct")
+        XCTAssertEqual(restored.resolvedProxyType, .http)
+        // The unknown enum must not take the rest of the settings down with it.
+        XCTAssertEqual(restored.proxyHost, "p.example")
+    }
+
+    func testSettingsFromBeforeProxySupportGetDefaults() throws {
+        let legacy = #"{"backendURL":"http://127.0.0.1:8791"}"#
+        let restored = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
+        XCTAssertEqual(restored.resolvedProxyMode, .off)
+        XCTAssertEqual(restored.proxyHost, "")
+        XCTAssertNil(restored.proxyPort)
+        XCTAssertEqual(restored.proxyUsername, "")
+    }
+
+    func testProxyPortIsClampedOnDecodeAndInTheHelper() throws {
+        for hostile in ["0", "-1", "70000"] {
+            let json = "{\"proxyPort\": \(hostile)}"
+            let restored = try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
+            XCTAssertNil(restored.proxyPort, "\(hostile) is not a port")
+        }
+        XCTAssertEqual(AppSettings.clampProxyPort(8080), 8080)
+        XCTAssertEqual(AppSettings.clampProxyPort(1), 1)
+        XCTAssertEqual(AppSettings.clampProxyPort(65535), 65535)
+        XCTAssertNil(AppSettings.clampProxyPort(nil))
+    }
+
+    func testProxyHostNormalizationStripsWhatOtherFieldsOwn() {
+        XCTAssertEqual(ProxyConfigurator.normalizedHost("  Proxy.Corp  "), "proxy.corp")
+        XCTAssertEqual(ProxyConfigurator.normalizedHost("http://proxy.corp:3128/"), "proxy.corp")
+        XCTAssertEqual(ProxyConfigurator.normalizedHost("socks5://user:pass@proxy.corp:1080"), "proxy.corp")
+        XCTAssertEqual(ProxyConfigurator.normalizedHost("proxy.corp:8080"), "proxy.corp")
+        XCTAssertEqual(ProxyConfigurator.normalizedHost("10.1.2.3"), "10.1.2.3")
+        XCTAssertEqual(ProxyConfigurator.normalizedHost("[::1]:8080"), "::1", "brackets belong to URLs")
+        XCTAssertEqual(ProxyConfigurator.normalizedHost("::1"), "::1", "an IPv6 literal keeps its colons")
+        XCTAssertEqual(ProxyConfigurator.normalizedHost(""), "")
+    }
+
+    func testProxyBypassParsingNormalizesSuffixes() {
+        XCTAssertEqual(
+            ProxyConfigurator.parseBypassList("*.corp.example.com, 10.0.0.5\u{20}\u{20}HostA.example ,,"),
+            [".corp.example.com", "10.0.0.5", "hosta.example"]
+        )
+        XCTAssertEqual(ProxyConfigurator.parseBypassList(""), [])
+    }
+
+    func testProxyBypassHostsAlwaysKeepTheAppsOwnPlumbingDirect() {
+        var settings = AppSettings()
+        settings.proxyBypass = "*.corp.example.com, 127.0.0.1"
+        let hosts = ProxyConfigurator.bypassHosts(
+            settings: settings,
+            ollamaHost: "http://192.168.1.20:11434"
+        )
+        XCTAssertEqual(
+            hosts,
+            ["localhost", "127.0.0.1", "::1", "192.168.1.20", ".corp.example.com"],
+            "loopback, the agent, and Ollama lead; user entries follow; duplicates collapse"
+        )
+    }
+
+    func testManualHTTPProxyChildEnvironment() {
+        var settings = AppSettings()
+        settings.proxyModeRaw = ProxyMode.manual.rawValue
+        settings.proxyHost = "proxy.corp"
+        settings.proxyPort = 3128
+        let environment = ProxyConfigurator.childEnvironment(
+            settings: settings,
+            password: nil,
+            ollamaHost: nil
+        )
+        for name in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
+            XCTAssertEqual(environment[name], "http://proxy.corp:3128")
+        }
+        XCTAssertEqual(environment["ALL_PROXY"], "",
+                       "tombstoned, so an inherited ALL_PROXY is removed rather than left to apply")
+        XCTAssertEqual(environment["all_proxy"], "")
+        XCTAssertEqual(environment["NO_PROXY"], "localhost,127.0.0.1,::1")
+        XCTAssertEqual(environment["no_proxy"], environment["NO_PROXY"])
+        XCTAssertNil(environment["LOCUS_PROXY_CREDENTIAL"],
+                     "the credential never travels in the environment")
+    }
+
+    func testTheOverlayTombstonesEveryProxyVariableItDoesNotSet() {
+        var settings = AppSettings()
+        settings.proxyModeRaw = ProxyMode.manual.rawValue
+        settings.proxyTypeRaw = ProxyType.socks5.rawValue
+        settings.proxyHost = "socks.corp"
+        settings.proxyPort = 1080
+        let environment = ProxyConfigurator.childEnvironment(
+            settings: settings, password: nil, ollamaHost: nil
+        )
+        // Every name is present: the ones this proxy uses carry a URL, the
+        // rest carry the empty tombstone. A variable left absent would be
+        // inherited from the shell, and a scheme-specific HTTPS_PROXY
+        // outranks ALL_PROXY in requests, httpx and curl alike.
+        for name in ProxyConfigurator.proxyURLVariables {
+            XCTAssertNotNil(environment[name], "\(name) must be set or tombstoned")
+        }
+        XCTAssertEqual(environment["HTTPS_PROXY"], "")
+        XCTAssertEqual(environment["ALL_PROXY"], "socks5h://socks.corp:1080")
+    }
+
+    func testTheCredentialIsHandedOverSeparatelyFromTheEnvironment() {
+        var settings = AppSettings()
+        settings.proxyModeRaw = ProxyMode.manual.rawValue
+        settings.proxyHost = "proxy.corp"
+        settings.proxyPort = 3128
+        XCTAssertNil(ProxyConfigurator.childCredential(settings: settings, password: "secret"),
+                     "no username means no sign-in, whatever password is stored")
+
+        settings.proxyUsername = "user@corp"
+        XCTAssertEqual(
+            ProxyConfigurator.childCredential(settings: settings, password: "p:s@w/d"),
+            "user%40corp:p%3As%40w%2Fd",
+            "both halves encoded, so the first colon is unambiguously the separator"
+        )
+
+        settings.proxyModeRaw = ProxyMode.off.rawValue
+        XCTAssertNil(ProxyConfigurator.childCredential(settings: settings, password: "secret"))
+    }
+
+    func testManualSOCKSProxyChildEnvironmentUsesRemoteResolution() {
+        var settings = AppSettings()
+        settings.proxyModeRaw = ProxyMode.manual.rawValue
+        settings.proxyTypeRaw = ProxyType.socks5.rawValue
+        settings.proxyHost = "socks.corp"
+        settings.proxyPort = 1080
+        let environment = ProxyConfigurator.childEnvironment(
+            settings: settings,
+            password: nil,
+            ollamaHost: nil
+        )
+        XCTAssertEqual(environment["ALL_PROXY"], "socks5h://socks.corp:1080",
+                       "socks5h so DNS resolves at the proxy, not locally")
+        XCTAssertEqual(environment["all_proxy"], environment["ALL_PROXY"])
+        XCTAssertEqual(environment["HTTP_PROXY"], "", "tombstoned, not left inherited")
+    }
+
+    func testProxyCredentialNeverRidesTheProxyURLOrTheEnvironment() {
+        var settings = AppSettings()
+        settings.proxyModeRaw = ProxyMode.manual.rawValue
+        settings.proxyHost = "proxy.corp"
+        settings.proxyPort = 3128
+        settings.proxyUsername = "user@corp"
+        let environment = ProxyConfigurator.childEnvironment(
+            settings: settings,
+            password: "p:s@w/d",
+            ollamaHost: nil
+        )
+        XCTAssertEqual(environment["HTTP_PROXY"], "http://proxy.corp:3128",
+                       "children inherit the route, never the secret")
+        for (name, value) in environment {
+            XCTAssertFalse(value.contains("s%40w"), "\(name) must not carry the password")
+            XCTAssertFalse(value.contains("user%40corp"), "\(name) must not carry the username")
+        }
+    }
+
+    func testIncompleteOrInactiveProxyProducesNoEnvironment() {
+        var incomplete = AppSettings()
+        incomplete.proxyModeRaw = ProxyMode.manual.rawValue
+        incomplete.proxyHost = "proxy.corp"  // no port
+        XCTAssertTrue(ProxyConfigurator.childEnvironment(
+            settings: incomplete, password: nil, ollamaHost: nil
+        ).isEmpty)
+
+        var off = AppSettings()
+        off.proxyHost = "proxy.corp"
+        off.proxyPort = 3128
+        XCTAssertTrue(ProxyConfigurator.childEnvironment(
+            settings: off, password: nil, ollamaHost: nil
+        ).isEmpty, "off means off, whatever else is filled in")
+        XCTAssertTrue(ProxyConfigurator.agentEnvironmentOverlay(
+            settings: off, ollamaHost: nil
+        ).isEmpty, "off manages nothing, so the shell's own proxy passes through untouched")
+    }
+
+    func testProxyRuntimeRebuildsSessionsOnlyWhenTheProxyActuallyChanges() {
+        let runtime = ProxyRuntime()
+        var settings = AppSettings()
+        runtime.update(settings: settings, password: nil)
+        let atRest = runtime.generation
+        XCTAssertNil(runtime.current)
+
+        runtime.update(settings: settings, password: nil)
+        XCTAssertEqual(runtime.generation, atRest, "an identical update must not churn sessions")
+
+        settings.proxyModeRaw = ProxyMode.manual.rawValue
+        settings.proxyHost = "proxy.corp"
+        settings.proxyPort = 3128
+        runtime.update(settings: settings, password: nil)
+        XCTAssertEqual(runtime.current?.host, "proxy.corp")
+        let configured = runtime.generation
+        XCTAssertGreaterThan(configured, atRest)
+
+        // The Ollama host arrives later, from the agent — it belongs to the
+        // bypass list, so it has to move the generation too.
+        runtime.noteOllamaHost("http://192.168.1.20:11434")
+        XCTAssertGreaterThan(runtime.generation, configured)
+        XCTAssertEqual(runtime.current?.bypass.contains("192.168.1.20"), true)
+    }
+
+    func testSystemProxyDictionaryTranslation() {
+        let settings = AppSettings()
+        let proxies: [String: Any] = [
+            "HTTPEnable": 1, "HTTPProxy": "sys.proxy", "HTTPPort": 8080,
+            "HTTPSEnable": 1, "HTTPSProxy": "sys.proxy", "HTTPSPort": 8443,
+            "ExceptionsList": ["*.local", "169.254/16"],
+        ]
+        let environment = ProxyConfigurator.environmentFromSystemProxies(
+            proxies, settings: settings, ollamaHost: nil
+        )
+        XCTAssertEqual(environment["HTTP_PROXY"], "http://sys.proxy:8080")
+        XCTAssertEqual(environment["HTTPS_PROXY"], "http://sys.proxy:8443",
+                       "an HTTPS proxy is reached over http; the scheme names the hop, not the cargo")
+        XCTAssertEqual(environment["NO_PROXY"], "localhost,127.0.0.1,::1,.local,169.254/16")
+    }
+
+    func testPACAndDisabledSystemProxiesLeaveNoProxyButStillTombstone() {
+        let settings = AppSettings()
+        let cases: [[String: Any]] = [
+            // A PAC file cannot be expressed as env vars at all.
+            ["ProxyAutoConfigEnable": 1, "HTTPEnable": 1, "HTTPProxy": "p", "HTTPPort": 1],
+            ["HTTPEnable": 0, "HTTPProxy": "p", "HTTPPort": 1],
+            [:],
+        ]
+        for proxies in cases {
+            let environment = ProxyConfigurator.environmentFromSystemProxies(
+                proxies, settings: settings, ollamaHost: nil
+            )
+            // "Follow the system" has to be deterministic: with nothing to
+            // follow the agent connects directly, rather than inheriting
+            // whatever proxy the launching shell happened to carry.
+            for name in ProxyConfigurator.proxyURLVariables {
+                XCTAssertEqual(environment[name], "", "\(name) must be tombstoned, not absent")
+            }
+        }
+    }
+
+    func testSystemSOCKSProxyTranslatesToAllProxy() {
+        let environment = ProxyConfigurator.environmentFromSystemProxies(
+            ["SOCKSEnable": 1, "SOCKSProxy": "socks.sys", "SOCKSPort": 1080],
+            settings: AppSettings(),
+            ollamaHost: nil
+        )
+        XCTAssertEqual(environment["ALL_PROXY"], "socks5h://socks.sys:1080")
+    }
+
+    func testTheSystemOverlayIsEmptyOnlyWhenTheProxyIsOff() {
+        var settings = AppSettings()
+        XCTAssertTrue(ProxyConfigurator.agentEnvironmentOverlay(
+            settings: settings, ollamaHost: nil
+        ).isEmpty, "off manages nothing")
+
+        settings.proxyModeRaw = ProxyMode.system.rawValue
+        let overlay = ProxyConfigurator.agentEnvironmentOverlay(
+            settings: settings, ollamaHost: nil
+        )
+        XCTAssertFalse(
+            overlay.isEmpty,
+            "system mode always states the routing, even when the system has no proxy to state"
+        )
+    }
+
+    func testProxyResolutionCarriesTheCredentialOnlyWithAUsername() {
+        var settings = AppSettings()
+        settings.proxyModeRaw = ProxyMode.manual.rawValue
+        settings.proxyHost = "HTTP://Proxy.Corp:9/"
+        settings.proxyPort = 3128
+        settings.proxyUsername = "  "
+        let anonymous = ProxyConfigurator.resolved(
+            settings: settings, password: "secret", ollamaHost: nil
+        )
+        XCTAssertEqual(anonymous?.host, "proxy.corp", "resolution normalizes a pasted URL")
+        XCTAssertNil(anonymous?.username)
+        XCTAssertNil(anonymous?.password, "a password without a username is inert")
+
+        settings.proxyUsername = "nahid"
+        let authenticated = ProxyConfigurator.resolved(
+            settings: settings, password: "secret", ollamaHost: nil
+        )
+        XCTAssertEqual(authenticated?.username, "nahid")
+        XCTAssertEqual(authenticated?.password, "secret")
+
+        settings.proxyModeRaw = ProxyMode.off.rawValue
+        XCTAssertNil(ProxyConfigurator.resolved(
+            settings: settings, password: "secret", ollamaHost: nil
+        ))
+    }
+
     func testGitChangeSummaryAndNaming() {
         let change = GitChange(
             path: "Locus/AppModel.swift", status: .modified, additions: 12, deletions: 3

@@ -60,13 +60,16 @@ struct PreviewWebView: NSViewRepresentable {
     final class Coordinator {
         var loadedURL: URL?
         var reloadID: UUID?
+        var proxyGeneration: Int?
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
+        let store = WKWebsiteDataStore.nonPersistent()
+        applyProxy(to: store, coordinator: context.coordinator)
+        configuration.websiteDataStore = store
         let view = WKWebView(frame: .zero, configuration: configuration)
         // Supported replacement for the private "drawsBackground" KVC key,
         // which would raise (uncatchably) if WebKit ever renamed it.
@@ -76,10 +79,27 @@ struct PreviewWebView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         guard let url else { return }
-        if context.coordinator.loadedURL != url || context.coordinator.reloadID != reloadID {
+        let generation = ProxyRuntime.shared.generation
+        if context.coordinator.loadedURL != url
+            || context.coordinator.reloadID != reloadID
+            || context.coordinator.proxyGeneration != generation
+        {
             context.coordinator.loadedURL = url
             context.coordinator.reloadID = reloadID
+            applyProxy(to: webView.configuration.websiteDataStore, coordinator: context.coordinator)
             webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+        }
+    }
+
+    /// The preview follows the manual proxy like everything else; the bypass
+    /// list keeps the usual localhost dev server direct. Applied to the data
+    /// store rather than baked in, so a settings change reaches the next load.
+    private func applyProxy(to store: WKWebsiteDataStore, coordinator: Coordinator) {
+        coordinator.proxyGeneration = ProxyRuntime.shared.generation
+        if let proxy = ProxyRuntime.shared.current {
+            store.proxyConfigurations = [ProxyConfigurator.networkProxyConfiguration(for: proxy)]
+        } else {
+            store.proxyConfigurations = []
         }
     }
 }

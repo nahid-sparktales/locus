@@ -946,6 +946,12 @@ struct SettingsView: View {
     @State private var draft = AppSettings()
     @State private var localWindow = ""
     @State private var iterationLimit = ""
+    @State private var proxyPort = ""
+    @State private var proxyAuthEnabled = false
+    @State private var proxyPassword = ""
+    @State private var proxyPasswordStored = false
+    @State private var isTestingProxy = false
+    @State private var proxyTestOutcome: ProxyProbe.Outcome?
     @State private var addingAccount: ProviderAccount?
     @State private var editingAccount: ProviderAccount?
     @State private var accountPendingRemoval: ProviderAccount?
@@ -989,6 +995,7 @@ struct SettingsView: View {
 
                 switch model.settingsPage {
                 case .general: generalPage
+                case .network: networkPage
                 case .accounts: accountsPage
                 case .permissions: permissionsPage
                 case .extensions:
@@ -997,7 +1004,10 @@ struct SettingsView: View {
                 }
             }
 
-            if model.settingsPage == .general {
+            // Network shares General's draft and Save: the proxy has no side
+            // effects until Save, and Save is the single point where the
+            // settings, the password file, and the agent relaunch commit.
+            if model.settingsPage == .general || model.settingsPage == .network {
                 HStack {
                     Button("Cancel") {
                         dismiss()
@@ -1005,17 +1015,29 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings.cancel")
                     Spacer()
+                    // Shown wherever the Save bar is: the draft is shared, so
+                    // an incomplete proxy disables Save on General too, and a
+                    // greyed-out button with no stated reason is a dead end.
+                    if let error = proxyDraftError {
+                        Text(error)
+                            .font(.system(size: 9))
+                            .foregroundStyle(LocusTheme.coral)
+                            .accessibilityIdentifier("settings.proxyError")
+                    }
                     Button("Save") {
                         var saved = draft
                         let typed = localWindow.trimmingCharacters(in: .whitespacesAndNewlines)
                         saved.localContextWindow = typed.isEmpty ? nil : Int(typed)
                         let steps = iterationLimit.trimmingCharacters(in: .whitespacesAndNewlines)
                         saved.maxIterations = steps.isEmpty ? nil : Int(steps)
-                        model.applySettings(saved)
+                        applyProxyDraft(to: &saved)
+                        let credentialChanged = updateProxyCredential(for: saved)
+                        model.applySettings(saved, proxyCredentialChanged: credentialChanged)
                         dismiss()
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(LocusTheme.ink)
+                    .disabled(proxyDraftError != nil)
                     .accessibilityIdentifier("settings.save")
                 }
                 .padding(15)
@@ -1034,7 +1056,18 @@ struct SettingsView: View {
             // context window that the user could still see in the meter.
             localWindow = model.settings.localContextWindow.map(String.init) ?? ""
             iterationLimit = model.settings.maxIterations.map(String.init) ?? ""
+            proxyPort = model.settings.proxyPort.map(String.init) ?? ""
+            proxyTestOutcome = nil
+            proxyAuthEnabled = !model.settings.proxyUsername.isEmpty
+            // The password field stays empty; the placeholder says one is
+            // saved, and an untouched field keeps it — the keyStored pattern.
+            proxyPassword = ""
+            proxyPasswordStored = model.persistenceEnabled
+                && CredentialStore.has(account: CredentialStore.proxyCredentialKey)
         }
+        // A result describes the values it was run against; the moment any of
+        // them changes it is a claim about a proxy that no longer exists.
+        .onChange(of: proxyDraftSignature) { proxyTestOutcome = nil }
         .onExitCommand {
             dismiss()
             model.settingsPresented = false
@@ -1162,6 +1195,202 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// Outbound proxy. Rides the same draft as General: nothing — settings,
+    /// the password file, or the agent relaunch — happens before Save, so
+    /// Cancel genuinely leaves no trace.
+    private var networkPage: some View {
+        Form {
+            Section("Proxy") {
+                Picker("Outbound traffic", selection: $draft.proxyModeRaw) {
+                    Text("Direct connection").tag(ProxyMode.off.rawValue)
+                    Text("Use system proxy").tag(ProxyMode.system.rawValue)
+                    Text("Manual proxy").tag(ProxyMode.manual.rawValue)
+                }
+                .accessibilityIdentifier("settings.proxyMode")
+
+                Text(proxyModeDetail)
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if draft.resolvedProxyMode == .system, ProxyConfigurator.systemProxyUsesPAC() {
+                    Text("The system proxy is configured through a PAC file, which only the app's own requests can follow — the agent's traffic stays direct. Use a manual proxy to cover everything.")
+                        .font(.system(size: 9))
+                        .foregroundStyle(LocusTheme.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("settings.proxyPACWarning")
+                }
+            }
+
+            if draft.resolvedProxyMode == .manual {
+                Section("Manual proxy") {
+                    Picker("Type", selection: $draft.proxyTypeRaw) {
+                        Text("HTTP/HTTPS").tag(ProxyType.http.rawValue)
+                        Text("SOCKS5").tag(ProxyType.socks5.rawValue)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("settings.proxyType")
+
+                    TextField("Proxy host", text: $draft.proxyHost)
+                        .accessibilityIdentifier("settings.proxyHost")
+                    TextField("Port", text: $proxyPort)
+                        .accessibilityIdentifier("settings.proxyPort")
+                    TextField("Bypass proxy for these hosts (optional)", text: $draft.proxyBypass)
+                        .accessibilityIdentifier("settings.proxyBypass")
+
+                    Text("Comma-separated: exact hostnames, IP addresses, or domain suffixes like .corp.example.com. Loopback addresses, the local agent, and the Ollama host always connect directly and do not need listing.")
+                        .font(.system(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Section("Sign-in") {
+                    Toggle("The proxy requires sign-in", isOn: $proxyAuthEnabled)
+                        .accessibilityIdentifier("settings.proxyAuth")
+
+                    if proxyAuthEnabled {
+                        TextField("Username", text: $draft.proxyUsername)
+                            .accessibilityIdentifier("settings.proxyUsername")
+                        SecureField(
+                            proxyPasswordStored ? "Password (a password is saved)" : "Password",
+                            text: $proxyPassword
+                        )
+                        .accessibilityIdentifier("settings.proxyPassword")
+
+                        Text("The password is written to \(CredentialStore.displayPath) on Save, readable only by your macOS user account. It is used by the app and its agent; commands the model runs see the proxy address but never the password, so they cannot pass its sign-in.")
+                            .font(.system(size: 9))
+                            .foregroundStyle(LocusTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                Section("Test") {
+                    HStack {
+                        Button(isTestingProxy ? "Testing…" : "Test Proxy") { testProxy() }
+                            .disabled(isTestingProxy || proxyDraftError != nil)
+                            .accessibilityIdentifier("settings.proxyTest")
+                        if let outcome = proxyTestOutcome {
+                            Text(outcome.message)
+                                .font(.system(size: 9))
+                                .foregroundStyle(outcome.ok ? LocusTheme.success : LocusTheme.coral)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("settings.proxyTestResult")
+                        }
+                    }
+                }
+            }
+
+            Section {
+                Text("The proxy carries the app's own requests, the agent's model and web traffic, extensions, and git. A proxy that stops answering is an error, never a silent direct connection. The agent restarts when these settings change.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    /// Everything a proxy test depends on, so editing any of it retires the
+    /// last result rather than leaving it to describe a stale configuration.
+    private var proxyDraftSignature: String {
+        [
+            draft.proxyModeRaw, draft.proxyTypeRaw, draft.proxyHost, proxyPort,
+            draft.proxyBypass, draft.proxyUsername, proxyPassword,
+            proxyAuthEnabled ? "1" : "0",
+        ].joined(separator: "\u{1F}")
+    }
+
+    private var proxyModeDetail: String {
+        switch draft.resolvedProxyMode {
+        case .off:
+            "Connections go straight out, the way Locus has always worked."
+        case .system:
+            "The app follows the proxy configured in System Settings, and the agent is launched with the matching HTTP_PROXY environment."
+        case .manual:
+            "Everything — the app and the agent — is routed through the proxy below, except loopback and the bypass list."
+        }
+    }
+
+    /// Manual mode must be complete before Save can commit it: a half-typed
+    /// proxy silently falling back to direct connections is the one outcome
+    /// this feature exists to prevent.
+    private var proxyDraftError: String? {
+        guard draft.resolvedProxyMode == .manual else { return nil }
+        let host = ProxyConfigurator.normalizedHost(draft.proxyHost)
+        let typed = proxyPort.trimmingCharacters(in: .whitespacesAndNewlines)
+        let port = AppSettings.clampProxyPort(typed.isEmpty ? nil : Int(typed))
+        if host.isEmpty || port == nil {
+            return "Manual proxy needs a host and a port from 1 to 65535."
+        }
+        guard proxyAuthEnabled else { return nil }
+        if draft.proxyUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Sign-in needs a username, or turn sign-in off."
+        }
+        // A saved password left untouched is fine; nothing at all is not —
+        // it would save a username the proxy answers every request with 407.
+        if !proxyPasswordStored,
+           proxyPassword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return "Sign-in needs a password, or turn sign-in off."
+        }
+        return nil
+    }
+
+    private func applyProxyDraft(to saved: inout AppSettings) {
+        saved.proxyHost = ProxyConfigurator.normalizedHost(draft.proxyHost)
+        let typed = proxyPort.trimmingCharacters(in: .whitespacesAndNewlines)
+        saved.proxyPort = AppSettings.clampProxyPort(typed.isEmpty ? nil : Int(typed))
+        saved.proxyUsername = proxyAuthEnabled
+            ? draft.proxyUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
+    }
+
+    /// Writes or deletes the proxy password — from Save only, so Cancel
+    /// cannot leave a half-committed credential. Returns whether anything
+    /// about the stored secret changed, which is what forces the relaunch.
+    private func updateProxyCredential(for saved: AppSettings) -> Bool {
+        // Tests run against isolated defaults but a real credential file; the
+        // delete branch below would otherwise wipe the developer's password.
+        guard model.persistenceEnabled else { return false }
+        if saved.proxyUsername.isEmpty {
+            guard proxyPasswordStored else { return false }
+            CredentialStore.setProxyPassword("")
+            return true
+        }
+        let typed = proxyPassword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty, typed != CredentialStore.proxyPassword() else { return false }
+        return CredentialStore.setProxyPassword(typed)
+    }
+
+    /// Probes with the *draft* values, like Test Connection on an account:
+    /// side-effect free, nothing saved, the live sessions untouched.
+    private func testProxy() {
+        var candidate = draft
+        applyProxyDraft(to: &candidate)
+        let typedPassword = proxyPassword.trimmingCharacters(in: .whitespacesAndNewlines)
+        let password = typedPassword.isEmpty ? CredentialStore.proxyPassword() : typedPassword
+        guard let proxy = ProxyConfigurator.resolved(
+            settings: candidate,
+            password: password,
+            ollamaHost: nil
+        ) else { return }
+        // The active provider makes the probe meaningful; without one — or
+        // with a local one, which proves nothing about a proxy — a host the
+        // app already talks to for the model library.
+        let base = model.activeAccount
+            .map { RemoteEndpointTester.normalizeBaseURL($0.resolvedBaseURL) }
+            .flatMap(URL.init(string:))
+            .flatMap { OllamaRuntime.isLoopback($0) ? nil : $0 }
+        let target = base ?? URL(string: "https://huggingface.co")!
+        isTestingProxy = true
+        proxyTestOutcome = nil
+        Task {
+            let outcome = await ProxyProbe.test(proxy: proxy, target: target)
+            isTestingProxy = false
+            proxyTestOutcome = outcome
+        }
     }
 
     /// Remote provider accounts. Edits here write the credential file as they

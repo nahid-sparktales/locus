@@ -187,6 +187,32 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Reusable workflows"].exists)
     }
 
+    func testNetworkSettingsRevealManualProxyFieldsAndGateSave() {
+        anyElement("workspace.modelPicker").click()
+        app.menuItems["Manage Accounts…"].click()
+
+        let networkPage = anyElement("settings.page.network")
+        XCTAssertTrue(networkPage.waitForExistence(timeout: 3))
+        networkPage.click()
+
+        let mode = anyElement("settings.proxyMode")
+        XCTAssertTrue(mode.waitForExistence(timeout: 3))
+        // Direct connection by default: no manual fields, Save enabled.
+        XCTAssertFalse(anyElement("settings.proxyHost").exists)
+        XCTAssertTrue(app.buttons["settings.save"].isEnabled)
+
+        mode.click()
+        app.menuItems["Manual proxy"].click()
+        XCTAssertTrue(anyElement("settings.proxyHost").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("settings.proxyPort").exists)
+        XCTAssertTrue(anyElement("settings.proxyBypass").exists)
+        // A manual proxy with no host must not be saveable — silent direct
+        // connections are the failure this feature exists to prevent.
+        XCTAssertFalse(app.buttons["settings.save"].isEnabled)
+
+        app.buttons["settings.cancel"].click()
+    }
+
     func testRuntimeSettingsShowAutomaticOnlineServices() {
         anyElement("workspace.modelPicker").click()
         app.menuItems["Manage Accounts…"].click()

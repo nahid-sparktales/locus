@@ -12,6 +12,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .proxy import sanitized_child_environment
+
 GIT = "git"
 DEFAULT_TIMEOUT = 15.0
 MAX_STATUS_BYTES = 400_000
@@ -50,12 +52,14 @@ def run_git(
         "-c", "color.ui=false",
         *args,
     ]
-    env = {
+    # Stripped of proxy credentials: status reads are local, but git can be
+    # configured to run helpers, and no child gets the secret.
+    env = sanitized_child_environment({
         **os.environ,
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_OPTIONAL_LOCKS": "0",
         "GIT_PAGER": "cat",
-    }
+    })
     try:
         proc = subprocess.Popen(
             command,

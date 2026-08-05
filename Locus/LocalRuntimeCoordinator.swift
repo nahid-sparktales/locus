@@ -168,6 +168,17 @@ final class OllamaRuntime {
             let renderedHost = hostname.contains(":") ? "[\(hostname)]:\(port)" : "\(hostname):\(port)"
             environment["OLLAMA_HOST"] = renderedHost
         }
+        // Ollama fetches models itself, so it gets the proxy route — but not
+        // the credential, which stays between the app and its own agent.
+        // Behind an authenticated proxy, pulls fail rather than leak. An empty
+        // value is a tombstone; see BackendProcess for why.
+        for (key, value) in ProxyRuntime.shared.helperEnvironmentOverlay {
+            if value.isEmpty {
+                environment.removeValue(forKey: key)
+            } else {
+                environment[key] = value
+            }
+        }
         process.environment = environment
 
         do {
@@ -202,7 +213,7 @@ final class OllamaRuntime {
         var request = URLRequest(url: url)
         request.timeoutInterval = 2
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (_, response) = try await ProxyRuntime.shared.urlSession.data(for: request)
             return (200..<300).contains((response as? HTTPURLResponse)?.statusCode ?? -1)
         } catch {
             return false

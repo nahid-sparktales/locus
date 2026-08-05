@@ -58,11 +58,13 @@ Each package's complete license text is retained in its installed
 | pydantic-core | 2.46.4 | MIT |
 | Pygments | 2.20.0 | BSD-2-Clause |
 | PyJWT | 2.13.0 | MIT |
+| PySocks | 1.7.1 | BSD-3-Clause |
 | python-multipart | 0.0.32 | Apache-2.0 |
 | referencing | 0.37.0 | MIT |
 | requests | 2.34.2 | Apache-2.0 |
 | rich | 15.0.0 | MIT |
 | rpds-py | 2026.6.3 | MIT |
+| socksio | 1.0.0 | MIT |
 | sse-starlette | 3.4.6 | BSD-3-Clause |
 | starlette | 1.3.1 | BSD-3-Clause |
 | truststore | 0.10.4 | MIT |
@@ -72,6 +74,9 @@ Each package's complete license text is retained in its installed
 | uvicorn | 0.52.0 | BSD-3-Clause |
 | wcwidth | 0.8.2 | MIT |
 | websockets | 17.0 | BSD-3-Clause |
+
+The SOCKS proxy packages' license texts are additionally retained at
+`ThirdPartyLicenses/pysocks-1.7.1/` and `ThirdPartyLicenses/socksio-1.0.0/`.
 
 Ollama, Hugging Face services, hosted models, and model weights are not
 distributed with Locus. Locus only connects to services configured by the

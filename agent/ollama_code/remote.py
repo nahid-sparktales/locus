@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 
 import requests
 
-from . import USER_AGENT
+from . import USER_AGENT, proxy
 from .ollama import ChatResponse, OllamaError, ToolCall
 
 #: Well-known bases, offered as presets in the UI.
@@ -306,7 +306,7 @@ class RemoteClient:
                 allow_redirects=False,
             )
         except requests.RequestException as e:
-            raise OllamaError(f"cannot reach {self.base_url}: {e}") from e
+            raise OllamaError(proxy.redact(f"cannot reach {self.base_url}: {e}")) from e
         if response.status_code == 404:
             # Single-model endpoints frequently omit /v1/models; that is fine.
             return
@@ -333,7 +333,7 @@ class RemoteClient:
                 allow_redirects=False,
             )
         except requests.RequestException as e:
-            raise OllamaError(f"failed to list models: {e}") from e
+            raise OllamaError(proxy.redact(f"failed to list models: {e}")) from e
         if response.status_code == 404:
             return self._fallback_models()
         if response.status_code >= 300:
@@ -572,7 +572,7 @@ class RemoteClient:
                 resp.done = True
                 resp.done_reason = "interrupted"
                 return resp
-            raise OllamaError(f"chat request failed: {e}") from e
+            raise OllamaError(proxy.redact(f"chat request failed: {e}")) from e
         finally:
             watcher_done.set()
             if watcher is not None:
@@ -666,7 +666,7 @@ class RemoteClient:
                 resp.done = True
                 resp.done_reason = "interrupted"
                 return resp
-            raise OllamaError(f"chat request failed: {e}") from e
+            raise OllamaError(proxy.redact(f"chat request failed: {e}")) from e
         finally:
             watcher_done.set()
             if watcher is not None:
