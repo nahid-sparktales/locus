@@ -217,7 +217,12 @@ final class AppModel: ObservableObject {
         persistenceEnabled = startImmediately && !isUITesting
         let defaults = UserDefaults.standard
         var loadedSettings: AppSettings
-        if !isUITesting,
+        // Gated on `persistenceEnabled` for the same reason the accounts below
+        // are: a model that will never write must not read either. Without it a
+        // unit test inherited whatever the developer had saved in the real app —
+        // an active account, a configured proxy — so the suite passed or failed
+        // according to the machine it ran on rather than the code under test.
+        if !isUITesting, persistenceEnabled,
            let data = defaults.data(forKey: "Locus.settings"),
            let saved = try? JSONDecoder().decode(AppSettings.self, from: data)
         {

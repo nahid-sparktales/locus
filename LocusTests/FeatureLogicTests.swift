@@ -630,6 +630,54 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
+    func testProxyFailuresAreDescribedInTermsOfTheProxy() {
+        let authenticated = ResolvedProxy(
+            type: .http, host: "proxy.corp", port: 3128,
+            username: "nahid", password: "secret", bypass: []
+        )
+        let anonymous = ResolvedProxy(
+            type: .http, host: "proxy.corp", port: 3128,
+            username: nil, password: nil, bypass: []
+        )
+        func describe(_ domain: String, _ code: Int, _ proxy: ResolvedProxy) -> String {
+            ProxyProbe.describe(NSError(domain: domain, code: code), proxy: proxy)
+        }
+
+        // A real proxy reports a rejected sign-in as POSIX EAUTH through the
+        // Network framework, not as NSURLErrorUserAuthenticationRequired —
+        // matching only the URL-loading constant left the one genuinely
+        // actionable failure showing "The operation couldn't be completed."
+        XCTAssertTrue(
+            describe(NSPOSIXErrorDomain, Int(EAUTH), authenticated).contains("rejected the sign-in")
+        )
+        XCTAssertTrue(
+            describe(NSURLErrorDomain, NSURLErrorUserAuthenticationRequired, authenticated)
+                .contains("rejected the sign-in")
+        )
+        // With no sign-in configured at all, the same refusal means something
+        // different to the user.
+        XCTAssertTrue(
+            describe(NSPOSIXErrorDomain, Int(EAUTH), anonymous).contains("requires a sign-in")
+        )
+        // A proxy awaiting credentials it never got often just stops answering,
+        // which is indistinguishable from a dead one — so say so.
+        XCTAssertTrue(
+            describe(NSURLErrorDomain, NSURLErrorTimedOut, anonymous).contains("requires a sign-in")
+        )
+        XCTAssertTrue(
+            describe(NSURLErrorDomain, NSURLErrorTimedOut, authenticated).contains("did not answer")
+        )
+        XCTAssertTrue(
+            describe(NSURLErrorDomain, NSURLErrorCannotFindHost, authenticated)
+                .contains("No host named proxy.corp")
+        )
+        XCTAssertEqual(
+            describe(NSURLErrorDomain, NSURLErrorBadURL, authenticated),
+            NSError(domain: NSURLErrorDomain, code: NSURLErrorBadURL).localizedDescription,
+            "anything unrecognised falls back to the system's own wording"
+        )
+    }
+
     func testProxyResolutionCarriesTheCredentialOnlyWithAUsername() {
         var settings = AppSettings()
         settings.proxyModeRaw = ProxyMode.manual.rawValue

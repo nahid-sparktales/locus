@@ -354,21 +354,46 @@ enum ProxyProbe {
                 message: "The proxy carried the request — \(target.host ?? "the test host") answered \(status) in \(elapsed) ms."
             )
         } catch {
-            let code = (error as NSError).code
-            if code == NSURLErrorUserAuthenticationRequired {
-                return Outcome(
-                    ok: false,
-                    message: "The proxy rejected the sign-in. Check the username and password."
-                )
-            }
-            if code == NSURLErrorTimedOut || code == NSURLErrorCannotConnectToHost {
-                return Outcome(
-                    ok: false,
-                    message: "The proxy did not answer at \(proxy.host):\(proxy.port)."
-                )
-            }
-            return Outcome(ok: false, message: error.localizedDescription)
+            return Outcome(ok: false, message: Self.describe(error, proxy: proxy))
         }
+    }
+
+    /// Says what went wrong in terms of the proxy, which is what the button is
+    /// asking about. The codes are the ones a real proxy actually produces:
+    /// a rejected sign-in arrives as POSIX `EAUTH` from the Network framework
+    /// rather than as `NSURLErrorUserAuthenticationRequired`, so matching only
+    /// the URL-loading constant left the useful case showing "The operation
+    /// couldn't be completed."
+    static func describe(_ error: Error, proxy: ResolvedProxy) -> String {
+        let error = error as NSError
+        let address = "\(proxy.host):\(proxy.port)"
+        let rejectedSignIn = (error.domain == NSPOSIXErrorDomain && error.code == Int(EAUTH))
+            || error.code == NSURLErrorUserAuthenticationRequired
+        if rejectedSignIn {
+            return proxy.username == nil
+                ? "The proxy requires a sign-in. Turn on \"The proxy requires sign-in\" and enter its username and password."
+                : "The proxy rejected the sign-in. Check the username and password."
+        }
+        if error.domain == NSURLErrorDomain {
+            switch error.code {
+            case NSURLErrorTimedOut, NSURLErrorCannotConnectToHost,
+                 NSURLErrorNetworkConnectionLost, NSURLErrorNotConnectedToInternet:
+                // A proxy that wants a sign-in it did not get often just stops
+                // answering rather than saying 407, which is indistinguishable
+                // from a dead one here — so when no sign-in is configured, name
+                // that as the likely cause instead of only blaming the address.
+                return proxy.username == nil
+                    ? "The proxy did not answer at \(address). If it requires a sign-in, turn that on and enter the username and password."
+                    : "The proxy did not answer at \(address)."
+            case NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed:
+                return "No host named \(proxy.host) could be found. Check the proxy address."
+            case NSURLErrorSecureConnectionFailed, NSURLErrorServerCertificateUntrusted:
+                return "The proxy answered at \(address), but the secure connection through it failed."
+            default:
+                break
+            }
+        }
+        return error.localizedDescription
     }
 }
 
