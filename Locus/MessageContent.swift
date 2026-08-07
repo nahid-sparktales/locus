@@ -109,6 +109,27 @@ enum MarkdownFragment: Hashable {
     }
 }
 
+/// Finished replies are immutable. Parsing them again because an unrelated
+/// app setting or hover state changed is pure main-thread work, so retain the
+/// completed block structure for the lifetime of the process.
+@MainActor
+private enum FinishedMarkdownCache {
+    private static var values: [String: [MarkdownFragment]] = [:]
+    private static var order: [String] = []
+    private static let limit = 128
+
+    static func fragments(for text: String) -> [MarkdownFragment] {
+        if let cached = values[text] { return cached }
+        let parsed = MarkdownFragment.parse(text)
+        values[text] = parsed
+        order.append(text)
+        if order.count > limit {
+            values.removeValue(forKey: order.removeFirst())
+        }
+        return parsed
+    }
+}
+
 /// Heuristic for tool output that is a unified diff, so the Changes inspector
 /// and tool cards can color it like Claude Code's diff view.
 enum DiffDetector {
@@ -132,14 +153,34 @@ enum DiffDetector {
 struct MessageContentView: View {
     let text: String
     let isStreaming: Bool
+    var reasoningText: String? = nil
     var thinkingVisibility: ThinkingVisibility = .collapsed
 
     var body: some View {
-        let segments = AssistantSegment.rendered(from: text, mode: thinkingVisibility)
+        let nativeReasoning = reasoningText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         VStack(alignment: .leading, spacing: 10) {
-            if segments.isEmpty, isStreaming {
-                // Everything streamed so far is hidden reasoning; without
-                // this line the stream would look dead.
+            if !nativeReasoning.isEmpty, thinkingVisibility != .hidden {
+                ThinkingSegmentView(
+                    text: nativeReasoning,
+                    isActive: isStreaming && text.isEmpty,
+                    forceExpanded: thinkingVisibility == .expanded
+                )
+            }
+            if isStreaming {
+                streamingAnswer(nativeReasoning: nativeReasoning)
+            } else {
+                finishedAnswer
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func streamingAnswer(nativeReasoning: String) -> some View {
+        // Provider/inline reasoning arrives on its separate channel. Keeping
+        // the active answer as one plain Text avoids reparsing an ever-growing
+        // Markdown document for every 50 ms batch.
+        if text.isEmpty {
+            if nativeReasoning.isEmpty || thinkingVisibility == .hidden {
                 HStack(spacing: 7) {
                     ProgressView()
                         .controlSize(.mini)
@@ -149,37 +190,226 @@ struct MessageContentView: View {
                 }
                 .accessibilityIdentifier("message.thinking.hiddenIndicator")
             }
-            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                switch segment {
-                case .thinking(let body, let isComplete):
-                    ThinkingSegmentView(
-                        text: body,
-                        isActive: !isComplete && isStreaming,
-                        forceExpanded: thinkingVisibility == .expanded
-                    )
-                case .visible(let body):
-                    if isStreaming {
-                        Text(body.trimmingCharacters(in: .whitespacesAndNewlines))
-                            .font(.system(size: 12))
-                            .foregroundStyle(LocusTheme.inkSoft)
-                            .lineSpacing(4)
-                            .textSelection(.enabled)
-                    } else {
-                        ForEach(
-                            Array(MarkdownFragment.parse(body).enumerated()),
-                            id: \.offset
-                        ) { _, fragment in
-                            switch fragment {
-                            case .text(let value):
-                                InlineMarkdownText(value)
-                            case .code(let language, let code):
-                                CodeBlockView(language: language, code: code)
-                            }
-                        }
+        } else {
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundStyle(LocusTheme.inkSoft)
+                .lineSpacing(4)
+                .textSelection(.enabled)
+        }
+    }
+
+    @ViewBuilder
+    private var finishedAnswer: some View {
+        let segments = AssistantSegment.rendered(from: text, mode: thinkingVisibility)
+        ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+            switch segment {
+            case .thinking(let body, _):
+                ThinkingSegmentView(
+                    text: body,
+                    isActive: false,
+                    forceExpanded: thinkingVisibility == .expanded
+                )
+            case .visible(let body):
+                ForEach(
+                    Array(FinishedMarkdownCache.fragments(for: body).enumerated()),
+                    id: \.offset
+                ) { _, fragment in
+                    switch fragment {
+                    case .text(let value):
+                        InlineMarkdownText(value)
+                    case .code(let language, let code):
+                        CodeBlockView(language: language, code: code)
                     }
                 }
             }
         }
+    }
+}
+
+/// The active reply bypasses SwiftUI Text layout. TextKit receives only the
+/// newly appended UTF-16 suffix, so a 100 KB answer does not relayout its
+/// entire String on every provider chunk.
+struct StreamingMessageContentView: View {
+    @ObservedObject var reply: StreamingReplyState
+    let thinkingVisibility: ThinkingVisibility
+
+    var body: some View {
+        let snapshot = reply.snapshot
+        VStack(alignment: .leading, spacing: 10) {
+            if !snapshot.reasoning.isEmpty, thinkingVisibility != .hidden {
+                StreamingThinkingSegmentView(
+                    text: snapshot.reasoning,
+                    isActive: snapshot.text.isEmpty,
+                    forceExpanded: thinkingVisibility == .expanded
+                )
+            }
+            if snapshot.text.isEmpty {
+                if snapshot.reasoning.isEmpty || thinkingVisibility == .hidden {
+                    HStack(spacing: 7) {
+                        ProgressView().controlSize(.mini)
+                        Text("Thinking…")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(LocusTheme.muted)
+                    }
+                }
+            } else {
+                StreamingPlainTextView(
+                    text: snapshot.text,
+                    font: .systemFont(ofSize: 12),
+                    color: NSColor(LocusTheme.inkSoft),
+                    lineSpacing: 4
+                )
+                Capsule()
+                    .fill(LocusTheme.signalDeep)
+                    .frame(width: 9, height: 2)
+                    .opacity(0.8)
+            }
+        }
+    }
+}
+
+private struct StreamingThinkingSegmentView: View {
+    let text: String
+    let isActive: Bool
+    let forceExpanded: Bool
+    @State private var expanded = false
+
+    private var isOpen: Bool { expanded || isActive || forceExpanded }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                expanded.toggle()
+            } label: {
+                HStack(spacing: 7) {
+                    if !forceExpanded {
+                        Image(systemName: isOpen ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    Image(systemName: "brain").font(.system(size: 10))
+                    Text(isActive ? "Thinking…" : "Thought process")
+                        .font(.system(size: 9, weight: .semibold))
+                    if isActive { ProgressView().controlSize(.mini) }
+                    Spacer()
+                }
+                .foregroundStyle(LocusTheme.muted)
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(forceExpanded)
+
+            if isOpen {
+                StreamingPlainTextView(
+                    text: text,
+                    font: .systemFont(ofSize: 10),
+                    color: NSColor(LocusTheme.muted),
+                    lineSpacing: 3
+                )
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
+            }
+        }
+        .background(LocusTheme.paperDeep.opacity(0.55))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(LocusTheme.line.opacity(0.8), lineWidth: 1)
+        }
+    }
+}
+
+struct StreamingPlainTextView: NSViewRepresentable {
+    let text: String
+    let font: NSFont
+    let color: NSColor
+    let lineSpacing: CGFloat
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> AppendOnlyTextView {
+        let view = AppendOnlyTextView(frame: .zero)
+        view.isEditable = false
+        view.isSelectable = true
+        view.drawsBackground = false
+        view.textContainerInset = .zero
+        view.isHorizontallyResizable = false
+        view.isVerticallyResizable = true
+        view.autoresizingMask = [.width]
+        view.textContainer?.widthTracksTextView = true
+        view.textContainer?.heightTracksTextView = false
+        view.textContainer?.lineFragmentPadding = 0
+        update(view, coordinator: context.coordinator)
+        return view
+    }
+
+    func updateNSView(_ nsView: AppendOnlyTextView, context: Context) {
+        update(nsView, coordinator: context.coordinator)
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: AppendOnlyTextView,
+        context: Context
+    ) -> CGSize? {
+        guard let width = proposal.width, width > 0 else { return nil }
+        return CGSize(width: width, height: nsView.measuredHeight(for: width))
+    }
+
+    private func update(_ view: AppendOnlyTextView, coordinator: Coordinator) {
+        let value = text as NSString
+        let attributes = textAttributes
+        if value.length >= coordinator.utf16Length {
+            let suffix = value.substring(from: coordinator.utf16Length)
+            if !suffix.isEmpty {
+                view.textStorage?.append(NSAttributedString(string: suffix, attributes: attributes))
+            }
+        } else {
+            view.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: attributes))
+        }
+        coordinator.utf16Length = value.length
+        view.invalidateIntrinsicContentSize()
+    }
+
+    private var textAttributes: [NSAttributedString.Key: Any] {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = lineSpacing
+        return [
+            .font: font,
+            .foregroundColor: color,
+            .paragraphStyle: paragraph,
+        ]
+    }
+
+    final class Coordinator {
+        var utf16Length = 0
+    }
+}
+
+final class AppendOnlyTextView: NSTextView {
+    func measuredHeight(for width: CGFloat) -> CGFloat {
+        guard let textContainer, let layoutManager else { return 1 }
+        textContainer.containerSize = NSSize(
+            width: max(width, 1),
+            height: .greatestFiniteMagnitude
+        )
+        layoutManager.ensureLayout(for: textContainer)
+        return max(ceil(layoutManager.usedRect(for: textContainer).height), 1)
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(
+            width: NSView.noIntrinsicMetric,
+            height: measuredHeight(for: max(bounds.width, 1))
+        )
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let widthChanged = abs(newSize.width - frame.width) > 0.5
+        super.setFrameSize(newSize)
+        if widthChanged { invalidateIntrinsicContentSize() }
     }
 }
 
@@ -249,21 +479,23 @@ struct InlineMarkdownText: View {
     let text: String
     init(_ text: String) { self.text = text }
 
+    private enum ProseBlock: Hashable {
+        case heading(Int, String)
+        case paragraph(String)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(
-                Array(text.split(separator: "\n", omittingEmptySubsequences: false).enumerated()),
-                id: \.offset
-            ) { _, rawLine in
-                let line = String(rawLine)
-                if let heading = headingLevel(line) {
-                    Text(String(line.drop(while: { $0 == "#" || $0 == " " })))
-                        .font(.system(size: heading <= 2 ? 15 : 13, weight: .bold))
+            ForEach(Array(proseBlocks.enumerated()), id: \.offset) { _, block in
+                switch block {
+                case .heading(let level, let value):
+                    Text(value)
+                        .font(.system(size: level <= 2 ? 15 : 13, weight: .bold))
                         .foregroundStyle(LocusTheme.ink)
                         .padding(.top, 4)
                         .textSelection(.enabled)
-                } else if !line.isEmpty {
-                    Text(inline(line))
+                case .paragraph(let value):
+                    Text(inline(value))
                         .font(.system(size: 12))
                         .foregroundStyle(LocusTheme.inkSoft)
                         .lineSpacing(4)
@@ -271,6 +503,35 @@ struct InlineMarkdownText: View {
                 }
             }
         }
+    }
+
+    /// Coalesce consecutive prose and list lines into one Text view. Blank
+    /// lines and headings remain semantic boundaries, avoiding hundreds of
+    /// SwiftUI nodes in long model replies.
+    private var proseBlocks: [ProseBlock] {
+        var result: [ProseBlock] = []
+        var paragraph: [String] = []
+        func flush() {
+            guard !paragraph.isEmpty else { return }
+            result.append(.paragraph(paragraph.joined(separator: "\n")))
+            paragraph = []
+        }
+        for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(raw)
+            if let level = headingLevel(line) {
+                flush()
+                result.append(.heading(
+                    level,
+                    String(line.drop(while: { $0 == "#" || $0 == " " }))
+                ))
+            } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
+                flush()
+            } else {
+                paragraph.append(line)
+            }
+        }
+        flush()
+        return result
     }
 
     private func headingLevel(_ line: String) -> Int? {

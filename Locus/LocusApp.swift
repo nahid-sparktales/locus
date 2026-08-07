@@ -95,6 +95,8 @@ struct LocusApp: App {
                 Divider()
                 Button("Just Chat") { model.selectedMode = .ask }
                     .keyboardShortcut("a", modifiers: .option)
+                Button("Adaptive Work") { model.selectedMode = .work }
+                    .keyboardShortcut("w", modifiers: .option)
                 Button("Plan Mode") { model.selectedMode = .plan }
                     .keyboardShortcut("p", modifiers: .option)
                 Button("Build Mode") { model.selectedMode = .build }
@@ -234,20 +236,29 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.18), value: model.sidebarCollapsed)
         .background(LocusTheme.paper)
         .overlay(alignment: .bottomTrailing) {
-            if let toast = model.toastMessage {
-                Label(toast, systemImage: "checkmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(LocusTheme.paper)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(LocusTheme.ink)
-                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                    .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
-                    .padding(18)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            if let toast = model.toast {
+                HStack(spacing: 12) {
+                    Label(toast.message, systemImage: toast.systemImage)
+                        .font(.system(size: 11, weight: .semibold))
+                    if let actionTitle = toast.actionTitle {
+                        Button(actionTitle) { model.performToastAction() }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(LocusTheme.signal)
+                            .accessibilityIdentifier("toast.action")
+                    }
+                }
+                .foregroundStyle(LocusTheme.paper)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(LocusTheme.ink)
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
+                .padding(18)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.easeOut(duration: 0.18), value: model.toastMessage)
+        .animation(.easeOut(duration: 0.18), value: model.toast?.id)
         .sheet(isPresented: $model.commandPalettePresented) {
             CommandPaletteView()
                 .environmentObject(model)

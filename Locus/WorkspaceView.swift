@@ -1,3 +1,5 @@
+import AppKit
+import QuartzCore
 import SwiftUI
 
 struct WorkspaceView: View {
@@ -26,8 +28,11 @@ struct WorkspaceView: View {
                     .environmentObject(model)
             }
 
-            ConversationView()
+            ConversationView(streamingReply: model.streamingReply)
                 .frame(maxHeight: .infinity)
+
+            WorkStatusStrip(streamingReply: model.streamingReply)
+                .environmentObject(model)
 
             ComposerView()
         }
@@ -257,6 +262,47 @@ struct WorkspaceView: View {
     }
 }
 
+private struct WorkStatusStrip: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject var streamingReply: StreamingReplyState
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(model.isBusy ? LocusTheme.signalDeep : LocusTheme.success)
+                    .frame(width: 6, height: 6)
+                Text(model.currentWorkPhase)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                if model.isBusy, let started = model.activeWorkStartedAt {
+                    Text(elapsed(from: started, to: context.date))
+                        .monospacedDigit()
+                }
+                Spacer()
+                if model.isBusy {
+                    Text("~\(model.estimatedStreamingTokens.formatted()) streamed tokens")
+                }
+                if let info = model.sessionInfo {
+                    Text("provider · \(info.promptTokens.formatted()) in / \(info.completionTokens.formatted()) out")
+                }
+            }
+            .font(.system(size: 8, design: .monospaced))
+            .foregroundStyle(LocusTheme.muted)
+            .padding(.horizontal, 24)
+            .frame(height: 25)
+            .background(LocusTheme.panel)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("workspace.workStatus")
+        }
+    }
+
+    private func elapsed(from start: Date, to end: Date) -> String {
+        let seconds = max(Int(end.timeIntervalSince(start)), 0)
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
 /// Codex-style Chat/Work segmented control. This intentionally uses custom
 /// capsule styling instead of the native macOS segmented picker so it matches
 /// the compact dark control used in Codex.
@@ -332,102 +378,137 @@ struct JustChatControl: View {
     }
 }
 
+struct TranscriptFollowState: Equatable {
+    var isNearBottom = true
+    var isFollowingOutput = true
+
+    /// `isFollowingOutput` is the explicit pin. A layout pass can temporarily
+    /// move the bottom marker more than 24 points before the matching scroll
+    /// callback runs; that content growth must not masquerade as user intent.
+    var permitsAutomaticScroll: Bool { isFollowingOutput }
+    var showsJumpToLatest: Bool { !isNearBottom || !isFollowingOutput }
+
+    mutating func userScrolled(upward: Bool) {
+        if upward {
+            isFollowingOutput = false
+        } else if isNearBottom {
+            isFollowingOutput = true
+        }
+    }
+
+    mutating func updateBottom(isNear: Bool) {
+        isNearBottom = isNear
+    }
+
+    mutating func jumpToLatest() {
+        isNearBottom = true
+        isFollowingOutput = true
+    }
+
+    mutating func detach() {
+        isFollowingOutput = false
+    }
+}
+
 private struct ConversationView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var isNearBottom = true
+    let streamingReply: StreamingReplyState
+    @StateObject private var scrollCoordinator = TranscriptScrollCoordinator()
 
     private let bottomID = "conversation-bottom"
 
     var body: some View {
         ScrollViewReader { proxy in
-            GeometryReader { viewport in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 20) {
-                        if model.blocks.isEmpty {
-                            EmptyConversationView()
-                                .environmentObject(model)
-                        } else {
-                            ForEach(model.blocks) { block in
-                                MessageBlockView(block: block)
-                                    .environmentObject(model)
-                                    .overlay {
-                                        if let style = model.transcriptMatchStyle(for: block.id) {
-                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                                .stroke(
-                                                    style == .current
-                                                        ? LocusTheme.signalDeep
-                                                        : LocusTheme.lineStrong.opacity(0.7),
-                                                    lineWidth: style == .current ? 2 : 1
-                                                )
-                                                .padding(-7)
-                                                .allowsHitTesting(false)
-                                        }
-                                    }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 20) {
+                    if model.blocks.isEmpty {
+                        EmptyConversationView()
+                            .environmentObject(model)
+                    } else {
+                        ForEach(model.blocks) { block in
+                            Group {
+                                if block.kind == .assistant,
+                                   block.id == model.activeStreamingAssistantID
+                                {
+                                    ActiveAssistantBlockView(
+                                        reply: streamingReply,
+                                        thinkingVisibility: model.thinkingVisibility
+                                    )
                                     .id(block.id)
+                                } else {
+                                    MessageBlockView(
+                                        block: block,
+                                        thinkingVisibility: model.thinkingVisibility,
+                                        actionsDisabled: model.isBusy || model.hasPendingPermission,
+                                        canRewind: model.canRewind(to: block),
+                                        canRegenerate: model.canRegenerate(block),
+                                        onCopy: { model.copyMessage(block.text) },
+                                        onUseAsDraft: { model.useAsDraft(block.text) },
+                                        onRewind: { model.rewind(to: block) },
+                                        onRegenerate: { model.retryLastResponse() }
+                                    )
+                                    .equatable()
+                                }
                             }
+                            .overlay {
+                                if let style = model.transcriptMatchStyle(for: block.id) {
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .stroke(
+                                            style == .current
+                                                ? LocusTheme.signalDeep
+                                                : LocusTheme.lineStrong.opacity(0.7),
+                                            lineWidth: style == .current ? 2 : 1
+                                        )
+                                        .padding(-7)
+                                        .allowsHitTesting(false)
+                                }
+                            }
+                            .id(block.id)
                         }
-                        GeometryReader { marker in
-                            Color.clear.preference(
-                                key: ConversationBottomKey.self,
-                                value: marker.frame(in: .named("conversationScroll")).maxY
-                            )
-                        }
+                    }
+                    Color.clear
                         .frame(height: 1)
                         .id(bottomID)
+                }
+                .frame(maxWidth: 740)
+                .padding(.horizontal, 28)
+                .padding(.top, model.blocks.isEmpty ? 0 : 26)
+                .padding(.bottom, 40)
+                .frame(maxWidth: .infinity)
+            }
+            .background {
+                TranscriptScrollBridge(coordinator: scrollCoordinator)
+            }
+            .overlay(alignment: .bottom) {
+                if scrollCoordinator.followState.showsJumpToLatest, !model.blocks.isEmpty {
+                    Button {
+                        scrollCoordinator.jumpToLatest(animated: true)
+                    } label: {
+                        Label("Jump to Latest", systemImage: "arrow.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(LocusTheme.ink)
+                            .padding(.horizontal, 12)
+                            .frame(height: 30)
+                            .background(LocusTheme.white)
+                            .clipShape(Capsule())
+                            .overlay { Capsule().stroke(LocusTheme.line, lineWidth: 1) }
+                            .shadow(color: .black.opacity(0.08), radius: 12, y: 5)
                     }
-                    .frame(maxWidth: 740)
-                    .padding(.horizontal, 28)
-                    .padding(.top, model.blocks.isEmpty ? 0 : 26)
-                    .padding(.bottom, 40)
-                    .frame(maxWidth: .infinity)
+                    .buttonStyle(.plain)
+                    .padding(.bottom, 12)
+                    .accessibilityIdentifier("conversation.jumpToLatest")
                 }
-                .coordinateSpace(name: "conversationScroll")
-                .onPreferenceChange(ConversationBottomKey.self) { bottom in
-                    isNearBottom = bottom <= viewport.size.height + 110
-                }
-                .overlay(alignment: .bottom) {
-                    if !isNearBottom, !model.blocks.isEmpty {
-                        Button {
-                            isNearBottom = true
-                            withAnimation(.easeOut(duration: 0.16)) {
-                                proxy.scrollTo(bottomID, anchor: .bottom)
-                            }
-                        } label: {
-                            Label("Jump to Latest", systemImage: "arrow.down")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(LocusTheme.ink)
-                                .padding(.horizontal, 12)
-                                .frame(height: 30)
-                                .background(LocusTheme.white)
-                                .clipShape(Capsule())
-                                .overlay { Capsule().stroke(LocusTheme.line, lineWidth: 1) }
-                                .shadow(color: .black.opacity(0.08), radius: 12, y: 5)
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.bottom, 12)
-                        .accessibilityIdentifier("conversation.jumpToLatest")
-                    }
-                }
-                .onChange(of: model.blocks.count) {
-                    guard isNearBottom else { return }
-                    withAnimation(.easeOut(duration: 0.14)) {
-                        proxy.scrollTo(bottomID, anchor: .bottom)
-                    }
-                }
-                .onChange(of: model.streamRevision) {
-                    guard isNearBottom else { return }
-                    proxy.scrollTo(bottomID, anchor: .bottom)
-                }
-                .onChange(of: model.isBusy) {
-                    guard isNearBottom else { return }
-                    proxy.scrollTo(bottomID, anchor: .bottom)
-                }
-                .onChange(of: model.transcriptSearchSelection) {
-                    scrollToCurrentMatch(proxy)
-                }
-                .onChange(of: model.transcriptSearchQuery) {
-                    scrollToCurrentMatch(proxy)
-                }
+            }
+            .onChange(of: model.blocks.count) {
+                scrollCoordinator.contentMayHaveChanged()
+            }
+            .onChange(of: model.transcriptSearchSelection) {
+                scrollCoordinator.detach()
+                scrollToCurrentMatch(proxy)
+            }
+            .onChange(of: model.transcriptSearchQuery) {
+                scrollCoordinator.detach()
+                scrollToCurrentMatch(proxy)
             }
         }
     }
@@ -438,6 +519,312 @@ private struct ConversationView: View {
             proxy.scrollTo(match, anchor: .center)
         }
     }
+}
+
+struct TranscriptScrollMetrics {
+    static func bottomDistance(
+        documentBounds: CGRect,
+        visibleRect: CGRect,
+        isFlipped: Bool
+    ) -> CGFloat {
+        if isFlipped {
+            return max(documentBounds.maxY - visibleRect.maxY, 0)
+        }
+        return max(visibleRect.minY - documentBounds.minY, 0)
+    }
+
+    static func bottomOriginY(
+        documentBounds: CGRect,
+        viewportHeight: CGFloat,
+        isFlipped: Bool
+    ) -> CGFloat {
+        if isFlipped {
+            return max(documentBounds.maxY - viewportHeight, documentBounds.minY)
+        }
+        return documentBounds.minY
+    }
+}
+
+/// Owns the underlying NSScrollView. Streaming height changes are pinned once
+/// per display refresh by adjusting the clip-view origin directly; no SwiftUI
+/// scrollTo transaction is created for tokens or reasoning.
+@MainActor
+final class TranscriptScrollCoordinator: ObservableObject {
+    @Published private(set) var followState = TranscriptFollowState()
+
+    private weak var scrollView: NSScrollView?
+    private weak var documentView: NSView?
+    private var observers: [NSObjectProtocol] = []
+    private var eventMonitor: Any?
+    private var displayLink: CADisplayLink?
+    private var pinPending = false
+    private var isProgrammaticScroll = false
+    private var isUserLiveScrolling = false
+    private var lastOriginY: CGFloat = 0
+
+    func attach(from anchor: NSView) {
+        guard let candidate = anchor.enclosingScrollView else { return }
+        if scrollView === candidate, documentView === candidate.documentView { return }
+        detachObservers()
+        scrollView = candidate
+        documentView = candidate.documentView
+        candidate.contentView.postsBoundsChangedNotifications = true
+        candidate.documentView?.postsFrameChangedNotifications = true
+        lastOriginY = candidate.contentView.bounds.origin.y
+
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(
+            forName: NSView.frameDidChangeNotification,
+            object: candidate.documentView,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.documentFrameChanged() }
+        })
+        observers.append(center.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: candidate.contentView,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.boundsChanged() }
+        })
+        observers.append(center.addObserver(
+            forName: NSScrollView.willStartLiveScrollNotification,
+            object: candidate,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.liveScrollStarted() }
+        })
+        observers.append(center.addObserver(
+            forName: NSScrollView.didLiveScrollNotification,
+            object: candidate,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.userViewportChanged() }
+        })
+        observers.append(center.addObserver(
+            forName: NSScrollView.didEndLiveScrollNotification,
+            object: candidate,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.liveScrollEnded() }
+        })
+
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) {
+            [weak self, weak candidate] event in
+            guard let self, let candidate,
+                  let window = candidate.window, event.window === window
+            else { return event }
+            let point = candidate.convert(event.locationInWindow, from: nil)
+            guard candidate.bounds.contains(point), event.scrollingDeltaY != 0 else { return event }
+            self.wheelMoved(deltaY: event.scrollingDeltaY)
+            return event
+        }
+        updateNearBottom()
+        contentMayHaveChanged()
+    }
+
+    func contentMayHaveChanged() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if self.followState.permitsAutomaticScroll {
+                self.schedulePin()
+            } else {
+                self.updateNearBottom()
+            }
+        }
+    }
+
+    func detach() {
+        pinPending = false
+        displayLink?.isPaused = true
+        mutateState { $0.detach() }
+    }
+
+    func jumpToLatest(animated: Bool) {
+        mutateState { $0.jumpToLatest() }
+        pinPending = false
+        displayLink?.isPaused = true
+        scrollToBottom(animated: animated)
+    }
+
+    func detachAll() {
+        detachObservers()
+        scrollView = nil
+        documentView = nil
+    }
+
+    private func wheelMoved(deltaY: CGFloat) {
+        updateNearBottom()
+        if deltaY > 0 {
+            detach()
+        } else {
+            mutateState { $0.userScrolled(upward: false) }
+        }
+    }
+
+    private func liveScrollStarted() {
+        isUserLiveScrolling = true
+        pinPending = false
+        displayLink?.isPaused = true
+        lastOriginY = scrollView?.contentView.bounds.origin.y ?? lastOriginY
+    }
+
+    private func liveScrollEnded() {
+        userViewportChanged()
+        isUserLiveScrolling = false
+    }
+
+    private func userViewportChanged() {
+        guard let scrollView, !isProgrammaticScroll else { return }
+        let origin = scrollView.contentView.bounds.origin.y
+        let movedTowardBottom = documentView?.isFlipped == false
+            ? origin < lastOriginY
+            : origin > lastOriginY
+        lastOriginY = origin
+        updateNearBottom()
+        if movedTowardBottom, followState.isNearBottom {
+            mutateState { $0.userScrolled(upward: false) }
+        } else if !movedTowardBottom {
+            detach()
+        }
+    }
+
+    private func boundsChanged() {
+        guard let scrollView else { return }
+        let origin = scrollView.contentView.bounds.origin.y
+        if isProgrammaticScroll {
+            lastOriginY = origin
+            updateNearBottom()
+        } else if isUserLiveScrolling {
+            userViewportChanged()
+        } else {
+            lastOriginY = origin
+            updateNearBottom()
+        }
+    }
+
+    private func documentFrameChanged() {
+        if followState.permitsAutomaticScroll {
+            schedulePin()
+        } else {
+            updateNearBottom()
+        }
+    }
+
+    private func updateNearBottom() {
+        guard let scrollView, let documentView else { return }
+        let distance = TranscriptScrollMetrics.bottomDistance(
+            documentBounds: documentView.bounds,
+            visibleRect: scrollView.documentVisibleRect,
+            isFlipped: documentView.isFlipped
+        )
+        mutateState { $0.updateBottom(isNear: distance <= 24) }
+    }
+
+    private func schedulePin() {
+        guard followState.permitsAutomaticScroll, let scrollView else { return }
+        pinPending = true
+        if displayLink == nil {
+            let link = scrollView.displayLink(target: self, selector: #selector(displayTick(_:)))
+            link.add(to: .main, forMode: .common)
+            link.isPaused = true
+            displayLink = link
+        }
+        displayLink?.isPaused = false
+    }
+
+    @objc private func displayTick(_ link: CADisplayLink) {
+        guard pinPending, followState.permitsAutomaticScroll else {
+            link.isPaused = true
+            return
+        }
+        pinPending = false
+        link.isPaused = true
+        scrollToBottom(animated: false)
+    }
+
+    private func scrollToBottom(animated: Bool) {
+        guard let scrollView, let documentView else { return }
+        let origin = NSPoint(
+            x: scrollView.contentView.bounds.origin.x,
+            y: TranscriptScrollMetrics.bottomOriginY(
+                documentBounds: documentView.bounds,
+                viewportHeight: scrollView.contentView.bounds.height,
+                isFlipped: documentView.isFlipped
+            )
+        )
+        isProgrammaticScroll = true
+        let finish = { [weak self, weak scrollView] in
+            guard let self else { return }
+            if let scrollView {
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+                self.lastOriginY = scrollView.contentView.bounds.origin.y
+            }
+            self.isProgrammaticScroll = false
+            self.updateNearBottom()
+        }
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.16
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                scrollView.contentView.animator().setBoundsOrigin(origin)
+            } completionHandler: {
+                DispatchQueue.main.async(execute: finish)
+            }
+        } else {
+            scrollView.contentView.scroll(to: origin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            finish()
+        }
+    }
+
+    private func mutateState(_ mutation: (inout TranscriptFollowState) -> Void) {
+        var next = followState
+        mutation(&next)
+        if next != followState { followState = next }
+    }
+
+    private func detachObservers() {
+        let center = NotificationCenter.default
+        observers.forEach(center.removeObserver)
+        observers.removeAll()
+        if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
+        eventMonitor = nil
+        displayLink?.invalidate()
+        displayLink = nil
+        pinPending = false
+    }
+
+    deinit {
+        observers.forEach(NotificationCenter.default.removeObserver)
+        if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
+        displayLink?.invalidate()
+    }
+}
+
+private struct TranscriptScrollBridge: NSViewRepresentable {
+    let coordinator: TranscriptScrollCoordinator
+
+    func makeNSView(context: Context) -> TranscriptScrollAnchorView {
+        let view = TranscriptScrollAnchorView(frame: .zero)
+        view.transcriptCoordinator = coordinator
+        DispatchQueue.main.async { coordinator.attach(from: view) }
+        return view
+    }
+
+    func updateNSView(_ view: TranscriptScrollAnchorView, context: Context) {
+        view.transcriptCoordinator = coordinator
+        DispatchQueue.main.async { coordinator.attach(from: view) }
+    }
+
+    static func dismantleNSView(_ nsView: TranscriptScrollAnchorView, coordinator: ()) {
+        nsView.transcriptCoordinator?.detachAll()
+        nsView.transcriptCoordinator = nil
+    }
+}
+
+private final class TranscriptScrollAnchorView: NSView {
+    weak var transcriptCoordinator: TranscriptScrollCoordinator?
 }
 
 /// ⌘F search over the current conversation. Matches whole blocks (tool cards
@@ -529,13 +916,6 @@ private struct TranscriptSearchBar: View {
             Rectangle().fill(LocusTheme.line).frame(height: 1)
         }
         .onAppear { focused = true }
-    }
-}
-
-private struct ConversationBottomKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
     }
 }
 
@@ -634,10 +1014,49 @@ private struct EmptyConversationView: View {
     }
 }
 
-private struct MessageBlockView: View {
-    @EnvironmentObject private var model: AppModel
+/// An immutable transcript row. Keeping the observable AppModel out of this
+/// view is what prevents a token publication for the active reply from
+/// invalidating every completed Markdown row above it.
+private struct ActiveAssistantBlockView: View {
+    @ObservedObject var reply: StreamingReplyState
+    let thinkingVisibility: ThinkingVisibility
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 13) {
+            BrandMark(compact: true)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Locus")
+                    .font(.system(size: 10, weight: .bold))
+                StreamingMessageContentView(
+                    reply: reply,
+                    thinkingVisibility: thinkingVisibility
+                )
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityIdentifier("message.streamingAssistant")
+    }
+}
+
+private struct MessageBlockView: View, Equatable {
     let block: ChatBlock
+    let thinkingVisibility: ThinkingVisibility
+    let actionsDisabled: Bool
+    let canRewind: Bool
+    let canRegenerate: Bool
+    let onCopy: () -> Void
+    let onUseAsDraft: () -> Void
+    let onRewind: () -> Void
+    let onRegenerate: () -> Void
     @State private var isHovering = false
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.block == rhs.block
+            && lhs.thinkingVisibility == rhs.thinkingVisibility
+            && lhs.actionsDisabled == rhs.actionsDisabled
+            && lhs.canRewind == rhs.canRewind
+            && lhs.canRegenerate == rhs.canRegenerate
+    }
 
     var body: some View {
         Group {
@@ -653,13 +1072,17 @@ private struct MessageBlockView: View {
 
             case .assistant:
                 conversationRow(name: "Locus", avatar: AnyView(BrandMark(compact: true))) {
-                    if block.text.isEmpty, block.isStreaming {
+                    if block.text.isEmpty,
+                       (block.reasoningText?.isEmpty ?? true),
+                       block.isStreaming
+                    {
                         ThinkingDots()
                     } else {
                         MessageContentView(
                             text: block.text,
                             isStreaming: block.isStreaming,
-                            thinkingVisibility: model.thinkingVisibility
+                            reasoningText: block.reasoningText,
+                            thinkingVisibility: thinkingVisibility
                         )
                         if block.isStreaming {
                             Capsule()
@@ -673,7 +1096,6 @@ private struct MessageBlockView: View {
             case .tool:
                 if let tool = block.tool {
                     ToolCardView(tool: tool)
-                        .environmentObject(model)
                         .padding(.leading, 43)
                 }
 
@@ -712,17 +1134,17 @@ private struct MessageBlockView: View {
         )
         .contextMenu {
             if block.kind == .user || block.kind == .assistant {
-                Button("Copy Message") { model.copyMessage(block.text) }
-                Button("Use as Draft") { model.useAsDraft(block.text) }
-                    .disabled(model.isBusy || model.hasPendingPermission)
+                Button("Copy Message", action: onCopy)
+                Button("Use as Draft", action: onUseAsDraft)
+                    .disabled(actionsDisabled)
             }
             if block.kind == .user {
-                Button("Rewind to This Message") { model.rewind(to: block) }
-                    .disabled(!model.canRewind(to: block))
+                Button("Rewind to This Message", action: onRewind)
+                    .disabled(!canRewind)
             }
-            if model.canRegenerate(block) {
+            if canRegenerate {
                 Divider()
-                Button("Regenerate Response") { model.retryLastResponse() }
+                Button("Regenerate Response", action: onRegenerate)
             }
         }
     }
@@ -769,22 +1191,22 @@ private struct MessageBlockView: View {
     private var messageActions: some View {
         if block.kind == .user || block.kind == .assistant {
             actionButton("doc.on.doc", help: "Copy message", identifier: "copy") {
-                model.copyMessage(block.text)
+                onCopy()
             }
             actionButton("arrow.turn.down.right", help: "Use as draft", identifier: "useAsDraft") {
-                model.useAsDraft(block.text)
+                onUseAsDraft()
             }
-            .disabled(model.isBusy || model.hasPendingPermission)
+            .disabled(actionsDisabled)
         }
         if block.kind == .user {
             actionButton("arrow.counterclockwise", help: "Rewind to this message", identifier: "rewind") {
-                model.rewind(to: block)
+                onRewind()
             }
-            .disabled(!model.canRewind(to: block))
+            .disabled(!canRewind)
         }
-        if model.canRegenerate(block) {
+        if canRegenerate {
             actionButton("arrow.clockwise", help: "Regenerate response", identifier: "regenerate") {
-                model.retryLastResponse()
+                onRegenerate()
             }
         }
     }
@@ -1033,7 +1455,6 @@ private struct ThinkingDots: View {
 }
 
 private struct ToolCardView: View {
-    @EnvironmentObject private var model: AppModel
     let tool: ToolPayload
     @State private var expanded = false
 

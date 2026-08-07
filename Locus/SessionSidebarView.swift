@@ -28,37 +28,41 @@ struct SessionSidebarView: View {
 
             ScrollView {
                 LazyVStack(spacing: 4) {
-                    if model.filteredSessions.isEmpty {
+                    if model.workspaceChatGroups.isEmpty {
                         emptyState
                     } else {
-                        SectionLabel(model.showArchivedSessions ? "All sessions" : "Recent")
-                        ForEach(model.filteredSessions) { session in
-                            SessionRow(
-                                session: session,
-                                isActive: session.id == model.currentSessionID
-                            ) {
-                                model.resume(session)
-                            }
-                            .contextMenu {
-                                Button("Rename…") {
-                                    renameText = session.displayTitle
-                                    sessionToRename = session
+                        SectionLabel(model.showArchivedSessions ? "All Workspaces" : "Workspaces")
+                        ForEach(model.workspaceChatGroups) { group in
+                            WorkspaceGroupRow(
+                                group: group,
+                                expanded: model.isWorkspaceExpanded(group.id),
+                                active: group.id == model.activeWorkspaceID,
+                                actionsDisabled: model.isBusy || model.hasPendingPermission,
+                                onToggle: {
+                                    model.setWorkspaceExpanded(
+                                        group.id,
+                                        expanded: !model.isWorkspaceExpanded(group.id)
+                                    )
+                                },
+                                onOpen: { model.openWorkspace(group) },
+                                onNewChat: {
+                                    if let path = group.path { model.newSession(in: path) }
                                 }
-                                .accessibilityIdentifier("session.\(session.id).rename")
-                                Button(session.isPinned ? "Unpin" : "Pin") {
-                                    model.togglePin(session)
+                            )
+                            if model.isWorkspaceExpanded(group.id) {
+                                if group.chats.isEmpty {
+                                    Text("No chats yet")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(LocusTheme.muted)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.leading, 42)
+                                        .padding(.vertical, 7)
+                                } else {
+                                    ForEach(group.chats) { session in
+                                        sessionRow(session)
+                                            .padding(.leading, 14)
+                                    }
                                 }
-                                .accessibilityIdentifier("session.\(session.id).pin")
-                                Divider()
-                                Button("Export Markdown…") {
-                                    model.exportSession(session)
-                                }
-                                .accessibilityIdentifier("session.\(session.id).export")
-                                Button(session.isArchived ? "Restore from Archive" : "Archive") {
-                                    model.archive(session)
-                                }
-                                .disabled(session.id == model.currentSessionID)
-                                .accessibilityIdentifier("session.\(session.id).archive")
                             }
                         }
                     }
@@ -206,27 +210,55 @@ struct SessionSidebarView: View {
 
     private var controls: some View {
         VStack(spacing: 8) {
-            Button {
-                model.newSession()
-            } label: {
-                HStack(spacing: SidebarMetrics.iconGap) {
-                    Image(systemName: "plus")
-                        .frame(width: SidebarMetrics.iconColumn)
-                    Text("New chat")
-                    Spacer(minLength: 4)
-                    Text("⌘N")
-                        .font(.system(size: 8, design: .monospaced))
-                        .foregroundStyle(Color.white.opacity(0.45))
+            HStack(spacing: 7) {
+                Button {
+                    model.newSession()
+                } label: {
+                    HStack(spacing: SidebarMetrics.iconGap) {
+                        Image(systemName: "plus")
+                            .frame(width: SidebarMetrics.iconColumn)
+                        Text("New chat")
+                        Spacer(minLength: 4)
+                        Text("⌘N")
+                            .font(.system(size: 8, design: .monospaced))
+                            .foregroundStyle(Color.white.opacity(0.45))
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(LocusTheme.paper)
+                    .padding(.horizontal, SidebarMetrics.rowInset)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 36)
+                    .background(LocusTheme.ink)
+                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 }
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(LocusTheme.paper)
-                .padding(.horizontal, SidebarMetrics.rowInset)
-                .frame(height: 36)
-                .background(LocusTheme.ink)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("sidebar.newSession")
+
+                Menu {
+                    Button("New Workspace Folder…") { model.createWorkspace() }
+                        .accessibilityIdentifier("workspace.new")
+                    Button("Add Existing Folder…") { model.chooseWorkspace() }
+                        .accessibilityIdentifier("workspace.addExisting")
+                } label: {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(LocusTheme.ink)
+                        .frame(width: 36, height: 36)
+                        .background(LocusTheme.white.opacity(0.82))
+                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .stroke(LocusTheme.line, lineWidth: 1)
+                        }
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .frame(width: 36)
+                .help("Add workspace")
+                .accessibilityLabel("Add workspace")
+                .accessibilityIdentifier("sidebar.addWorkspace")
+                .disabled(model.isBusy || model.hasPendingPermission)
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("sidebar.newSession")
 
             HStack(spacing: SidebarMetrics.iconGap) {
                 Image(systemName: "magnifyingglass")
@@ -259,6 +291,43 @@ struct SessionSidebarView: View {
         }
         .padding(.horizontal, SidebarMetrics.gutter)
         .padding(.bottom, 12)
+    }
+
+    @ViewBuilder
+    private func sessionRow(_ session: SessionSummary) -> some View {
+        SessionRow(
+            session: session,
+            isActive: session.id == model.currentSessionID
+        ) {
+            model.resume(session)
+        }
+        .contextMenu {
+            Button("Rename…") {
+                renameText = session.displayTitle
+                sessionToRename = session
+            }
+            .accessibilityIdentifier("session.\(session.id).rename")
+            Button(session.isPinned ? "Unpin" : "Pin") {
+                model.togglePin(session)
+            }
+            .accessibilityIdentifier("session.\(session.id).pin")
+            Divider()
+            Button("Export Markdown…") {
+                model.exportSession(session)
+            }
+            .accessibilityIdentifier("session.\(session.id).export")
+            Button(session.isArchived ? "Restore from Archive" : "Archive") {
+                model.archive(session)
+            }
+            .disabled(session.id == model.currentSessionID)
+            .accessibilityIdentifier("session.\(session.id).archive")
+            Divider()
+            Button("Delete Chat", role: .destructive) {
+                model.deleteChat(session)
+            }
+            .disabled(model.isBusy || model.hasPendingPermission)
+            .accessibilityIdentifier("session.\(session.id).delete")
+        }
     }
 
     private var emptyState: some View {
@@ -462,6 +531,78 @@ struct SessionSidebarView: View {
         case .online: LocusTheme.success
         case .unavailable: LocusTheme.coral
         }
+    }
+}
+
+private struct WorkspaceGroupRow: View {
+    let group: WorkspaceChatGroup
+    let expanded: Bool
+    let active: Bool
+    let actionsDisabled: Bool
+    let onToggle: () -> Void
+    let onOpen: () -> Void
+    let onNewChat: () -> Void
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Button(action: onToggle) {
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(LocusTheme.muted)
+                    .frame(width: 18, height: 30)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(expanded ? "Collapse \(group.title)" : "Expand \(group.title)")
+
+            Button(action: onOpen) {
+                HStack(spacing: 7) {
+                    Image(systemName: group.isOther ? "tray.full" : "folder.fill")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(active ? LocusTheme.signalDeep : LocusTheme.muted)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(group.title)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(LocusTheme.ink)
+                            .lineLimit(1)
+                        Text("\(group.chats.count) \(group.chats.count == 1 ? "chat" : "chats")")
+                            .font(.system(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                    }
+                    Spacer(minLength: 3)
+                    if !group.isAvailable {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(LocusTheme.warning)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(actionsDisabled || (group.path != nil && !group.isAvailable))
+            .help(group.path ?? "Chats without saved workspace information")
+            .accessibilityIdentifier("workspace.group.\(group.id)")
+
+            if group.path != nil {
+                Button(action: onNewChat) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(LocusTheme.muted)
+                        .frame(width: 24, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(actionsDisabled || !group.isAvailable)
+                .help("New chat in \(group.title)")
+                .accessibilityLabel("New chat in \(group.title)")
+                .accessibilityIdentifier("workspace.group.\(group.id).newChat")
+            }
+        }
+        .padding(.horizontal, 5)
+        .frame(height: 38)
+        .background(active ? LocusTheme.panel.opacity(0.85) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 

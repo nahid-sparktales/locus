@@ -91,6 +91,7 @@ busy, 422 invalid configuration, 502 verification failure.
   "sessions": [
     { "id": "20260723-010948-123456-users-nahid", "name": "20260723-010948-123456-users-nahid.jsonl",
       "preview": "create a file …", "mtime": 1784783548.44, "size": 126216,
+      "cwd": "/Users/me/project",
       "title": "Shipping checklist", "pinned": true, "archived": false }
   ],
   "current": "20260723-011732-users-nahid"
@@ -105,7 +106,8 @@ Query parameters:
 
 Pinned sessions sort first, then all remaining sessions by modification date.
 `id` is the filename stem. Existing sessions receive empty-title, unpinned,
-unarchived defaults automatically.
+unarchived defaults automatically. `cwd` is optional for compatibility with
+older sessions; clients may group missing values under an unassigned section.
 
 ### `DELETE /api/sessions`
 
@@ -125,6 +127,26 @@ folder under `~/.ollama-code/session-trash/`.
 This endpoint returns 409 while the agent is busy, so a clear cannot race with
 records being appended to the active turn. A `manifest.json` beside the
 recovered JSONL files preserves identifiers and organizer metadata.
+
+### `DELETE /api/sessions/{session_id}`
+
+Moves one session and its organizer metadata into a uniquely named recovery
+batch. If it is the active session, a blank replacement is created in the same
+workspace before the old file is moved.
+
+```json
+{
+  "ok": true,
+  "id": "20260723-010948-123456-users-nahid",
+  "trash_batch": "20260725-220000-123456",
+  "deleted_active": true,
+  "replacement_session_info": { "session_id": "20260725-220001-123456-users-nahid" }
+}
+```
+
+Unknown IDs return 404, traversal-like IDs return 422, and deletion returns
+409 while a turn or permission decision is active. Workspace files are never
+part of the recovery batch.
 
 ### `GET /api/sessions/{session_id}`
 
@@ -171,7 +193,8 @@ Creates a genuinely separate saved session and returns a direct acknowledgement:
 
 ```json
 {
-  "reason": "clear_chat"
+  "reason": "clear_chat",
+  "cwd": "/Users/me/project"
 }
 ```
 
@@ -185,15 +208,17 @@ Creates a genuinely separate saved session and returns a direct acknowledgement:
 }
 ```
 
-`reason` may be `clear_chat` or `new_session`. The previous session remains
-available. Memory, todos, session permissions, interrupts, and token counters
-are reset. A matching `session_started` WebSocket event is also emitted when a
-client is connected.
+`reason` may be `clear_chat`, `new_session`, or a client-specific session reason.
+The optional `cwd` must be an existing directory and makes the new session's
+workspace explicit. The previous session remains available. Memory, todos,
+session permissions, interrupts, and token counters are reset. A matching
+`session_started` WebSocket event is also emitted when a client is connected.
 
 ### `POST /api/sessions/restore`
 
 Body: `{ "batch": "<timestamped batch name>" }`; omitting `batch` restores the
-newest recovery batch. Returns `{ "ok": true, "restored": <count> }`.
+newest recovery batch. Returns
+`{ "ok": true, "restored": <count>, "session_ids": ["<restored-id>"] }`.
 Traversal-like batch names are refused and existing session files are never
 overwritten. Returns 409 while a turn is active.
 
@@ -310,7 +335,8 @@ Endpoint: `/ws/chat`.
   ("Agent is busy — press Stop first."). This includes `user_message`,
   `new_session`, `retry_last`, `compact`, `resume`, `set_model`, `set_cwd`,
   `set_permission_mode`, and `clear`. Only `interrupt`, permission decisions,
-  heartbeat traffic, and independent console operations remain accepted.
+  `steer`, native computer-action results, heartbeat traffic, and independent
+  console operations remain accepted.
 
 ---
 
@@ -318,9 +344,12 @@ Endpoint: `/ws/chat`.
 
 | `type` | Extra fields | Effect |
 |---|---|---|
-| `user_message` | `text: string` | Runs one agent turn. If `text` starts with `/` it is executed as a slash command and ends with a `slash_result` event instead of `turn_done`. |
+| `user_message` | `text: string`, optional `mode: "ask" \| "work" \| "plan" \| "build"`, optional `attachments` | Runs one agent turn. Existing `ask`, `plan`, and `build` values remain compatible; `work` is tools-enabled adaptive behavior. If `text` starts with `/` it is executed as a slash command and ends with a `slash_result` event instead of `turn_done`. |
 | `permission_decision` | `request_id: string`, `decision: "once" \| "always" \| "deny"` | Answers a `permission_request`. Unknown/invalid values are treated as `deny`. Late answers are ignored. |
 | `interrupt` | — | Soft-interrupts the current turn: streaming stops after the current chunk, pending permission waits are denied, turn ends with `turn_done {reason: "interrupted"}`. Safe to send when idle. |
+| `steer` | `text: string` | Adds direction to the active turn. It interrupts only the current provider generation, waits for an already-running tool/native action to reach a safe boundary, and continues the same turn without an intermediate `turn_done`. |
+| `set_computer_control` | `enabled: boolean`, `native_available: boolean` | Advertises the direct-build native broker. Computer tools enter model schemas only when both values are true. Rejected while a turn is busy. |
+| `computer_action_result` | `request_id: string`, `result: object` | Completes one pending native broker request. `result` may contain `text`, `error`, and optional `screenshot` metadata/data. Late, duplicate, and unknown IDs are ignored after cancellation or timeout. |
 | `set_model` | `model: string` | Switches model (substring match allowed). Emits `session_info` on success, `command_error` if rejected. Persisted to config. |
 | `set_cwd` | `path: string` | Changes the agent working directory. Emits `session_info` on success, `command_error` otherwise. |
 | `set_permission_mode` | `mode: "ask" \| "accept_edits" \| "bypass"` | Changes the permission mode while idle and emits `session_info`. |
@@ -380,12 +409,57 @@ only clear or branch their visible transcript after this event.
 reason. A retry copies history only through the latest user message; the source
 session is never modified.
 
-### `message_start` / `token` / `message_end`
+### `message_start` / `token` / `thinking` / `message_end`
 Assistant streaming. `token` carries `{ "type": "token", "text": "<piece>" }`;
 concatenate `text` in order. `<think>...</think>` blocks are already stripped.
+`thinking` carries `{ "type": "thinking", "text": "<piece>" }`; concatenate
+only explicit provider-supplied native reasoning or text from inline
+`<think>`/`<thinking>` blocks, and apply one visibility setting to both.
+Provider signatures and redacted reasoning are never sent.
 `message_start` and `message_end` have no extra fields. One
 `message_start … message_end` pair wraps each model call, so a multi-tool turn
 contains several pairs.
+
+### `plan_ready`
+
+Emitted after the permission-free `submit_plan` tool succeeds. It is a final
+plan-decision boundary, not a general progress event.
+
+```json
+{ "type": "plan_ready", "plan": {
+  "id": "8f38c1d2d9a04bc1", "title": "Implementation plan",
+  "summary": "...", "steps": ["..."], "tests": ["..."]
+} }
+```
+
+The client presents Proceed, Revise, and Cancel only after the surrounding Plan
+turn completes successfully. Reconnection replay preserves this event's order.
+
+### `steer_ack` / `steer_applied`
+
+`steer_ack {text, state}` accepts a steering message. `state` is
+`interrupting_generation` or `after_current_action`. Later,
+`steer_applied {text}` marks the safe boundary where the text was appended to
+the same turn's user history. Multiple steers preserve receive order.
+
+### `computer_control_status` / `computer_action_request`
+
+`computer_control_status {enabled}` acknowledges the native capability
+handshake. When enabled, a native tool call emits:
+
+```json
+{ "type": "computer_action_request", "request_id": "...",
+  "tool": "computer_get_state", "arguments": {"app": "Safari"},
+  "timeout_ms": 60000 }
+```
+
+The agent worker blocks for the matching `computer_action_result`. Exactly one
+result is accepted per ID. The request fails after 60 seconds; `interrupt` and
+socket teardown cancel all pending native requests immediately. Element IDs are
+valid only for the latest Accessibility snapshot and must be refreshed after a
+mutation. A screenshot result is an ephemeral newest-only observation; routes
+that reject images are retried once without it and remain Accessibility-only
+for the session.
 
 ### `tool_call_proposed`
 The model asked to run a tool. Always emitted before any `permission_request`
@@ -428,14 +502,6 @@ Exactly one per `tool_call_proposed` (after permission, if any).
 `{ "type": "todo_update", "todos": [ { "content": "...", "status": "pending" } ] }`
 — `status` is `pending` | `in_progress` | `completed`. Emitted after every
 `todo_write` tool call and on `clear`.
-
-### `thinking`
-
-`{ "type": "thinking", "text": "..." }` — native reasoning output, separate
-from visible answer tokens. Provider-required continuation state (including
-OpenAI-compatible `reasoning_content` and Anthropic thinking signatures) is
-retained in the private session transcript but omitted from sanitized
-REST/resume payloads shown to the UI.
 
 ### `workspace_changed`
 
@@ -520,24 +586,42 @@ Notes:
   the model usually replies with text afterwards and the turn completes.
 - `interrupt` mid-stream: current `message_start…message_end` pair closes, then
   `turn_done {reason: "interrupted"}` + `session_info`. Interrupt during a
-  permission wait auto-denies it first.
+  permission wait auto-denies it first and cancels a pending native request.
+- `steer` mid-stream: `steer_ack` is sent first, the current
+  `message_start…message_end` pair closes, then `steer_applied` precedes the next
+  `message_start`. There is no intermediate `turn_done`. During tool execution,
+  the tool's terminal `tool_result` comes before `steer_applied`.
+- Stop & Send is a client ordering rule: send `interrupt`, wait for the old
+  turn's terminal `turn_done`, then send a fresh `user_message`.
 - Tool-call arguments are **not** streamed; while the model generates long
   arguments no `token` events arrive.
 - Slash commands: no `message_start`/`turn_done` (except `/init`, which runs a
   full agent turn internally); the turn ends with `slash_result`.
 - History messages (from resume / `GET /api/sessions/{id}`) are sanitized:
-  `{role, content, name?, tool_calls?}` where `content` is capped at 4000 chars,
-  `name` is the tool name for `role: "tool"`, and `tool_calls` on assistant
-  messages is a list of tool-name strings (not full call objects).
+  `{role, content, reasoning?, name?, tool_calls?}` where `content` is capped at
+  4000 chars, visible provider-supplied `reasoning` at 20000 chars, `name` is
+  the tool name for `role: "tool"`, and `tool_calls` on assistant messages is a
+  list of tool-name strings (not full call objects). Signatures and redacted
+  provider blocks are omitted.
 
 ---
 
 ## 6. Tools the model can call
 
 `read_file`, `write_file`, `edit_file`, `multi_edit`, `bash`, `glob`, `grep`,
-`list_dir`, `todo_write`, `web_fetch`, `git_status`, and `git_diff`.
-Workspace-contained `read_file`, `glob`, `grep`, `list_dir`, and `todo_write`
-are permission-free. Everything else follows the selected permission mode.
+`list_dir`, `todo_write`, `submit_plan`, `web_fetch`, `git_status`, and
+`git_diff`. Workspace-contained `read_file`, `glob`, `grep`, `list_dir`,
+`todo_write`, and `submit_plan` are permission-free. Everything else follows
+the selected permission mode.
+
+When native computer control is enabled and available, the schema additionally
+contains `computer_list_apps`, `computer_get_state`, `computer_activate_app`,
+`computer_click`, `computer_set_value`, `computer_type_text`,
+`computer_press_key`, `computer_scroll`, and `computer_drag`. Listing and state
+inspection are automatic. Mutations follow the global permission mode, except
+high-consequence actions always ask and credential entry, password changes,
+security interstitials, contracts, and final financial transactions are hard
+blocked for user takeover even in Bypass.
 Writes through a symlinked workspace component are refused; permission previews
 show the resolved target when it differs. The shell deny list is a final
 catastrophic-command guardrail, not a process sandbox.

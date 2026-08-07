@@ -75,6 +75,7 @@ targets:
       configs:
         ReleaseMAS:
           CODE_SIGN_ENTITLEMENTS: Config/Locus.entitlements
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_APP_STORE"
     scheme:
       testTargets:
         - LocusTests

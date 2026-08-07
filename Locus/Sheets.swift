@@ -1502,8 +1502,72 @@ struct SettingsView: View {
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            Section("Computer Control") {
+                if ComputerControlService.isAvailable {
+                    Toggle("Allow Locus to control Mac apps", isOn: Binding(
+                        get: { model.settings.computerControlEnabled },
+                        set: { model.setComputerControlEnabled($0) }
+                    ))
+                    .accessibilityIdentifier("settings.computerControl.enabled")
+
+                    Text("Off by default. Read-only app inspection is automatic. Clicks, typing, keys, scrolling, and dragging follow the permission mode above, with non-bypassable safeguards for credentials and high-consequence actions.")
+                        .font(.system(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    LabeledContent("Accessibility") {
+                        permissionStatus(
+                            granted: model.computerControl.accessibilityGranted,
+                            grant: model.computerControl.requestAccessibility,
+                            settings: model.computerControl.openAccessibilitySettings
+                        )
+                    }
+                    LabeledContent("Screen Recording") {
+                        permissionStatus(
+                            granted: model.computerControl.screenRecordingGranted,
+                            grant: model.computerControl.requestScreenRecording,
+                            settings: model.computerControl.openScreenRecordingSettings
+                        )
+                    }
+                    Text("Screenshots are target-window scoped and exclude Locus. Before a screenshot is sent to a hosted provider, Locus names that provider and asks once per session. Local Ollama screenshots remain local.")
+                        .font(.system(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Label("Unavailable in the Mac App Store build", systemImage: "lock.app.dashed")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("Apple requires App Sandbox for Mac App Store apps, while assistive Accessibility control is incompatible with that sandbox. Install the signed direct-download build to opt in.")
+                        .font(.system(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Link(
+                        "Apple App Sandbox guidance",
+                        destination: URL(string: "https://developer.apple.com/documentation/security/protecting-user-data-with-app-sandbox")!
+                    )
+                    .font(.system(size: 9, weight: .semibold))
+                }
+            }
         }
         .formStyle(.grouped)
+        .onAppear { model.computerControl.refreshPermissionStatus() }
+    }
+
+    @ViewBuilder
+    private func permissionStatus(
+        granted: Bool,
+        grant: @escaping () -> Void,
+        settings: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 8) {
+            Label(granted ? "Granted" : "Not granted", systemImage: granted ? "checkmark.circle.fill" : "exclamationmark.circle")
+                .foregroundStyle(granted ? LocusTheme.success : LocusTheme.warning)
+            if !granted {
+                Button("Grant", action: grant)
+                Button("Open Settings", action: settings)
+            }
+        }
+        .font(.system(size: 9, weight: .semibold))
     }
 
     private func accountDetail(_ account: ProviderAccount) -> String {

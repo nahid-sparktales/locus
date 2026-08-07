@@ -8,6 +8,207 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(WorkMode.ask.instruction.contains("Do not inspect attachment paths"))
         XCTAssertTrue(WorkMode.plan.instruction.contains("do not modify"))
         XCTAssertTrue(WorkMode.build.instruction.contains("Implement"))
+        XCTAssertTrue(WorkMode.work.instruction.contains("Choose whether"))
+    }
+
+    @MainActor
+    func testAdaptiveWorkIsTheNeutralDefault() {
+        let model = AppModel(startImmediately: false)
+        XCTAssertEqual(model.selectedMode, .work)
+    }
+
+    @MainActor
+    func testSessionsAreGroupedUnderTheirFolderBackedWorkspaces() {
+        let model = AppModel(startImmediately: false)
+        let firstPath = "/tmp/locus-workspace-one"
+        let secondPath = "/tmp/locus-workspace-two"
+        model.workspaceProfiles = [
+            WorkspaceProfile(
+                path: firstPath,
+                lastOpened: Date(timeIntervalSince1970: 20),
+                model: "",
+                accountID: nil,
+                mode: .work,
+                previewURL: "",
+                contextFiles: [],
+                draft: ""
+            ),
+            WorkspaceProfile(
+                path: secondPath,
+                lastOpened: Date(timeIntervalSince1970: 10),
+                model: "",
+                accountID: nil,
+                mode: .work,
+                previewURL: "",
+                contextFiles: [],
+                draft: ""
+            ),
+        ]
+        model.sessions = [
+            SessionSummary(
+                id: "one",
+                name: "one.jsonl",
+                preview: "First",
+                mtime: 30,
+                size: 1,
+                cwd: firstPath
+            ),
+            SessionSummary(
+                id: "legacy",
+                name: "legacy.jsonl",
+                preview: "Legacy",
+                mtime: 5,
+                size: 1
+            ),
+        ]
+
+        let groups = model.workspaceChatGroups
+        XCTAssertEqual(groups.first(where: { $0.id == firstPath })?.chats.map(\.id), ["one"])
+        XCTAssertNotNil(groups.first(where: { $0.id == secondPath }), "empty workspaces remain visible")
+        XCTAssertEqual(
+            groups.first(where: { $0.id == AppModel.otherWorkspaceID })?.chats.map(\.id),
+            ["legacy"]
+        )
+    }
+
+    @MainActor
+    func testWorkspaceExpansionCanBePersistentlyToggledInMemory() {
+        let model = AppModel(startImmediately: false)
+        model.setWorkspaceExpanded("/tmp/example", expanded: true)
+        XCTAssertTrue(model.isWorkspaceExpanded("/tmp/example"))
+        model.setWorkspaceExpanded("/tmp/example", expanded: false)
+        XCTAssertFalse(model.isWorkspaceExpanded("/tmp/example"))
+    }
+
+    func testOlderSessionSummaryWithoutWorkspaceStillDecodes() throws {
+        let summary = try JSONDecoder().decode(
+            SessionSummary.self,
+            from: Data(
+                #"{"id":"old","name":"old.jsonl","preview":"hello","mtime":1,"size":4,"title":null,"pinned":false,"archived":false}"#.utf8
+            )
+        )
+        XCTAssertNil(summary.cwd)
+        XCTAssertNil(summary.workspacePath)
+    }
+
+    func testTranscriptFollowDetachesAndReattachesOnlyFromUserIntent() {
+        var state = TranscriptFollowState()
+        XCTAssertTrue(state.permitsAutomaticScroll)
+
+        state.userScrolled(upward: true)
+        XCTAssertFalse(state.permitsAutomaticScroll)
+        state.updateBottom(isNear: true)
+        XCTAssertFalse(state.permitsAutomaticScroll, "streaming cannot reclaim a detached viewport")
+
+        state.userScrolled(upward: false)
+        XCTAssertTrue(
+            state.permitsAutomaticScroll,
+            "a user who scrolls back within the bottom threshold restores following"
+        )
+        state.userScrolled(upward: true)
+
+        state.jumpToLatest()
+        XCTAssertTrue(state.permitsAutomaticScroll)
+        state.updateBottom(isNear: false)
+        XCTAssertTrue(
+            state.permitsAutomaticScroll,
+            "content growth must not be mistaken for an upward user scroll"
+        )
+        XCTAssertTrue(state.showsJumpToLatest)
+        state.userScrolled(upward: true)
+        XCTAssertFalse(state.permitsAutomaticScroll)
+    }
+
+    func testTranscriptScrollMetricsHandleFlippedAndUnflippedDocuments() {
+        let document = CGRect(x: 0, y: 0, width: 600, height: 2_000)
+        let flippedVisible = CGRect(x: 0, y: 1_500, width: 600, height: 400)
+        XCTAssertEqual(
+            TranscriptScrollMetrics.bottomDistance(
+                documentBounds: document,
+                visibleRect: flippedVisible,
+                isFlipped: true
+            ),
+            100
+        )
+        XCTAssertEqual(
+            TranscriptScrollMetrics.bottomOriginY(
+                documentBounds: document,
+                viewportHeight: 400,
+                isFlipped: true
+            ),
+            1_600
+        )
+        let unflippedVisible = CGRect(x: 0, y: 75, width: 600, height: 400)
+        XCTAssertEqual(
+            TranscriptScrollMetrics.bottomDistance(
+                documentBounds: document,
+                visibleRect: unflippedVisible,
+                isFlipped: false
+            ),
+            75
+        )
+    }
+
+    func testPlanDocumentDecodesOlderPartialPayloads() throws {
+        let document = try JSONDecoder().decode(
+            PlanDocument.self,
+            from: Data(#"{"title":"Older plan","steps":["Inspect","Verify"]}"#.utf8)
+        )
+        XCTAssertEqual(document.title, "Older plan")
+        XCTAssertEqual(document.steps, ["Inspect", "Verify"])
+        XCTAssertTrue(document.summary.isEmpty)
+        XCTAssertTrue(document.tests.isEmpty)
+        XCTAssertFalse(document.id.isEmpty)
+    }
+
+    func testPlanFallbackRequiresACompletedActionablePlan() {
+        let plan = PlanSignalDetector.document(from: "# Plan\n1. Inspect the view\n2. Fix scrolling")
+        XCTAssertEqual(plan?.steps, ["Inspect the view", "Fix scrolling"])
+        XCTAssertNil(PlanSignalDetector.document(from: "# Plan\n1. Inspect the view"))
+        XCTAssertNil(PlanSignalDetector.document(
+            from: "I made a preliminary list.\nWhich behavior should it use?",
+            changedTodos: [TodoItem(content: "Inspect the view", status: .pending)]
+        ))
+        XCTAssertEqual(
+            PlanSignalDetector.document(
+                from: "<proposed_plan>\n- Inspect the view\n- Verify the fix\n</proposed_plan>"
+            )?.steps,
+            ["Inspect the view", "Verify the fix"]
+        )
+        XCTAssertNotNil(PlanSignalDetector.document(
+            from: "# Plan\n1. Inspect the view\n2. Verify the fix\nWould you like me to proceed?"
+        ))
+    }
+
+    @MainActor
+    func testAdaptiveWorkPromptDecorationNamesTheNeutralMode() {
+        let model = AppModel(startImmediately: false)
+        let prompt = model.decoratedPrompt("Fix the sidebar", mode: .work)
+        XCTAssertTrue(prompt.contains("[Locus mode: Work]"))
+        XCTAssertTrue(prompt.contains(WorkMode.work.instruction))
+        XCTAssertTrue(prompt.hasSuffix("User request:\nFix the sidebar"))
+    }
+
+    @MainActor
+    func testLegacyBuildProfilesMigrateOnceWithoutChangingPlan() {
+        func profile(_ mode: WorkMode, path: String) -> WorkspaceProfile {
+            WorkspaceProfile(
+                path: path,
+                lastOpened: Date(),
+                model: "qwen",
+                accountID: nil,
+                mode: mode,
+                previewURL: "",
+                contextFiles: [],
+                draft: ""
+            )
+        }
+        let migrated = AppModel.migrateLegacyBuildProfiles([
+            profile(.build, path: "/tmp/build"),
+            profile(.plan, path: "/tmp/plan"),
+            profile(.work, path: "/tmp/work"),
+        ])
+        XCTAssertEqual(migrated.map(\.mode), [.work, .plan, .work])
     }
 
     func testChatAttachmentRepresentsTextAndImageInputs() {
@@ -359,12 +560,23 @@ final class AppModelTests: XCTestCase {
         let model = AppModel(startImmediately: false)
         model.blocks = [ChatBlock(kind: .user, text: "Make the header calmer")]
         model.todos = [TodoItem(content: "Audit header", status: .pending)]
+        model.handleEventForTesting([
+            "type": "plan_ready",
+            "plan": [
+                "id": "checkpoint-plan",
+                "title": "Header plan",
+                "summary": "",
+                "steps": ["Audit header"],
+                "tests": [],
+            ],
+        ])
 
         model.createCheckpoint(title: "Before header pass")
 
         XCTAssertEqual(model.checkpoints.first?.title, "Before header pass")
         XCTAssertEqual(model.checkpoints.first?.blocks.count, 1)
         XCTAssertEqual(model.checkpoints.first?.todos.count, 1)
+        XCTAssertEqual(model.checkpoints.first?.activePlan?.title, "Header plan")
     }
 
     @MainActor
@@ -433,6 +645,8 @@ final class AppModelTests: XCTestCase {
 
         try await Task.sleep(for: .milliseconds(60))
         XCTAssertLessThanOrEqual(model.streamRevision, 2)
+        XCTAssertEqual(model.streamingReply.snapshot.text.count, 2_000)
+        XCTAssertTrue(model.blocks.last?.text.isEmpty == true)
         model.handleEventForTesting(["type": "message_end"])
         XCTAssertEqual(model.blocks.last?.text.count, 2_000)
         XCTAssertLessThanOrEqual(model.streamRevision, 3)
@@ -568,6 +782,18 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkSlashCommandReturnsToAdaptiveMode() {
+        let model = AppModel(startImmediately: false)
+        model.selectedMode = .build
+
+        model.send("/work")
+
+        XCTAssertEqual(model.selectedMode, .work)
+        XCTAssertTrue(model.blocks.isEmpty)
+        XCTAssertFalse(model.isBusy)
+    }
+
+    @MainActor
     func testPermissionRequestWithoutProposalStillShowsCard() {
         let model = AppModel(startImmediately: false)
         model.handleEventForTesting([
@@ -624,7 +850,7 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testPermissionRequestUpgradeScrollsTheConversation() {
+    func testPermissionRequestUpgradePublishesTheToolCardChange() {
         let model = AppModel(startImmediately: false)
         model.handleEventForTesting([
             "type": "tool_call_proposed",
@@ -644,7 +870,7 @@ final class AppModelTests: XCTestCase {
 
         XCTAssertGreaterThan(
             model.streamRevision, revisionBefore,
-            "an in-place upgrade must still trigger the auto-scroll"
+            "an in-place upgrade must still publish its changed status"
         )
     }
 
@@ -825,7 +1051,7 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testThinkingEventDoesNotDisturbTheTranscript() {
+    func testThinkingEventIsStoredSeparatelyFromTheAnswer() {
         let model = AppModel(startImmediately: false)
         model.handleEventForTesting(["type": "message_start"])
         model.handleEventForTesting(["type": "thinking", "text": "weighing options"])
@@ -834,6 +1060,33 @@ final class AppModelTests: XCTestCase {
 
         XCTAssertEqual(model.blocks.count, 1)
         XCTAssertEqual(model.blocks.first?.text, "answer")
+        XCTAssertEqual(model.blocks.first?.reasoningText, "weighing options")
+    }
+
+    @MainActor
+    func testHundredKilobyteStreamIsCoalescedIntoOneActiveRow() async throws {
+        let model = AppModel(startImmediately: false)
+        let historical = (0..<160).map { index in
+            ChatBlock(kind: index.isMultiple(of: 2) ? .user : .assistant, text: "History \(index)")
+        }
+        model.blocks = historical
+        let historicalIDs = model.blocks.map(\.id)
+        model.handleEventForTesting(["type": "message_start"])
+
+        let chunk = String(repeating: "x", count: 100)
+        for _ in 0..<1_000 {
+            model.handleEventForTesting(["type": "token", "text": chunk])
+        }
+        XCTAssertEqual(model.streamRevision, 0, "token events stay buffered until the display refresh")
+        try await Task.sleep(nanoseconds: 150_000_000)
+
+        XCTAssertEqual(model.streamingReply.snapshot.text.count, 100_000)
+        XCTAssertTrue(model.blocks.last?.text.isEmpty == true)
+        XCTAssertEqual(Array(model.blocks.dropLast()).map(\.id), historicalIDs)
+        XCTAssertEqual(model.streamRevision, 0, "active text does not republish the transcript array")
+
+        model.handleEventForTesting(["type": "message_end"])
+        XCTAssertEqual(model.blocks.last?.text.count, 100_000)
     }
 
     @MainActor
@@ -1404,6 +1657,21 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testUnchangedTodoListIsNotAPlanReadyFallback() {
+        let model = AppModel(startImmediately: false)
+        model.selectedMode = .plan
+        model.turnDispatchedInPlanMode = true
+        model.todos = [TodoItem(content: "Existing step", status: .pending)]
+        model.handleEventForTesting([
+            "type": "todo_update",
+            "todos": [["content": "Existing step", "status": "pending"]],
+        ])
+        model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
+
+        XCTAssertFalse(model.planApprovalPending)
+    }
+
+    @MainActor
     func testBuildTurnDoesNotOfferApprovalEvenAfterAMidRunSwitchToPlan() {
         let model = AppModel(startImmediately: false)
         // What send() latches when a turn is dispatched in Build mode.
@@ -1518,7 +1786,7 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testQueuedMessageSuppressesPlanApproval() {
+    func testQueuedMessageWaitsBehindPlanApproval() {
         let model = AppModel(startImmediately: false)
         model.selectedMode = .plan
         model.turnDispatchedInPlanMode = true
@@ -1530,7 +1798,8 @@ final class AppModelTests: XCTestCase {
         ])
         model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
 
-        XCTAssertFalse(model.planApprovalPending, "the queued message already decided what happens next")
+        XCTAssertTrue(model.planApprovalPending, "queued work waits until the plan decision is resolved")
+        XCTAssertEqual(model.queuedMessages, ["and then do the follow-up"])
     }
 
     @MainActor
@@ -1538,7 +1807,7 @@ final class AppModelTests: XCTestCase {
         let model = AppModel(startImmediately: false)
         armPlanApproval(model)
 
-        model.resolvePlanApproval(.keepPlanning)
+        model.resolvePlanApproval(.revise)
 
         XCTAssertFalse(model.planApprovalPending)
         XCTAssertEqual(model.selectedMode, .plan)
@@ -1551,7 +1820,7 @@ final class AppModelTests: XCTestCase {
         model.agentRuntimePhase = .online
         armPlanApproval(model)
 
-        model.resolvePlanApproval(.implementReviewing)
+        model.resolvePlanApproval(.proceed)
 
         XCTAssertFalse(model.planApprovalPending)
         XCTAssertEqual(model.selectedMode, .build, "implementation happens in Build mode")
@@ -1563,10 +1832,58 @@ final class AppModelTests: XCTestCase {
         model.agentRuntimePhase = .unavailable("gone")
         armPlanApproval(model)
 
-        model.resolvePlanApproval(.implementReviewing)
+        model.resolvePlanApproval(.proceed)
 
         XCTAssertTrue(model.planApprovalPending, "the decision must survive a reconnect")
         XCTAssertEqual(model.selectedMode, .plan)
+    }
+
+    @MainActor
+    func testCancellingPlanReturnsToAdaptiveWorkAndKeepsPlan() {
+        let model = AppModel(startImmediately: false)
+        armPlanApproval(model)
+
+        model.resolvePlanApproval(.cancel)
+
+        XCTAssertFalse(model.planApprovalPending)
+        XCTAssertEqual(model.selectedMode, .work)
+        XCTAssertNotNil(model.activePlan)
+    }
+
+    @MainActor
+    func testClarifyingPlanAnswerDoesNotTriggerApproval() {
+        let model = AppModel(startImmediately: false)
+        model.selectedMode = .plan
+        model.turnDispatchedInPlanMode = true
+        model.handleEventForTesting(["type": "message_start"])
+        model.handleEventForTesting(["type": "token", "text": "Which platform should this target?"])
+        model.handleEventForTesting(["type": "message_end"])
+        model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
+
+        XCTAssertFalse(model.planApprovalPending)
+    }
+
+    @MainActor
+    func testClarifyingQuestionSuppressesEvenAnEarlyStructuredPlanSignal() {
+        let model = AppModel(startImmediately: false)
+        model.selectedMode = .plan
+        model.turnDispatchedInPlanMode = true
+        model.handleEventForTesting([
+            "type": "plan_ready",
+            "plan": [
+                "id": "plan-1",
+                "title": "Draft plan",
+                "summary": "Needs a target",
+                "steps": ["Update the target"],
+                "tests": [],
+            ],
+        ])
+        model.handleEventForTesting(["type": "message_start"])
+        model.handleEventForTesting(["type": "token", "text": "Which target should this use?"])
+        model.handleEventForTesting(["type": "message_end"])
+        model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
+
+        XCTAssertFalse(model.planApprovalPending)
     }
 
     @MainActor

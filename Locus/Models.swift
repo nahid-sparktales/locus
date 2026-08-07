@@ -1,7 +1,9 @@
+import Combine
 import Foundation
 
 enum WorkMode: String, CaseIterable, Codable, Identifiable {
     case ask
+    case work
     case plan
     case build
 
@@ -10,6 +12,7 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
     var description: String {
         switch self {
         case .ask: "Answers without workspace access"
+        case .work: "Chooses the right approach for the request"
         case .plan: "Maps the work before editing"
         case .build: "Can edit files and run commands"
         }
@@ -19,8 +22,10 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .ask:
             "Answer conversationally using only the conversation and files or images the user explicitly attached to this message. Do not inspect attachment paths or browse, read, search, or modify any other workspace files. Do not call tools, skills, or external integrations."
+        case .work:
+            "Solve the request using the workspace and tools when useful. Choose whether to answer, inspect, plan, or implement from the request itself. Follow the current permission policy for every action."
         case .plan:
-            "Create a concise, ordered implementation plan. Inspect files if useful, but do not modify anything."
+            "Inspect files if useful, but do not modify anything. Ask clarifying questions when needed. When the plan is final and decision-complete, call submit_plan exactly once with its title, summary, ordered steps, and test scenarios; do not call submit_plan for a question or partial plan."
         case .build:
             "Implement the request completely. Inspect, edit, and verify the relevant files, asking for permission when required."
         }
@@ -30,12 +35,122 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
 /// The answer to the "implement this plan?" prompt that follows a completed
 /// Plan-mode turn.
 enum PlanApprovalDecision {
-    /// Switch to Build mode, raise permissions to accept-edits, implement.
-    case implementAutoAccepting
-    /// Switch to Build mode and implement, approving each edit as it comes.
-    case implementReviewing
-    /// Dismiss the prompt and stay in Plan mode.
-    case keepPlanning
+    /// Switch to Build mode and implement with the current permissions.
+    case proceed
+    /// Dismiss the decision and continue refining in Plan mode.
+    case revise
+    /// Keep the plan for reference and return to adaptive Work.
+    case cancel
+}
+
+/// A final, decision-complete plan submitted by the model for user approval.
+/// Every field has a default so checkpoints and older agents remain tolerant.
+struct PlanDocument: Codable, Hashable, Identifiable {
+    var id: String
+    var title: String
+    var summary: String
+    var steps: [String]
+    var tests: [String]
+
+    init(
+        id: String = UUID().uuidString,
+        title: String = "Implementation plan",
+        summary: String = "",
+        steps: [String] = [],
+        tests: [String] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.summary = summary
+        self.steps = steps
+        self.tests = tests
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, summary, steps, tests
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? "Implementation plan"
+        summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        steps = try container.decodeIfPresent([String].self, forKey: .steps) ?? []
+        tests = try container.decodeIfPresent([String].self, forKey: .tests) ?? []
+    }
+}
+
+enum PlanSignalDetector {
+    static func document(from text: String, changedTodos: [TodoItem] = []) -> PlanDocument? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tagged = taggedPlan(in: trimmed)
+        let source = tagged ?? trimmed
+        var steps = listItems(in: source)
+        if steps.isEmpty { steps = changedTodos.map(\.content) }
+        let hasPlanHeading = source
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .contains { line in
+                let heading = line.trimmingCharacters(in: .whitespaces).lowercased()
+                return heading.hasPrefix("#") && heading.contains("plan")
+            }
+        guard !isClarifyingResponse(source),
+              tagged != nil || !changedTodos.isEmpty || (hasPlanHeading && steps.count >= 2),
+              !steps.isEmpty
+        else { return nil }
+        let title = source
+            .split(separator: "\n")
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .first(where: { $0.hasPrefix("#") && $0.lowercased().contains("plan") })?
+            .trimmingCharacters(in: CharacterSet(charactersIn: "# "))
+            .nilIfEmpty ?? "Implementation plan"
+        return PlanDocument(title: title, summary: source, steps: steps, tests: [])
+    }
+
+    private static func taggedPlan(in text: String) -> String? {
+        guard let open = text.range(of: "<proposed_plan>"),
+              let close = text.range(of: "</proposed_plan>", range: open.upperBound..<text.endIndex)
+        else { return nil }
+        return String(text[open.upperBound..<close.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func listItems(in text: String) -> [String] {
+        text.split(separator: "\n", omittingEmptySubsequences: false).compactMap { raw in
+            let line = String(raw).trimmingCharacters(in: .whitespaces)
+            guard line.range(
+                of: #"^(?:[-*+]\s+|\d+[.)]\s+)(.+)$"#,
+                options: .regularExpression
+            ) != nil else { return nil }
+            return line.replacingOccurrences(
+                of: #"^(?:[-*+]\s+|\d+[.)]\s+)"#,
+                with: "",
+                options: .regularExpression
+            ).trimmingCharacters(in: .whitespaces).nilIfEmpty
+        }
+    }
+
+    static func isClarifyingResponse(_ text: String) -> Bool {
+        let lines = text.split(separator: "\n").map {
+            String($0).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard let question = lines.last(where: { !$0.isEmpty && !$0.hasPrefix("#") }),
+              question.hasSuffix("?")
+        else { return false }
+        let lower = question.lowercased()
+        if lower.contains("proceed")
+            || lower.contains("implement this plan")
+            || lower.contains("go ahead with this plan")
+        {
+            return false
+        }
+        return lower.hasPrefix("which ")
+            || lower.hasPrefix("what ")
+            || lower.hasPrefix("would ")
+            || lower.hasPrefix("should ")
+            || lower.hasPrefix("could ")
+            || lower.hasPrefix("do you ")
+            || lower.contains("clarify")
+    }
 }
 
 /// A ready-made prompt offered when the user asks for a plan without having
@@ -185,6 +300,7 @@ struct TurnCompletion: Codable, Hashable {
         case .complete:
             switch mode {
             case .ask: "Chat finished"
+            case .work: "Work finished"
             case .plan: "Plan finished"
             case .build: "Task finished"
             case nil: "Finished"
@@ -506,6 +622,9 @@ struct SessionSummary: Codable, Hashable, Identifiable {
     let title: String?
     let pinned: Bool?
     let archived: Bool?
+    /// Folder-backed workspace recorded in the transcript's leading meta row.
+    /// Optional so sessions created by older agents remain visible.
+    let cwd: String?
 
     init(
         id: String,
@@ -515,7 +634,8 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         size: Int,
         title: String? = nil,
         pinned: Bool? = nil,
-        archived: Bool? = nil
+        archived: Bool? = nil,
+        cwd: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -525,6 +645,7 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         self.title = title
         self.pinned = pinned
         self.archived = archived
+        self.cwd = cwd
     }
 
     var displayTitle: String {
@@ -549,6 +670,101 @@ struct SessionSummary: Codable, Hashable, Identifiable {
     var date: Date { Date(timeIntervalSince1970: mtime) }
     var isPinned: Bool { pinned ?? false }
     var isArchived: Bool { archived ?? false }
+
+    var workspacePath: String? {
+        guard let cwd = cwd?.trimmingCharacters(in: .whitespacesAndNewlines), !cwd.isEmpty else {
+            return nil
+        }
+        return Self.canonicalWorkspacePath(cwd)
+    }
+
+    static func canonicalWorkspacePath(_ path: String) -> String {
+        let expanded = NSString(string: path).expandingTildeInPath
+        let standardized = URL(fileURLWithPath: expanded).standardizedFileURL.path
+        guard FileManager.default.fileExists(atPath: standardized) else { return standardized }
+        return URL(fileURLWithPath: standardized).resolvingSymlinksInPath().path
+    }
+}
+
+/// One folder-backed section in the session sidebar. A nil path is the
+/// compatibility bucket for transcripts written before workspace provenance.
+struct WorkspaceChatGroup: Identifiable, Equatable {
+    let id: String
+    let path: String?
+    let title: String
+    let chats: [SessionSummary]
+    let lastOpened: Date
+    let isAvailable: Bool
+    let isOther: Bool
+}
+
+/// Transient app notification with an optional user action. The action itself
+/// stays in AppModel so this value remains Equatable and safe for SwiftUI.
+struct AppToast: Identifiable, Equatable {
+    let id = UUID()
+    let message: String
+    let systemImage: String
+    let actionTitle: String?
+
+    init(
+        message: String,
+        systemImage: String = "checkmark",
+        actionTitle: String? = nil
+    ) {
+        self.message = message
+        self.systemImage = systemImage
+        self.actionTitle = actionTitle
+    }
+}
+
+struct StreamingReplySnapshot: Equatable {
+    var id: UUID?
+    var text = ""
+    var reasoning = ""
+    var turnCharacterCount = 0
+
+    var isActive: Bool { id != nil }
+}
+
+/// Token-level state lives outside AppModel's published transcript array.
+/// Consequently an append invalidates only the active row and token label,
+/// rather than every historical row, sidebar and composer.
+@MainActor
+final class StreamingReplyState: ObservableObject {
+    @Published private(set) var snapshot = StreamingReplySnapshot()
+
+    func begin(id: UUID) {
+        var next = snapshot
+        next.id = id
+        next.text = ""
+        next.reasoning = ""
+        snapshot = next
+    }
+
+    func append(text: String, reasoning: String) {
+        guard snapshot.id != nil, !text.isEmpty || !reasoning.isEmpty else { return }
+        var next = snapshot
+        next.text += text
+        next.reasoning += reasoning
+        next.turnCharacterCount += text.count + reasoning.count
+        snapshot = next
+    }
+
+    func finish(id: UUID) -> StreamingReplySnapshot? {
+        guard snapshot.id == id else { return nil }
+        let finished = snapshot
+        snapshot = StreamingReplySnapshot(
+            id: nil,
+            text: "",
+            reasoning: "",
+            turnCharacterCount: finished.turnCharacterCount
+        )
+        return finished
+    }
+
+    func resetTurn() {
+        snapshot = StreamingReplySnapshot()
+    }
 }
 
 struct HealthResponse: Codable {
@@ -565,6 +781,7 @@ struct HistoryMessage: Codable {
     let role: String
     let content: String
     let name: String?
+    let reasoning: String?
 
     // A single null-content tool message must not fail an entire resume.
     init(from decoder: Decoder) throws {
@@ -572,6 +789,7 @@ struct HistoryMessage: Codable {
         role = try container.decodeIfPresent(String.self, forKey: .role) ?? ""
         content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
         name = try? container.decodeIfPresent(String.self, forKey: .name)
+        reasoning = try? container.decodeIfPresent(String.self, forKey: .reasoning)
     }
 }
 
@@ -605,6 +823,9 @@ struct ChatBlock: Identifiable, Codable, Hashable {
     var id: UUID
     var kind: Kind
     var text: String
+    /// Native provider reasoning, kept separate from visible answer text.
+    /// Optional decoding keeps existing checkpoints readable.
+    var reasoningText: String?
     var isStreaming: Bool
     var tool: ToolPayload?
     /// Present only for the quiet end-of-turn note rendered after a run.
@@ -615,6 +836,7 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         id: UUID = UUID(),
         kind: Kind,
         text: String = "",
+        reasoningText: String? = nil,
         isStreaming: Bool = false,
         tool: ToolPayload? = nil,
         completion: TurnCompletion? = nil
@@ -622,6 +844,7 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         self.id = id
         self.kind = kind
         self.text = text
+        self.reasoningText = reasoningText
         self.isStreaming = isStreaming
         self.tool = tool
         self.completion = completion
@@ -746,6 +969,8 @@ struct SessionCheckpoint: Identifiable, Codable, Hashable {
     let contextFiles: [ContextFile]
     let workspacePath: String
     let model: String
+    /// Optional so checkpoints written before structured plans remain valid.
+    var activePlan: PlanDocument? = nil
 }
 
 enum ModelProvider: String, Codable, CaseIterable, Identifiable {
@@ -820,6 +1045,11 @@ struct AppSettings: Codable, Hashable {
     var inspectorLastTab = InspectorTab.plan.rawValue
     /// Raw string for the same forward-compatibility reason as the tab.
     var thinkingVisibilityRaw = ThinkingVisibility.collapsed.rawValue
+    /// One-time compatibility marker: releases before adaptive Work persisted
+    /// Build because an agentic mode was mandatory, not necessarily chosen.
+    var adaptiveWorkMigrationCompleted = false
+    /// Computer control is opt-in and is ignored in sandboxed builds.
+    var computerControlEnabled = false
     /// Raw strings, like the tab: an unknown mode or type saved by a future
     /// version must not fail the whole settings decode.
     var proxyModeRaw = ProxyMode.off.rawValue
@@ -904,6 +1134,14 @@ struct AppSettings: Codable, Hashable {
             ?? defaults.inspectorLastTab
         thinkingVisibilityRaw = try container.decodeIfPresent(String.self, forKey: .thinkingVisibilityRaw)
             ?? defaults.thinkingVisibilityRaw
+        adaptiveWorkMigrationCompleted = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .adaptiveWorkMigrationCompleted
+        ) ?? defaults.adaptiveWorkMigrationCompleted
+        computerControlEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .computerControlEnabled
+        ) ?? defaults.computerControlEnabled
         proxyModeRaw = try container.decodeIfPresent(String.self, forKey: .proxyModeRaw)
             ?? defaults.proxyModeRaw
         proxyTypeRaw = try container.decodeIfPresent(String.self, forKey: .proxyTypeRaw)

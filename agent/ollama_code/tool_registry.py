@@ -70,6 +70,31 @@ EXTENSION_TOOL_SCHEMAS = [
     ),
 ]
 
+COMPUTER_TOOL_SCHEMAS = [
+    _schema("computer_list_apps", "List visible running Mac apps. Read-only.", {}, []),
+    _schema(
+        "computer_get_state",
+        "Inspect a bounded Accessibility tree for one Mac app. Element ids are valid only for this snapshot.",
+        {
+            "app": {"type": "string", "description": "App name or bundle identifier."},
+            "include_screenshot": {"type": "boolean", "description": "Request a target-window screenshot when consent and Screen Recording allow it."},
+        },
+        ["app"],
+    ),
+    _schema("computer_activate_app", "Bring one running Mac app to the foreground.", {"app": {"type": "string"}}, ["app"]),
+    _schema("computer_click", "Click an element from the latest state snapshot, then refresh state before another element action.", {"app": {"type": "string"}, "element": {"type": "string"}}, ["app", "element"]),
+    _schema("computer_set_value", "Set non-secure text on an element from the latest snapshot.", {"app": {"type": "string"}, "element": {"type": "string"}, "text": {"type": "string"}}, ["app", "element", "text"]),
+    _schema("computer_type_text", "Type text into the focused non-secure field of an app.", {"app": {"type": "string"}, "text": {"type": "string"}}, ["app", "text"]),
+    _schema("computer_press_key", "Press a key in an app, optionally with modifiers.", {"app": {"type": "string"}, "key": {"type": "string"}, "modifiers": {"type": "array", "items": {"type": "string"}}}, ["app", "key"]),
+    _schema("computer_scroll", "Scroll inside an app by bounded horizontal and vertical amounts.", {"app": {"type": "string"}, "delta_x": {"type": "integer"}, "delta_y": {"type": "integer"}}, ["app", "delta_y"]),
+    _schema("computer_drag", "Drag from one latest-snapshot element to another.", {"app": {"type": "string"}, "from_element": {"type": "string"}, "to_element": {"type": "string"}}, ["app", "from_element", "to_element"]),
+]
+
+_READ_ONLY_COMPUTER_TOOLS = {"computer_list_apps", "computer_get_state"}
+_COMPUTER_TOOL_NAMES = {
+    schema["function"]["name"] for schema in COMPUTER_TOOL_SCHEMAS
+}
+
 
 def _qualified_tool_name(server_name: str, tool_name: str, server_id: str) -> str:
     def clean(value: str) -> str:
@@ -99,6 +124,7 @@ class ToolRegistry:
         self._loaded_skill_context: dict[str, str] = {}
         self._explicit_skill_ids: set[str] = set()
         self._workspace = extensions.cwd
+        self.computer_enabled = False
         self.refresh()
 
     def refresh(self) -> None:
@@ -173,6 +199,8 @@ class ToolRegistry:
 
     def schemas(self) -> list[dict[str, Any]]:
         schemas = [*TOOL_SCHEMAS, *EXTENSION_TOOL_SCHEMAS]
+        if self.computer_enabled:
+            schemas.extend(COMPUTER_TOOL_SCHEMAS)
         for name in sorted(self._active_mcp):
             tool = self._mcp_by_qualified.get(name)
             if not tool:
@@ -280,6 +308,8 @@ class ToolRegistry:
         return "\n".join(lines)
 
     def is_safe(self, name: str) -> bool:
+        if self.computer_enabled and name in _READ_ONLY_COMPUTER_TOOLS:
+            return True
         if name in _SAFE_EXTENSION_TOOLS:
             return True
         tool = self._mcp_by_qualified.get(name)
@@ -298,6 +328,11 @@ class ToolRegistry:
         )
 
     def tool_info(self, name: str) -> dict[str, Any] | None:
+        if self.computer_enabled and name in _COMPUTER_TOOL_NAMES:
+            return {
+                "origin": "native",
+                "annotations": {"readOnlyHint": name in _READ_ONLY_COMPUTER_TOOLS},
+            }
         if name in _SAFE_EXTENSION_TOOLS:
             return {"origin": "extension", "annotations": {"readOnlyHint": True}}
         tool = self._mcp_by_qualified.get(name)
@@ -317,16 +352,26 @@ class ToolRegistry:
     def metadata(self) -> list[dict[str, Any]]:
         active = self._active_mcp
         out: list[dict[str, Any]] = []
-        for schema in [*TOOL_SCHEMAS, *EXTENSION_TOOL_SCHEMAS]:
+        base_schemas = [*TOOL_SCHEMAS, *EXTENSION_TOOL_SCHEMAS]
+        if self.computer_enabled:
+            base_schemas.extend(COMPUTER_TOOL_SCHEMAS)
+        for schema in base_schemas:
             fn = schema["function"]
             out.append({
                 "name": fn["name"],
                 "description": fn["description"],
                 "parameters": fn["parameters"],
-                "origin": "builtin" if schema in TOOL_SCHEMAS else "extension",
+                "origin": (
+                    "builtin" if schema in TOOL_SCHEMAS
+                    else "native" if schema in COMPUTER_TOOL_SCHEMAS
+                    else "extension"
+                ),
                 "active": True,
                 "deferred": False,
-                "annotations": {"readOnlyHint": fn["name"] in _SAFE_EXTENSION_TOOLS},
+                "annotations": {
+                    "readOnlyHint": fn["name"] in _SAFE_EXTENSION_TOOLS
+                    or fn["name"] in _READ_ONLY_COMPUTER_TOOLS
+                },
             })
         for name, tool in sorted(self._mcp_by_qualified.items()):
             out.append({
@@ -346,4 +391,4 @@ class ToolRegistry:
         return out
 
 
-__all__ = ["EXTENSION_TOOL_SCHEMAS", "ToolRegistry"]
+__all__ = ["COMPUTER_TOOL_SCHEMAS", "EXTENSION_TOOL_SCHEMAS", "ToolRegistry"]

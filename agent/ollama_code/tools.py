@@ -43,7 +43,10 @@ IGNORE_DIRS = {
 }
 
 #: Read-only tools that never require permission.
-SAFE_TOOLS = {"read_file", "glob", "grep", "list_dir", "todo_write"}
+SAFE_TOOLS = {
+    "read_file", "glob", "grep", "list_dir", "todo_write", "submit_plan",
+    "computer_list_apps", "computer_get_state",
+}
 
 #: Tools that modify files — auto-allowed in the "accept_edits" mode.
 EDIT_TOOLS = {"write_file", "edit_file", "multi_edit"}
@@ -54,6 +57,7 @@ class ToolContext:
     """Mutable per-session state shared with tools."""
 
     todos: list[dict[str, str]] = field(default_factory=list)
+    plan_document: dict[str, Any] | None = None
     cwd: str = ""
     #: Files read this turn, so edit_file can warn about blind edits.
     read_files: set[str] = field(default_factory=set)
@@ -804,6 +808,32 @@ def _impl_git_diff(args: dict[str, Any], ctx: ToolContext) -> str:
     return _run_git(ctx, *git_args)
 
 
+def _impl_submit_plan(args: dict[str, Any], ctx: ToolContext) -> str:
+    title = str(args.get("title") or "Implementation plan").strip()[:160]
+    summary = str(args.get("summary") or "").strip()[:4_000]
+    raw_steps = args.get("steps")
+    raw_tests = args.get("tests")
+    if not isinstance(raw_steps, list):
+        return "Error: 'steps' must be an array."
+    steps = [str(item).strip()[:1_000] for item in raw_steps if str(item).strip()][:100]
+    tests = (
+        [str(item).strip()[:1_000] for item in raw_tests if str(item).strip()][:100]
+        if isinstance(raw_tests, list) else []
+    )
+    if not steps:
+        return "Error: submit_plan requires at least one non-empty step."
+    plan_id = secrets.token_hex(8)
+    ctx.plan_document = {
+        "id": plan_id,
+        "title": title or "Implementation plan",
+        "summary": summary,
+        "steps": steps,
+        "tests": tests,
+    }
+    ctx.todos = [{"content": step, "status": "pending"} for step in steps]
+    return f"Plan submitted for approval ({len(steps)} steps)."
+
+
 _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
     "read_file": _impl_read_file,
     "write_file": _impl_write_file,
@@ -817,6 +847,7 @@ _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
     "web_fetch": _impl_web_fetch,
     "git_status": _impl_git_status,
     "git_diff": _impl_git_diff,
+    "submit_plan": _impl_submit_plan,
 }
 
 
@@ -957,6 +988,25 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             }
         },
         ["todos"],
+    ),
+    _schema(
+        "submit_plan",
+        "Submit a final, decision-complete implementation plan for user approval. Use only in Plan mode after all necessary clarification.",
+        {
+            "title": {"type": "string", "description": "Short plan title."},
+            "summary": {"type": "string", "description": "Concise outcome and approach."},
+            "steps": {
+                "type": "array",
+                "description": "Ordered implementation steps.",
+                "items": {"type": "string"},
+            },
+            "tests": {
+                "type": "array",
+                "description": "Verification scenarios.",
+                "items": {"type": "string"},
+            },
+        },
+        ["title", "summary", "steps", "tests"],
     ),
     _schema(
         "web_fetch",

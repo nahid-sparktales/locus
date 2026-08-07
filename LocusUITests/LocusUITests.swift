@@ -130,7 +130,10 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.menuItems["Unpin"].exists)
         XCTAssertTrue(app.menuItems["Export Markdown…"].exists)
         XCTAssertTrue(app.menuItems["Archive"].exists)
+        XCTAssertTrue(app.menuItems["Delete Chat"].exists)
         app.typeKey(.escape, modifierFlags: [])
+
+        XCTAssertTrue(anyElement("sidebar.addWorkspace").exists)
 
         anyElement("sidebar.more").click()
         let archivedToggle = app.menuItems["sidebar.showArchived"]

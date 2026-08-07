@@ -20,6 +20,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from ollama_code import config as config_mod
 from ollama_code import core as core_module
+from ollama_code import server as server_mod
 from ollama_code import sessions as sessions_mod
 from ollama_code.core import AgentCore
 from ollama_code.ollama import ChatResponse, OllamaError, process_chunk
@@ -420,6 +421,19 @@ def test_permission_modes():
     assert perms.is_auto_allowed("bash") and perms.skip_all
 
 
+def test_computer_guardrails_remain_above_bypass():
+    perms = PermissionManager(mode="bypass")
+    assert perms.blocked_reason(
+        "computer_type_text", {"app": "Safari", "text": "enter password"}
+    ) is not None
+    assert perms.requires_confirmation(
+        "computer_click", {"app": "Finder", "element": "upload-file"}
+    )
+    assert not perms.requires_confirmation(
+        "computer_click", {"app": "Notes", "element": "snapshot-3"}
+    )
+
+
 def test_permission_allowlist_and_reset():
     perms = PermissionManager()
     perms.allow_tool("bash")
@@ -528,6 +542,15 @@ def test_think_filter_strips_reasoning_across_chunks():
     out = "".join(f.feed(part) for part in ["Hel", "lo <thi", "nk>secret</thi", "nk> world"])
     assert "secret" not in out
     assert (out + f.flush()).strip() == "Hello  world".strip().replace("  ", "  ")
+    assert f.take_thinking() == "secret"
+
+
+def test_thinking_alias_is_streamed_as_reasoning_not_answer_text():
+    f = ThinkFilter()
+    visible = "".join(f.feed(part) for part in ["<think", "ing>careful", " work</thinking>", "Answer"])
+    visible += f.flush()
+    assert visible == "Answer"
+    assert f.take_thinking() == "careful work"
 
 
 def test_strip_think_handles_unclosed_block():
@@ -2046,6 +2069,7 @@ def test_every_rest_state_mutation_is_rejected_while_busy(client):
         client.post("/api/permissions", json={"mode": "bypass"}),
         client.post("/api/sessions/new", json={"reason": "test"}),
         client.delete("/api/sessions"),
+        client.delete(f"/api/sessions/{session_id}"),
         client.post("/api/sessions/restore", json={}),
     ]
 
@@ -2059,6 +2083,28 @@ def test_new_session_returns_session_info(client):
     body = client.post("/api/sessions/new", json={"reason": "clear_chat"}).json()
     assert body["ok"] is True and body["reason"] == "clear_chat"
     assert body["session_info"]["session_id"] != before
+
+
+def test_new_session_can_target_a_workspace(client, tmp_path):
+    workspace = tmp_path / "second-workspace"
+    workspace.mkdir()
+
+    body = client.post(
+        "/api/sessions/new",
+        json={"reason": "workspace_chat", "cwd": str(workspace)},
+    ).json()
+
+    assert body["ok"] is True
+    assert body["session_info"]["cwd"] == str(workspace)
+    assert client.app.state.service.core.cwd == str(workspace)
+
+
+def test_session_summary_includes_workspace_from_header(client):
+    _record_message(client, "workspace-aware summary")
+
+    row = client.get("/api/sessions").json()["sessions"][0]
+
+    assert row["cwd"] == client.app.state.service.core.cwd
 
 
 def test_session_patch_and_detail(client):
@@ -2095,6 +2141,67 @@ def test_delete_sessions_preserves_active(client):
     assert body["recovery_path"]
     remaining = [s["id"] for s in client.get("/api/sessions").json()["sessions"]]
     assert new_active in remaining and active not in remaining
+
+
+def test_delete_one_inactive_chat_and_restore_it(client):
+    old = client.get("/api/sessions").json()["current"]
+    _record_message(client, "delete this one")
+    client.post("/api/sessions/new", json={"reason": "next"})
+    _record_message(client, "keep this one")
+
+    deleted = client.delete(f"/api/sessions/{old}").json()
+
+    assert deleted["ok"] is True
+    assert deleted["id"] == old
+    assert deleted["deleted_active"] is False
+    assert deleted["replacement_session_info"] is None
+    assert deleted["trash_batch"]
+    assert old not in {row["id"] for row in client.get("/api/sessions").json()["sessions"]}
+
+    restored = client.post(
+        "/api/sessions/restore", json={"batch": deleted["trash_batch"]}
+    ).json()
+    assert restored["restored"] == 1
+    assert restored["session_ids"] == [old]
+
+
+def test_delete_active_chat_creates_same_workspace_replacement(client):
+    active = client.get("/api/sessions").json()["current"]
+    workspace = client.app.state.service.core.cwd
+    _record_message(client, "active chat")
+
+    deleted = client.delete(f"/api/sessions/{active}").json()
+
+    replacement = deleted["replacement_session_info"]
+    assert deleted["deleted_active"] is True
+    assert replacement["session_id"] != active
+    assert replacement["cwd"] == workspace
+    assert client.get("/api/sessions").json()["current"] == replacement["session_id"]
+    assert SessionStore.path_for(active) is None
+
+    restored = client.post(
+        "/api/sessions/restore", json={"batch": deleted["trash_batch"]}
+    ).json()
+    assert restored["session_ids"] == [active]
+
+
+def test_individual_delete_batches_never_collide(client):
+    first = client.get("/api/sessions").json()["current"]
+    _record_message(client, "first")
+    client.post("/api/sessions/new", json={"reason": "second"})
+    second = client.get("/api/sessions").json()["current"]
+    _record_message(client, "second")
+    client.post("/api/sessions/new", json={"reason": "third"})
+
+    first_delete = client.delete(f"/api/sessions/{first}").json()
+    second_delete = client.delete(f"/api/sessions/{second}").json()
+
+    assert first_delete["trash_batch"] != second_delete["trash_batch"]
+
+
+def test_individual_delete_rejects_missing_or_unsafe_ids(client):
+    assert client.delete("/api/sessions/missing").status_code == 404
+    assert client.delete("/api/sessions/..").status_code in {404, 405}
 
 
 def test_browser_origins_are_rejected(client):
@@ -2454,6 +2561,236 @@ def test_run_turn_emits_streaming_and_turn_done(tmp_path):
     assert done["reason"] == "complete"
     assert isinstance(done["duration_ms"], int) and done["duration_ms"] >= 0
     assert core.messages[-1]["content"] == "Hello world"
+
+
+def test_submit_plan_emits_structured_plan_ready(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(tool_calls=[ToolCall("submit_plan", {
+            "title": "Smooth streaming",
+            "summary": "Make transcript updates bounded.",
+            "steps": ["Buffer tokens", "Detach user scrolling"],
+            "tests": ["Stream a 100 KB reply"],
+        })], done=True),
+        ChatResponse(content_parts=["Plan ready."], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn("plan the fix")
+
+    ready = next(event for event in events if event["type"] == "plan_ready")
+    assert ready["plan"]["title"] == "Smooth streaming"
+    assert ready["plan"]["steps"] == ["Buffer tokens", "Detach user scrolling"]
+    assert ready["plan"]["tests"] == ["Stream a 100 KB reply"]
+
+
+def test_local_and_inline_reasoning_are_resumable_without_provider_state(tmp_path):
+    core = _core(tmp_path, [
+        ChatResponse(
+            content_parts=["<thinking>inline thought</thinking>Visible answer"],
+            thinking_parts=["native thought"],
+            done=True,
+        ),
+    ])
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn("hi")
+
+    assistant = next(message for message in reversed(core.messages) if message["role"] == "assistant")
+    assert assistant["content"] == "Visible answer"
+    assert assistant["_display_reasoning"] == "native thought\n\ninline thought"
+    assert "_display_reasoning" not in core._request_messages()[-1]
+    resumed = AgentCore.sanitize_messages([assistant])[0]
+    assert resumed["reasoning"] == "native thought\n\ninline thought"
+    thinking = "".join(event.get("text", "") for event in events if event["type"] == "thinking")
+    assert "inline thought" in thinking
+
+
+def test_sanitized_anthropic_reasoning_never_exposes_signatures_or_redactions():
+    out = AgentCore.sanitize_messages([{
+        "role": "assistant",
+        "content": "answer",
+        "anthropic_content": [
+            {"type": "thinking", "thinking": "visible", "signature": "secret-signature"},
+            {"type": "redacted_thinking", "data": "opaque-secret"},
+        ],
+    }])
+    assert out[0]["reasoning"] == "visible"
+    assert "signature" not in json.dumps(out)
+    assert "opaque-secret" not in json.dumps(out)
+
+
+def test_computer_tools_are_absent_until_native_broker_is_enabled(tmp_path):
+    core = _core(tmp_path, [ChatResponse(content_parts=["ok"], done=True)])
+
+    def names():
+        return {schema["function"]["name"] for schema in core.tool_registry.schemas()}
+
+    assert "computer_get_state" not in names()
+    core.tool_registry.computer_enabled = True
+    assert {"computer_get_state", "computer_click", "computer_type_text"} <= names()
+
+
+def test_native_computer_tool_uses_permission_mode_and_bridge(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(tool_calls=[ToolCall("computer_click", {"app": "Notes", "element": "snap-1"})], done=True),
+        ChatResponse(content_parts=["done"], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    core.tool_registry.computer_enabled = True
+    core.perms.set_mode("bypass")
+    calls = []
+    core.computer_executor = lambda name, args, request_id: calls.append((name, args, request_id)) or "clicked"
+
+    core.run_turn("click the note")
+
+    assert calls and calls[0][0] == "computer_click"
+    assert calls[0][1]["element"] == "snap-1"
+
+
+def test_steer_continues_same_turn_without_intermediate_turn_done(tmp_path):
+    first_started = threading.Event()
+
+    class SteeringClient(FakeClient):
+        def __init__(self):
+            super().__init__([])
+
+        def chat_stream(self, model, messages, tools=None, on_token=None, should_stop=None,
+                        on_thinking=None, think=False, options=None):
+            self.seen_messages.append(messages)
+            if len(self.seen_messages) == 1:
+                on_token("Initial direction")
+                first_started.set()
+                deadline = time.time() + 2
+                while time.time() < deadline and not should_stop():
+                    time.sleep(0.005)
+                return ChatResponse(done=True, done_reason="interrupted")
+            on_token("Updated answer")
+            return ChatResponse(done=True)
+
+    core = _core(tmp_path, [])
+    client = SteeringClient()
+    core.client = client
+    events = []
+    core.on_event(events.append)
+    worker = threading.Thread(target=core.run_turn, args=("start",), daemon=True)
+    worker.start()
+    assert first_started.wait(1)
+
+    assert core.steer("focus on scrolling") == "interrupting_generation"
+    worker.join(3)
+
+    assert not worker.is_alive()
+    assert len([event for event in events if event["type"] == "turn_done"]) == 1
+    assert core.steer("too late") is None
+    assert any(event["type"] == "steer_applied" for event in events)
+    assert any(
+        message.get("role") == "user" and message.get("content") == "focus on scrolling"
+        for message in client.seen_messages[1]
+    )
+
+
+def test_steer_finishes_current_tool_but_skips_later_stale_actions(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(tool_calls=[
+            ToolCall("computer_click", {"app": "Notes", "element": "snap-1"}, call_id="first"),
+            ToolCall("computer_scroll", {"app": "Notes", "delta_y": 200}, call_id="second"),
+        ], done=True),
+        ChatResponse(content_parts=["redirected"], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    core.tool_registry.computer_enabled = True
+    core.perms.set_mode("bypass")
+    started = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def execute(name, args, request_id):
+        calls.append(name)
+        started.set()
+        assert release.wait(2)
+        return "done"
+
+    core.computer_executor = execute
+    worker = threading.Thread(target=core.run_turn, args=("start",), daemon=True)
+    worker.start()
+    assert started.wait(1)
+    assert core.steer("do not scroll") == "after_current_action"
+    release.set()
+    worker.join(3)
+
+    assert calls == ["computer_click"]
+    assert not worker.is_alive()
+    second_request = core.client.seen_messages[1]
+    tool_results = [message for message in second_request if message.get("role") == "tool"]
+    assert [message["tool_call_id"] for message in tool_results[-2:]] == ["first", "second"]
+    assert "Not run" in tool_results[-1]["content"]
+    assert second_request[-1]["content"] == "do not scroll"
+
+
+def test_computer_screenshot_retries_only_for_explicit_image_rejection(tmp_path):
+    class ImageRejectingClient(FakeClient):
+        def chat_stream(self, model, messages, tools=None, on_token=None, should_stop=None,
+                        on_thinking=None, think=False, options=None):
+            self.calls += 1
+            self.seen_messages.append(messages)
+            if self.calls == 1:
+                raise OllamaError("this model does not support image input")
+            assert not any(message.get("attachments") for message in messages)
+            if on_token:
+                on_token("AX-only answer")
+            return ChatResponse(content_parts=["AX-only answer"], done=True)
+
+    core = _core(tmp_path, [])
+    core.client = ImageRejectingClient([])
+    core.messages.append({
+        "role": "user",
+        "content": "screen",
+        "attachments": [{"mime_type": "image/png", "data": "aW1hZ2U="}],
+        "_computer_observation": True,
+    })
+
+    core.run_turn("continue")
+
+    assert core.client.calls == 2
+    assert core._computer_route_key() in core._ax_only_routes
+
+
+def test_terminal_event_is_not_sent_until_turn_slot_is_idle(tmp_path):
+    async def scenario():
+        core = _core(tmp_path, [])
+        service = server_mod.ChatService(core)
+        service.loop = asyncio.get_running_loop()
+        service.turn_future = service.loop.create_future()
+
+        class Socket:
+            def __init__(self):
+                self.events = []
+
+            async def send_json(self, event):
+                self.events.append(event)
+
+        socket = Socket()
+        pump = asyncio.create_task(server_mod._event_pump(service, socket))
+        service.queue_event({"type": "turn_done", "reason": "interrupted"})
+        await asyncio.sleep(0)
+        assert socket.events == []
+
+        service.turn_future.set_result(None)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert socket.events == [{"type": "turn_done", "reason": "interrupted"}]
+        pump.cancel()
+
+    asyncio.run(scenario())
 
 
 def test_tool_call_runs_and_reports(tmp_path):

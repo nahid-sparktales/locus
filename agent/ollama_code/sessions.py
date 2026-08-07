@@ -356,6 +356,59 @@ class SessionStore:
         return False
 
     @staticmethod
+    def _summary_record(path: Path, preview_limit: int = 80) -> dict[str, Any] | None:
+        """Read the fields needed by the organizer in one bounded pass.
+
+        The workspace sidebar requests hundreds of summaries at once.  The old
+        implementation opened every JSONL file separately for ``has_messages``,
+        ``preview`` and provenance, which made expanding workspace groups scale
+        with three full directory scans.  A summary only needs the leading meta
+        record and the first user message, so stop as soon as both are known.
+        """
+        header: dict[str, Any] = {}
+        preview = ""
+        has_messages = False
+        try:
+            if path.stat().st_size > MAX_SESSION_BYTES:
+                return None
+            with path.open("rb") as handle:
+                for raw in handle:
+                    if len(raw) > MAX_SESSION_LINE_BYTES:
+                        return None
+                    try:
+                        record = json.loads(raw.decode("utf-8", errors="replace"))
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(record, dict):
+                        continue
+                    if record.get("type") == "meta" and not header:
+                        header = record
+                        continue
+                    if record.get("type") != "message" or not isinstance(
+                        record.get("message"), dict
+                    ):
+                        continue
+                    has_messages = True
+                    message = record["message"]
+                    if message.get("role") == "user" and not preview:
+                        content = str(message.get("content", ""))
+                        content = strip_prompt_decoration(content).replace("\n", " ").strip()
+                        if content:
+                            preview = content[:preview_limit]
+                            if len(content) > preview_limit:
+                                preview += "…"
+                    if header and preview:
+                        break
+        except OSError:
+            return None
+        if not has_messages:
+            return None
+        return {
+            "preview": preview or "(no user messages)",
+            "cwd": str(header.get("cwd") or "") or None,
+        }
+
+    @staticmethod
     def summaries(
         limit: int = 50,
         include_archived: bool = False,
@@ -373,7 +426,8 @@ class SessionStore:
             entry = meta.get(session_id, {})
             if entry.get("archived") and not include_archived:
                 continue
-            if not SessionStore.has_messages(f):
+            summary = SessionStore._summary_record(f)
+            if summary is None:
                 continue
             try:
                 stat = f.stat()
@@ -382,7 +436,8 @@ class SessionStore:
             if query:
                 haystack = " ".join([
                     str(entry.get("title") or ""),
-                    SessionStore.preview(f),
+                    str(summary["preview"]),
+                    str(summary["cwd"] or ""),
                     session_id,
                 ]).lower()
                 if query.strip().lower() not in haystack:
@@ -390,7 +445,8 @@ class SessionStore:
             out.append({
                 "id": session_id,
                 "name": f.name,
-                "preview": SessionStore.preview(f),
+                "preview": summary["preview"],
+                "cwd": summary["cwd"],
                 "mtime": stat.st_mtime,
                 "size": stat.st_size,
                 "title": entry.get("title"),
@@ -409,8 +465,14 @@ class SessionStore:
         """Move sessions into the recovery folder. Returns (count, path)."""
         if not session_ids:
             return 0, str(_trash_dir())
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        # A UUID is unnecessary here, but microseconds plus an exclusive suffix
+        # prevents two rapid individual deletes from sharing a manifest.
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         target = _trash_dir() / stamp
+        for attempt in range(1, 1000):
+            if not target.exists():
+                break
+            target = _trash_dir() / f"{stamp}-{attempt}"
         target.mkdir(parents=True, exist_ok=True)
         meta = SessionMeta.all()
         moved: list[str] = []
@@ -438,25 +500,25 @@ class SessionStore:
         return len(moved), str(target)
 
     @staticmethod
-    def restore_from_trash(batch: str | None = None) -> int:
-        """Move a trash batch (default: newest) back into the sessions folder."""
+    def restore_from_trash_details(batch: str | None = None) -> list[str]:
+        """Restore a trash batch and return the resulting session ids."""
         if not _trash_dir().exists():
-            return 0
+            return []
         batches = sorted((p for p in _trash_dir().iterdir() if p.is_dir()), reverse=True)
         if not batches:
-            return 0
+            return []
         if batch and (
             "/" in batch or "\\" in batch or batch.startswith(".") or Path(batch).name != batch
         ):
-            return 0
+            return []
         folder = _trash_dir() / batch if batch else batches[0]
         try:
             if folder.resolve().parent != _trash_dir().resolve():
-                return 0
+                return []
         except OSError:
-            return 0
+            return []
         if not folder.is_dir():
-            return 0
+            return []
         try:
             manifest_path = folder / "manifest.json"
             if manifest_path.stat().st_size > MAX_METADATA_BYTES:
@@ -466,7 +528,7 @@ class SessionStore:
         except (OSError, json.JSONDecodeError):
             manifest = {"sessions": {}}
         SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-        restored = 0
+        restored_ids: list[str] = []
         for path in sorted(folder.glob("*.jsonl")):
             destination = SESSIONS_DIR / path.name
             # A session with this id may have been recreated since the clear;
@@ -482,11 +544,11 @@ class SessionStore:
                 shutil.move(str(path), str(destination))
             except OSError:
                 continue
-            restored += 1
+            restored_ids.append(destination.stem)
             entry = (manifest.get("sessions") or {}).get(path.stem)
             if isinstance(entry, dict) and entry:
                 SessionMeta.update(destination.stem, **entry)
-        if restored and not any(folder.glob("*.jsonl")):
+        if restored_ids and not any(folder.glob("*.jsonl")):
             # Drop the manifest too so the emptied batch does not linger and
             # make the next "restore newest" a no-op.
             try:
@@ -494,7 +556,12 @@ class SessionStore:
                 folder.rmdir()
             except OSError:
                 pass
-        return restored
+        return restored_ids
+
+    @staticmethod
+    def restore_from_trash(batch: str | None = None) -> int:
+        """Compatibility wrapper returning the historical restored count."""
+        return len(SessionStore.restore_from_trash_details(batch))
 
 
 # --------------------------------------------------------------------------

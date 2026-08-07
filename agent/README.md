@@ -42,12 +42,19 @@ exactly this layout (`.venv/bin/python` plus the `ollama_code` package).
 | `grep` | automatic | Regex search across the tree, vendor dirs skipped |
 | `list_dir` | automatic | Directory tree to a chosen depth |
 | `todo_write` | automatic | Maintain the visible task plan |
+| `submit_plan` | automatic | Submit a final structured plan for approval |
 | `write_file` | asks | Create or overwrite a file |
 | `edit_file` | asks | Replace one exact unique string |
 | `multi_edit` | asks | Several edits to one file, all-or-nothing |
 | `bash` | asks | Run a shell command in the workspace |
 | `web_fetch` | asks | Fetch a URL as text |
 | `git_status` / `git_diff` | asks | Inspect the working tree |
+
+The signed direct-download Mac app can additionally advertise bounded
+`computer_*` tools after the user enables Computer Control. Those schemas are
+absent in the App Store build and whenever the native broker is unavailable;
+read-only Accessibility inspection is automatic, while mutations use the same
+permission mode and retain non-bypassable high-consequence guardrails.
 
 ## Model providers
 
@@ -112,7 +119,8 @@ and archive flags live in `~/.ollama-code/session-meta.json`, so renaming a
 session never rewrites its transcript. Clearing saved sessions **moves** them to
 `~/.ollama-code/session-trash/<timestamp>/` with a manifest of their metadata;
 `POST /api/sessions/restore` (or `SessionStore.restore_from_trash()`) puts them
-back.
+back. Individual chats use their own recovery batches and can be restored by
+batch name; deleting a chat never touches files in its workspace.
 
 ## HTTP API
 
@@ -120,10 +128,11 @@ back.
 | --- | --- | --- |
 | GET | `/api/health` | Service + model-backend reachability |
 | GET | `/api/models` | Installed models, each with the window it will really run in |
-| GET | `/api/sessions?include_archived=` | Session list with organizer metadata |
-| POST | `/api/sessions/new` | Start a fresh session (`{"reason": "clear_chat"}`) |
+| GET | `/api/sessions?include_archived=` | Session list with organizer metadata and optional workspace `cwd` |
+| POST | `/api/sessions/new` | Start a fresh session (optional `cwd`) |
 | DELETE | `/api/sessions` | Move all but the active session to the trash |
-| POST | `/api/sessions/restore` | Undo the most recent clear |
+| DELETE | `/api/sessions/{id}` | Move one chat to a recoverable batch |
+| POST | `/api/sessions/restore` | Restore a recovery batch and return its session IDs |
 | GET | `/api/sessions/{id}` | Transcript, title, workspace, model, start time |
 | PATCH | `/api/sessions/{id}` | Set `title`, `pinned`, `archived` |
 | POST | `/api/sessions/{id}/resume` | Load a session into the agent |
@@ -167,13 +176,16 @@ which is the number worth comparing models by.
 
 ## WebSocket protocol (`/ws/chat`)
 
-Client → server: `user_message`, `retry_last`, `interrupt`,
+Client → server: `user_message`, `retry_last`, `interrupt`, `steer`,
 `permission_decision`, `set_model`, `set_cwd`, `set_permission_mode`,
-`new_session`, `clear`, `compact`, `resume`, `ping`.
+`set_computer_control`, `computer_action_result`, `new_session`, `clear`,
+`compact`, `resume`, `ping`.
 
 Server → client: `session_info`, `session_started`, `message_start`, `token`,
-`thinking`, `message_end`, `tool_call_proposed`, `permission_request`,
-`tool_result`, `todo_update`, `turn_done`, `slash_result`, `error`, `pong`.
+`thinking`, `message_end`, `plan_ready`, `steer_ack`, `steer_applied`,
+`computer_control_status`, `computer_action_request`, `tool_call_proposed`,
+`permission_request`, `tool_result`, `todo_update`, `turn_done`, `slash_result`,
+`error`, `pong`.
 
 A turn runs in a worker thread; permission requests block that thread on a
 future until the client answers, so the UI stays responsive and no tool runs

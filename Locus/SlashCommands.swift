@@ -61,6 +61,11 @@ struct SlashCommand: Identifiable, Hashable {
             argumentHint: nil, symbol: "bubble.left", action: .setMode(.ask)
         ),
         SlashCommand(
+            name: "work", aliases: [],
+            summary: "Use adaptive Work mode",
+            argumentHint: nil, symbol: "sparkles", action: .setMode(.work)
+        ),
+        SlashCommand(
             name: "plan", aliases: [],
             summary: "Switch to Plan mode",
             argumentHint: nil, symbol: "list.bullet.clipboard", action: .setMode(.plan)

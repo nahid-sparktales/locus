@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import Foundation
 import PDFKit
+import QuartzCore
 import UniformTypeIdentifiers
 import UserNotifications
 
@@ -25,7 +26,10 @@ final class AppModel: ObservableObject {
     @Published var blocks: [ChatBlock] = []
     @Published var todos: [TodoItem] = []
     @Published var isBusy = false
-    @Published var selectedMode: WorkMode = .build {
+    /// A short, truthful description of where an in-flight steering request
+    /// is waiting. It is cleared when the direction joins the active turn.
+    @Published private(set) var steeringState: String?
+    @Published var selectedMode: WorkMode = .work {
         didSet {
             // Changing modes is taking a stance on what happens next, so a
             // pending "implement this plan?" prompt would only contradict it.
@@ -60,6 +64,7 @@ final class AppModel: ObservableObject {
     /// user's answer to "implement this plan?". While set, the composer input
     /// is replaced by PlanApprovalPromptView, the way permission requests are.
     @Published private(set) var planApprovalPending = false
+    @Published private(set) var activePlan: PlanDocument?
     @Published private(set) var gitChanges: [GitChange] = []
     @Published private(set) var isRefreshingGitStatus = false
     @Published private(set) var isGitRepository = false
@@ -122,6 +127,7 @@ final class AppModel: ObservableObject {
     @Published var isClearingSessions = false
     @Published var showArchivedSessions = false
     @Published var searchQuery = ""
+    @Published var expandedWorkspaceIDs: Set<String> = []
     @Published var transcriptSearchPresented = false
     @Published var transcriptSearchQuery = "" {
         didSet { transcriptSearchSelection = 0 }
@@ -129,7 +135,8 @@ final class AppModel: ObservableObject {
     @Published var transcriptSearchSelection = 0
     @Published var previewReloadID = UUID()
     @Published var streamRevision = 0
-    @Published var toastMessage: String?
+    @Published var toast: AppToast?
+    var toastMessage: String? { toast?.message }
     @Published var backendLogHint = ""
     @Published var contextNotice: String?
     @Published var isLoadingContext = false
@@ -142,6 +149,8 @@ final class AppModel: ObservableObject {
     /// here: republishing AppModel on every output chunk would redraw the
     /// sidebar, conversation and composer at the command's output rate.
     let terminal = TerminalSession()
+    let computerControl = ComputerControlService()
+    let streamingReply = StreamingReplyState()
 
     private let backend: BackendService
     private let backendProcess = BackendProcess()
@@ -151,17 +160,21 @@ final class AppModel: ObservableObject {
     private var initialWorkspacePath: String?
     private var streamingAssistantID: UUID?
     private var pendingTokens = ""
+    private var pendingReasoning = ""
     /// Rough size of the reply streamed since the last `session_info`, so the
     /// context meter moves during a turn instead of freezing at the pre-turn
     /// value. Reset whenever the backend supplies a real count.
     private var streamedCharsThisTurn = 0
-    private var streamFlushTask: Task<Void, Never>?
+    private lazy var streamFlushDriver = DisplaySynchronizedFlushDriver { [weak self] in
+        self?.flushPendingTokens()
+    }
     private var refreshTask: Task<Void, Never>?
     private var runtimeRecoveryTask: Task<Void, Never>?
     private var runtimeRecoveryAttempt = 0
     private var extensionRefreshTask: Task<Void, Never>?
     private var restoredTranscriptContext: String?
     private var toastTask: Task<Void, Never>?
+    private var pendingDeletedChat: DeletedChatUndo?
     private var profilePersistenceTask: Task<Void, Never>?
     private var settingsPersistenceTask: Task<Void, Never>?
     private var promptHistoryCursor: Int?
@@ -171,6 +184,7 @@ final class AppModel: ObservableObject {
     /// is offered only for turns that actually produced a plan — a Plan-mode
     /// chat answer must not re-offer a plan left over from an earlier run.
     private var planTodosChangedThisTurn = false
+    private var planReadyThisTurn = false
     /// What the user actually dispatched, kept separate from the live picker
     /// so a mid-run mode change cannot relabel the completion marker or alter
     /// plan reconciliation.
@@ -179,7 +193,7 @@ final class AppModel: ObservableObject {
     private var turnStartedAt: Date?
     /// Turning Just Chat off returns to the last mode that could act on the
     /// workspace instead of always making the user reselect Build or Plan.
-    private var lastAgenticMode: WorkMode = .build
+    private var lastAgenticMode: WorkMode = .work
     /// Just Chat temporarily hides the inspector. This records whether it was
     /// visible so Work mode can restore the user's layout on exit.
     private var restoreInspectorAfterJustChat = false
@@ -190,9 +204,14 @@ final class AppModel: ObservableObject {
     /// turns without a live backend.
     var turnDispatchedInPlanMode = false
     private var pendingRetry = false
+    /// Stop & Send is deliberately not part of the ordinary queue: it must
+    /// wait for the interrupted turn's terminal event before it can create a
+    /// fresh provider turn and conversation-history boundary.
+    private var pendingStopAndSend: String?
     private var pendingCheckpointRestore: SessionCheckpoint?
     private var pendingRewindDraft: String?
     private var pendingWorkspacePath: String?
+    private var workspaceToOpenAfterReconnect: String?
     private var appliedWorkspacePath: String?
     private var sessionResetWatchdog: Task<Void, Never>?
     private var indexTask: Task<Void, Never>?
@@ -298,6 +317,13 @@ final class AppModel: ObservableObject {
                 defaults.set(data, forKey: "Locus.settings")
             }
         }
+        let migrateLegacyBuildMode = !loadedSettings.adaptiveWorkMigrationCompleted
+        loadedSettings.adaptiveWorkMigrationCompleted = true
+        if migrateLegacyBuildMode, persistenceEnabled,
+           let data = try? JSONEncoder().encode(loadedSettings)
+        {
+            defaults.set(data, forKey: "Locus.settings")
+        }
         settings = loadedSettings
         // The proxy snapshot is what static call sites read; seed it before
         // anything can make a request. A test model must not read the
@@ -318,9 +344,22 @@ final class AppModel: ObservableObject {
            let data = defaults.data(forKey: "Locus.workspaceProfiles"),
            let saved = try? JSONDecoder().decode([WorkspaceProfile].self, from: data)
         {
-            let recent = Array(saved.sorted { $0.lastOpened > $1.lastOpened }.prefix(8))
+            var recent = saved.sorted { $0.lastOpened > $1.lastOpened }
+            if migrateLegacyBuildMode {
+                recent = Self.migrateLegacyBuildProfiles(recent)
+                if persistenceEnabled,
+                   let migratedData = try? JSONEncoder().encode(recent)
+                {
+                    defaults.set(migratedData, forKey: "Locus.workspaceProfiles")
+                }
+            }
             workspaceProfiles = recent
             restoredWorkspacePaths = recent.map(\.path)
+        }
+        if !isUITesting, persistenceEnabled {
+            expandedWorkspaceIDs = Set(
+                defaults.stringArray(forKey: "Locus.expandedWorkspaces") ?? []
+            )
         }
         let access = WorkspaceAccess(defaults: defaults)
         workspaceAccess = access
@@ -345,6 +384,7 @@ final class AppModel: ObservableObject {
                 if connected {
                     self.agentRuntimePhase = .online
                     self.runtimeRecoveryAttempt = 0
+                    self.sendComputerControlCapability()
                 } else if self.agentRuntimePhase.isOnline, !self.isShuttingDown {
                     self.agentRuntimePhase = .recovering("Reconnecting to the local agent…")
                     self.recoverFromLostConnection()
@@ -480,6 +520,92 @@ final class AppModel: ObservableObject {
         }
     }
 
+    static let otherWorkspaceID = "locus.other-chats"
+
+    var activeWorkspaceID: String {
+        SessionSummary.canonicalWorkspacePath(workspacePath)
+    }
+
+    /// Folder-backed workspace sections plus a compatibility bucket for old
+    /// transcripts whose meta record predates cwd provenance.
+    var workspaceChatGroups: [WorkspaceChatGroup] {
+        let queryActive = !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let chats = filteredSessions
+        var chatsByPath = Dictionary(grouping: chats.compactMap { session -> (String, SessionSummary)? in
+            guard let path = session.workspacePath else { return nil }
+            return (path, session)
+        }, by: \.0).mapValues { $0.map(\.1) }
+
+        var profilesByPath: [String: WorkspaceProfile] = [:]
+        for profile in workspaceProfiles {
+            let path = SessionSummary.canonicalWorkspacePath(profile.path)
+            if let existing = profilesByPath[path], existing.lastOpened >= profile.lastOpened {
+                continue
+            }
+            profilesByPath[path] = profile
+        }
+
+        var paths = Set(profilesByPath.keys)
+        paths.formUnion(chatsByPath.keys)
+        paths.insert(activeWorkspaceID)
+
+        var groups = paths.compactMap { path -> WorkspaceChatGroup? in
+            let groupChats = (chatsByPath.removeValue(forKey: path) ?? []).sorted(by: Self.sessionSort)
+            if queryActive && groupChats.isEmpty { return nil }
+            let profile = profilesByPath[path]
+            let chatDate = groupChats.map(\.date).max() ?? .distantPast
+            let lastOpened = max(profile?.lastOpened ?? .distantPast, chatDate)
+            return WorkspaceChatGroup(
+                id: path,
+                path: path,
+                title: URL(fileURLWithPath: path).lastPathComponent,
+                chats: groupChats,
+                lastOpened: lastOpened,
+                isAvailable: FileManager.default.fileExists(atPath: path),
+                isOther: false
+            )
+        }
+        groups.sort { lhs, rhs in
+            if lhs.id == activeWorkspaceID { return true }
+            if rhs.id == activeWorkspaceID { return false }
+            return lhs.lastOpened > rhs.lastOpened
+        }
+
+        let otherChats = chats.filter { $0.workspacePath == nil }.sorted(by: Self.sessionSort)
+        if !otherChats.isEmpty {
+            groups.append(
+                WorkspaceChatGroup(
+                    id: Self.otherWorkspaceID,
+                    path: nil,
+                    title: "Other Chats",
+                    chats: otherChats,
+                    lastOpened: otherChats.map(\.date).max() ?? .distantPast,
+                    isAvailable: true,
+                    isOther: true
+                )
+            )
+        }
+        return groups
+    }
+
+    private static func sessionSort(_ lhs: SessionSummary, _ rhs: SessionSummary) -> Bool {
+        if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
+        return lhs.mtime > rhs.mtime
+    }
+
+    func isWorkspaceExpanded(_ id: String) -> Bool {
+        expandedWorkspaceIDs.contains(id)
+    }
+
+    func setWorkspaceExpanded(_ id: String, expanded: Bool) {
+        if expanded {
+            expandedWorkspaceIDs.insert(id)
+        } else {
+            expandedWorkspaceIDs.remove(id)
+        }
+        persistExpandedWorkspaces()
+    }
+
     var includedContextTokens: Int {
         contextFiles.filter { $0.isIncluded && $0.isAvailable }.reduce(0) {
             $0 + $1.estimatedTokens
@@ -551,6 +677,32 @@ final class AppModel: ObservableObject {
     /// after each send.
     var contextUsedTokens: Int {
         (sessionInfo?.approxTokens ?? 0) + streamedCharsThisTurn / 4
+    }
+
+    var activeWorkStartedAt: Date? { turnStartedAt }
+    var activeStreamingAssistantID: UUID? { streamingAssistantID }
+
+    var estimatedStreamingTokens: Int { streamedCharsThisTurn / 4 }
+
+    var currentWorkPhase: String {
+        if let steeringState { return steeringState }
+        if let request = activePermissionRequest {
+            return "Waiting for permission · \(request.tool)"
+        }
+        if let tool = blocks.reversed().compactMap(\.tool).first(where: {
+            $0.status == .running || $0.status == .awaitingPermission
+        }) {
+            return tool.status == .running
+                ? "Using \(tool.tool)"
+                : "Waiting for permission · \(tool.tool)"
+        }
+        if let assistant = blocks.last(where: { $0.kind == .assistant && $0.isStreaming }),
+           assistant.text.isEmpty,
+           !(assistant.reasoningText?.isEmpty ?? true)
+        {
+            return "Reasoning"
+        }
+        return isBusy ? "Generating response" : "Ready"
     }
 
     /// What a conversation may actually occupy — the raw window less the tool
@@ -860,7 +1012,7 @@ final class AppModel: ObservableObject {
         persistSettings()
         refreshTask?.cancel()
         runtimeRecoveryTask?.cancel()
-        streamFlushTask?.cancel()
+        streamFlushDriver.invalidate()
         profilePersistenceTask?.cancel()
         settingsPersistenceTask?.cancel()
         sessionResetWatchdog?.cancel()
@@ -1134,10 +1286,24 @@ final class AppModel: ObservableObject {
         await refreshAccountCatalogs()
 
         do {
-            let suffix = showArchivedSessions ? "?include_archived=true" : ""
+            let suffix = showArchivedSessions
+                ? "?include_archived=true&limit=500"
+                : "?limit=500"
             let response = try await backend.get("/api/sessions\(suffix)", as: SessionsResponse.self)
             sessions = response.sessions
             currentSessionID = response.current
+            if let path = workspaceToOpenAfterReconnect {
+                workspaceToOpenAfterReconnect = nil
+                let canonical = SessionSummary.canonicalWorkspacePath(path)
+                expandedWorkspaceIDs.insert(canonical)
+                persistExpandedWorkspaces()
+                if let latest = sessions
+                    .filter({ $0.workspacePath == canonical })
+                    .max(by: { $0.mtime < $1.mtime })
+                {
+                    resume(latest)
+                }
+            }
         } catch {
             // Preserve the last-known list during reconnects.
         }
@@ -1675,6 +1841,7 @@ final class AppModel: ObservableObject {
         turnStartedAt = Date()
         planApprovalPending = false
         planTodosChangedThisTurn = false
+        planReadyThisTurn = false
         // Agent-side slash commands (/init and friends) may write todos, but
         // running one is housekeeping, never a plan worth offering to build.
         turnDispatchedInPlanMode = dispatchedMode == .plan && !isSlashPassthrough
@@ -1783,7 +1950,60 @@ final class AppModel: ObservableObject {
     }
 
     func submitDraft() {
-        send(draftText)
+        if isBusy {
+            steerDraft()
+        } else {
+            send(draftText)
+        }
+    }
+
+    /// Append the current direction to the active provider turn. The backend
+    /// stops only the current generation, preserves completed tool results,
+    /// and continues the same turn without an intermediate `turn_done`.
+    func steerDraft() {
+        let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isBusy, !hasPendingPermission, !text.isEmpty else { return }
+        guard backend.send(["type": "steer", "text": text]) else {
+            showToast("Reconnect the local agent — the direction was not sent")
+            return
+        }
+        if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
+            draftText = ""
+        }
+        recordPrompt(text)
+        steeringState = "Applying direction…"
+        showToast("Steering the active turn")
+    }
+
+    /// Explicitly retain a message for the next independent turn.
+    func queueDraft() {
+        let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        queuedMessages.append(text)
+        if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
+            draftText = ""
+        }
+        recordPrompt(text)
+        showToast("Queued for the next turn")
+    }
+
+    /// Interrupt now, but do not start the replacement turn until the backend
+    /// confirms the old one has fully unwound and persisted its terminal state.
+    func stopAndSendDraft() {
+        let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isBusy, !hasPendingPermission, !text.isEmpty else { return }
+        guard backend.send(["type": "interrupt"]) else {
+            showToast("Reconnect the local agent — the active turn could not be stopped")
+            return
+        }
+        computerControl.cancelPendingActions()
+        pendingStopAndSend = text
+        if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
+            draftText = ""
+        }
+        recordPrompt(text)
+        steeringState = "Stopping before a new turn…"
+        showToast("Stopping, then sending as a new turn")
     }
 
     func removeQueuedMessage(at index: Int) {
@@ -1792,7 +2012,9 @@ final class AppModel: ObservableObject {
     }
 
     private func drainQueuedMessages() {
-        guard !isBusy, !hasPendingPermission, !queuedMessages.isEmpty else { return }
+        guard !isBusy, !hasPendingPermission, !planApprovalPending, !queuedMessages.isEmpty else {
+            return
+        }
         guard isAgentOnline else { return }
         send(queuedMessages.removeFirst(), preservingDraftOnFailure: false, requeueingOnFailure: true)
     }
@@ -1871,6 +2093,7 @@ final class AppModel: ObservableObject {
         turnStartedAt = Date()
         planApprovalPending = false
         planTodosChangedThisTurn = false
+        planReadyThisTurn = false
         turnDispatchedInPlanMode = selectedMode == .plan
         turnDispatchedMode = selectedMode
         showToast("Regenerating the last response")
@@ -1884,6 +2107,7 @@ final class AppModel: ObservableObject {
             showToast("Reconnect the local agent — the run could not be stopped")
             return
         }
+        computerControl.cancelPendingActions()
         isBusy = false
         pendingRetry = false
         showToast("Stopping the current run")
@@ -2018,7 +2242,8 @@ final class AppModel: ObservableObject {
             todos: [],
             contextFiles: contextFiles,
             workspacePath: workspacePath,
-            model: selectedModel
+            model: selectedModel,
+            activePlan: nil
         )
         pendingRewindDraft = block.text
         restore(checkpoint)
@@ -2328,6 +2553,62 @@ final class AppModel: ObservableObject {
         requestClearChat()
     }
 
+    func newSession(in workspacePath: String) {
+        startNewChat(in: workspacePath)
+    }
+
+    func openWorkspace(_ group: WorkspaceChatGroup) {
+        guard !isBusy, !hasPendingPermission else {
+            showToast("Finish the active run before switching workspaces")
+            return
+        }
+        setWorkspaceExpanded(group.id, expanded: true)
+        if let latest = group.chats.max(by: { $0.mtime < $1.mtime }) {
+            resume(latest)
+        } else if let path = group.path {
+            startNewChat(in: path)
+        }
+    }
+
+    private func startNewChat(in rawPath: String) {
+        guard !isBusy, !hasPendingPermission, !pendingSessionReset else {
+            showToast("Finish the active run before starting another chat")
+            return
+        }
+        let path = SessionSummary.canonicalWorkspacePath(rawPath)
+        guard FileManager.default.fileExists(atPath: path) else {
+            showToast("That workspace is no longer available")
+            return
+        }
+        guard workspaceAccess.activateStored(path: path) else {
+            showToast("Choose that workspace again to restore access")
+            return
+        }
+        persistCurrentWorkspaceProfile()
+        pendingWorkspacePath = path
+        initialWorkspacePath = path
+        expandedWorkspaceIDs.insert(path)
+        persistExpandedWorkspaces()
+        pendingSessionReset = true
+        armSessionResetWatchdog()
+        showToast("Starting a new chat in \(URL(fileURLWithPath: path).lastPathComponent)…")
+        Task {
+            do {
+                let response = try await backend.post(
+                    "/api/sessions/new",
+                    body: ["reason": "workspace_chat", "cwd": path],
+                    as: NewSessionResponse.self
+                )
+                applySessionStarted(response.sessionInfo, reason: response.reason)
+            } catch {
+                pendingSessionReset = false
+                pendingWorkspacePath = nil
+                sessionResetWatchdog?.cancel()
+                showToast("Could not start the chat: \(error.localizedDescription)")
+            }
+        }
+    }
+
     func requestClearSavedSessions() {
         commandPalettePresented = false
         guard !isClearingSessions else { return }
@@ -2344,7 +2625,9 @@ final class AppModel: ObservableObject {
                     "/api/sessions",
                     as: ClearSessionsResponse.self
                 )
-                let suffix = showArchivedSessions ? "?include_archived=true" : ""
+                let suffix = showArchivedSessions
+                    ? "?include_archived=true&limit=500"
+                    : "?limit=500"
                 let list = try await backend.get(
                     "/api/sessions\(suffix)",
                     as: SessionsResponse.self
@@ -2370,6 +2653,20 @@ final class AppModel: ObservableObject {
             showToast("Finish the active run before switching sessions")
             return
         }
+        if let path = session.workspacePath {
+            guard FileManager.default.fileExists(atPath: path) else {
+                showToast("That chat's workspace is no longer available")
+                return
+            }
+            guard workspaceAccess.activateStored(path: path) else {
+                showToast("Choose that workspace again to restore access")
+                return
+            }
+            pendingWorkspacePath = path
+            initialWorkspacePath = path
+            expandedWorkspaceIDs.insert(path)
+            persistExpandedWorkspaces()
+        }
         Task {
             do {
                 let response = try await backend.post(
@@ -2379,8 +2676,10 @@ final class AppModel: ObservableObject {
                 )
                 flushPendingTokens()
                 streamingAssistantID = nil
+                streamingReply.resetTurn()
                 isBusy = false
                 todos = []
+                activePlan = nil
                 planApprovalPending = false
                 queuedMessages = []
                 restoredTranscriptContext = nil
@@ -2391,6 +2690,7 @@ final class AppModel: ObservableObject {
                 blocks = Self.blocks(from: response.messages)
                 sessionInfo = response.sessionInfo
                 currentSessionID = response.sessionInfo.sessionID
+                touchWorkspaceProfile(response.sessionInfo.cwd)
                 showToast("Session resumed")
             } catch {
                 blocks.append(ChatBlock(kind: .error, text: error.localizedDescription))
@@ -2412,6 +2712,76 @@ final class AppModel: ObservableObject {
             return
         }
         updateSession(session, body: ["archived": !session.isArchived], success: session.isArchived ? "Session restored" : "Session archived")
+    }
+
+    func deleteChat(_ session: SessionSummary) {
+        guard !isBusy, !hasPendingPermission, !pendingSessionReset else {
+            showToast("Finish the active run before deleting a chat")
+            return
+        }
+        let wasActive = session.id == currentSessionID
+        if wasActive {
+            pendingSessionReset = true
+            armSessionResetWatchdog()
+        }
+        Task {
+            do {
+                let response = try await backend.delete(
+                    "/api/sessions/\(session.id)",
+                    as: DeleteSessionResponse.self
+                )
+                if let replacement = response.replacementSessionInfo {
+                    applySessionStarted(replacement, reason: "deleted_active")
+                }
+                sessions.removeAll { $0.id == session.id }
+                pendingDeletedChat = DeletedChatUndo(
+                    session: session,
+                    trashBatch: response.trashBatch,
+                    wasActive: response.deletedActive
+                )
+                showToast(
+                    "Moved “\(session.displayTitle)” to recovery",
+                    actionTitle: "Undo",
+                    duration: 7
+                )
+            } catch {
+                if wasActive {
+                    pendingSessionReset = false
+                    sessionResetWatchdog?.cancel()
+                }
+                showToast("Could not delete the chat: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func performToastAction() {
+        guard toast?.actionTitle != nil, let deletion = pendingDeletedChat else { return }
+        toastTask?.cancel()
+        toast = nil
+        pendingDeletedChat = nil
+        Task {
+            do {
+                let response = try await backend.post(
+                    "/api/sessions/restore",
+                    body: ["batch": deletion.trashBatch],
+                    as: RestoreSessionsResponse.self
+                )
+                await refreshMetadata()
+                guard response.restored > 0 else {
+                    showToast("That chat could not be restored")
+                    return
+                }
+                showToast("Chat restored")
+                if deletion.wasActive,
+                   let restoredID = response.sessionIDs.first,
+                   let restored = sessions.first(where: { $0.id == restoredID })
+                {
+                    resume(restored)
+                }
+            } catch {
+                showToast("Could not restore the chat: \(error.localizedDescription)")
+            }
+        }
     }
 
     func setShowArchived(_ value: Bool) {
@@ -2457,6 +2827,10 @@ final class AppModel: ObservableObject {
     }
 
     func chooseWorkspace() {
+        guard !isBusy, !hasPendingPermission else {
+            showToast("Finish the active run before adding a workspace")
+            return
+        }
         let panel = NSOpenPanel()
         panel.title = "Choose a workspace"
         panel.message = "Pick a project folder, or use New Folder to start a new one."
@@ -2523,6 +2897,7 @@ final class AppModel: ObservableObject {
             showToast("Finish the active run before switching workspaces")
             return
         }
+        let path = SessionSummary.canonicalWorkspacePath(path)
         guard workspaceAccess.activateStored(path: path) else {
             showToast("Choose that workspace again to restore access")
             return
@@ -2535,7 +2910,10 @@ final class AppModel: ObservableObject {
         persistCurrentWorkspaceProfile()
         pendingWorkspacePath = path
         initialWorkspacePath = path
+        expandedWorkspaceIDs.insert(path)
+        persistExpandedWorkspaces()
         if backendProcess.isRunning, WorkspaceAccess.isSandboxed {
+            workspaceToOpenAfterReconnect = path
             backend.disconnect()
             sessionInfo = nil
             Task { [backendProcess] in
@@ -2545,16 +2923,24 @@ final class AppModel: ObservableObject {
             showToast("Switching to \(URL(fileURLWithPath: path).lastPathComponent)")
             return
         }
-        guard backend.send(["type": "set_cwd", "path": path]) else {
-            pendingWorkspacePath = nil
-            showToast("Reconnect before switching workspaces")
-            return
+        if let latest = sessions
+            .filter({ $0.workspacePath == path })
+            .max(by: { $0.mtime < $1.mtime })
+        {
+            resume(latest)
+        } else {
+            startNewChat(in: path)
         }
         showToast("Switching to \(URL(fileURLWithPath: path).lastPathComponent)")
     }
 
     func removeWorkspaceProfile(_ path: String) {
-        workspaceProfiles.removeAll { $0.path == path }
+        let canonical = SessionSummary.canonicalWorkspacePath(path)
+        workspaceProfiles.removeAll {
+            SessionSummary.canonicalWorkspacePath($0.path) == canonical
+        }
+        expandedWorkspaceIDs.remove(canonical)
+        persistExpandedWorkspaces()
         persistWorkspaceProfiles()
     }
 
@@ -2684,7 +3070,8 @@ final class AppModel: ObservableObject {
             todos: todos,
             contextFiles: contextFiles,
             workspacePath: workspacePath,
-            model: selectedModel
+            model: selectedModel,
+            activePlan: activePlan
         )
         checkpoints.insert(checkpoint, at: 0)
         checkpoints = Array(checkpoints.prefix(12))
@@ -2732,31 +3119,27 @@ final class AppModel: ObservableObject {
         send(prompt, preservingDraftOnFailure: false)
     }
 
-    /// Answers the "implement this plan?" prompt that follows a completed
-    /// Plan-mode turn. Implementing switches to Build mode and starts the
-    /// run; auto-accepting also raises Ask permissions to Accept Edits so
-    /// the build is not interrupted for every file change.
+    /// Resolves the final Plan-mode decision without changing permissions.
     func resolvePlanApproval(_ decision: PlanApprovalDecision) {
         guard planApprovalPending else { return }
         switch decision {
-        case .keepPlanning:
+        case .revise:
             planApprovalPending = false
-        case .implementAutoAccepting, .implementReviewing:
+            selectedMode = .plan
+            drainQueuedMessages()
+        case .cancel:
+            planApprovalPending = false
+            selectedMode = .work
+            drainQueuedMessages()
+        case .proceed:
             guard isAgentOnline else {
                 showToast("Reconnect the local agent to implement the plan")
                 return
             }
             planApprovalPending = false
             selectedMode = .build
-            let escalate = decision == .implementAutoAccepting && permissionMode == .ask
             Task { [weak self] in
                 guard let self else { return }
-                // The escalation lands before the run starts; if it fails,
-                // the run still proceeds and simply asks per edit — the
-                // failure toast says why. If delivery of the message itself
-                // fails, it is requeued and drained on reconnect rather
-                // than dropped, so the decision survives.
-                if escalate { await changePermissionMode(.acceptEdits) }
                 send(
                     "Implement the plan you just created, in order. Keep the todo list updated as you complete each step.",
                     preservingDraftOnFailure: false,
@@ -3377,6 +3760,26 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func setComputerControlEnabled(_ enabled: Bool) {
+        guard ComputerControlService.isAvailable else {
+            settings.computerControlEnabled = false
+            showToast("Computer Control is unavailable in the App Store build")
+            return
+        }
+        settings.computerControlEnabled = enabled
+        computerControl.refreshPermissionStatus()
+        sendComputerControlCapability()
+        showToast(enabled ? "Computer Control enabled" : "Computer Control disabled")
+    }
+
+    private func sendComputerControlCapability() {
+        _ = backend.send([
+            "type": "set_computer_control",
+            "enabled": settings.computerControlEnabled,
+            "native_available": ComputerControlService.isAvailable,
+        ])
+    }
+
     /// The agent echoes the new state; mirror it locally so the UI updates
     /// without waiting for the next session_info event.
     private func applyPermissionState(_ state: PermissionStateResponse) {
@@ -3414,6 +3817,7 @@ final class AppModel: ObservableObject {
         case .reviewChanges: selectInspectorTab(.changes)
         case .createCheckpoint: checkpointPresented = true
         case .askMode: selectedMode = .ask
+        case .workMode: selectedMode = .work
         case .planMode: selectedMode = .plan
         case .buildMode: selectedMode = .build
         case .chooseWorkspace: chooseWorkspace()
@@ -3447,11 +3851,20 @@ final class AppModel: ObservableObject {
         handle(event)
     }
 
+    static func migrateLegacyBuildProfiles(_ profiles: [WorkspaceProfile]) -> [WorkspaceProfile] {
+        profiles.map { profile in
+            guard profile.mode == .build else { return profile }
+            var migrated = profile
+            migrated.mode = .work
+            return migrated
+        }
+    }
+
     private func backendIsHealthy() async -> Bool {
         (try? await backend.get("/api/health", as: HealthResponse.self)) != nil
     }
 
-    private func decoratedPrompt(
+    func decoratedPrompt(
         _ text: String,
         mode: WorkMode,
         chatAttachments: [ChatAttachment] = []
@@ -3516,6 +3929,7 @@ final class AppModel: ObservableObject {
         switch type {
         case "session_info":
             if let info = decode(SessionInfo.self, from: event) {
+                computerControl.beginSession(info.sessionID)
                 sessionInfo = info
                 currentSessionID = info.sessionID
                 // Only when a reply is not mid-flight. `approx_tokens` counts
@@ -3525,7 +3939,10 @@ final class AppModel: ObservableObject {
                 // permission mode does it, and it is busy-guarded on neither
                 // side) does not include the text streamed so far, so clearing
                 // the estimate would drop it and the meter would visibly fall.
-                if streamingAssistantID == nil { streamedCharsThisTurn = 0 }
+                if streamingAssistantID == nil {
+                    streamedCharsThisTurn = 0
+                    streamingReply.resetTurn()
+                }
                 noteLocalHost(from: info)
                 applyWorkspaceProfileIfNeeded(for: info)
             }
@@ -3549,11 +3966,7 @@ final class AppModel: ObservableObject {
 
         case "message_end":
             flushPendingTokens()
-            if let id = streamingAssistantID,
-               let index = blocks.firstIndex(where: { $0.id == id })
-            {
-                blocks[index].isStreaming = false
-            }
+            if let id = streamingAssistantID { commitStreamingReply(id, finished: true) }
             streamingAssistantID = nil
             streamRevision += 1
 
@@ -3589,9 +4002,9 @@ final class AppModel: ObservableObject {
             if let index = blocks.lastIndex(where: { $0.tool?.toolID == toolID }), !toolID.isEmpty {
                 blocks[index].tool?.status = .awaitingPermission
                 blocks[index].tool?.requestID = requestID
-                // An in-place upgrade changes neither the block count nor the
-                // stream revision, so without this the conversation would not
-                // scroll the prompt into view.
+                // Publish the in-place tool-card upgrade even though the
+                // block count did not change. The native scroll coordinator
+                // decides independently whether the viewport should follow.
                 streamRevision += 1
             } else {
                 // Never drop a permission request: without a card the backend
@@ -3662,23 +4075,81 @@ final class AppModel: ObservableObject {
             }
 
         case "thinking":
-            // Native reasoning output is surfaced separately from the answer;
-            // it is rendered from the assistant block, so nothing to append.
-            break
+            // Keep only reasoning text explicitly supplied by the provider;
+            // signatures and redacted blocks never enter this event.
+            if streamingAssistantID == nil {
+                startAssistantStream()
+            }
+            enqueueReasoning(event["text"] as? String ?? "")
+
+        case "steer_ack":
+            let state = event["state"] as? String
+            steeringState = state == "after_current_action"
+                ? "Waiting for the active action…"
+                : "Redirecting generation…"
+
+        case "steer_applied":
+            if let text = (event["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !text.isEmpty
+            {
+                blocks.append(ChatBlock(kind: .user, text: text))
+            }
+            steeringState = nil
+
+        case "computer_action_request":
+            guard let requestID = event["request_id"] as? String,
+                  let tool = event["tool"] as? String,
+                  let arguments = event["arguments"] as? [String: Any]
+            else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let result = await self.computerControl.perform(
+                    tool: tool,
+                    arguments: arguments,
+                    hostedProvider: self.activeAccount?.displayName,
+                    timeoutMilliseconds: event["timeout_ms"] as? Int ?? 60_000
+                )
+                _ = self.backend.send([
+                    "type": "computer_action_result",
+                    "request_id": requestID,
+                    "result": result,
+                ])
+            }
+
+        case "computer_control_status":
+            if (event["enabled"] as? Bool) != true, settings.computerControlEnabled {
+                showToast("Computer Control is unavailable from the native broker")
+            }
 
         case "todo_update":
             if let raw = event["todos"] as? [[String: Any]] {
-                todos = raw.compactMap { decode(TodoItem.self, from: $0) }
+                let updatedTodos = raw.compactMap { decode(TodoItem.self, from: $0) }
+                let changed = updatedTodos != todos
+                todos = updatedTodos
                 if todos.isEmpty {
                     // A prompt offering to implement zero steps is nonsense;
                     // the agent emptying the list withdraws the plan.
                     planApprovalPending = false
-                } else {
+                    activePlan = nil
+                } else if changed {
                     planTodosChangedThisTurn = true
                 }
                 // Badge rather than switch: being pulled off the tab you are
                 // reading mid-run is the complaint this replaces.
                 if !todos.isEmpty, inspectorTab != .plan || inspectorCollapsed {
+                    planHasUnseenUpdate = true
+                }
+            }
+
+        case "plan_ready":
+            if let raw = event["plan"] as? [String: Any],
+               let plan = decode(PlanDocument.self, from: raw),
+               !plan.steps.isEmpty
+            {
+                activePlan = plan
+                planReadyThisTurn = true
+                todos = plan.steps.map { TodoItem(content: $0, status: .pending) }
+                if inspectorTab != .plan || inspectorCollapsed {
                     planHasUnseenUpdate = true
                 }
             }
@@ -3700,22 +4171,27 @@ final class AppModel: ObservableObject {
             )
             isBusy = false
             pendingRetry = false
+            steeringState = nil
             streamingAssistantID = nil
             streamedCharsThisTurn = 0
-            // A Plan-mode turn that wrote a plan ends by asking whether to
-            // implement it — but only a finished turn, only a turn that was
-            // dispatched in Plan mode and is still being read in it, and
-            // never over a queued message, which the user has already
-            // decided comes next.
-            if reason == "complete",
-               turnDispatchedInPlanMode,
-               selectedMode == .plan,
-               planTodosChangedThisTurn,
-               !todos.isEmpty,
-               queuedMessages.isEmpty {
-                planApprovalPending = true
+            streamingReply.resetTurn()
+            if reason == "complete", turnDispatchedInPlanMode, selectedMode == .plan {
+                let assistantText = blocks.last(where: { $0.kind == .assistant })?.text ?? ""
+                if !planReadyThisTurn,
+                   let fallback = PlanSignalDetector.document(
+                    from: assistantText,
+                    changedTodos: planTodosChangedThisTurn ? todos : []
+                   )
+                {
+                    activePlan = fallback
+                    planReadyThisTurn = true
+                }
+                planApprovalPending = planReadyThisTurn
+                    && !(activePlan?.steps.isEmpty ?? true)
+                    && !PlanSignalDetector.isClarifyingResponse(assistantText)
             }
             planTodosChangedThisTurn = false
+            planReadyThisTurn = false
             turnDispatchedInPlanMode = false
             turnDispatchedMode = nil
             turnStartedAt = nil
@@ -3726,6 +4202,11 @@ final class AppModel: ObservableObject {
             // Before the queue drains: a model chosen mid-turn is meant for
             // the messages waiting behind it.
             applyPendingProviderSwitchIfNeeded()
+            if let replacement = pendingStopAndSend {
+                pendingStopAndSend = nil
+                send(replacement, preservingDraftOnFailure: false, requeueingOnFailure: true)
+                return
+            }
             Task { @MainActor [weak self] in
                 self?.drainQueuedMessages()
             }
@@ -3735,6 +4216,7 @@ final class AppModel: ObservableObject {
             finalizeStreamingBlocks()
             resolveDanglingPermissions()
             pendingRetry = false
+            steeringState = nil
             planApprovalPending = false
             planTodosChangedThisTurn = false
             turnDispatchedInPlanMode = false
@@ -3744,6 +4226,7 @@ final class AppModel: ObservableObject {
             pendingRewindDraft = nil
             streamingAssistantID = nil
             streamedCharsThisTurn = 0
+            streamingReply.resetTurn()
             blocks.append(
                 ChatBlock(
                     kind: .error,
@@ -3768,6 +4251,7 @@ final class AppModel: ObservableObject {
             if event["command"] as? String == "clear" {
                 blocks = []
                 todos = []
+                activePlan = nil
                 planApprovalPending = false
             } else if let text = event["text"] as? String, !text.isEmpty {
                 blocks.append(
@@ -3798,6 +4282,7 @@ final class AppModel: ObservableObject {
             && !pendingSessionReset
             && !pendingRetry
             && pendingCheckpointRestore == nil
+        computerControl.beginSession(info.sessionID)
         sessionInfo = info
         currentSessionID = info.sessionID
         if isDuplicateAcknowledgement { return }
@@ -3815,6 +4300,7 @@ final class AppModel: ObservableObject {
             pendingWorkspacePath = nil
             blocks = checkpoint.blocks
             todos = checkpoint.todos
+            activePlan = checkpoint.activePlan
             planApprovalPending = false
             contextFiles = checkpoint.contextFiles
             queuedMessages = []
@@ -3839,21 +4325,28 @@ final class AppModel: ObservableObject {
                 blocks = Array(blocks.prefix(through: userIndex))
             }
             todos = []
+            activePlan = nil
             planApprovalPending = false
             planTodosChangedThisTurn = false
             pendingRetry = false
             isBusy = true
-        } else if pendingSessionReset || reason == "clear_chat" {
+        } else if pendingSessionReset
+                    || reason == "clear_chat"
+                    || reason == "workspace_chat"
+                    || reason == "deleted_active"
+        {
             flushPendingTokens()
             blocks = []
             todos = []
+            activePlan = nil
             planApprovalPending = false
             queuedMessages = []
             streamingAssistantID = nil
+            streamingReply.resetTurn()
             restoredTranscriptContext = nil
             pendingSessionReset = false
             isBusy = false
-            showToast("Fresh chat started")
+            showToast(reason == "deleted_active" ? "Fresh chat opened" : "Fresh chat started")
         }
         if persistenceEnabled {
             Task { await refreshMetadata() }
@@ -3862,18 +4355,34 @@ final class AppModel: ObservableObject {
 
     private func startAssistantStream() {
         flushPendingTokens()
+        if let current = streamingAssistantID {
+            commitStreamingReply(current, finished: true)
+        }
         let id = UUID()
         streamingAssistantID = id
         isBusy = true
         blocks.append(ChatBlock(id: id, kind: .assistant, isStreaming: true))
+        streamingReply.begin(id: id)
     }
 
     /// No assistant bubble may stay in the streaming state once the turn is
     /// over — a missed message_end otherwise leaves a blinking cursor forever.
     private func finalizeStreamingBlocks() {
+        if let id = streamingAssistantID {
+            commitStreamingReply(id, finished: true)
+        }
         for index in blocks.indices where blocks[index].isStreaming {
             blocks[index].isStreaming = false
         }
+    }
+
+    private func commitStreamingReply(_ id: UUID, finished: Bool) {
+        guard let snapshot = streamingReply.finish(id: id),
+              let index = blocks.firstIndex(where: { $0.id == id })
+        else { return }
+        blocks[index].text = snapshot.text
+        blocks[index].reasoningText = snapshot.reasoning.nilIfEmpty
+        if finished { blocks[index].isStreaming = false }
     }
 
     /// A normally completed Build turn is authoritative evidence that the
@@ -3931,6 +4440,7 @@ final class AppModel: ObservableObject {
         finalizeStreamingBlocks()
         streamingAssistantID = nil
         streamedCharsThisTurn = 0
+        streamingReply.resetTurn()
         turnStartedAt = nil
         isBusy = false
         pendingRetry = false
@@ -3956,28 +4466,34 @@ final class AppModel: ObservableObject {
     private func enqueueToken(_ token: String) {
         guard !token.isEmpty else { return }
         pendingTokens += token
-        guard streamFlushTask == nil else { return }
-        streamFlushTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(33))
-            guard !Task.isCancelled else { return }
-            self?.flushPendingTokens()
-        }
+        scheduleStreamFlush()
+    }
+
+    private func enqueueReasoning(_ text: String) {
+        guard !text.isEmpty else { return }
+        pendingReasoning += text
+        scheduleStreamFlush()
+    }
+
+    /// A single publication on the next display refresh keeps text growth and
+    /// native scroll anchoring on the same visual frame.
+    private func scheduleStreamFlush() {
+        streamFlushDriver.request()
     }
 
     private func flushPendingTokens() {
-        streamFlushTask?.cancel()
-        streamFlushTask = nil
-        guard !pendingTokens.isEmpty,
-              let id = streamingAssistantID,
-              let index = blocks.firstIndex(where: { $0.id == id })
+        streamFlushDriver.cancelPending()
+        guard !pendingTokens.isEmpty || !pendingReasoning.isEmpty,
+              streamingAssistantID != nil
         else {
             pendingTokens = ""
+            pendingReasoning = ""
             return
         }
-        blocks[index].text += pendingTokens
-        streamedCharsThisTurn += pendingTokens.count
+        streamingReply.append(text: pendingTokens, reasoning: pendingReasoning)
+        streamedCharsThisTurn += pendingTokens.count + pendingReasoning.count
         pendingTokens = ""
-        streamRevision += 1
+        pendingReasoning = ""
     }
 
     private func updateSession(_ session: SessionSummary, body: [String: Any], success: String) {
@@ -3997,18 +4513,24 @@ final class AppModel: ObservableObject {
     }
 
     private func applyWorkspaceProfileIfNeeded(for info: SessionInfo) {
-        guard appliedWorkspacePath != info.cwd || pendingWorkspacePath == info.cwd else { return }
-        let changedWorkspace = appliedWorkspacePath != nil && appliedWorkspacePath != info.cwd
-        appliedWorkspacePath = info.cwd
+        let path = SessionSummary.canonicalWorkspacePath(info.cwd)
+        guard appliedWorkspacePath != path || pendingWorkspacePath == path else { return }
+        let changedWorkspace = appliedWorkspacePath != nil && appliedWorkspacePath != path
+        appliedWorkspacePath = path
         pendingWorkspacePath = nil
+        expandedWorkspaceIDs.insert(path)
+        persistExpandedWorkspaces()
         if changedWorkspace {
             flushPendingTokens()
             blocks = []
             todos = []
+            activePlan = nil
             planApprovalPending = false
             restoredTranscriptContext = nil
         }
-        if let profile = workspaceProfiles.first(where: { $0.path == info.cwd }) {
+        if let profile = workspaceProfiles.first(where: {
+            SessionSummary.canonicalWorkspacePath($0.path) == path
+        }) {
             draftText = profile.draft
             selectedMode = profile.mode
             settings.previewURL = profile.previewURL
@@ -4016,7 +4538,7 @@ final class AppModel: ObservableObject {
             applyProfileRoute(profile, currentModel: info.model)
             Task { await refreshContextFiles() }
         }
-        touchWorkspaceProfile(info.cwd)
+        touchWorkspaceProfile(path)
         refreshGitBranch()
         refreshWorkspaceIndex(force: true)
     }
@@ -4045,7 +4567,10 @@ final class AppModel: ObservableObject {
     }
 
     private func touchWorkspaceProfile(_ path: String) {
-        if let index = workspaceProfiles.firstIndex(where: { $0.path == path }) {
+        let path = SessionSummary.canonicalWorkspacePath(path)
+        if let index = workspaceProfiles.firstIndex(where: {
+            SessionSummary.canonicalWorkspacePath($0.path) == path
+        }) {
             workspaceProfiles[index].lastOpened = Date()
         } else {
             workspaceProfiles.append(
@@ -4061,7 +4586,7 @@ final class AppModel: ObservableObject {
                 )
             )
         }
-        workspaceProfiles = Array(workspaceProfiles.sorted { $0.lastOpened > $1.lastOpened }.prefix(8))
+        workspaceProfiles.sort { $0.lastOpened > $1.lastOpened }
         persistWorkspaceProfiles()
     }
 
@@ -4087,8 +4612,7 @@ final class AppModel: ObservableObject {
 
     private func persistCurrentWorkspaceProfile() {
         // Before the agent reports a session, workspacePath falls back to the
-        // home directory — which must never be recorded as a recent
-        // workspace, where it evicts real entries from the 8-slot list.
+        // home directory — which must never be recorded as a real workspace.
         guard sessionInfo != nil else { return }
         let path = workspacePath
         let profile = WorkspaceProfile(
@@ -4101,12 +4625,14 @@ final class AppModel: ObservableObject {
             contextFiles: contextFiles,
             draft: draftText
         )
-        if let index = workspaceProfiles.firstIndex(where: { $0.path == path }) {
+        if let index = workspaceProfiles.firstIndex(where: {
+            SessionSummary.canonicalWorkspacePath($0.path) == path
+        }) {
             workspaceProfiles[index] = profile
         } else {
             workspaceProfiles.append(profile)
         }
-        workspaceProfiles = Array(workspaceProfiles.sorted { $0.lastOpened > $1.lastOpened }.prefix(8))
+        workspaceProfiles.sort { $0.lastOpened > $1.lastOpened }
         persistWorkspaceProfiles()
     }
 
@@ -4208,7 +4734,8 @@ final class AppModel: ObservableObject {
                 mtime: Date().timeIntervalSince1970,
                 size: 400,
                 title: "Workspace review",
-                pinned: true
+                pinned: true,
+                cwd: workspace
             ),
             SessionSummary(
                 id: "seed-archived",
@@ -4216,9 +4743,11 @@ final class AppModel: ObservableObject {
                 preview: "Archived design pass",
                 mtime: Date().addingTimeInterval(-600).timeIntervalSince1970,
                 size: 300,
-                archived: true
+                archived: true,
+                cwd: workspace
             ),
         ]
+        expandedWorkspaceIDs = [SessionSummary.canonicalWorkspacePath(workspace)]
         blocks = [
             ChatBlock(
                 id: UUID(uuidString: "00000000-0000-0000-0000-000000000101")!,
@@ -4318,14 +4847,31 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func showToast(_ message: String) {
+    private func showToast(
+        _ message: String,
+        actionTitle: String? = nil,
+        duration: Double = 2.4
+    ) {
         toastTask?.cancel()
-        toastMessage = message
+        if actionTitle == nil { pendingDeletedChat = nil }
+        toast = AppToast(
+            message: message,
+            actionTitle: actionTitle
+        )
         toastTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(2.4))
+            try? await Task.sleep(for: .seconds(duration))
             guard !Task.isCancelled else { return }
-            self?.toastMessage = nil
+            self?.toast = nil
+            self?.pendingDeletedChat = nil
         }
+    }
+
+    private func persistExpandedWorkspaces() {
+        guard persistenceEnabled else { return }
+        UserDefaults.standard.set(
+            expandedWorkspaceIDs.sorted(),
+            forKey: "Locus.expandedWorkspaces"
+        )
     }
 
     private func persistSettings() {
@@ -4665,8 +5211,13 @@ final class AppModel: ObservableObject {
             switch message.role {
             case "user":
                 ChatBlock(kind: .user, text: displayUserText(message.content))
-            case "assistant" where !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
-                ChatBlock(kind: .assistant, text: message.content)
+            case "assistant" where !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !(message.reasoning?.isEmpty ?? true):
+                ChatBlock(
+                    kind: .assistant,
+                    text: message.content,
+                    reasoningText: message.reasoning
+                )
             case "tool":
                 ChatBlock(
                     kind: .tool,
@@ -4703,6 +5254,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
     case reviewChanges
     case createCheckpoint
     case askMode
+    case workMode
     case planMode
     case buildMode
     case chooseWorkspace
@@ -4724,6 +5276,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .reviewChanges: "Review file changes"
         case .createCheckpoint: "Create a session checkpoint"
         case .askMode: "Turn on Just Chat"
+        case .workMode: "Use adaptive Work mode"
         case .planMode: "Switch to Plan mode"
         case .buildMode: "Switch to Build mode"
         case .chooseWorkspace: "Choose a workspace"
@@ -4745,6 +5298,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .reviewChanges: "doc.text.magnifyingglass"
         case .createCheckpoint: "clock.arrow.circlepath"
         case .askMode: "bubble.left"
+        case .workMode: "sparkles"
         case .planMode: "list.bullet.clipboard"
         case .buildMode: "hammer"
         case .chooseWorkspace: "folder"
@@ -4766,12 +5320,64 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .reviewChanges: "⌘R"
         case .createCheckpoint: "⌘S"
         case .askMode: "⌥A"
+        case .workMode: "⌥W"
         case .planMode: "⌥P"
         case .buildMode: "⌥B"
         case .showShortcuts: "⌘/"
         case .chooseWorkspace, .newWorkspace, .browseModels, .refreshModels,
              .exportSession, .permissions, .openSettings: ""
         }
+    }
+}
+
+@MainActor
+private final class DisplaySynchronizedFlushDriver: NSObject {
+    private let callback: () -> Void
+    private var displayLink: CADisplayLink?
+    private var pending = false
+
+    init(callback: @escaping () -> Void) {
+        self.callback = callback
+    }
+
+    func request() {
+        guard !pending else { return }
+        pending = true
+        if displayLink == nil,
+           let source = NSApplication.shared.keyWindow?.screen ?? NSScreen.main
+        {
+            let link = source.displayLink(target: self, selector: #selector(displayTick(_:)))
+            link.add(to: .main, forMode: .common)
+            link.isPaused = true
+            displayLink = link
+        }
+        if let displayLink {
+            displayLink.isPaused = false
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.fire() }
+        }
+    }
+
+    func cancelPending() {
+        pending = false
+        displayLink?.isPaused = true
+    }
+
+    func invalidate() {
+        pending = false
+        displayLink?.invalidate()
+        displayLink = nil
+    }
+
+    @objc private func displayTick(_ link: CADisplayLink) {
+        fire()
+    }
+
+    private func fire() {
+        guard pending else { return }
+        pending = false
+        displayLink?.isPaused = true
+        callback()
     }
 }
 
@@ -4811,6 +5417,45 @@ private struct ClearSessionsResponse: Codable {
     }
 }
 
+private struct DeleteSessionResponse: Codable {
+    let ok: Bool
+    let id: String
+    let trashBatch: String
+    let deletedActive: Bool
+    let replacementSessionInfo: SessionInfo?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, id
+        case trashBatch = "trash_batch"
+        case deletedActive = "deleted_active"
+        case replacementSessionInfo = "replacement_session_info"
+    }
+}
+
+private struct RestoreSessionsResponse: Codable {
+    let ok: Bool
+    let restored: Int
+    let sessionIDs: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case ok, restored
+        case sessionIDs = "session_ids"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decode(Bool.self, forKey: .ok)
+        restored = try container.decode(Int.self, forKey: .restored)
+        sessionIDs = try container.decodeIfPresent([String].self, forKey: .sessionIDs) ?? []
+    }
+}
+
+private struct DeletedChatUndo {
+    let session: SessionSummary
+    let trashBatch: String
+    let wasActive: Bool
+}
+
 private struct ResumeResponse: Codable {
     let ok: Bool
     let text: String
@@ -4845,6 +5490,6 @@ private struct ChatAttachmentLoadResult: Sendable {
     let notice: String?
 }
 
-private extension String {
+extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
 }

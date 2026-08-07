@@ -21,8 +21,11 @@ final class WorkspaceAccess {
         for path in storedBookmarks.keys {
             _ = activateStored(path: path)
         }
-        for path in paths where activeURLs[path] != nil || !Self.isSandboxed {
-            return activeURLs[path]?.path ?? path
+        for path in paths {
+            let canonical = Self.canonicalPath(path)
+            if activeURLs[canonical] != nil || !Self.isSandboxed {
+                return activeURLs[canonical]?.path ?? canonical
+            }
         }
         return nil
     }
@@ -30,10 +33,11 @@ final class WorkspaceAccess {
     @discardableResult
     func rememberAndActivate(_ selectedURL: URL) -> Bool {
         let url = selectedURL.standardizedFileURL
+        let canonical = Self.canonicalPath(url.path)
         guard url.startAccessingSecurityScopedResource() || !Self.isSandboxed else {
             return false
         }
-        activeURLs[url.path] = url
+        activeURLs[canonical] = url
 
         guard Self.isSandboxed else { return true }
         do {
@@ -43,11 +47,11 @@ final class WorkspaceAccess {
                 relativeTo: nil
             )
             var bookmarks = storedBookmarks
-            bookmarks[url.path] = bookmark
+            bookmarks[canonical] = bookmark
             defaults.set(bookmarks, forKey: Self.defaultsKey)
             return true
         } catch {
-            activeURLs.removeValue(forKey: url.path)
+            activeURLs.removeValue(forKey: canonical)
             url.stopAccessingSecurityScopedResource()
             return false
         }
@@ -55,11 +59,17 @@ final class WorkspaceAccess {
 
     @discardableResult
     func activateStored(path: String) -> Bool {
-        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
-        if activeURLs[normalized] != nil || !Self.isSandboxed {
+        let canonical = Self.canonicalPath(path)
+        if activeURLs[canonical] != nil || !Self.isSandboxed {
             return true
         }
-        guard let data = storedBookmarks[normalized] else { return false }
+        // Bookmarks saved by older builds used the selected spelling of the
+        // path. Match those by canonical destination so symlink-selected
+        // workspaces remain usable after canonical IDs were introduced.
+        let bookmarks = storedBookmarks
+        guard let data = bookmarks[canonical] ?? bookmarks.first(where: {
+            Self.canonicalPath($0.key) == canonical
+        })?.value else { return false }
         var stale = false
         guard let url = try? URL(
             resolvingBookmarkData: data,
@@ -70,11 +80,19 @@ final class WorkspaceAccess {
         else {
             return false
         }
-        activeURLs[normalized] = url
+        activeURLs[canonical] = url
         if stale {
             _ = rememberAndActivate(url)
         }
         return true
+    }
+
+    private static func canonicalPath(_ path: String) -> String {
+        let standardized = URL(fileURLWithPath: path).standardizedFileURL
+        guard FileManager.default.fileExists(atPath: standardized.path) else {
+            return standardized.path
+        }
+        return standardized.resolvingSymlinksInPath().path
     }
 
     static func sandboxWorkspaceURL() -> URL? {

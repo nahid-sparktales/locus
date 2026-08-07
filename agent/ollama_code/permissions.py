@@ -59,6 +59,16 @@ class PermissionManager:
         sandbox: the agent runs with the user's privileges by design. Each
         chained segment is checked so a safe prefix cannot smuggle one in.
         """
+        if tool_name.startswith("computer_"):
+            text = json.dumps(args, ensure_ascii=False).lower()
+            takeover = (
+                "password", "passcode", "credential", "security interstitial",
+                "sign contract", "accept contract", "final transaction",
+                "confirm purchase", "place order", "wire transfer",
+            )
+            if any(term in text for term in takeover):
+                return "user takeover is required for credentials, contracts, security interstitials, and final financial transactions"
+            return None
         if tool_name != "bash":
             return None
         command = str(args.get("command", ""))
@@ -69,6 +79,17 @@ class PermissionManager:
         if _dynamic_root_delete(command):
             return "blocked by the deny list: dynamic construction of a recursive root delete"
         return None
+
+    def requires_confirmation(self, tool_name: str, args: dict[str, Any]) -> bool:
+        """Actions that remain permission-gated even in Bypass mode."""
+        if not tool_name.startswith("computer_"):
+            return False
+        text = json.dumps(args, ensure_ascii=False).lower()
+        consequence_terms = (
+            "delete", "remove permanently", "erase", "privacy", "security",
+            "install", "upload", "send file", "share file", "factory reset",
+        )
+        return any(term in text for term in consequence_terms)
 
     def allow_tool(self, tool_name: str, permanent: bool = False) -> None:
         self.allowed.add(tool_name)
@@ -363,6 +384,10 @@ def build_preview(
                 for t in todos if isinstance(t, dict)
             )
         return f"update task list ({n} tasks)", detail
+    if name == "submit_plan":
+        steps = args.get("steps")
+        n = len(steps) if isinstance(steps, list) else 0
+        return f"submit plan ({n} steps)", str(args.get("title") or "Implementation plan")
     if name == "web_fetch":
         url = str(args.get("url", ""))
         return f"fetch {url}", url

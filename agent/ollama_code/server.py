@@ -18,7 +18,9 @@ import os
 import signal
 import sys
 from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FutureTimeout
 from contextlib import asynccontextmanager, contextmanager
+from pathlib import Path
 from threading import RLock
 from typing import Any
 
@@ -88,6 +90,7 @@ class ChatService:
         self.ws: WebSocket | None = None
         self.event_pump: asyncio.Task[Any] | None = None
         self.pending_permissions: dict[str, Future[str]] = {}
+        self.pending_computer_actions: dict[str, Future[dict[str, Any]]] = {}
         self.turn_future: Any = None
         self._state_guard = RLock()
         self._state_mutating = False
@@ -161,6 +164,62 @@ class ChatService:
             if not fut.done():
                 fut.set_result("deny")
 
+    def execute_computer(
+        self,
+        tool: str,
+        arguments: dict[str, Any],
+        request_id: str,
+    ) -> str:
+        """Bridge one worker-thread tool call to the native Swift broker.
+
+        Requests are strictly one-result-per-id. The worker stays blocked until
+        Swift answers, Stop cancels it, or the 60-second protocol timeout wins.
+        """
+        if not self.core.tool_registry.computer_enabled:
+            return "Error: native computer control is disabled."
+        future: Future[dict[str, Any]] = Future()
+        self.pending_computer_actions[request_id] = future
+        self.emit({
+            "type": "computer_action_request",
+            "request_id": request_id,
+            "tool": tool,
+            "arguments": arguments,
+            "timeout_ms": 60_000,
+        })
+        try:
+            result = future.result(timeout=60)
+        except FutureTimeout:
+            return "Error: native computer action timed out after 60 seconds."
+        finally:
+            self.pending_computer_actions.pop(request_id, None)
+        error = str(result.get("error") or "").strip()
+        if error:
+            return f"Error: {error}"
+        text = str(result.get("text") or "").strip()
+        screenshot = result.get("screenshot")
+        if isinstance(screenshot, dict):
+            detail = str(screenshot.get("description") or "target-window screenshot")
+            accepted = self.core.accept_computer_screenshot(screenshot)
+            suffix = (
+                f"Screenshot observation available: {detail}"
+                if accepted
+                else "This route is using Accessibility text only for this session."
+            )
+            text = f"{text}\n\n{suffix}".strip()
+        return text or "Computer action completed."
+
+    def answer_computer(self, request_id: str, result: dict[str, Any]) -> bool:
+        future = self.pending_computer_actions.get(request_id)
+        if future is None or future.done():
+            return False
+        future.set_result(result)
+        return True
+
+    def cancel_all_computer_actions(self) -> None:
+        for future in list(self.pending_computer_actions.values()):
+            if not future.done():
+                future.set_result({"error": "cancelled by the user"})
+
     @property
     def busy(self) -> bool:
         with self._state_guard:
@@ -187,7 +246,16 @@ class ChatService:
                 self.turn_future is not None and not self.turn_future.done()
             ):
                 return False
-            self.turn_future = loop.run_in_executor(None, call, *args)
+            name = str(getattr(call, "__name__", ""))
+            steerable = name in {"_run_user_turn", "retry_last_response"}
+            if steerable:
+                self.core.begin_steerable_turn()
+            try:
+                self.turn_future = loop.run_in_executor(None, call, *args)
+            except Exception:
+                if steerable:
+                    self.core.end_steerable_turn()
+                raise
             return True
 
     def queue_event(self, event: dict[str, Any]) -> None:
@@ -479,10 +547,15 @@ def session_new(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, 
     try:
         with svc.state_mutation():
             reason = str(body.get("reason") or "new_session")
-            info = svc.core.new_session(reason=reason)
+            cwd_value = body.get("cwd")
+            if cwd_value is not None and not isinstance(cwd_value, str):
+                raise HTTPException(422, "cwd must be a string")
+            info = svc.core.new_session(reason=reason, cwd=str(cwd_value or "") or None)
             return {"ok": True, "reason": reason, "session_info": info}
     except AgentBusyError as e:
         raise _busy_http() from e
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
 
 
 @app.delete("/api/sessions")
@@ -497,6 +570,32 @@ def sessions_clear() -> dict[str, Any]:
         raise _busy_http() from e
 
 
+@app.delete("/api/sessions/{session_id}")
+def session_delete(session_id: str) -> dict[str, Any]:
+    """Move one chat to recovery, replacing it first when it is active."""
+    svc = service()
+    if SessionStore.path_for(session_id) is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    try:
+        with svc.state_mutation():
+            deleted_active = session_id == svc.core.session.session_id
+            replacement = None
+            if deleted_active:
+                replacement = svc.core.new_session(reason="deleted_active")
+            count, recovery_path = SessionStore.move_to_trash([session_id])
+            if count != 1:
+                raise HTTPException(500, "the chat could not be moved to recovery")
+            return {
+                "ok": True,
+                "id": session_id,
+                "trash_batch": Path(recovery_path).name,
+                "deleted_active": deleted_active,
+                "replacement_session_info": replacement,
+            }
+    except AgentBusyError as e:
+        raise _busy_http() from e
+
+
 @app.post("/api/sessions/restore")
 def sessions_restore(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     """Undo a clear: move a trash batch (default the newest) back."""
@@ -504,8 +603,12 @@ def sessions_restore(body: dict[str, Any] = Body(default_factory=dict)) -> dict[
     try:
         with svc.state_mutation():
             batch = str(body.get("batch") or "") or None
-            restored = SessionStore.restore_from_trash(batch)
-            return {"ok": True, "restored": restored}
+            restored_ids = SessionStore.restore_from_trash_details(batch)
+            return {
+                "ok": True,
+                "restored": len(restored_ids),
+                "session_ids": restored_ids,
+            }
     except AgentBusyError as e:
         raise _busy_http() from e
 
@@ -1105,6 +1208,14 @@ async def _event_pump(svc: ChatService, ws: WebSocket) -> None:
     try:
         while True:
             event = await svc.queue.get()
+            if event.get("type") in {"turn_done", "slash_result"}:
+                # Once a terminal event reaches the client, the turn slot must
+                # already accept the next message. This makes Stop & Send and
+                # ordinary queue draining deterministic rather than a race
+                # against the executor future's final callback.
+                future = svc.turn_future
+                if future is not None and not future.done():
+                    await asyncio.shield(future)
             await ws.send_json(event)
     except (WebSocketDisconnect, RuntimeError):
         pass
@@ -1175,7 +1286,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             _command_error(svc, str(mtype), "Message is too large to process safely.")
             return
         mode = str(msg.get("mode") or "").strip().lower()
-        if mode not in {"", "ask", "plan", "build"}:
+        if mode not in {"", "ask", "work", "plan", "build"}:
             _command_error(svc, str(mtype), "Unknown conversation mode.")
             return
         just_chat = mode == "ask"
@@ -1199,9 +1310,43 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             str(msg.get("request_id", "")),
             str(msg.get("decision", "deny")),
         )
+    elif mtype == "steer":
+        text = str(msg.get("text") or "").strip()
+        if not text:
+            _command_error(svc, "steer", "A steering message cannot be empty.")
+            return
+        if len(text) > MAX_USER_MESSAGE_CHARS \
+                or len(text.encode("utf-8")) > MAX_USER_MESSAGE_BYTES:
+            _command_error(svc, "steer", "Message is too large to process safely.")
+            return
+        if not svc.busy:
+            _command_error(svc, "steer", "There is no active turn to steer.")
+            return
+        state = core.steer(text)
+        if state is None:
+            _command_error(svc, "steer", "The active turn is already stopping.")
+            return
+        svc.queue_event({"type": "steer_ack", "text": text, "state": state})
+    elif mtype == "set_computer_control":
+        if svc.busy:
+            _command_error(svc, "set_computer_control", "Wait for the active turn to finish.")
+            return
+        enabled = bool(msg.get("enabled")) and bool(msg.get("native_available"))
+        core.tool_registry.computer_enabled = enabled
+        core.computer_executor = svc.execute_computer if enabled else None
+        svc.queue_event({"type": "computer_control_status", "enabled": enabled})
+    elif mtype == "computer_action_result":
+        request_id = str(msg.get("request_id") or "")
+        raw = msg.get("result")
+        result = raw if isinstance(raw, dict) else {"error": "invalid native result"}
+        # Stop, timeout, or reconnect may have cancelled the request while the
+        # native broker was unwinding. Late/duplicate results are harmless and
+        # intentionally ignored.
+        svc.answer_computer(request_id, result)
     elif mtype == "interrupt":
         core.interrupt()
         svc.deny_all_pending()  # unblock a permission wait so the turn can end
+        svc.cancel_all_computer_actions()
     elif mtype == "retry_last":
         if not svc.start_turn(loop, core.retry_last, svc.decide):
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
@@ -1371,6 +1516,7 @@ async def ws_chat(ws: WebSocket) -> None:
             svc.ws = None
             svc.core.interrupt()
             svc.deny_all_pending()
+            svc.cancel_all_computer_actions()
 
 
 def _is_loopback_bind(host: str) -> bool:

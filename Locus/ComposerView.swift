@@ -402,7 +402,7 @@ struct ComposerView: View {
         HStack(spacing: 3) {
             ForEach([WorkMode.plan, WorkMode.build]) { mode in
                 Button {
-                    model.selectedMode = mode
+                    model.selectedMode = model.selectedMode == mode ? .work : mode
                 } label: {
                     Text(mode.rawValue.capitalized)
                         .font(.system(size: 9, weight: .semibold))
@@ -541,22 +541,46 @@ struct ComposerView: View {
                 .foregroundStyle(LocusTheme.muted.opacity(0.62))
 
             if model.isBusy {
-                Button {
-                    model.stop()
+                Menu {
+                    Button("Queue for Next Turn", systemImage: "tray.and.arrow.down") {
+                        model.queueDraft()
+                    }
+                    Button("Stop & Send as New Turn", systemImage: "stop.circle") {
+                        model.stopAndSendDraft()
+                    }
                 } label: {
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color.white)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(LocusTheme.muted)
+                        .frame(width: 24, height: 30)
+                        .background(LocusTheme.paperDeep)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .disabled(!canSubmit)
+                .help("Choose how this message joins the conversation")
+                .accessibilityLabel("More send choices")
+                .accessibilityIdentifier("composer.sendChoices")
+
+                Button {
+                    submit()
+                } label: {
+                    Image(systemName: "arrow.turn.up.right")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(canSubmit ? Color.white : LocusTheme.muted)
                         .frame(width: 30, height: 30)
-                        .background(LocusTheme.coral)
+                        .background(canSubmit ? LocusTheme.signal : LocusTheme.paperDeep)
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                .help("Stop the current run (Esc)")
-                .accessibilityLabel("Stop")
-                .accessibilityIdentifier("composer.stop")
+                .disabled(!canSubmit)
+                .help("Steer the active turn (⌘↵)")
+                .accessibilityLabel("Steer now")
+                .accessibilityIdentifier("composer.steer")
 
-                // Invisible ⌘↵ target so sending while busy queues the draft.
+                // The visible menu cannot own the shortcut, so this zero-size
+                // target makes the primary busy action deterministic.
                 Button("") { submit() }
                     .keyboardShortcut(.return, modifiers: .command)
                     .buttonStyle(.plain)
@@ -656,12 +680,13 @@ struct ComposerView: View {
     private var sendHint: String {
         // No permission branch: while a request is pending the whole card —
         // including this hint — is replaced by the permission panel.
-        model.isBusy ? "⌘↵ Queue" : "⌘↵ Send"
+        model.isBusy ? "⌘↵ Steer Now" : "⌘↵ Send"
     }
 
     private var placeholder: String {
         switch model.selectedMode {
         case .ask: "Ask anything…  (attach files or images · no workspace tools)"
+        case .work: "What should Locus work on?  ( / commands · @ files )"
         case .plan: "Describe the change you want to plan…  ( / commands · @ files )"
         case .build: "What should we build next?  ( / commands · @ files )"
         }

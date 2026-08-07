@@ -203,6 +203,19 @@ def _looks_like_window_overflow(error_text: str) -> bool:
     lowered = error_text.lower()
     return any(marker in lowered for marker in _WINDOW_OVERFLOW_MARKERS)
 
+
+def _looks_like_image_rejection(error_text: str) -> bool:
+    """Whether a provider explicitly rejected an image-bearing request."""
+    lowered = error_text.lower()
+    image_terms = ("image", "vision", "multimodal", "image_url", "input_image")
+    rejection_terms = (
+        "not support", "unsupported", "not allowed", "invalid", "cannot", "can't",
+        "could not", "unable", "does not accept", "unknown content type",
+    )
+    return any(term in lowered for term in image_terms) and any(
+        term in lowered for term in rejection_terms
+    )
+
 BASE_SYSTEM_PROMPT = """You are ollama-code, a CLI coding agent running in the user's terminal on macOS.
 
 You help with software engineering tasks: reading, writing and editing code, running shell commands, and searching the codebase.
@@ -331,6 +344,12 @@ class AgentCore:
         self._trained_window = 0
         self._trained_window_for = ""
         self._interrupt = threading.Event()
+        self._steer_event = threading.Event()
+        self._steer_lock = threading.Lock()
+        self._pending_steers: list[str] = []
+        self._accepting_steers = False
+        self._streaming_response = False
+        self._in_tool_call = False
         self.tool_ctx.should_stop = self._interrupt.is_set
         self._last_user_message: str | None = None
         #: The server's ground-truth size of the last completed model call
@@ -343,6 +362,9 @@ class AgentCore:
         # the answer being regenerated.
         self._turn_allows_tools = True
         self._last_turn_allowed_tools = True
+        self.computer_executor: Callable[[str, dict[str, Any], str], str] | None = None
+        self._pending_computer_screenshot: dict[str, str] | None = None
+        self._ax_only_routes: set[str] = set()
 
     # --------------------------------------------------------------- events
 
@@ -358,7 +380,59 @@ class AgentCore:
 
     def interrupt(self) -> None:
         """Soft-interrupt the current turn (safe to call from any thread)."""
+        with self._steer_lock:
+            self._pending_steers.clear()
+            self._steer_event.clear()
         self._interrupt.set()
+
+    def steer(self, text: str) -> str | None:
+        """Inject a user update at the next safe model boundary."""
+        value = text.strip()
+        if not value or self._interrupt.is_set():
+            return None
+        with self._steer_lock:
+            if not self._accepting_steers:
+                return None
+            self._pending_steers.append(value)
+            self._steer_event.set()
+        return "interrupting_generation" if self._streaming_response else "after_current_action"
+
+    def begin_steerable_turn(self) -> None:
+        """Open a fresh same-turn steering window before worker dispatch."""
+        with self._steer_lock:
+            self._pending_steers.clear()
+            self._steer_event.clear()
+            self._accepting_steers = True
+
+    def end_steerable_turn(self) -> None:
+        with self._steer_lock:
+            self._accepting_steers = False
+
+    def _apply_pending_steers(self) -> bool:
+        with self._steer_lock:
+            values = list(self._pending_steers)
+            self._pending_steers.clear()
+            self._steer_event.clear()
+        for value in values:
+            self._add_message({"role": "user", "content": value})
+            self._emit({"type": "steer_applied", "text": value})
+        return bool(values)
+
+    def _apply_final_steers_or_close(self) -> bool:
+        """Atomically apply late directions or close the turn to new ones."""
+        with self._steer_lock:
+            values = list(self._pending_steers)
+            self._pending_steers.clear()
+            self._steer_event.clear()
+            if not values:
+                self._accepting_steers = False
+        for value in values:
+            self._add_message({"role": "user", "content": value})
+            self._emit({"type": "steer_applied", "text": value})
+        return bool(values)
+
+    def _should_stop_stream(self) -> bool:
+        return self._interrupt.is_set() or self._steer_event.is_set()
 
     def close(self) -> None:
         """Release extension transports and their child processes."""
@@ -908,6 +982,7 @@ class AgentCore:
         self.session = self._new_session_store()
         self.messages = [self.system_message()]
         self.tool_ctx.todos = []
+        self.tool_ctx.plan_document = None
         self._emit({"type": "todo_update", "todos": []})
         self.mcp.refresh(wait=False)
         self._emit_info()
@@ -915,17 +990,36 @@ class AgentCore:
     def reset_conversation(self) -> None:
         self.messages = [self.system_message()]
         self.tool_ctx.todos = []
+        self.tool_ctx.plan_document = None
         self.tool_ctx.read_files.clear()
         self._last_user_message = None
+        self._pending_computer_screenshot = None
+        self._ax_only_routes.clear()
         self._emit({"type": "todo_update", "todos": []})
         self._emit_info()
 
-    def start_new_session(self, reason: str = "new_session") -> dict[str, Any]:
+    def start_new_session(
+        self,
+        reason: str = "new_session",
+        cwd: str | None = None,
+    ) -> dict[str, Any]:
         """Start a fresh saved session and announce it. Returns session_info.
 
         A new chat starts clean: session-scoped tool permissions and the token
         counters belong to the conversation that just ended, not the next one.
+        ``cwd`` lets the native workspace tree create a chat beneath a folder
+        without first creating a throwaway session in the previous workspace.
         """
+        if cwd:
+            path = Path(cwd).expanduser()
+            if not path.is_dir():
+                raise ValueError(f"not a directory: {cwd}")
+            os.chdir(path)
+            self.cwd = os.getcwd()
+            self.tool_ctx.cwd = self.cwd
+            self.extensions.set_cwd(self.cwd)
+            self.reload_context()
+            self.mcp.refresh(wait=False)
         self.session = self._new_session_store()
         self.reset_conversation()
         self.perms.allowed.clear()
@@ -1063,6 +1157,11 @@ class AgentCore:
         self._turn_allows_tools = allow_tools
         self._last_turn_allowed_tools = allow_tools
         self._interrupt.clear()
+        with self._steer_lock:
+            if not self._accepting_steers:
+                self._pending_steers.clear()
+                self._steer_event.clear()
+                self._accepting_steers = True
         self.tool_ctx.read_files.clear()
         self._last_user_message = user_text
         # Stale counts from a previous turn must not leak into this turn's
@@ -1109,6 +1208,7 @@ class AgentCore:
             if self.context_limit != before:
                 self._emit_info()
         finally:
+            self.end_steerable_turn()
             self.tool_registry.end_turn()
             self._turn_allows_tools = True
 
@@ -1303,10 +1403,16 @@ class AgentCore:
                 index = i
                 break
         if index is None:
+            self.end_steerable_turn()
             self._emit({"type": "error", "message": "Nothing to regenerate yet."})
             self._emit({"type": "turn_done", "reason": "error", "duration_ms": 0})
             return False
         started_at = time.monotonic()
+        with self._steer_lock:
+            if not self._accepting_steers:
+                self._pending_steers.clear()
+                self._steer_event.clear()
+                self._accepting_steers = True
         self.messages = self.messages[: index + 1]
         self._interrupt.clear()
         self.tool_ctx.read_files.clear()
@@ -1326,6 +1432,7 @@ class AgentCore:
         try:
             self._run_response_loop(decider, started_at=started_at)
         finally:
+            self.end_steerable_turn()
             self.tool_registry.end_turn()
             self._turn_allows_tools = True
         return True
@@ -1341,10 +1448,14 @@ class AgentCore:
     ) -> None:
         started_at = time.monotonic() if started_at is None else started_at
         reason = "complete"
-        for _ in range(self.max_iterations):
+        iteration = 0
+        iteration_limit = self.max_iterations
+        while iteration < iteration_limit:
+            iteration += 1
             if self._interrupt.is_set():
                 reason = "interrupted"
                 break
+            self._apply_pending_steers()
             # Tool results are appended uncapped in aggregate (a dozen reads
             # in one iteration is legal), so the window can fill *inside* a
             # turn where the turn-start compaction check cannot help. Trim
@@ -1364,6 +1475,14 @@ class AgentCore:
                 reason = "error"
                 break
             assistant_msg: dict[str, Any] = {"role": "assistant", "content": strip_think(resp.content)}
+            inline_thinking = str(resp.provider_fields.get("inline_thinking") or "")
+            display_reasoning = "\n\n".join(
+                part for part in (resp.thinking.strip(), inline_thinking.strip()) if part
+            )
+            if display_reasoning:
+                # Display-only reasoning is removed from provider requests by
+                # _request_messages, but remains in session history for resume.
+                assistant_msg["_display_reasoning"] = display_reasoning
             if self.provider == "remote" and resp.thinking:
                 assistant_msg["reasoning_content"] = resp.thinking
             anthropic_content = resp.provider_fields.get("anthropic_content")
@@ -1402,6 +1521,9 @@ class AgentCore:
             if not resp.tool_calls:
                 if self._interrupt.is_set():
                     reason = "interrupted"
+                elif self._apply_final_steers_or_close():
+                    iteration_limit += 1
+                    continue
                 break
             if not self._turn_allows_tools:
                 # Providers should not return tool calls when no schemas were
@@ -1419,8 +1541,11 @@ class AgentCore:
                         "tool_call_id": skipped.call_id or skipped.name,
                         "content": "Not run: Just Chat has no tool or workspace access.",
                     })
+                if self._steer_event.is_set():
+                    iteration_limit += 1
                 continue
             interrupted = False
+            steered = False
             for index, tc in enumerate(resp.tool_calls):
                 if self._interrupt.is_set():
                     interrupted = True
@@ -1435,13 +1560,40 @@ class AgentCore:
                             "content": "Not run: the user interrupted this turn.",
                         })
                     break
-                result = self._run_tool_call(tc, decider)
+                if self._steer_event.is_set():
+                    # The direction changed before this action began. Pair
+                    # every unstarted provider tool call with a synthetic
+                    # result so OpenAI/Anthropic history remains valid.
+                    for skipped in resp.tool_calls[index:]:
+                        self._add_message({
+                            "role": "tool",
+                            "name": skipped.name,
+                            "tool_call_id": skipped.call_id or skipped.name,
+                            "content": "Not run: the user steered this turn before the action began.",
+                        })
+                    steered = True
+                    break
+                self._in_tool_call = True
+                try:
+                    result = self._run_tool_call(tc, decider)
+                finally:
+                    self._in_tool_call = False
                 self._add_message({
                     "role": "tool",
                     "name": tc.name,
                     "tool_call_id": tc.call_id or tc.name,
                     "content": result,
                 })
+                if self._steer_event.is_set():
+                    for skipped in resp.tool_calls[index + 1:]:
+                        self._add_message({
+                            "role": "tool",
+                            "name": skipped.name,
+                            "tool_call_id": skipped.call_id or skipped.name,
+                            "content": "Not run: the user steered this turn after the current action.",
+                        })
+                    steered = True
+                    break
             # Tool output is most of what fills a window, and until this the
             # meter only learned about it when the whole turn ended — so a turn
             # that read twenty files showed a flat meter and then jumped. One
@@ -1451,8 +1603,18 @@ class AgentCore:
             if interrupted:
                 reason = "interrupted"
                 break
+            self._append_pending_computer_observation()
+            if steered:
+                iteration_limit += 1
+                continue
+            if iteration >= iteration_limit and self._apply_final_steers_or_close():
+                iteration_limit += 1
         else:
             reason = "max_iterations"
+        # Close steering before publishing the terminal boundary. Any steer
+        # accepted before this point is either applied above or caused another
+        # loop iteration; anything later belongs in Queue or Stop & Send.
+        self.end_steerable_turn()
         self._emit({
             "type": "turn_done",
             "reason": reason,
@@ -1493,7 +1655,10 @@ class AgentCore:
 
     def _request_messages(self) -> list[dict[str, Any]]:
         """Return a request-only copy with extension context in the system prompt."""
-        messages = [dict(message) for message in self.messages]
+        messages = [
+            {key: value for key, value in message.items() if not key.startswith("_")}
+            for message in self.messages
+        ]
         if not self._turn_allows_tools:
             if messages and messages[0].get("role") == "system":
                 messages[0]["content"] = JUST_CHAT_SYSTEM_PROMPT
@@ -1507,12 +1672,21 @@ class AgentCore:
             messages.insert(0, {"role": "system", "content": prompt})
         return messages
 
-    def _stream_response(self, allow_overflow_retry: bool = True) -> ChatResponse | None:
+    def _stream_response(
+        self,
+        allow_overflow_retry: bool = True,
+        allow_image_retry: bool = True,
+    ) -> ChatResponse | None:
         self._emit({"type": "message_start"})
         think_filter = ThinkFilter()
+        inline_thinking: list[str] = []
 
         def on_token(token: str) -> None:
             piece = think_filter.feed(token)
+            thought = think_filter.take_thinking()
+            if thought:
+                inline_thinking.append(thought)
+                self._emit({"type": "thinking", "text": thought})
             if piece:
                 self._emit({"type": "token", "text": piece})
 
@@ -1522,15 +1696,19 @@ class AgentCore:
             self._emit({"type": "thinking", "text": text})
 
         try:
-            resp = self.client.chat_stream(
-                model=self.model,
-                messages=self._request_messages(),
-                tools=self.tool_registry.schemas() if self._turn_allows_tools else [],
-                on_token=on_token,
-                should_stop=self._interrupt.is_set,
-                on_thinking=on_thinking,
-                options=self.chat_options(),
-            )
+            self._streaming_response = True
+            try:
+                resp = self.client.chat_stream(
+                    model=self.model,
+                    messages=self._request_messages(),
+                    tools=self.tool_registry.schemas() if self._turn_allows_tools else [],
+                    on_token=on_token,
+                    should_stop=self._should_stop_stream,
+                    on_thinking=on_thinking,
+                    options=self.chat_options(),
+                )
+            finally:
+                self._streaming_response = False
         except KeyboardInterrupt:  # CLI Ctrl+C on the main thread
             self._interrupt.set()
             resp = None
@@ -1538,6 +1716,33 @@ class AgentCore:
             # Keep whatever already streamed: the user has read it on screen,
             # so it must exist in the conversation and the session file too.
             partial = strip_think(think_filter.flush_all())
+            thought_tail = think_filter.take_thinking()
+            if thought_tail:
+                inline_thinking.append(thought_tail)
+                self._emit({"type": "thinking", "text": thought_tail})
+            if (
+                allow_image_retry
+                and not partial
+                and not self._interrupt.is_set()
+                and _looks_like_image_rejection(str(e))
+                and any(
+                    m.get("_computer_observation") and m.get("attachments")
+                    for m in self.messages
+                )
+            ):
+                for message in self.messages:
+                    if message.get("_computer_observation"):
+                        message.pop("attachments", None)
+                self._ax_only_routes.add(self._computer_route_key())
+                self._emit({"type": "message_end"})
+                self._emit({
+                    "type": "note",
+                    "text": "This model route rejected a screenshot, so Locus is retrying with Accessibility text only for the rest of the session.",
+                })
+                return self._stream_response(
+                    allow_overflow_retry=allow_overflow_retry,
+                    allow_image_retry=False,
+                )
             if (
                 allow_overflow_retry
                 and not partial
@@ -1559,7 +1764,10 @@ class AgentCore:
                         "window — dropped older tool output and retrying."
                     ),
                 })
-                return self._stream_response(allow_overflow_retry=False)
+                return self._stream_response(
+                    allow_overflow_retry=False,
+                    allow_image_retry=allow_image_retry,
+                )
             if partial:
                 self._add_message({"role": "assistant", "content": partial})
             self._emit({"type": "error", "message": str(e)})
@@ -1569,10 +1777,53 @@ class AgentCore:
             self._emit({"type": "message_end"})
             return ChatResponse(done=True, done_reason="interrupted")
         tail = think_filter.flush()
+        thought_tail = think_filter.take_thinking()
+        if thought_tail:
+            inline_thinking.append(thought_tail)
+            self._emit({"type": "thinking", "text": thought_tail})
         if tail:
             self._emit({"type": "token", "text": tail})
+        if inline_thinking:
+            resp.provider_fields["inline_thinking"] = "".join(inline_thinking)
         self._emit({"type": "message_end"})
         return resp
+
+    def accept_computer_screenshot(self, screenshot: dict[str, Any]) -> bool:
+        """Retain only the newest native screenshot for the next model step."""
+        if self._computer_route_key() in self._ax_only_routes:
+            return False
+        data = str(screenshot.get("data") or "")
+        mime_type = str(screenshot.get("mime_type") or "")
+        if not data or not mime_type.startswith("image/"):
+            return False
+        self._pending_computer_screenshot = {
+            "data": data,
+            "mime_type": mime_type,
+            "name": "computer-observation.png",
+        }
+        return True
+
+    def _computer_route_key(self) -> str:
+        return f"{self.provider}:{self.model}"
+
+    def _append_pending_computer_observation(self) -> None:
+        screenshot = self._pending_computer_screenshot
+        self._pending_computer_screenshot = None
+        if screenshot is None:
+            return
+        for message in self.messages:
+            if message.get("_computer_observation"):
+                message.pop("attachments", None)
+        message = {
+            "role": "user",
+            "content": "Newest target-window screenshot from the native computer broker. Use it together with the Accessibility state above.",
+            "attachments": [screenshot],
+            "_computer_observation": True,
+        }
+        self._add_message(
+            message,
+            {"role": "user", "content": "[Ephemeral target-window screenshot observation]"},
+        )
 
     # ------------------------------------------------------------------ tools
 
@@ -1621,8 +1872,11 @@ class AgentCore:
                 **event_info,
             })
             return result
-        auto = self.tool_registry.is_safe(tc.name) or self.perms.is_auto_allowed(
-            permission_key, inside_workspace=self._targets_workspace(tc)
+        force_confirmation = self.perms.requires_confirmation(tc.name, tc.arguments)
+        auto = not force_confirmation and (
+            self.tool_registry.is_safe(tc.name) or self.perms.is_auto_allowed(
+                permission_key, inside_workspace=self._targets_workspace(tc)
+            )
         )
         self._emit({
             "type": "tool_call_proposed",
@@ -1646,7 +1900,7 @@ class AgentCore:
                 **event_info,
             })
             decision = decider(tc.name, summary, detail, request_id) if decider else "deny"
-            if decision == "always":
+            if decision == "always" and not force_confirmation:
                 self.perms.allow_tool(permission_key)
             if decision not in ("once", "always"):
                 result = (
@@ -1664,11 +1918,18 @@ class AgentCore:
                     **event_info,
                 })
                 return result
-        result = (
-            execute_tool(tc.name, tc.arguments, self.tool_ctx)
-            if info.get("origin") == "builtin"
-            else self.tool_registry.execute(tc.name, tc.arguments, self.tool_ctx)
-        )
+        if info.get("origin") == "native":
+            result = (
+                self.computer_executor(tc.name, tc.arguments, call_id)
+                if self.computer_executor is not None
+                else "Error: native computer control is unavailable."
+            )
+        else:
+            result = (
+                execute_tool(tc.name, tc.arguments, self.tool_ctx)
+                if info.get("origin") == "builtin"
+                else self.tool_registry.execute(tc.name, tc.arguments, self.tool_ctx)
+            )
         ok = not result.startswith("Error")
         self._emit({
             "type": "tool_result",
@@ -1680,8 +1941,10 @@ class AgentCore:
             "denied": False,
             **event_info,
         })
-        if tc.name == "todo_write":
+        if tc.name in {"todo_write", "submit_plan"}:
             self._emit({"type": "todo_update", "todos": self.tool_ctx.todos})
+        if tc.name == "submit_plan" and self.tool_ctx.plan_document is not None and ok:
+            self._emit({"type": "plan_ready", "plan": dict(self.tool_ctx.plan_document)})
         return result
 
     def _targets_workspace(self, tc: ToolCall) -> bool:
@@ -1916,6 +2179,20 @@ class AgentCore:
             if role == "user":
                 content = strip_prompt_decoration(content)
             item: dict[str, Any] = {"role": role, "content": content[:4000]}
+            if role == "assistant":
+                # Resume only provider-supplied visible reasoning. Signatures
+                # and redacted-thinking payloads are intentionally omitted.
+                reasoning = str(m.get("_display_reasoning") or "")
+                if not reasoning:
+                    reasoning = str(m.get("reasoning_content") or "")
+                if not reasoning:
+                    reasoning = "".join(
+                        str(block.get("thinking") or "")
+                        for block in (m.get("anthropic_content") or [])
+                        if isinstance(block, dict) and block.get("type") == "thinking"
+                    )
+                if reasoning:
+                    item["reasoning"] = reasoning[:20000]
             if role == "tool":
                 item["name"] = m.get("name", "tool")
             tool_calls = m.get("tool_calls") or []
@@ -1944,6 +2221,8 @@ class AgentCore:
             except OSError:
                 pass
         self.messages = [self.system_message()] + messages
+        self._pending_computer_screenshot = None
+        self._ax_only_routes.clear()
         # Continue appending to the session the user resumed.
         self.session.path = path
         self._last_user_message = next(
