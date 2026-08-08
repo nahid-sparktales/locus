@@ -129,6 +129,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var orchestrationRuns: [OrchestrationRun] = []
     @Published private(set) var selectedOrchestrationRun: OrchestrationRun?
     @Published private(set) var orchestrationEvents: [OrchestrationEvent] = []
+    @Published private(set) var isLoadingOrchestrationRuns = false
     @Published private(set) var pendingDispatchPlan: DispatchPlan?
     @Published private(set) var evaluationSuites: [EvaluationSuite] = []
     @Published private(set) var activeEvaluationID: String?
@@ -305,6 +306,46 @@ final class AppModel: ObservableObject {
         if currentRunID == runID { return currentSessionID }
         return states.first(where: { $0.value.runID == runID })?.key
     }
+
+    func teamRunPresentation(
+        for runID: String,
+        durable run: OrchestrationRun?
+    ) -> TeamRunPresentation {
+        Self.resolveTeamRunPresentation(
+            runID: runID,
+            currentRunID: orchestrationRunID,
+            liveState: orchestrationState,
+            isBusy: isBusy,
+            durableState: run.flatMap { TeamRunState(rawValue: $0.state) },
+            durableRecoverable: run?.recoverable == true
+        )
+    }
+
+    static func resolveTeamRunPresentation(
+        runID: String,
+        currentRunID: String?,
+        liveState: TeamRunState?,
+        isBusy: Bool,
+        durableState: TeamRunState?,
+        durableRecoverable: Bool
+    ) -> TeamRunPresentation {
+        let isCurrent = currentRunID == runID
+        let state = (isCurrent ? liveState : nil) ?? durableState ?? .dispatching
+        let hasLiveOwner = isCurrent && isBusy && !state.isTerminal && state != .paused
+        let hasRecoverableSavedState = durableRecoverable
+            && (durableState == .paused || durableState == .interrupted)
+        let canRecover = (!isCurrent || !isBusy)
+            && hasRecoverableSavedState
+            && (state == .paused || state == .interrupted)
+        return TeamRunPresentation(
+            state: state,
+            isCurrent: isCurrent,
+            isActivelyOwned: hasLiveOwner,
+            canPause: hasLiveOwner && state != .waitingDispatchApproval,
+            canStop: hasLiveOwner,
+            canRecover: canRecover
+        )
+    }
     private let ollamaRuntime = OllamaRuntime()
     private let mcpAuthCoordinator = MCPAuthCoordinator()
     private let workspaceAccess: WorkspaceAccess
@@ -342,6 +383,7 @@ final class AppModel: ObservableObject {
     /// so a mid-run mode change cannot relabel the completion marker or alter
     /// plan reconciliation.
     var turnDispatchedMode: WorkMode?
+    private var turnDispatchedTeamRunID: String?
     /// Client-side fallback for agents from before `turn_done.duration_ms`.
     private var turnStartedAt: Date?
     /// Turning Just Chat off returns to the last mode that could act on the
@@ -491,12 +533,13 @@ final class AppModel: ObservableObject {
             let loadedProfiles = AgentTeamStore.loadProfiles(from: defaults)
             let storedTeams = AgentTeamStore.loadTeams(from: defaults)
             let approvalMigration = AgentTeamStore.migrateToOneTimeApproval(storedTeams)
-            let loadedTeams = approvalMigration.teams
+            let budgetMigration = AgentTeamStore.migrateLegacyCallBudgets(approvalMigration.teams)
+            let loadedTeams = budgetMigration.teams
             let loadedSelection = defaults.string(forKey: AgentTeamStore.selectionKey)
                 .flatMap(UUID.init(uuidString:))
             agentProfiles = loadedProfiles
             agentTeams = loadedTeams
-            if approvalMigration.changed {
+            if approvalMigration.changed || budgetMigration.changed {
                 AgentTeamStore.save(profiles: loadedProfiles, teams: loadedTeams, to: defaults)
             }
             teamRoutingConsentAccountIDs = AgentTeamStore.loadConsent(from: defaults)
@@ -1087,12 +1130,17 @@ final class AppModel: ObservableObject {
             }
         }
 
-        inspectorTab = .runs
-        inspectorCollapsed = false
-        settings.inspectorLastTab = InspectorTab.runs.rawValue
         let message = lifecycleRecoveryExplanation(fallback: recovery)
-        lifecycleRecoveryMessage = message
-        showToast(message, duration: 8)
+        if let run = selectedOrchestrationRun,
+           teamRunPresentation(for: run.id, durable: run).canRecover
+        {
+            lifecycleRecoveryMessage = message
+            showToast("A saved team run can be resumed", duration: 6)
+        } else {
+            // Terminal runs already have durable boards in the conversation.
+            // Restoring one is normal data loading, not a warning condition.
+            lifecycleRecoveryMessage = nil
+        }
     }
 
     private func lifecycleRecoveryExplanation(fallback: AppLifecycleRecovery) -> String {
@@ -1100,7 +1148,7 @@ final class AppModel: ObservableObject {
         if run.state == TeamRunState.completed.rawValue {
             return "Locus was force quit after the team run completed. Its results were restored."
         }
-        if run.recoverable {
+        if teamRunPresentation(for: run.id, durable: run).canRecover {
             return "Locus closed unexpectedly. This team run can be resumed from its saved checkpoint."
         }
         if let state = TeamRunState(rawValue: run.state) {
@@ -2208,6 +2256,7 @@ final class AppModel: ObservableObject {
         // running one is housekeeping, never a plan worth offering to build.
         turnDispatchedInPlanMode = dispatchedMode == .plan && !isSlashPassthrough
         turnDispatchedMode = isSlashPassthrough ? nil : dispatchedMode
+        turnDispatchedTeamRunID = dispatchedTeam?["run_id"] as? String
         Task { [weak self] in
             guard let self else { return }
             var transport = self.conversationBackend
@@ -2216,6 +2265,7 @@ final class AppModel: ObservableObject {
                     self.isBusy = false
                     self.turnStartedAt = nil
                     self.turnDispatchedMode = nil
+                    self.turnDispatchedTeamRunID = nil
                     self.turnDispatchedInPlanMode = false
                     self.stashUnsent(
                         text,
@@ -2262,6 +2312,7 @@ final class AppModel: ObservableObject {
                 isBusy = false
                 turnStartedAt = nil
                 turnDispatchedMode = nil
+                turnDispatchedTeamRunID = nil
                 turnDispatchedInPlanMode = false
                 stashUnsent(text, requeue: requeueingOnFailure, preserveDraft: preservingDraftOnFailure)
                 return
@@ -2277,7 +2328,8 @@ final class AppModel: ObservableObject {
             let visibleText = [text.nilIfEmpty, attachmentLine]
                 .compactMap { $0 }
                 .joined(separator: "\n\n")
-            blocks.append(ChatBlock(kind: .user, text: visibleText))
+            let teamRunID = (dispatchedTeam?["run_id"] as? String)?.nilIfEmpty
+            blocks.append(ChatBlock(kind: .user, text: visibleText, teamRunID: teamRunID))
             if !text.isEmpty { recordPrompt(text) }
             if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
                 draftText = ""
@@ -2330,7 +2382,9 @@ final class AppModel: ObservableObject {
 
     func submitDraft() {
         if isBusy {
-            if steeringState?.hasPrefix("Stopping") == true {
+            if orchestrationState == .waitingDispatchApproval
+                || steeringState?.hasPrefix("Stopping") == true
+            {
                 queueDraft()
             } else {
                 steerDraft()
@@ -3134,6 +3188,7 @@ final class AppModel: ObservableObject {
                 "max_model_calls": team.budget.maxModelCalls,
                 "max_concurrent_calls": team.budget.maxConcurrentCalls,
                 "max_metered_tokens": team.budget.maxMeteredTokens,
+                "call_budget_mode": team.budget.callBudgetMode.rawValue,
             ],
         ]
         if let id = team.dispatcherID { teamPayload["dispatcher_id"] = id.uuidString }
@@ -3161,6 +3216,7 @@ final class AppModel: ObservableObject {
         } else {
             orchestrationRunsGeneration += 1
             let generation = orchestrationRunsGeneration
+            isLoadingOrchestrationRuns = true
             let query = sessionID.isEmpty
                 ? []
                 : [URLQueryItem(name: "session_id", value: sessionID)]
@@ -3182,19 +3238,28 @@ final class AppModel: ObservableObject {
             guard request.generation == orchestrationRunsGeneration,
                   currentSessionID == sessionID
             else { return }
+            isLoadingOrchestrationRuns = false
             if orchestrationRuns != response.runs {
                 orchestrationRuns = response.runs
             }
-            let selectedID = runID ?? selectedOrchestrationRun?.id
-                ?? orchestrationRunID ?? response.runs.first?.id
+            let selectedInCurrentSession = selectedOrchestrationRun.flatMap { selected in
+                selected.sessionID == nil || selected.sessionID == sessionID ? selected.id : nil
+            }
+            let selectedID = runID ?? orchestrationRunID
+                ?? selectedInCurrentSession ?? response.runs.first?.id
             if let selectedID {
                 await loadOrchestrationRun(selectedID, terminal: terminal)
+            } else if selectedOrchestrationRun?.sessionID != sessionID {
+                selectedOrchestrationRun = nil
+                orchestrationEvents = []
+                orchestrationEventIDs = []
             }
         } catch {
             if orchestrationRunsTasks[requestKey]?.generation == request.generation {
                 orchestrationRunsTasks.removeValue(forKey: requestKey)
             }
             guard !Task.isCancelled, request.generation == orchestrationRunsGeneration else { return }
+            isLoadingOrchestrationRuns = false
             showToast("Could not load team runs: \(error.localizedDescription)")
         }
     }
@@ -3202,7 +3267,9 @@ final class AppModel: ObservableObject {
     func loadOrchestrationRun(_ runID: String, terminal: Bool = false) async {
         let sameRun = selectedOrchestrationRun?.id == runID
         let afterSequence = sameRun ? orchestrationEvents.map(\.sequence).max() ?? 0 : 0
-        let loadKey = "\(runID)|\(afterSequence)|\(terminal ? "terminal" : "routine")"
+        let transport = orchestrationBackend(for: runID)
+        let transportKey = transport.currentBaseURL.absoluteString
+        let loadKey = "\(transportKey)|\(runID)|\(afterSequence)|\(terminal ? "terminal" : "routine")"
         let generation: Int
         if requestedOrchestrationLoadKey == loadKey {
             generation = orchestrationSelectionGeneration
@@ -3212,13 +3279,16 @@ final class AppModel: ObservableObject {
             requestedOrchestrationLoadKey = loadKey
             requestedOrchestrationRunID = runID
         }
-        let detailKey = "\(runID)|\(terminal ? "terminal" : "routine")"
-        let eventsKey = "\(runID)|\(afterSequence)|\(terminal ? "terminal" : "routine")"
-        let detailTask = orchestrationDetailTask(runID: runID, key: detailKey)
+        let detailKey = "\(transportKey)|\(runID)|\(terminal ? "terminal" : "routine")"
+        let eventsKey = "\(transportKey)|\(runID)|\(afterSequence)|\(terminal ? "terminal" : "routine")"
+        let detailTask = orchestrationDetailTask(
+            runID: runID, key: detailKey, transport: transport
+        )
         let eventsTask = orchestrationEventsTask(
             runID: runID,
             afterSequence: afterSequence,
-            key: eventsKey
+            key: eventsKey,
+            transport: transport
         )
         do {
             let detail = try await detailTask.value
@@ -3242,6 +3312,7 @@ final class AppModel: ObservableObject {
             }
             orchestrationEventIDs = Set(merged.map(\.id))
             if orchestrationRunID == runID,
+               orchestrationState == nil,
                let state = TeamRunState(rawValue: detail.state),
                orchestrationState != state
             {
@@ -3260,8 +3331,11 @@ final class AppModel: ObservableObject {
             .filter { $0.text("run_id") == runID }
             .map(\.sequence)
             .max() ?? 0
-        let key = "\(runID)|\(after)|routine"
-        let task = orchestrationEventsTask(runID: runID, afterSequence: after, key: key)
+        let transport = orchestrationBackend(for: runID)
+        let key = "\(transport.currentBaseURL.absoluteString)|\(runID)|\(after)|routine"
+        let task = orchestrationEventsTask(
+            runID: runID, afterSequence: after, key: key, transport: transport
+        )
         do {
             let response = try await task.value
             orchestrationEventTasks.removeValue(forKey: key)
@@ -3290,13 +3364,24 @@ final class AppModel: ObservableObject {
         }
     }
 
+    nonisolated static func orchestrationPickerRuns(
+        _ runs: [OrchestrationRun],
+        selected: OrchestrationRun?
+    ) -> [OrchestrationRun] {
+        guard let selected,
+              !runs.contains(where: { $0.id == selected.id })
+        else { return runs }
+        return [selected] + runs
+    }
+
     private func orchestrationDetailTask(
         runID: String,
-        key: String
+        key: String,
+        transport: BackendService
     ) -> Task<OrchestrationRun, Error> {
         if let existing = orchestrationDetailTasks[key] { return existing }
-        let task = Task { [backend] in
-            try await backend.get(
+        let task = Task {
+            try await transport.get(
                 "/api/orchestrations/\(runID)", as: OrchestrationRun.self
             )
         }
@@ -3307,11 +3392,12 @@ final class AppModel: ObservableObject {
     private func orchestrationEventsTask(
         runID: String,
         afterSequence: Int,
-        key: String
+        key: String,
+        transport: BackendService
     ) -> Task<OrchestrationEventsResponse, Error> {
         if let existing = orchestrationEventTasks[key] { return existing }
-        let task = Task { [backend] in
-            try await backend.get(
+        let task = Task {
+            try await transport.get(
                 "/api/orchestrations/\(runID)/events",
                 query: [URLQueryItem(name: "after_seq", value: String(afterSequence))],
                 as: OrchestrationEventsResponse.self
@@ -3446,6 +3532,10 @@ final class AppModel: ObservableObject {
     }
 
     func resumeOrchestration(_ run: OrchestrationRun) {
+        guard teamRunPresentation(for: run.id, durable: run).canRecover else {
+            showToast("That team run is not paused or interrupted")
+            return
+        }
         guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
               let manifest = teamManifest(for: run.request, teamID: teamID)
         else {
@@ -3476,6 +3566,10 @@ final class AppModel: ObservableObject {
     }
 
     func retryOrchestrationJob(_ attempt: AgentJobAttempt, in run: OrchestrationRun) {
+        guard teamRunPresentation(for: run.id, durable: run).canRecover else {
+            showToast("Pause the team run before retrying a job")
+            return
+        }
         guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
               let manifest = teamManifest(for: run.request, teamID: teamID)
         else {
@@ -3494,6 +3588,10 @@ final class AppModel: ObservableObject {
         in run: OrchestrationRun,
         to profile: AgentProfile
     ) {
+        guard teamRunPresentation(for: run.id, durable: run).canRecover else {
+            showToast("Pause the team run before reassigning a job")
+            return
+        }
         guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
               let manifest = teamManifest(for: run.request, teamID: teamID)
         else {
@@ -4429,6 +4527,7 @@ final class AppModel: ObservableObject {
                 appliedWorkspacePath = response.sessionInfo.cwd
                 pendingWorkspacePath = nil
                 blocks = Self.blocks(from: response.messages)
+                refreshAnchoredTeamRunsIfNeeded()
                 sessionInfo = response.sessionInfo
                 currentSessionID = response.sessionInfo.sessionID
                 dispatcherActivity = nil
@@ -4497,6 +4596,7 @@ final class AppModel: ObservableObject {
                     as: SessionDetailResponse.self
                 )
                 blocks = Self.blocks(from: detail.messages)
+                refreshAnchoredTeamRunsIfNeeded()
                 agentActivities = detail.agentActivities ?? []
                 orchestrationState = detail.orchestrationState
                     ?? taskConversationStates[runtime.sessionID]?.state
@@ -5516,7 +5616,7 @@ final class AppModel: ObservableObject {
             + "\n… \(lines.count - maxLines) more lines — open the file to see the rest."
     }
 
-    func selectInspectorTab(_ tab: InspectorTab) {
+    func selectInspectorTab(_ tab: InspectorTab, selecting runID: String? = nil) {
         guard !justChatEnabled else { return }
         inspectorTab = tab
         if inspectorCollapsed {
@@ -5529,10 +5629,23 @@ final class AppModel: ObservableObject {
         }
         if tab == .files { refreshWorkspaceIndex() }
         if tab == .runs {
-            Task { @MainActor [weak self] in await self?.refreshOrchestrationRuns() }
+            Task { @MainActor [weak self] in
+                await self?.refreshOrchestrationRuns(select: runID)
+            }
         }
         if tab == .agents { refreshAgentInstructions() }
         settings.inspectorLastTab = tab.rawValue
+    }
+
+    func openTeamRun(_ runID: String) {
+        selectInspectorTab(.runs, selecting: runID)
+    }
+
+    private func refreshAnchoredTeamRunsIfNeeded() {
+        guard blocks.contains(where: { $0.teamRunID != nil }) else { return }
+        Task { @MainActor [weak self] in
+            await self?.refreshOrchestrationRuns()
+        }
     }
 
     func toggleInspector() {
@@ -5803,7 +5916,10 @@ final class AppModel: ObservableObject {
     }
 
     private func backendIsHealthy() async -> Bool {
-        (try? await backend.get("/api/health", as: HealthResponse.self)) != nil
+        guard BackendProcess.loopbackPortIsListening(at: backend.currentBaseURL) else {
+            return false
+        }
+        return (try? await backend.get("/api/health", as: HealthResponse.self)) != nil
     }
 
     private func ensureTeamWorker(for requestedSessionID: String) async -> TaskWorkerRuntime? {
@@ -5837,19 +5953,50 @@ final class AppModel: ObservableObject {
         runtime.process.onUnexpectedExit = { [weak self, weak runtime] _, output in
             Task { @MainActor in
                 guard let self, let runtime else { return }
+                if let key = self.taskWorkers.first(where: { $0.value === runtime })?.key {
+                    self.taskWorkers.removeValue(forKey: key)
+                }
+                let previous = self.taskConversationStates[runtime.sessionID]
+                let runID = previous?.runID
+                var durableRun: OrchestrationRun?
+                if let runID {
+                    durableRun = try? await self.backend.post(
+                        "/api/orchestrations/\(runID)/reconcile-worker-exit",
+                        body: ["worker_id": previous?.workerID ?? ""],
+                        timeout: 5,
+                        as: OrchestrationRun.self
+                    )
+                    if let durableRun {
+                        self.orchestrationRuns.removeAll { $0.id == durableRun.id }
+                        self.orchestrationRuns.insert(durableRun, at: 0)
+                        if self.selectedOrchestrationRun?.id == durableRun.id {
+                            self.selectedOrchestrationRun = durableRun
+                        }
+                    }
+                }
+                let interruptedState = durableRun.flatMap {
+                    TeamRunState(rawValue: $0.state)
+                } ?? .interrupted
                 let state = TaskConversationState(
                     sessionID: runtime.sessionID,
                     taskID: runtime.sessionInfo?.task?.id,
-                    teamID: self.taskConversationStates[runtime.sessionID]?.teamID,
-                    workerID: self.taskConversationStates[runtime.sessionID]?.workerID,
-                    runID: self.taskConversationStates[runtime.sessionID]?.runID,
-                    state: .interrupted,
+                    teamID: previous?.teamID,
+                    workerID: previous?.workerID,
+                    runID: runID,
+                    state: interruptedState,
                     updatedAt: Date()
                 )
                 self.taskConversationStates[runtime.sessionID] = state
+                if let runID {
+                    self.lifecycleJournal?.record(
+                        sessionID: runtime.sessionID,
+                        runID: runID,
+                        state: interruptedState
+                    )
+                }
                 if self.currentSessionID == runtime.sessionID {
                     self.isBusy = false
-                    self.orchestrationState = .interrupted
+                    self.orchestrationState = interruptedState
                     let detail = output.trimmingCharacters(in: .whitespacesAndNewlines)
                     self.blocks.append(ChatBlock(
                         kind: .error,
@@ -5872,7 +6019,9 @@ final class AppModel: ObservableObject {
 
         var healthy = false
         for _ in 0..<60 {
-            if (try? await runtime.service.get("/api/health", as: HealthResponse.self)) != nil {
+            if BackendProcess.loopbackPortIsListening(at: endpoint),
+               (try? await runtime.service.get("/api/health", as: HealthResponse.self)) != nil
+            {
                 healthy = true
                 break
             }
@@ -6456,6 +6605,36 @@ final class AppModel: ObservableObject {
                 ))
             }
 
+        case "agent_job_continuing":
+            let jobID = event["job_id"] as? String ?? ""
+            if let index = agentActivities.firstIndex(where: { $0.id == jobID }) {
+                agentActivities[index].state = .running
+                agentActivities[index].output = event["message"] as? String
+                    ?? "Continuing coding job…"
+            }
+            if let usage = event["usage"] as? [String: Any] {
+                teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
+                teamMeteredTokens = usage["metered_tokens"] as? Int ?? teamMeteredTokens
+            }
+
+        case "agent_job_incomplete":
+            let jobID = event["job_id"] as? String ?? ""
+            if let index = agentActivities.firstIndex(where: { $0.id == jobID }) {
+                agentActivities[index].state = .paused
+                agentActivities[index].output = event["message"] as? String
+                    ?? "This coding job stopped before it finished."
+                if let result = event["result"] as? [String: Any] {
+                    agentActivities[index].elapsedMilliseconds = result["elapsed_ms"] as? Int ?? 0
+                    agentActivities[index].promptTokens = result["prompt_tokens"] as? Int ?? 0
+                    agentActivities[index].completionTokens = result["completion_tokens"] as? Int ?? 0
+                }
+            }
+            orchestrationState = .paused
+            if let usage = event["usage"] as? [String: Any] {
+                teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
+                teamMeteredTokens = usage["metered_tokens"] as? Int ?? teamMeteredTokens
+            }
+
         case "agent_job_completed":
             guard let result = event["result"] as? [String: Any] else { return }
             let jobID = result["job_id"] as? String ?? ""
@@ -6636,11 +6815,14 @@ final class AppModel: ObservableObject {
             if reason == "complete", dispatchedMode == .build {
                 reconcileFinishedPlanStep()
             }
-            appendTurnCompletion(
-                reason: reason,
-                mode: dispatchedMode,
-                backendDurationMilliseconds: event["duration_ms"] as? Int
-            )
+            if turnDispatchedTeamRunID == nil {
+                appendTurnCompletion(
+                    reason: reason,
+                    mode: dispatchedMode,
+                    backendDurationMilliseconds: event["duration_ms"] as? Int,
+                    modelCallLimit: event["model_call_limit"] as? Int
+                )
+            }
             isBusy = false
             pendingRetry = false
             steeringState = nil
@@ -6667,6 +6849,7 @@ final class AppModel: ObservableObject {
             planReadyThisTurn = false
             turnDispatchedInPlanMode = false
             turnDispatchedMode = nil
+            turnDispatchedTeamRunID = nil
             turnStartedAt = nil
             notifyTurnCompleteIfInactive()
             if persistenceEnabled {
@@ -6694,6 +6877,7 @@ final class AppModel: ObservableObject {
             planTodosChangedThisTurn = false
             turnDispatchedInPlanMode = false
             turnDispatchedMode = nil
+            turnDispatchedTeamRunID = nil
             pendingSessionReset = false
             pendingCheckpointRestore = nil
             pendingRewindDraft = nil
@@ -6888,7 +7072,8 @@ final class AppModel: ObservableObject {
     private func appendTurnCompletion(
         reason: String,
         mode: WorkMode?,
-        backendDurationMilliseconds: Int?
+        backendDurationMilliseconds: Int?,
+        modelCallLimit: Int? = nil
     ) {
         let measured = turnStartedAt.map {
             max(Int(Date().timeIntervalSince($0) * 1_000), 0)
@@ -6903,7 +7088,9 @@ final class AppModel: ObservableObject {
             durationMilliseconds: duration,
             // Carried only for the outcome it explains, so an ordinary finished
             // turn does not persist a number nothing reads.
-            iterationLimit: outcome == .maxIterations ? sessionInfo?.maxIterations : nil
+            iterationLimit: outcome == .maxIterations
+                ? sessionInfo?.maxIterations
+                : outcome == .modelCallBudget ? modelCallLimit : nil
         )
         blocks.append(ChatBlock(kind: .note, completion: completion))
     }
@@ -6935,6 +7122,7 @@ final class AppModel: ObservableObject {
         planTodosChangedThisTurn = false
         turnDispatchedInPlanMode = false
         turnDispatchedMode = nil
+        turnDispatchedTeamRunID = nil
         pendingSessionReset = false
         pendingCheckpointRestore = nil
         pendingRewindDraft = nil
@@ -7399,8 +7587,16 @@ final class AppModel: ObservableObject {
             recoverable: fixture == "recoverable",
             recoveryReason: fixture == "recoverable" ? "Saved checkpoint available" : nil,
             checkpoint: nil,
-            attempts: nil
+            attempts: nil,
+            plan: nil,
+            usage: ["model_calls": .number(12)],
+            jobCount: 4,
+            completedJobCount: fixture == "completed" ? 4 : 2
         )
+        if let requestIndex = blocks.firstIndex(where: { $0.kind == .user }) {
+            blocks[requestIndex].text = run.request
+            blocks[requestIndex].teamRunID = run.id
+        }
         orchestrationRuns = [run]
         selectedOrchestrationRun = run
         orchestrationRunID = run.id
@@ -7932,7 +8128,11 @@ final class AppModel: ObservableObject {
         messages.compactMap { message in
             switch message.role {
             case "user":
-                ChatBlock(kind: .user, text: displayUserText(message.content))
+                ChatBlock(
+                    kind: .user,
+                    text: displayUserText(message.content),
+                    teamRunID: message.teamRunID
+                )
             case "assistant" where !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || !(message.reasoning?.isEmpty ?? true):
                 ChatBlock(

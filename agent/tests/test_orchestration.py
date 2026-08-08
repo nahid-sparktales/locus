@@ -117,6 +117,19 @@ def test_manifest_and_dispatch_plan_require_a_writer_and_known_members():
         validate_dispatch_plan(no_writer, team, profiles)
 
 
+def test_automatic_call_budget_uses_the_bounded_adaptive_pool():
+    manifest = _manifest()
+    manifest["team"]["budget"].update({
+        "call_budget_mode": "automatic",
+        "max_model_calls": 12,
+    })
+
+    _, team, _, _ = parse_manifest(manifest)
+
+    assert team.budget.call_budget_mode == "automatic"
+    assert team.budget.max_model_calls == 100
+
+
 def test_multiple_coding_jobs_must_be_write_capable_and_transitively_ordered():
     manifest = _manifest()
     manifest["profiles"].append(

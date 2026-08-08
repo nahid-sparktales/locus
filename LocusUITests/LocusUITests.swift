@@ -506,13 +506,10 @@ final class LocusUITests: XCTestCase {
         let state = anyElement("runs.state")
         XCTAssertTrue(state.waitForExistence(timeout: 3))
         XCTAssertTrue((state.label + " \(state.value ?? "")").lowercased().contains("completed"))
-        XCTAssertTrue(anyElement("runs.recoveryExplanation").exists)
-        XCTAssertTrue(
-            app.staticTexts.matching(
-                NSPredicate(format: "value CONTAINS[c] %@ OR label CONTAINS[c] %@", "results were restored", "results were restored")
-            ).firstMatch.exists
-        )
+        XCTAssertFalse(anyElement("runs.recoveryExplanation").exists)
+        XCTAssertTrue(anyElement("teamBoard.terminalSummary").exists)
 
+        app.buttons["Activity"].firstMatch.click()
         let filter = app.textFields["runs.filter"]
         filter.click()
         filter.typeText("Team run completed")
@@ -528,7 +525,9 @@ final class LocusUITests: XCTestCase {
     func testForcedQuitRecoveryExplainsAResumableRun() {
         relaunchWithRunFixture("recoverable", uncleanRecovery: true)
 
-        XCTAssertTrue(anyElement("runs.recoveryExplanation").waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("runs.recoveryExplanation").exists)
+        XCTAssertTrue(anyElement("teamBoard.resume").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("teamBoard.discard").exists)
         XCTAssertTrue(
             app.staticTexts.matching(
                 NSPredicate(format: "value CONTAINS[c] %@ OR label CONTAINS[c] %@", "can be resumed", "can be resumed")
@@ -555,6 +554,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(progress.waitForExistence(timeout: 3))
         progress.click()
         XCTAssertTrue(anyElement("teamProgress.popover").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("teamBoard.seed-run").waitForExistence(timeout: 3))
         XCTAssertTrue(
             app.staticTexts.matching(
                 NSPredicate(
@@ -565,7 +565,6 @@ final class LocusUITests: XCTestCase {
             ).firstMatch.exists
         )
 
-        app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(
             app.staticTexts.matching(
                 NSPredicate(
@@ -577,11 +576,11 @@ final class LocusUITests: XCTestCase {
         )
     }
 
-    func testTeamPlanAppearsOnceInComposerWithWholePlanActions() {
+    func testTeamPlanAppearsOnceInConversationWithWholePlanActions() {
         relaunchWithRunFixture("dispatch-plan")
 
         XCTAssertTrue(anyElement("teamDispatch.approval").waitForExistence(timeout: 3))
-        XCTAssertFalse(app.textViews["composer.input"].exists)
+        XCTAssertTrue(app.textViews["composer.input"].exists)
         XCTAssertTrue(anyElement("teamDispatch.jobs").exists)
         XCTAssertTrue(anyElement("teamDispatch.run").exists)
         XCTAssertTrue(anyElement("teamDispatch.redispatch").exists)

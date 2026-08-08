@@ -291,6 +291,7 @@ struct TurnCompletion: Codable, Hashable {
         case complete
         case interrupted
         case maxIterations = "max_iterations"
+        case modelCallBudget = "model_call_budget"
         case error
 
         init(reason: String) {
@@ -325,6 +326,12 @@ struct TurnCompletion: Codable, Hashable {
                 "Iteration limit reached (\(iterationLimit) steps)"
             } else {
                 "Iteration limit reached"
+            }
+        case .modelCallBudget:
+            if let iterationLimit, iterationLimit > 0 {
+                "Team call budget reached (\(iterationLimit) calls)"
+            } else {
+                "Team call budget reached"
             }
         case .error: "Run failed"
         }
@@ -852,6 +859,12 @@ struct HistoryMessage: Codable {
     let content: String
     let name: String?
     let reasoning: String?
+    let teamRunID: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case role, content, name, reasoning
+        case teamRunID = "team_run_id"
+    }
 
     // A single null-content tool message must not fail an entire resume.
     init(from decoder: Decoder) throws {
@@ -860,6 +873,7 @@ struct HistoryMessage: Codable {
         content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
         name = try? container.decodeIfPresent(String.self, forKey: .name)
         reasoning = try? container.decodeIfPresent(String.self, forKey: .reasoning)
+        teamRunID = try? container.decodeIfPresent(String.self, forKey: .teamRunID)
     }
 }
 
@@ -901,6 +915,9 @@ struct ChatBlock: Identifiable, Codable, Hashable {
     /// Present only for the quiet end-of-turn note rendered after a run.
     /// Optional keeps checkpoints written by older Locus releases decodable.
     var completion: TurnCompletion?
+    /// Links a team request to its durable board without changing ordinary
+    /// transcript rendering. Optional decoding keeps existing checkpoints.
+    var teamRunID: String?
 
     init(
         id: UUID = UUID(),
@@ -909,7 +926,8 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         reasoningText: String? = nil,
         isStreaming: Bool = false,
         tool: ToolPayload? = nil,
-        completion: TurnCompletion? = nil
+        completion: TurnCompletion? = nil,
+        teamRunID: String? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -918,6 +936,7 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         self.isStreaming = isStreaming
         self.tool = tool
         self.completion = completion
+        self.teamRunID = teamRunID
     }
 }
 

@@ -5,6 +5,8 @@ import os
 import sqlite3
 import time
 
+import pytest
+
 from ollama_code.runstore import RunStore, sanitize_event
 
 
@@ -50,6 +52,31 @@ def test_run_store_attempt_ids_are_scoped_to_each_run(tmp_path) -> None:
     assert attempt_ids == ["first-run:writer:1", "second-run:writer:1"]
 
 
+def test_incomplete_writer_attempt_is_paused_and_not_counted_as_completed(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    store.start_run("run", state="running")
+    store.append_event("run", {
+        "type": "agent_job_started", "job_id": "writer",
+        "agent_id": "writer-agent", "agent_name": "Writer",
+        "role": "implementer", "goal": "implement",
+    })
+    store.append_event("run", {
+        "type": "agent_job_incomplete", "job_id": "writer",
+        "agent_id": "writer-agent", "state": "paused",
+        "reason": "model_call_budget", "message": "Saved for resume",
+    })
+
+    detail = store.run("run", include_events=True)
+
+    assert detail["attempts"][0]["state"] == "paused"
+    assert detail["attempts"][0]["completed_at"] is None
+    assert detail["job_count"] == 1
+    assert detail["completed_job_count"] == 0
+    summary = store.list_runs()[0]
+    assert summary["job_count"] == 1
+    assert summary["completed_job_count"] == 0
+
+
 def test_run_store_checkpoint_and_redacted_export(tmp_path) -> None:
     store = RunStore(tmp_path / "runs.sqlite3")
     store.start_run("run-1", request="secret request")
@@ -84,6 +111,63 @@ def test_live_owner_is_not_marked_abandoned(tmp_path) -> None:
     with sqlite3.connect(store.path) as connection:
         connection.execute("UPDATE runs SET owner_pid=? WHERE id='run-1'", (os.getpid(),))
     assert store.mark_abandoned() == []
+
+
+def test_live_state_event_clears_stale_recovery_metadata(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    store.start_run("run-1", state="waiting_dispatch_approval")
+    store.set_state(
+        "run-1", "waiting_dispatch_approval", recoverable=True,
+        reason="Waiting for plan approval.",
+    )
+
+    store.append_event("run-1", {
+        "type": "orchestration_state", "state": "running",
+    })
+
+    run = store.run("run-1")
+    assert run["state"] == "running"
+    assert run["recoverable"] is False
+    assert run["recovery_reason"] is None
+
+    store.set_state(
+        "run-1", "running", recoverable=True,
+        reason="An older caller tried to restore stale recovery metadata.",
+    )
+    run = store.run("run-1")
+    assert run["recoverable"] is False
+    assert run["recovery_reason"] is None
+
+
+def test_pause_and_resume_transition_recovery_metadata(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    store.start_run("run-1", state="running")
+    store.set_state("run-1", "paused", recoverable=True, reason="Saved checkpoint.")
+    assert store.run("run-1")["recoverable"] is True
+
+    store.append_event("run-1", {
+        "type": "orchestration_started", "state": "running", "resumed": True,
+    })
+
+    run = store.run("run-1")
+    assert run["recoverable"] is False
+    assert run["recovery_reason"] is None
+
+
+@pytest.mark.parametrize("event_type", ["permission_request", "computer_action_request"])
+def test_active_wait_clears_stale_recovery_metadata(tmp_path, event_type: str) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    store.start_run("run-1", state="waiting_dispatch_approval")
+    store.set_state(
+        "run-1", "waiting_dispatch_approval", recoverable=True,
+        reason="Waiting for plan approval.",
+    )
+
+    store.append_event("run-1", {"type": event_type})
+
+    run = store.run("run-1")
+    assert run["recoverable"] is False
+    assert run["recovery_reason"] is None
 
 
 def test_active_scheduler_lease_prevents_abandoned_recovery(tmp_path) -> None:

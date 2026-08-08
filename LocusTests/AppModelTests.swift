@@ -58,8 +58,11 @@ private final class OrchestrationURLProtocol: URLProtocol {
         let runID = parts.count >= 3 ? String(parts[2]) : "run-1"
         let run = runJSON(id: runID)
         if path == "/api/orchestrations" {
+            let sessionID = components?.queryItems?
+                .first(where: { $0.name == "session_id" })?.value
+            let runs = sessionID == "session-empty" ? [] : [runJSON(id: "run-1")]
             return try! JSONSerialization.data(withJSONObject: [
-                "runs": [runJSON(id: "run-1")],
+                "runs": runs,
                 "read_only": false,
             ])
         }
@@ -166,6 +169,107 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(urls.filter { $0.path == "/api/orchestrations" }.count, 1)
         XCTAssertEqual(urls.filter { $0.path == "/api/orchestrations/run-1" }.count, 1)
         XCTAssertEqual(urls.filter { $0.path.hasSuffix("/events") }.count, 1)
+    }
+
+    @MainActor
+    func testOpenTeamRunUsesOneCoordinatedRefresh() async throws {
+        let model = orchestrationModel()
+
+        model.openTeamRun("run-1")
+        model.openTeamRun("run-1")
+        model.openTeamRun("run-1")
+
+        for _ in 0..<50 where OrchestrationURLProtocol.requests.count < 3 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let urls = OrchestrationURLProtocol.requests
+        XCTAssertEqual(urls.filter { $0.path == "/api/orchestrations" }.count, 1)
+        XCTAssertEqual(urls.filter { $0.path == "/api/orchestrations/run-1" }.count, 1)
+        XCTAssertEqual(urls.filter { $0.path.hasSuffix("/events") }.count, 1)
+    }
+
+    @MainActor
+    func testLiveRunningStateRejectsStaleDurableRecoveryControls() {
+        let presentation = AppModel.resolveTeamRunPresentation(
+            runID: "run-1",
+            currentRunID: "run-1",
+            liveState: .running,
+            isBusy: true,
+            durableState: .interrupted,
+            durableRecoverable: true
+        )
+
+        XCTAssertEqual(presentation.state, .running)
+        XCTAssertTrue(presentation.canPause)
+        XCTAssertTrue(presentation.canStop)
+        XCTAssertFalse(presentation.canRecover)
+    }
+
+    @MainActor
+    func testInterruptedLiveStateWaitsForDurableRecoveryConfirmation() {
+        let presentation = AppModel.resolveTeamRunPresentation(
+            runID: "run-1",
+            currentRunID: "run-1",
+            liveState: .interrupted,
+            isBusy: false,
+            durableState: .running,
+            durableRecoverable: true
+        )
+
+        XCTAssertFalse(presentation.canRecover)
+        XCTAssertFalse(presentation.canPause)
+        XCTAssertFalse(presentation.canStop)
+    }
+
+    @MainActor
+    func testPausedRunOffersRecoveryOnlyAfterWorkerStops() {
+        let stillStopping = AppModel.resolveTeamRunPresentation(
+            runID: "run-1",
+            currentRunID: "run-1",
+            liveState: .paused,
+            isBusy: true,
+            durableState: .paused,
+            durableRecoverable: true
+        )
+        let stopped = AppModel.resolveTeamRunPresentation(
+            runID: "run-1",
+            currentRunID: "run-1",
+            liveState: .paused,
+            isBusy: false,
+            durableState: .paused,
+            durableRecoverable: true
+        )
+
+        XCTAssertFalse(stillStopping.canRecover)
+        XCTAssertTrue(stopped.canRecover)
+        XCTAssertFalse(stopped.canPause)
+        XCTAssertFalse(stopped.canStop)
+    }
+
+    @MainActor
+    func testPickerOptionsRetainASelectedRunMissingFromTheLatestList() async {
+        let model = orchestrationModel()
+        await model.loadOrchestrationRun("run-missing")
+
+        let options = AppModel.orchestrationPickerRuns(
+            model.orchestrationRuns,
+            selected: model.selectedOrchestrationRun
+        )
+
+        XCTAssertEqual(options.map(\.id), ["run-missing"])
+    }
+
+    @MainActor
+    func testChangingSessionsClearsASelectionOwnedByThePreviousSession() async {
+        let model = orchestrationModel()
+        await model.loadOrchestrationRun("run-1")
+        XCTAssertEqual(model.selectedOrchestrationRun?.sessionID, "session-1")
+
+        model.currentSessionID = "session-empty"
+        await model.refreshOrchestrationRuns()
+
+        XCTAssertNil(model.selectedOrchestrationRun)
+        XCTAssertTrue(model.orchestrationEvents.isEmpty)
     }
 
     @MainActor
@@ -389,6 +493,9 @@ final class AppModelTests: XCTestCase {
         let teamPayload = try XCTUnwrap(manifest["team"] as? [String: Any])
         XCTAssertEqual(Set(profiles.compactMap { $0["id"] as? String }), Set(team.memberIDs.map(\.uuidString)))
         XCTAssertEqual(teamPayload["dispatch_approval_mode"] as? String, "preview")
+        let budget = try XCTUnwrap(teamPayload["budget"] as? [String: Any])
+        XCTAssertEqual(budget["call_budget_mode"] as? String, "automatic")
+        XCTAssertEqual(budget["max_model_calls"] as? Int, 100)
         XCTAssertTrue(JSONSerialization.isValidJSONObject(manifest))
         let encoded = try JSONSerialization.data(withJSONObject: manifest)
         XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("api_key"))
@@ -441,6 +548,62 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.shouldShowTeamDispatchProgress)
         XCTAssertTrue(model.shouldShowTeamDispatchApproval)
         XCTAssertEqual(model.pendingDispatchPlan?.jobs.count, 1)
+    }
+
+    @MainActor
+    func testMessagesEnteredDuringTeamPlanApprovalQueueForTheNextTurn() {
+        let model = AppModel(startImmediately: false)
+        model.isBusy = true
+        model.handleEventForTesting([
+            "type": "orchestration_state",
+            "state": "waiting_dispatch_approval",
+        ])
+        model.draftText = "Add documentation after this run"
+
+        model.submitDraft()
+
+        XCTAssertEqual(model.queuedMessages, ["Add documentation after this run"])
+        XCTAssertTrue(model.draftText.isEmpty)
+    }
+
+    @MainActor
+    func testIncompleteCodingJobBecomesPausedWithoutCompletion() {
+        let model = AppModel(startImmediately: false)
+        model.handleEventForTesting([
+            "type": "agent_job_started",
+            "run_id": "run-1",
+            "job_id": "writer",
+            "agent_id": "writer-agent",
+            "agent_name": "Backend Writer",
+            "role": "implementer",
+            "provider": "Kimi",
+            "model": "kimi-for-coding",
+            "goal": "Implement the backend",
+            "writer_job_id": "writer",
+            "writer_position": 1,
+            "writer_total": 2,
+        ])
+        model.handleEventForTesting([
+            "type": "agent_job_incomplete",
+            "run_id": "run-1",
+            "job_id": "writer",
+            "state": "paused",
+            "message": "Call budget reached before this coding job finished.",
+            "model_calls": 12,
+            "limit": 12,
+            "result": [
+                "job_id": "writer",
+                "elapsed_ms": 2_000,
+                "prompt_tokens": 20,
+                "completion_tokens": 10,
+            ],
+            "usage": ["model_calls": 12],
+        ])
+
+        XCTAssertEqual(model.orchestrationState, .paused)
+        XCTAssertEqual(model.agentActivities.first?.state, .paused)
+        XCTAssertEqual(model.agentActivities.first?.output, "Call budget reached before this coding job finished.")
+        XCTAssertEqual(model.teamModelCalls, 12)
     }
 
     func testWorkModeInstructionsAreDistinct() {

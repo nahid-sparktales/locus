@@ -29,8 +29,14 @@ MAX_EXPORT_EVENTS = 50_000
 
 TERMINAL_STATES = {"completed", "failed", "interrupted", "cancelled", "discarded"}
 RECOVERABLE_STATES = {
-    "queued", "dispatching", "running", "reviewing", "paused",
-    "waiting_dispatch_approval", "waiting_permission", "waiting_computer",
+    "paused", "interrupted", "waiting_dispatch_approval",
+}
+
+# These states have a live owner.  A stale recovery bit from plan approval or
+# an earlier checkpoint must never survive once execution is moving again.
+ACTIVE_NONRECOVERABLE_STATES = {
+    "queued", "dispatching", "running", "reviewing", "pausing",
+    "waiting_permission", "waiting_computer",
 }
 
 _SECRET_KEY = re.compile(
@@ -512,8 +518,17 @@ class RunStore:
                 updates.append("state = ?")
                 values.append(state)
                 if state in TERMINAL_STATES:
-                    updates.extend(["completed_at = ?", "recoverable = 0"])
+                    updates.extend([
+                        "completed_at = ?", "recoverable = 0", "recovery_reason = NULL",
+                    ])
                     values.append(now)
+                elif state in ACTIVE_NONRECOVERABLE_STATES:
+                    updates.extend(["recoverable = 0", "recovery_reason = NULL"])
+            elif event_type in {"permission_request", "computer_action_request"}:
+                # These waits still have a live worker.  They must clear a
+                # stale approval/checkpoint recovery bit even though their
+                # durable event does not replace the orchestration state.
+                updates.extend(["recoverable = 0", "recovery_reason = NULL"])
             if isinstance(safe.get("usage"), dict):
                 updates.append("usage_json = ?")
                 values.append(_json(safe["usage"]))
@@ -556,7 +571,7 @@ class RunStore:
                     now,
                 ),
             )
-        elif event_type == "agent_job_completed":
+        elif event_type in {"agent_job_completed", "agent_job_incomplete"}:
             result = event.get("result") if isinstance(event.get("result"), dict) else {}
             job_id = str(result.get("job_id") or event.get("job_id") or "")
             if not job_id:
@@ -583,7 +598,10 @@ class RunStore:
             connection.execute(
                 """UPDATE job_attempts SET state=?, result_json=?, completed_at=?
                    WHERE run_id=? AND job_id=? AND attempt=?""",
-                (str(event.get("state") or "completed"), _json(result), now,
+                (str(event.get("state") or (
+                    "paused" if event_type == "agent_job_incomplete" else "completed"
+                )), _json(result),
+                 now if event_type == "agent_job_completed" else None,
                  run_id, job_id, attempt),
             )
 
@@ -651,23 +669,60 @@ class RunStore:
         value = self._run_row(row)
         value["checkpoint"] = self.latest_checkpoint(run_id)
         value["attempts"] = self.attempts(run_id)
+        value.update(self._job_summary(value["attempts"]))
         if include_events:
             value["events"] = self.events(run_id, limit=MAX_EXPORT_EVENTS)
         return value
 
     def list_runs(self, *, session_id: str = "", limit: int = 100) -> list[dict[str, Any]]:
         limit = min(max(int(limit), 1), 500)
+        summary_query = """
+            SELECT runs.*,
+              (SELECT COUNT(DISTINCT attempts.job_id)
+                 FROM job_attempts AS attempts
+                WHERE attempts.run_id=runs.id) AS job_count,
+              (SELECT COUNT(*)
+                 FROM job_attempts AS latest
+                WHERE latest.run_id=runs.id
+                  AND latest.state='completed'
+                  AND latest.attempt=(
+                    SELECT MAX(candidate.attempt)
+                      FROM job_attempts AS candidate
+                     WHERE candidate.run_id=latest.run_id
+                       AND candidate.job_id=latest.job_id
+                  )) AS completed_job_count
+              FROM runs
+        """
         with self._connect(readonly=True) as connection:
             if session_id:
                 rows = connection.execute(
-                    "SELECT * FROM runs WHERE session_id=? ORDER BY updated_at DESC LIMIT ?",
+                    summary_query + " WHERE session_id=? ORDER BY updated_at DESC LIMIT ?",
                     (session_id, limit),
                 ).fetchall()
             else:
                 rows = connection.execute(
-                    "SELECT * FROM runs ORDER BY updated_at DESC LIMIT ?", (limit,)
+                    summary_query + " ORDER BY updated_at DESC LIMIT ?", (limit,)
                 ).fetchall()
-        return [self._run_row(row) for row in rows]
+        return [{
+            **self._run_row(row),
+            "job_count": int(row["job_count"] or 0),
+            "completed_job_count": int(row["completed_job_count"] or 0),
+        } for row in rows]
+
+    @staticmethod
+    def _job_summary(attempts: list[dict[str, Any]]) -> dict[str, int]:
+        latest: dict[str, dict[str, Any]] = {}
+        for attempt in attempts:
+            job_id = str(attempt.get("job_id") or "")
+            if job_id:
+                latest[job_id] = attempt
+        return {
+            "job_count": len(latest),
+            "completed_job_count": sum(
+                str(attempt.get("state") or "") == "completed"
+                for attempt in latest.values()
+            ),
+        }
 
     @staticmethod
     def _run_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -713,11 +768,16 @@ class RunStore:
                   reason: str | None = None) -> None:
         if self.read_only:
             return
+        if state in ACTIVE_NONRECOVERABLE_STATES:
+            recoverable = False
+            reason = None
         values: list[Any] = [state, time.time()]
         fields = ["state=?", "updated_at=?"]
         if recoverable is not None:
             fields.append("recoverable=?")
             values.append(1 if recoverable else 0)
+            if not recoverable and reason is None:
+                fields.append("recovery_reason=NULL")
         if reason is not None:
             fields.append("recovery_reason=?")
             values.append(reason[:4_000])

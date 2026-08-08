@@ -322,7 +322,45 @@ class SessionStore:
                             "elapsed_milliseconds": 0,
                             "prompt_tokens": 0,
                             "completion_tokens": 0,
+                            "writer_job_id": event.get("writer_job_id"),
+                            "writer_position": event.get("writer_position"),
+                            "writer_total": event.get("writer_total"),
                         }
+                    elif event_type == "agent_job_continuing":
+                        job_id = str(event.get("job_id") or "")
+                        if job_id and job_id in activities:
+                            activities[job_id]["state"] = "running"
+                            activities[job_id]["output"] = str(
+                                event.get("message") or "Continuing coding job…"
+                            )[:2_000]
+                    elif event_type == "agent_job_incomplete":
+                        job_id = str(event.get("job_id") or "")
+                        if not job_id:
+                            continue
+                        result = event.get("result")
+                        if not isinstance(result, dict):
+                            result = {}
+                        current = activities.get(job_id, {})
+                        current.update({
+                            "id": job_id,
+                            "agent_name": str(event.get("agent_name") or current.get("agent_name") or "Agent"),
+                            "role": str(result.get("role") or current.get("role") or "implementer"),
+                            "provider": str(current.get("provider") or ""),
+                            "model": str(current.get("model") or ""),
+                            "goal": str(current.get("goal") or ""),
+                            "state": "paused",
+                            "output": str(event.get("message") or result.get("output") or "")[:120_000],
+                            "reasoning_text": None,
+                            "tool": None,
+                            "evidence": [str(item) for item in result.get("evidence") or []][:128],
+                            "elapsed_milliseconds": int(result.get("elapsed_ms") or 0),
+                            "prompt_tokens": int(result.get("prompt_tokens") or 0),
+                            "completion_tokens": int(result.get("completion_tokens") or 0),
+                            "writer_job_id": event.get("writer_job_id"),
+                            "writer_position": event.get("writer_position"),
+                            "writer_total": event.get("writer_total"),
+                        })
+                        activities[job_id] = current
                     elif event_type == "agent_job_completed":
                         result = event.get("result")
                         if not isinstance(result, dict):

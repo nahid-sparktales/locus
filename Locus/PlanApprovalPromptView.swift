@@ -1,8 +1,371 @@
 import SwiftUI
 
-/// Replaces the composer while the selected team's dispatcher is building a
-/// plan. It reports observable stages and validation diagnostics without
-/// presenting provider reasoning or raw structured output.
+/// A durable, user-facing representation of one team run. It is rendered in
+/// the conversation directly below the request carrying the same run id, so
+/// planning and execution never displace the message composer.
+struct TeamRunBoardView: View {
+    @EnvironmentObject private var model: AppModel
+    let runID: String
+    let request: String
+
+    @State private var terminalExpanded = false
+
+    var body: some View {
+        Group {
+            if isActive, model.shouldShowTeamDispatchProgress {
+                TeamDispatchProgressView()
+            } else if isActive, model.shouldShowTeamDispatchApproval,
+                      let plan = model.pendingDispatchPlan
+            {
+                TeamDispatchApprovalPromptView(plan: plan)
+            } else if shouldCollapseTerminal, !terminalExpanded {
+                compactTerminal
+            } else if isActive, state != .paused, !state.isTerminal {
+                TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                    board(now: timeline.date)
+                }
+            } else {
+                board(now: Date())
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("teamBoard.\(runID)")
+    }
+
+    private func board(now: Date) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            boardHeader(now: now)
+            Divider()
+            phaseRail
+                .padding(12)
+            if !visibleActivities.isEmpty {
+                Divider()
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("TEAM JOBS")
+                        .font(.system(size: 8, weight: .bold))
+                        .tracking(0.7)
+                        .foregroundStyle(LocusTheme.muted)
+                    ForEach(visibleActivities) { activity in
+                        activityRow(activity, now: now)
+                    }
+                }
+                .padding(12)
+            }
+            if let explanation = statusExplanation {
+                Divider()
+                Label(explanation, systemImage: state == .paused
+                    ? "pause.circle.fill" : "info.circle.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(state == .paused ? LocusTheme.warning : LocusTheme.inkSoft)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(12)
+            }
+            Divider()
+            actionRow
+                .padding(12)
+        }
+        .locusCard(radius: 12)
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(stateColor.opacity(0.45), lineWidth: 1)
+        }
+    }
+
+    private var compactTerminal: some View {
+        HStack(spacing: 10) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) { terminalExpanded = true }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: stateSymbol)
+                        .foregroundStyle(stateColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(teamName).font(.system(size: 10, weight: .bold))
+                            Text(state.title)
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(stateColor)
+                        }
+                        Text(terminalSummary)
+                            .font(.system(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                            .lineLimit(2)
+                    }
+                    Spacer(minLength: 8)
+                    Text("Expand")
+                        .font(.system(size: 8, weight: .semibold))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                .foregroundStyle(LocusTheme.ink)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(teamName), \(state.title). \(terminalSummary). Expand")
+            Button("Open Team Runs") { model.openTeamRun(runID) }
+                .buttonStyle(.borderless)
+                .font(.system(size: 8, weight: .semibold))
+                .accessibilityIdentifier("teamBoard.openRuns")
+        }
+        .padding(12)
+        .locusCard(radius: 10)
+        .accessibilityIdentifier("teamBoard.terminalSummary")
+    }
+
+    private func boardHeader(now: Date) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: stateSymbol)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(stateColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("TEAM RUN")
+                    .font(.system(size: 8, weight: .bold))
+                    .tracking(0.8)
+                    .foregroundStyle(LocusTheme.muted)
+                Text(teamName).font(.system(size: 12, weight: .bold))
+            }
+            Spacer()
+            if isActive, model.teamModelCalls > 0 || model.teamMeteredTokens > 0 {
+                Text("\(model.teamModelCalls) calls · \(model.teamMeteredTokens.formatted()) tokens")
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            if isActive, let startedAt = model.activeWorkStartedAt {
+                Text(elapsedText(max(now.timeIntervalSince(startedAt), 0)))
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            Text(state.title)
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(stateColor)
+            if state.isTerminal {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) { terminalExpanded = false }
+                } label: { Image(systemName: "chevron.up") }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Collapse team result")
+            }
+        }
+        .padding(12)
+    }
+
+    private var phaseRail: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(request)
+                .font(.system(size: 9))
+                .foregroundStyle(LocusTheme.inkSoft)
+                .lineLimit(3)
+            HStack(spacing: 5) {
+                ForEach(Array(phases.enumerated()), id: \.offset) { index, phase in
+                    HStack(spacing: 4) {
+                        Image(systemName: phaseSymbol(index))
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(phaseColor(index))
+                        Text(phase)
+                            .font(.system(size: 7, weight: index == currentPhase ? .bold : .regular))
+                            .foregroundStyle(index <= currentPhase ? LocusTheme.inkSoft : LocusTheme.muted)
+                            .lineLimit(1)
+                        if index < phases.count - 1 {
+                            Rectangle().fill(index < currentPhase ? LocusTheme.success : LocusTheme.line)
+                                .frame(maxWidth: .infinity, maxHeight: 1)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func activityRow(_ activity: AgentActivity, now: Date) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: activity.state == .completed
+                ? "checkmark.circle.fill"
+                : activity.state == .paused ? "pause.circle.fill" : "circle.dotted")
+                .foregroundStyle(activity.state == .completed
+                    ? LocusTheme.success
+                    : activity.state == .paused ? LocusTheme.warning : LocusTheme.signalDeep)
+                .frame(width: 13)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    Text(activity.writerPosition.map {
+                        "Coding job \($0) of \(activity.writerTotal ?? 1)"
+                    } ?? activity.agentName)
+                        .font(.system(size: 9, weight: .semibold))
+                    if activity.writerPosition != nil {
+                        Text("· \(activity.agentName)")
+                            .font(.system(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                    }
+                }
+                Text([activity.provider, activity.model].filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.system(size: 7, design: .monospaced))
+                    .foregroundStyle(LocusTheme.muted)
+                    .lineLimit(1)
+                Text(activity.output.isEmpty ? activity.goal : activity.output)
+                    .font(.system(size: 8))
+                    .foregroundStyle(LocusTheme.inkSoft)
+                    .lineLimit(3)
+            }
+            Spacer(minLength: 0)
+            if let startedAt = activity.startedAt {
+                let seconds = activity.state == .running
+                    ? max(now.timeIntervalSince(startedAt), 0)
+                    : Double(activity.elapsedMilliseconds) / 1_000
+                Text(elapsedText(seconds))
+                    .font(.system(size: 7, design: .monospaced))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+        }
+    }
+
+    private func elapsedText(_ seconds: TimeInterval) -> String {
+        let total = max(Int(seconds), 0)
+        return total < 60 ? "\(total)s" : "\(total / 60)m \(total % 60)s"
+    }
+
+    private var actionRow: some View {
+        HStack(spacing: 9) {
+            if presentation.canRecover, let run {
+                Button("Resume") { model.resumeOrchestration(run) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(LocusTheme.ink)
+                    .accessibilityIdentifier("teamBoard.resume")
+                Button("Discard", role: .destructive) { model.discardOrchestration(run.id) }
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("teamBoard.discard")
+            } else if let activeID = model.orchestrationRunID {
+                if presentation.canPause {
+                    Button("Pause at Safe Boundary") { model.pauseOrchestration(activeID) }
+                        .buttonStyle(.borderless)
+                        .accessibilityIdentifier("teamBoard.pause")
+                }
+                if presentation.canStop {
+                    Button("Stop", role: .destructive) { model.cancelOrchestration(activeID) }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(LocusTheme.coral)
+                        .accessibilityIdentifier("teamBoard.stop")
+                }
+            }
+            if state == .completed, model.taskHasChanges, isActive {
+                Button("Apply to Workspace") { model.applyActiveTaskToWorkspace() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(LocusTheme.ink)
+            }
+            Spacer()
+            Button("Open Team Runs") { model.openTeamRun(runID) }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("teamBoard.openRuns")
+        }
+        .font(.system(size: 9, weight: .semibold))
+    }
+
+    private var run: OrchestrationRun? {
+        if model.selectedOrchestrationRun?.id == runID { return model.selectedOrchestrationRun }
+        return model.orchestrationRuns.first(where: { $0.id == runID })
+    }
+
+    private var presentation: TeamRunPresentation {
+        model.teamRunPresentation(for: runID, durable: run)
+    }
+    private var isActive: Bool { presentation.isCurrent }
+    private var shouldCollapseTerminal: Bool {
+        presentation.shouldCollapseTerminal
+    }
+    private var state: TeamRunState {
+        presentation.state
+    }
+    private var teamName: String {
+        if isActive, let name = model.activeOrchestrationTeam?.name { return name }
+        return run?.teamName ?? "Team run"
+    }
+    private var visibleActivities: [AgentActivity] {
+        guard isActive else { return [] }
+        return model.agentActivities
+    }
+    private var phases: [String] { ["Plan", "Approve", "Specialists", "Coding", "Review", "Done"] }
+    private var currentPhase: Int {
+        return switch state {
+        case .queued, .dispatching: 0
+        case .waitingDispatchApproval: 1
+        case .running, .waitingPermission, .waitingComputer:
+            model.agentActivities.contains(where: { $0.writerPosition != nil }) ? 3 : 2
+        case .reviewing: 4
+        case .completed: 5
+        case .paused, .failed, .interrupted, .cancelled, .discarded: interruptedPhase
+        }
+    }
+    private var interruptedPhase: Int {
+        if model.pendingDispatchPlan != nil { return 1 }
+        if visibleActivities.contains(where: { $0.writerPosition != nil }) { return 3 }
+        if let kind = run?.checkpoint?.kind.lowercased() {
+            if kind.contains("synthesis") { return 5 }
+            if kind.contains("review") || kind.contains("revision") { return 4 }
+            if kind.contains("writer") { return 3 }
+            if kind.contains("dispatch") { return 2 }
+        }
+        return run?.plan == nil ? 0 : 2
+    }
+    private func phaseSymbol(_ index: Int) -> String {
+        index < currentPhase || state == .completed ? "checkmark.circle.fill"
+            : index == currentPhase ? "circle.inset.filled" : "circle"
+    }
+    private func phaseColor(_ index: Int) -> Color {
+        index < currentPhase || state == .completed ? LocusTheme.success
+            : index == currentPhase ? stateColor : LocusTheme.lineStrong
+    }
+    private var stateSymbol: String {
+        switch state {
+        case .completed: "checkmark.circle.fill"
+        case .interrupted where presentation.canRecover: "pause.circle.fill"
+        case .failed, .interrupted, .cancelled, .discarded: "xmark.circle.fill"
+        case .paused: "pause.circle.fill"
+        case .waitingPermission, .waitingComputer, .waitingDispatchApproval: "clock.fill"
+        default: "person.3.sequence.fill"
+        }
+    }
+    private var stateColor: Color {
+        switch state {
+        case .completed: LocusTheme.success
+        case .interrupted where presentation.canRecover: LocusTheme.warning
+        case .failed, .interrupted, .cancelled, .discarded: LocusTheme.coral
+        case .paused, .waitingPermission, .waitingComputer, .waitingDispatchApproval: LocusTheme.warning
+        default: LocusTheme.signalDeep
+        }
+    }
+    private var statusExplanation: String? {
+        if state == .paused {
+            return run?.recoveryReason
+                ?? visibleActivities.first(where: { $0.state == .paused })?.output
+                ?? "This run is saved at a safe checkpoint and can be resumed."
+        }
+        if state == .waitingPermission { return "A coding job is waiting for a tool permission decision below." }
+        if state == .waitingComputer { return "A coding job is waiting for computer control." }
+        if state == .failed || state == .interrupted { return run?.recoveryReason ?? "The team run stopped before completion." }
+        return nil
+    }
+    private var terminalSummary: String {
+        let completed = run?.completedJobCount
+            ?? (isActive ? model.agentActivities.filter { $0.state == .completed }.count : 0)
+        let total = run?.jobCount ?? (isActive ? model.agentActivities.count : 0)
+        let jobs = total > 0 ? "\(completed)/\(total) jobs" : "Run finished"
+        let duration: String
+        if let run {
+            let end = run.completedAt ?? run.updatedAt
+            let seconds = max(Int(end - run.createdAt), 0)
+            duration = seconds < 60 ? "\(seconds)s" : "\(seconds / 60)m \(seconds % 60)s"
+        } else {
+            duration = ""
+        }
+        let changes = isActive && model.taskHasChanges ? "changes ready" : ""
+        let failure = state == .completed ? "" : (run?.recoveryReason ?? "")
+        return [jobs, duration, changes, failure]
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+    }
+}
+
+/// Lives in the request's conversation board while the selected team's
+/// dispatcher is building a plan. It reports observable stages and validation
+/// diagnostics without presenting provider reasoning or raw structured output.
 struct TeamDispatchProgressView: View {
     @EnvironmentObject private var model: AppModel
 
@@ -169,7 +532,7 @@ struct TeamDispatchProgressView: View {
         if model.dispatcherActivity == nil {
             return "Opening the dispatcher route and preparing the team roster."
         }
-        return "Creating assignments, dependencies, and the single-writer boundary."
+        return "Creating assignments, dependencies, and the ordered coding sequence."
     }
 
     private var dispatcherProfile: AgentProfile? {
@@ -248,7 +611,6 @@ struct TeamDispatchApprovalPromptView: View {
             return .handled
         }
         .onTapGesture { panelFocused = true }
-        .onAppear { panelFocused = true }
         .accessibilityIdentifier("teamDispatch.approval")
     }
 
@@ -324,7 +686,11 @@ struct TeamDispatchApprovalPromptView: View {
             if let budget = plan.budget ?? model.activeOrchestrationTeam?.budget {
                 HStack(spacing: 8) {
                     budgetPill("\(budget.maxJobs) jobs max")
-                    budgetPill("\(budget.maxModelCalls) calls")
+                    budgetPill(
+                        budget.callBudgetMode == .automatic
+                            ? "Automatic · up to 100 calls"
+                            : "\(budget.maxModelCalls) calls fixed"
+                    )
                     budgetPill("\(budget.maxConcurrentCalls) concurrent")
                     if let cost = plan.maximumEstimatedCost, cost > 0 {
                         budgetPill(cost.formatted(.currency(code: "USD")))

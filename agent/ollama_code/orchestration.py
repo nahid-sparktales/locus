@@ -36,7 +36,7 @@ DispatchApproval = Callable[[str, dict[str, Any]], dict[str, Any]]
 MAX_TEAM_PROFILES = 32
 MAX_TEAM_JOBS = 16
 MAX_TEAM_ROUNDS = 8
-MAX_TEAM_CALLS = 48
+MAX_TEAM_CALLS = 100
 MAX_TEAM_CONCURRENCY = 8
 MAX_TEAM_METERED_TOKENS = 2_000_000
 MAX_TEAM_ESTIMATED_COST = 100_000.0
@@ -55,16 +55,25 @@ class OrchestrationBudget:
     max_model_calls: int = 12
     max_concurrent_calls: int = 3
     max_metered_tokens: int = 500_000
+    call_budget_mode: str = "fixed"
 
     @classmethod
     def parse(cls, value: Any) -> OrchestrationBudget:
         raw = value if isinstance(value, dict) else {}
+        call_budget_mode = str(raw.get("call_budget_mode") or "fixed")
         budget = cls(
             max_jobs=_integer(raw.get("max_jobs"), 4),
             max_rounds=_integer(raw.get("max_rounds"), 3),
-            max_model_calls=_integer(raw.get("max_model_calls"), 12),
+            # Automatic is a bounded adaptive pool, not a second spelling for
+            # whatever fixed value happened to be saved previously.
+            max_model_calls=(
+                MAX_TEAM_CALLS
+                if call_budget_mode == "automatic"
+                else _integer(raw.get("max_model_calls"), 12)
+            ),
             max_concurrent_calls=_integer(raw.get("max_concurrent_calls"), 3),
             max_metered_tokens=_integer(raw.get("max_metered_tokens"), 500_000),
+            call_budget_mode=call_budget_mode,
         )
         limits = (
             ("max_jobs", budget.max_jobs, 1, MAX_TEAM_JOBS),
@@ -78,6 +87,8 @@ class OrchestrationBudget:
                 raise OrchestrationError(f"{name} must be between {lower} and {upper}")
         if budget.max_concurrent_calls > budget.max_model_calls:
             raise OrchestrationError("concurrent model calls cannot exceed the call budget")
+        if budget.call_budget_mode not in {"automatic", "fixed"}:
+            raise OrchestrationError("call_budget_mode must be automatic or fixed")
         return budget
 
 

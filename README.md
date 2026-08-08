@@ -24,19 +24,19 @@ like; macOS remembers the size you choose for later launches.
   local run store. Stop is routed to the worker that owns the run, waits for a
   terminal event, and leaves a cancelled run non-recoverable instead of
   replaying its last approval after reconnecting. Run updates are coalesced and
-  loaded incrementally so large timelines stay responsive at completion. After
-  an unexpected quit, Locus reopens the latest run and explains whether it
-  finished or can be resumed. A completed run no longer triggers the active-work
+  loaded incrementally so large histories stay responsive at completion. After
+  an unexpected quit, completed runs restore silently, while a genuinely
+  interrupted run offers Resume or Discard on its conversation board. A completed run no longer triggers the active-work
   warning when you quit just because an older in-memory status is still present.
-- **Live Team Progress in the header** sits immediately left of the context
-  meter and shows the active dispatcher and its
-  provider/model, elapsed time, delegated jobs, model calls, and hosted-token
-  usage. During dispatch, the composer itself explains the current stage and
-  any bounded validation repair. When the plan is ready, the composer asks for
-  one approval for the complete plan; individual models, jobs, and steps do not
-  ask again. Its Stop button remains available while a team is running. Common
+- **Live Team Run boards in the conversation** stay attached to the request
+  that started them. One board follows dispatch, whole-plan approval, read-only
+  work, ordered coding jobs, review, and completion without taking over the
+  composer. The header status button scrolls to the active board, and each
+  completed board collapses to a permanent result summary. The plan asks for
+  one approval for the complete run; individual models, jobs, and steps do not
+  ask again. Common
   Qwen/vLLM plan wrappers are normalized before validation; when correction is
-  needed, both Team Progress and Runs show the repair stage and exact bounded
+  needed, both the live board and Team Runs show the repair stage and exact bounded
   validation reason. If repair still fails, Locus explains why it is continuing
   safely with the Lead Writer instead of silently skipping specialists.
 - **Team-aware model controls** label the workspace with the selected team and
@@ -314,13 +314,23 @@ switch back to Solo, or manage the team. Agent profiles use a model dropdown
 filled from their selected provider; the refresh and **Test Connection** actions
 can wake a scaled-to-zero vLLM endpoint before its model catalog is available.
 
-The Team Progress button appears immediately left of the context meter. While
-the dispatcher is building a plan, the composer shows its route, elapsed time,
-observable stage, and validation status. The completed plan then replaces the
-composer with **Run Plan**, **Re-dispatch**, and **Cancel**. Run Plan is a
-single approval for the entire dependency graph; it is not repeated for each
-agent or step. Security-sensitive tool permissions still follow the permission
-mode selected separately.
+The Team Progress button appears immediately left of the context meter and
+scrolls to the active live board. The board is attached directly below the
+request that started the team run. It shows the dispatcher route, elapsed time,
+observable stage, validation status, the completed plan, ordered jobs, current
+model, permission waits, usage, and terminal result. **Run Plan** is a single
+approval for the entire dependency graph; it is not repeated for each agent or
+step. The composer remains available, and messages entered while approval is
+pending are queued for the next turn. Security-sensitive tool permissions
+still follow the permission mode selected separately.
+
+Team call budgets are **Automatic** by default. Locus allocates the 100-call
+pool in bounded slices, protects capacity for later writers, review, and final
+synthesis, and continues an unfinished coding job when its fair share allows.
+A model-call budget or 100-step writer guard never counts as success: the run
+pauses at a checkpoint and offers recovery instead of starting later jobs or
+synthesizing a false completion. Choose a Fixed limit only when a smaller hard
+ceiling is intentional; Solo keeps its 40-step safety limit.
 
 A team may include several write-capable coding profiles. The dispatcher must
 order every coding job through dependencies; Locus then runs them one at a time
@@ -601,7 +611,7 @@ xcodebuild \
 cd agent && .venv/bin/python -m pytest -q
 ```
 
-The repository currently contains 251 unit tests, 33 UI tests, and 398 backend
+The repository currently contains 255 unit tests, 33 UI tests, and 403 backend
 test cases.
 
 The unit suite covers work modes, lightweight context migration, session
