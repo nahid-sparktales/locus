@@ -15,6 +15,7 @@ CAPABILITY_ENV = {
     "adaptive_routing": "LOCUS_CAPABILITY_ADAPTIVE_ROUTING",
     "workspace_knowledge": "LOCUS_CAPABILITY_WORKSPACE_KNOWLEDGE",
     "modern_mcp": "LOCUS_CAPABILITY_MODERN_MCP",
+    "browser": "LOCUS_CAPABILITY_BROWSER",
 }
 
 

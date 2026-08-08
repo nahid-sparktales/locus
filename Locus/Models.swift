@@ -1120,6 +1120,12 @@ struct AppSettings: Codable, Hashable {
     var adaptiveWorkMigrationCompleted = false
     /// Computer control is opt-in and is ignored in sandboxed builds.
     var computerControlEnabled = false
+    /// The browser is on by default and, unlike computer control, works in the
+    /// sandboxed App Store build too — a web view needs no special access.
+    var browserEnabled = true
+    /// Raw string, like the tab: an unknown preset from a future version must
+    /// not fail the whole settings decode.
+    var browserViewportRaw = BrowserViewport.desktop.rawValue
     /// OpenTelemetry export is explicit and disabled by default. Endpoint
     /// authorization lives in CredentialStore, never in these settings.
     var otlpExportEnabled = false
@@ -1159,6 +1165,10 @@ struct AppSettings: Codable, Hashable {
 
     var resolvedInspectorTab: InspectorTab {
         InspectorTab(rawValue: inspectorLastTab) ?? .plan
+    }
+
+    var resolvedBrowserViewport: BrowserViewport {
+        BrowserViewport(rawValue: browserViewportRaw) ?? .desktop
     }
 
     var resolvedProxyMode: ProxyMode {
@@ -1217,6 +1227,10 @@ struct AppSettings: Codable, Hashable {
             Bool.self,
             forKey: .computerControlEnabled
         ) ?? defaults.computerControlEnabled
+        browserEnabled = try container.decodeIfPresent(Bool.self, forKey: .browserEnabled)
+            ?? defaults.browserEnabled
+        browserViewportRaw = try container.decodeIfPresent(String.self, forKey: .browserViewportRaw)
+            ?? defaults.browserViewportRaw
         otlpExportEnabled = try container.decodeIfPresent(Bool.self, forKey: .otlpExportEnabled)
             ?? defaults.otlpExportEnabled
         otlpEndpoint = try container.decodeIfPresent(String.self, forKey: .otlpEndpoint)

@@ -369,6 +369,7 @@ class AgentCore:
         self._turn_allows_tools = True
         self._last_turn_allowed_tools = True
         self.computer_executor: Callable[[str, dict[str, Any], str], str] | None = None
+        self.browser_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self._pending_computer_screenshot: dict[str, str] | None = None
         self._ax_only_routes: set[str] = set()
         self._suppress_turn_done = False
@@ -2025,6 +2026,17 @@ class AgentCore:
                     if self.computer_executor is not None
                     else "Error: native computer control is unavailable."
                 )
+            elif info.get("origin") == "browser":
+                # Checked here rather than relying on schema omission: a team's
+                # writer route swaps the access ceiling without unwiring the
+                # executor, so a read-only agent could otherwise guess its way
+                # to a mutating tool.
+                if not self.tool_registry.browser_tool_allowed(tc.name):
+                    result = "Error: this agent is read-only and cannot use that browser tool."
+                elif self.browser_executor is None:
+                    result = "Error: the browser is unavailable."
+                else:
+                    result = self.browser_executor(tc.name, tc.arguments, call_id)
             else:
                 result = (
                     execute_tool(tc.name, tc.arguments, self.tool_ctx)

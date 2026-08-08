@@ -479,6 +479,8 @@ Endpoint: `/ws/chat`.
 | `steer` | `text: string` | Adds direction to the active turn. It interrupts only the current provider generation, waits for an already-running tool/native action to reach a safe boundary, and continues the same turn without an intermediate `turn_done`. |
 | `set_computer_control` | `enabled: boolean`, `native_available: boolean` | Advertises the direct-build native broker. Computer tools enter model schemas only when both values are true. Rejected while a turn is busy. |
 | `computer_action_result` | `request_id: string`, `result: object` | Completes one pending native broker request. `result` may contain `text`, `error`, and optional `screenshot` metadata/data. Late, duplicate, and unknown IDs are ignored after cancellation or timeout. |
+| `set_browser_control` | `enabled: boolean` | Advertises the native browser broker. Browser tools enter model schemas only while true. Rejected while a turn is busy, so the client re-sends after `turn_done`. Unlike computer control there is no `native_available`: a web view needs no special access and is present in every build. |
+| `browser_action_result` | `request_id: string`, `result: object` | Completes one pending browser request. `result` may contain `text`, `error`, and optional `screenshot` metadata/data. Late, duplicate, and unknown IDs are ignored after cancellation or timeout. |
 | `set_model` | `model: string` | Switches model (substring match allowed). Emits `session_info` on success, `command_error` if rejected. Persisted to config. |
 | `set_cwd` | `path: string` | Changes the agent working directory. Emits `session_info` on success, `command_error` otherwise. |
 | `set_permission_mode` | `mode: "ask" \| "accept_edits" \| "bypass"` | Changes the permission mode while idle and emits `session_info`. |
@@ -595,6 +597,38 @@ valid only for the latest Accessibility snapshot and must be refreshed after a
 mutation. A screenshot result is an ephemeral newest-only observation; routes
 that reject images are retried once without it and remain Accessibility-only
 for the session.
+
+### `browser_control_status` / `browser_action_request`
+
+`browser_control_status {enabled}` acknowledges the browser capability
+handshake. When enabled, a browser tool call emits:
+
+```json
+{ "type": "browser_action_request", "request_id": "...",
+  "tool": "browser_read_page", "arguments": {"filter": "interactive"},
+  "timeout_ms": 60000 }
+```
+
+The agent worker blocks for the matching `browser_action_result`. Exactly one
+result is accepted per ID. `timeout_ms` is the client's budget — 60 seconds for
+most tools, 120 for `browser_navigate` — and the worker waits eight seconds
+longer than it, so a result delivered right at the client's deadline is still
+collected rather than being dropped as a timeout after the action already
+happened. `interrupt` and socket teardown cancel all pending browser requests
+immediately, and cancellation also stops the load rather than only unblocking
+the worker.
+
+Element IDs are valid only for the latest `browser_read_page` snapshot and are
+retired by navigation, by same-document routing, and by any in-place removal of
+an element that snapshot named; acting on an older one returns
+`Error: page changed; call browser_read_page again.` A screenshot result is an
+ephemeral newest-only observation sharing one slot with computer control, and
+routes that reject images fall back to text for the session.
+
+Unlike computer control, a browser request from a background team worker is
+served immediately and answered on that worker's own socket rather than being
+held until the user opens its conversation: driving a web view takes nothing
+away from the person at the keyboard.
 
 ### Team orchestration and scheduler events
 
@@ -831,6 +865,28 @@ inspection are automatic. Mutations follow the global permission mode, except
 high-consequence actions always ask and credential entry, password changes,
 security interstitials, contracts, and final financial transactions are hard
 blocked for user takeover even in Bypass.
+When the browser broker is enabled the schema also contains `browser_read_page`,
+`browser_get_text`, `browser_find`, `browser_screenshot`, `browser_wait_for`,
+`browser_console`, `browser_network`, `browser_tabs`, `browser_navigate`,
+`browser_input`, `browser_resize`, and `browser_javascript`. The reading half is
+permission-free and stays available to read-only agents, which is a deliberate
+departure from computer control — a reviewer should be able to look at the page
+it is reviewing. Everything else follows the permission mode, and
+`browser_javascript` asks every time, Bypass included. Navigation is restricted
+to `http`, `https` and `about`: a `file:` URL would otherwise read any file
+without passing through `read_file`'s workspace scoping or its prompt. Typing a
+credential is hard blocked on both sides — by content in the agent, and by the
+field's own type, its autocomplete hint, and whether its form holds a password
+in the app.
+
+Page text, console output and network payloads are labelled untrusted external
+data. Capture is JavaScript-level: `fetch` and `XMLHttpRequest` are recorded in
+full, sub-resources appear as timing only, main-document status codes come from
+the navigation delegate, and anything logged before the page's own scripts ran
+is not recorded. Results are truncated to the same 30 000-character bound the
+built-in tools use, because a session record over 2 MB is written and then
+skipped on read.
+
 Writes through a symlinked workspace component are refused; permission previews
 show the resolved target when it differs. The shell deny list is a final
 catastrophic-command guardrail, not a process sandbox.

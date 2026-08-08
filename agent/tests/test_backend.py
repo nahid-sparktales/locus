@@ -2730,6 +2730,154 @@ def test_native_computer_tool_uses_permission_mode_and_bridge(tmp_path):
     assert calls[0][1]["element"] == "snap-1"
 
 
+def test_browser_tools_are_absent_until_the_app_announces_a_broker(tmp_path):
+    core = _core(tmp_path, [ChatResponse(content_parts=["ok"], done=True)])
+
+    def names():
+        return {schema["function"]["name"] for schema in core.tool_registry.schemas()}
+
+    # Default off, so the headless CLI and evaluation cores — which construct a
+    # registry but will never own a browser — do not advertise dead tools.
+    assert core.tool_registry.browser_enabled is False
+    assert "browser_read_page" not in names()
+
+    core.tool_registry.browser_enabled = True
+    assert {"browser_read_page", "browser_navigate"} <= names()
+
+
+def test_read_only_agents_see_and_may_use_only_the_reading_half(tmp_path):
+    core = _core(tmp_path, [ChatResponse(content_parts=["ok"], done=True)])
+    core.tool_registry.browser_enabled = True
+    core.tool_registry.set_mcp_agent_policy({}, access_ceiling="read_only", role="reviewer")
+
+    names = {schema["function"]["name"] for schema in core.tool_registry.schemas()}
+    # A reviewer should be able to look at the page it is reviewing, which is
+    # why the browser differs from computer control here.
+    assert "browser_read_page" in names
+    assert "browser_navigate" not in names
+
+    # Omitting the schema is not the boundary: a writer route only swaps the
+    # ceiling and leaves the executor wired, so guessing the name must fail too.
+    assert core.tool_registry.browser_tool_allowed("browser_read_page")
+    assert not core.tool_registry.browser_tool_allowed("browser_navigate")
+
+
+def test_read_only_agent_guessing_a_mutating_browser_tool_is_refused(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(tool_calls=[ToolCall("browser_navigate", {"url": "https://example.com"})], done=True),
+        ChatResponse(content_parts=["done"], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    core.tool_registry.browser_enabled = True
+    core.tool_registry.set_mcp_agent_policy({}, access_ceiling="read_only", role="reviewer")
+    core.perms.set_mode("bypass")
+    calls = []
+    core.browser_executor = lambda name, args, request_id: calls.append(name) or "opened"
+
+    events = []
+    core.on_event(events.append)
+    core.run_turn("look at the page")
+
+    assert calls == []
+    results = [event for event in events if event["type"] == "tool_result"]
+    assert results and "read-only" in results[0]["result"]
+
+
+def test_browser_tool_reaches_the_browser_bridge(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(tool_calls=[ToolCall("browser_read_page", {"filter": "interactive"})], done=True),
+        ChatResponse(content_parts=["done"], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    core.tool_registry.browser_enabled = True
+    calls = []
+    core.browser_executor = lambda name, args, request_id: calls.append((name, args)) or "button [ref_1]"
+
+    core.run_turn("what is on the page")
+
+    assert calls and calls[0][0] == "browser_read_page"
+    assert calls[0][1]["filter"] == "interactive"
+
+
+def test_browser_tools_report_unavailable_rather_than_leaking_the_tool_list(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(tool_calls=[ToolCall("browser_read_page", {})], done=True),
+        ChatResponse(content_parts=["done"], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    core.tool_registry.browser_enabled = True
+    core.browser_executor = None
+
+    events = []
+    core.on_event(events.append)
+    core.run_turn("read it")
+
+    results = [event for event in events if event["type"] == "tool_result"]
+    assert results and results[0]["result"] == "Error: the browser is unavailable."
+
+
+def test_browsing_ordinary_urls_is_neither_blocked_nor_confirmation_gated():
+    perms = PermissionManager(mode="bypass")
+    # Every one of these trips the computer-control vocabulary, and every one is
+    # an address somebody debugging their own app types all day.
+    for url in (
+        "https://github.com/settings/password",
+        "http://localhost:3000/admin/delete",
+        "https://example.com/docs/installation",
+        "http://localhost:3000/settings/privacy",
+        "https://example.com/security",
+        "localhost:3000",
+    ):
+        assert perms.blocked_reason("browser_navigate", {"url": url}) is None, url
+        assert not perms.requires_confirmation("browser_navigate", {"url": url}), url
+
+
+def test_browser_guardrails_hold_where_the_arguments_carry_meaning():
+    perms = PermissionManager(mode="bypass")
+    assert perms.blocked_reason(
+        "browser_input", {"action": "type", "text": "my password is hunter2"}
+    ) is not None
+    assert perms.blocked_reason(
+        "browser_input", {"action": "type", "text": "hello world"}
+    ) is None
+    # Reading the page is never blocked, however the query is phrased.
+    assert perms.blocked_reason("browser_read_page", {"ref_id": "ref_7"}) is None
+    # Running arbitrary JavaScript keeps asking, Bypass or not.
+    assert perms.requires_confirmation("browser_javascript", {"code": "1 + 1"})
+    assert perms.requires_confirmation("browser_navigate", {"url": "javascript:alert(1)"})
+    assert perms.requires_confirmation("browser_navigate", {"url": "file:///etc/passwd"})
+    assert not perms.requires_confirmation("browser_navigate", {"url": "reload"})
+
+
+def test_browser_permission_preview_leads_with_the_destination():
+    summary, detail = build_preview("browser_navigate", {"url": "https://example.com/checkout"})
+    assert summary == "open https://example.com/checkout"
+    assert detail == "https://example.com/checkout"
+    assert build_preview("browser_navigate", {"url": "back"})[0] == "browser back"
+
+
+def test_browser_schema_budget_stays_small_enough_for_local_models(tmp_path):
+    core = _core(tmp_path, [ChatResponse(content_parts=["ok"], done=True)])
+    baseline = core.tool_registry.schema_tokens()
+    core.tool_registry.browser_enabled = True
+    cost = core.tool_registry.schema_tokens() - baseline
+
+    # Every prompt pays this, on models whose whole window may be 8k. A tool per
+    # input action — click, double_click, hover, drag, type, key, scroll, each
+    # with its own parameter block — measured 2500-3500 here; folding them into
+    # `browser_input` is what buys the difference. The ceiling exists so that
+    # shape cannot creep back in unnoticed.
+    assert cost < 1_600, f"browser schemas cost {cost} tokens"
+    names = {schema["function"]["name"] for schema in core.tool_registry.browser_schemas()}
+    assert len(names) <= 15, sorted(names)
+
+
 def test_steer_continues_same_turn_without_intermediate_turn_done(tmp_path):
     first_started = threading.Event()
 

@@ -69,6 +69,8 @@ class PermissionManager:
             if any(term in text for term in takeover):
                 return "user takeover is required for credentials, contracts, security interstitials, and final financial transactions"
             return None
+        if tool_name.startswith("browser_"):
+            return _browser_blocked_reason(tool_name, args)
         if tool_name != "bash":
             return None
         command = str(args.get("command", ""))
@@ -82,6 +84,8 @@ class PermissionManager:
 
     def requires_confirmation(self, tool_name: str, args: dict[str, Any]) -> bool:
         """Actions that remain permission-gated even in Bypass mode."""
+        if tool_name.startswith("browser_"):
+            return _browser_requires_confirmation(tool_name, args)
         if not tool_name.startswith("computer_"):
             return False
         text = json.dumps(args, ensure_ascii=False).lower()
@@ -124,6 +128,68 @@ class PermissionManager:
             "use '/permissions reset' to clear allowances, "
             "'/permissions mode ask|accept_edits|bypass' to change the mode",
         ]
+
+
+#: Browser tools that carry content the user is about to send somewhere.
+#:
+#: The scan is deliberately narrow. Both guards above match substrings of the
+#: whole argument dict, which is right for `computer_*` — the model has to echo
+#: the element titles it read — and badly wrong for a browser. Pointed at a URL
+#: it would hard-block navigating to `/settings/password` with no way to
+#: override, and prompt on every address containing "install", "delete" or
+#: "security", even in Bypass. It would also catch nothing real: a click's
+#: argument is `ref_12`, and the meaning lives in the page, not the call. The
+#: page-aware half of this gate is on the Swift side, where the element's type
+#: and its form are actually known.
+_BROWSER_TYPED_ARGUMENT_TOOLS = {"browser_input", "browser_javascript"}
+_BROWSER_TYPED_KEYS = ("text", "value", "code")
+_BROWSER_CREDENTIAL_TERMS = (
+    "password", "passcode", "credential", "api key", "secret",
+    "one-time code", "verification code", "seed phrase", "recovery phrase",
+)
+#: Consequential enough to ask about every time, Bypass included.
+_BROWSER_ALWAYS_CONFIRM = {"browser_javascript", "browser_dev_server"}
+#: What `browser_navigate` may open without asking. The broker refuses anything
+#: else outright; this is the second line.
+_BROWSER_SAFE_SCHEMES = {"http", "https", "about"}
+#: Schemes written without `//`. Needed because a bare `localhost:3000` is a
+#: host and a port, not a scheme, and treating it as one would put a
+#: confirmation in front of the most common address anyone types here.
+_BROWSER_COLON_SCHEMES = {"about", "javascript", "data", "mailto", "blob", "locus"}
+
+
+def _browser_scheme(raw: str) -> str:
+    value = raw.strip()
+    if "://" in value:
+        return value.split("://", 1)[0].lower()
+    head, separator, _ = value.partition(":")
+    if separator and head.lower() in _BROWSER_COLON_SCHEMES:
+        return head.lower()
+    return ""
+
+
+def _browser_typed_content(args: dict[str, Any]) -> str:
+    return " ".join(
+        str(args.get(key, "")) for key in _BROWSER_TYPED_KEYS
+    ).lower()
+
+
+def _browser_blocked_reason(tool_name: str, args: dict[str, Any]) -> str | None:
+    if tool_name not in _BROWSER_TYPED_ARGUMENT_TOOLS:
+        return None
+    typed = _browser_typed_content(args)
+    if any(term in typed for term in _BROWSER_CREDENTIAL_TERMS):
+        return "user takeover is required for credentials"
+    return None
+
+
+def _browser_requires_confirmation(tool_name: str, args: dict[str, Any]) -> bool:
+    if tool_name in _BROWSER_ALWAYS_CONFIRM:
+        return True
+    if tool_name == "browser_navigate":
+        scheme = _browser_scheme(str(args.get("url") or ""))
+        return bool(scheme) and scheme not in _BROWSER_SAFE_SCHEMES
+    return False
 
 
 #: Wrappers that hide the real command behind themselves.
@@ -391,6 +457,26 @@ def build_preview(
     if name == "web_fetch":
         url = str(args.get("url", ""))
         return f"fetch {url}", url
+    # The destination is the most security-relevant thing in the whole browser
+    # family, and the fallback below would render it as a JSON blob clipped at
+    # 120 characters.
+    if name == "browser_navigate":
+        url = str(args.get("url", ""))
+        if url.lower() in {"back", "forward", "reload"}:
+            return f"browser {url.lower()}", ""
+        return f"open {_shorten(url, 90)}", url
+    if name == "browser_read_page":
+        scope = str(args.get("ref_id") or "")
+        return f"read the page{f' below {scope}' if scope else ''}", ""
+    if name == "browser_input":
+        action = str(args.get("action") or "click")
+        target = str(args.get("ref") or args.get("from_ref") or args.get("key") or "")
+        typed = str(args.get("text") or args.get("value") or "")
+        summary = f"{action.replace('_', ' ')}{f' {target}' if target else ''}"
+        return summary, typed or target
+    if name == "browser_javascript":
+        code = str(args.get("code") or "")
+        return f"run JavaScript in the page: {_shorten(code, 70)}", code
     if name == "git_status":
         return "git status", ""
     if name == "git_diff":

@@ -37,7 +37,6 @@ final class ComputerControlService: ObservableObject {
     }
 
     private var snapshots: [String: Snapshot] = [:]
-    private var hostedScreenshotConsent: Set<String> = []
     private var latestScreenshot: Data?
     private var cancellationGeneration = 0
     private var currentSessionID: String?
@@ -45,7 +44,7 @@ final class ComputerControlService: ObservableObject {
     func beginSession(_ sessionID: String) {
         guard !sessionID.isEmpty, currentSessionID != sessionID else { return }
         currentSessionID = sessionID
-        hostedScreenshotConsent.removeAll()
+        HostedScreenshotConsent.shared.beginSession(sessionID)
         latestScreenshot = nil
         snapshots.removeAll()
         cancelPendingActions()
@@ -120,15 +119,12 @@ final class ComputerControlService: ObservableObject {
                screenRecordingGranted,
                app.processIdentifier != ProcessInfo.processInfo.processIdentifier
             {
-                if let provider = hostedProvider,
-                   !hostedScreenshotConsent.contains(provider)
-                {
-                    if requestHostedScreenshotConsent(provider: provider) {
-                        hostedScreenshotConsent.insert(provider)
-                    } else {
-                        result["text"] = state.text + "\n\nScreenshot not shared; the user declined hosted-provider consent. AX text is still available."
-                        return result
-                    }
+                // One consent set across both native brokers, so the user is
+                // asked once per provider per session rather than once per
+                // broker.
+                guard HostedScreenshotConsent.shared.isAllowed(provider: hostedProvider) else {
+                    result["text"] = state.text + "\n\nScreenshot not shared; the user declined hosted-provider consent. AX text is still available."
+                    return result
                 }
                 guard actionIsCurrent(generation, deadline: deadline) else {
                     return staleActionResult(generation)
@@ -540,16 +536,6 @@ final class ComputerControlService: ObservableObject {
         } catch {
             return nil
         }
-    }
-
-    private func requestHostedScreenshotConsent(provider: String) -> Bool {
-        let alert = NSAlert()
-        alert.messageText = "Share a screenshot with \(provider)?"
-        alert.informativeText = "Locus will capture only the target app window, exclude Locus, and send only the newest screenshot for this session. Accessibility text will still work if you decline."
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "Share This Session")
-        alert.addButton(withTitle: "Use Text Only")
-        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private func openPrivacySettings(_ pane: String) {

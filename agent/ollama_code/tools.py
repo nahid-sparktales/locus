@@ -47,6 +47,16 @@ SAFE_TOOLS = {
     "read_file", "glob", "grep", "list_dir", "todo_write", "submit_plan",
     "search_workspace_knowledge",
     "computer_list_apps", "computer_get_state",
+    # Reading a page never prompts. Note this is a deliberate departure from
+    # `web_fetch`, which is not here: these are the first never-ask tools that
+    # pull remote, attacker-controlled text into a context that also holds
+    # `bash`, so every result is wrapped as untrusted evidence.
+    #
+    # `browser_tabs` is here despite being able to open and close one: its
+    # reach is the calling session's own tabs, a new tab is blank, and going
+    # anywhere with it needs `browser_navigate`, which is not safe-listed.
+    "browser_read_page", "browser_get_text", "browser_find", "browser_screenshot",
+    "browser_wait_for", "browser_console", "browser_network", "browser_tabs",
 }
 
 #: Tools that modify files — auto-allowed in the "accept_edits" mode.
@@ -121,6 +131,16 @@ def _truncate(text: str, limit: int = MAX_OUTPUT) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + f"\n... [truncated, {len(text) - limit} more chars]"
+
+
+def truncate_output(text: str, limit: int = MAX_OUTPUT) -> str:
+    """The same bound the built-in tools apply, for callers outside this module.
+
+    Native brokers hand back a string that no other layer trims, and a session
+    record above ``MAX_SESSION_LINE_BYTES`` is written and then skipped on read
+    — so an unbounded page dump silently loses the turn it belonged to.
+    """
+    return _truncate(text, limit)
 
 
 def _as_int(value: Any, default: int = 0) -> int:

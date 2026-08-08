@@ -268,11 +268,16 @@ final class AppModel: ObservableObject {
     /// sidebar, conversation and composer at the command's output rate.
     let terminal = TerminalSession()
     let computerControl = ComputerControlService()
+    /// The browser, for the same reason as the console: its tab list and load
+    /// progress change far too often to republish AppModel over.
+    let browser = BrowserService()
     let streamingReply = StreamingReplyState()
 
     private let backend: BackendService
     private let backendProcess = BackendProcess()
     private var taskWorkers: [String: TaskWorkerRuntime] = [:]
+    /// Backends that refused the browser handshake because a turn was running.
+    private var pendingBrowserCapabilityTransports: [BackendService] = []
     private var conversationBackend: BackendService {
         taskWorkers[currentSessionID]?.service ?? backend
     }
@@ -568,6 +573,7 @@ final class AppModel: ObservableObject {
                     self.agentRuntimePhase = .online
                     self.runtimeRecoveryAttempt = 0
                     self.sendComputerControlCapability()
+                    self.announceBrowserCapability()
                     if let runID = self.orchestrationRunID {
                         Task { @MainActor [weak self] in
                             await self?.backfillOrchestrationEvents(runID)
@@ -2378,6 +2384,7 @@ final class AppModel: ObservableObject {
             return
         }
         computerControl.cancelPendingActions()
+        browser.cancelPendingActions()
         pendingStopAndSend = text
         if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
             draftText = ""
@@ -2489,6 +2496,7 @@ final class AppModel: ObservableObject {
             return
         }
         computerControl.cancelPendingActions()
+        browser.cancelPendingActions()
         pendingRetry = false
         steeringState = "Stopping the current run…"
         showToast("Stopping the current run")
@@ -2547,6 +2555,7 @@ final class AppModel: ObservableObject {
         }
         _ = backend.send(["type": "interrupt"])
         computerControl.cancelPendingActions()
+        browser.cancelPendingActions()
         Task { @MainActor in
             // Give every worker a bounded window to append its interrupted
             // task state and terminal event before shutdown stops processes.
@@ -4457,6 +4466,7 @@ final class AppModel: ObservableObject {
     private func detachForegroundWorkerUIIfNeeded() {
         guard taskWorkers[currentSessionID] != nil else { return }
         computerControl.cancelPendingActions()
+        browser.cancelPendingActions()
         flushPendingTokens()
         finalizeStreamingBlocks()
         streamingAssistantID = nil
@@ -4479,6 +4489,7 @@ final class AppModel: ObservableObject {
         currentSessionID = runtime.sessionID
         sessionInfo = runtime.sessionInfo
         if let info = runtime.sessionInfo { computerControl.beginSession(info.sessionID) }
+        if let info = runtime.sessionInfo { browser.beginSession(info.sessionID) }
         Task {
             do {
                 let detail = try await backend.get(
@@ -5592,6 +5603,50 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Run one browser action and answer on the socket that asked for it.
+    ///
+    /// Deliberately not routed through `pendingForegroundEvent` the way
+    /// computer actions are. Parking the request until the user happens to open
+    /// that conversation is right for control of the real mouse and keyboard;
+    /// for a web view it just means a background agent blocks until its deadline
+    /// with nobody watching. Answering on the originating transport is what
+    /// makes that safe — `conversationBackend` resolves to whichever session is
+    /// in front, which is not necessarily the one that asked.
+    /// Takes a reply closure rather than a transport so the routing — which
+    /// socket the answer goes back on — is something a test can observe.
+    @discardableResult
+    func runBrowserAction(
+        _ event: [String: Any],
+        reply: @escaping @MainActor ([String: Any]) -> Void
+    ) -> Task<Void, Never>? {
+        guard let requestID = event["request_id"] as? String,
+              let tool = event["tool"] as? String,
+              let arguments = event["arguments"] as? [String: Any]
+        else { return nil }
+        let sessionID = (event["session_id"] as? String) ?? currentSessionID
+        return Task { @MainActor [weak self] in
+            guard let self else { return }
+            let result = await self.browser.perform(
+                tool: tool,
+                arguments: arguments,
+                sessionID: sessionID,
+                hostedProvider: self.activeAccount?.displayName,
+                timeoutMilliseconds: event["timeout_ms"] as? Int ?? 60_000
+            )
+            reply([
+                "type": "browser_action_result",
+                "request_id": requestID,
+                "result": result,
+            ])
+        }
+    }
+
+    private func runBrowserAction(_ event: [String: Any], on transport: BackendService) {
+        runBrowserAction(event) { payload in
+            _ = transport.send(payload)
+        }
+    }
+
     func setComputerControlEnabled(_ enabled: Bool) {
         guard ComputerControlService.isAvailable else {
             settings.computerControlEnabled = false
@@ -5603,6 +5658,7 @@ final class AppModel: ObservableObject {
         sendComputerControlCapability()
         for runtime in taskWorkers.values where runtime.sessionID != currentSessionID {
             sendComputerControlCapability(to: runtime.service)
+            sendBrowserCapability(to: runtime.service)
         }
         showToast(enabled ? "Computer Control enabled" : "Computer Control disabled")
     }
@@ -5617,6 +5673,53 @@ final class AppModel: ObservableObject {
             "enabled": settings.computerControlEnabled,
             "native_available": ComputerControlService.isAvailable,
         ])
+    }
+
+    func setBrowserEnabled(_ enabled: Bool) {
+        settings.browserEnabled = enabled
+        announceBrowserCapability()
+        showToast(enabled ? "Browser enabled" : "Browser disabled")
+        if !enabled { browser.cancelPendingActions() }
+    }
+
+    /// Tell every live backend, not just whichever one happens to be in front.
+    ///
+    /// The computer-control version resolves `conversationBackend`, so when a
+    /// worker session is foreground and the *main* backend reconnects, the
+    /// announcement lands on the worker's socket and the reconnected agent
+    /// never learns the capability. Naming the transports avoids inheriting
+    /// that.
+    private func announceBrowserCapability() {
+        sendBrowserCapability(to: backend)
+        for runtime in taskWorkers.values {
+            sendBrowserCapability(to: runtime.service)
+        }
+    }
+
+    private func sendBrowserCapability(to transport: BackendService) {
+        let delivered = transport.send([
+            "type": "set_browser_control",
+            "enabled": settings.browserEnabled,
+        ])
+        // The agent refuses capability changes mid-turn and Swift historically
+        // dropped the answer, so a toggle during a long turn was lost until the
+        // next reconnect. Retry once the turn is over instead.
+        if !delivered || isBusy {
+            pendingBrowserCapabilityTransports.append(transport)
+        }
+    }
+
+    /// Re-announce anything the agent refused while it was busy.
+    private func flushPendingBrowserCapability() {
+        guard !pendingBrowserCapabilityTransports.isEmpty else { return }
+        let transports = pendingBrowserCapabilityTransports
+        pendingBrowserCapabilityTransports.removeAll()
+        for transport in transports {
+            _ = transport.send([
+                "type": "set_browser_control",
+                "enabled": settings.browserEnabled,
+            ])
+        }
     }
 
     /// The agent echoes the new state; mirror it locally so the UI updates
@@ -5755,8 +5858,12 @@ final class AppModel: ObservableObject {
                 }
             }
         }
-        runtime.service.onConnectionChange = { [weak runtime] connected in
+        runtime.service.onConnectionChange = { [weak self, weak runtime] connected in
             runtime?.isConnected = connected
+            // A worker that reconnects has a fresh agent process behind it,
+            // which knows nothing about the capability until it is told again.
+            guard connected, let self, let runtime else { return }
+            self.sendBrowserCapability(to: runtime.service)
         }
         runtime.service.onEvent = { [weak self, weak runtime] event in
             guard let self, let runtime else { return }
@@ -5824,6 +5931,7 @@ final class AppModel: ObservableObject {
             activeTaskRecord = info.task
         }
         sendComputerControlCapability(to: runtime.service)
+        sendBrowserCapability(to: runtime.service)
         return runtime
     }
 
@@ -5862,6 +5970,13 @@ final class AppModel: ObservableObject {
         if type == "computer_action_request" {
             state = .waitingComputer
             runtime.pendingForegroundEvent = event
+        }
+        if type == "browser_action_request" {
+            // Served straight away on this worker's own socket. Parking it the
+            // way a computer action is parked would leave the worker blocked
+            // until somebody opened its conversation.
+            state = .waitingComputer
+            runBrowserAction(event, on: runtime.service)
         }
         var taskID = runtime.sessionInfo?.task?.id ?? previous?.taskID
         if let raw = event["task"] as? [String: Any],
@@ -6004,6 +6119,7 @@ final class AppModel: ObservableObject {
             if let info = decode(SessionInfo.self, from: event) {
                 activeWorkerID = event["worker_id"] as? String ?? activeWorkerID
                 computerControl.beginSession(info.sessionID)
+                browser.beginSession(info.sessionID)
                 sessionInfo = info
                 currentSessionID = info.sessionID
                 watchWorkspaceKnowledge(info.workspaceRoot ?? info.cwd)
@@ -6468,6 +6584,14 @@ final class AppModel: ObservableObject {
                 showToast("Computer Control is unavailable from the native broker")
             }
 
+        case "browser_action_request":
+            runBrowserAction(event, on: conversationBackend)
+
+        case "browser_control_status":
+            if (event["enabled"] as? Bool) != true, settings.browserEnabled {
+                showToast("The browser is unavailable from the native broker")
+            }
+
         case "todo_update":
             if let raw = event["todos"] as? [[String: Any]] {
                 let updatedTodos = raw.compactMap { decode(TodoItem.self, from: $0) }
@@ -6505,6 +6629,7 @@ final class AppModel: ObservableObject {
             flushPendingTokens()
             finalizeStreamingBlocks()
             resolveDanglingPermissions()
+            flushPendingBrowserCapability()
             let reason = event["reason"] as? String ?? "complete"
             let dispatchedMode = turnDispatchedMode
                 ?? (turnDispatchedInPlanMode ? .plan : nil)
@@ -6631,6 +6756,7 @@ final class AppModel: ObservableObject {
             && !pendingRetry
             && pendingCheckpointRestore == nil
         computerControl.beginSession(info.sessionID)
+        browser.beginSession(info.sessionID)
         sessionInfo = info
         currentSessionID = info.sessionID
         activeTaskRecord = info.task
