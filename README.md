@@ -27,8 +27,10 @@ like; macOS remembers the size you choose for later launches.
   provider/model, elapsed time, delegated jobs, model calls, and hosted-token
   usage. Its Stop button remains available while a team is running.
 - **Team-aware model controls** label the workspace with the selected team and
-  distinct model count, list the exact team models in the header menu, and use
-  provider-backed model dropdowns when editing agent profiles.
+  distinct model count, list the exact team models in a bounded, scrollable
+  header picker, and use provider-backed model dropdowns when editing agent
+  profiles. Long vLLM repository identifiers wrap inside the picker instead of
+  resizing or stalling the app.
 - **Evaluation suites and transparent scorecard routing** compare Solo and team
   configurations against immutable fixtures, then explain why an eligible agent
   was selected.
