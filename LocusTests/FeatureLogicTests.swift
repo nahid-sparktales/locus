@@ -1763,6 +1763,20 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(activity.promptTokens + activity.completionTokens, 25)
     }
 
+    func testPerTokenTeamStreamsAreExcludedFromTheDurableTimeline() throws {
+        let stream = try JSONDecoder().decode(
+            OrchestrationEvent.self,
+            from: Data(#"{"type":"agent_job_stream","seq":4,"text":"token"}"#.utf8)
+        )
+        let completed = try JSONDecoder().decode(
+            OrchestrationEvent.self,
+            from: Data(#"{"type":"agent_job_completed","seq":5}"#.utf8)
+        )
+
+        XCTAssertTrue(stream.isTransientStream)
+        XCTAssertFalse(completed.isTransientStream)
+    }
+
     func testTaskConversationStateRoundTripsWithoutConversationContent() throws {
         let state = TaskConversationState(
             sessionID: "session",

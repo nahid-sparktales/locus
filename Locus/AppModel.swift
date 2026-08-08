@@ -5512,7 +5512,8 @@ final class AppModel: ObservableObject {
 
     private func handle(_ event: [String: Any]) {
         guard let type = event["type"] as? String else { return }
-        if event["event_id"] != nil,
+        if type != "agent_job_stream",
+           event["event_id"] != nil,
            let runEvent = decode(OrchestrationEvent.self, from: event),
            !orchestrationEventIDs.contains(runEvent.id),
            selectedOrchestrationRun?.id == (event["run_id"] as? String)

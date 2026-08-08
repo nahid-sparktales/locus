@@ -29,6 +29,27 @@ def test_run_store_orders_events_and_rebuilds_attempts(tmp_path) -> None:
     assert detail["attempts"][0]["result"]["output"] == "done"
 
 
+def test_run_store_attempt_ids_are_scoped_to_each_run(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    attempt_ids = []
+
+    for run_id in ("first-run", "second-run"):
+        store.start_run(run_id, session_id="session", team_id="team", request="work")
+        started = store.append_event(run_id, {
+            "type": "agent_job_started", "job_id": "writer",
+            "agent_id": "writer-agent", "agent_name": "Writer",
+            "role": "implementer", "goal": "implement",
+        })
+        completed = store.append_event(run_id, {
+            "type": "agent_job_completed", "state": "completed",
+            "result": {"job_id": "writer", "output": "done"},
+        })
+        assert started["attempt_id"] == completed["attempt_id"]
+        attempt_ids.append(started["attempt_id"])
+
+    assert attempt_ids == ["first-run:writer:1", "second-run:writer:1"]
+
+
 def test_run_store_checkpoint_and_redacted_export(tmp_path) -> None:
     store = RunStore(tmp_path / "runs.sqlite3")
     store.start_run("run-1", request="secret request")

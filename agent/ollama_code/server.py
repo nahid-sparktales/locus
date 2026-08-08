@@ -14,8 +14,10 @@ import asyncio
 import base64
 import binascii
 import ipaddress
+import logging
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -75,6 +77,8 @@ from .telemetry import TelemetryError, send_otlp
 from .terminal import TerminalManager, TerminalRejected
 from .worktrees import TaskCheckout, TaskCheckoutStore, WorktreeError
 
+logger = logging.getLogger(__name__)
+
 #: Tools whose success means files on disk may have changed.
 _MUTATING_TOOLS = {"write_file", "edit_file", "multi_edit", "bash"}
 MAX_HTTP_BODY_BYTES = 2 * 1024 * 1024
@@ -121,6 +125,7 @@ class ChatService:
         self.pending_dispatch_decisions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_dispatch_plans: dict[str, dict[str, Any]] = {}
         self.turn_future: Any = None
+        self._terminal_events = 0
         self.active_orchestrator: TeamOrchestrator | None = None
         self.active_team: TeamPreparation | None = None
         self.active_run_id: str | None = None
@@ -172,6 +177,8 @@ class ChatService:
     # -- core event bridge (called from the worker thread) --
     def emit(self, event: dict[str, Any]) -> None:
         event_type = str(event.get("type") or "")
+        if event_type == "turn_done":
+            self._terminal_events += 1
         if event_type == "session_info":
             event = dict(event)
             event.setdefault("worker_id", self.worker_id)
@@ -187,15 +194,22 @@ class ChatService:
             "workspace_changed", "note", "error", "dispatch_plan",
             "orchestration_checkpoint", "dispatch_plan_ready",
         }
+        durable_agent_event = (
+            event_type.startswith("agent_job_") and event_type != "agent_job_stream"
+        )
         if run_id and (
             event_type in persisted_types
-            or event_type.startswith(("agent_job_", "orchestration_", "scheduler_lease", "mcp_task_"))
+            or durable_agent_event
+            or event_type.startswith(("orchestration_", "scheduler_lease", "mcp_task_"))
         ):
             event = dict(event)
             event.setdefault("run_id", run_id)
             try:
                 event = self.run_store.append_event(run_id, event)
-            except RunStoreError as exc:
+            except (RunStoreError, sqlite3.DatabaseError, OSError) as exc:
+                # Run history is observability, not execution authority. A
+                # damaged or temporarily locked history store must never stop
+                # an otherwise healthy agent turn.
                 event = {**event, "persistence_error": str(exc)}
         if event_type in {"agent_job_started", "agent_job_completed", "dispatch_plan"} \
                 or event_type.startswith("orchestration_") \
@@ -405,12 +419,38 @@ class ChatService:
                 # terminate immediately after a successful cancellation.
                 self.core._interrupt.clear()
                 self.core.begin_steerable_turn()
+            terminal_before = self._terminal_events
             try:
                 self.turn_future = loop.run_in_executor(None, call, *args)
             except Exception:
                 if steerable:
                     self.core.end_steerable_turn()
                 raise
+            def observe_completion(future: asyncio.Future[Any]) -> None:
+                if future.cancelled():
+                    return
+                exception = future.exception()
+                if exception is None:
+                    return
+                logger.error(
+                    "turn worker failed unexpectedly",
+                    exc_info=(type(exception), exception, exception.__traceback__),
+                )
+                # Most turn paths publish their own terminal boundary. This is
+                # the last-resort guard for errors outside those paths, so the
+                # UI cannot remain on Running after the worker has exited.
+                if self._terminal_events == terminal_before:
+                    self.core.end_steerable_turn()
+                    self.emit({
+                        "type": "error",
+                        "message": (
+                            "The run stopped because of an internal error. "
+                            "Nothing is still running; you can retry it."
+                        ),
+                    })
+                    self.emit({"type": "turn_done", "reason": "error", "duration_ms": 0})
+
+            self.turn_future.add_done_callback(observe_completion)
             return True
 
     def queue_event(self, event: dict[str, Any]) -> None:
@@ -2447,6 +2487,7 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
     run_id = str(manifest.get("run_id") or uuid.uuid4().hex)
     svc.active_run_id = run_id
     svc.pause_requested = False
+    stage = "validating the team setup"
     try:
         run_id, team, _, _ = parse_manifest(manifest)
         svc.run_store.start_run(
@@ -2486,6 +2527,7 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
             )
             svc.emit({"type": "task_ready", "task": task.as_dict(), "state": "running"})
 
+        stage = "preparing the dispatch plan"
         orchestrator = TeamOrchestrator(
             svc.emit,
             core._should_stop_stream,
@@ -2525,8 +2567,10 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
             "dispatch_complete", _team_checkpoint_state(prepared, "running", svc.current_task)
         )
 
+        stage = "starting the writer"
         route_snapshot = _install_writer_route(core, prepared)
         try:
+            stage = "running the writer"
             _run_team_writer(
                 svc,
                 orchestrator,
@@ -2537,6 +2581,7 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
                 ),
                 job_id="writer",
                 goal=prepared.original_request,
+                reserve_model_calls=2,
             )
             terminal_reason = str(core.last_turn_result.get("reason") or "complete")
             if terminal_reason not in {"complete", "max_iterations"}:
@@ -2545,10 +2590,14 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
                 "writer_complete", _team_checkpoint_state(prepared, "reviewing", svc.current_task)
             )
 
+            stage = "reviewing the changes"
             core.begin_steerable_turn()
             diff_text = _task_diff(svc, core.workspace_root, core.cwd)
+            test_evidence = _latest_assistant_output(core)
             try:
-                reviews = orchestrator.review(prepared, diff_text)
+                reviews = orchestrator.review(
+                    prepared, diff_text, test_evidence=test_evidence,
+                )
             except InterruptedError:
                 if core._interrupt.is_set() or not core._apply_pending_steers():
                     raise
@@ -2572,9 +2621,14 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
                     persisted_user_text="[Team steering update]",
                     job_id="writer-steered",
                     goal="Apply the user's steering update to the existing task changes",
+                    reserve_model_calls=2,
                 )
                 diff_text = _task_diff(svc, core.workspace_root, core.cwd)
-                reviews = orchestrator.review(prepared, diff_text)
+                reviews = orchestrator.review(
+                    prepared,
+                    diff_text,
+                    test_evidence=_latest_assistant_output(core),
+                )
             svc.checkpoint(
                 "review_complete",
                 _team_checkpoint_state(
@@ -2593,6 +2647,7 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
                     persisted_user_text="[Team review requested a revision]",
                     job_id="writer-revision",
                     goal="Resolve verified reviewer findings and rerun focused tests",
+                    reserve_model_calls=1,
                 )
                 terminal_reason = str(core.last_turn_result.get("reason") or "complete")
                 diff_text = _task_diff(svc, core.workspace_root, core.cwd)
@@ -2603,6 +2658,7 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
                     ),
                 )
 
+            stage = "preparing the final handoff"
             core.begin_steerable_turn()
             synthesis = orchestrator.synthesize(prepared, reviews, diff_text)
             if synthesis and not core._interrupt.is_set():
@@ -2694,6 +2750,23 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
             "state": "failed",
             "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
         })
+    except Exception as exc:  # noqa: BLE001 - terminal guard for worker failures
+        terminal_reason = "error"
+        logger.exception("team run failed unexpectedly while %s", stage)
+        svc.emit({
+            "type": "error",
+            "message": (
+                f"The team run stopped unexpectedly while {stage}. "
+                "Nothing is still running; you can retry it."
+            ),
+            "error_type": type(exc).__name__,
+        })
+        svc.emit({
+            "type": "orchestration_completed",
+            "run_id": run_id,
+            "state": "failed",
+            "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
+        })
     finally:
         if svc.current_task is not None:
             task_state = {
@@ -2762,12 +2835,14 @@ def _run_team_writer(
     persisted_user_text: str,
     job_id: str,
     goal: str,
+    reserve_model_calls: int = 0,
 ) -> None:
     """Run the only mutation-capable member under both permission and call budgets."""
     core = svc.core
     remaining = orchestrator.remaining_model_calls(prepared.team.budget)
     if remaining <= 0:
         raise OrchestrationError("team model-call budget exhausted before the writer ran")
+    model_call_limit = max(remaining - max(reserve_model_calls, 0), 1)
     started = time.monotonic()
     prompt_before = core.total_prompt_tokens
     completion_before = core.total_completion_tokens
@@ -2790,7 +2865,7 @@ def _run_team_writer(
             svc.decide,
             allow_tools=True,
             persisted_user_text=persisted_user_text,
-            model_call_limit=remaining,
+            model_call_limit=model_call_limit,
             persist_user_message=False,
         )
     prompt_tokens = max(core.total_prompt_tokens - prompt_before, 0)
@@ -2828,6 +2903,15 @@ def _run_team_writer(
         },
         "usage": orchestrator.usage(),
     })
+
+
+def _latest_assistant_output(core: AgentCore) -> str:
+    """Return bounded writer verification evidence for the read-only reviewer."""
+    assistant = next(
+        (message for message in reversed(core.messages) if message.get("role") == "assistant"),
+        {},
+    )
+    return str(assistant.get("content") or "")[:120_000]
 
 
 def _install_writer_route(core: AgentCore, prepared: TeamPreparation) -> dict[str, Any]:

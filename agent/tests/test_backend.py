@@ -13,7 +13,9 @@ import subprocess
 import threading
 import time
 from concurrent.futures import Future
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -2875,6 +2877,121 @@ def test_starting_a_new_team_turn_clears_the_previous_interrupt(tmp_path):
         assert observed == [False]
 
     asyncio.run(scenario())
+
+
+def test_uncaught_turn_worker_error_publishes_a_terminal_event(tmp_path):
+    async def scenario():
+        core = _core(tmp_path, [])
+        service = server_mod.ChatService(core)
+        service.loop = asyncio.get_running_loop()
+
+        def broken_turn():
+            raise RuntimeError("private diagnostic detail")
+
+        assert service.start_turn(service.loop, broken_turn)
+        with pytest.raises(RuntimeError, match="private diagnostic detail"):
+            await service.turn_future
+        await asyncio.sleep(0)
+
+        events = []
+        while not service.queue.empty():
+            events.append(service.queue.get_nowait())
+        error = next(event for event in events if event["type"] == "error")
+        terminal = next(event for event in events if event["type"] == "turn_done")
+        assert "internal error" in error["message"]
+        assert "private diagnostic detail" not in error["message"]
+        assert terminal["reason"] == "error"
+
+    asyncio.run(scenario())
+
+
+def test_team_turn_unexpected_error_is_persisted_as_failed(tmp_path, monkeypatch):
+    core = _core(tmp_path, [])
+    service = server_mod.ChatService(core)
+
+    def broken_manifest(_manifest):
+        raise RuntimeError("unexpected parser failure")
+
+    monkeypatch.setattr(server_mod, "parse_manifest", broken_manifest)
+    server_mod._run_team_turn(service, "do the work", {"run_id": "failed-team-run"})
+
+    record = service.run_store.run("failed-team-run", include_events=True)
+    assert record is not None
+    assert record["state"] == "failed"
+    assert any(
+        event["type"] == "orchestration_completed" and event["state"] == "failed"
+        for event in record["events"]
+    )
+    assert service.active_run_id is None
+
+
+def test_specialist_token_streams_do_not_flood_durable_run_history(tmp_path):
+    core = _core(tmp_path, [])
+    service = server_mod.ChatService(core)
+    service.run_store.start_run("stream-run", request="work")
+    service.active_run_id = "stream-run"
+
+    for token in ("one", "two", "three"):
+        service.emit({
+            "type": "agent_job_stream", "run_id": "stream-run",
+            "job_id": "review", "text": token,
+        })
+
+    assert service.run_store.events("stream-run") == []
+
+
+def test_team_writer_reserves_calls_for_review_and_synthesis():
+    observed = {}
+    core = SimpleNamespace(
+        total_prompt_tokens=0,
+        total_completion_tokens=0,
+        last_turn_result={"model_calls": 0},
+        messages=[{"role": "assistant", "content": "verified"}],
+    )
+
+    def run_turn(_prompt, _decider, **kwargs):
+        observed["model_call_limit"] = kwargs["model_call_limit"]
+        core.last_turn_result = {"model_calls": 2, "reason": "complete"}
+
+    core.run_turn = run_turn
+    writer = SimpleNamespace(
+        id="writer", name="Writer", role="implementer", model="k3",
+        route={"provider": "remote", "account_label": "Kimi"},
+    )
+    prepared = SimpleNamespace(
+        run_id="run", writer=writer,
+        team=SimpleNamespace(budget=SimpleNamespace()),
+    )
+
+    class Orchestrator:
+        def remaining_model_calls(self, _budget):
+            return 5
+
+        def writer_slot(self, _run_id, _writer):
+            return nullcontext()
+
+        def account_writer_usage(self, *_args):
+            return None
+
+        def usage(self):
+            return {"model_calls": 2}
+
+    events = []
+    service = SimpleNamespace(core=core, emit=events.append, decide=lambda *_args: "always")
+    server_mod._run_team_writer(
+        service,
+        Orchestrator(),
+        prepared,
+        "write",
+        persisted_user_text="request",
+        job_id="writer",
+        goal="implement",
+        reserve_model_calls=2,
+    )
+
+    assert observed["model_call_limit"] == 3
+    assert events[0]["type"] == "agent_job_started"
+    assert events[-1]["type"] == "agent_job_completed"
 
 
 def test_tool_call_runs_and_reports(tmp_path):
