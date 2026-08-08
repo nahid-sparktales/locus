@@ -226,11 +226,20 @@ struct AgentProfile: Identifiable, Codable, Hashable {
 }
 
 struct OrchestrationBudget: Codable, Hashable {
+    enum CallBudgetMode: String, Codable, CaseIterable, Identifiable {
+        case automatic
+        case fixed
+
+        var id: String { rawValue }
+        var title: String { self == .automatic ? "Automatic (up to 100)" : "Fixed limit" }
+    }
+
     var maxJobs = 4
     var maxRounds = 3
-    var maxModelCalls = 12
+    var maxModelCalls = 100
     var maxConcurrentCalls = 3
     var maxMeteredTokens = 500_000
+    var callBudgetMode: CallBudgetMode = .automatic
 
     private enum CodingKeys: String, CodingKey {
         case maxJobs = "max_jobs"
@@ -238,6 +247,7 @@ struct OrchestrationBudget: Codable, Hashable {
         case maxModelCalls = "max_model_calls"
         case maxConcurrentCalls = "max_concurrent_calls"
         case maxMeteredTokens = "max_metered_tokens"
+        case callBudgetMode = "call_budget_mode"
     }
 
     private enum LegacyCodingKeys: String, CodingKey {
@@ -247,15 +257,17 @@ struct OrchestrationBudget: Codable, Hashable {
     init(
         maxJobs: Int = 4,
         maxRounds: Int = 3,
-        maxModelCalls: Int = 12,
+        maxModelCalls: Int = 100,
         maxConcurrentCalls: Int = 3,
-        maxMeteredTokens: Int = 500_000
+        maxMeteredTokens: Int = 500_000,
+        callBudgetMode: CallBudgetMode = .automatic
     ) {
         self.maxJobs = maxJobs
         self.maxRounds = maxRounds
         self.maxModelCalls = maxModelCalls
         self.maxConcurrentCalls = maxConcurrentCalls
         self.maxMeteredTokens = maxMeteredTokens
+        self.callBudgetMode = callBudgetMode
     }
 
     init(from decoder: Decoder) throws {
@@ -271,6 +283,14 @@ struct OrchestrationBudget: Codable, Hashable {
             ?? legacy.decodeIfPresent(Int.self, forKey: .maxConcurrentCalls) ?? 3
         maxMeteredTokens = try current.decodeIfPresent(Int.self, forKey: .maxMeteredTokens)
             ?? legacy.decodeIfPresent(Int.self, forKey: .maxMeteredTokens) ?? 500_000
+        // A missing mode is an older saved or protocol budget. The store
+        // migration upgrades only the exact former native default; custom
+        // limits remain fixed.
+        callBudgetMode = try current.decodeIfPresent(CallBudgetMode.self, forKey: .callBudgetMode)
+            ?? .fixed
+        if callBudgetMode == .automatic {
+            maxModelCalls = 100
+        }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -280,12 +300,13 @@ struct OrchestrationBudget: Codable, Hashable {
         try container.encode(maxModelCalls, forKey: .maxModelCalls)
         try container.encode(maxConcurrentCalls, forKey: .maxConcurrentCalls)
         try container.encode(maxMeteredTokens, forKey: .maxMeteredTokens)
+        try container.encode(callBudgetMode, forKey: .callBudgetMode)
     }
 
     mutating func clamp() {
         maxJobs = min(max(maxJobs, 1), 16)
         maxRounds = min(max(maxRounds, 1), 8)
-        maxModelCalls = min(max(maxModelCalls, 1), 48)
+        maxModelCalls = min(max(maxModelCalls, 1), 100)
         maxConcurrentCalls = min(max(maxConcurrentCalls, 1), 8)
         maxMeteredTokens = min(max(maxMeteredTokens, 1_000), 2_000_000)
     }
@@ -434,6 +455,27 @@ enum AgentTeamStore {
             },
             changed
         )
+    }
+
+    static func migrateLegacyCallBudgets(_ teams: [AgentTeam]) -> (teams: [AgentTeam], changed: Bool) {
+        var changed = false
+        let migrated = teams.map { stored in
+            var team = stored
+            let budget = team.budget
+            let isFormerDefault = budget.callBudgetMode == .fixed
+                && budget.maxJobs == 4
+                && budget.maxRounds == 3
+                && budget.maxModelCalls == 12
+                && budget.maxConcurrentCalls == 3
+                && budget.maxMeteredTokens == 500_000
+            if isFormerDefault {
+                team.budget.callBudgetMode = .automatic
+                team.budget.maxModelCalls = 100
+                changed = true
+            }
+            return team
+        }
+        return (migrated, changed)
     }
 
     static func save(profiles: [AgentProfile], teams: [AgentTeam], to defaults: UserDefaults = .standard) {
@@ -776,9 +818,13 @@ struct OrchestrationRun: Identifiable, Codable, Hashable {
     let recoveryReason: String?
     let checkpoint: RunCheckpoint?
     let attempts: [AgentJobAttempt]?
+    let plan: DispatchPlan?
+    let usage: [String: JSONValue]?
+    let jobCount: Int?
+    let completedJobCount: Int?
 
     enum CodingKeys: String, CodingKey {
-        case id, state, request, pinned, legacy, recoverable, checkpoint, attempts
+        case id, state, request, pinned, legacy, recoverable, checkpoint, attempts, plan, usage
         case sessionID = "session_id"
         case teamID = "team_id"
         case teamName = "team_name"
@@ -791,6 +837,8 @@ struct OrchestrationRun: Identifiable, Codable, Hashable {
         case completedAt = "completed_at"
         case lastSequence = "last_seq"
         case recoveryReason = "recovery_reason"
+        case jobCount = "job_count"
+        case completedJobCount = "completed_job_count"
     }
 }
 

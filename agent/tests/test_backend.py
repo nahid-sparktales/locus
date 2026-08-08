@@ -688,11 +688,13 @@ def test_strip_prompt_decoration_passthrough():
 def test_sanitize_messages_drops_system_and_keeps_tools():
     out = AgentCore.sanitize_messages([
         {"role": "system", "content": "hidden"},
-        {"role": "user", "content": "[Locus mode: Ask]\nx\n\nUser request:\nhi"},
+        {"role": "user", "content": "[Locus mode: Ask]\nx\n\nUser request:\nhi",
+         "team_run_id": "run-42"},
         {"role": "tool", "name": "bash", "content": "output"},
     ])
     assert [m["role"] for m in out] == ["user", "tool"]
     assert out[0]["content"] == "hi"
+    assert out[0]["team_run_id"] == "run-42"
     assert out[1]["name"] == "bash"
 
 
@@ -2639,6 +2641,26 @@ def test_run_turn_emits_streaming_and_turn_done(tmp_path):
     assert core.messages[-1]["content"] == "Hello world"
 
 
+def test_run_turn_names_a_smaller_team_call_limit_instead_of_iteration_limit(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    core = _core(tmp_path, [
+        ChatResponse(tool_calls=[ToolCall("list_dir", {"path": "."})], done=True),
+        ChatResponse(tool_calls=[ToolCall("list_dir", {"path": "."})], done=True),
+    ])
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn("inspect twice", model_call_limit=2)
+
+    done = next(event for event in events if event["type"] == "turn_done")
+    assert done["reason"] == "model_call_budget"
+    assert done["model_calls"] == 2
+    assert done["model_call_limit"] == 2
+    assert done["iteration_limit"] == 5
+    assert core.last_turn_result == done
+
+
 def test_submit_plan_emits_structured_plan_ready(tmp_path):
     from ollama_code.ollama import ToolCall
 
@@ -3108,6 +3130,164 @@ def test_ordered_coding_jobs_never_overlap_and_second_observes_first(monkeypatch
     ]
     assert prepared.completed_writer_job_ids == {"backend-job", "ui-job"}
     assert checkpoints[-1][1]["state"] == "reviewing"
+
+
+def test_coding_job_continues_in_bounded_slices_until_it_finishes(monkeypatch):
+    writer = SimpleNamespace(
+        id="backend", name="Backend", role="implementer", can_write=True,
+    )
+    job = SimpleNamespace(
+        id="backend-job", agent_id="backend", goal="Build API", kind="writer",
+    )
+    prepared = SimpleNamespace(
+        run_id="run",
+        writer_jobs=(job,),
+        completed_writer_job_ids=set(),
+        writer_results=[],
+        profiles={"backend": writer},
+        plan=SimpleNamespace(jobs=[job]),
+        team=SimpleNamespace(
+            budget=SimpleNamespace(max_rounds=1, max_model_calls=20),
+        ),
+    )
+    core = SimpleNamespace(_interrupt=threading.Event(), last_turn_result={})
+    emitted = []
+    checkpoints = []
+    service = SimpleNamespace(
+        core=core,
+        current_task=None,
+        emit=emitted.append,
+        checkpoint=lambda kind, state: checkpoints.append((kind, state)),
+    )
+
+    class Orchestrator:
+        calls = 0
+
+        def remaining_model_calls(self, budget):
+            return budget.max_model_calls - self.calls
+
+        def usage(self):
+            return {"model_calls": self.calls}
+
+    orchestrator = Orchestrator()
+    continuations = []
+
+    def run_writer(_svc, _orchestrator, _prepared, _writer, _prompt, **kwargs):
+        continuations.append(kwargs["continuation"])
+        used = 12 if len(continuations) == 1 else 1
+        orchestrator.calls += used
+        core.last_turn_result = {
+            "reason": "model_call_budget" if len(continuations) == 1 else "complete",
+            "model_calls": used,
+            "model_call_limit": kwargs["model_call_limit"],
+            "iteration_limit": 100,
+        }
+        return AgentResult(
+            kwargs["job_id"], writer.id, writer.name, writer.role,
+            "partial" if len(continuations) == 1 else "finished", [], 0, 0, 1,
+        )
+
+    monkeypatch.setattr(server_mod, "writer_prompt_for_job", lambda _value, value: value.goal)
+    monkeypatch.setattr(server_mod, "_install_writer_route", lambda _core, value: value.id)
+    monkeypatch.setattr(server_mod, "_restore_writer_route", lambda _core, _snapshot: None)
+    monkeypatch.setattr(server_mod, "_run_team_writer", run_writer)
+    monkeypatch.setattr(
+        server_mod,
+        "_team_checkpoint_state",
+        lambda value, state, _task, **_kwargs: {
+            "state": state,
+            "completed_writer_job_ids": sorted(value.completed_writer_job_ids),
+        },
+    )
+
+    server_mod._run_prepared_writers(
+        service, orchestrator, prepared, first_persisted_user_text="request",
+    )
+
+    assert continuations == [False, True]
+    assert prepared.completed_writer_job_ids == {"backend-job"}
+    assert prepared.writer_results[0].output == "finished"
+    assert [event["type"] for event in emitted] == ["agent_job_completed"]
+    assert checkpoints[-1][0] == "writer_complete:backend-job"
+
+
+def test_unfinished_coding_job_pauses_recoverably_without_false_completion(monkeypatch):
+    writer = SimpleNamespace(
+        id="backend", name="Backend", role="implementer", can_write=True,
+    )
+    job = SimpleNamespace(
+        id="backend-job", agent_id="backend", goal="Build API", kind="writer",
+    )
+    prepared = SimpleNamespace(
+        run_id="run",
+        writer_jobs=(job,),
+        completed_writer_job_ids=set(),
+        writer_results=[],
+        profiles={"backend": writer},
+        plan=SimpleNamespace(jobs=[job]),
+        team=SimpleNamespace(
+            budget=SimpleNamespace(max_rounds=1, max_model_calls=3),
+        ),
+    )
+    core = SimpleNamespace(_interrupt=threading.Event(), last_turn_result={})
+    emitted = []
+    checkpoints = []
+    service = SimpleNamespace(
+        core=core,
+        current_task=None,
+        emit=emitted.append,
+        checkpoint=lambda kind, state: checkpoints.append((kind, state)),
+    )
+
+    class Orchestrator:
+        calls = 0
+
+        def remaining_model_calls(self, budget):
+            return budget.max_model_calls - self.calls
+
+        def usage(self):
+            return {"model_calls": self.calls}
+
+    orchestrator = Orchestrator()
+
+    def run_writer(_svc, _orchestrator, _prepared, _writer, _prompt, **kwargs):
+        orchestrator.calls += 2
+        core.last_turn_result = {
+            "reason": "model_call_budget",
+            "model_calls": 2,
+            "model_call_limit": kwargs["model_call_limit"],
+            "iteration_limit": 100,
+        }
+        return AgentResult(
+            kwargs["job_id"], writer.id, writer.name, writer.role,
+            "unfinished", [], 0, 0, 1,
+        )
+
+    monkeypatch.setattr(server_mod, "writer_prompt_for_job", lambda _value, value: value.goal)
+    monkeypatch.setattr(server_mod, "_install_writer_route", lambda _core, value: value.id)
+    monkeypatch.setattr(server_mod, "_restore_writer_route", lambda _core, _snapshot: None)
+    monkeypatch.setattr(server_mod, "_run_team_writer", run_writer)
+    monkeypatch.setattr(
+        server_mod,
+        "_team_checkpoint_state",
+        lambda value, state, _task, **_kwargs: {
+            "state": state,
+            "completed_writer_job_ids": sorted(value.completed_writer_job_ids),
+        },
+    )
+
+    with pytest.raises(server_mod.TeamWriterBudgetPause) as paused:
+        server_mod._run_prepared_writers(
+            service, orchestrator, prepared, first_persisted_user_text="request",
+        )
+
+    assert paused.value.reason == "model_call_budget"
+    assert prepared.completed_writer_job_ids == set()
+    assert prepared.writer_results == []
+    assert [event["type"] for event in emitted] == ["agent_job_incomplete"]
+    assert emitted[0]["model_calls"] == 2
+    assert emitted[0]["limit"] == 2
+    assert checkpoints[-1][0] == "writer_incomplete:backend-job"
 
 
 def test_cancellation_after_first_coding_job_never_starts_the_next(monkeypatch):

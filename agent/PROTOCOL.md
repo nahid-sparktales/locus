@@ -57,6 +57,9 @@ Every persisted event has immutable `event_id`, per-run monotonic `seq`,
 `occurred_at`, `schema_version`, and optional job/attempt identity. Clients
 deduplicate by `event_id`. The database uses WAL, foreign keys, transactional
 additive migrations, and reopens read-only if a migration cannot complete.
+Persisted user messages may carry an optional bounded `team_run_id`, allowing
+clients to restore the durable run surface beside the request that originated
+it. Older clients ignore the field.
 `dispatcher_plan_rejected` is an additive diagnostic event with `stage`
 (`initial` or `repair`), a bounded validation `reason`, `response_source`, and
 `will_retry`. It never contains the raw model response or provider credentials.
@@ -493,6 +496,11 @@ Endpoint: `/ws/chat`.
 | `terminal_cancel` | `run_id`, optional `force` | Sends a graceful cancel, or a force kill when requested. |
 | `ping` | — | Emits `pong`; used as an ordering sentinel. |
 
+A team budget may include `call_budget_mode: "automatic" | "fixed"`.
+`automatic` resolves to the bounded 100-call adaptive pool; `fixed` preserves
+the supplied `max_model_calls`. Missing mode remains fixed for compatibility
+with older clients.
+
 Any other `type` produces
 `command_error {operation: "<type>", message: "unknown message type: ..."}`.
 
@@ -613,6 +621,11 @@ for the session.
   the agent, exact provider/model, bounded goal, elapsed time, evidence, and
   usage. Only explicitly supplied `reasoning_text` is retained; signatures and
   redacted reasoning are never exposed. Stream chunks are not persisted.
+- Ordered writer attempts add `writer_job_id`, `writer_position`, and
+  `writer_total`. `agent_job_continuing` reports another bounded slice of the
+  same coding job. `agent_job_incomplete` reports a checkpointed, paused job
+  with its bounded reason, calls used, and applicable limit; it never counts as
+  completion.
 - `scheduler_lease_waiting`, `scheduler_lease_acquired`, and
   `scheduler_lease_released` expose the authenticated local model-call lease.
   Leases are shared across worker processes, round-robin by run, heartbeat
@@ -620,7 +633,9 @@ for the session.
 - `task_ready`, `task_changes`, `task_state`, and `task_applied` carry the
   managed checkout record and baseline-relative change state.
 - `orchestration_completed` is terminal for the orchestration but not the chat;
-  exactly one `turn_done` follows it. `interrupt` cancels every job in the run.
+  exactly one `turn_done` follows it. A recoverable budget boundary emits
+  `orchestration_paused` instead, followed by `turn_done` with the exact limit
+  reason. `interrupt` cancels every job in the run.
 
 Persisted variants add `event_id`, `seq`, `occurred_at`, `schema_version`, and
 when applicable `attempt_id`. `orchestration_checkpoint`,
@@ -629,9 +644,11 @@ when applicable `attempt_id`. `orchestration_checkpoint`,
 are additive. Older clients may ignore all unknown events and fields.
 
 Dispatchers and read-only specialists receive no mutation, MCP, extension, or
-computer schemas. Specialists cannot recursively delegate. Only the designated
-writer enters the existing permission-controlled agent loop, and Computer
-Control remains foreground-only and globally exclusive in the native broker.
+computer schemas. Specialists cannot recursively delegate. Only a write-capable
+member assigned to the current ordered coding job enters the existing
+permission-controlled agent loop. Coding jobs share a checkout but never
+overlap. Computer Control remains foreground-only and globally exclusive in the
+native broker.
 
 ### `tool_call_proposed`
 The model asked to run a tool. Always emitted before any `permission_request`
@@ -690,7 +707,10 @@ Clients render notes as inline system lines; they never change turn state.
 
 ### `turn_done`
 Ends a turn started by `user_message` (non-slash input).
-`reason` is `complete` | `interrupted` | `max_iterations` | `error`.
+`reason` is `complete` | `interrupted` | `max_iterations` |
+`model_call_budget` | `error`. Limit outcomes add `iteration_limit` and/or
+`model_call_limit`, plus the model calls used, so clients name the boundary that
+actually ended the turn.
 A `session_info` event follows immediately.
 
 ### `command_error`

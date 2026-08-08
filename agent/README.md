@@ -72,6 +72,14 @@ initial backend or UI assignment. Completed coding-job IDs and bounded results
 are checkpointed so recovery skips finished mutations and continues with the
 next ordered writer.
 
+Native teams use an adaptive model-call pool capped at 100 by default. Each
+writer receives bounded slices while the orchestrator reserves capacity for
+later writers, review, possible Lead Writer revision, and synthesis. Reaching a
+slice limit can continue the same writer automatically. Reaching the available
+allocation or the separate 100-iteration writer guard checkpoints the active
+job as incomplete and pauses the run; it is never reported as a successful
+coding job.
+
 Each running team chat owns a separate local worker process and WebSocket, so
 other chats and workspaces remain usable. Model calls obtain crash-recoverable,
 round-robin leases shared across workers (three by default). Git team chats use

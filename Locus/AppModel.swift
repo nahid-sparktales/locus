@@ -252,6 +252,7 @@ final class AppModel: ObservableObject {
     @Published var transcriptSearchSelection = 0
     @Published var previewReloadID = UUID()
     @Published var streamRevision = 0
+    @Published private(set) var teamBoardFocusRequest = 0
     @Published var toast: AppToast?
     var toastMessage: String? { toast?.message }
     @Published private(set) var lifecycleRecoveryMessage: String?
@@ -337,6 +338,7 @@ final class AppModel: ObservableObject {
     /// so a mid-run mode change cannot relabel the completion marker or alter
     /// plan reconciliation.
     var turnDispatchedMode: WorkMode?
+    private var turnDispatchedTeamRunID: String?
     /// Client-side fallback for agents from before `turn_done.duration_ms`.
     private var turnStartedAt: Date?
     /// Turning Just Chat off returns to the last mode that could act on the
@@ -486,12 +488,13 @@ final class AppModel: ObservableObject {
             let loadedProfiles = AgentTeamStore.loadProfiles(from: defaults)
             let storedTeams = AgentTeamStore.loadTeams(from: defaults)
             let approvalMigration = AgentTeamStore.migrateToOneTimeApproval(storedTeams)
-            let loadedTeams = approvalMigration.teams
+            let budgetMigration = AgentTeamStore.migrateLegacyCallBudgets(approvalMigration.teams)
+            let loadedTeams = budgetMigration.teams
             let loadedSelection = defaults.string(forKey: AgentTeamStore.selectionKey)
                 .flatMap(UUID.init(uuidString:))
             agentProfiles = loadedProfiles
             agentTeams = loadedTeams
-            if approvalMigration.changed {
+            if approvalMigration.changed || budgetMigration.changed {
                 AgentTeamStore.save(profiles: loadedProfiles, teams: loadedTeams, to: defaults)
             }
             teamRoutingConsentAccountIDs = AgentTeamStore.loadConsent(from: defaults)
@@ -1081,12 +1084,15 @@ final class AppModel: ObservableObject {
             }
         }
 
-        inspectorTab = .runs
-        inspectorCollapsed = false
-        settings.inspectorLastTab = InspectorTab.runs.rawValue
         let message = lifecycleRecoveryExplanation(fallback: recovery)
-        lifecycleRecoveryMessage = message
-        showToast(message, duration: 8)
+        if selectedOrchestrationRun?.recoverable == true {
+            lifecycleRecoveryMessage = message
+            showToast("A saved team run can be resumed", duration: 6)
+        } else {
+            // Terminal runs already have durable boards in the conversation.
+            // Restoring one is normal data loading, not a warning condition.
+            lifecycleRecoveryMessage = nil
+        }
     }
 
     private func lifecycleRecoveryExplanation(fallback: AppLifecycleRecovery) -> String {
@@ -2202,6 +2208,7 @@ final class AppModel: ObservableObject {
         // running one is housekeeping, never a plan worth offering to build.
         turnDispatchedInPlanMode = dispatchedMode == .plan && !isSlashPassthrough
         turnDispatchedMode = isSlashPassthrough ? nil : dispatchedMode
+        turnDispatchedTeamRunID = dispatchedTeam?["run_id"] as? String
         Task { [weak self] in
             guard let self else { return }
             var transport = self.conversationBackend
@@ -2210,6 +2217,7 @@ final class AppModel: ObservableObject {
                     self.isBusy = false
                     self.turnStartedAt = nil
                     self.turnDispatchedMode = nil
+                    self.turnDispatchedTeamRunID = nil
                     self.turnDispatchedInPlanMode = false
                     self.stashUnsent(
                         text,
@@ -2256,6 +2264,7 @@ final class AppModel: ObservableObject {
                 isBusy = false
                 turnStartedAt = nil
                 turnDispatchedMode = nil
+                turnDispatchedTeamRunID = nil
                 turnDispatchedInPlanMode = false
                 stashUnsent(text, requeue: requeueingOnFailure, preserveDraft: preservingDraftOnFailure)
                 return
@@ -2271,7 +2280,8 @@ final class AppModel: ObservableObject {
             let visibleText = [text.nilIfEmpty, attachmentLine]
                 .compactMap { $0 }
                 .joined(separator: "\n\n")
-            blocks.append(ChatBlock(kind: .user, text: visibleText))
+            let teamRunID = (dispatchedTeam?["run_id"] as? String)?.nilIfEmpty
+            blocks.append(ChatBlock(kind: .user, text: visibleText, teamRunID: teamRunID))
             if !text.isEmpty { recordPrompt(text) }
             if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
                 draftText = ""
@@ -2324,7 +2334,9 @@ final class AppModel: ObservableObject {
 
     func submitDraft() {
         if isBusy {
-            if steeringState?.hasPrefix("Stopping") == true {
+            if orchestrationState == .waitingDispatchApproval
+                || steeringState?.hasPrefix("Stopping") == true
+            {
                 queueDraft()
             } else {
                 steerDraft()
@@ -3125,6 +3137,7 @@ final class AppModel: ObservableObject {
                 "max_model_calls": team.budget.maxModelCalls,
                 "max_concurrent_calls": team.budget.maxConcurrentCalls,
                 "max_metered_tokens": team.budget.maxMeteredTokens,
+                "call_budget_mode": team.budget.callBudgetMode.rawValue,
             ],
         ]
         if let id = team.dispatcherID { teamPayload["dispatcher_id"] = id.uuidString }
@@ -4420,6 +4433,7 @@ final class AppModel: ObservableObject {
                 appliedWorkspacePath = response.sessionInfo.cwd
                 pendingWorkspacePath = nil
                 blocks = Self.blocks(from: response.messages)
+                refreshAnchoredTeamRunsIfNeeded()
                 sessionInfo = response.sessionInfo
                 currentSessionID = response.sessionInfo.sessionID
                 dispatcherActivity = nil
@@ -4486,6 +4500,7 @@ final class AppModel: ObservableObject {
                     as: SessionDetailResponse.self
                 )
                 blocks = Self.blocks(from: detail.messages)
+                refreshAnchoredTeamRunsIfNeeded()
                 agentActivities = detail.agentActivities ?? []
                 orchestrationState = detail.orchestrationState
                     ?? taskConversationStates[runtime.sessionID]?.state
@@ -5524,6 +5539,30 @@ final class AppModel: ObservableObject {
         settings.inspectorLastTab = tab.rawValue
     }
 
+    func focusActiveTeamBoard() {
+        guard let runID = orchestrationRunID,
+              blocks.contains(where: { $0.teamRunID == runID })
+        else {
+            selectInspectorTab(.runs)
+            return
+        }
+        teamBoardFocusRequest += 1
+    }
+
+    func openTeamRun(_ runID: String) {
+        selectInspectorTab(.runs)
+        Task { @MainActor [weak self] in
+            await self?.loadOrchestrationRun(runID)
+        }
+    }
+
+    private func refreshAnchoredTeamRunsIfNeeded() {
+        guard blocks.contains(where: { $0.teamRunID != nil }) else { return }
+        Task { @MainActor [weak self] in
+            await self?.refreshOrchestrationRuns()
+        }
+    }
+
     func toggleInspector() {
         guard !justChatEnabled else { return }
         inspectorCollapsed.toggle()
@@ -6340,6 +6379,36 @@ final class AppModel: ObservableObject {
                 ))
             }
 
+        case "agent_job_continuing":
+            let jobID = event["job_id"] as? String ?? ""
+            if let index = agentActivities.firstIndex(where: { $0.id == jobID }) {
+                agentActivities[index].state = .running
+                agentActivities[index].output = event["message"] as? String
+                    ?? "Continuing coding job…"
+            }
+            if let usage = event["usage"] as? [String: Any] {
+                teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
+                teamMeteredTokens = usage["metered_tokens"] as? Int ?? teamMeteredTokens
+            }
+
+        case "agent_job_incomplete":
+            let jobID = event["job_id"] as? String ?? ""
+            if let index = agentActivities.firstIndex(where: { $0.id == jobID }) {
+                agentActivities[index].state = .paused
+                agentActivities[index].output = event["message"] as? String
+                    ?? "This coding job stopped before it finished."
+                if let result = event["result"] as? [String: Any] {
+                    agentActivities[index].elapsedMilliseconds = result["elapsed_ms"] as? Int ?? 0
+                    agentActivities[index].promptTokens = result["prompt_tokens"] as? Int ?? 0
+                    agentActivities[index].completionTokens = result["completion_tokens"] as? Int ?? 0
+                }
+            }
+            orchestrationState = .paused
+            if let usage = event["usage"] as? [String: Any] {
+                teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
+                teamMeteredTokens = usage["metered_tokens"] as? Int ?? teamMeteredTokens
+            }
+
         case "agent_job_completed":
             guard let result = event["result"] as? [String: Any] else { return }
             let jobID = result["job_id"] as? String ?? ""
@@ -6511,11 +6580,14 @@ final class AppModel: ObservableObject {
             if reason == "complete", dispatchedMode == .build {
                 reconcileFinishedPlanStep()
             }
-            appendTurnCompletion(
-                reason: reason,
-                mode: dispatchedMode,
-                backendDurationMilliseconds: event["duration_ms"] as? Int
-            )
+            if turnDispatchedTeamRunID == nil {
+                appendTurnCompletion(
+                    reason: reason,
+                    mode: dispatchedMode,
+                    backendDurationMilliseconds: event["duration_ms"] as? Int,
+                    modelCallLimit: event["model_call_limit"] as? Int
+                )
+            }
             isBusy = false
             pendingRetry = false
             steeringState = nil
@@ -6542,6 +6614,7 @@ final class AppModel: ObservableObject {
             planReadyThisTurn = false
             turnDispatchedInPlanMode = false
             turnDispatchedMode = nil
+            turnDispatchedTeamRunID = nil
             turnStartedAt = nil
             notifyTurnCompleteIfInactive()
             if persistenceEnabled {
@@ -6569,6 +6642,7 @@ final class AppModel: ObservableObject {
             planTodosChangedThisTurn = false
             turnDispatchedInPlanMode = false
             turnDispatchedMode = nil
+            turnDispatchedTeamRunID = nil
             pendingSessionReset = false
             pendingCheckpointRestore = nil
             pendingRewindDraft = nil
@@ -6762,7 +6836,8 @@ final class AppModel: ObservableObject {
     private func appendTurnCompletion(
         reason: String,
         mode: WorkMode?,
-        backendDurationMilliseconds: Int?
+        backendDurationMilliseconds: Int?,
+        modelCallLimit: Int? = nil
     ) {
         let measured = turnStartedAt.map {
             max(Int(Date().timeIntervalSince($0) * 1_000), 0)
@@ -6777,7 +6852,9 @@ final class AppModel: ObservableObject {
             durationMilliseconds: duration,
             // Carried only for the outcome it explains, so an ordinary finished
             // turn does not persist a number nothing reads.
-            iterationLimit: outcome == .maxIterations ? sessionInfo?.maxIterations : nil
+            iterationLimit: outcome == .maxIterations
+                ? sessionInfo?.maxIterations
+                : outcome == .modelCallBudget ? modelCallLimit : nil
         )
         blocks.append(ChatBlock(kind: .note, completion: completion))
     }
@@ -6809,6 +6886,7 @@ final class AppModel: ObservableObject {
         planTodosChangedThisTurn = false
         turnDispatchedInPlanMode = false
         turnDispatchedMode = nil
+        turnDispatchedTeamRunID = nil
         pendingSessionReset = false
         pendingCheckpointRestore = nil
         pendingRewindDraft = nil
@@ -7273,8 +7351,16 @@ final class AppModel: ObservableObject {
             recoverable: fixture == "recoverable",
             recoveryReason: fixture == "recoverable" ? "Saved checkpoint available" : nil,
             checkpoint: nil,
-            attempts: nil
+            attempts: nil,
+            plan: nil,
+            usage: ["model_calls": .number(12)],
+            jobCount: 4,
+            completedJobCount: fixture == "completed" ? 4 : 2
         )
+        if let requestIndex = blocks.firstIndex(where: { $0.kind == .user }) {
+            blocks[requestIndex].text = run.request
+            blocks[requestIndex].teamRunID = run.id
+        }
         orchestrationRuns = [run]
         selectedOrchestrationRun = run
         orchestrationRunID = run.id
@@ -7806,7 +7892,11 @@ final class AppModel: ObservableObject {
         messages.compactMap { message in
             switch message.role {
             case "user":
-                ChatBlock(kind: .user, text: displayUserText(message.content))
+                ChatBlock(
+                    kind: .user,
+                    text: displayUserText(message.content),
+                    teamRunID: message.teamRunID
+                )
             case "assistant" where !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || !(message.reasoning?.isEmpty ?? true):
                 ChatBlock(

@@ -167,7 +167,7 @@ struct AgentTeamsSettingsView: View {
                             .frame(width: 18)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(team.name).font(.system(size: 11, weight: .semibold))
-                            Text(errors.first ?? "\(team.memberIDs.count) members · \(team.budget.maxConcurrentCalls) concurrent calls · \(team.budget.maxModelCalls) calls max")
+                            Text(errors.first ?? "\(team.memberIDs.count) members · \(team.budget.maxConcurrentCalls) concurrent calls · \(team.budget.callBudgetMode.title.lowercased())")
                                 .font(.system(size: 8))
                                 .foregroundStyle(errors.isEmpty ? LocusTheme.muted : LocusTheme.coral)
                                 .lineLimit(2)
@@ -451,6 +451,7 @@ private struct AgentProfileEditor: View {
     @State private var mcpTools: String
     @State private var mcpResources: String
     @State private var mcpPrompts: String
+    @State private var advancedSettings = false
     let onSave: (AgentProfile) -> Void
 
     init(profile: AgentProfile, onSave: @escaping (AgentProfile) -> Void) {
@@ -527,43 +528,52 @@ private struct AgentProfileEditor: View {
             Picker("Classification", selection: $draft.metering) {
                 ForEach(AgentMetering.allCases) { Text($0.title).tag($0) }
             }
+            Text("Custom role instructions").font(.caption).foregroundStyle(LocusTheme.muted)
+            TextEditor(text: $draft.instructions)
+                .frame(minHeight: 100)
+                .accessibilityIdentifier("agent.instructions")
+            Button("Use \(draft.role.title) Template") {
+                draft.instructions = draft.role.defaultInstructions
+            }
+            .buttonStyle(.borderless)
             TextField("Capability tags", text: $tags, prompt: Text("code, tests, research"))
-            Stepper("Timeout: \(draft.timeoutSeconds)s", value: $draft.timeoutSeconds, in: 30...3_600, step: 30)
-            Stepper("Token limit: \(draft.tokenLimit.formatted())", value: $draft.tokenLimit, in: 1_024...1_000_000, step: 1_024)
-            if draft.metering == .metered {
-                TextField("Input $ / 1M tokens", value: $draft.inputCostPerMillion, format: .number)
-                TextField("Output $ / 1M tokens", value: $draft.outputCostPerMillion, format: .number)
-            }
-            Section("MCP access · none by default") {
-                ForEach(model.extensions.mcpServers) { server in
-                    Toggle(server.name, isOn: Binding(
-                        get: { draft.mcpPolicy?.serverIDs.contains(server.id) == true },
-                        set: { enabled in
-                            var policy = draft.mcpPolicy ?? MCPAgentPolicy()
-                            if enabled { policy.serverIDs.append(server.id) }
-                            else { policy.serverIDs.removeAll { $0 == server.id } }
-                            draft.mcpPolicy = policy
-                        }
-                    ))
+            Toggle("Advanced Settings", isOn: $advancedSettings)
+                .accessibilityIdentifier("agent.advancedSettings")
+            if advancedSettings {
+                Section("Advanced Settings") {
+                    Stepper("Timeout: \(draft.timeoutSeconds)s", value: $draft.timeoutSeconds, in: 30...3_600, step: 30)
+                    Stepper("Token limit: \(draft.tokenLimit.formatted())", value: $draft.tokenLimit, in: 1_024...1_000_000, step: 1_024)
+                    if draft.metering == .metered {
+                        TextField("Input $ / 1M tokens", value: $draft.inputCostPerMillion, format: .number)
+                        TextField("Output $ / 1M tokens", value: $draft.outputCostPerMillion, format: .number)
+                    }
                 }
-                TextField("Allowed tools", text: $mcpTools, prompt: Text("tool names, comma separated"))
-                TextField("Allowed resources", text: $mcpResources, prompt: Text("resource URIs or names"))
-                TextField("Allowed prompts", text: $mcpPrompts, prompt: Text("prompt names"))
-                Text("Prompts introduce instructions and must be named explicitly. Mutating MCP tools remain writer-only.")
-                    .font(.system(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
+                Section("MCP access · none by default") {
+                    ForEach(model.extensions.mcpServers) { server in
+                        Toggle(server.name, isOn: Binding(
+                            get: { draft.mcpPolicy?.serverIDs.contains(server.id) == true },
+                            set: { enabled in
+                                var policy = draft.mcpPolicy ?? MCPAgentPolicy()
+                                if enabled { policy.serverIDs.append(server.id) }
+                                else { policy.serverIDs.removeAll { $0 == server.id } }
+                                draft.mcpPolicy = policy
+                            }
+                        ))
+                    }
+                    TextField("Allowed tools", text: $mcpTools, prompt: Text("tool names, comma separated"))
+                    TextField("Allowed resources", text: $mcpResources, prompt: Text("resource URIs or names"))
+                    TextField("Allowed prompts", text: $mcpPrompts, prompt: Text("prompt names"))
+                    Text("Prompts introduce instructions and must be named explicitly. Mutating MCP tools remain writer-only.")
+                        .font(.system(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                }
             }
-            Text("Role instructions").font(.caption).foregroundStyle(LocusTheme.muted)
-            TextEditor(text: $draft.instructions).frame(minHeight: 130)
             if let connectionResult {
                 Text(connectionResult)
                     .font(.system(size: 9))
                     .foregroundStyle(LocusTheme.muted)
             }
             HStack {
-                Button("Use \(draft.role.title) Template") {
-                    draft.instructions = draft.role.defaultInstructions
-                }
                 Button(testingConnection ? "Testing…" : "Test Connection") {
                     testingConnection = true
                     Task {
@@ -751,7 +761,26 @@ private struct AgentTeamEditor: View {
                     Section("Hard budgets") {
                         Stepper("Delegated jobs: \(draft.budget.maxJobs)", value: $draft.budget.maxJobs, in: 1...16)
                         Stepper("Orchestration rounds: \(draft.budget.maxRounds)", value: $draft.budget.maxRounds, in: 1...8)
-                        Stepper("Model calls: \(draft.budget.maxModelCalls)", value: $draft.budget.maxModelCalls, in: 1...48)
+                        Picker("Call budget", selection: Binding(
+                            get: { draft.budget.callBudgetMode },
+                            set: { mode in
+                                draft.budget.callBudgetMode = mode
+                                if mode == .automatic {
+                                    draft.budget.maxModelCalls = 100
+                                }
+                            }
+                        )) {
+                            ForEach(OrchestrationBudget.CallBudgetMode.allCases) { mode in
+                                Text(mode.title).tag(mode)
+                            }
+                        }
+                        if draft.budget.callBudgetMode == .fixed {
+                            Stepper("Model calls: \(draft.budget.maxModelCalls)", value: $draft.budget.maxModelCalls, in: 1...100)
+                        } else {
+                            Text("Locus allocates calls in small slices and preserves enough capacity for later coding jobs, review, and the final handoff.")
+                                .font(.system(size: 8))
+                                .foregroundStyle(LocusTheme.muted)
+                        }
                         Stepper("Concurrent calls: \(draft.budget.maxConcurrentCalls)", value: $draft.budget.maxConcurrentCalls, in: 1...8)
                         Stepper("Metered tokens: \(draft.budget.maxMeteredTokens.formatted())", value: $draft.budget.maxMeteredTokens, in: 1_000...2_000_000, step: 10_000)
                     }
@@ -899,7 +928,7 @@ private struct EvaluationSuiteEditor: View {
                                 )
                                 Stepper(
                                     "Model calls · \(caseBudget(index).wrappedValue.maxModelCalls)",
-                                    value: caseBudgetValue(index, \.maxModelCalls), in: 1...48
+                                    value: caseBudgetValue(index, \.maxModelCalls), in: 1...100
                                 )
                                 Stepper(
                                     "Concurrent calls · \(caseBudget(index).wrappedValue.maxConcurrentCalls)",

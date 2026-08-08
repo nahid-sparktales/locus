@@ -5,7 +5,6 @@ import SwiftUI
 struct WorkspaceView: View {
     @EnvironmentObject private var model: AppModel
     @State private var modelPickerPresented = false
-    @State private var teamProgressPresented = false
 
     private var sessionTitle: String {
         model.sessions.first(where: { $0.id == model.currentSessionID })?.displayTitle
@@ -32,11 +31,6 @@ struct WorkspaceView: View {
 
             ConversationView(streamingReply: model.streamingReply)
                 .frame(maxHeight: .infinity)
-
-            if !model.agentActivities.isEmpty || model.activeTaskRecord != nil {
-                TeamRunStatusBar()
-                    .environmentObject(model)
-            }
 
             WorkStatusStrip(streamingReply: model.streamingReply)
                 .environmentObject(model)
@@ -88,7 +82,7 @@ struct WorkspaceView: View {
 
             if model.selectedAgentTeam != nil {
                 Button {
-                    teamProgressPresented.toggle()
+                    model.focusActiveTeamBoard()
                 } label: {
                     ZStack(alignment: .topTrailing) {
                         Image(systemName: "waveform.path.ecg")
@@ -115,12 +109,6 @@ struct WorkspaceView: View {
                 .help("Team progress · \(teamProgressTitle)")
                 .accessibilityLabel("Team progress, \(teamProgressTitle)")
                 .accessibilityIdentifier("workspace.teamProgress")
-                .popover(isPresented: $teamProgressPresented, arrowEdge: .top) {
-                    TeamProgressPopover {
-                        teamProgressPresented = false
-                    }
-                    .environmentObject(model)
-                }
             }
 
             ContextUsageChip()
@@ -470,46 +458,6 @@ private struct ModelPickerPopover: View {
             .font(.system(size: 8, weight: .bold))
             .tracking(0.7)
             .foregroundStyle(LocusTheme.muted)
-    }
-}
-
-private struct TeamRunStatusBar: View {
-    @EnvironmentObject private var model: AppModel
-
-    var body: some View {
-        Button {
-            model.selectInspectorTab(.runs)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "person.3.sequence.fill")
-                    .foregroundStyle(LocusTheme.signalDeep)
-                Text(model.orchestrationState?.title ?? "Team run")
-                    .font(.system(size: 9, weight: .semibold))
-                if !model.agentActivities.isEmpty {
-                    Text("\(model.agentActivities.filter { $0.state == .completed }.count)/\(model.agentActivities.count) jobs")
-                        .font(.system(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
-                }
-                Spacer()
-                if let task = model.activeTaskRecord {
-                    Text(URL(fileURLWithPath: task.executionPath).lastPathComponent)
-                        .font(.system(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
-                }
-                Text("Inspect Run")
-                    .font(.system(size: 8, weight: .bold))
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .bold))
-            }
-            .foregroundStyle(LocusTheme.ink)
-            .padding(.horizontal, 24)
-            .frame(height: 32)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .background(LocusTheme.paperDeep.opacity(0.75))
-        .overlay(alignment: .top) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
-        .accessibilityIdentifier("teamRun.openInspector")
     }
 }
 
@@ -872,7 +820,7 @@ private struct ConversationView: View {
                             .environmentObject(model)
                     } else {
                         ForEach(model.blocks) { block in
-                            Group {
+                            VStack(alignment: .leading, spacing: 12) {
                                 if block.kind == .assistant,
                                    block.id == model.activeStreamingAssistantID
                                 {
@@ -894,6 +842,11 @@ private struct ConversationView: View {
                                         onRegenerate: { model.retryLastResponse() }
                                     )
                                     .equatable()
+                                }
+                                if block.kind == .user, let runID = block.teamRunID {
+                                    TeamRunBoardView(runID: runID, request: block.text)
+                                        .environmentObject(model)
+                                        .id("team-board-\(runID)")
                                 }
                             }
                             .overlay {
@@ -943,6 +896,15 @@ private struct ConversationView: View {
                     .buttonStyle(.plain)
                     .padding(.bottom, 12)
                     .accessibilityIdentifier("conversation.jumpToLatest")
+                }
+            }
+            .onChange(of: model.teamBoardFocusRequest) {
+                guard let runID = model.orchestrationRunID else {
+                    model.selectInspectorTab(.runs)
+                    return
+                }
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo("team-board-\(runID)", anchor: .center)
                 }
             }
             .onChange(of: model.blocks.count) {
@@ -1684,7 +1646,7 @@ private struct TurnCompletionMarker: View {
     private var color: Color {
         switch completion.outcome {
         case .complete: LocusTheme.success
-        case .interrupted, .maxIterations: LocusTheme.warning
+        case .interrupted, .maxIterations, .modelCallBudget: LocusTheme.warning
         case .error: LocusTheme.coral
         }
     }
@@ -1693,7 +1655,7 @@ private struct TurnCompletionMarker: View {
         switch completion.outcome {
         case .complete: "checkmark.circle.fill"
         case .interrupted: "stop.circle.fill"
-        case .maxIterations: "exclamationmark.circle.fill"
+        case .maxIterations, .modelCallBudget: "exclamationmark.circle.fill"
         case .error: "xmark.circle.fill"
         }
     }

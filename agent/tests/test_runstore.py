@@ -50,6 +50,31 @@ def test_run_store_attempt_ids_are_scoped_to_each_run(tmp_path) -> None:
     assert attempt_ids == ["first-run:writer:1", "second-run:writer:1"]
 
 
+def test_incomplete_writer_attempt_is_paused_and_not_counted_as_completed(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    store.start_run("run", state="running")
+    store.append_event("run", {
+        "type": "agent_job_started", "job_id": "writer",
+        "agent_id": "writer-agent", "agent_name": "Writer",
+        "role": "implementer", "goal": "implement",
+    })
+    store.append_event("run", {
+        "type": "agent_job_incomplete", "job_id": "writer",
+        "agent_id": "writer-agent", "state": "paused",
+        "reason": "model_call_budget", "message": "Saved for resume",
+    })
+
+    detail = store.run("run", include_events=True)
+
+    assert detail["attempts"][0]["state"] == "paused"
+    assert detail["attempts"][0]["completed_at"] is None
+    assert detail["job_count"] == 1
+    assert detail["completed_job_count"] == 0
+    summary = store.list_runs()[0]
+    assert summary["job_count"] == 1
+    assert summary["completed_job_count"] == 0
+
+
 def test_run_store_checkpoint_and_redacted_export(tmp_path) -> None:
     store = RunStore(tmp_path / "runs.sqlite3")
     store.start_run("run-1", request="secret request")

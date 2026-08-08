@@ -13,7 +13,7 @@ The main areas are:
 3. Smooth streaming and transcript navigation
 4. Workspace-organized chats and recoverable deletion
 5. Multi-agent teams and isolated worktrees
-6. Durable team runs and the Run Inspector
+6. Durable team runs, live boards, and Team Runs
 7. Recovery and job-level controls
 8. Evaluation Lab
 9. Editable dispatch plans
@@ -195,11 +195,11 @@ An agent profile describes one model and the job it is allowed to perform. A pro
 - A name, such as `Local Planner` or `Claude Reviewer`
 - A role: Dispatcher, Planner, Researcher, Implementer, Tester, Reviewer, or Generalist
 - A provider route and exact model
+- Custom role instructions, with a role template as a starting point
 - Capability tags, such as `swift`, `research`, or `tests`
 - An access ceiling: read-only, workspace write, or computer control
-- Timeout and token limits
-- Metered or self-hosted classification and optional user-entered cost rates
-- Explicit MCP allowlists
+- An **Advanced Settings** checkbox containing timeout, token limits, optional
+  metered cost rates, and explicit MCP allowlists
 
 Use **Test Connection** before adding a profile to a team.
 
@@ -247,36 +247,42 @@ It never records API keys, authorization headers, secure-field values, provider 
 
 Example: if Wi-Fi drops during a reviewer job, reopen the same chat. Locus asks for all events after the last sequence it saw and deduplicates them, so the Inspector fills in the missing activity without duplicating earlier events.
 
-### Compact run status
+### Live team run board
 
-While a team works, a compact status bar appears below the transcript. It shows the current phase and completed job count without expanding a large activity panel into the conversation.
+Each team request owns one durable board directly below its user message. The
+same board progresses through Planning → Approval → Specialists → ordered
+Coding Jobs → Review → Complete, and returns to the same message after a
+relaunch. Multiple team requests in one chat keep separate boards.
 
-The Team Progress button immediately left of the header's context meter opens
-the dispatcher, delegated-job, model, and usage summary. Click **Inspect Run**
-or **Open Runs** to open the full Run Inspector.
+During dispatch the board names the dispatcher route, elapsed time, request,
+observable stage, and any bounded validation correction. At approval it shows
+the complete ordered plan and its budget. While running it shows the active
+agent/model, job position, waits, duration, calls, tokens, Pause, and Stop.
+Terminal boards collapse automatically to a result summary with Expand and
+**Open Team Runs**. Raw model output and hidden reasoning are not shown.
 
-While the dispatcher creates the plan, the composer becomes a progress card.
-It names the dispatcher route, elapsed time, request, observable stage, and any
-bounded validation correction. Raw model output and hidden reasoning are not
-shown.
+The ordinary composer remains usable throughout. A message sent while a plan
+awaits approval is queued for the next turn and cannot modify the pending plan.
+The Team Progress button immediately left of the header's context meter scrolls
+to the active board or opens Team Runs when the board is not in view.
 
-### Run Inspector: Timeline view
+### Team Runs: Overview and Activity
 
-The Timeline view shows the run in exact event order. It includes dispatching, agent attempts, scheduler leases, permission waits, steering, tool activity, routing decisions, checkpoints, and terminal results.
-
-Use the filter box to search by agent, event type, job state, or attempt.
+**Overview** explains the request, state, phase, assignments and exact models,
+results, changed files, duration, usage, and recovery actions. **Activity**
+groups human-readable events by phase. Its filter searches agents, event types,
+job state, and attempts. Raw events and dependency details are available only
+under the optional **Technical Log** disclosure.
 
 Example: search for `fallback` to see whether the primary dispatcher failed and which fallback route Locus used.
 
-If a dispatcher returns a plan that Locus cannot validate, Team Progress first
-shows **Correcting dispatcher plan…**. The Timeline records the bounded reason.
+If a dispatcher returns a plan that Locus cannot validate, the live board first
+shows **Correcting dispatcher plan…**. Activity records the bounded reason.
 If the corrected plan is still invalid, Locus continues safely with the team's
 Lead Writer and states why specialists were skipped; raw provider output
 and credentials are not written to run history.
 
-### Run Inspector: Dependencies view
-
-The Dependencies view groups work by job and attempt. Each row can show:
+The Team Runs assignment cards group work by job and attempt. Each row can show:
 
 - Agent, provider, and exact model
 - Assigned goal and role
@@ -308,7 +314,7 @@ Example: pin a release investigation so its agent trace and evidence remain avai
 
 ### Redacted `.locusrun` export
 
-Use the Run Inspector's **Export** menu to create a portable `.locusrun` file.
+Use Team Runs' **Export** menu to create a portable `.locusrun` file.
 
 - **Redacted .locusrun** excludes conversation, goals, output, reasoning, tool arguments, and tool results.
 - **Include Visible Content…** includes content the user could already see.
@@ -473,8 +479,8 @@ Successful, unpinned evaluation checkouts are eligible for automatic cleanup aft
 ### One approval for the complete plan
 
 Every native Locus team pauses once after the dispatcher returns a validated
-plan and before any jobs begin. The plan appears in the composer with its jobs,
-assignments, dependencies, and budget.
+plan and before any jobs begin. The plan appears in the request's live board
+with its jobs, assignments, dependencies, and budget.
 
 - **Run Plan** approves the entire dependency graph. Locus does not ask again
   for each model, agent, job, or step.
@@ -507,6 +513,21 @@ Example: the dispatcher proposes Research → Writer → Review. Add a parallel 
 - **Cancel** returns without starting the plan.
 
 The pending one-time approval survives reconnects.
+
+### Automatic and fixed call budgets
+
+New teams use **Automatic** call budgeting: an adaptive pool capped at 100 model
+calls. Coding models work in bounded slices. After each slice Locus either
+continues the same coding job, or preserves enough calls for later ordered
+writers, review, possible Lead Writer revision, and synthesis. Older teams that
+still have the former untouched 12-call default migrate to Automatic; explicitly
+customized limits remain Fixed.
+
+A coding job reaching its model-call allocation or the separate 100-step team
+writer guard is incomplete, never successful. Locus checkpoints and pauses the
+run with an accurate reason and Resume/Discard actions. Later writers, review,
+and synthesis do not begin until the coding job genuinely completes. Solo turns
+retain their independent 40-step safety ceiling.
 
 Example: select Re-dispatch when the proposed plan spends three specialist jobs on documentation but the task is primarily a test failure.
 
@@ -753,7 +774,7 @@ Suppose you want a team to fix a Swift concurrency bug safely:
 2. Create `Swift Team`, choose scorecard routing, and set a `$3` estimated-cost ceiling.
 3. In the composer, select Team and `Swift Team`, then send: `Investigate and fix the actor-isolation warnings. Add regression tests.`
 4. Review the proposed dependency graph. Add a parallel test-design job if needed, then choose **Run Plan**.
-5. Click **Inspect Run** to watch routing explanations, evidence, tokens, and checkpoints.
+5. Use the live board while the team works, then click **Open Team Runs** for routing explanations, evidence, tokens, and checkpoints.
 6. If the reviewer fails, retry or reassign only that job.
 7. Review the baseline-relative diff and choose **Apply to Workspace**. Locus leaves the changes unstaged and uncommitted.
 8. Save the task as an Evaluation case with required test and changed-path assertions.

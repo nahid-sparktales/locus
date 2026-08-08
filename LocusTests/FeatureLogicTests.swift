@@ -1583,6 +1583,12 @@ final class FeatureLogicTests: XCTestCase {
             outcome: .complete, mode: .build, durationMilliseconds: 1_000
         )
         XCTAssertEqual(finished.title, "Task finished")
+
+        let teamBudget = TurnCompletion(
+            outcome: .modelCallBudget, mode: .build, durationMilliseconds: 1_000,
+            iterationLimit: 24
+        )
+        XCTAssertEqual(teamBudget.title, "Team call budget reached (24 calls)")
     }
 
     func testLocusIdentifiesItselfHonestlyToProviders() {
@@ -1733,6 +1739,41 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertFalse(alreadyPreview.changed)
     }
 
+    func testFormerDefaultTeamBudgetMigratesToAutomaticButCustomBudgetStaysFixed() {
+        let legacyDefault = AgentTeam(
+            name: "Former default",
+            dispatcherID: nil,
+            fallbackDispatcherID: nil,
+            memberIDs: [],
+            defaultWriterID: nil,
+            budget: OrchestrationBudget(
+                maxJobs: 4, maxRounds: 3, maxModelCalls: 12,
+                maxConcurrentCalls: 3, maxMeteredTokens: 500_000,
+                callBudgetMode: .fixed
+            )
+        )
+        let custom = AgentTeam(
+            name: "Custom",
+            dispatcherID: nil,
+            fallbackDispatcherID: nil,
+            memberIDs: [],
+            defaultWriterID: nil,
+            budget: OrchestrationBudget(
+                maxJobs: 4, maxRounds: 3, maxModelCalls: 24,
+                maxConcurrentCalls: 3, maxMeteredTokens: 500_000,
+                callBudgetMode: .fixed
+            )
+        )
+
+        let migration = AgentTeamStore.migrateLegacyCallBudgets([legacyDefault, custom])
+
+        XCTAssertTrue(migration.changed)
+        XCTAssertEqual(migration.teams[0].budget.callBudgetMode, .automatic)
+        XCTAssertEqual(migration.teams[0].budget.maxModelCalls, 100)
+        XCTAssertEqual(migration.teams[1].budget.callBudgetMode, .fixed)
+        XCTAssertEqual(migration.teams[1].budget.maxModelCalls, 24)
+    }
+
     func testAgentTeamRejectsAModelTheSelectedProviderDoesNotReport() {
         let account = ProviderAccount(
             kind: .custom,
@@ -1828,15 +1869,34 @@ final class FeatureLogicTests: XCTestCase {
     func testOrchestrationBudgetDecodesLegacyAndProtocolKeys() throws {
         let legacy = Data(#"{"maxJobs":2,"maxRounds":1,"maxModelCalls":5,"maxConcurrentCalls":2,"maxMeteredTokens":9000}"#.utf8)
         let protocolValue = Data(#"{"max_jobs":3,"max_rounds":2,"max_model_calls":6,"max_concurrent_calls":3,"max_metered_tokens":12000}"#.utf8)
+        let automatic = Data(#"{"max_jobs":4,"max_rounds":3,"max_model_calls":12,"max_concurrent_calls":3,"max_metered_tokens":500000,"call_budget_mode":"automatic"}"#.utf8)
 
-        XCTAssertEqual(try JSONDecoder().decode(OrchestrationBudget.self, from: legacy).maxJobs, 2)
+        let legacyDecoded = try JSONDecoder().decode(OrchestrationBudget.self, from: legacy)
+        XCTAssertEqual(legacyDecoded.maxJobs, 2)
+        XCTAssertEqual(legacyDecoded.callBudgetMode, .fixed)
         let decoded = try JSONDecoder().decode(OrchestrationBudget.self, from: protocolValue)
         XCTAssertEqual(decoded.maxJobs, 3)
         XCTAssertEqual(decoded.maxMeteredTokens, 12_000)
+        let automaticDecoded = try JSONDecoder().decode(OrchestrationBudget.self, from: automatic)
+        XCTAssertEqual(automaticDecoded.callBudgetMode, .automatic)
+        XCTAssertEqual(automaticDecoded.maxModelCalls, 100)
 
         let encoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
         XCTAssertTrue(encoded.contains("max_model_calls"))
         XCTAssertFalse(encoded.contains("maxModelCalls"))
+    }
+
+    func testTeamRunIDSurvivesHistoryAndTranscriptSerialization() throws {
+        let historyData = Data(#"{"role":"user","content":"Build it","team_run_id":"run-42"}"#.utf8)
+        let history = try JSONDecoder().decode(HistoryMessage.self, from: historyData)
+        XCTAssertEqual(history.teamRunID, "run-42")
+
+        let block = ChatBlock(kind: .user, text: "Build it", teamRunID: "run-42")
+        let restored = try JSONDecoder().decode(
+            ChatBlock.self,
+            from: JSONEncoder().encode(block)
+        )
+        XCTAssertEqual(restored.teamRunID, "run-42")
     }
 
     func testSessionInfoDecodesManagedTaskMetadataTolerantly() throws {
