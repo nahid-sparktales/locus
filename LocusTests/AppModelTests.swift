@@ -2425,6 +2425,56 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(response.capabilities.stdio)
     }
 
+    @MainActor
+    func testDispatchPlanAllowsOrderedCodingJobsAndRejectsUnorderedWriters() {
+        let model = AppModel(startImmediately: false)
+        let dispatcher = AgentProfile(
+            name: "Dispatcher", model: "qwen", role: .dispatcher
+        )
+        let backend = AgentProfile(
+            name: "Backend", model: "kimi", role: .implementer,
+            accessCeiling: .workspaceWrite
+        )
+        let ui = AgentProfile(
+            name: "UI", model: "claude", role: .implementer,
+            accessCeiling: .computerControl
+        )
+        [dispatcher, backend, ui].forEach(model.saveAgentProfile)
+        let team = AgentTeam(
+            name: "Two Writers",
+            dispatcherID: dispatcher.id,
+            fallbackDispatcherID: nil,
+            memberIDs: [dispatcher.id, backend.id, ui.id],
+            defaultWriterID: backend.id
+        )
+        model.saveAgentTeam(team)
+        model.selectAgentTeam(team.id)
+        let ordered = DispatchPlan(
+            summary: "Backend then UI",
+            jobs: [
+                DispatchJob(
+                    id: "backend", agentID: backend.id.uuidString,
+                    goal: "Build API", dependencies: [], kind: "writer",
+                    requiredRole: nil, capabilityTags: nil, preferredAgentID: nil
+                ),
+                DispatchJob(
+                    id: "ui", agentID: ui.id.uuidString,
+                    goal: "Build UI", dependencies: ["backend"], kind: "writer",
+                    requiredRole: nil, capabilityTags: nil, preferredAgentID: nil
+                ),
+            ]
+        )
+        XCTAssertTrue(model.dispatchPlanErrors(ordered).isEmpty)
+
+        var unordered = ordered
+        unordered.jobs[1].dependencies = []
+        XCTAssertTrue(
+            model.dispatchPlanErrors(unordered).contains(where: {
+                $0.contains("Every pair of coding jobs")
+            })
+        )
+    }
+
     private func sessionInfo(id: String) -> [String: Any] {
         [
             "model": "qwen3:8b",

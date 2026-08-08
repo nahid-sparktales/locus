@@ -622,6 +622,11 @@ private struct AgentActivityRow: View {
                         .frame(width: 13)
                     Text(activity.agentName)
                         .font(.system(size: 9, weight: .semibold))
+                    if let position = activity.writerPosition, let total = activity.writerTotal {
+                        Text("Coding \(position)/\(total)")
+                            .font(.system(size: 7, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(LocusTheme.signalDeep)
+                    }
                     Text("\(activity.provider) · \(activity.model)")
                         .font(.system(size: 8, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)

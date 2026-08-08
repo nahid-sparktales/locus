@@ -92,7 +92,7 @@ struct AgentTeamsSettingsView: View {
         VStack(alignment: .leading, spacing: 5) {
             Text("Agents & Teams")
                 .font(.system(size: 16, weight: .bold))
-            Text("Create explicit model roles, then combine them into a dispatcher-led team with one writer.")
+            Text("Create explicit model roles, then combine them into a dispatcher-led team with safely ordered coding agents.")
                 .font(.system(size: 10))
                 .foregroundStyle(LocusTheme.muted)
         }
@@ -157,7 +157,7 @@ struct AgentTeamsSettingsView: View {
             )
         } content: {
             if model.agentTeams.isEmpty {
-                emptyRow("Teams are explicit: add a dispatcher, one writer, and any read-only specialists.")
+                emptyRow("Teams are explicit: add a dispatcher, a lead writer, other coding agents, and any read-only specialists.")
             } else {
                 ForEach(model.agentTeams) { team in
                     let errors = AgentTeamValidation.errors(team: team, profiles: model.agentProfiles)
@@ -615,9 +615,14 @@ private struct AgentProfileEditor: View {
                let reported = model.accountModels[id],
                !reported.isEmpty
             {
-                values = reported
+                values = account.kind == .custom ? reported : reported.filter {
+                    ProviderModelFilter.matches(kind: account.kind, name: $0)
+                }
             } else {
-                values = [account.preferredModel] + account.kind.curatedModels
+                values = ([account.preferredModel] + account.kind.curatedModels).filter {
+                    account.kind == .custom
+                        || ProviderModelFilter.matches(kind: account.kind, name: $0)
+                }
             }
         }
         var seen: Set<String> = []
@@ -697,12 +702,17 @@ private struct AgentTeamEditor: View {
                             Text($0.name).tag($0.id as UUID?)
                         }
                     }
-                    Picker("Default writer", selection: $draft.defaultWriterID) {
+                    Picker("Lead writer", selection: $draft.defaultWriterID) {
                         Text("Choose…").tag(nil as UUID?)
                         ForEach(memberProfiles.filter { $0.accessCeiling.canWrite }) {
                             Text($0.name).tag($0.id as UUID?)
                         }
                     }
+                    Text("The lead handles safe fallback and combined review fixes. Other write-capable members can own ordered coding jobs in the approved plan.")
+                        .font(.system(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("teamEditor.multiWriterExplanation")
                     Toggle("Use isolated managed worktree for new Git tasks", isOn: $draft.useManagedWorktree)
                     Section("Dispatch and routing") {
                         Label(

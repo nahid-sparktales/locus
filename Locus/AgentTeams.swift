@@ -21,7 +21,7 @@ enum AgentRole: String, Codable, CaseIterable, Identifiable {
         case .researcher:
             "Investigate the question from the supplied workspace evidence. Separate facts from inferences and cite exact paths or outputs. Do not edit files."
         case .implementer:
-            "Own all workspace mutations for the run. Use specialist evidence critically, make focused changes, and verify them under the active permission mode."
+            "Own the assigned coding scope. Preserve earlier team changes, use specialist evidence critically, make focused edits, and verify them under the active permission mode."
         case .tester:
             "Design and run the most relevant verification available to the writer. Report failures precisely and do not edit product files."
         case .reviewer:
@@ -356,19 +356,17 @@ enum AgentTeamValidation {
               let writer = byID[writerID],
               team.memberIDs.contains(writerID)
         else {
-            errors.append("Choose one default writer who belongs to the team.")
+            errors.append("Choose one lead writer who belongs to the team.")
             return errors
         }
         if !writer.accessCeiling.canWrite {
-            errors.append("The default writer needs workspace-write access.")
-        }
-        let writers = team.memberIDs.compactMap { byID[$0] }.filter { $0.accessCeiling.canWrite }
-        if writers.count != 1 {
-            errors.append("A team must contain exactly one mutation-capable agent.")
+            errors.append("The lead writer needs workspace-write access.")
         }
         if let fallback = team.fallbackDispatcherID,
-           (!team.memberIDs.contains(fallback) || byID[fallback]?.role != .dispatcher) {
-            errors.append("The fallback dispatcher must be a Dispatcher team member.")
+           (!team.memberIDs.contains(fallback)
+               || byID[fallback]?.role != .dispatcher
+               || byID[fallback]?.accessCeiling != .readOnly) {
+            errors.append("The fallback dispatcher must be a read-only Dispatcher team member.")
         }
         for id in team.memberIDs where byID[id] == nil {
             errors.append("The team contains an unavailable agent.")
@@ -519,6 +517,9 @@ struct AgentActivity: Identifiable, Codable, Hashable {
     var elapsedMilliseconds: Int
     var promptTokens: Int
     var completionTokens: Int
+    var writerJobID: String? = nil
+    var writerPosition: Int? = nil
+    var writerTotal: Int? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, role, provider, model, goal, state, output, tool, evidence
@@ -528,6 +529,9 @@ struct AgentActivity: Identifiable, Codable, Hashable {
         case elapsedMilliseconds = "elapsed_milliseconds"
         case promptTokens = "prompt_tokens"
         case completionTokens = "completion_tokens"
+        case writerJobID = "writer_job_id"
+        case writerPosition = "writer_position"
+        case writerTotal = "writer_total"
     }
 }
 

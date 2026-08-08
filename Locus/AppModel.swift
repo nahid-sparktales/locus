@@ -2089,8 +2089,29 @@ final class AppModel: ObservableObject {
                 group.addTask { (account.id, await ProviderModelCatalog.fetch(for: account)) }
             }
             for await (id, result) in group {
-                accountModels[id] = result.models
+                guard let account = providerAccounts.first(where: { $0.id == id }) else {
+                    continue
+                }
+                let routedModels = agentProfiles.compactMap { profile -> String? in
+                    guard profile.route.accountID == id else { return nil }
+                    return profile.model
+                }
+                let scoped = ProviderModelCatalog.scopedModels(
+                    for: account,
+                    result: result,
+                    routedModels: routedModels
+                )
+                accountModels[id] = scoped
                 accountStatus[id] = result.status
+                if let replacement = scoped.first,
+                   !scoped.contains(where: {
+                       $0.caseInsensitiveCompare(account.preferredModel) == .orderedSame
+                   }),
+                   let index = providerAccounts.firstIndex(where: { $0.id == id })
+                {
+                    providerAccounts[index].preferredModel = replacement
+                    persistProviderAccounts()
+                }
             }
         }
     }
@@ -2789,6 +2810,7 @@ final class AppModel: ObservableObject {
     }
 
     private func rememberPreferredModel(_ model: String, for account: ProviderAccount) {
+        guard modelBelongsToAccount(model, account: account) else { return }
         guard let index = providerAccounts.firstIndex(where: { $0.id == account.id }),
               providerAccounts[index].preferredModel != model
         else { return }
@@ -2799,6 +2821,23 @@ final class AppModel: ObservableObject {
     func persistProviderAccounts() {
         guard persistenceEnabled else { return }
         ProviderAccountStore.save(providerAccounts)
+    }
+
+    private func modelBelongsToAccount(_ model: String, account: ProviderAccount) -> Bool {
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if account.kind != .custom {
+            return ProviderModelFilter.matches(kind: account.kind, name: trimmed)
+        }
+        if case .connected = accountStatus[account.id],
+           let reported = accountModels[account.id], !reported.isEmpty
+        {
+            return reported.contains { $0.caseInsensitiveCompare(trimmed) == .orderedSame }
+        }
+        let routed = agentProfiles.filter { $0.route.accountID == account.id }.map(\.model)
+        return routed.isEmpty || routed.contains {
+            $0.caseInsensitiveCompare(trimmed) == .orderedSame
+        }
     }
 
     // MARK: - Agents and teams
@@ -3475,6 +3514,16 @@ final class AppModel: ObservableObject {
         }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
+    func isCodingAttempt(_ attempt: AgentJobAttempt, in run: OrchestrationRun) -> Bool {
+        guard case .object(let plan) = run.checkpoint?.state["plan"],
+              case .array(let jobs) = plan["jobs"]
+        else { return false }
+        return jobs.contains { value in
+            guard case .object(let job) = value else { return false }
+            return job["id"]?.string == attempt.jobID && job["kind"]?.string == "writer"
+        }
+    }
+
     func replayOrchestration(_ run: OrchestrationRun) {
         startOrchestrationCopy(run, action: "replay")
     }
@@ -3558,11 +3607,11 @@ final class AppModel: ObservableObject {
                 errors.append("Job \(job.id) uses an unavailable team member.")
                 continue
             }
-            if job.kind == "writer" && agentID != team.defaultWriterID {
-                errors.append("The writer must remain the team’s fixed writer.")
+            if job.kind == "writer" && !profile.accessCeiling.canWrite {
+                errors.append("Coding job \(job.id) requires a write-capable team member.")
             }
             if job.kind != "writer" && profile.accessCeiling.canWrite {
-                errors.append("Only the writer may receive mutation access.")
+                errors.append("Write-capable team members may only own coding jobs.")
             }
             if job.kind == "reviewer" && profile.role != .reviewer {
                 errors.append("Reviewer jobs require a Reviewer profile.")
@@ -3579,8 +3628,9 @@ final class AppModel: ObservableObject {
                 errors.append("Job \(job.id) has an invalid dependency.")
             }
         }
-        if plan.jobs.filter({ $0.kind == "writer" }).count != 1 {
-            errors.append("The plan must contain exactly one writer job.")
+        let writerJobs = plan.jobs.filter { $0.kind == "writer" }
+        if writerJobs.isEmpty {
+            errors.append("The plan must contain at least one coding job.")
         }
         var visiting: Set<String> = []
         var visited: Set<String> = []
@@ -3595,6 +3645,54 @@ final class AppModel: ObservableObject {
             return false
         }
         if ids.contains(where: visit) { errors.append("The job graph contains a dependency cycle.") }
+        let kindByID = Dictionary(uniqueKeysWithValues: plan.jobs.map { ($0.id, $0.kind) })
+        for job in plan.jobs {
+            if job.kind == "specialist",
+               job.dependencies.contains(where: { kindByID[$0] != "specialist" })
+            {
+                errors.append("Specialists may depend only on specialist jobs.")
+            }
+            if job.kind == "writer",
+               job.dependencies.contains(where: {
+                   guard let kind = kindByID[$0] else { return false }
+                   return kind != "specialist" && kind != "writer"
+               })
+            {
+                errors.append("Coding jobs may depend only on specialists or earlier coding jobs.")
+            }
+        }
+        func transitivelyDepends(_ jobID: String, on targetID: String, seen: inout Set<String>) -> Bool {
+            guard seen.insert(jobID).inserted else { return false }
+            for dependency in dependencies[jobID] ?? [] {
+                if dependency == targetID { return true }
+                if transitivelyDepends(dependency, on: targetID, seen: &seen) { return true }
+            }
+            return false
+        }
+        if writerJobs.count > 1 {
+            for leftIndex in 0..<(writerJobs.count - 1) {
+                for rightIndex in (leftIndex + 1)..<writerJobs.count {
+                    var leftSeen: Set<String> = []
+                    var rightSeen: Set<String> = []
+                    let ordered = transitivelyDepends(
+                        writerJobs[leftIndex].id,
+                        on: writerJobs[rightIndex].id,
+                        seen: &leftSeen
+                    ) || transitivelyDepends(
+                        writerJobs[rightIndex].id,
+                        on: writerJobs[leftIndex].id,
+                        seen: &rightSeen
+                    )
+                    if !ordered {
+                        errors.append("Every pair of coding jobs must be ordered by a dependency.")
+                    }
+                }
+            }
+        }
+        let minimumModelCalls = plan.jobs.count + 2 + (budget.maxRounds > 1 ? 1 : 0)
+        if budget.maxModelCalls < minimumModelCalls {
+            errors.append("This plan needs at least \(minimumModelCalls) model calls for its jobs, synthesis, and possible lead revision.")
+        }
         if budget.maxConcurrentCalls > budget.maxModelCalls {
             errors.append("Concurrent calls cannot exceed the model-call budget.")
         }
@@ -6216,6 +6314,9 @@ final class AppModel: ObservableObject {
             if let index = agentActivities.firstIndex(where: { $0.id == jobID }) {
                 agentActivities[index].state = .running
                 agentActivities[index].startedAt = Date()
+                agentActivities[index].writerJobID = event["writer_job_id"] as? String
+                agentActivities[index].writerPosition = event["writer_position"] as? Int
+                agentActivities[index].writerTotal = event["writer_total"] as? Int
             } else {
                 agentActivities.append(AgentActivity(
                     id: jobID,
@@ -6232,7 +6333,10 @@ final class AppModel: ObservableObject {
                     startedAt: Date(),
                     elapsedMilliseconds: 0,
                     promptTokens: 0,
-                    completionTokens: 0
+                    completionTokens: 0,
+                    writerJobID: event["writer_job_id"] as? String,
+                    writerPosition: event["writer_position"] as? Int,
+                    writerTotal: event["writer_total"] as? Int
                 ))
             }
 
@@ -6257,7 +6361,13 @@ final class AppModel: ObservableObject {
                 startedAt: index.flatMap { agentActivities[$0].startedAt },
                 elapsedMilliseconds: result["elapsed_ms"] as? Int ?? 0,
                 promptTokens: result["prompt_tokens"] as? Int ?? 0,
-                completionTokens: result["completion_tokens"] as? Int ?? 0
+                completionTokens: result["completion_tokens"] as? Int ?? 0,
+                writerJobID: event["writer_job_id"] as? String
+                    ?? index.flatMap { agentActivities[$0].writerJobID },
+                writerPosition: event["writer_position"] as? Int
+                    ?? index.flatMap { agentActivities[$0].writerPosition },
+                writerTotal: event["writer_total"] as? Int
+                    ?? index.flatMap { agentActivities[$0].writerTotal }
             )
             if let index { agentActivities[index] = activity } else { agentActivities.append(activity) }
             if let usage = event["usage"] as? [String: Any] {
@@ -6822,12 +6932,13 @@ final class AppModel: ObservableObject {
         }) {
             workspaceProfiles[index].lastOpened = Date()
         } else {
+            let route = stableWorkspaceRoute(for: path)
             workspaceProfiles.append(
                 WorkspaceProfile(
                     path: path,
                     lastOpened: Date(),
-                    model: selectedModel,
-                    accountID: settings.activeAccountID,
+                    model: route.model,
+                    accountID: route.accountID,
                     mode: selectedMode,
                     previewURL: settings.previewURL,
                     contextFiles: contextFiles,
@@ -6864,11 +6975,12 @@ final class AppModel: ObservableObject {
         // home directory — which must never be recorded as a real workspace.
         guard sessionInfo != nil else { return }
         let path = workspacePath
+        let route = stableWorkspaceRoute(for: path)
         let profile = WorkspaceProfile(
             path: path,
             lastOpened: Date(),
-            model: selectedModel,
-            accountID: settings.activeAccountID,
+            model: route.model,
+            accountID: route.accountID,
             mode: selectedMode,
             previewURL: settings.previewURL,
             contextFiles: contextFiles,
@@ -6883,6 +6995,27 @@ final class AppModel: ObservableObject {
         }
         workspaceProfiles.sort { $0.lastOpened > $1.lastOpened }
         persistWorkspaceProfiles()
+    }
+
+    /// Team jobs temporarily replace AgentCore's provider and model. Persist
+    /// the user's solo route instead of pairing the last team member's model
+    /// with an unrelated account and contaminating that account's picker.
+    private func stableWorkspaceRoute(for path: String) -> (model: String, accountID: String?) {
+        if let account = activeAccount {
+            return (account.preferredModel, account.id.uuidString)
+        }
+        guard teamModeEnabled || orchestrationRunID != nil else {
+            return (selectedModel, nil)
+        }
+        if let existing = workspaceProfiles.first(where: {
+            SessionSummary.canonicalWorkspacePath($0.path) == path && $0.accountID == nil
+        }), !existing.model.isEmpty {
+            return (existing.model, nil)
+        }
+        let installed = localModels.first(where: { $0.name == selectedModel })?.name
+            ?? localModels.first?.name
+            ?? ""
+        return (installed, nil)
     }
 
     private func persistWorkspaceProfiles() {
@@ -7151,6 +7284,7 @@ final class AppModel: ObservableObject {
             let dispatcherID = UUID(uuidString: "00000000-0000-0000-0000-000000000501")!
             let writerID = UUID(uuidString: "00000000-0000-0000-0000-000000000502")!
             let teamID = UUID(uuidString: "00000000-0000-0000-0000-000000000503")!
+            let uiWriterID = UUID(uuidString: "00000000-0000-0000-0000-000000000504")!
             agentProfiles = [
                 AgentProfile(
                     id: dispatcherID,
@@ -7160,10 +7294,17 @@ final class AppModel: ObservableObject {
                 ),
                 AgentProfile(
                     id: writerID,
-                    name: "Kimi Writer",
+                    name: "Kimi Backend",
                     model: "qwen3:8b",
                     role: .implementer,
                     accessCeiling: .workspaceWrite
+                ),
+                AgentProfile(
+                    id: uiWriterID,
+                    name: "Kimi UI",
+                    model: "qwen3:8b",
+                    role: .implementer,
+                    accessCeiling: .computerControl
                 ),
             ]
             agentTeams = [AgentTeam(
@@ -7171,7 +7312,7 @@ final class AppModel: ObservableObject {
                 name: "Codex Team",
                 dispatcherID: dispatcherID,
                 fallbackDispatcherID: nil,
-                memberIDs: [dispatcherID, writerID],
+                memberIDs: [dispatcherID, writerID, uiWriterID],
                 defaultWriterID: writerID
             )]
             selectedAgentTeamID = teamID
@@ -7234,10 +7375,17 @@ final class AppModel: ObservableObject {
                             kind: "specialist"
                         ),
                         DispatchJob(
-                            id: "write",
+                            id: "backend",
                             agentID: writerID.uuidString,
-                            goal: "Implement and verify the stock checker",
+                            goal: "Implement and verify the stock-checking backend",
                             dependencies: ["inspect"],
+                            kind: "writer"
+                        ),
+                        DispatchJob(
+                            id: "ui",
+                            agentID: uiWriterID.uuidString,
+                            goal: "Build the UI against the completed backend contract",
+                            dependencies: ["backend"],
                             kind: "writer"
                         ),
                     ],

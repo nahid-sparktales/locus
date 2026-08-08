@@ -459,7 +459,8 @@ struct InspectorRunsTab: View {
                                     .font(.system(size: 7, design: .monospaced))
                                     .foregroundStyle(LocusTheme.muted)
                                 Spacer()
-                                if attempt.state != "running" {
+                                if attempt.state != "running"
+                                    && !model.isCodingAttempt(attempt, in: run) {
                                     Menu {
                                         Button("Retry with Same Agent") {
                                             model.retryOrchestrationJob(attempt, in: run)
@@ -538,7 +539,7 @@ struct InspectorRunsTab: View {
             VStack(alignment: .leading, spacing: 5) {
                 Label("Review dispatch plan", systemImage: "checkmark.shield")
                     .font(.system(size: 11, weight: .bold))
-                Text("Edit goals, assignments, and dependencies. Locus revalidates the team, budget, cycles, consent, and single-writer boundary before starting.")
+                Text("Edit goals, assignments, and dependencies. Coding jobs must form an explicit order; Locus runs them one at a time in the shared checkout.")
                     .font(.system(size: 8))
                     .foregroundStyle(LocusTheme.muted)
             }
@@ -588,20 +589,17 @@ struct InspectorRunsTab: View {
                     ForEach(Array(plan.jobs.enumerated()), id: \.element.id) { index, job in
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
-                                Text(job.kind.capitalized).font(.system(size: 8, weight: .bold))
+                                Text(job.kind == "writer" ? "Coding" : job.kind.capitalized)
+                                    .font(.system(size: 8, weight: .bold))
                                 Spacer()
-                                if job.kind != "writer" {
-                                    Button(role: .destructive) {
-                                        draftPlan?.jobs.remove(at: index)
-                                    } label: { Image(systemName: "trash") }
-                                        .buttonStyle(.plain)
-                                }
+                                Button(role: .destructive) {
+                                    draftPlan?.jobs.remove(at: index)
+                                } label: { Image(systemName: "trash") }
+                                    .buttonStyle(.plain)
                             }
                             TextField("Goal", text: jobBinding(index, \.goal), axis: .vertical)
                             Picker("Agent", selection: jobBinding(index, \.agentID)) {
-                                ForEach(model.agentProfiles.filter { profile in
-                                    model.selectedAgentTeam?.memberIDs.contains(profile.id) == true
-                                }) { profile in
+                                ForEach(eligibleProfiles(for: job)) { profile in
                                     Text(profile.name).tag(profile.id.uuidString)
                                 }
                             }
@@ -611,14 +609,17 @@ struct InspectorRunsTab: View {
                         .background(LocusTheme.white.opacity(0.6))
                         .clipShape(RoundedRectangle(cornerRadius: 7))
                     }
-                    Button {
-                        draftPlan?.jobs.append(DispatchJob(
-                            id: "job-\((draftPlan?.jobs.count ?? 0) + 1)",
-                            agentID: model.selectedAgentTeam?.memberIDs.first?.uuidString ?? "",
-                            goal: "", dependencies: [], kind: "specialist"
-                        ))
-                    } label: { Label("Add Specialist Job", systemImage: "plus") }
-                        .buttonStyle(.borderless)
+                    HStack {
+                        Button {
+                            addJob(kind: "specialist")
+                        } label: { Label("Add Specialist Job", systemImage: "plus") }
+                            .buttonStyle(.borderless)
+                        Button {
+                            addJob(kind: "writer")
+                        } label: { Label("Add Coding Job", systemImage: "hammer") }
+                            .buttonStyle(.borderless)
+                            .accessibilityIdentifier("runs.addCodingJob")
+                    }
                 }
                 .padding(12)
             }
@@ -640,6 +641,41 @@ struct InspectorRunsTab: View {
             .padding(12)
             .overlay(alignment: .top) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
         }
+    }
+
+    private func eligibleProfiles(for job: DispatchJob) -> [AgentProfile] {
+        guard let team = model.selectedAgentTeam else { return [] }
+        return model.agentProfiles.filter { profile in
+            guard team.memberIDs.contains(profile.id) else { return false }
+            switch job.kind {
+            case "writer":
+                return profile.accessCeiling.canWrite
+            case "reviewer":
+                return !profile.accessCeiling.canWrite && profile.role == .reviewer
+            default:
+                return !profile.accessCeiling.canWrite
+            }
+        }
+    }
+
+    private func addJob(kind: String) {
+        guard let plan = draftPlan else { return }
+        let template = DispatchJob(
+            id: "job-\(plan.jobs.count + 1)",
+            agentID: "",
+            goal: "",
+            dependencies: [],
+            kind: kind
+        )
+        guard let profile = eligibleProfiles(for: template).first else { return }
+        var job = template
+        job.agentID = profile.id.uuidString
+        if kind == "writer",
+           let priorWriter = plan.jobs.last(where: { $0.kind == "writer" })
+        {
+            job.dependencies = [priorWriter.id]
+        }
+        draftPlan?.jobs.append(job)
     }
 
     private var filteredEvents: [OrchestrationEvent] {

@@ -289,7 +289,7 @@ struct TeamDispatchApprovalPromptView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 7) {
-                    ForEach(Array(plan.jobs.enumerated()), id: \.element.id) { index, job in
+                    ForEach(Array(executionOrderedJobs.enumerated()), id: \.element.id) { index, job in
                         HStack(alignment: .top, spacing: 8) {
                             Text("\(index + 1).")
                                 .font(.system(size: 9, design: .monospaced))
@@ -298,7 +298,7 @@ struct TeamDispatchApprovalPromptView: View {
                                 HStack(spacing: 5) {
                                     Text(agentName(for: job))
                                         .font(.system(size: 9, weight: .semibold))
-                                    Text("· \(job.kind.capitalized)")
+                                    Text("· \(jobLabel(job))")
                                         .font(.system(size: 8))
                                         .foregroundStyle(LocusTheme.muted)
                                 }
@@ -440,6 +440,49 @@ struct TeamDispatchApprovalPromptView: View {
     private func agentName(for job: DispatchJob) -> String {
         guard let id = UUID(uuidString: job.agentID) else { return job.agentID }
         return model.agentProfiles.first(where: { $0.id == id })?.name ?? job.agentID
+    }
+
+    private func jobLabel(_ job: DispatchJob) -> String {
+        guard job.kind == "writer" else { return job.kind.capitalized }
+        let writers = executionOrderedJobs.filter { $0.kind == "writer" }
+        guard let index = writers.firstIndex(where: { $0.id == job.id }) else { return "Coding" }
+        return "Coding \(index + 1) of \(writers.count)"
+    }
+
+    /// Mirrors the backend's execution phases so the approval card exposes
+    /// the actual serialized coding order even when the dispatcher returned
+    /// jobs in a different JSON array order.
+    private var executionOrderedJobs: [DispatchJob] {
+        let specialists = topologicalJobs(
+            plan.jobs.filter { $0.kind == "specialist" },
+            completed: []
+        )
+        let specialistIDs = Set(specialists.map(\.id))
+        let writers = topologicalJobs(
+            plan.jobs.filter { $0.kind == "writer" },
+            completed: specialistIDs
+        )
+        let reviewers = plan.jobs.filter { $0.kind == "reviewer" }
+        let ordered = specialists + writers + reviewers
+        return ordered.count == plan.jobs.count ? ordered : plan.jobs
+    }
+
+    private func topologicalJobs(
+        _ jobs: [DispatchJob],
+        completed initial: Set<String>
+    ) -> [DispatchJob] {
+        var completed = initial
+        var pending = jobs
+        var ordered: [DispatchJob] = []
+        while !pending.isEmpty {
+            let ready = pending.filter { Set($0.dependencies).isSubset(of: completed) }
+            guard !ready.isEmpty else { return jobs }
+            let readyIDs = Set(ready.map(\.id))
+            ordered.append(contentsOf: ready)
+            completed.formUnion(readyIDs)
+            pending.removeAll { readyIDs.contains($0.id) }
+        }
+        return ordered
     }
 
     private func confirm(_ index: Int) {
