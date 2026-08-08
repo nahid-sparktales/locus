@@ -249,9 +249,13 @@ final class BrowserCaptureTests: XCTestCase {
         try await super.tearDown()
     }
 
+    /// A real base URL matters here. A document with an opaque origin has its
+    /// own scripts treated as cross-origin, and WebKit redacts uncaught error
+    /// messages to "Script error." — the page's own listeners see the same
+    /// thing, so a fixture without an origin cannot test error text at all.
     private func loadAndCollect(_ html: String) async throws {
         waiter.reset()
-        host.webView.loadHTMLString(html, baseURL: nil)
+        host.webView.loadHTMLString(html, baseURL: URL(string: "http://127.0.0.1/fixture"))
         try await waiter.wait()
         // The page-world queue flushes on a 250ms timer, on purpose: a
         // hot-reload error loop would otherwise post thousands of messages a
@@ -289,8 +293,8 @@ final class BrowserCaptureTests: XCTestCase {
             .filter { $0["kind"] as? String == "console" }
             .compactMap { $0["message"] as? String }
             .joined(separator: "\n")
-        XCTAssertTrue(messages.contains("boom"), messages)
-        XCTAssertTrue(messages.contains("unhandled rejection"), messages)
+        XCTAssertTrue(messages.contains("Error: boom"), messages)
+        XCTAssertTrue(messages.contains("unhandled rejection: Error: nope"), messages)
     }
 
     /// Failed sub-resource loads never bubble, so only a capture-phase listener

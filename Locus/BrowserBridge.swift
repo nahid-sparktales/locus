@@ -673,6 +673,15 @@ enum BrowserBridge {
 
       function text(value) {
         if (typeof value === 'string') { return value; }
+        // An Error stringifies to "{}", which is the least useful thing the
+        // model could be told about a failure. Note JavaScriptCore's `stack`
+        // opens with the frame rather than the message, so the message has to
+        // come first explicitly.
+        if (value instanceof Error) {
+          const head = String(value.name || 'Error') + ': ' + String(value.message || '');
+          const frame = value.stack ? String(value.stack).split('\n')[0].trim() : '';
+          return frame ? head + ' at ' + frame : head;
+        }
         try { return JSON.stringify(value); } catch (error) { return String(value); }
       }
 
@@ -689,26 +698,41 @@ enum BrowserBridge {
         };
       }
 
+      // Two hooks, because they see different things. A capture-phase listener
+      // is the only way to see a failed <img>, <script> or <link> load — those
+      // never bubble — while uncaught script exceptions are what `onerror` is
+      // for, and it reports them with a message the listener does not always
+      // carry.
       addEventListener('error', (event) => {
-        // Capture phase, so failed <img>, <script> and <link> loads are seen —
-        // they never bubble.
-        if (event.target && event.target !== window && event.target.tagName) {
-          post({
-            kind: 'console',
-            level: 'error',
-            message: 'failed to load ' + (event.target.src || event.target.href || event.target.tagName),
-            url: location.href,
-          });
-          return;
-        }
+        const target = event.target;
+        if (!target || target === window || !target.tagName) { return; }
         post({
           kind: 'console',
           level: 'error',
-          message: String(event.message || 'uncaught error')
-            + (event.filename ? ' (' + event.filename + ':' + event.lineno + ')' : ''),
+          message: 'failed to load ' + (target.src || target.href || target.tagName),
           url: location.href,
         });
       }, true);
+
+      const previousOnError = globalThis.onerror;
+      globalThis.onerror = function (message, source, line, column, error) {
+        // A document with an opaque origin — anything loaded without a real
+        // base URL — has its own scripts treated as cross-origin, and WebKit
+        // redacts the message to "Script error." with no file or line. That is
+        // the platform's behaviour, not a gap here: the page's own listeners
+        // see exactly the same thing.
+        post({
+          kind: 'console',
+          level: 'error',
+          message: (error ? text(error) : String(message || 'uncaught error'))
+            + (source ? ' (' + source + ':' + (line || 0) + ')' : ''),
+          url: location.href,
+        });
+        if (typeof previousOnError === 'function') {
+          return previousOnError.apply(this, arguments);
+        }
+        return false;
+      };
 
       addEventListener('unhandledrejection', (event) => {
         post({
