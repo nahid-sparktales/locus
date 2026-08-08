@@ -22,7 +22,10 @@ like; macOS remembers the size you choose for later launches.
   costs, checkpoints, steering, pause/resume state, and recovery options in a
   local run store. Stop is routed to the worker that owns the run, waits for a
   terminal event, and leaves a cancelled run non-recoverable instead of
-  replaying its last approval after reconnecting.
+  replaying its last approval after reconnecting. Run updates are coalesced and
+  loaded incrementally so large timelines stay responsive at completion. After
+  an unexpected quit, Locus reopens the latest run and explains whether it
+  finished or can be resumed.
 - **Live Team Progress in the sidebar** shows the active dispatcher and its
   provider/model, elapsed time, delegated jobs, model calls, and hosted-token
   usage. Its Stop button remains available while a team is running.
@@ -564,7 +567,7 @@ xcodebuild \
 cd agent && .venv/bin/python -m pytest -q
 ```
 
-The repository currently contains 237 unit tests, 26 UI tests, and 372 backend
+The repository currently contains 244 unit tests, 29 UI tests, and 378 backend
 test cases.
 
 The unit suite covers work modes, lightweight context migration, session

@@ -109,6 +109,50 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
+    func testLifecycleJournalDistinguishesCleanAndUncleanTermination() throws {
+        let suite = "LocusTests.lifecycle.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let journal = AppLifecycleJournal(defaults: defaults, keyPrefix: "test")
+
+        XCTAssertNil(journal.beginLaunch(), "the first launch is not a recovery")
+        journal.record(
+            sessionID: "session-1",
+            runID: "run-1",
+            state: .running,
+            at: Date(timeIntervalSince1970: 10)
+        )
+
+        let afterForcedQuit = AppLifecycleJournal(defaults: defaults, keyPrefix: "test")
+            .beginLaunch()
+        XCTAssertEqual(afterForcedQuit?.snapshot?.runID, "run-1")
+        XCTAssertEqual(afterForcedQuit?.snapshot?.state, .running)
+
+        journal.markCleanExit()
+        XCTAssertNil(
+            AppLifecycleJournal(defaults: defaults, keyPrefix: "test").beginLaunch(),
+            "normal termination must not show crash recovery"
+        )
+    }
+
+    func testLifecycleRecoveryExplainsCompletedAndRecoverableRuns() {
+        let completed = AppLifecycleRecovery(snapshot: AppLifecycleRunSnapshot(
+            sessionID: "session",
+            runID: "completed",
+            state: .completed,
+            updatedAt: Date()
+        ))
+        let active = AppLifecycleRecovery(snapshot: AppLifecycleRunSnapshot(
+            sessionID: "session",
+            runID: "active",
+            state: .waitingPermission,
+            updatedAt: Date()
+        ))
+
+        XCTAssertTrue(completed.message.contains("completed"))
+        XCTAssertTrue(active.message.contains("resumed"))
+    }
+
     // MARK: - Slash commands
 
     func testSlashQueryDetection() {

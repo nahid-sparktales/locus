@@ -1,7 +1,203 @@
 import XCTest
 @testable import Locus
 
+private final class OrchestrationURLProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var recordedURLs: [URL] = []
+    static var responseDelay: (URL) -> TimeInterval = { _ in 0 }
+
+    static func reset() {
+        lock.lock()
+        recordedURLs = []
+        responseDelay = { _ in 0 }
+        lock.unlock()
+    }
+
+    static var requests: [URL] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedURLs
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url else { return }
+        Self.lock.lock()
+        Self.recordedURLs.append(url)
+        let delay = Self.responseDelay(url)
+        Self.lock.unlock()
+
+        let complete = { [weak self] in
+            guard let self else { return }
+            let data = Self.responseData(for: url)
+            let response = HTTPURLResponse(
+                url: url,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            self.client?.urlProtocol(self, didLoad: data)
+            self.client?.urlProtocolDidFinishLoading(self)
+        }
+        if delay > 0 {
+            DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: complete)
+        } else {
+            complete()
+        }
+    }
+
+    override func stopLoading() {}
+
+    private static func responseData(for url: URL) -> Data {
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let path = components?.path ?? url.path
+        let parts = path.split(separator: "/")
+        let runID = parts.count >= 3 ? String(parts[2]) : "run-1"
+        let run = runJSON(id: runID)
+        if path == "/api/orchestrations" {
+            return try! JSONSerialization.data(withJSONObject: [
+                "runs": [runJSON(id: "run-1")],
+                "read_only": false,
+            ])
+        }
+        if path.hasSuffix("/events") {
+            let after = Int(components?.queryItems?.first(where: { $0.name == "after_seq" })?.value ?? "0") ?? 0
+            let events: [[String: Any]] = after < 65 ? [
+                ["event_id": "event-65", "run_id": runID, "seq": 65, "type": "agent_job_completed", "state": "completed"],
+            ] : []
+            return try! JSONSerialization.data(withJSONObject: [
+                "run_id": runID,
+                "events": events,
+                "last_seq": max(after, 65),
+            ])
+        }
+        return try! JSONSerialization.data(withJSONObject: run)
+    }
+
+    private static func runJSON(id: String) -> [String: Any] {
+        [
+            "id": id,
+            "session_id": "session-1",
+            "team_id": "team-1",
+            "team_name": "Codex Team",
+            "worker_id": "worker-1",
+            "workspace_root": "/tmp",
+            "execution_path": "/tmp",
+            "state": "completed",
+            "request": "Check stock",
+            "created_at": 1.0,
+            "updated_at": 2.0,
+            "completed_at": 2.0,
+            "last_seq": 65,
+            "pinned": false,
+            "legacy": false,
+            "recoverable": false,
+        ]
+    }
+}
+
 final class AppModelTests: XCTestCase {
+    @MainActor
+    private func orchestrationModel() -> AppModel {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OrchestrationURLProtocol.self]
+        let service = BackendService(
+            baseURL: URL(string: "http://locus.test")!,
+            authToken: "test",
+            session: URLSession(configuration: configuration)
+        )
+        let model = AppModel(startImmediately: false, backendOverride: service)
+        model.currentSessionID = "session-1"
+        return model
+    }
+
+    override func setUp() {
+        super.setUp()
+        OrchestrationURLProtocol.reset()
+    }
+
+    @MainActor
+    func testDuplicateSessionInfoAndCompletionPerformOneIncrementalRefresh() async throws {
+        let model = orchestrationModel()
+        await model.loadOrchestrationRun("run-1")
+        OrchestrationURLProtocol.reset()
+
+        var info = sessionInfo(id: "session-1")
+        info["type"] = "session_info"
+        model.handleEventForTesting(info)
+        model.handleEventForTesting(info)
+        let completed: [String: Any] = [
+            "type": "orchestration_completed",
+            "event_id": "event-66",
+            "seq": 66,
+            "run_id": "run-1",
+            "state": "completed",
+        ]
+        model.handleEventForTesting(completed)
+        model.handleEventForTesting(completed)
+
+        for _ in 0..<50 where OrchestrationURLProtocol.requests.count < 3 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let urls = OrchestrationURLProtocol.requests
+        XCTAssertEqual(urls.filter { $0.path == "/api/orchestrations" }.count, 1)
+        XCTAssertEqual(urls.filter { $0.path == "/api/orchestrations/run-1" }.count, 1)
+        let eventURLs = urls.filter { $0.path.hasSuffix("/events") }
+        XCTAssertEqual(eventURLs.count, 1)
+        XCTAssertEqual(
+            URLComponents(url: try XCTUnwrap(eventURLs.first), resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "after_seq" })?.value,
+            "66"
+        )
+    }
+
+    @MainActor
+    func testConcurrentRunRefreshesCoalesce() async {
+        let model = orchestrationModel()
+        let first = Task { await model.refreshOrchestrationRuns(select: "run-1") }
+        let second = Task { await model.refreshOrchestrationRuns(select: "run-1") }
+        await first.value
+        await second.value
+
+        let urls = OrchestrationURLProtocol.requests
+        XCTAssertEqual(urls.filter { $0.path == "/api/orchestrations" }.count, 1)
+        XCTAssertEqual(urls.filter { $0.path == "/api/orchestrations/run-1" }.count, 1)
+        XCTAssertEqual(urls.filter { $0.path.hasSuffix("/events") }.count, 1)
+    }
+
+    @MainActor
+    func testLateRunResponseCannotReplaceNewerSelection() async throws {
+        OrchestrationURLProtocol.responseDelay = { url in
+            url.path.contains("run-old") ? 0.2 : 0
+        }
+        let model = orchestrationModel()
+        let old = Task { await model.loadOrchestrationRun("run-old") }
+        try await Task.sleep(for: .milliseconds(20))
+        let new = Task { await model.loadOrchestrationRun("run-new") }
+        await new.value
+        await old.value
+
+        XCTAssertEqual(model.selectedOrchestrationRun?.id, "run-new")
+    }
+
+    func testIncrementalEventMergeDeduplicatesAndDropsTransientStreams() throws {
+        func event(_ json: String) throws -> OrchestrationEvent {
+            try JSONDecoder().decode(OrchestrationEvent.self, from: Data(json.utf8))
+        }
+        let one = try event(#"{"event_id":"one","seq":1,"type":"orchestration_started"}"#)
+        let duplicate = try event(#"{"event_id":"one","seq":1,"type":"orchestration_started"}"#)
+        let stream = try event(#"{"event_id":"stream","seq":2,"type":"agent_job_stream"}"#)
+        let three = try event(#"{"event_id":"three","seq":3,"type":"orchestration_completed"}"#)
+
+        XCTAssertEqual(
+            AppModel.mergeOrchestrationEvents([one], with: [duplicate, stream, three]).map(\.id),
+            ["one", "three"]
+        )
+    }
+
     @MainActor
     func testOrchestrationControlsResolveTheWorkerThatOwnsTheRun() {
         let oldRun = TaskConversationState(
