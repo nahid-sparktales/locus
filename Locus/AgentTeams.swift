@@ -308,7 +308,12 @@ struct AgentTeam: Identifiable, Codable, Hashable {
 
     mutating func clamp() {
         name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(64))
-        memberIDs = Array(Set(memberIDs)).prefix(32).map { $0 }
+        // Preserve the editor's order (dispatcher first in the common case)
+        // while removing duplicates. Converting through Set made the team
+        // model picker reshuffle on every save.
+        var seenMemberIDs: Set<UUID> = []
+        memberIDs = memberIDs.filter { seenMemberIDs.insert($0).inserted }
+        memberIDs = Array(memberIDs.prefix(32))
         budget.clamp()
         if routingMode == .scorecard, routingWeights == nil { routingWeights = .init() }
         routingWeights?.normalize()
@@ -366,6 +371,37 @@ enum AgentTeamValidation {
         }
         for profile in team.memberIDs.compactMap({ byID[$0] }) where !profile.isConfigured {
             errors.append("Configure a model for \(profile.name.isEmpty ? "an agent" : profile.name).")
+        }
+        return Array(Set(errors)).sorted()
+    }
+
+    /// Validate saved agent models against catalogs the provider has actually
+    /// reported. An account's display name is intentionally not evidence that
+    /// its endpoint serves a similarly named model.
+    static func routeErrors(
+        team: AgentTeam,
+        profiles: [AgentProfile],
+        accounts: [ProviderAccount],
+        accountModels: [UUID: [String]]
+    ) -> [String] {
+        let byID = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
+        let accountsByID = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
+        var errors: [String] = []
+
+        for profile in team.memberIDs.compactMap({ byID[$0] }) {
+            guard case .providerAccount(let accountID) = profile.route,
+                  let account = accountsByID[accountID],
+                  account.kind.listsModels,
+                  let reported = accountModels[accountID],
+                  !reported.isEmpty,
+                  !reported.contains(where: {
+                      $0.caseInsensitiveCompare(profile.model) == .orderedSame
+                  })
+            else { continue }
+
+            errors.append(
+                "\(profile.name) is set to \(profile.model), but \(account.displayName) does not report that model. Choose one from the model picker."
+            )
         }
         return Array(Set(errors)).sorted()
     }

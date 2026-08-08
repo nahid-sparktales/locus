@@ -3,6 +3,51 @@ import XCTest
 
 final class AppModelTests: XCTestCase {
     @MainActor
+    func testOrchestrationControlsResolveTheWorkerThatOwnsTheRun() {
+        let oldRun = TaskConversationState(
+            sessionID: "old-session",
+            taskID: nil,
+            teamID: "team",
+            workerID: "worker-old",
+            runID: "run-old",
+            state: .waitingDispatchApproval,
+            updatedAt: Date()
+        )
+        let currentRun = TaskConversationState(
+            sessionID: "current-session",
+            taskID: nil,
+            teamID: "team",
+            workerID: "worker-current",
+            runID: "run-current",
+            state: .dispatching,
+            updatedAt: Date()
+        )
+        let states = [
+            oldRun.sessionID: oldRun,
+            currentRun.sessionID: currentRun,
+        ]
+
+        XCTAssertEqual(
+            AppModel.orchestrationOwnerSessionID(
+                for: "run-old",
+                currentSessionID: "current-session",
+                currentRunID: "run-current",
+                states: states
+            ),
+            "old-session"
+        )
+        XCTAssertEqual(
+            AppModel.orchestrationOwnerSessionID(
+                for: "run-current",
+                currentSessionID: "current-session",
+                currentRunID: "run-current",
+                states: [:]
+            ),
+            "current-session"
+        )
+    }
+
+    @MainActor
     func testGlobalAgentConcurrencyStaysWithinApplicationCeiling() {
         let model = AppModel(startImmediately: false)
         model.globalAgentConcurrency = 99
@@ -541,6 +586,38 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.isCurrentRoute(account: personal, model: "claude-sonnet-4-5"))
         XCTAssertFalse(model.isCurrentRoute(account: nil, model: "claude-sonnet-4-5"))
         XCTAssertEqual(model.modelPickerLabel, "Work · claude-sonnet-4-5")
+    }
+
+    @MainActor
+    func testModelPickerLabelShowsTheSelectedTeamAndDistinctModelCount() {
+        let model = AppModel(startImmediately: false)
+        let dispatcher = AgentProfile(
+            name: "Dispatcher",
+            model: "qwen",
+            role: .dispatcher
+        )
+        let planner = AgentProfile(name: "Planner", model: "qwen", role: .planner)
+        let writer = AgentProfile(
+            name: "Writer",
+            model: "kimi",
+            role: .implementer,
+            accessCeiling: .workspaceWrite
+        )
+        model.saveAgentProfile(dispatcher)
+        model.saveAgentProfile(planner)
+        model.saveAgentProfile(writer)
+        let team = AgentTeam(
+            name: "Codex Team",
+            dispatcherID: dispatcher.id,
+            fallbackDispatcherID: nil,
+            memberIDs: [dispatcher.id, planner.id, writer.id],
+            defaultWriterID: writer.id
+        )
+        model.saveAgentTeam(team)
+        model.selectAgentTeam(team.id)
+
+        XCTAssertEqual(model.selectedTeamModelNames, ["qwen", "kimi"])
+        XCTAssertEqual(model.modelPickerLabel, "Codex Team · 2 models")
     }
 
     @MainActor

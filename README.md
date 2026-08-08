@@ -20,7 +20,15 @@ like; macOS remembers the size you choose for later launches.
   in a private managed worktree.
 - **Durable, inspectable runs** record timelines, evidence, routing decisions,
   costs, checkpoints, steering, pause/resume state, and recovery options in a
-  local run store.
+  local run store. Stop is routed to the worker that owns the run, waits for a
+  terminal event, and leaves a cancelled run non-recoverable instead of
+  replaying its last approval after reconnecting.
+- **Live Team Progress in the sidebar** shows the active dispatcher and its
+  provider/model, elapsed time, delegated jobs, model calls, and hosted-token
+  usage. Its Stop button remains available while a team is running.
+- **Team-aware model controls** label the workspace with the selected team and
+  distinct model count, list the exact team models in the header menu, and use
+  provider-backed model dropdowns when editing agent profiles.
 - **Evaluation suites and transparent scorecard routing** compare Solo and team
   configurations against immutable fixtures, then explain why an eligible agent
   was selected.
@@ -39,10 +47,11 @@ for setup, examples, permission boundaries, recovery, and troubleshooting.
 ## Designed for real project work
 
 - **One calm sidebar** holds the conversation list: rows for Plugins & MCP,
-  Manage Accounts and Hugging Face, then New chat, search, recents, and a footer
-  with the workspace selector, connection status, and the rest of the app's
-  actions. It starts open, collapses with `⌘0` or the header button when you
-  want the room, and remembers its state across launches.
+  Manage Accounts, Agents & Teams, live Team Progress, and Hugging Face, then
+  New chat, search, recents, and a footer with the workspace selector,
+  connection status, and the rest of the app's actions. It starts open,
+  collapses with `⌘0` or the header button when you want the room, and remembers
+  its state across launches.
 - **Workspaces** open from a folder picker that can create folders, or with
   **New Workspace…**, which names a folder, creates it, and opens it.
 - **Local or rented GPU.** Point Locus at local Ollama, or at any
@@ -97,6 +106,8 @@ for setup, examples, permission boundaries, recovery, and troubleshooting.
   match count, `↵`/`⇧↵` navigation, and scroll-to-match highlighting.
 - **Message queueing** keeps you typing while a run is active — queued
   messages send automatically when the turn finishes, and Esc stops a run.
+  Anything submitted while the UI says **Stopping…** is queued for the next
+  turn rather than steered into the run being cancelled.
 - **Rewind** any earlier user message: the conversation returns to that point
   with the message back in the composer for editing.
 - **Session organizer** adds names, pins, soft archives, filtering, and Markdown
@@ -272,6 +283,12 @@ A model name is remembered per account rather than globally, so switching to a
 different provider never arrives carrying the last one's model — that is how a
 Kimi model name ends up pointed at Anthropic and fails with an error that names
 neither problem.
+
+When a team is selected, the header menu shows the team name and distinct model
+count rather than the solo session's provider. Open it to see each exact model,
+switch back to Solo, or manage the team. Agent profiles use a model dropdown
+filled from their selected provider; the refresh and **Test Connection** actions
+can wake a scaled-to-zero vLLM endpoint before its model catalog is available.
 
 **Test Connection** confirms the account answers before you send a message,
 and reports the actual reason when it does not — a rejected key, a wrong URL,
@@ -545,8 +562,8 @@ xcodebuild \
 cd agent && .venv/bin/python -m pytest -q
 ```
 
-The repository currently contains 234 unit tests, 26 UI tests, and 367 backend
-tests.
+The repository currently contains 237 unit tests, 26 UI tests, and 372 backend
+test cases.
 
 The unit suite covers work modes, lightweight context migration, session
 acknowledgements and retry branches, recoverable session clearing, Hugging Face

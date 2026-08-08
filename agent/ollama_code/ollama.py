@@ -436,6 +436,12 @@ class OllamaClient:
                 resp.done_reason = "interrupted"
                 return resp
             raise OllamaError(f"chat request failed: {e}") from e
+        except Exception:
+            if should_stop is not None and should_stop():
+                resp.done = True
+                resp.done_reason = "interrupted"
+                return resp
+            raise
         finally:
             watcher_done.set()
             if watcher is not None:

@@ -573,6 +573,18 @@ class RemoteClient:
                 resp.done_reason = "interrupted"
                 return resp
             raise OllamaError(proxy.redact(f"chat request failed: {e}")) from e
+        except Exception:
+            # Closing a requests/urllib3 response from the stop watcher can
+            # surface an implementation error such as
+            # ``AttributeError: 'NoneType' object has no attribute 'read'``
+            # instead of RequestException. Once Stop is set, that exception is
+            # the expected wake-up path and must not trigger dispatcher repair
+            # or fallback work.
+            if should_stop is not None and should_stop():
+                resp.done = True
+                resp.done_reason = "interrupted"
+                return resp
+            raise
         finally:
             watcher_done.set()
             if watcher is not None:
@@ -667,6 +679,12 @@ class RemoteClient:
                 resp.done_reason = "interrupted"
                 return resp
             raise OllamaError(proxy.redact(f"chat request failed: {e}")) from e
+        except Exception:
+            if should_stop is not None and should_stop():
+                resp.done = True
+                resp.done_reason = "interrupted"
+                return resp
+            raise
         finally:
             watcher_done.set()
             if watcher is not None:

@@ -618,7 +618,9 @@ class TeamOrchestrator:
         })
         dispatcher = profiles[team.dispatcher_id]
         try:
-            plan = self._dispatch(request, workspace, team, profiles, dispatcher, forced_agent)
+            plan = self._dispatch_with_status(
+                run_id, request, workspace, team, profiles, dispatcher, forced_agent,
+            )
         except OllamaError:
             fallback_id = team.fallback_dispatcher_id
             if not fallback_id or fallback_id == dispatcher.id:
@@ -630,7 +632,9 @@ class TeamOrchestrator:
                 "state": "dispatching",
                 "message": f"Primary dispatcher unavailable; trying {dispatcher.name}",
             })
-            plan = self._dispatch(request, workspace, team, profiles, dispatcher, forced_agent)
+            plan = self._dispatch_with_status(
+                run_id, request, workspace, team, profiles, dispatcher, forced_agent,
+            )
         plan = self._resolve_scorecard(run_id, plan, team, profiles, forced_agent)
         if team.dispatch_approval_mode == "preview":
             if self.approve_dispatch is None:
@@ -646,8 +650,8 @@ class TeamOrchestrator:
                 if action == "cancel":
                     raise InterruptedError("dispatch cancelled")
                 if action == "redispatch":
-                    plan = self._dispatch(
-                        request, workspace, team, profiles, dispatcher, forced_agent,
+                    plan = self._dispatch_with_status(
+                        run_id, request, workspace, team, profiles, dispatcher, forced_agent,
                     )
                     plan = self._resolve_scorecard(run_id, plan, team, profiles, forced_agent)
                     continue
@@ -976,6 +980,53 @@ class TeamOrchestrator:
             "prompt_tokens": result.prompt_tokens,
             "completion_tokens": result.completion_tokens,
         }
+
+    def _dispatch_with_status(
+        self,
+        run_id: str,
+        request: str,
+        workspace: str,
+        team: AgentTeam,
+        profiles: dict[str, AgentProfile],
+        dispatcher: AgentProfile,
+        forced_agent: str | None,
+    ) -> DispatchPlan:
+        started = time.monotonic()
+        self.emit({
+            "type": "dispatcher_started",
+            "run_id": run_id,
+            "agent_id": dispatcher.id,
+            "agent_name": dispatcher.name,
+            "provider": _route_label(dispatcher.route),
+            "model": dispatcher.model,
+            "goal": "Creating the team plan",
+            "state": "running",
+        })
+        try:
+            plan = self._dispatch(
+                request, workspace, team, profiles, dispatcher, forced_agent,
+            )
+        except Exception as exc:
+            self.emit({
+                "type": "dispatcher_completed",
+                "run_id": run_id,
+                "agent_id": dispatcher.id,
+                "state": "failed",
+                "message": str(exc)[:2_000],
+                "elapsed_ms": max(int((time.monotonic() - started) * 1_000), 0),
+                "usage": self.usage(),
+            })
+            raise
+        self.emit({
+            "type": "dispatcher_completed",
+            "run_id": run_id,
+            "agent_id": dispatcher.id,
+            "state": "completed",
+            "message": "Dispatch plan ready",
+            "elapsed_ms": max(int((time.monotonic() - started) * 1_000), 0),
+            "usage": self.usage(),
+        })
+        return plan
 
     def _dispatch(
         self,

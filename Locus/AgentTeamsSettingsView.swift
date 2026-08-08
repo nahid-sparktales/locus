@@ -474,7 +474,53 @@ private struct AgentProfileEditor: View {
                     Text(account.displayName).tag(AgentRoute.providerAccount(account.id))
                 }
             }
-            TextField("Exact model", text: $draft.model)
+            LabeledContent("Model") {
+                HStack(spacing: 7) {
+                    if modelChoices.isEmpty {
+                        TextField("Exact model ID", text: $draft.model)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityIdentifier("agent.model.manual")
+                    } else {
+                        Picker("Model", selection: $draft.model) {
+                            if modelSelectionUnavailable {
+                                Text("\(draft.model) — unavailable")
+                                    .tag(draft.model)
+                            }
+                            Text("Choose a model…").tag("")
+                            ForEach(modelChoices, id: \.self) { name in
+                                Text(name).tag(name)
+                            }
+                        }
+                        .labelsHidden()
+                        .accessibilityIdentifier("agent.model.picker")
+                    }
+                    Button {
+                        Task { await refreshModels() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Refresh models from this provider")
+                    .accessibilityLabel("Refresh provider models")
+                    .accessibilityIdentifier("agent.model.refresh")
+                }
+            }
+            if modelSelectionUnavailable {
+                Label(
+                    "This provider does not report \(draft.model). Choose a model from the menu before saving.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.system(size: 9))
+                .foregroundStyle(LocusTheme.coral)
+            } else if modelChoices.isEmpty {
+                Text("This provider cannot list models, so enter its exact API model ID.")
+                    .font(.system(size: 8))
+                    .foregroundStyle(LocusTheme.muted)
+            } else {
+                Text("Only models reported by the selected provider are shown.")
+                    .font(.system(size: 8))
+                    .foregroundStyle(LocusTheme.muted)
+            }
             Picker("Access ceiling", selection: $draft.accessCeiling) {
                 ForEach(AgentAccessCeiling.allCases) { Text($0.title).tag($0) }
             }
@@ -540,10 +586,60 @@ private struct AgentProfileEditor: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(LocusTheme.ink)
+                .disabled(
+                    draft.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || modelSelectionUnavailable
+                )
             }
         }
         .padding(20)
         .frame(width: 600, height: 720)
+        .task { await refreshModels() }
+        .onChange(of: draft.route) { _, _ in
+            draft.model = ""
+            connectionResult = nil
+            Task { await refreshModels() }
+        }
+    }
+
+    private var modelChoices: [String] {
+        let values: [String]
+        switch draft.route {
+        case .localOllama:
+            values = model.localModels.map(\.name)
+        case .providerAccount(let id):
+            guard let account = model.providerAccounts.first(where: { $0.id == id }) else {
+                return []
+            }
+            if account.kind.listsModels,
+               let reported = model.accountModels[id],
+               !reported.isEmpty
+            {
+                values = reported
+            } else {
+                values = [account.preferredModel] + account.kind.curatedModels
+            }
+        }
+        var seen: Set<String> = []
+        return values.filter { value in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !trimmed.isEmpty && seen.insert(trimmed.lowercased()).inserted
+        }
+    }
+
+    private var modelSelectionUnavailable: Bool {
+        !draft.model.isEmpty && !modelChoices.isEmpty && !modelChoices.contains(where: {
+            $0.caseInsensitiveCompare(draft.model) == .orderedSame
+        })
+    }
+
+    private func refreshModels() async {
+        switch draft.route {
+        case .localOllama:
+            await model.refreshMetadata()
+        case .providerAccount:
+            await model.refreshAccountCatalogs(force: true)
+        }
     }
 
     private func csv(_ value: String) -> [String] {
@@ -571,88 +667,99 @@ private struct AgentTeamEditor: View {
     }
 
     var body: some View {
-        Form {
-            TextField("Team name", text: $draft.name)
-            Section("Members") {
-                ForEach(model.agentProfiles) { profile in
-                    Toggle(isOn: Binding(
-                        get: { draft.memberIDs.contains(profile.id) },
-                        set: { included in
-                            if included { draft.memberIDs.append(profile.id) }
-                            else { draft.memberIDs.removeAll { $0 == profile.id } }
+        let errors = AgentTeamValidation.errors(team: draft, profiles: model.agentProfiles)
+        VStack(spacing: 0) {
+            ScrollView {
+                Form {
+                    TextField("Team name", text: $draft.name)
+                    Section("Members") {
+                        ForEach(model.agentProfiles) { profile in
+                            Toggle(isOn: Binding(
+                                get: { draft.memberIDs.contains(profile.id) },
+                                set: { included in
+                                    if included { draft.memberIDs.append(profile.id) }
+                                    else { draft.memberIDs.removeAll { $0 == profile.id } }
+                                }
+                            )) {
+                                Text("\(profile.name) · \(profile.role.title)")
+                            }
                         }
-                    )) {
-                        Text("\(profile.name) · \(profile.role.title)")
+                    }
+                    Picker("Dispatcher", selection: $draft.dispatcherID) {
+                        Text("Choose…").tag(nil as UUID?)
+                        ForEach(memberProfiles.filter { $0.role == .dispatcher }) {
+                            Text($0.name).tag($0.id as UUID?)
+                        }
+                    }
+                    Picker("Fallback dispatcher", selection: $draft.fallbackDispatcherID) {
+                        Text("None").tag(nil as UUID?)
+                        ForEach(memberProfiles.filter { $0.role == .dispatcher }) {
+                            Text($0.name).tag($0.id as UUID?)
+                        }
+                    }
+                    Picker("Default writer", selection: $draft.defaultWriterID) {
+                        Text("Choose…").tag(nil as UUID?)
+                        ForEach(memberProfiles.filter { $0.accessCeiling.canWrite }) {
+                            Text($0.name).tag($0.id as UUID?)
+                        }
+                    }
+                    Toggle("Use isolated managed worktree for new Git tasks", isOn: $draft.useManagedWorktree)
+                    Section("Dispatch and routing") {
+                        Picker("Plan approval", selection: Binding(
+                            get: { draft.resolvedDispatchApprovalMode },
+                            set: { draft.dispatchApprovalMode = $0 }
+                        )) {
+                            ForEach(DispatchApprovalMode.allCases) { Text($0.title).tag($0) }
+                        }
+                        Picker("Specialist routing", selection: Binding(
+                            get: { draft.resolvedRoutingMode },
+                            set: { draft.routingMode = $0 }
+                        )) {
+                            ForEach(AgentRoutingMode.allCases) { Text($0.title).tag($0) }
+                        }
+                        TextField("Evaluation tags", text: $evaluationTags, prompt: Text("swift, security, tests"))
+                        TextField(
+                            "Maximum estimated cost",
+                            value: $draft.maximumEstimatedCost,
+                            format: .currency(code: "USD")
+                        )
+                        if draft.resolvedRoutingMode == .scorecard {
+                            scoreWeight("Quality", \.quality)
+                            scoreWeight("Reliability", \.reliability)
+                            scoreWeight("Privacy/locality", \.privacy)
+                            scoreWeight("Latency", \.latency)
+                            scoreWeight("Cost", \.cost)
+                            Text("Weights are normalized to 100% when saved. Limited data is shown until five comparable evaluations exist.")
+                                .font(.system(size: 8))
+                                .foregroundStyle(LocusTheme.muted)
+                        }
+                    }
+                    Section("Hard budgets") {
+                        Stepper("Delegated jobs: \(draft.budget.maxJobs)", value: $draft.budget.maxJobs, in: 1...16)
+                        Stepper("Orchestration rounds: \(draft.budget.maxRounds)", value: $draft.budget.maxRounds, in: 1...8)
+                        Stepper("Model calls: \(draft.budget.maxModelCalls)", value: $draft.budget.maxModelCalls, in: 1...48)
+                        Stepper("Concurrent calls: \(draft.budget.maxConcurrentCalls)", value: $draft.budget.maxConcurrentCalls, in: 1...8)
+                        Stepper("Metered tokens: \(draft.budget.maxMeteredTokens.formatted())", value: $draft.budget.maxMeteredTokens, in: 1_000...2_000_000, step: 10_000)
+                    }
+                    if !errors.isEmpty {
+                        ForEach(errors, id: \.self) { error in
+                            Label(error, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(LocusTheme.coral)
+                                .font(.system(size: 9))
+                        }
                     }
                 }
+                .padding(20)
+                .fixedSize(horizontal: false, vertical: true)
             }
-            Picker("Dispatcher", selection: $draft.dispatcherID) {
-                Text("Choose…").tag(nil as UUID?)
-                ForEach(memberProfiles.filter { $0.role == .dispatcher }) {
-                    Text($0.name).tag($0.id as UUID?)
-                }
-            }
-            Picker("Fallback dispatcher", selection: $draft.fallbackDispatcherID) {
-                Text("None").tag(nil as UUID?)
-                ForEach(memberProfiles.filter { $0.role == .dispatcher }) {
-                    Text($0.name).tag($0.id as UUID?)
-                }
-            }
-            Picker("Default writer", selection: $draft.defaultWriterID) {
-                Text("Choose…").tag(nil as UUID?)
-                ForEach(memberProfiles.filter { $0.accessCeiling.canWrite }) {
-                    Text($0.name).tag($0.id as UUID?)
-                }
-            }
-            Toggle("Use isolated managed worktree for new Git tasks", isOn: $draft.useManagedWorktree)
-            Section("Dispatch and routing") {
-                Picker("Plan approval", selection: Binding(
-                    get: { draft.resolvedDispatchApprovalMode },
-                    set: { draft.dispatchApprovalMode = $0 }
-                )) {
-                    ForEach(DispatchApprovalMode.allCases) { Text($0.title).tag($0) }
-                }
-                Picker("Specialist routing", selection: Binding(
-                    get: { draft.resolvedRoutingMode },
-                    set: { draft.routingMode = $0 }
-                )) {
-                    ForEach(AgentRoutingMode.allCases) { Text($0.title).tag($0) }
-                }
-                TextField("Evaluation tags", text: $evaluationTags, prompt: Text("swift, security, tests"))
-                TextField(
-                    "Maximum estimated cost",
-                    value: $draft.maximumEstimatedCost,
-                    format: .currency(code: "USD")
-                )
-                if draft.resolvedRoutingMode == .scorecard {
-                    scoreWeight("Quality", \.quality)
-                    scoreWeight("Reliability", \.reliability)
-                    scoreWeight("Privacy/locality", \.privacy)
-                    scoreWeight("Latency", \.latency)
-                    scoreWeight("Cost", \.cost)
-                    Text("Weights are normalized to 100% when saved. Limited data is shown until five comparable evaluations exist.")
-                        .font(.system(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
-                }
-            }
-            Section("Hard budgets") {
-                Stepper("Delegated jobs: \(draft.budget.maxJobs)", value: $draft.budget.maxJobs, in: 1...16)
-                Stepper("Orchestration rounds: \(draft.budget.maxRounds)", value: $draft.budget.maxRounds, in: 1...8)
-                Stepper("Model calls: \(draft.budget.maxModelCalls)", value: $draft.budget.maxModelCalls, in: 1...48)
-                Stepper("Concurrent calls: \(draft.budget.maxConcurrentCalls)", value: $draft.budget.maxConcurrentCalls, in: 1...8)
-                Stepper("Metered tokens: \(draft.budget.maxMeteredTokens.formatted())", value: $draft.budget.maxMeteredTokens, in: 1_000...2_000_000, step: 10_000)
-            }
-            let errors = AgentTeamValidation.errors(team: draft, profiles: model.agentProfiles)
-            if !errors.isEmpty {
-                ForEach(errors, id: \.self) { error in
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(LocusTheme.coral)
-                        .font(.system(size: 9))
-                }
-            }
+            .accessibilityIdentifier("teamEditor.scroll")
+
+            Divider()
+
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
+                    .accessibilityIdentifier("teamEditor.cancel")
                 Button("Save") {
                     draft.evaluationTags = evaluationTags.split(separator: ",").map(String.init)
                     draft.clamp()
@@ -661,10 +768,13 @@ private struct AgentTeamEditor: View {
                     .buttonStyle(.borderedProminent)
                     .tint(LocusTheme.ink)
                     .disabled(!errors.isEmpty)
+                    .accessibilityIdentifier("teamEditor.save")
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .background(LocusTheme.paper)
         }
-        .padding(20)
-        .frame(width: 620, height: 760)
+        .frame(width: 620, height: 680)
     }
 
     private var memberProfiles: [AgentProfile] {
