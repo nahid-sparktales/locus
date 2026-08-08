@@ -1,8 +1,36 @@
 # Changelog
 
-## Unreleased
+## 1.11.0 — 2026-08-08
 
 ### Added
+
+- **Adaptive Work and explicit multi-agent teams.** Locus can dispatch bounded
+  work to configured local and hosted specialists, run eligible read-only jobs
+  concurrently, reserve mutations for one fixed writer, and reproduce the
+  current Git state in an isolated managed worktree. Hosted routing requires
+  explicit consent, and team membership, capabilities, cost, calls, tokens, and
+  concurrency all remain visible and bounded.
+- **Durable run history, recovery, and evaluations.** Team activity is persisted
+  before it reaches the interface and is available through a Run Inspector with
+  ordered timelines, evidence, routing explanations, checkpoints, pause/resume,
+  retry, reassignment, replay, and repair guidance. Evaluation suites compare
+  Solo and team configurations in immutable fixtures without applying their
+  changes to the source workspace.
+- **Workspace chats and recoverable chat deletion.** Conversations are grouped
+  under their project folders, each workspace restores its latest chat, and an
+  individual deletion moves history into a recoverable batch with Undo.
+- **Local workspace knowledge and approved memory.** Eligible agents can search a
+  bounded local index and user-approved memories; retrieved content is treated as
+  untrusted data and remains unavailable to Just Chat.
+- **Modern MCP resources, prompts, tasks, progress, and input flows.** Access is
+  deny-by-default per agent, destructive operations remain writer-only and pass
+  through normal permissions, and sensitive input is kept on verified HTTPS
+  pages rather than returned through a model-visible form.
+- **Native Computer Control for signed direct-download builds.** The foreground
+  writer can inspect and operate Mac interfaces after Accessibility and Screen
+  Recording are enabled. It is off by default, globally exclusive, permission
+  gated, unavailable to evaluations, and omitted from the sandboxed App Store
+  build.
 
 - **Locus works behind a proxy.** A new **Settings ▸ Network** tab routes
   outbound traffic — the app's own requests, the agent's model and web traffic,
@@ -23,6 +51,11 @@
   changes always have.
 
 ### Changed
+
+- **The default launch window is now 1250×760.** The extra width keeps the right
+  inspector fully visible in the standard three-column workspace. Existing
+  installs adopt the new centered size once, then macOS continues remembering
+  later user resizing.
 
 - **Accounts and permissions each have their own Settings tab.** Both used to be
   sections buried in General, above the backend and preview fields, which is a

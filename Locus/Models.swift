@@ -192,6 +192,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     case terminal
     case preview
     case checkpoints
+    case runs
     case agents
 
     var id: String { rawValue }
@@ -207,6 +208,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .terminal: "Console"
         case .preview: "Preview"
         case .checkpoints: "Checkpoints"
+        case .runs: "Runs"
         case .agents: "AGENTS.md"
         }
     }
@@ -219,11 +221,12 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .terminal: "terminal"
         case .preview: "safari"
         case .checkpoints: "clock.arrow.circlepath"
+        case .runs: "point.3.connected.trianglepath.dotted"
         case .agents: "doc.text.fill"
         }
     }
 
-    /// ⌘1…⌘7, in declaration order. Existing shortcuts stay stable.
+    /// ⌘1…⌘8, in declaration order. Existing shortcuts stay stable.
     var shortcutKey: Character {
         switch self {
         case .plan: "1"
@@ -232,7 +235,8 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .terminal: "4"
         case .preview: "5"
         case .checkpoints: "6"
-        case .agents: "7"
+        case .runs: "7"
+        case .agents: "8"
         }
     }
 }
@@ -242,6 +246,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case network = "Network"
     case accounts = "Accounts"
     case agents = "Agents & Teams"
+    case knowledge = "Knowledge"
     case permissions = "Permissions"
     case extensions = "Extensions"
 
@@ -253,6 +258,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .network: "network"
         case .accounts: "person.crop.circle"
         case .agents: "person.3.sequence.fill"
+        case .knowledge: "books.vertical.fill"
         case .permissions: "lock.shield"
         case .extensions: "puzzlepiece.extension"
         }
@@ -1108,6 +1114,11 @@ struct AppSettings: Codable, Hashable {
     var adaptiveWorkMigrationCompleted = false
     /// Computer control is opt-in and is ignored in sandboxed builds.
     var computerControlEnabled = false
+    /// OpenTelemetry export is explicit and disabled by default. Endpoint
+    /// authorization lives in CredentialStore, never in these settings.
+    var otlpExportEnabled = false
+    var otlpEndpoint = ""
+    var otlpIncludeContent = false
     /// Raw strings, like the tab: an unknown mode or type saved by a future
     /// version must not fail the whole settings decode.
     var proxyModeRaw = ProxyMode.off.rawValue
@@ -1200,6 +1211,12 @@ struct AppSettings: Codable, Hashable {
             Bool.self,
             forKey: .computerControlEnabled
         ) ?? defaults.computerControlEnabled
+        otlpExportEnabled = try container.decodeIfPresent(Bool.self, forKey: .otlpExportEnabled)
+            ?? defaults.otlpExportEnabled
+        otlpEndpoint = try container.decodeIfPresent(String.self, forKey: .otlpEndpoint)
+            ?? defaults.otlpEndpoint
+        otlpIncludeContent = try container.decodeIfPresent(Bool.self, forKey: .otlpIncludeContent)
+            ?? defaults.otlpIncludeContent
         proxyModeRaw = try container.decodeIfPresent(String.self, forKey: .proxyModeRaw)
             ?? defaults.proxyModeRaw
         proxyTypeRaw = try container.decodeIfPresent(String.self, forKey: .proxyTypeRaw)
@@ -1356,6 +1373,7 @@ struct ExtensionMCPServer: Codable, Identifiable, Hashable {
 }
 
 struct MCPOAuthConfiguration: Codable, Hashable {
+    let issuer: String?
     let authorizationEndpoint: String
     let tokenEndpoint: String
     let clientID: String
@@ -1363,7 +1381,7 @@ struct MCPOAuthConfiguration: Codable, Hashable {
     let redirectURI: String?
 
     enum CodingKeys: String, CodingKey {
-        case scopes
+        case issuer, scopes
         case authorizationEndpoint = "authorization_endpoint"
         case tokenEndpoint = "token_endpoint"
         case clientID = "client_id"

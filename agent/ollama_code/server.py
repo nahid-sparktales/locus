@@ -18,6 +18,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from concurrent.futures import Future
@@ -32,6 +33,8 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request, WebSocket, Web
 from fastapi.responses import JSONResponse
 
 from . import __version__, gitinfo, proxy
+from .capabilities import enabled as capability_enabled
+from .capabilities import snapshot as capability_snapshot
 from .config import (
     MAX_ITERATIONS_CEILING,
     MINIMUM_CONTEXT_WINDOW,
@@ -41,15 +44,26 @@ from .config import (
     save_config,
 )
 from .core import AgentCore
+from .evaluations import (
+    EvaluationError,
+    EvaluationStore,
+    compare_results,
+    grade_case,
+    summarize_results,
+)
 from .extensions import ExtensionError
+from .knowledge import KnowledgeError, KnowledgeStore
 from .ollama import OllamaError, effective_context_length
 from .orchestration import (
+    GLOBAL_MODEL_SCHEDULER,
     OrchestrationError,
     TeamOrchestrator,
     TeamPreparation,
     client_for_profile,
+    orchestration_fingerprint,
     parse_manifest,
 )
+from .runstore import RunStore, RunStoreError
 from .sessions import (
     MAX_SESSION_LINE_BYTES,
     SessionMeta,
@@ -57,6 +71,7 @@ from .sessions import (
     SessionTooLargeError,
     update_session_metadata,
 )
+from .telemetry import TelemetryError, send_otlp
 from .terminal import TerminalManager, TerminalRejected
 from .worktrees import TaskCheckout, TaskCheckoutStore, WorktreeError
 
@@ -103,10 +118,32 @@ class ChatService:
         self.event_pump: asyncio.Task[Any] | None = None
         self.pending_permissions: dict[str, Future[str]] = {}
         self.pending_computer_actions: dict[str, Future[dict[str, Any]]] = {}
+        self.pending_dispatch_decisions: dict[str, Future[dict[str, Any]]] = {}
+        self.pending_dispatch_plans: dict[str, dict[str, Any]] = {}
         self.turn_future: Any = None
         self.active_orchestrator: TeamOrchestrator | None = None
         self.active_team: TeamPreparation | None = None
+        self.active_run_id: str | None = None
+        self.pause_requested = False
+        self.active_evaluation_id: str | None = None
+        self.active_evaluation_core: AgentCore | None = None
         self.current_task: TaskCheckout | None = None
+        self.run_store = RunStore()
+        self.core.mcp.task_store = self.run_store
+        self.core.mcp.context_provider = self.mcp_context
+        self.recoverable_runs = self.run_store.mark_abandoned(
+            GLOBAL_MODEL_SCHEDULER.has_active_lease
+        )
+        self.run_store.prune()
+        for expired_task_id in EvaluationStore(
+            self.run_store
+        ).expired_successful_task_ids():
+            try:
+                TaskCheckoutStore.cleanup(expired_task_id)
+            except WorktreeError:
+                # Missing/in-use fixtures remain visible in their evaluation
+                # result and can be cleaned explicitly later.
+                pass
         self._state_guard = RLock()
         self._state_mutating = False
         core.on_event(self.emit)
@@ -124,6 +161,13 @@ class ChatService:
         if self.background_probes:
             self.core.resolve_context_limit_soon()
 
+    def mcp_context(self) -> dict[str, str]:
+        return {
+            "run_id": self.active_run_id or "",
+            "job_id": "writer" if self.active_team is not None else "",
+            "tool_call_id": self.core.active_tool_call_id,
+        }
+
     # -- core event bridge (called from the worker thread) --
     def emit(self, event: dict[str, Any]) -> None:
         event_type = str(event.get("type") or "")
@@ -131,13 +175,31 @@ class ChatService:
             event = dict(event)
             event.setdefault("worker_id", self.worker_id)
             event.setdefault("process_id", os.getpid())
-        if event_type.startswith(("agent_job_", "orchestration_", "scheduler_lease")) \
+        if event_type.startswith(("agent_job_", "orchestration_", "scheduler_lease", "mcp_task_")) \
                 or event_type == "dispatch_plan":
             event = dict(event)
             event.setdefault("worker_id", self.worker_id)
+        run_id = str(event.get("run_id") or self.active_run_id or "")
+        persisted_types = {
+            "message_start", "message_end", "tool_call_proposed", "permission_request",
+            "tool_result", "steer_ack", "steer_applied", "computer_action_request",
+            "workspace_changed", "note", "error", "dispatch_plan",
+            "orchestration_checkpoint", "dispatch_plan_ready",
+        }
+        if run_id and (
+            event_type in persisted_types
+            or event_type.startswith(("agent_job_", "orchestration_", "scheduler_lease", "mcp_task_"))
+        ):
+            event = dict(event)
+            event.setdefault("run_id", run_id)
+            try:
+                event = self.run_store.append_event(run_id, event)
+            except RunStoreError as exc:
+                event = {**event, "persistence_error": str(exc)}
         if event_type in {"agent_job_started", "agent_job_completed", "dispatch_plan"} \
                 or event_type.startswith("orchestration_") \
-                or event_type.startswith("scheduler_lease"):
+                or event_type.startswith("scheduler_lease") \
+                or event_type.startswith("mcp_task_"):
             # Separate append-only records keep the main transcript format
             # compatible. Route credentials and provider signatures never
             # enter these events.
@@ -166,10 +228,20 @@ class ChatService:
             and not event.get("denied")
         ):
             follow_up = {"type": "workspace_changed", "reason": "tool", "tool": event["tool"]}
-            if running is loop:
-                self.queue.put_nowait(follow_up)
-            else:
-                loop.call_soon_threadsafe(self.queue.put_nowait, follow_up)
+            self.emit(follow_up)
+
+    def checkpoint(self, kind: str, state: dict[str, Any]) -> dict[str, Any] | None:
+        run_id = self.active_run_id
+        if not run_id:
+            return None
+        checkpoint = self.run_store.checkpoint(run_id, kind, state)
+        self.emit({
+            "type": "orchestration_checkpoint",
+            "run_id": run_id,
+            "checkpoint": checkpoint,
+            "state": str(state.get("state") or "running"),
+        })
+        return checkpoint
 
     #: Historical name; the core still registers the handler by this one.
     _on_core_event = emit
@@ -250,6 +322,52 @@ class ChatService:
         for future in list(self.pending_computer_actions.values()):
             if not future.done():
                 future.set_result({"error": "cancelled by the user"})
+
+    def request_dispatch_approval(
+        self, run_id: str, plan: dict[str, Any]
+    ) -> dict[str, Any]:
+        future: Future[dict[str, Any]] = Future()
+        self.pending_dispatch_decisions[run_id] = future
+        self.pending_dispatch_plans[run_id] = dict(plan)
+        try:
+            self.run_store.set_state(run_id, "waiting_dispatch_approval", recoverable=True)
+            self.emit({
+                "type": "dispatch_plan_ready", "run_id": run_id,
+                "state": "waiting_dispatch_approval", "plan": plan,
+            })
+            checkpoint_state: dict[str, Any] = {
+                "state": "waiting_dispatch_approval", "plan": plan,
+                "baseline_tree": self.current_task.baseline_tree
+                if self.current_task is not None else "",
+            }
+            record = self.run_store.run(run_id) or {}
+            try:
+                _, team, profiles, _ = parse_manifest(record.get("manifest"))
+                checkpoint_state["orchestration_fingerprint"] = orchestration_fingerprint(
+                    team, profiles,
+                )
+            except OrchestrationError:
+                # The pending decision remains usable in-process. A restart
+                # will surface a repair checklist instead of reusing an
+                # unverifiable checkpoint.
+                checkpoint_state["orchestration_fingerprint"] = "unavailable"
+            self.checkpoint("dispatch_waiting", checkpoint_state)
+            return future.result()
+        finally:
+            self.pending_dispatch_decisions.pop(run_id, None)
+            self.pending_dispatch_plans.pop(run_id, None)
+
+    def answer_dispatch(self, run_id: str, decision: dict[str, Any]) -> bool:
+        future = self.pending_dispatch_decisions.get(run_id)
+        if future is None or future.done():
+            return False
+        future.set_result(decision)
+        return True
+
+    def cancel_dispatch_decisions(self) -> None:
+        for future in list(self.pending_dispatch_decisions.values()):
+            if not future.done():
+                future.set_result({"action": "cancel"})
 
     @property
     def busy(self) -> bool:
@@ -388,6 +506,11 @@ def service() -> ChatService:
     return svc
 
 
+def _require_capability(name: str) -> None:
+    if not capability_enabled(name):
+        raise HTTPException(404, f"capability is disabled: {name}")
+
+
 # --------------------------------------------------------------------- REST
 
 
@@ -411,12 +534,620 @@ def health() -> dict[str, Any]:
         "model": svc.core.model,
         "error": error,
         "provider": svc.core.provider,
+        "capabilities": capability_snapshot(),
     }
 
 
 @app.get("/api/provider")
 def get_provider() -> dict[str, Any]:
     return service().core.provider_state()
+
+
+# ---------------------------------------------------------- Workspace knowledge
+
+
+def _knowledge_store(workspace: str = "") -> KnowledgeStore:
+    _require_capability("workspace_knowledge")
+    target = workspace.strip() or service().core.workspace_root or service().core.cwd
+    try:
+        return KnowledgeStore(target)
+    except KnowledgeError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/knowledge/status")
+def knowledge_status(workspace: str = Query(default="")) -> dict[str, Any]:
+    return _knowledge_store(workspace).settings()
+
+
+@app.post("/api/knowledge/settings")
+def knowledge_settings(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    store = _knowledge_store(str(body.get("workspace") or ""))
+    enabled = body.get("enabled") if isinstance(body.get("enabled"), bool) else None
+    embedding_model = (
+        str(body.get("embedding_model") or "") if "embedding_model" in body else None
+    )
+    ollama_host = str(body.get("ollama_host") or "") if "ollama_host" in body else None
+    if "exclusions" in body and not isinstance(body.get("exclusions"), list):
+        raise HTTPException(422, "knowledge exclusions must be a list of glob patterns")
+    exclusions = (
+        [str(item) for item in body.get("exclusions") or []]
+        if "exclusions" in body else None
+    )
+    return store.configure(
+        enabled=enabled, embedding_model=embedding_model, ollama_host=ollama_host,
+        exclusions=exclusions,
+    )
+
+
+@app.post("/api/knowledge/reindex")
+def knowledge_reindex(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    store = _knowledge_store(str(body.get("workspace") or ""))
+    return store.reindex()
+
+
+@app.post("/api/knowledge/changes")
+def knowledge_changes(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    store = _knowledge_store(str(body.get("workspace") or ""))
+    raw = body.get("paths")
+    if not isinstance(raw, list):
+        raise HTTPException(422, "paths must be an array")
+    return store.reindex(changed_paths=[str(item) for item in raw[:5_000]])
+
+
+@app.get("/api/knowledge/search")
+def knowledge_search(
+    query: str = Query(min_length=1, max_length=2_000),
+    workspace: str = Query(default=""),
+    limit: int = Query(default=8, ge=1, le=20),
+) -> dict[str, Any]:
+    try:
+        return {"results": _knowledge_store(workspace).search(query, limit=limit)}
+    except KnowledgeError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/knowledge/memories")
+def knowledge_memories(workspace: str = Query(default="")) -> dict[str, Any]:
+    return {"memories": _knowledge_store(workspace).list_memories()}
+
+
+@app.post("/api/knowledge/memories")
+def knowledge_memory_create(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    try:
+        memory = _knowledge_store(str(body.get("workspace") or "")).save_memory(body)
+        return {"ok": True, "memory": memory}
+    except KnowledgeError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.put("/api/knowledge/memories/{memory_id}")
+def knowledge_memory_update(
+    memory_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    try:
+        memory = _knowledge_store(str(body.get("workspace") or "")).save_memory(body, memory_id)
+        return {"ok": True, "memory": memory}
+    except KnowledgeError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.delete("/api/knowledge/memories/{memory_id}")
+def knowledge_memory_delete(memory_id: str, workspace: str = Query(default="")) -> dict[str, Any]:
+    if not _knowledge_store(workspace).delete_memory(memory_id):
+        raise HTTPException(404, "workspace memory not found")
+    return {"ok": True, "id": memory_id}
+
+
+@app.delete("/api/knowledge")
+def knowledge_delete_all(workspace: str = Query(default="")) -> dict[str, Any]:
+    _knowledge_store(workspace).delete_all()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------ Durable MCP tasks
+
+
+@app.get("/api/mcp/tasks")
+def mcp_task_list(
+    run_id: str = Query(default=""), nonterminal: bool = Query(default=False)
+) -> dict[str, Any]:
+    _require_capability("modern_mcp")
+    return {
+        "tasks": service().run_store.mcp_tasks(
+            run_id=run_id, nonterminal=nonterminal,
+        )
+    }
+
+
+@app.post("/api/mcp/tasks/{task_id}/lookup")
+def mcp_task_lookup(task_id: str) -> dict[str, Any]:
+    _require_capability("modern_mcp")
+    try:
+        return {"ok": True, **service().core.mcp.lookup_task(task_id)}
+    except ExtensionError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/mcp/tasks/{task_id}/cancel")
+def mcp_task_cancel(task_id: str) -> dict[str, Any]:
+    _require_capability("modern_mcp")
+    try:
+        return {"ok": True, **service().core.mcp.cancel_task(task_id)}
+    except ExtensionError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+# --------------------------------------------------------------- Evaluations
+
+
+def _evaluation_store() -> EvaluationStore:
+    _require_capability("evaluations")
+    return EvaluationStore(service().run_store)
+
+
+@app.get("/api/evaluations")
+def evaluation_list(workspace: str = Query(default="")) -> dict[str, Any]:
+    return {"suites": _evaluation_store().list_suites(workspace)}
+
+
+@app.post("/api/evaluations")
+def evaluation_create(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    try:
+        return {"ok": True, "suite": _evaluation_store().save_suite(body)}
+    except EvaluationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/evaluations/{suite_id}")
+def evaluation_detail(suite_id: str) -> dict[str, Any]:
+    suite = _evaluation_store().get_suite(suite_id)
+    if suite is None:
+        raise HTTPException(404, "evaluation suite not found")
+    results = _evaluation_store().results(suite_id)
+    return {
+        "suite": suite, "results": results,
+        "summary": summarize_results(results), "comparison": compare_results(results),
+    }
+
+
+@app.get("/api/evaluations/{suite_id}/comparison")
+def evaluation_comparison(suite_id: str) -> dict[str, Any]:
+    if _evaluation_store().get_suite(suite_id) is None:
+        raise HTTPException(404, "evaluation suite not found")
+    results = _evaluation_store().results(suite_id)
+    return {"suite_id": suite_id, "configurations": compare_results(results)}
+
+
+@app.get("/api/evaluations/{suite_id}/export")
+def evaluation_export(suite_id: str, include_results: bool = Query(default=False)) -> dict[str, Any]:
+    suite = _evaluation_store().get_suite(suite_id)
+    if suite is None:
+        raise HTTPException(404, "evaluation suite not found")
+    export: dict[str, Any] = {"schema_version": 1, "suite": suite}
+    if include_results:
+        export["results"] = _evaluation_store().results(suite_id)
+    return export
+
+
+@app.put("/api/evaluations/{suite_id}")
+def evaluation_update(
+    suite_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    try:
+        return {"ok": True, "suite": _evaluation_store().save_suite(body, suite_id)}
+    except EvaluationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.delete("/api/evaluations/{suite_id}")
+def evaluation_delete(suite_id: str) -> dict[str, Any]:
+    if not _evaluation_store().delete_suite(suite_id):
+        raise HTTPException(404, "evaluation suite not found")
+    return {"ok": True, "id": suite_id}
+
+
+@app.post("/api/evaluations/{suite_id}/grade")
+def evaluation_grade(
+    suite_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    suite = _evaluation_store().get_suite(suite_id)
+    if suite is None:
+        raise HTTPException(404, "evaluation suite not found")
+    case_id = str(body.get("case_id") or "")
+    case = next((item for item in suite["cases"] if item["id"] == case_id), None)
+    if case is None:
+        raise HTTPException(404, "evaluation case not found")
+    checkout = str(body.get("checkout") or "")
+    source_root = Path(suite["workspace_root"]).resolve()
+    checkout_path = Path(checkout).resolve()
+    if checkout_path != source_root or str(case.get("mode")) != "read_only":
+        # Managed evaluation checkouts live outside the source root; require a
+        # known TaskCheckout record instead of accepting arbitrary paths.
+        task_id = str(body.get("task_id") or "")
+        task = TaskCheckoutStore.load(task_id) if task_id else None
+        if task is None or Path(task.execution_path).resolve() != checkout_path:
+            raise HTTPException(422, "checkout is not a managed evaluation task")
+    try:
+        result = grade_case(
+            case, checkout, str(body.get("output") or ""),
+            [str(item) for item in body.get("changed_paths") or []],
+        )
+    except EvaluationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"case_id": case_id, **result}
+
+
+@app.post("/api/evaluations/{suite_id}/run")
+async def evaluation_run(
+    suite_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    svc = service()
+    suite = _evaluation_store().get_suite(suite_id)
+    if suite is None:
+        raise HTTPException(404, "evaluation suite not found")
+    manifest = body.get("manifest")
+    raw_manifests = body.get("manifests")
+    manifests = {
+        str(team_id): dict(value)
+        for team_id, value in raw_manifests.items()
+        if str(team_id) and isinstance(value, dict)
+    } if isinstance(raw_manifests, dict) else {}
+    if len(manifests) > 32:
+        raise HTTPException(422, "an evaluation run may reference at most 32 teams")
+    needs_team = any(str(case.get("target") or "team") == "team" for case in suite["cases"])
+    missing_team = any(
+        str(case.get("target") or "team") == "team"
+        and not (
+            isinstance(manifest, dict)
+            or str(case.get("team_id") or "") in manifests
+            or (not str(case.get("team_id") or "") and len(manifests) == 1)
+        )
+        for case in suite["cases"]
+    )
+    if needs_team and missing_team:
+        raise HTTPException(422, "team evaluation cases require a configured team manifest")
+    if not isinstance(manifest, dict):
+        manifest = {}
+    if svc.busy:
+        raise _busy_http()
+    loop = asyncio.get_running_loop()
+    evaluation_id = uuid.uuid4().hex
+    if not svc.start_turn(
+        loop, _run_evaluation_suite, svc, suite, dict(manifest), manifests, evaluation_id,
+    ):
+        raise _busy_http()
+    return {"ok": True, "evaluation_id": evaluation_id, "state": "queued"}
+
+
+@app.post("/api/evaluations/runs/{evaluation_id}/cancel")
+def evaluation_cancel(evaluation_id: str) -> dict[str, Any]:
+    svc = service()
+    if svc.active_evaluation_id != evaluation_id:
+        raise HTTPException(409, "that evaluation is not currently running")
+    svc.core.interrupt()
+    if svc.active_evaluation_core is not None:
+        svc.active_evaluation_core.interrupt()
+    return {"ok": True, "evaluation_id": evaluation_id, "state": "cancelling"}
+
+
+def _run_evaluation_suite(
+    parent: ChatService,
+    suite: dict[str, Any],
+    manifest: dict[str, Any],
+    manifests: dict[str, dict[str, Any]],
+    evaluation_id: str,
+) -> None:
+    """Execute evaluation cases in disposable task checkouts.
+
+    The source workspace is only read while each baseline is captured. The
+    evaluation owns a separate AgentCore/session and never exposes Apply.
+    """
+    store = EvaluationStore(parent.run_store)
+    parent.emit({
+        "type": "evaluation_started", "evaluation_id": evaluation_id,
+        "suite_id": suite["id"], "case_count": len(suite["cases"]),
+    })
+    parent.active_evaluation_id = evaluation_id
+    try:
+        for index, case in enumerate(suite["cases"]):
+            if parent.core._interrupt.is_set():
+                break
+            run_id = f"eval-{evaluation_id[:12]}-{index + 1}"
+            task_id = run_id
+            result_id = store.start_result(str(suite["id"]), str(case["id"]), run_id)
+            started = time.monotonic()
+            parent.emit({
+                "type": "evaluation_case_started", "evaluation_id": evaluation_id,
+                "suite_id": suite["id"], "case_id": case["id"],
+                "case_index": index, "run_id": run_id,
+            })
+            evaluation_core: AgentCore | None = None
+            timeout_timer: threading.Timer | None = None
+            timed_out = threading.Event()
+            try:
+                fixture = case.get("baseline_fixture")
+                fixture_id = (
+                    str(fixture.get("task_id") or "")
+                    if isinstance(fixture, dict) else ""
+                )
+                fixture_task = TaskCheckoutStore.load(fixture_id) if fixture_id else None
+                task = (
+                    TaskCheckoutStore.replay(fixture_task, task_id)
+                    if fixture_task is not None
+                    else TaskCheckoutStore.create(str(suite["workspace_root"]), task_id)
+                )
+                task.state = "running"
+                task.save()
+                evaluation_core = AgentCore(
+                    model=parent.core.model,
+                    cwd=task.execution_path,
+                    skip_permissions=True,
+                    config=parent.core.config,
+                )
+                parent.active_evaluation_core = evaluation_core
+                evaluation_core.tool_registry.computer_enabled = False
+                read_only = str(case.get("mode") or "write") == "read_only"
+                evaluation_core.evaluation_read_only = read_only
+                evaluation_core.tool_registry.set_mcp_agent_policy(
+                    {},
+                    access_ceiling="read_only" if read_only else "workspace_write",
+                    role="evaluation",
+                )
+                evaluation_service = ChatService(evaluation_core)
+                evaluation_service.run_store = parent.run_store
+                evaluation_service.core.mcp.task_store = parent.run_store
+                evaluation_service.current_task = task
+                evaluation_service.core.enter_task_checkout(
+                    task.execution_path, task.workspace_root, task.as_dict(),
+                )
+                requested_team = str(case.get("team_id") or "")
+                selected_manifest = manifests.get(requested_team)
+                if selected_manifest is None and not requested_team and len(manifests) == 1:
+                    selected_manifest = next(iter(manifests.values()))
+                case_manifest = dict(selected_manifest or manifest)
+                case_manifest["run_id"] = run_id
+                team_value = dict(case_manifest.get("team") or {})
+                team_value["use_managed_worktree"] = True
+                if isinstance(case.get("budget"), dict):
+                    team_value["budget"] = dict(case["budget"])
+                case_manifest["team"] = team_value
+                # Evaluation tools are local-only: computer control and
+                # mutating MCP access stay absent even when a profile normally
+                # allows them. A read-only suite may retain explicit MCP
+                # allowlists, which are still annotation-gated by the runtime.
+                profile_values = []
+                for raw_profile in case_manifest.get("profiles") or []:
+                    profile_value = dict(raw_profile)
+                    if not (read_only and suite.get("read_only_mcp")):
+                        profile_value["mcp_policy"] = {}
+                    profile_values.append(profile_value)
+                if profile_values:
+                    case_manifest["profiles"] = profile_values
+                target = str(case.get("target") or "team")
+                timeout_seconds = int(case.get("timeout_seconds") or 1_800)
+
+                def timeout_case(
+                    timeout_event: threading.Event = timed_out,
+                    case_core: AgentCore = evaluation_core,
+                ) -> None:
+                    timeout_event.set()
+                    case_core.interrupt()
+
+                timeout_timer = threading.Timer(timeout_seconds, timeout_case)
+                timeout_timer.daemon = True
+                timeout_timer.start()
+                if target == "solo":
+                    parent.run_store.start_run(
+                        run_id,
+                        session_id=evaluation_core.session.session_id,
+                        workspace_root=task.workspace_root,
+                        execution_path=task.execution_path,
+                        task_id=task.id,
+                        request=str(case["prompt"]),
+                        state="running",
+                    )
+                    evaluation_service.active_run_id = run_id
+                    evaluation_core.client = parent.core.client
+                    evaluation_core.provider = parent.core.provider
+                    evaluation_core.host = parent.core.host
+                    evaluation_core.model = parent.core.model
+                    budget = case.get("budget") if isinstance(case.get("budget"), dict) else {}
+                    evaluation_core.max_iterations = min(
+                        evaluation_core.max_iterations,
+                        int(budget.get("max_model_calls") or evaluation_core.max_iterations),
+                    )
+                    parent.emit({
+                        "type": "scheduler_lease_waiting", "run_id": run_id,
+                        "agent_id": "solo-evaluation",
+                        "active_leases": GLOBAL_MODEL_SCHEDULER.active_count,
+                    })
+                    with GLOBAL_MODEL_SCHEDULER.lease(
+                        run_id, evaluation_core._should_stop_stream,
+                    ) as lease_id:
+                        parent.emit({
+                            "type": "scheduler_lease_acquired", "run_id": run_id,
+                            "agent_id": "solo-evaluation", "lease_id": lease_id,
+                            "active_leases": GLOBAL_MODEL_SCHEDULER.active_count,
+                        })
+                        heartbeat_stop = threading.Event()
+
+                        def heartbeat(stop_event: threading.Event = heartbeat_stop) -> None:
+                            while not stop_event.wait(10):
+                                if not GLOBAL_MODEL_SCHEDULER.heartbeat(lease_id):
+                                    return
+
+                        heartbeat_thread = threading.Thread(
+                            target=heartbeat, name="locus-evaluation-lease", daemon=True,
+                        )
+                        heartbeat_thread.start()
+                        try:
+                            evaluation_core.run_turn(
+                                str(case["prompt"]), lambda *_: "deny", allow_tools=True,
+                            )
+                        finally:
+                            heartbeat_stop.set()
+                            parent.emit({
+                                "type": "scheduler_lease_released", "run_id": run_id,
+                                "agent_id": "solo-evaluation", "lease_id": lease_id,
+                            })
+                    solo_reason = str(evaluation_core.last_turn_result.get("reason") or "")
+                    parent.run_store.set_state(
+                        run_id,
+                        "completed" if solo_reason in {"complete", "max_iterations"} else "failed",
+                    )
+                    evaluation_service.active_run_id = None
+                else:
+                    _run_team_turn(evaluation_service, str(case["prompt"]), case_manifest)
+                run = parent.run_store.run(run_id) or {}
+                patch_text, current_tree = task.patch()
+                changed = _evaluation_changed_paths(task, current_tree)
+                output = next((
+                    str(message.get("content") or "")
+                    for message in reversed(evaluation_core.messages)
+                    if message.get("role") == "assistant"
+                ), "")
+                grade = grade_case(case, task.execution_path, output, changed)
+                succeeded = str(run.get("state") or "") == "completed"
+                rubric_result: dict[str, Any] | None = None
+                if grade["deterministic_passed"] and str(case.get("rubric") or "").strip():
+                    judge_id = str(case.get("judge_profile_id") or "")
+                    if judge_id and case_manifest.get("profiles"):
+                        _, judge_team, judge_profiles, _ = parse_manifest(case_manifest)
+                        judge = judge_profiles.get(judge_id)
+                        if judge is None or judge.role != "reviewer":
+                            raise EvaluationError(
+                                "the evaluation judge must be an eligible reviewer profile"
+                            )
+                        rubric_result = TeamOrchestrator(
+                            parent.emit,
+                            evaluation_core._should_stop_stream,
+                            run_store=parent.run_store,
+                        ).evaluate_rubric(
+                            run_id, judge, judge_team.budget,
+                            case=case, output=output, diff_text=patch_text, evidence=grade,
+                        )
+                rubric_passed = rubric_result is None or (
+                    float(rubric_result["score"]) >= float(case.get("passing_score") or 80)
+                )
+                passed = (
+                    not timed_out.is_set()
+                    and succeeded
+                    and bool(grade["deterministic_passed"])
+                    and rubric_passed
+                )
+                usage = run.get("usage") if isinstance(run.get("usage"), dict) else {}
+                model_calls = int(
+                    usage.get("model_calls")
+                    or evaluation_core.last_turn_result.get("model_calls")
+                    or 0
+                )
+                value = store.finish_result(result_id, {
+                    "state": "passed" if passed else "failed",
+                    **grade,
+                    "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
+                    "model_calls": model_calls,
+                    "prompt_tokens": evaluation_core.total_prompt_tokens,
+                    "completion_tokens": evaluation_core.total_completion_tokens,
+                    "estimated_cost": float(usage.get("estimated_cost") or 0),
+                    "output": output,
+                    "rubric_score": rubric_result["score"] if rubric_result else None,
+                    "rubric_reason": rubric_result["reason"] if rubric_result else "",
+                    "rubric_subjective": bool(rubric_result),
+                    "patch_bytes": len(patch_text.encode("utf-8", errors="surrogateescape")),
+                    "task_id": task_id,
+                    "target": target,
+                    "team_id": str(
+                        case.get("team_id")
+                        or (case_manifest.get("team") or {}).get("id")
+                        or ""
+                    ),
+                    "retries": sum(
+                        max(int(attempt.get("attempt") or 1) - 1, 0)
+                        for attempt in run.get("attempts") or []
+                    ),
+                    "failure_category": "" if passed else (
+                        "timeout" if timed_out.is_set() else
+                        "provider_or_runtime" if not succeeded else
+                        "deterministic_assertion" if not grade["deterministic_passed"] else
+                        "subjective_rubric"
+                    ),
+                })
+                if target == "team" and case_manifest.get("profiles"):
+                    _, _, evaluation_profiles, _ = parse_manifest(case_manifest)
+                    quality = float(
+                        rubric_result["score"] if rubric_result else (100 if passed else 0)
+                    )
+                    for attempt in run.get("attempts") or []:
+                        agent = evaluation_profiles.get(str(attempt.get("agent_id") or ""))
+                        result = attempt.get("result") if isinstance(attempt.get("result"), dict) else {}
+                        if agent is None:
+                            continue
+                        estimated_cost = (
+                            int(result.get("prompt_tokens") or 0) * agent.input_cost_per_million
+                            + int(result.get("completion_tokens") or 0)
+                            * agent.output_cost_per_million
+                        ) / 1_000_000
+                        parent.run_store.record_routing_sample(
+                            agent.id,
+                            tags=[str(item) for item in case.get("tags") or []],
+                            quality=quality,
+                            reliable=succeeded and not bool(result.get("error")),
+                            latency_ms=int(result.get("elapsed_ms") or value["duration_ms"]),
+                            estimated_cost=estimated_cost,
+                            local=agent.route.get("provider") == "ollama",
+                            evaluation=True,
+                        )
+                parent.emit({
+                    "type": "evaluation_case_completed",
+                    "evaluation_id": evaluation_id,
+                    "suite_id": suite["id"], "case_id": case["id"],
+                    "run_id": run_id, "result": value,
+                })
+            except (
+                EvaluationError, InterruptedError, WorktreeError, OrchestrationError, OSError,
+            ) as exc:
+                value = store.finish_result(result_id, {
+                    "state": "failed", "error": str(exc),
+                    "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
+                    "target": str(case.get("target") or "team"),
+                    "team_id": str(case.get("team_id") or ""),
+                    "failure_category": "timeout" if timed_out.is_set() else "runtime",
+                })
+                parent.emit({
+                    "type": "evaluation_case_completed", "evaluation_id": evaluation_id,
+                    "suite_id": suite["id"], "case_id": case["id"],
+                    "run_id": run_id, "result": value,
+                })
+            finally:
+                if timeout_timer is not None:
+                    timeout_timer.cancel()
+                parent.active_evaluation_core = None
+                if evaluation_core is not None:
+                    evaluation_core.mcp.close()
+        results = store.results(str(suite["id"]))
+        parent.emit({
+            "type": "evaluation_completed", "evaluation_id": evaluation_id,
+            "suite_id": suite["id"], "summary": summarize_results(results),
+            "state": "interrupted" if parent.core._interrupt.is_set() else "completed",
+        })
+    finally:
+        parent.active_evaluation_id = None
+        parent.active_evaluation_core = None
+        parent.core._interrupt.clear()
+
+
+def _evaluation_changed_paths(task: TaskCheckout, current_tree: str) -> list[str]:
+    result = subprocess.run(
+        ["git", "diff", "--name-only", "-z", task.baseline_tree, current_tree, "--"],
+        cwd=task.execution_path, capture_output=True, timeout=120, check=False,
+    )
+    if result.returncode != 0:
+        raise WorktreeError(result.stderr.decode("utf-8", errors="replace").strip())
+    return [
+        item.decode("utf-8", errors="replace")
+        for item in result.stdout.split(b"\0") if item
+    ]
 
 
 @app.post("/api/provider")
@@ -678,6 +1409,334 @@ def session_detail(session_id: str) -> dict[str, Any]:
     }
 
 
+# ------------------------------------------------------- Durable orchestrations
+
+
+@app.get("/api/orchestrations")
+def orchestration_list(
+    session_id: str = Query(default="", max_length=160),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> dict[str, Any]:
+    _require_capability("durable_runs")
+    store = service().run_store
+    if session_id and not store.list_runs(session_id=session_id, limit=1):
+        path = SessionStore.path_for(session_id)
+        if path is not None:
+            snapshot = SessionStore.agent_activity(path)
+            header = SessionStore.header(path)
+            store.import_legacy_snapshot(
+                session_id, snapshot, workspace_root=str(header.get("cwd") or ""),
+            )
+    return {
+        "runs": store.list_runs(session_id=session_id, limit=limit),
+        "read_only": store.read_only,
+    }
+
+
+@app.get("/api/orchestrations/{run_id}")
+def orchestration_detail(run_id: str) -> dict[str, Any]:
+    _require_capability("durable_runs")
+    value = service().run_store.run(run_id)
+    if value is None:
+        raise HTTPException(404, f"orchestration not found: {run_id}")
+    return value
+
+
+@app.patch("/api/orchestrations/{run_id}")
+def orchestration_update(
+    run_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    _require_capability("durable_runs")
+    if not isinstance(body.get("pinned"), bool):
+        raise HTTPException(422, "pinned must be a boolean")
+    try:
+        return service().run_store.set_pinned(run_id, bool(body["pinned"]))
+    except RunStoreError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.get("/api/orchestrations/{run_id}/events")
+def orchestration_events(
+    run_id: str,
+    after_seq: int = Query(default=0, ge=0),
+    limit: int = Query(default=5_000, ge=1, le=10_000),
+) -> dict[str, Any]:
+    _require_capability("durable_runs")
+    store = service().run_store
+    if store.run(run_id) is None:
+        raise HTTPException(404, f"orchestration not found: {run_id}")
+    events = store.events(run_id, after_seq=after_seq, limit=limit)
+    return {
+        "run_id": run_id,
+        "after_seq": after_seq,
+        "events": events,
+        "last_seq": int(events[-1].get("seq") or after_seq) if events else after_seq,
+    }
+
+
+@app.get("/api/orchestrations/{run_id}/export")
+def orchestration_export(
+    run_id: str,
+    include_content: bool = Query(default=False),
+) -> dict[str, Any]:
+    _require_capability("durable_runs")
+    try:
+        return service().run_store.export(run_id, include_content=include_content)
+    except RunStoreError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/orchestrations/{run_id}/otlp")
+def orchestration_otlp(
+    run_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    _require_capability("durable_runs")
+    try:
+        return send_otlp(
+            service().run_store,
+            run_id,
+            str(body.get("endpoint") or ""),
+            authorization=str(body.get("authorization") or ""),
+            include_content=bool(body.get("include_content")),
+        )
+    except RunStoreError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except TelemetryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/orchestrations/{run_id}/pause")
+def orchestration_pause(run_id: str) -> dict[str, Any]:
+    _require_capability("recovery_controls")
+    svc = service()
+    if svc.active_run_id != run_id or not svc.busy:
+        raise HTTPException(409, "that orchestration is not actively running")
+    svc.pause_requested = True
+    svc.run_store.set_state(
+        run_id, "pausing", recoverable=False,
+        reason="Waiting for the next safe boundary before pausing.",
+    )
+    svc.core.interrupt()
+    svc.deny_all_pending()
+    svc.cancel_all_computer_actions()
+    svc.cancel_dispatch_decisions()
+    svc.core.mcp.cancel_pending_inputs()
+    svc.emit({
+        "type": "orchestration_pause_requested", "run_id": run_id,
+        "state": "pausing",
+    })
+    return {"ok": True, "run_id": run_id, "state": "pausing"}
+
+
+@app.post("/api/orchestrations/{run_id}/cancel")
+def orchestration_cancel(run_id: str) -> dict[str, Any]:
+    _require_capability("recovery_controls")
+    svc = service()
+    if svc.active_run_id == run_id and svc.busy:
+        svc.pause_requested = False
+        svc.core.interrupt()
+        svc.deny_all_pending()
+        svc.cancel_all_computer_actions()
+        svc.cancel_dispatch_decisions()
+        svc.core.mcp.cancel_pending_inputs()
+    try:
+        svc.run_store.set_state(run_id, "cancelled", recoverable=False)
+    except RunStoreError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {"ok": True, "run_id": run_id, "state": "cancelled"}
+
+
+@app.post("/api/orchestrations/{run_id}/discard")
+def orchestration_discard(run_id: str) -> dict[str, Any]:
+    _require_capability("recovery_controls")
+    svc = service()
+    if svc.active_run_id == run_id and svc.busy:
+        raise HTTPException(409, "stop the active orchestration before discarding it")
+    try:
+        return {"ok": True, "run": svc.run_store.discard(run_id)}
+    except RunStoreError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/orchestrations/{run_id}/dispatch-decision")
+def orchestration_dispatch_decision(
+    run_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    _require_capability("adaptive_routing")
+    action = str(body.get("action") or "cancel")
+    if action not in {"run", "redispatch", "cancel"}:
+        raise HTTPException(422, "action must be run, redispatch, or cancel")
+    decision: dict[str, Any] = {"action": action}
+    if isinstance(body.get("plan"), dict):
+        decision["plan"] = body["plan"]
+    if not service().answer_dispatch(run_id, decision):
+        raise HTTPException(409, "that dispatch plan is no longer waiting")
+    return {"ok": True, "run_id": run_id, "action": action}
+
+
+async def _resume_orchestration(
+    run_id: str,
+    body: dict[str, Any],
+    *,
+    action: str,
+) -> dict[str, Any]:
+    _require_capability("recovery_controls")
+    svc = service()
+    record = svc.run_store.run(run_id)
+    if record is None:
+        raise HTTPException(404, f"orchestration not found: {run_id}")
+    if svc.busy:
+        raise _busy_http()
+    manifest = body.get("manifest")
+    if not isinstance(manifest, dict):
+        raise HTTPException(422, "resume requires the current in-memory team manifest")
+    manifest = dict(manifest)
+    if action in {"resume", "retry", "reassign"}:
+        manifest["run_id"] = run_id
+    else:
+        manifest["run_id"] = uuid.uuid4().hex
+    checkpoint = record.get("checkpoint")
+    if action in {"resume", "retry", "reassign"}:
+        if not isinstance(checkpoint, dict):
+            raise HTTPException(409, "this run has no stable checkpoint to resume")
+        manifest["_resume"] = checkpoint.get("state") or {}
+        manifest["_resume_from_run_id"] = run_id
+    if action == "retry":
+        job_id = str(body.get("job_id") or "")
+        if not job_id:
+            raise HTTPException(422, "job_id is required")
+        manifest["_retry_job"] = job_id
+    if action == "reassign":
+        job_id = str(body.get("job_id") or "")
+        agent_id = str(body.get("agent_id") or "")
+        if not job_id or not agent_id:
+            raise HTTPException(422, "job_id and agent_id are required")
+        manifest["_reassign"] = {"job_id": job_id, "agent_id": agent_id}
+    task_id = str(record.get("task_id") or "")
+    source_task = TaskCheckoutStore.load(task_id) if task_id else None
+    if action in {"resume", "retry", "reassign", "replay"} and task_id and source_task is None:
+        raise HTTPException(409, "the managed checkout for this run is missing")
+    checkpoint_state = (
+        checkpoint.get("state") if isinstance(checkpoint, dict)
+        and isinstance(checkpoint.get("state"), dict) else {}
+    )
+    expected_baseline = str(checkpoint_state.get("baseline_tree") or "")
+    if source_task is not None and expected_baseline \
+            and source_task.baseline_tree != expected_baseline:
+        raise HTTPException(409, "the managed checkout no longer matches its recovery baseline")
+    task = source_task
+    if action == "replay" and source_task is not None:
+        task = TaskCheckoutStore.replay(source_task, str(manifest["run_id"]))
+    elif action == "duplicate":
+        task = None
+        svc.current_task = None
+        try:
+            svc.core.leave_task_checkout(str(record.get("workspace_root") or ""))
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+    if task is not None:
+        svc.current_task = task
+        svc.core.enter_task_checkout(task.execution_path, task.workspace_root, task.as_dict())
+    request_text = str(record.get("request") or "")
+    if not request_text:
+        raise HTTPException(409, "the original request is unavailable")
+    loop = asyncio.get_running_loop()
+    if not svc.start_turn(loop, _run_team_turn, svc, request_text, manifest):
+        raise _busy_http()
+    return {
+        "ok": True,
+        "action": action,
+        "source_run_id": run_id,
+        "run_id": str(manifest["run_id"]),
+        "state": "queued",
+    }
+
+
+@app.post("/api/orchestrations/{run_id}/resume")
+async def orchestration_resume(
+    run_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    return await _resume_orchestration(run_id, body, action="resume")
+
+
+@app.post("/api/orchestrations/{run_id}/recovery-assessment")
+def orchestration_recovery_assessment(
+    run_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    """Validate reusable state without making a provider call or changing the run."""
+    _require_capability("recovery_controls")
+    record = service().run_store.run(run_id)
+    if record is None:
+        raise HTTPException(404, f"orchestration not found: {run_id}")
+    repairs: list[str] = []
+    checkpoint = record.get("checkpoint")
+    state = checkpoint.get("state") if isinstance(checkpoint, dict) else None
+    if record.get("legacy"):
+        repairs.append("Legacy imported runs are inspectable but not replayable.")
+    if not isinstance(state, dict):
+        repairs.append("No stable checkpoint is available.")
+        state = {}
+    task_id = str(record.get("task_id") or "")
+    task = TaskCheckoutStore.load(task_id) if task_id else None
+    if task_id and task is None:
+        repairs.append("The managed checkout is missing.")
+    expected_baseline = str(state.get("baseline_tree") or "")
+    if task is not None and expected_baseline and task.baseline_tree != expected_baseline:
+        repairs.append("The private task baseline changed.")
+    manifest = body.get("manifest")
+    if not isinstance(manifest, dict):
+        repairs.append("The current team profiles and credentials are required.")
+    else:
+        try:
+            _, team, profiles, _ = parse_manifest(manifest)
+            expected = str(state.get("orchestration_fingerprint") or "")
+            if not expected or expected == "unavailable":
+                repairs.append("The checkpoint has no verifiable team fingerprint.")
+            elif orchestration_fingerprint(team, profiles) != expected:
+                repairs.append("The team or profile configuration changed.")
+        except OrchestrationError as exc:
+            repairs.append(str(exc))
+    reusable = [
+        str(result.get("job_id") or "") for result in state.get("results") or []
+        if isinstance(result, dict) and str(result.get("job_id") or "")
+    ]
+    return {
+        "run_id": run_id,
+        "can_resume": not repairs,
+        "repair_checklist": repairs,
+        "reusable_job_ids": reusable,
+        "writer_continuation": bool(task is not None),
+    }
+
+
+@app.post("/api/orchestrations/{run_id}/jobs/{job_id}/retry")
+async def orchestration_retry_job(
+    run_id: str, job_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    return await _resume_orchestration(run_id, {**body, "job_id": job_id}, action="retry")
+
+
+@app.post("/api/orchestrations/{run_id}/jobs/{job_id}/reassign")
+async def orchestration_reassign_job(
+    run_id: str, job_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    return await _resume_orchestration(run_id, {**body, "job_id": job_id}, action="reassign")
+
+
+@app.post("/api/orchestrations/{run_id}/replay")
+async def orchestration_replay(
+    run_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    return await _resume_orchestration(run_id, body, action="replay")
+
+
+@app.post("/api/orchestrations/{run_id}/duplicate")
+async def orchestration_duplicate(
+    run_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    return await _resume_orchestration(run_id, body, action="duplicate")
+
+
 @app.get("/api/tasks/{task_id}")
 def task_detail(task_id: str) -> dict[str, Any]:
     """Return task metadata and its complete baseline-relative binary patch."""
@@ -716,6 +1775,27 @@ def task_apply(task_id: str) -> dict[str, Any]:
                 **result,
             })
             return {"task": task.as_dict(), **result}
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except WorktreeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.delete("/api/tasks/{task_id}")
+def task_cleanup(task_id: str) -> dict[str, Any]:
+    """Explicitly remove a managed task checkout without touching its workspace."""
+    svc = service()
+    task = TaskCheckoutStore.load(task_id)
+    if task is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    if svc.busy:
+        raise _busy_http()
+    try:
+        with svc.state_mutation():
+            if svc.current_task and svc.current_task.id == task_id:
+                svc.core.leave_task_checkout(task.workspace_root)
+                svc.current_task = None
+            return TaskCheckoutStore.cleanup(task_id)
     except AgentBusyError as exc:
         raise _busy_http() from exc
     except WorktreeError as exc:
@@ -1350,12 +2430,29 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
     started = time.monotonic()
     terminal_reason = "complete"
     core._suppress_turn_done = True
+    run_id = str(manifest.get("run_id") or uuid.uuid4().hex)
+    svc.active_run_id = run_id
+    svc.pause_requested = False
     try:
         run_id, team, _, _ = parse_manifest(manifest)
+        svc.run_store.start_run(
+            run_id,
+            session_id=core.session.session_id,
+            team_id=team.id,
+            team_name=team.name,
+            worker_id=svc.worker_id,
+            workspace_root=core.workspace_root,
+            execution_path=core.cwd,
+            task_id=svc.current_task.id if svc.current_task else "",
+            request=text,
+            manifest=manifest,
+            state="dispatching",
+        )
         # Persist the visible request before dispatch can spend minutes on
         # specialists. This makes a brand-new background task immediately
         # addressable in the sidebar. Internal writer prompts stay in memory.
-        core._add_message({"role": "user", "content": text})
+        if not isinstance(manifest.get("_resume"), dict):
+            core._add_message({"role": "user", "content": text})
         workspace_root = core.workspace_root
         if team.use_managed_worktree and svc.current_task is None \
                 and _is_git_workspace(workspace_root):
@@ -1363,6 +2460,7 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
             task.state = "running"
             task.save()
             svc.current_task = task
+            svc.run_store.update_task(run_id, task.as_dict())
             core.enter_task_checkout(task.execution_path, task.workspace_root, task.as_dict())
             SessionMeta.update(
                 core.session.session_id,
@@ -1374,13 +2472,24 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
             )
             svc.emit({"type": "task_ready", "task": task.as_dict(), "state": "running"})
 
-        orchestrator = TeamOrchestrator(svc.emit, core._should_stop_stream)
+        orchestrator = TeamOrchestrator(
+            svc.emit,
+            core._should_stop_stream,
+            run_store=svc.run_store,
+            approve_dispatch=svc.request_dispatch_approval,
+        )
         svc.active_orchestrator = orchestrator
         prepared: TeamPreparation | None = None
         request = text
         for _round in range(team.budget.max_rounds):
             try:
-                prepared = orchestrator.prepare(request, core.cwd, manifest)
+                resume_state = manifest.get("_resume")
+                if isinstance(resume_state, dict) and not resume_state.get("restart_dispatch"):
+                    prepared = orchestrator.resume_preparation(
+                        request, core.cwd, manifest, resume_state,
+                    )
+                else:
+                    prepared = orchestrator.prepare(request, core.cwd, manifest)
                 break
             except InterruptedError:
                 if core._interrupt.is_set():
@@ -1398,6 +2507,9 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
         if prepared is None:
             raise OrchestrationError("the orchestration-round budget ended before dispatch completed")
         svc.active_team = prepared
+        svc.checkpoint(
+            "dispatch_complete", _team_checkpoint_state(prepared, "running", svc.current_task)
+        )
 
         route_snapshot = _install_writer_route(core, prepared)
         try:
@@ -1406,13 +2518,18 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
                 orchestrator,
                 prepared,
                 prepared.writer_prompt,
-                persisted_user_text=text,
+                persisted_user_text=(
+                    "[Resumed team run]" if isinstance(manifest.get("_resume"), dict) else text
+                ),
                 job_id="writer",
                 goal=prepared.original_request,
             )
             terminal_reason = str(core.last_turn_result.get("reason") or "complete")
             if terminal_reason not in {"complete", "max_iterations"}:
                 raise InterruptedError(terminal_reason)
+            svc.checkpoint(
+                "writer_complete", _team_checkpoint_state(prepared, "reviewing", svc.current_task)
+            )
 
             core.begin_steerable_turn()
             diff_text = _task_diff(svc, core.workspace_root, core.cwd)
@@ -1444,6 +2561,12 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
                 )
                 diff_text = _task_diff(svc, core.workspace_root, core.cwd)
                 reviews = orchestrator.review(prepared, diff_text)
+            svc.checkpoint(
+                "review_complete",
+                _team_checkpoint_state(
+                    prepared, "reviewing", svc.current_task, reviews=reviews,
+                ),
+            )
             revision = _revision_request(reviews)
             if revision and prepared.team.budget.max_rounds > 1 and not core._interrupt.is_set():
                 _run_team_writer(
@@ -1459,6 +2582,12 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
                 )
                 terminal_reason = str(core.last_turn_result.get("reason") or "complete")
                 diff_text = _task_diff(svc, core.workspace_root, core.cwd)
+                svc.checkpoint(
+                    "revision_complete",
+                    _team_checkpoint_state(
+                        prepared, "reviewing", svc.current_task, reviews=reviews,
+                    ),
+                )
 
             core.begin_steerable_turn()
             synthesis = orchestrator.synthesize(prepared, reviews, diff_text)
@@ -1467,6 +2596,12 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
                 svc.emit({"type": "token", "text": synthesis, "agent": "dispatcher"})
                 svc.emit({"type": "message_end", "agent": "dispatcher"})
                 core._add_message({"role": "assistant", "content": synthesis})
+                svc.checkpoint(
+                    "synthesis_complete",
+                    _team_checkpoint_state(
+                        prepared, "completed", svc.current_task, reviews=reviews,
+                    ),
+                )
         finally:
             _restore_writer_route(core, route_snapshot)
 
@@ -1488,12 +2623,43 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
         })
     except InterruptedError:
         terminal_reason = "interrupted"
+        paused = svc.pause_requested
+        if paused and prepared is not None:
+            svc.checkpoint(
+                "paused",
+                _team_checkpoint_state(prepared, "paused", svc.current_task),
+            )
+            svc.emit({
+                "type": "orchestration_paused", "run_id": run_id,
+                "state": "paused",
+            })
+        elif paused:
+            _, paused_team, paused_profiles, _ = parse_manifest(manifest)
+            svc.checkpoint("paused_before_dispatch", {
+                "state": "paused",
+                "restart_dispatch": True,
+                "orchestration_fingerprint": orchestration_fingerprint(
+                    paused_team, paused_profiles,
+                ),
+                "baseline_tree": svc.current_task.baseline_tree
+                if svc.current_task is not None else "",
+            })
+            svc.emit({
+                "type": "orchestration_paused", "run_id": run_id,
+                "state": "paused",
+            })
         svc.emit({
             "type": "orchestration_completed",
             "run_id": str(manifest.get("run_id") or ""),
-            "state": "interrupted",
+            "state": "paused" if paused else "interrupted",
             "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
         })
+        svc.run_store.set_state(
+            run_id,
+            "paused" if paused else "interrupted",
+            recoverable=paused or svc.run_store.latest_checkpoint(run_id) is not None,
+            reason=("Paused by the user." if paused else "The run was interrupted."),
+        )
     except (OrchestrationError, WorktreeError, OllamaError, ValueError) as exc:
         terminal_reason = "error"
         svc.emit({"type": "error", "message": str(exc)})
@@ -1532,6 +2698,32 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
             "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
         })
         core._emit_info()
+        svc.active_run_id = None
+        svc.pause_requested = False
+
+
+def _team_checkpoint_state(
+    prepared: TeamPreparation,
+    state: str,
+    task: TaskCheckout | None,
+    *,
+    reviews: list[Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "state": state,
+        "run_id": prepared.run_id,
+        "request": prepared.original_request,
+        "workspace": prepared.workspace,
+        "plan": prepared.plan.structured(),
+        "results": [result.structured() for result in prepared.results],
+        "reviews": [result.structured() for result in reviews or []],
+        "writer_id": prepared.writer.id,
+        "team_id": prepared.team.id,
+        "orchestration_fingerprint": orchestration_fingerprint(
+            prepared.team, prepared.profiles,
+        ),
+        "baseline_tree": task.baseline_tree if task is not None else "",
+    }
 
 
 def _run_team_writer(
@@ -1623,6 +2815,7 @@ def _install_writer_route(core: AgentCore, prepared: TeamPreparation) -> dict[st
         "context_source": core._context_source,
         "context_requested": core._context_requested,
         "context_for": core._context_limit_for,
+        "mcp_policy": core.tool_registry.mcp_agent_policy_snapshot(),
     }
     client = client_for_profile(prepared.writer)
     core.client = client
@@ -1636,6 +2829,15 @@ def _install_writer_route(core: AgentCore, prepared: TeamPreparation) -> dict[st
     core._context_source = "unknown"
     core._context_requested = 0
     core._context_limit_for = ""
+    access_ceiling = (
+        "read_only" if bool(getattr(core, "evaluation_read_only", False))
+        else prepared.writer.access_ceiling
+    )
+    core.tool_registry.set_mcp_agent_policy(
+        prepared.writer.mcp_policy,
+        access_ceiling=access_ceiling,
+        role=prepared.writer.role,
+    )
     core._emit_info()
     return snapshot
 
@@ -1650,6 +2852,10 @@ def _restore_writer_route(core: AgentCore, snapshot: dict[str, Any]) -> None:
     core._context_source = snapshot["context_source"]
     core._context_requested = snapshot["context_requested"]
     core._context_limit_for = snapshot["context_for"]
+    policy, access_ceiling, role = snapshot["mcp_policy"]
+    core.tool_registry.set_mcp_agent_policy(
+        policy, access_ceiling=access_ceiling, role=role,
+    )
     core._emit_info()
 
 
@@ -1766,6 +2972,18 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             str(msg.get("request_id", "")),
             str(msg.get("decision", "deny")),
         )
+    elif mtype == "dispatch_decision":
+        run_id = str(msg.get("run_id") or "")
+        action = str(msg.get("action") or "cancel")
+        if action not in {"run", "redispatch", "cancel"}:
+            _command_error(svc, "dispatch_decision", "Unknown dispatch decision.")
+            return
+        plan = msg.get("plan")
+        decision = {"action": action}
+        if isinstance(plan, dict):
+            decision["plan"] = plan
+        if not svc.answer_dispatch(run_id, decision):
+            _command_error(svc, "dispatch_decision", "That dispatch plan is no longer waiting.")
     elif mtype == "steer":
         text = str(msg.get("text") or "").strip()
         if not text:
@@ -1799,10 +3017,23 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         # native broker was unwinding. Late/duplicate results are harmless and
         # intentionally ignored.
         svc.answer_computer(request_id, result)
+    elif mtype == "mcp_input_response":
+        request_id = str(msg.get("request_id") or "")
+        action = str(msg.get("action") or "cancel")
+        content = msg.get("content") if isinstance(msg.get("content"), dict) else {}
+        if action not in {"accept", "decline", "cancel"}:
+            _command_error(svc, "mcp_input_response", "Unknown MCP input decision.")
+            return
+        if not core.mcp.answer_elicitation(request_id, action, content):
+            _command_error(svc, "mcp_input_response", "That MCP input request is no longer waiting.")
     elif mtype == "interrupt":
         core.interrupt()
+        if svc.active_evaluation_core is not None:
+            svc.active_evaluation_core.interrupt()
         svc.deny_all_pending()  # unblock a permission wait so the turn can end
         svc.cancel_all_computer_actions()
+        svc.cancel_dispatch_decisions()
+        core.mcp.cancel_pending_inputs()
     elif mtype == "retry_last":
         if not svc.start_turn(loop, core.retry_last, svc.decide):
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
@@ -1951,6 +3182,19 @@ async def ws_chat(ws: WebSocket) -> None:
         "worker_id": svc.worker_id,
         "process_id": os.getpid(),
     })
+    for run in svc.recoverable_runs:
+        await ws.send_json({
+            "type": "orchestration_recovery_available",
+            "run": run,
+        })
+    svc.recoverable_runs = []
+    for run_id, plan in list(svc.pending_dispatch_plans.items()):
+        await ws.send_json({
+            "type": "dispatch_plan_ready",
+            "run_id": run_id,
+            "state": "waiting_dispatch_approval",
+            "plan": plan,
+        })
     # A console run survives a dropped socket — killing a build because the
     # laptop slept is worse than the state it costs to replay it.
     await ws.send_json({"type": "terminal_state", "runs": svc.terminal.snapshot()})
@@ -1978,6 +3222,8 @@ async def ws_chat(ws: WebSocket) -> None:
             svc.core.interrupt()
             svc.deny_all_pending()
             svc.cancel_all_computer_actions()
+            svc.cancel_dispatch_decisions()
+            svc.core.mcp.cancel_pending_inputs()
 
 
 def _is_loopback_bind(host: str) -> bool:

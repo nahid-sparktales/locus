@@ -1,6 +1,6 @@
 # Locus for macOS
 
-Locus 1.10 is a native workspace for building with local Ollama models. It combines
+Locus 1.11 is a native workspace for building with local Ollama models. It combines
 conversation, planning, file context, change review, a console, and live preview
 in one calm SwiftUI interface. Local Ollama is the default; hosted providers are
 used only after you explicitly add and select an account.
@@ -9,8 +9,32 @@ used only after you explicitly add and select an account.
 
 ![Locus workspace](Docs/locus-workspace.jpg)
 
-Locus opens in a compact 1200×760 workspace by default. Resize it whenever you
+Locus opens in a 1250×760 workspace by default, keeping the sidebar, conversation,
+and inspector visible without clipping the right edge. Resize it whenever you
 like; macOS remembers the size you choose for later launches.
+
+## What's new in 1.11
+
+- **Adaptive Work and explicit agent teams** can route a request across local or
+  hosted specialists while keeping one designated writer and isolating Git work
+  in a private managed worktree.
+- **Durable, inspectable runs** record timelines, evidence, routing decisions,
+  costs, checkpoints, steering, pause/resume state, and recovery options in a
+  local run store.
+- **Evaluation suites and transparent scorecard routing** compare Solo and team
+  configurations against immutable fixtures, then explain why an eligible agent
+  was selected.
+- **Workspace chats, local knowledge, and approved memory** organize conversation
+  history per project and let eligible agents retrieve bounded, untrusted project
+  context without exposing it to Just Chat.
+- **Modern MCP support** adds allowlisted resources and prompts, long-running
+  tasks, progress, safe input requests, and per-agent access policies.
+- **Native Computer Control** gives the designated foreground writer guarded Mac
+  UI access in signed direct-download builds; it remains disabled by default and
+  unavailable in the sandboxed App Store build.
+
+See the [Agent Teams feature and usage guide](Docs/AGENT_TEAMS_FEATURE_GUIDE.md)
+for setup, examples, permission boundaries, recovery, and troubleshooting.
 
 ## Designed for real project work
 
@@ -106,19 +130,22 @@ like; macOS remembers the size you choose for later launches.
 ## The inspector
 
 The right-hand panel keeps execution visible beside the conversation: **Plan,
-Changes, Files, Console, Preview, Checkpoints, and AGENTS.md**, selected with
-`⌘1`–`⌘7`. It starts hidden — the conversation gets the room until you need it, and `⌘1`–`⌘7` or
-`⌘⌥I` bring it back; a restore control also sits in the workspace header. It
+Changes, Files, Console, Preview, Checkpoints, Runs, and AGENTS.md**, selected
+with `⌘1`–`⌘8`. It starts hidden — the conversation gets the room until you
+need it, and `⌘1`–`⌘8` or `⌘⌥I` bring it back; a restore control also sits in
+the workspace header. It
 drags to any width between 280 and 520 points, and the width, the collapsed
 state, and the last open tab are remembered across launches. Tab labels appear once the
 panel is wide enough to fit them; below that the strip is icons only. A run
 never switches your tab: new work raises a badge and leaves you where you were.
 
 The **Plan** tab puts context-window usage first, the active implementation plan
-below it, and keeps permission controls pinned to the bottom edge. **Checkpoints** has its own tab for
-naming, creating, restoring, and deleting session snapshots. **AGENTS.md**
-explains workspace instructions and provides a safe root-file editor with create,
-refresh, revert, save, and Finder actions.
+below it, and keeps permission controls pinned to the bottom edge. **Checkpoints**
+has its own tab for naming, creating, restoring, and deleting session snapshots.
+**Runs** shows durable Solo and team history, active progress, recovery controls,
+and detailed timelines. **AGENTS.md** explains workspace instructions and
+provides a safe root-file editor with create, refresh, revert, save, and Finder
+actions.
 
 **Changes reads git**, not the chat log. It shows the real working tree with
 per-file diffs and staged, modified, and untracked counts — including edits made
@@ -518,7 +545,8 @@ xcodebuild \
 cd agent && .venv/bin/python -m pytest -q
 ```
 
-186 unit tests, 24 UI tests, and 248 backend tests currently pass.
+The repository currently contains 234 unit tests, 26 UI tests, and 367 backend
+tests.
 
 The unit suite covers work modes, lightweight context migration, session
 acknowledgements and retry branches, recoverable session clearing, Hugging Face
@@ -527,18 +555,22 @@ repository normalization and GGUF quantization detection, prompt history
 and turn completion, message queueing and drain, slash-command parsing and
 local execution, thinking-block and markdown-fragment parsing, diff detection,
 `@`-mention matching, reconnect backoff, a 2,000-token streaming regression,
-inspector width clamping and settings round-trips, console output assembly and
-its bounded buffer, and the rule that a run badges a tab instead of switching
-to it. The UI suite checks Clear Chat, Clear Saved Sessions, the Local Model
-Library, message actions and rewind, session organization, archived filtering,
+inspector width clamping and settings round-trips, agent/team validation,
+orchestration-budget compatibility, managed-run state, MCP callback validation,
+telemetry defaults, console output assembly and its bounded buffer, and the rule
+that a run badges a tab instead of switching to it. The UI suite checks Clear
+Chat, Clear Saved Sessions, the Local Model Library, message actions and rewind,
+session organization, archived filtering,
 recent workspaces, context controls, prompt history, the slash command popup,
 the shortcuts sheet, command-palette keyboard navigation, and the inspector —
-collapse and restore, `⌘1`–`⌘7`, the Changes, Files, Checkpoints, and AGENTS.md tabs, and the console —
-through accessibility identifiers. The backend suite covers the tools,
+collapse and restore, `⌘1`–`⌘8`, the Changes, Files, Checkpoints, Runs, and
+AGENTS.md tabs, and the console — through accessibility identifiers. The backend
+suite covers the tools,
 permission modes and the deny list, streaming, session metadata and trash
 recovery, most HTTP endpoints, the git status and diff endpoints, the console
-protocol, the WebSocket handshake, and the agent loop end to end against a
-scripted model.
+protocol, the WebSocket handshake, durable run storage, capabilities, recovery,
+evaluations, routing telemetry, local knowledge, modern MCP behavior, and the
+agent loop end to end against a scripted model.
 
 UI tests drive a real window, so run them from a terminal with UI automation
 permission — not from a sandboxed shell, where the app launches without a

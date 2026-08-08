@@ -12,9 +12,12 @@ from ollama_code.orchestration import (
     CrossProcessModelCallScheduler,
     ModelCallScheduler,
     OrchestrationError,
+    TeamOrchestrator,
+    orchestration_fingerprint,
     parse_manifest,
     validate_dispatch_plan,
 )
+from ollama_code.runstore import RunStore
 from ollama_code.worktrees import TaskCheckoutStore, WorktreeError
 
 
@@ -108,6 +111,62 @@ def test_manifest_and_dispatch_plan_enforce_one_writer_and_known_members():
     with pytest.raises(OrchestrationError, match="exactly one writer"):
         validate_dispatch_plan(no_writer, team, profiles)
 
+
+def test_orchestration_fingerprint_ignores_credentials_but_tracks_models():
+    first = _manifest()
+    _, team, profiles, _ = parse_manifest(first)
+    original = orchestration_fingerprint(team, profiles)
+
+    first["profiles"][0]["route"]["api_key"] = "rotated-secret"
+    _, same_team, same_profiles, _ = parse_manifest(first)
+    assert orchestration_fingerprint(same_team, same_profiles) == original
+
+    first["profiles"][0]["model"] = "different-model"
+    _, changed_team, changed_profiles, _ = parse_manifest(first)
+    assert orchestration_fingerprint(changed_team, changed_profiles) != original
+
+
+def test_maximum_estimated_cost_is_a_hard_run_budget() -> None:
+    manifest = _manifest(maximum_estimated_cost=0.001)
+    writer = next(item for item in manifest["profiles"] if item["id"] == "writer")
+    writer.update({
+        "metering": "metered",
+        "input_cost_per_million": 2.0,
+        "output_cost_per_million": 4.0,
+    })
+    _, team, profiles, _ = parse_manifest(manifest)
+    orchestrator = TeamOrchestrator(lambda _event: None, lambda: False)
+    orchestrator.configure_run_budget(team)
+
+    with pytest.raises(OrchestrationError, match="estimated-cost budget"):
+        orchestrator.account_writer_usage(
+            profiles["writer"], team.budget, 1, 1_000, 0,
+        )
+
+
+def test_scorecard_uses_bounded_evaluations_and_deterministic_ties(tmp_path) -> None:
+    manifest = _manifest(routing_mode="scorecard")
+    manifest["team"]["member_ids"].append("planner2")
+    manifest["profiles"].append(_profile("planner2", "planner"))
+    _, team, profiles, _ = parse_manifest(manifest)
+    store = RunStore(tmp_path / "runs.sqlite3")
+    for _ in range(4):
+        store.record_routing_sample(
+            "planner", tags=["planner"], quality=100, reliable=True,
+            latency_ms=100, estimated_cost=0, local=True, evaluation=True,
+        )
+    orchestrator = TeamOrchestrator(
+        lambda _event: None, lambda: False, run_store=store,
+    )
+    limited = orchestrator.scorecard(profiles["planner"], team)
+    assert limited["limited_data"] is True
+    assert 50 < limited["components"]["quality"] < 100
+
+    plan_value = _valid_plan()
+    plan_value["jobs"][0]["agent_id"] = "planner2"
+    plan = validate_dispatch_plan(plan_value, team, profiles)
+    routed = orchestrator.route_plan("run", plan, team, profiles)
+    assert routed.jobs[0].agent_id == "planner"
 
 def test_dispatch_plan_rejects_cycles_order_violations_and_ignored_forced_agent():
     manifest = _manifest()
@@ -271,6 +330,39 @@ def test_managed_worktree_conflict_leaves_source_untouched(tmp_path, monkeypatch
     with pytest.raises(WorktreeError, match="conflict"):
         task.apply()
     assert (source / "tracked.txt").read_text() == "concurrent source edit\n"
+
+
+def test_replay_checkout_starts_from_original_immutable_baseline(tmp_path, monkeypatch):
+    from ollama_code import worktrees
+
+    source = _repository(tmp_path / "source")
+    (source / "tracked.txt").write_text("dirty baseline\n")
+    monkeypatch.setattr(worktrees, "TASKS_DIR", tmp_path / "tasks")
+    original = TaskCheckoutStore.create(str(source), "original")
+    (Path(original.execution_path) / "tracked.txt").write_text("agent mutation\n")
+    (source / "tracked.txt").write_text("new workspace state\n")
+
+    replay = TaskCheckoutStore.replay(original, "replay")
+
+    assert replay.baseline_tree == original.baseline_tree
+    assert Path(replay.execution_path, "tracked.txt").read_text() == "dirty baseline\n"
+    assert replay.patch()[0] == ""
+
+
+def test_cleanup_removes_only_managed_checkout(tmp_path, monkeypatch):
+    from ollama_code import worktrees
+
+    source = _repository(tmp_path / "source")
+    monkeypatch.setattr(worktrees, "TASKS_DIR", tmp_path / "tasks")
+    task = TaskCheckoutStore.create(str(source), "cleanup")
+    workspace_file = source / "tracked.txt"
+    before = workspace_file.read_text(encoding="utf-8")
+
+    result = TaskCheckoutStore.cleanup(task.id)
+
+    assert result["removed"] is True
+    assert TaskCheckoutStore.load(task.id) is None
+    assert workspace_file.read_text(encoding="utf-8") == before
 
 
 def test_agent_job_is_a_plain_non_recursive_record():

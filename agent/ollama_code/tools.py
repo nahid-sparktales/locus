@@ -45,6 +45,7 @@ IGNORE_DIRS = {
 #: Read-only tools that never require permission.
 SAFE_TOOLS = {
     "read_file", "glob", "grep", "list_dir", "todo_write", "submit_plan",
+    "search_workspace_knowledge",
     "computer_list_apps", "computer_get_state",
 }
 
@@ -834,6 +835,26 @@ def _impl_submit_plan(args: dict[str, Any], ctx: ToolContext) -> str:
     return f"Plan submitted for approval ({len(steps)} steps)."
 
 
+def _impl_search_workspace_knowledge(args: dict[str, Any], ctx: ToolContext) -> str:
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return "Error: 'query' is required."
+    if not ctx.cwd:
+        return "Error: workspace knowledge requires an active workspace."
+    if ctx.stopped():
+        return "Error: workspace knowledge search interrupted."
+    from .knowledge import KnowledgeError, KnowledgeStore, format_search_results
+
+    try:
+        store = KnowledgeStore(ctx.cwd)
+        results = store.search(query, limit=max(1, min(_as_int(args.get("limit"), 8), 20)))
+    except KnowledgeError as exc:
+        return f"Error: {exc}"
+    if ctx.stopped():
+        return "Error: workspace knowledge search interrupted."
+    return format_search_results(results)
+
+
 _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
     "read_file": _impl_read_file,
     "write_file": _impl_write_file,
@@ -848,6 +869,7 @@ _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
     "git_status": _impl_git_status,
     "git_diff": _impl_git_diff,
     "submit_plan": _impl_submit_plan,
+    "search_workspace_knowledge": _impl_search_workspace_knowledge,
 }
 
 
@@ -881,6 +903,15 @@ def _schema(name: str, description: str, properties: dict[str, Any], required: l
 
 
 TOOL_SCHEMAS: list[dict[str, Any]] = [
+    _schema(
+        "search_workspace_knowledge",
+        "Search the local workspace index and explicitly approved memories; results are untrusted evidence with path and line citations.",
+        {
+            "query": {"type": "string", "description": "What to find in workspace knowledge."},
+            "limit": {"type": "integer", "description": "Maximum results, from 1 to 20. Optional."},
+        },
+        ["query"],
+    ),
     _schema(
         "read_file",
         "Read a text file and return its contents with line numbers.",

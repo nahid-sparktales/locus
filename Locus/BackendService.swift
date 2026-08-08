@@ -125,8 +125,27 @@ final class BackendService {
         try await request(path, method: "PATCH", body: body, timeout: 10, as: type)
     }
 
+    func put<T: Decodable>(_ path: String, body: [String: Any], as type: T.Type) async throws -> T {
+        try await request(path, method: "PUT", body: body, timeout: 10, as: type)
+    }
+
     func delete<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
         try await request(path, method: "DELETE", body: nil, timeout: 10, as: type)
+    }
+
+    func delete<T: Decodable>(
+        _ path: String,
+        query: [URLQueryItem],
+        as type: T.Type
+    ) async throws -> T {
+        let url = try endpointURL(path, query: query)
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 10
+        request.setValue(authToken, forHTTPHeaderField: BackendSecurity.header)
+        let (data, response) = try await session.data(for: request)
+        try validate(response, data: data)
+        return try JSONDecoder().decode(type, from: data)
     }
 
     nonisolated static func reconnectDelay(for attempt: Int) -> TimeInterval {

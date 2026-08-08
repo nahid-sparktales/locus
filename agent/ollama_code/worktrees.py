@@ -165,6 +165,41 @@ class TaskCheckoutStore:
             raise
 
     @staticmethod
+    def replay(source: TaskCheckout, task_id: str) -> TaskCheckout:
+        """Create a new checkout at another task's immutable private baseline."""
+        if not _TASK_ID.fullmatch(task_id):
+            raise WorktreeError("task id is invalid")
+        root = Path(source.workspace_root).expanduser().resolve()
+        task_dir = (TASKS_DIR / task_id).resolve()
+        if task_dir.parent != TASKS_DIR.resolve() or task_dir.exists():
+            raise WorktreeError("managed replay task already exists or escaped its root")
+        checkout = task_dir / "checkout"
+        task_dir.mkdir(parents=True, exist_ok=False)
+        try:
+            _git(root, "worktree", "add", "--detach", str(checkout), source.baseline_commit)
+            observed_tree = _git(checkout, "rev-parse", "HEAD^{tree}").strip()
+            if observed_tree != source.baseline_tree:
+                raise WorktreeError("the original immutable baseline is no longer available")
+            record = TaskCheckout(
+                id=task_id,
+                workspace_root=str(root),
+                execution_path=str(checkout),
+                baseline_tree=source.baseline_tree,
+                baseline_commit=source.baseline_commit,
+                state="queued",
+            )
+            record.save()
+            return record
+        except Exception:
+            try:
+                if checkout.exists():
+                    _git(root, "worktree", "remove", "--force", str(checkout))
+            except WorktreeError:
+                pass
+            shutil.rmtree(task_dir, ignore_errors=True)
+            raise
+
+    @staticmethod
     def load(task_id: str) -> TaskCheckout | None:
         if not _TASK_ID.fullmatch(task_id):
             return None
@@ -186,6 +221,29 @@ class TaskCheckoutStore:
         if record.directory.resolve() != expected or record.id != task_id:
             return None
         return record
+
+    @staticmethod
+    def cleanup(task_id: str) -> dict[str, Any]:
+        """Remove one explicitly selected managed checkout, never workspace files."""
+        if not _TASK_ID.fullmatch(task_id):
+            raise WorktreeError("task id is invalid")
+        record = TaskCheckoutStore.load(task_id)
+        if record is None:
+            raise WorktreeError("managed task checkout was not found")
+        task_dir = (TASKS_DIR / task_id).resolve()
+        if task_dir.parent != TASKS_DIR.resolve() or record.directory.resolve() != task_dir:
+            raise WorktreeError("managed task checkout escaped its storage root")
+        checkout = Path(record.execution_path).resolve()
+        if checkout.parent != task_dir:
+            raise WorktreeError("managed checkout path is invalid")
+        workspace = Path(record.workspace_root).expanduser().resolve()
+        if workspace.exists() and checkout.exists():
+            try:
+                _git(workspace, "worktree", "remove", "--force", str(checkout))
+            except WorktreeError as exc:
+                raise WorktreeError(f"could not detach the managed checkout: {exc}") from exc
+        shutil.rmtree(task_dir)
+        return {"ok": True, "task_id": task_id, "removed": True}
 
 
 def _copy_source_state(source: Path, checkout: Path) -> None:

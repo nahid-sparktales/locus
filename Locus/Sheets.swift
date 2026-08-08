@@ -697,6 +697,7 @@ private struct MCPServerEditorView: View {
     @State private var approval = "annotations"
     @State private var authorizationEndpoint = ""
     @State private var tokenEndpoint = ""
+    @State private var issuer = ""
     @State private var clientID = ""
     @State private var scopes = ""
 
@@ -731,6 +732,7 @@ private struct MCPServerEditorView: View {
                     Text("OAuth 2.0 (PKCE)").tag("oauth")
                 }
                 if auth == "oauth" {
+                    TextField("Issuer (optional; discovers endpoints)", text: $issuer)
                     TextField("Authorization endpoint", text: $authorizationEndpoint)
                     TextField("Token endpoint", text: $tokenEndpoint)
                     TextField("Client ID", text: $clientID)
@@ -759,6 +761,7 @@ private struct MCPServerEditorView: View {
                     if let server { body["id"] = server.id }
                     if auth == "oauth" {
                         body["oauth"] = [
+                            "issuer": issuer,
                             "authorization_endpoint": authorizationEndpoint,
                             "token_endpoint": tokenEndpoint,
                             "client_id": clientID,
@@ -788,6 +791,7 @@ private struct MCPServerEditorView: View {
             approval = server.approvalMode ?? "annotations"
             authorizationEndpoint = server.oauth?.authorizationEndpoint ?? ""
             tokenEndpoint = server.oauth?.tokenEndpoint ?? ""
+            issuer = server.oauth?.issuer ?? ""
             clientID = server.oauth?.clientID ?? ""
             scopes = (server.oauth?.scopes ?? []).joined(separator: " ")
         }
@@ -999,6 +1003,9 @@ struct SettingsView: View {
                 case .accounts: accountsPage
                 case .agents:
                     AgentTeamsSettingsView()
+                        .environmentObject(model)
+                case .knowledge:
+                    WorkspaceKnowledgeSettingsView()
                         .environmentObject(model)
                 case .permissions: permissionsPage
                 case .extensions:

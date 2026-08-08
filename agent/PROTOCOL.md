@@ -34,11 +34,122 @@ refused unless the capability is configured.
   "ollama": true,
   "host": "http://localhost:11434",
   "model": "huihui_ai/qwen3-abliterated:latest",
-  "error": null
+  "error": null,
+  "capabilities": {
+    "durable_runs": true, "recovery_controls": true, "evaluations": true,
+    "adaptive_routing": true, "workspace_knowledge": true, "modern_mcp": true
+  }
 }
 ```
 
 `ollama` is false (and `error` a string) when the Ollama daemon is unreachable.
+Each additive orchestration stage has an independent
+`LOCUS_CAPABILITY_<NAME>` rollout gate. Disabled REST collections return 404
+and disabled model tools are omitted from their schemas; stored data is not
+removed.
+
+### Durable orchestrations
+
+`GET /api/orchestrations` lists authoritative SQLite run records. `GET
+/api/orchestrations/{run_id}` adds attempts and the latest stable checkpoint;
+`GET /events?after_seq=N` returns the ordered suffix for reconnect backfill.
+Every persisted event has immutable `event_id`, per-run monotonic `seq`,
+`occurred_at`, `schema_version`, and optional job/attempt identity. Clients
+deduplicate by `event_id`. The database uses WAL, foreign keys, transactional
+additive migrations, and reopens read-only if a migration cannot complete.
+
+`GET /api/orchestrations/{run_id}/export?include_content=false` produces the
+redacted `locusrun` version-1 document. Conversation, goal, output, reasoning,
+tool arguments/results, and previews are omitted unless content is explicitly
+requested; credentials and provider signatures are always redacted.
+`POST /api/orchestrations/{run_id}/otlp` accepts `{endpoint, authorization?,
+include_content?}` and sends an OTLP/HTTP JSON trace without following
+redirects. Remote endpoints require HTTPS. Authorization is transient and is
+never written by the backend.
+
+Recovery controls are `POST /pause`, `/resume`, `/cancel`, `/discard`,
+`/jobs/{job_id}/retry`, `/jobs/{job_id}/reassign`, `/replay`, and `/duplicate`.
+`POST /recovery-assessment` returns the current repair checklist without
+starting work. `DELETE /api/tasks/{task_id}` is the separate, explicit managed
+checkout cleanup action; discarding a run does not delete its checkout.
+Resume/retry/reassign reuse a stable checkpoint only when the team/profile
+fingerprint and managed baseline still match. Active jobs become new attempts;
+completed independent specialist results may be reused. Writer mutations and
+tool calls are never replayed. Replay creates a new checkout at the original
+immutable baseline. Duplicate creates a new checkout from current source
+workspace state. Startup only advertises abandoned runs and never calls a
+model. Pending permission, computer, dispatch, and MCP-input waits are
+cancelled and must be requested again.
+
+### Evaluation Lab
+
+`/api/evaluations` supports suite CRUD, result history, deterministic grading,
+execution and cancellation. `GET /api/evaluations/{suite_id}/comparison`
+groups Solo/team metrics and `/export` returns a portable versioned JSON suite
+plus results. A case describes prompt/tags, Solo or team target,
+mode, timeout, assertions, optional rubric and reviewer judge, and passing
+score. A case may pin its own bounded orchestration budget; its timeout
+cooperatively interrupts provider streams and cancellable tools. Solo cases
+also acquire the shared cross-chat model lease. Assertions cover commands, required/forbidden paths, exact/contains/
+regex text, allowed/forbidden changed paths, JSON pointer/schema checks, and
+expected output. Required deterministic failures always fail before subjective
+grading. A judge sees only the case, rubric, output, baseline-relative diff,
+tests, and evidence—not provider/model identities—and its score is labelled
+subjective.
+
+Every Git-backed case captures an immutable private fixture when the suite is
+saved, then replays each execution into a fresh disposable checkout. Evaluation changes are
+never offered to Apply. Computer Control and mutating MCP are absent; read-only
+MCP remains off unless the suite opts in, and annotations plus the agent policy
+still gate it. Results report pass rate, rubric score, median/p95 latency,
+calls, tokens, estimated cost, and retry/failure evidence through the existing
+global scheduler.
+
+### Workspace knowledge
+
+`/api/knowledge` exposes status/settings, bounded search, reindex/full or
+changed-path updates, and approved-memory CRUD. Each canonical workspace owns
+a separate SQLite FTS5 database. Indexing follows Git ignores, refuses
+symlinks, hidden/build/vendor paths, binary or over-2-MB files, and common
+credential/key/certificate/environment-secret names. Content hashes make
+workspace-open, native watcher, and Locus-mutation refreshes incremental.
+
+Selecting a local Ollama embedding model creates a new vector generation and
+uses only a loopback Ollama `/api/embed`; text search remains available if
+embedding fails. Settings may add exclusion globs without weakening the hard
+secret and symlink exclusions. `search_workspace_knowledge` returns bounded snippets with canonical
+relative path, line range, freshness, and text/vector/approved-memory source.
+Every result is labelled untrusted and cannot alter instructions, permissions,
+or team membership. Memory is written only by explicit Remember, `/remember`,
+or the memory editor. `DELETE /api/knowledge` removes index and memories only.
+
+### Modern MCP catalogs, tasks, and input
+
+MCP capability negotiation preserves legacy servers and conditionally adds
+bounded deferred resources/prompts. The permission-free discovery tools are
+`search_extension_resources`, `read_extension_resource`,
+`search_extension_prompts`, and `load_extension_prompt`. Resources are
+untrusted evidence. Prompts are untrusted instructions and require both server
+and profile allowlisting. Lists are bounded and cached by server TTL.
+
+Task-required tools persist remote task ID, run/job/tool-call origin, progress,
+state, cancellation and terminal payload in the run database. `mcp_task_*`
+events are ordered with their run. `GET /api/mcp/tasks` lists persisted tasks;
+explicit `/lookup` and `/cancel` actions reconnect or terminate a selected
+remote task and never run automatically at startup. Form elicitation admits only bounded,
+schema-valid non-sensitive fields; password, token, API-key, payment and
+credential-shaped fields are refused and must use a credential-free HTTPS URL
+flow. The client replies with `mcp_input_response {request_id, action,
+content?}`. Decline, timeout, cancellation, or disconnect produces a normal
+terminal tool result. OAuth uses PKCE, exact callback scheme/host/port/path,
+issuer metadata discovery and exact issuer validation, and never forwards
+tokens to another origin.
+
+An agent profile's `mcp_policy` has explicit `server_ids`, `tools`, `resources`
+and `prompts` allowlists. Empty is no access. Read-only specialists,
+dispatchers and reviewers can invoke only allowlisted tools annotated
+read-only and non-destructive. Mutation remains writer-only and still follows
+permissions and hard guardrails.
 
 ### `GET /api/models`
 
@@ -505,6 +616,12 @@ for the session.
 - `orchestration_completed` is terminal for the orchestration but not the chat;
   exactly one `turn_done` follows it. `interrupt` cancels every job in the run.
 
+Persisted variants add `event_id`, `seq`, `occurred_at`, `schema_version`, and
+when applicable `attempt_id`. `orchestration_checkpoint`,
+`orchestration_recovery_available`, `dispatch_plan_ready`, `routing_decision`,
+`evaluation_*`, `knowledge_indexing`, `mcp_task_*`, and `mcp_input_required`
+are additive. Older clients may ignore all unknown events and fields.
+
 Dispatchers and read-only specialists receive no mutation, MCP, extension, or
 computer schemas. Specialists cannot recursively delegate. Only the designated
 writer enters the existing permission-controlled agent loop, and Computer
@@ -649,6 +766,14 @@ task_state
 turn_done
 session_info
 ```
+
+With dispatch preview, `dispatch_plan_ready` is persisted before the server
+enters `waiting_dispatch_approval`; no jobs start until `dispatch_decision`
+chooses Run Plan. Every edit or re-dispatch is fully revalidated. With recovery,
+an `orchestration_checkpoint` follows validated dispatch and each terminal
+specialist wave, writer, review, revision, and synthesis boundary. Pause waits
+for a safe boundary: streams and cancellable tools stop cooperatively, while a
+non-cancellable action finishes before its checkpoint is marked.
 
 Notes:
 
