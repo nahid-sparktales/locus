@@ -29,16 +29,6 @@ struct ComposerView: View {
                 PermissionPromptView(request: request)
                     .frame(maxWidth: 740)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else if model.shouldShowTeamDispatchApproval,
-                      let plan = model.pendingDispatchPlan
-            {
-                TeamDispatchApprovalPromptView(plan: plan)
-                    .frame(maxWidth: 740)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else if model.shouldShowTeamDispatchProgress {
-                TeamDispatchProgressView()
-                    .frame(maxWidth: 740)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
             } else if model.planApprovalPending {
                 // Same contract as the permission panel: the finished plan is
                 // a decision point, so the decision replaces the input.
@@ -105,8 +95,6 @@ struct ComposerView: View {
             )
         )
         .animation(.easeInOut(duration: 0.18), value: model.activePermissionRequest?.requestID)
-        .animation(.easeInOut(duration: 0.18), value: model.shouldShowTeamDispatchProgress)
-        .animation(.easeInOut(duration: 0.18), value: model.shouldShowTeamDispatchApproval)
         .animation(.easeInOut(duration: 0.18), value: model.planApprovalPending)
         .onAppear { restoreFocus() }
         .onChange(of: model.activePermissionRequest?.requestID) {
@@ -639,32 +627,35 @@ struct ComposerView: View {
                 .foregroundStyle(LocusTheme.muted.opacity(0.62))
 
             if model.isBusy {
-                Menu {
-                    Button("Queue for Next Turn", systemImage: "tray.and.arrow.down") {
-                        model.queueDraft()
+                if !isWaitingForTeamApproval {
+                    Menu {
+                        Button("Queue for Next Turn", systemImage: "tray.and.arrow.down") {
+                            model.queueDraft()
+                        }
+                        Button("Stop & Send as New Turn", systemImage: "stop.circle") {
+                            model.stopAndSendDraft()
+                        }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(LocusTheme.muted)
+                            .frame(width: 24, height: 30)
+                            .background(LocusTheme.paperDeep)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
-                    Button("Stop & Send as New Turn", systemImage: "stop.circle") {
-                        model.stopAndSendDraft()
-                    }
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(LocusTheme.muted)
-                        .frame(width: 24, height: 30)
-                        .background(LocusTheme.paperDeep)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .disabled(!canSubmit)
+                    .help("Choose how this message joins the conversation")
+                    .accessibilityLabel("More send choices")
+                    .accessibilityIdentifier("composer.sendChoices")
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .disabled(!canSubmit)
-                .help("Choose how this message joins the conversation")
-                .accessibilityLabel("More send choices")
-                .accessibilityIdentifier("composer.sendChoices")
 
                 Button {
                     submit()
                 } label: {
-                    Image(systemName: "arrow.turn.up.right")
+                    Image(systemName: isWaitingForTeamApproval
+                        ? "tray.and.arrow.down.fill" : "arrow.turn.up.right")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(canSubmit ? Color.white : LocusTheme.muted)
                         .frame(width: 30, height: 30)
@@ -673,9 +664,10 @@ struct ComposerView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSubmit)
-                .help("Steer the active turn (⌘↵)")
-                .accessibilityLabel("Steer now")
-                .accessibilityIdentifier("composer.steer")
+                .help(isWaitingForTeamApproval
+                    ? "Queue for the next turn (⌘↵)" : "Steer the active turn (⌘↵)")
+                .accessibilityLabel(isWaitingForTeamApproval ? "Queue for next turn" : "Steer now")
+                .accessibilityIdentifier(isWaitingForTeamApproval ? "composer.queue" : "composer.steer")
 
                 // The visible menu cannot own the shortcut, so this zero-size
                 // target makes the primary busy action deterministic.
@@ -778,16 +770,25 @@ struct ComposerView: View {
     private var sendHint: String {
         // No permission branch: while a request is pending the whole card —
         // including this hint — is replaced by the permission panel.
-        model.isBusy ? "⌘↵ Steer Now" : "⌘↵ Send"
+        model.isBusy
+            ? (isWaitingForTeamApproval ? "⌘↵ Queue for Next Turn" : "⌘↵ Steer Now")
+            : "⌘↵ Send"
     }
 
     private var placeholder: String {
-        switch model.selectedMode {
+        if isWaitingForTeamApproval {
+            return "Write the next message — it will send after the plan decision…"
+        }
+        return switch model.selectedMode {
         case .ask: "Ask anything…  (attach files or images · no workspace tools)"
         case .work: "What should Locus work on?  ( / commands · @ files )"
         case .plan: "Describe the change you want to plan…  ( / commands · @ files )"
         case .build: "What should we build next?  ( / commands · @ files )"
         }
+    }
+
+    private var isWaitingForTeamApproval: Bool {
+        model.orchestrationState == .waitingDispatchApproval
     }
 
     private func submit() {

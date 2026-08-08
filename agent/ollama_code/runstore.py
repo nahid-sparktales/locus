@@ -556,7 +556,7 @@ class RunStore:
                     now,
                 ),
             )
-        elif event_type == "agent_job_completed":
+        elif event_type in {"agent_job_completed", "agent_job_incomplete"}:
             result = event.get("result") if isinstance(event.get("result"), dict) else {}
             job_id = str(result.get("job_id") or event.get("job_id") or "")
             if not job_id:
@@ -583,7 +583,10 @@ class RunStore:
             connection.execute(
                 """UPDATE job_attempts SET state=?, result_json=?, completed_at=?
                    WHERE run_id=? AND job_id=? AND attempt=?""",
-                (str(event.get("state") or "completed"), _json(result), now,
+                (str(event.get("state") or (
+                    "paused" if event_type == "agent_job_incomplete" else "completed"
+                )), _json(result),
+                 now if event_type == "agent_job_completed" else None,
                  run_id, job_id, attempt),
             )
 
@@ -651,23 +654,60 @@ class RunStore:
         value = self._run_row(row)
         value["checkpoint"] = self.latest_checkpoint(run_id)
         value["attempts"] = self.attempts(run_id)
+        value.update(self._job_summary(value["attempts"]))
         if include_events:
             value["events"] = self.events(run_id, limit=MAX_EXPORT_EVENTS)
         return value
 
     def list_runs(self, *, session_id: str = "", limit: int = 100) -> list[dict[str, Any]]:
         limit = min(max(int(limit), 1), 500)
+        summary_query = """
+            SELECT runs.*,
+              (SELECT COUNT(DISTINCT attempts.job_id)
+                 FROM job_attempts AS attempts
+                WHERE attempts.run_id=runs.id) AS job_count,
+              (SELECT COUNT(*)
+                 FROM job_attempts AS latest
+                WHERE latest.run_id=runs.id
+                  AND latest.state='completed'
+                  AND latest.attempt=(
+                    SELECT MAX(candidate.attempt)
+                      FROM job_attempts AS candidate
+                     WHERE candidate.run_id=latest.run_id
+                       AND candidate.job_id=latest.job_id
+                  )) AS completed_job_count
+              FROM runs
+        """
         with self._connect(readonly=True) as connection:
             if session_id:
                 rows = connection.execute(
-                    "SELECT * FROM runs WHERE session_id=? ORDER BY updated_at DESC LIMIT ?",
+                    summary_query + " WHERE session_id=? ORDER BY updated_at DESC LIMIT ?",
                     (session_id, limit),
                 ).fetchall()
             else:
                 rows = connection.execute(
-                    "SELECT * FROM runs ORDER BY updated_at DESC LIMIT ?", (limit,)
+                    summary_query + " ORDER BY updated_at DESC LIMIT ?", (limit,)
                 ).fetchall()
-        return [self._run_row(row) for row in rows]
+        return [{
+            **self._run_row(row),
+            "job_count": int(row["job_count"] or 0),
+            "completed_job_count": int(row["completed_job_count"] or 0),
+        } for row in rows]
+
+    @staticmethod
+    def _job_summary(attempts: list[dict[str, Any]]) -> dict[str, int]:
+        latest: dict[str, dict[str, Any]] = {}
+        for attempt in attempts:
+            job_id = str(attempt.get("job_id") or "")
+            if job_id:
+                latest[job_id] = attempt
+        return {
+            "job_count": len(latest),
+            "completed_job_count": sum(
+                str(attempt.get("state") or "") == "completed"
+                for attempt in latest.values()
+            ),
+        }
 
     @staticmethod
     def _run_row(row: sqlite3.Row) -> dict[str, Any]:

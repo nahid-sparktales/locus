@@ -214,7 +214,8 @@ class ChatService:
                 # damaged or temporarily locked history store must never stop
                 # an otherwise healthy agent turn.
                 event = {**event, "persistence_error": str(exc)}
-        if event_type in {"agent_job_started", "agent_job_completed", "dispatch_plan",
+        if event_type in {"agent_job_started", "agent_job_continuing",
+                          "agent_job_incomplete", "agent_job_completed", "dispatch_plan",
                           "dispatcher_plan_rejected"} \
                 or event_type.startswith("orchestration_") \
                 or event_type.startswith("scheduler_lease") \
@@ -2511,7 +2512,9 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
         # specialists. This makes a brand-new background task immediately
         # addressable in the sidebar. Internal writer prompts stay in memory.
         if not isinstance(manifest.get("_resume"), dict):
-            core._add_message({"role": "user", "content": text})
+            core._add_message({
+                "role": "user", "content": text, "team_run_id": run_id,
+            })
         workspace_root = core.workspace_root
         if team.use_managed_worktree and svc.current_task is None \
                 and _is_git_workspace(workspace_root):
@@ -2584,7 +2587,7 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
             ),
         )
         terminal_reason = str(core.last_turn_result.get("reason") or "complete")
-        if terminal_reason not in {"complete", "max_iterations"}:
+        if terminal_reason != "complete":
             raise InterruptedError(terminal_reason)
 
         try:
@@ -2639,25 +2642,101 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
             ):
                 lead = prepared.writer
                 route_snapshot = _install_writer_route(core, lead)
+                revision_result: AgentResult | None = None
+                revision_continuation = False
+                revision_calls = 0
                 try:
-                    _run_team_writer(
-                        svc,
-                        orchestrator,
-                        prepared,
-                        lead,
-                        "Team review found issues that must be resolved before handoff. Verify each finding "
-                        "against the workspace, make warranted revisions, and rerun focused tests.\n\n"
-                        + revision,
-                        persisted_user_text="[Team review requested a revision]",
-                        job_id="writer-revision",
-                        goal="Resolve verified reviewer findings and rerun focused tests",
-                        model_call_limit=max(
-                            orchestrator.remaining_model_calls(prepared.team.budget) - 1, 1,
-                        ),
-                    )
+                    while True:
+                        available = orchestrator.remaining_model_calls(
+                            prepared.team.budget,
+                        ) - 1
+                        if available <= 0:
+                            raise TeamWriterBudgetPause(
+                                "writer-revision",
+                                "model_call_budget",
+                                "The Lead Writer revision reached its model-call budget "
+                                "before it finished. The run was saved and can be resumed.",
+                            )
+                        revision_slice = _run_team_writer(
+                            svc,
+                            orchestrator,
+                            prepared,
+                            lead,
+                            (
+                                "Continue the Lead Writer revision from the current workspace "
+                                "state and finish verification."
+                                if revision_continuation else
+                                "Team review found issues that must be resolved before handoff. "
+                                "Verify each finding against the workspace, make warranted revisions, "
+                                "and rerun focused tests.\n\n" + revision
+                            ),
+                            persisted_user_text=(
+                                "[Team Lead Writer revision continuation]"
+                                if revision_continuation else
+                                "[Team review requested a revision]"
+                            ),
+                            job_id="writer-revision",
+                            goal="Resolve verified reviewer findings and rerun focused tests",
+                            model_call_limit=min(TEAM_WRITER_CALL_SLICE, available),
+                            continuation=revision_continuation,
+                            emit_completion=False,
+                        )
+                        revision_result = _merge_writer_results(
+                            revision_result, revision_slice,
+                        )
+                        revision_calls += int(
+                            core.last_turn_result.get("model_calls") or 0
+                        )
+                        terminal_reason = str(
+                            core.last_turn_result.get("reason") or "complete"
+                        )
+                        if terminal_reason == "complete":
+                            break
+                        if (
+                            terminal_reason == "model_call_budget"
+                            and orchestrator.remaining_model_calls(prepared.team.budget) > 1
+                        ):
+                            revision_continuation = True
+                            continue
+                        if terminal_reason not in {"model_call_budget", "max_iterations"}:
+                            raise InterruptedError(terminal_reason)
+                        message = (
+                            "The Lead Writer revision reached its "
+                            + ("model-call budget" if terminal_reason == "model_call_budget"
+                               else "100-step safety limit")
+                            + " before it finished. The run was saved and can be resumed."
+                        )
+                        svc.emit({
+                            "type": "agent_job_incomplete",
+                            "run_id": prepared.run_id,
+                            "job_id": "writer-revision",
+                            "agent_id": lead.id,
+                            "agent_name": lead.name,
+                            "state": "paused",
+                            "reason": terminal_reason,
+                            "message": message,
+                            "limit": core.last_turn_result.get(
+                                "model_call_limit" if terminal_reason == "model_call_budget"
+                                else "iteration_limit"
+                            ),
+                            "model_calls": revision_calls,
+                            "result": revision_result.structured(),
+                            "usage": orchestrator.usage(),
+                        })
+                        raise TeamWriterBudgetPause(
+                            "writer-revision", terminal_reason, message,
+                        )
                 finally:
                     _restore_writer_route(core, route_snapshot)
-                terminal_reason = str(core.last_turn_result.get("reason") or "complete")
+                assert revision_result is not None
+                svc.emit({
+                    "type": "agent_job_completed",
+                    "run_id": prepared.run_id,
+                    "job_id": "writer-revision",
+                    "state": "completed",
+                    "result": revision_result.structured(),
+                    "usage": orchestrator.usage(),
+                })
                 diff_text = _task_diff(svc, core.workspace_root, core.cwd)
                 svc.checkpoint(
                     "revision_complete",
@@ -2698,6 +2777,28 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
             "type": "orchestration_completed",
             "run_id": prepared.run_id,
             "state": "completed",
+            "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
+            "usage": orchestrator.usage(),
+        })
+    except TeamWriterBudgetPause as exc:
+        terminal_reason = exc.reason
+        if prepared is not None:
+            svc.checkpoint(
+                f"paused:{exc.job_id}",
+                _team_checkpoint_state(
+                    prepared, "paused", svc.current_task,
+                    usage=orchestrator.usage(),
+                ),
+            )
+        svc.run_store.set_state(
+            run_id, "paused", recoverable=True, reason=str(exc),
+        )
+        svc.emit({
+            "type": "orchestration_paused",
+            "run_id": run_id,
+            "state": "paused",
+            "reason": exc.reason,
+            "message": str(exc),
             "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
             "usage": orchestrator.usage(),
         })
@@ -2783,7 +2884,8 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
         if svc.current_task is not None:
             task_state = {
                 "complete": "completed",
-                "max_iterations": "completed",
+                "model_call_budget": "paused",
+                "max_iterations": "paused",
                 "interrupted": "interrupted",
                 "cancelled": "cancelled",
             }.get(terminal_reason, "failed")
@@ -2803,11 +2905,18 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
         core.end_steerable_turn()
         svc.active_orchestrator = None
         svc.active_team = None
-        svc.emit({
+        terminal_event = {
             "type": "turn_done",
             "reason": terminal_reason,
             "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
-        })
+        }
+        if terminal_reason in {"model_call_budget", "max_iterations"}:
+            terminal_event.update({
+                "model_calls": int(core.last_turn_result.get("model_calls") or 0),
+                "model_call_limit": core.last_turn_result.get("model_call_limit"),
+                "iteration_limit": core.last_turn_result.get("iteration_limit"),
+            })
+        svc.emit(terminal_event)
         core._emit_info()
         svc.active_run_id = None
         svc.cancel_requested_runs.discard(run_id)
@@ -2852,6 +2961,19 @@ def _review_call_count(prepared: TeamPreparation) -> int:
     ))
 
 
+TEAM_WRITER_ITERATION_LIMIT = 100
+TEAM_WRITER_CALL_SLICE = 12
+
+
+class TeamWriterBudgetPause(InterruptedError):
+    """A coding job reached a safety boundary and can resume from checkpoint."""
+
+    def __init__(self, job_id: str, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.job_id = job_id
+        self.reason = reason
+
+
 def _run_prepared_writers(
     svc: ChatService,
     orchestrator: TeamOrchestrator,
@@ -2860,6 +2982,7 @@ def _run_prepared_writers(
     first_persisted_user_text: str,
 ) -> None:
     """Run pending coding jobs serially and checkpoint each completed mutation scope."""
+    emit = getattr(svc, "emit", lambda _event: None)
     pending = [
         job for job in prepared.writer_jobs
         if job.id not in prepared.completed_writer_job_ids
@@ -2894,38 +3017,117 @@ def _run_prepared_writers(
             raise OrchestrationError(
                 "team model-call budget was exhausted before all coding jobs could run"
             )
-        # Each remaining writer receives an equal share. Calls it does not use
-        # remain in the global budget and are included when the next share is
-        # recalculated, so unused capacity rolls forward without letting the
-        # first model consume later writers' reservations.
-        call_limit = max(writer_pool // pending_count, 1)
+        # Each remaining writer receives an equal share. The share is consumed
+        # in bounded slices so a writer that is still making tool calls can
+        # continue automatically without taking the calls protected for later
+        # writers, review, revision, and synthesis.
+        writer_allowance = max(writer_pool // pending_count, 1)
         profile = prepared.profiles[job.agent_id]
         position = prepared.writer_jobs.index(job) + 1
         prompt = writer_prompt_for_job(prepared, job)
         route_snapshot = _install_writer_route(svc.core, profile)
+        accumulated: AgentResult | None = None
+        used_by_writer = 0
+        continuation = False
         try:
-            result = _run_team_writer(
-                svc,
-                orchestrator,
-                prepared,
-                profile,
-                prompt,
-                persisted_user_text=(
-                    first_persisted_user_text
-                    if first_pending else f"[Team coding job {position} of {total}]"
-                ),
-                job_id=job.id,
-                goal=job.goal,
-                model_call_limit=call_limit,
-                writer_position=position,
-                writer_total=total,
-            )
+            while True:
+                slice_limit = min(
+                    TEAM_WRITER_CALL_SLICE,
+                    max(writer_allowance - used_by_writer, 1),
+                )
+                slice_result = _run_team_writer(
+                    svc,
+                    orchestrator,
+                    prepared,
+                    profile,
+                    prompt if not continuation else (
+                        "Continue the same coding assignment from the current workspace state. "
+                        "Do not repeat completed exploration. Finish the requested edits and verification, "
+                        "then return a concise handoff."
+                    ),
+                    persisted_user_text=(
+                        first_persisted_user_text
+                        if first_pending and not continuation
+                        else f"[Team coding job {position} of {total} continuation]"
+                    ),
+                    job_id=job.id,
+                    goal=job.goal,
+                    model_call_limit=slice_limit,
+                    writer_position=position,
+                    writer_total=total,
+                    continuation=continuation,
+                    emit_completion=False,
+                )
+                used = int(svc.core.last_turn_result.get("model_calls") or 0)
+                used_by_writer += used
+                accumulated = _merge_writer_results(accumulated, slice_result)
+                terminal_reason = str(
+                    svc.core.last_turn_result.get("reason") or "complete"
+                )
+                if terminal_reason == "complete":
+                    result = accumulated
+                    emit({
+                        "type": "agent_job_completed",
+                        "run_id": prepared.run_id,
+                        "job_id": job.id,
+                        "state": "completed",
+                        "result": result.structured(),
+                        "writer_job_id": job.id,
+                        "writer_position": position,
+                        "writer_total": total,
+                        "usage": orchestrator.usage(),
+                    })
+                    break
+                if terminal_reason not in {"model_call_budget", "max_iterations"}:
+                    raise InterruptedError(terminal_reason)
+                can_continue = (
+                    terminal_reason == "model_call_budget"
+                    and used_by_writer < writer_allowance
+                    and orchestrator.remaining_model_calls(prepared.team.budget)
+                        > non_writer_reserve + (pending_count - 1)
+                )
+                if can_continue:
+                    continuation = True
+                    continue
+                limit = (
+                    svc.core.last_turn_result.get("model_call_limit")
+                    if terminal_reason == "model_call_budget"
+                    else svc.core.last_turn_result.get("iteration_limit")
+                )
+                message = (
+                    f"Coding job {position} of {total} reached its "
+                    + ("model-call budget" if terminal_reason == "model_call_budget"
+                       else "100-step safety limit")
+                    + " before it finished. The run was saved and can be resumed."
+                )
+                emit({
+                    "type": "agent_job_incomplete",
+                    "run_id": prepared.run_id,
+                    "job_id": job.id,
+                    "agent_id": profile.id,
+                    "agent_name": profile.name,
+                    "state": "paused",
+                    "reason": terminal_reason,
+                    "message": message,
+                    "limit": limit,
+                    "model_calls": used_by_writer,
+                    "result": accumulated.structured(),
+                    "writer_job_id": job.id,
+                    "writer_position": position,
+                    "writer_total": total,
+                    "usage": orchestrator.usage(),
+                })
+                svc.checkpoint(
+                    f"writer_incomplete:{job.id}",
+                    _team_checkpoint_state(
+                        prepared, "paused", svc.current_task,
+                        usage=orchestrator.usage(),
+                    ),
+                )
+                raise TeamWriterBudgetPause(job.id, terminal_reason, message)
         finally:
             _restore_writer_route(svc.core, route_snapshot)
         first_pending = False
-        terminal_reason = str(svc.core.last_turn_result.get("reason") or "complete")
-        if terminal_reason not in {"complete", "max_iterations"}:
-            raise InterruptedError(terminal_reason)
         prepared.writer_results.append(result)
         prepared.completed_writer_job_ids.add(job.id)
         svc.checkpoint(
@@ -2952,8 +3154,10 @@ def _run_team_writer(
     model_call_limit: int,
     writer_position: int | None = None,
     writer_total: int | None = None,
+    continuation: bool = False,
+    emit_completion: bool = True,
 ) -> AgentResult:
-    """Run one mutation-capable member under permission and call budgets."""
+    """Run one bounded slice of a mutation-capable member's coding job."""
     core = svc.core
     remaining = orchestrator.remaining_model_calls(prepared.team.budget)
     if remaining <= 0:
@@ -2963,8 +3167,9 @@ def _run_team_writer(
     prompt_before = core.total_prompt_tokens
     completion_before = core.total_completion_tokens
     route = writer.route
-    svc.emit({
-        "type": "agent_job_started",
+    emit = getattr(svc, "emit", lambda _event: None)
+    emit({
+        "type": "agent_job_continuing" if continuation else "agent_job_started",
         "run_id": prepared.run_id,
         "job_id": job_id,
         "agent_id": writer.id,
@@ -2977,16 +3182,26 @@ def _run_team_writer(
         "writer_job_id": job_id,
         "writer_position": writer_position,
         "writer_total": writer_total,
+        "message": "Continuing coding job with the saved workspace state"
+        if continuation else "Coding job started",
+        "slice_call_limit": model_call_limit,
     })
-    with orchestrator.writer_slot(prepared.run_id, writer):
-        core.run_turn(
-            prompt,
-            svc.decide,
-            allow_tools=True,
-            persisted_user_text=persisted_user_text,
-            model_call_limit=model_call_limit,
-            persist_user_message=False,
-        )
+    previous_iteration_limit = getattr(core, "max_iterations", None)
+    if previous_iteration_limit is not None:
+        core.max_iterations = TEAM_WRITER_ITERATION_LIMIT
+    try:
+        with orchestrator.writer_slot(prepared.run_id, writer):
+            core.run_turn(
+                prompt,
+                svc.decide,
+                allow_tools=True,
+                persisted_user_text=persisted_user_text,
+                model_call_limit=model_call_limit,
+                persist_user_message=False,
+            )
+    finally:
+        if previous_iteration_limit is not None:
+            core.max_iterations = previous_iteration_limit
     prompt_tokens = max(core.total_prompt_tokens - prompt_before, 0)
     completion_tokens = max(core.total_completion_tokens - completion_before, 0)
     model_calls = int(core.last_turn_result.get("model_calls") or 0)
@@ -3016,17 +3231,39 @@ def _run_team_writer(
         elapsed_ms=max(int((time.monotonic() - started) * 1_000), 0),
         error="",
     )
-    svc.emit({
-        "type": "agent_job_completed",
-        "run_id": prepared.run_id,
-        "state": "completed",
-        "result": result.structured(),
-        "writer_job_id": job_id,
-        "writer_position": writer_position,
-        "writer_total": writer_total,
-        "usage": orchestrator.usage(),
-    })
+    if emit_completion and str(core.last_turn_result.get("reason") or "complete") == "complete":
+        emit({
+            "type": "agent_job_completed",
+            "run_id": prepared.run_id,
+            "job_id": job_id,
+            "state": "completed",
+            "result": result.structured(),
+            "writer_job_id": job_id,
+            "writer_position": writer_position,
+            "writer_total": writer_total,
+            "usage": orchestrator.usage(),
+        })
     return result
+
+
+def _merge_writer_results(
+    previous: AgentResult | None, current: AgentResult
+) -> AgentResult:
+    if previous is None:
+        return current
+    return AgentResult(
+        job_id=current.job_id,
+        agent_id=current.agent_id,
+        agent_name=current.agent_name,
+        role=current.role,
+        output=current.output or previous.output,
+        reasoning_text=current.reasoning_text or previous.reasoning_text,
+        evidence=[*previous.evidence, *current.evidence][:128],
+        prompt_tokens=previous.prompt_tokens + current.prompt_tokens,
+        completion_tokens=previous.completion_tokens + current.completion_tokens,
+        elapsed_ms=previous.elapsed_ms + current.elapsed_ms,
+        error=current.error or previous.error,
+    )
 
 
 def _latest_assistant_output(core: AgentCore) -> str:

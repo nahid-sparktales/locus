@@ -13,7 +13,7 @@ Event types emitted:
     permission_request                      {request_id, id, tool, preview}
     tool_result                             {id, tool, summary, result, ok, denied}
     todo_update                             {todos}
-    turn_done                               {reason: complete|interrupted|max_iterations|error,
+    turn_done                               {reason: complete|interrupted|max_iterations|model_call_budget|error,
                                              duration_ms}
     error                                   {message}
     session_info                            full session_info() dict
@@ -1684,7 +1684,16 @@ class AgentCore:
             if iteration >= iteration_limit and self._apply_final_steers_or_close():
                 iteration_limit += 1
         else:
-            reason = "max_iterations"
+            # A team writer can have a smaller per-job call allocation than
+            # the agent's general loop ceiling. Reporting both as
+            # ``max_iterations`` made the native app claim that the global
+            # 40-step setting was reached when the writer had actually used a
+            # much smaller team budget.
+            reason = (
+                "model_call_budget"
+                if hard_call_limit is not None and hard_call_limit <= iteration_limit
+                else "max_iterations"
+            )
         # Close steering before publishing the terminal boundary. Any steer
         # accepted before this point is either applied above or caused another
         # loop iteration; anything later belongs in Queue or Stop & Send.
@@ -1694,6 +1703,8 @@ class AgentCore:
             "reason": reason,
             "duration_ms": max(int((time.monotonic() - started_at) * 1000), 0),
             "model_calls": iteration,
+            "iteration_limit": iteration_limit,
+            "model_call_limit": hard_call_limit,
         }
         self.last_turn_result = terminal
         if not self._suppress_turn_done:
@@ -2282,6 +2293,9 @@ class AgentCore:
             if role == "user":
                 content = strip_prompt_decoration(content)
             item: dict[str, Any] = {"role": role, "content": content[:4000]}
+            team_run_id = str(m.get("team_run_id") or "")[:128]
+            if role == "user" and team_run_id:
+                item["team_run_id"] = team_run_id
             if role == "assistant":
                 # Resume only provider-supplied visible reasoning. Signatures
                 # and redacted-thinking payloads are intentionally omitted.
