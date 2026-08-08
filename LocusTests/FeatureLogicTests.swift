@@ -1672,6 +1672,26 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
+    func testLegacyTeamApprovalModesMigrateToOneTimePreview() {
+        let team = AgentTeam(
+            name: "Legacy automatic team",
+            dispatcherID: nil,
+            fallbackDispatcherID: nil,
+            memberIDs: [],
+            defaultWriterID: nil,
+            dispatchApprovalMode: .automatic
+        )
+
+        let migration = AgentTeamStore.migrateToOneTimeApproval([team])
+
+        XCTAssertTrue(migration.changed)
+        XCTAssertEqual(migration.teams.first?.dispatchApprovalMode, .preview)
+        XCTAssertEqual(migration.teams.first?.resolvedDispatchApprovalMode, .preview)
+
+        let alreadyPreview = AgentTeamStore.migrateToOneTimeApproval(migration.teams)
+        XCTAssertFalse(alreadyPreview.changed)
+    }
+
     func testAgentTeamRejectsAModelTheSelectedProviderDoesNotReport() {
         let account = ProviderAccount(
             kind: .custom,

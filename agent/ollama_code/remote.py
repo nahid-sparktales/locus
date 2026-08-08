@@ -503,7 +503,10 @@ class RemoteClient:
             # tools so the user still gets an answer, and say what happened.
             if tools and ("tool" in message or "function" in message):
                 payload.pop("tools", None)
+                payload.pop("tool_choice", None)
+                payload.pop("parallel_tool_calls", None)
                 response = stream(payload, on_token, should_stop, on_thinking)
+                response.provider_fields["tools_rejected"] = True
                 response.content_parts.insert(
                     0,
                     "[This endpoint rejected tool calling, so I answered without "

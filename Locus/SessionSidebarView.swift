@@ -19,7 +19,6 @@ struct SessionSidebarView: View {
     @EnvironmentObject private var model: AppModel
     @State private var sessionToRename: SessionSummary?
     @State private var renameText = ""
-    @State private var teamProgressPresented = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -164,21 +163,6 @@ struct SessionSidebarView: View {
             }
 
             navigationRow(
-                symbol: "person.3.sequence.fill",
-                title: "Agents & Teams",
-                help: "Configure dispatchers, specialists, writers, and team budgets",
-                accessibilityLabel: "Manage agents and teams",
-                identifier: "sidebar.agentsTeams"
-            ) {
-                model.settingsPage = .agents
-                model.settingsPresented = true
-            }
-
-            if model.selectedAgentTeam != nil {
-                teamProgressRow
-            }
-
-            navigationRow(
                 symbol: "shippingbox",
                 title: "Hugging Face",
                 help: "Browse and install GGUF models from Hugging Face",
@@ -190,62 +174,6 @@ struct SessionSidebarView: View {
         }
         .padding(.horizontal, SidebarMetrics.gutter)
         .padding(.bottom, 10)
-    }
-
-    private var teamProgressRow: some View {
-        Button {
-            teamProgressPresented.toggle()
-        } label: {
-            HStack(spacing: SidebarMetrics.iconGap) {
-                Image(systemName: "waveform.path.ecg")
-                    .font(.system(size: 12, weight: .medium))
-                    .frame(width: SidebarMetrics.iconColumn)
-                Text("Team progress")
-                    .font(.system(size: 10, weight: .semibold))
-                Spacer(minLength: 4)
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(teamProgressColor)
-                        .frame(width: 6, height: 6)
-                    Text(teamProgressTitle)
-                        .font(.system(size: 8, weight: .semibold))
-                        .lineLimit(1)
-                }
-            }
-            .foregroundStyle(LocusTheme.inkSoft)
-            .padding(.horizontal, SidebarMetrics.rowInset)
-            .frame(height: 30)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .background(teamProgressPresented ? LocusTheme.signal.opacity(0.12) : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .help("Show the active team's dispatcher, jobs, models, and usage")
-        .accessibilityLabel("Team progress, \(teamProgressTitle)")
-        .accessibilityIdentifier("sidebar.teamProgress")
-        .popover(isPresented: $teamProgressPresented, arrowEdge: .leading) {
-            TeamProgressPopover {
-                teamProgressPresented = false
-            }
-            .environmentObject(model)
-        }
-    }
-
-    private var teamProgressTitle: String {
-        if model.selectedTeamRouteIssue != nil { return "Needs setup" }
-        return model.orchestrationState?.title ?? "Ready"
-    }
-
-    private var teamProgressColor: Color {
-        if model.selectedTeamRouteIssue != nil { return LocusTheme.coral }
-        switch model.orchestrationState {
-        case .completed: return LocusTheme.success
-        case .failed, .interrupted, .cancelled, .discarded: return LocusTheme.coral
-        case .waitingPermission, .waitingComputer, .waitingDispatchApproval, .paused:
-            return LocusTheme.warning
-        case .queued, .dispatching, .running, .reviewing: return LocusTheme.signalDeep
-        case nil: return LocusTheme.success
-        }
     }
 
     /// One row of the nav stack. They share an icon column with the New chat,
@@ -607,7 +535,7 @@ struct SessionSidebarView: View {
     }
 }
 
-private struct TeamProgressPopover: View {
+struct TeamProgressPopover: View {
     @EnvironmentObject private var model: AppModel
     let dismiss: () -> Void
 

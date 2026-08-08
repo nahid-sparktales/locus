@@ -25,10 +25,19 @@ like; macOS remembers the size you choose for later launches.
   replaying its last approval after reconnecting. Run updates are coalesced and
   loaded incrementally so large timelines stay responsive at completion. After
   an unexpected quit, Locus reopens the latest run and explains whether it
-  finished or can be resumed.
-- **Live Team Progress in the sidebar** shows the active dispatcher and its
+  finished or can be resumed. A completed run no longer triggers the active-work
+  warning when you quit just because an older in-memory status is still present.
+- **Live Team Progress in the header** sits immediately left of the context
+  meter and shows the active dispatcher and its
   provider/model, elapsed time, delegated jobs, model calls, and hosted-token
-  usage. Its Stop button remains available while a team is running.
+  usage. During dispatch, the composer itself explains the current stage and
+  any bounded validation repair. When the plan is ready, the composer asks for
+  one approval for the complete plan; individual models, jobs, and steps do not
+  ask again. Its Stop button remains available while a team is running. Common
+  Qwen/vLLM plan wrappers are normalized before validation; when correction is
+  needed, both Team Progress and Runs show the repair stage and exact bounded
+  validation reason. If repair still fails, Locus explains why it is continuing
+  safely with the designated writer instead of silently skipping specialists.
 - **Team-aware model controls** label the workspace with the selected team and
   distinct model count, list the exact team models in a bounded, scrollable
   header picker, and use provider-backed model dropdowns when editing agent
@@ -52,7 +61,7 @@ for setup, examples, permission boundaries, recovery, and troubleshooting.
 ## Designed for real project work
 
 - **One calm sidebar** holds the conversation list: rows for Plugins & MCP,
-  Manage Accounts, Agents & Teams, live Team Progress, and Hugging Face, then
+  Manage Accounts, and Hugging Face, then
   New chat, search, recents, and a footer with the workspace selector,
   connection status, and the rest of the app's actions. It starts open,
   collapses with `⌘0` or the header button when you want the room, and remembers
@@ -130,7 +139,9 @@ for setup, examples, permission boundaries, recovery, and troubleshooting.
 - **Session checkpoints** restore the conversation, plan, workspace, model, and
   context together.
 - **Native command palette and shortcuts** keep frequent actions close at
-  hand — ⌘K palette with arrow-key navigation, ⌘/ shortcut reference.
+  hand — ⌘K opens the palette with arrow-key navigation, ⌘/ opens the shortcut
+  reference, and the same reference has a permanent Settings tab below
+  Extensions.
 - **Background notifications** announce finished runs and pending permission
   requests when Locus is not the active app.
 - **Local sessions and model switching** work directly with the Ollama Code
@@ -294,6 +305,14 @@ count rather than the solo session's provider. Open it to see each exact model,
 switch back to Solo, or manage the team. Agent profiles use a model dropdown
 filled from their selected provider; the refresh and **Test Connection** actions
 can wake a scaled-to-zero vLLM endpoint before its model catalog is available.
+
+The Team Progress button appears immediately left of the context meter. While
+the dispatcher is building a plan, the composer shows its route, elapsed time,
+observable stage, and validation status. The completed plan then replaces the
+composer with **Run Plan**, **Re-dispatch**, and **Cancel**. Run Plan is a
+single approval for the entire dependency graph; it is not repeated for each
+agent or step. Security-sensitive tool permissions still follow the permission
+mode selected separately.
 
 **Test Connection** confirms the account answers before you send a message,
 and reports the actual reason when it does not — a rejected key, a wrong URL,
@@ -567,7 +586,7 @@ xcodebuild \
 cd agent && .venv/bin/python -m pytest -q
 ```
 
-The repository currently contains 244 unit tests, 29 UI tests, and 378 backend
+The repository currently contains 249 unit tests, 33 UI tests, and 392 backend
 test cases.
 
 The unit suite covers work modes, lightweight context migration, session

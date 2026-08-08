@@ -1127,7 +1127,7 @@ def test_remote_retries_without_tools_when_unsupported(monkeypatch):
         timeout=None,
         allow_redirects=None,
     ):
-        attempts.append("tools" in (json or {}))
+        attempts.append(dict(json or {}))
         if "tools" in (json or {}):
             return FakeResponse(
                 status_code=400,
@@ -1141,12 +1141,21 @@ def test_remote_retries_without_tools_when_unsupported(monkeypatch):
     client = remote_mod.RemoteClient("https://endpoint.example", model="m")
 
     resp = client.chat_stream(
-        "m", [{"role": "user", "content": "hi"}], tools=[{"type": "function"}]
+        "m",
+        [{"role": "user", "content": "hi"}],
+        tools=[{"type": "function"}],
+        options={
+            "tool_choice": {"type": "function", "function": {"name": "submit"}},
+            "parallel_tool_calls": False,
+        },
     )
 
-    assert attempts == [True, False], "it must retry once without tools"
+    assert len(attempts) == 2, "it must retry exactly once"
+    assert {"tools", "tool_choice", "parallel_tool_calls"} <= attempts[0].keys()
+    assert {"tools", "tool_choice", "parallel_tool_calls"}.isdisjoint(attempts[1])
     assert "plain answer" in resp.content
     assert "rejected tool calling" in resp.content
+    assert resp.provider_fields["tools_rejected"] is True
 
 
 def test_remote_stream_interrupt_closes_a_stalled_response(monkeypatch):
@@ -2938,6 +2947,31 @@ def test_specialist_token_streams_do_not_flood_durable_run_history(tmp_path):
         })
 
     assert service.run_store.events("stream-run") == []
+
+
+def test_dispatcher_rejection_is_persisted_as_a_bounded_durable_event(tmp_path):
+    core = _core(tmp_path, [])
+    service = server_mod.ChatService(core)
+    service.run_store.start_run("dispatch-run", request="work")
+    service.active_run_id = "dispatch-run"
+
+    service.emit({
+        "type": "dispatcher_plan_rejected",
+        "run_id": "dispatch-run",
+        "stage": "initial",
+        "reason": "dispatcher plan has no jobs",
+        "response_source": "tool_call",
+        "will_retry": True,
+        "message": "Correcting dispatcher plan…",
+    })
+
+    events = service.run_store.events("dispatch-run")
+    assert len(events) == 1
+    assert events[0]["type"] == "dispatcher_plan_rejected"
+    assert events[0]["reason"] == "dispatcher plan has no jobs"
+    assert events[0]["will_retry"] is True
+    assert "content" not in events[0]
+    assert "raw" not in events[0]
 
 
 def test_team_writer_reserves_calls_for_review_and_synthesis():

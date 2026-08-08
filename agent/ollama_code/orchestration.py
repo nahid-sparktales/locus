@@ -204,6 +204,10 @@ class AgentResult:
 class DispatchPlan:
     summary: str
     jobs: tuple[AgentJob, ...]
+    # Internal resolution metadata. It is deliberately absent from
+    # `structured()` so existing plan/checkpoint payloads remain compatible.
+    outcome: str = field(default="valid", repr=False, compare=False)
+    validation_reason: str = field(default="", repr=False, compare=False)
 
     def structured(self) -> dict[str, Any]:
         return {
@@ -837,7 +841,12 @@ class TeamOrchestrator:
                 "reason": "Highest eligible transparent scorecard total.",
                 "candidates": scorecards,
             })
-        return DispatchPlan(plan.summary, tuple(resolved))
+        return DispatchPlan(
+            plan.summary,
+            tuple(resolved),
+            outcome=plan.outcome,
+            validation_reason=plan.validation_reason,
+        )
 
     def _scorecard(self, profile: AgentProfile, team: AgentTeam) -> dict[str, Any]:
         samples = self.run_store.routing_samples(
@@ -1016,7 +1025,7 @@ class TeamOrchestrator:
         })
         try:
             plan = self._dispatch(
-                request, workspace, team, profiles, dispatcher, forced_agent,
+                run_id, request, workspace, team, profiles, dispatcher, forced_agent,
             )
         except Exception as exc:
             self.emit({
@@ -1029,12 +1038,18 @@ class TeamOrchestrator:
                 "usage": self.usage(),
             })
             raise
+        completion_message = {
+            "valid": "Dispatch plan ready",
+            "repaired": "Dispatch plan repaired",
+            "fallback": plan.summary,
+        }.get(plan.outcome, "Dispatch plan ready")
         self.emit({
             "type": "dispatcher_completed",
             "run_id": run_id,
             "agent_id": dispatcher.id,
             "state": "completed",
-            "message": "Dispatch plan ready",
+            "message": completion_message,
+            "outcome": plan.outcome,
             "elapsed_ms": max(int((time.monotonic() - started) * 1_000), 0),
             "usage": self.usage(),
         })
@@ -1042,6 +1057,7 @@ class TeamOrchestrator:
 
     def _dispatch(
         self,
+        run_id: str,
         request: str,
         workspace: str,
         team: AgentTeam,
@@ -1069,7 +1085,7 @@ class TeamOrchestrator:
             f"Hard max jobs: {team.budget.max_jobs}\nRoster:\n{json.dumps(roster)}"
         )
         response = self._raw_call(
-            team.id,
+            run_id,
             dispatcher,
             [
                 {"role": "system", "content": dispatcher.instructions},
@@ -1079,39 +1095,95 @@ class TeamOrchestrator:
             tools=[DISPATCH_TOOL],
             force_tool="submit_dispatch_plan",
         )
-        raw: Any = None
-        for call in response.tool_calls:
-            if call.name == "submit_dispatch_plan":
-                raw = call.arguments
-                break
-        if raw is None:
-            raw = _extract_json(response.content)
-        try:
-            return validate_dispatch_plan(raw, team, profiles, forced_agent)
-        except OrchestrationError:
-            repair = self._raw_call(
-                team.id,
-                dispatcher,
-                [
-                    {"role": "system", "content": dispatcher.instructions},
-                    {"role": "user", "content": prompt},
-                    {"role": "assistant", "content": response.content},
-                    {
-                        "role": "user",
-                        "content": "Repair the plan once. Return only strict JSON matching the submit_dispatch_plan arguments schema.",
-                    },
-                ],
-                team.budget,
-            )
-            try:
-                return validate_dispatch_plan(_extract_json(repair.content), team, profiles, forced_agent)
-            except OrchestrationError:
-                # Deterministic recovery: the designated writer receives the
-                # request directly; this preserves the one-writer boundary.
-                return DispatchPlan(
-                    summary="Dispatcher plan invalid; using the team's default writer.",
-                    jobs=(AgentJob("writer", team.default_writer_id, request, (), "writer"),),
-                )
+        plan, rejected, source, initial_reason = _validate_dispatch_response(
+            response, team, profiles, forced_agent,
+        )
+        if plan is not None:
+            return plan
+        if self.should_stop():
+            raise InterruptedError("orchestration redirected or cancelled")
+
+        initial_reason = _bounded_dispatch_reason(initial_reason)
+        self.emit({
+            "type": "dispatcher_plan_rejected",
+            "run_id": run_id,
+            "agent_id": dispatcher.id,
+            "agent_name": dispatcher.name,
+            "provider": _route_label(dispatcher.route),
+            "model": dispatcher.model,
+            "stage": "initial",
+            "reason": initial_reason,
+            "response_source": source,
+            "will_retry": True,
+            "message": "Correcting dispatcher plan…",
+        })
+        repair_prompt = (
+            "The previous dispatch candidate failed validation. Correct only the structural "
+            "or routing errors and return one strict JSON object matching the "
+            "submit_dispatch_plan arguments schema. Do not wrap it in prose or Markdown.\n\n"
+            f"Exact validation error:\n{initial_reason}\n\n"
+            f"Rejected candidate:\n{_bounded_dispatch_candidate(rejected)}\n\n"
+            f"Default writer id: {team.default_writer_id}\n"
+            f"Hard max jobs: {team.budget.max_jobs}\n"
+            f"Roster:\n{json.dumps(roster, ensure_ascii=False)}\n\n"
+            "Arguments schema:\n"
+            f"{json.dumps(DISPATCH_TOOL['function']['parameters'], ensure_ascii=False)}"
+        )
+        repair = self._raw_call(
+            run_id,
+            dispatcher,
+            [
+                {"role": "system", "content": dispatcher.instructions},
+                {"role": "user", "content": prompt},
+                {
+                    "role": "assistant",
+                    "content": _bounded_dispatch_candidate(
+                        response.content or rejected,
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": repair_prompt,
+                },
+            ],
+            team.budget,
+        )
+        repaired, _, repair_source, repair_reason = _validate_dispatch_response(
+            repair, team, profiles, forced_agent,
+        )
+        if repaired is not None:
+            return replace(repaired, outcome="repaired")
+        if self.should_stop():
+            raise InterruptedError("orchestration redirected or cancelled")
+
+        repair_reason = _bounded_dispatch_reason(repair_reason)
+        writer_name = profiles[team.default_writer_id].name
+        summary = (
+            "Dispatcher plan could not be validated after repair: "
+            f"{repair_reason}. Continuing safely with {writer_name} only."
+        )
+        self.emit({
+            "type": "dispatcher_plan_rejected",
+            "run_id": run_id,
+            "agent_id": dispatcher.id,
+            "agent_name": dispatcher.name,
+            "provider": _route_label(dispatcher.route),
+            "model": dispatcher.model,
+            "stage": "repair",
+            "reason": repair_reason,
+            "response_source": repair_source,
+            "will_retry": False,
+            "message": summary,
+        })
+        # Deterministic recovery: the designated writer receives the request
+        # directly; this preserves the one-writer boundary without pretending
+        # that specialists were dispatched.
+        return DispatchPlan(
+            summary=summary,
+            jobs=(AgentJob("writer", team.default_writer_id, request, (), "writer"),),
+            outcome="fallback",
+            validation_reason=repair_reason,
+        )
 
     def _run_pre_writer_jobs(
         self,
@@ -1470,6 +1542,103 @@ def validate_dispatch_plan(
     return DispatchPlan(str(value.get("summary") or "Team dispatch plan")[:4_000], tuple(jobs))
 
 
+def normalize_dispatch_candidate(value: Any, *, _depth: int = 0) -> Any:
+    """Unwrap bounded provider/tool envelopes without changing plan semantics."""
+    if _depth > 4:
+        raise OrchestrationError("dispatcher plan wrapper nesting is too deep")
+    if isinstance(value, str):
+        return normalize_dispatch_candidate(_extract_json(value), _depth=_depth + 1)
+    if not isinstance(value, dict):
+        return value
+    if "jobs" in value:
+        return value
+
+    plan = value.get("plan")
+    if plan is not None:
+        return normalize_dispatch_candidate(plan, _depth=_depth + 1)
+
+    function = value.get("function")
+    if isinstance(function, dict):
+        name = str(function.get("name") or value.get("name") or "")
+        if name == "submit_dispatch_plan" and "arguments" in function:
+            return normalize_dispatch_candidate(
+                function["arguments"], _depth=_depth + 1,
+            )
+
+    tool_call = value.get("tool_call")
+    if isinstance(tool_call, dict):
+        return normalize_dispatch_candidate(tool_call, _depth=_depth + 1)
+
+    calls = value.get("tool_calls")
+    if isinstance(calls, list):
+        for call in calls[:8]:
+            if not isinstance(call, dict):
+                continue
+            try:
+                candidate = normalize_dispatch_candidate(call, _depth=_depth + 1)
+            except OrchestrationError:
+                continue
+            if isinstance(candidate, dict) and "jobs" in candidate:
+                return candidate
+
+    name = str(value.get("name") or value.get("tool") or "")
+    if name == "submit_dispatch_plan":
+        for key in ("arguments", "input"):
+            if key in value:
+                return normalize_dispatch_candidate(value[key], _depth=_depth + 1)
+
+    # vLLM-compatible clients preserve malformed streamed arguments under
+    # `_raw`; top-level `arguments`/`input` wrappers are also common.
+    for key in ("_raw", "arguments", "input"):
+        if key in value:
+            return normalize_dispatch_candidate(value[key], _depth=_depth + 1)
+    return value
+
+
+def _validate_dispatch_response(
+    response: Any,
+    team: AgentTeam,
+    profiles: dict[str, AgentProfile],
+    forced_agent: str | None,
+) -> tuple[DispatchPlan | None, Any, str, str]:
+    candidates: list[tuple[Any, str]] = []
+    for call in getattr(response, "tool_calls", ()):
+        if getattr(call, "name", "") == "submit_dispatch_plan":
+            candidates.append((getattr(call, "arguments", None), "tool_call"))
+    content = str(getattr(response, "content", "") or "").strip()
+    if content:
+        candidates.append((content, "content"))
+    if not candidates:
+        candidates.append((None, "empty"))
+
+    first_rejected: Any = candidates[0][0]
+    first_source = candidates[0][1]
+    first_reason = "dispatcher did not return a dispatch candidate"
+    for index, (raw, source) in enumerate(candidates):
+        try:
+            candidate = normalize_dispatch_candidate(raw)
+            plan = validate_dispatch_plan(candidate, team, profiles, forced_agent)
+            return plan, candidate, source, ""
+        except OrchestrationError as exc:
+            if index == 0:
+                first_rejected = raw
+                first_source = source
+                first_reason = str(exc)
+    return None, first_rejected, first_source, first_reason
+
+
+def _bounded_dispatch_reason(value: str) -> str:
+    return " ".join(str(value or "dispatcher plan was rejected").split())[:500]
+
+
+def _bounded_dispatch_candidate(value: Any) -> str:
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        encoded = str(value)
+    return encoded[:16_000]
+
+
 def collect_workspace_evidence(workspace: str) -> str:
     root = Path(workspace).expanduser().resolve()
     sections = [f"Workspace root: {root}"]
@@ -1765,5 +1934,6 @@ __all__ = [
     "collect_workspace_evidence",
     "client_for_profile", "orchestration_fingerprint",
     "parse_manifest",
+    "normalize_dispatch_candidate",
     "validate_dispatch_plan",
 ]

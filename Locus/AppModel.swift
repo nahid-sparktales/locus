@@ -119,6 +119,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var activeWorkerID: String?
     @Published private(set) var taskConversationStates: [String: TaskConversationState] = [:]
     @Published private(set) var dispatcherActivity: AgentActivity?
+    @Published private(set) var dispatcherValidationReason: String?
     @Published private(set) var agentActivities: [AgentActivity] = []
     @Published private(set) var teamModelCalls = 0
     @Published private(set) var teamMeteredTokens = 0
@@ -483,11 +484,16 @@ final class AppModel: ObservableObject {
         }
         if !isUITesting, persistenceEnabled {
             let loadedProfiles = AgentTeamStore.loadProfiles(from: defaults)
-            let loadedTeams = AgentTeamStore.loadTeams(from: defaults)
+            let storedTeams = AgentTeamStore.loadTeams(from: defaults)
+            let approvalMigration = AgentTeamStore.migrateToOneTimeApproval(storedTeams)
+            let loadedTeams = approvalMigration.teams
             let loadedSelection = defaults.string(forKey: AgentTeamStore.selectionKey)
                 .flatMap(UUID.init(uuidString:))
             agentProfiles = loadedProfiles
             agentTeams = loadedTeams
+            if approvalMigration.changed {
+                AgentTeamStore.save(profiles: loadedProfiles, teams: loadedTeams, to: defaults)
+            }
             teamRoutingConsentAccountIDs = AgentTeamStore.loadConsent(from: defaults)
             let storedConcurrency = defaults.integer(forKey: AgentTeamStore.globalConcurrencyKey)
             globalAgentConcurrency = storedConcurrency == 0 ? 3 : min(max(storedConcurrency, 1), 8)
@@ -2468,10 +2474,49 @@ final class AppModel: ObservableObject {
     }
 
     var hasRunningWorkForQuit: Bool {
-        isBusy || hasPendingPermission || orchestrationState.map {
-            ![.completed, .failed, .interrupted, .cancelled, .discarded].contains($0)
-        } == true || taskConversationStates.values.contains {
-            ![.completed, .failed, .interrupted, .cancelled, .discarded].contains($0.state)
+        Self.shouldWarnBeforeQuit(
+            isBusy: isBusy,
+            hasPendingPermission: hasPendingPermission,
+            currentSessionID: currentSessionID,
+            orchestrationState: orchestrationState,
+            taskConversationStates: taskConversationStates,
+            liveWorkerSessionIDs: Set(
+                taskWorkers.values.compactMap { runtime in
+                    runtime.process.isRunning ? runtime.sessionID : nil
+                }
+            )
+        )
+    }
+
+    /// A terminal durable run is authoritative for the current chat. Team
+    /// workers intentionally remain alive between turns, so neither their
+    /// process nor a stale pre-completion snapshot proves work is still active.
+    static func shouldWarnBeforeQuit(
+        isBusy: Bool,
+        hasPendingPermission: Bool,
+        currentSessionID: String,
+        orchestrationState: TeamRunState?,
+        taskConversationStates: [String: TaskConversationState],
+        liveWorkerSessionIDs: Set<String>
+    ) -> Bool {
+        // These foreground flags are set synchronously when a new solo or team
+        // turn begins, before a fresh orchestration event can replace the last
+        // run's terminal state.
+        if isBusy || hasPendingPermission {
+            return true
+        }
+        if let orchestrationState, !orchestrationState.isTerminal {
+            return true
+        }
+        let currentRunIsTerminal = orchestrationState?.isTerminal == true
+        return taskConversationStates.contains { sessionID, snapshot in
+            guard liveWorkerSessionIDs.contains(sessionID), !snapshot.state.isTerminal else {
+                return false
+            }
+            // Completion events can arrive before older foreground flags and
+            // task snapshots are cleared. Do not turn those stale values into
+            // a destructive-looking quit confirmation.
+            return sessionID != currentSessionID || !currentRunIsTerminal
         }
     }
 
@@ -2485,10 +2530,7 @@ final class AppModel: ObservableObject {
             // Give every worker a bounded window to append its interrupted
             // task state and terminal event before shutdown stops processes.
             for _ in 0..<20 {
-                let backgroundActive = taskConversationStates.values.contains {
-                    ![.completed, .failed, .interrupted].contains($0.state)
-                }
-                if !isBusy && !backgroundActive { break }
+                if !hasRunningWorkForQuit { break }
                 try? await Task.sleep(for: .milliseconds(150))
             }
             completion()
@@ -2767,6 +2809,24 @@ final class AppModel: ObservableObject {
 
     var teamModeEnabled: Bool { selectedAgentTeam != nil }
 
+    var shouldShowTeamDispatchProgress: Bool {
+        isBusy && orchestrationRunID != nil && orchestrationState == .dispatching
+            && pendingDispatchPlan == nil
+    }
+
+    var shouldShowTeamDispatchApproval: Bool {
+        orchestrationState == .waitingDispatchApproval && pendingDispatchPlan != nil
+    }
+
+    var activeOrchestrationTeam: AgentTeam? {
+        if let id = selectedOrchestrationRun?.teamID.flatMap(UUID.init(uuidString:)),
+           let team = agentTeams.first(where: { $0.id == id })
+        {
+            return team
+        }
+        return selectedAgentTeam
+    }
+
     func selectAgentTeam(_ id: UUID?) {
         selectedAgentTeamID = id
         showToast(id == nil ? "Solo mode" : "Team mode")
@@ -3007,7 +3067,9 @@ final class AppModel: ObservableObject {
             "name": team.name,
             "member_ids": team.memberIDs.map(\.uuidString),
             "use_managed_worktree": team.useManagedWorktree,
-            "dispatch_approval_mode": team.resolvedDispatchApprovalMode.rawValue,
+            // One approval releases the complete plan. Individual jobs and
+            // models do not introduce additional dispatch confirmations.
+            "dispatch_approval_mode": DispatchApprovalMode.preview.rawValue,
             "routing_mode": team.resolvedRoutingMode.rawValue,
             "routing_weights": [
                 "quality": team.resolvedRoutingWeights.quality,
@@ -3457,7 +3519,18 @@ final class AppModel: ObservableObject {
             showToast("The dispatch decision could not be delivered")
             return
         }
-        if action != "redispatch" { pendingDispatchPlan = nil }
+        pendingDispatchPlan = nil
+        if action == "redispatch" {
+            orchestrationState = .dispatching
+            dispatcherValidationReason = nil
+            if var activity = dispatcherActivity {
+                activity.state = .running
+                activity.output = "Creating a new dispatcher plan…"
+                activity.startedAt = Date()
+                dispatcherActivity = activity
+            }
+            updateTaskConversation(state: .dispatching, event: ["run_id": runID])
+        }
     }
 
     func dispatchPlanErrors(_ plan: DispatchPlan) -> [String] {
@@ -4252,6 +4325,7 @@ final class AppModel: ObservableObject {
                 sessionInfo = response.sessionInfo
                 currentSessionID = response.sessionInfo.sessionID
                 dispatcherActivity = nil
+                dispatcherValidationReason = nil
                 agentActivities = response.agentActivities
                 orchestrationState = response.orchestrationState
                 orchestrationRunID = response.orchestrationRunID
@@ -4292,6 +4366,7 @@ final class AppModel: ObservableObject {
         isBusy = false
         orchestrationState = nil
         dispatcherActivity = nil
+        dispatcherValidationReason = nil
         agentActivities = []
         activeTaskRecord = nil
         taskHasChanges = false
@@ -6021,6 +6096,7 @@ final class AppModel: ObservableObject {
             orchestrationState = .dispatching
             activeWorkerID = event["worker_id"] as? String ?? activeWorkerID
             dispatcherActivity = nil
+            dispatcherValidationReason = nil
             agentActivities = []
             teamModelCalls = 0
             teamMeteredTokens = 0
@@ -6037,6 +6113,7 @@ final class AppModel: ObservableObject {
             if persistenceEnabled { Task { await refreshMetadata() } }
 
         case "dispatcher_started":
+            dispatcherValidationReason = nil
             let runID = event["run_id"] as? String ?? orchestrationRunID ?? "current"
             dispatcherActivity = AgentActivity(
                 id: "dispatcher-\(runID)",
@@ -6070,6 +6147,16 @@ final class AppModel: ObservableObject {
             if let usage = event["usage"] as? [String: Any] {
                 teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
                 teamMeteredTokens = usage["metered_tokens"] as? Int ?? teamMeteredTokens
+            }
+
+        case "dispatcher_plan_rejected":
+            dispatcherValidationReason = event["reason"] as? String
+            if var activity = dispatcherActivity {
+                activity.state = .running
+                activity.output = event["message"] as? String
+                    ?? event["reason"] as? String
+                    ?? "Correcting dispatcher plan…"
+                dispatcherActivity = activity
             }
 
         case "orchestration_state":
@@ -6502,6 +6589,7 @@ final class AppModel: ObservableObject {
             orchestrationState = nil
             activeWorkerID = nil
             dispatcherActivity = nil
+            dispatcherValidationReason = nil
             agentActivities = []
             teamModelCalls = 0
             teamMeteredTokens = 0
@@ -7023,9 +7111,15 @@ final class AppModel: ObservableObject {
 
     private func seedUITestRunFixtureIfNeeded() {
         guard let fixture = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_RUN_FIXTURE"],
-              fixture == "completed" || fixture == "recoverable"
+              ["completed", "recoverable", "dispatcher-repair", "dispatch-plan"].contains(fixture)
         else { return }
-        let state: TeamRunState = fixture == "completed" ? .completed : .interrupted
+        let state: TeamRunState = switch fixture {
+        case "completed": .completed
+        case "recoverable": .interrupted
+        case "dispatch-plan": .waitingDispatchApproval
+        default: .dispatching
+        }
+        let lastSequence = ["dispatcher-repair", "dispatch-plan"].contains(fixture) ? 1 : 1_200
         let run = OrchestrationRun(
             id: "seed-run",
             sessionID: "seed-current",
@@ -7040,7 +7134,7 @@ final class AppModel: ObservableObject {
             createdAt: Date().addingTimeInterval(-300).timeIntervalSince1970,
             updatedAt: Date().timeIntervalSince1970,
             completedAt: fixture == "completed" ? Date().timeIntervalSince1970 : nil,
-            lastSequence: 1_200,
+            lastSequence: lastSequence,
             pinned: false,
             legacy: false,
             recoverable: fixture == "recoverable",
@@ -7052,15 +7146,123 @@ final class AppModel: ObservableObject {
         selectedOrchestrationRun = run
         orchestrationRunID = run.id
         orchestrationState = state
-        let rawEvents: [[String: Any]] = (1...1_200).map { sequence in
-            [
-                "event_id": "seed-event-\(sequence)",
-                "run_id": run.id,
-                "seq": sequence,
-                "type": sequence == 1_200 ? "orchestration_completed" : "agent_job_completed",
-                "summary": sequence == 1_200 ? "Team run completed" : "Durable result \(sequence)",
-                "detail": String(repeating: "Verified output. ", count: 12),
+        let rawEvents: [[String: Any]]
+        if ["dispatcher-repair", "dispatch-plan"].contains(fixture) {
+            let dispatcherID = UUID(uuidString: "00000000-0000-0000-0000-000000000501")!
+            let writerID = UUID(uuidString: "00000000-0000-0000-0000-000000000502")!
+            let teamID = UUID(uuidString: "00000000-0000-0000-0000-000000000503")!
+            agentProfiles = [
+                AgentProfile(
+                    id: dispatcherID,
+                    name: "Qwen Dispatcher",
+                    model: "qwen3:8b",
+                    role: .dispatcher
+                ),
+                AgentProfile(
+                    id: writerID,
+                    name: "Kimi Writer",
+                    model: "qwen3:8b",
+                    role: .implementer,
+                    accessCeiling: .workspaceWrite
+                ),
             ]
+            agentTeams = [AgentTeam(
+                id: teamID,
+                name: "Codex Team",
+                dispatcherID: dispatcherID,
+                fallbackDispatcherID: nil,
+                memberIDs: [dispatcherID, writerID],
+                defaultWriterID: writerID
+            )]
+            selectedAgentTeamID = teamID
+            isBusy = true
+            if fixture == "dispatcher-repair" {
+                dispatcherActivity = AgentActivity(
+                    id: "dispatcher-seed-run",
+                    agentName: "Qwen Dispatcher",
+                    role: AgentRole.dispatcher.rawValue,
+                    provider: "vLLM",
+                    model: "qwen3:8b",
+                    goal: "Creating the team plan",
+                    state: .running,
+                    output: "Correcting dispatcher plan…",
+                    reasoningText: nil,
+                    tool: nil,
+                    evidence: [],
+                    startedAt: Date().addingTimeInterval(-5),
+                    elapsedMilliseconds: 0,
+                    promptTokens: 0,
+                    completionTokens: 0
+                )
+                dispatcherValidationReason = "dispatcher plan has no jobs"
+                rawEvents = [[
+                    "event_id": "seed-event-1",
+                    "run_id": run.id,
+                    "seq": 1,
+                    "type": "dispatcher_plan_rejected",
+                    "stage": "initial",
+                    "message": "Correcting dispatcher plan…",
+                    "reason": "dispatcher plan has no jobs",
+                    "will_retry": true,
+                ]]
+            } else {
+                dispatcherActivity = AgentActivity(
+                    id: "dispatcher-seed-run",
+                    agentName: "Qwen Dispatcher",
+                    role: AgentRole.dispatcher.rawValue,
+                    provider: "vLLM",
+                    model: "qwen3:8b",
+                    goal: "Creating the team plan",
+                    state: .completed,
+                    output: "Dispatch plan ready",
+                    reasoningText: nil,
+                    tool: nil,
+                    evidence: [],
+                    startedAt: Date().addingTimeInterval(-5),
+                    elapsedMilliseconds: 5_000,
+                    promptTokens: 1_000,
+                    completionTokens: 250
+                )
+                pendingDispatchPlan = DispatchPlan(
+                    summary: "Inspect the checker, implement the fix, and review it.",
+                    jobs: [
+                        DispatchJob(
+                            id: "inspect",
+                            agentID: dispatcherID.uuidString,
+                            goal: "Inspect the current implementation and constraints",
+                            dependencies: [],
+                            kind: "specialist"
+                        ),
+                        DispatchJob(
+                            id: "write",
+                            agentID: writerID.uuidString,
+                            goal: "Implement and verify the stock checker",
+                            dependencies: ["inspect"],
+                            kind: "writer"
+                        ),
+                    ],
+                    budget: OrchestrationBudget(),
+                    maximumEstimatedCost: nil
+                )
+                rawEvents = [[
+                    "event_id": "seed-event-1",
+                    "run_id": run.id,
+                    "seq": 1,
+                    "type": "dispatch_plan_ready",
+                    "state": "waiting_dispatch_approval",
+                ]]
+            }
+        } else {
+            rawEvents = (1...1_200).map { sequence in
+                [
+                    "event_id": "seed-event-\(sequence)",
+                    "run_id": run.id,
+                    "seq": sequence,
+                    "type": sequence == 1_200 ? "orchestration_completed" : "agent_job_completed",
+                    "summary": sequence == 1_200 ? "Team run completed" : "Durable result \(sequence)",
+                    "detail": String(repeating: "Verified output. ", count: 12),
+                ]
+            }
         }
         orchestrationEvents = rawEvents.compactMap {
             decode(OrchestrationEvent.self, from: $0)
@@ -7068,6 +7270,19 @@ final class AppModel: ObservableObject {
         orchestrationEventIDs = Set(orchestrationEvents.map(\.id))
         inspectorTab = .runs
         inspectorCollapsed = false
+        if fixture == "completed",
+           ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_STALE_QUIT_STATE"] == "1"
+        {
+            taskConversationStates[currentSessionID] = TaskConversationState(
+                sessionID: currentSessionID,
+                taskID: "seed-task",
+                teamID: "seed-team",
+                workerID: "seed-worker",
+                runID: run.id,
+                state: .running,
+                updatedAt: Date().addingTimeInterval(-1)
+            )
+        }
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_UNCLEAN_RECOVERY"] == "1" {
             lifecycleRecoveryMessage = fixture == "completed"
                 ? "Locus was force quit after the team run completed. Its results were restored."

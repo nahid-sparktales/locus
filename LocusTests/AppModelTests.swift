@@ -244,6 +244,112 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testCompletedForegroundRunDoesNotShowQuitWarningForStaleSnapshot() {
+        let stale = TaskConversationState(
+            sessionID: "current-session",
+            taskID: "task-1",
+            teamID: "team-1",
+            workerID: "worker-1",
+            runID: "run-1",
+            state: .running,
+            updatedAt: Date()
+        )
+
+        XCTAssertFalse(AppModel.shouldWarnBeforeQuit(
+            isBusy: false,
+            hasPendingPermission: false,
+            currentSessionID: stale.sessionID,
+            orchestrationState: .completed,
+            taskConversationStates: [stale.sessionID: stale],
+            liveWorkerSessionIDs: [stale.sessionID]
+        ))
+        XCTAssertTrue(AppModel.shouldWarnBeforeQuit(
+            isBusy: true,
+            hasPendingPermission: false,
+            currentSessionID: stale.sessionID,
+            orchestrationState: .completed,
+            taskConversationStates: [stale.sessionID: stale],
+            liveWorkerSessionIDs: [stale.sessionID]
+        ), "a newly-started turn must override the previous run's terminal state")
+    }
+
+    @MainActor
+    func testQuitWarningRequiresLiveNonTerminalBackgroundWorker() {
+        let background = TaskConversationState(
+            sessionID: "background-session",
+            taskID: "task-2",
+            teamID: "team-1",
+            workerID: "worker-2",
+            runID: "run-2",
+            state: .running,
+            updatedAt: Date()
+        )
+        let arguments = (
+            isBusy: false,
+            hasPendingPermission: false,
+            currentSessionID: "current-session",
+            orchestrationState: TeamRunState.completed,
+            taskConversationStates: [background.sessionID: background]
+        )
+
+        XCTAssertFalse(AppModel.shouldWarnBeforeQuit(
+            isBusy: arguments.isBusy,
+            hasPendingPermission: arguments.hasPendingPermission,
+            currentSessionID: arguments.currentSessionID,
+            orchestrationState: arguments.orchestrationState,
+            taskConversationStates: arguments.taskConversationStates,
+            liveWorkerSessionIDs: []
+        ))
+        XCTAssertTrue(AppModel.shouldWarnBeforeQuit(
+            isBusy: arguments.isBusy,
+            hasPendingPermission: arguments.hasPendingPermission,
+            currentSessionID: arguments.currentSessionID,
+            orchestrationState: arguments.orchestrationState,
+            taskConversationStates: arguments.taskConversationStates,
+            liveWorkerSessionIDs: [background.sessionID]
+        ))
+    }
+
+    @MainActor
+    func testDispatcherRepairAndFallbackMessagesUpdateProgress() {
+        let model = AppModel(startImmediately: false)
+        model.handleEventForTesting([
+            "type": "dispatcher_started",
+            "run_id": "run-1",
+            "agent_name": "Qwen Dispatcher",
+        ])
+        model.handleEventForTesting([
+            "type": "dispatcher_plan_rejected",
+            "run_id": "run-1",
+            "stage": "initial",
+            "reason": "dispatcher plan has no jobs",
+            "message": "Correcting dispatcher plan…",
+        ])
+
+        XCTAssertEqual(model.dispatcherActivity?.state, .running)
+        XCTAssertEqual(model.dispatcherActivity?.output, "Correcting dispatcher plan…")
+
+        let fallback = "Dispatcher plan could not be validated after repair: dispatcher plan has no jobs. Continuing safely with Kimi Writer only."
+        model.handleEventForTesting([
+            "type": "dispatcher_plan_rejected",
+            "run_id": "run-1",
+            "stage": "repair",
+            "reason": "dispatcher plan has no jobs",
+            "message": fallback,
+        ])
+        model.handleEventForTesting([
+            "type": "dispatcher_completed",
+            "run_id": "run-1",
+            "state": "completed",
+            "outcome": "fallback",
+            "message": fallback,
+        ])
+
+        XCTAssertEqual(model.dispatcherActivity?.state, .completed)
+        XCTAssertEqual(model.dispatcherActivity?.output, fallback)
+    }
+
+    @MainActor
     func testGlobalAgentConcurrencyStaysWithinApplicationCeiling() {
         let model = AppModel(startImmediately: false)
         model.globalAgentConcurrency = 99
@@ -280,10 +386,61 @@ final class AppModelTests: XCTestCase {
 
         let manifest = try XCTUnwrap(model.teamManifest(for: "Implement this"))
         let profiles = try XCTUnwrap(manifest["profiles"] as? [[String: Any]])
+        let teamPayload = try XCTUnwrap(manifest["team"] as? [String: Any])
         XCTAssertEqual(Set(profiles.compactMap { $0["id"] as? String }), Set(team.memberIDs.map(\.uuidString)))
+        XCTAssertEqual(teamPayload["dispatch_approval_mode"] as? String, "preview")
         XCTAssertTrue(JSONSerialization.isValidJSONObject(manifest))
         let encoded = try JSONSerialization.data(withJSONObject: manifest)
         XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("api_key"))
+    }
+
+    @MainActor
+    func testTeamDispatchProgressBecomesOneTimePlanApproval() {
+        let model = AppModel(startImmediately: false)
+        model.isBusy = true
+        model.handleEventForTesting([
+            "type": "orchestration_started",
+            "run_id": "run-once",
+            "state": "dispatching",
+        ])
+
+        XCTAssertTrue(model.shouldShowTeamDispatchProgress)
+        XCTAssertFalse(model.shouldShowTeamDispatchApproval)
+
+        model.handleEventForTesting([
+            "type": "dispatcher_started",
+            "run_id": "run-once",
+            "agent_name": "Qwen Dispatcher",
+            "provider": "vLLM",
+            "model": "qwen",
+        ])
+        model.handleEventForTesting([
+            "type": "dispatcher_plan_rejected",
+            "run_id": "run-once",
+            "reason": "writer job was missing",
+            "message": "Correcting dispatcher plan…",
+        ])
+        XCTAssertEqual(model.dispatcherValidationReason, "writer job was missing")
+
+        model.handleEventForTesting([
+            "type": "dispatch_plan_ready",
+            "run_id": "run-once",
+            "state": "waiting_dispatch_approval",
+            "plan": [
+                "summary": "Implement once",
+                "jobs": [[
+                    "id": "write",
+                    "agent_id": UUID().uuidString,
+                    "goal": "Implement the request",
+                    "dependencies": [],
+                    "kind": "writer",
+                ]],
+            ],
+        ])
+
+        XCTAssertFalse(model.shouldShowTeamDispatchProgress)
+        XCTAssertTrue(model.shouldShowTeamDispatchApproval)
+        XCTAssertEqual(model.pendingDispatchPlan?.jobs.count, 1)
     }
 
     func testWorkModeInstructionsAreDistinct() {
