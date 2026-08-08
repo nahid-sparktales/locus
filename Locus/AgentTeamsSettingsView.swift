@@ -151,7 +151,7 @@ struct AgentTeamsSettingsView: View {
                 fallbackDispatcherID: nil,
                 memberIDs: members,
                 defaultWriterID: writer?.id,
-                dispatchApprovalMode: .automatic,
+                dispatchApprovalMode: .preview,
                 routingMode: .scorecard,
                 routingWeights: .init()
             )
@@ -705,12 +705,16 @@ private struct AgentTeamEditor: View {
                     }
                     Toggle("Use isolated managed worktree for new Git tasks", isOn: $draft.useManagedWorktree)
                     Section("Dispatch and routing") {
-                        Picker("Plan approval", selection: Binding(
-                            get: { draft.resolvedDispatchApprovalMode },
-                            set: { draft.dispatchApprovalMode = $0 }
-                        )) {
-                            ForEach(DispatchApprovalMode.allCases) { Text($0.title).tag($0) }
-                        }
+                        Label(
+                            "Review each team plan once before any agent begins",
+                            systemImage: "checkmark.shield"
+                        )
+                        .font(.system(size: 9, weight: .medium))
+                        Text("Run Plan approves the complete plan. Locus will not ask again for each model, agent, job, or step; security-sensitive tool permissions remain separate.")
+                            .font(.system(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("teamEditor.oneTimeApproval")
                         Picker("Specialist routing", selection: Binding(
                             get: { draft.resolvedRoutingMode },
                             set: { draft.routingMode = $0 }

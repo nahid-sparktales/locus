@@ -57,6 +57,9 @@ Every persisted event has immutable `event_id`, per-run monotonic `seq`,
 `occurred_at`, `schema_version`, and optional job/attempt identity. Clients
 deduplicate by `event_id`. The database uses WAL, foreign keys, transactional
 additive migrations, and reopens read-only if a migration cannot complete.
+`dispatcher_plan_rejected` is an additive diagnostic event with `stage`
+(`initial` or `repair`), a bounded validation `reason`, `response_source`, and
+`will_retry`. It never contains the raw model response or provider credentials.
 
 `GET /api/orchestrations/{run_id}/export?include_content=false` produces the
 redacted `locusrun` version-1 document. Conversation, goal, output, reasoning,
@@ -598,8 +601,11 @@ for the session.
 - `orchestration_started` identifies `run_id`, `team_id`, `team_name`,
   `worker_id`, state, and the accepted hard budget.
 - `dispatch_plan` carries the validated, acyclic job graph. It is emitted only
-  after a required `submit_dispatch_plan` tool call, strict JSON fallback, one
-  JSON repair, or the deterministic default-writer recovery.
+  after a required `submit_dispatch_plan` tool call, a normalized JSON candidate,
+  one schema-aware repair, or the deterministic default-writer recovery.
+- `dispatcher_plan_rejected` records the bounded validation reason and whether
+  repair will be attempted. It deliberately omits the rejected model output and
+  credentials. A second rejection explains the one-writer safe fallback.
 - `orchestration_state` reports `dispatching`, `running`, `reviewing`, or a
   permission/computer wait. Steering cancels unstarted jobs and returns to
   dispatching without an intermediate `turn_done`.
@@ -769,7 +775,12 @@ session_info
 
 With dispatch preview, `dispatch_plan_ready` is persisted before the server
 enters `waiting_dispatch_approval`; no jobs start until `dispatch_decision`
-chooses Run Plan. Every edit or re-dispatch is fully revalidated. With recovery,
+chooses Run Plan. That single decision releases the complete validated graph;
+there is no dispatch decision per model, agent, job, or step. The native Locus
+client always requests preview, including for teams previously stored as
+automatic, while the protocol retains automatic mode for other clients. Tool
+permission requests remain independent. Every edit or re-dispatch is fully
+revalidated. With recovery,
 an `orchestration_checkpoint` follows validated dispatch and each terminal
 specialist wave, writer, review, revision, and synthesis boundary. Pause waits
 for a safe boundary: streams and cancellable tools stop cooperatively, while a

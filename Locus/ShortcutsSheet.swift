@@ -1,51 +1,108 @@
 import SwiftUI
 
-/// Keyboard shortcut reference, presented with ⌘/ like Claude Code's
-/// shortcuts help.
+private struct ShortcutReference: Identifiable {
+    let keys: String
+    let title: String
+    var id: String { keys + title }
+}
+
+private struct ShortcutReferenceGroup: Identifiable {
+    let name: String
+    let shortcuts: [ShortcutReference]
+    var id: String { name }
+}
+
+private let shortcutReferenceGroups: [ShortcutReferenceGroup] = [
+    ShortcutReferenceGroup(name: "General", shortcuts: [
+        ShortcutReference(keys: "⌘K", title: "Command palette"),
+        ShortcutReference(keys: "⌘F", title: "Find in conversation"),
+        ShortcutReference(keys: "⌘/", title: "Keyboard shortcuts"),
+        ShortcutReference(keys: "⌘N", title: "New session"),
+        ShortcutReference(keys: "⌘⇧K", title: "Clear chat"),
+        ShortcutReference(keys: "⌘S", title: "Create checkpoint"),
+        ShortcutReference(keys: "⌘R", title: "Review changes"),
+    ]),
+    ShortcutReferenceGroup(name: "Composer", shortcuts: [
+        ShortcutReference(keys: "⌘↵", title: "Send message (queues while busy)"),
+        ShortcutReference(keys: "Esc", title: "Stop the current run / close popups"),
+        ShortcutReference(keys: "↑ ↓", title: "Browse prompt history (empty composer)"),
+        ShortcutReference(keys: "/", title: "Slash commands"),
+        ShortcutReference(keys: "@", title: "Mention a workspace file"),
+        ShortcutReference(keys: "↑↓ · 1–3 · ↵ · Esc", title: "Answer an approval or permission request"),
+    ]),
+    ShortcutReferenceGroup(name: "Panels", shortcuts: [
+        ShortcutReference(keys: "⌘0", title: "Show/hide sidebar"),
+        ShortcutReference(keys: "⌘1–⌘8", title: "Open inspector tabs"),
+        ShortcutReference(keys: "⌘⌥I", title: "Show/hide inspector"),
+    ]),
+    ShortcutReferenceGroup(name: "Modes", shortcuts: [
+        ShortcutReference(keys: "⌥A", title: "Just Chat"),
+        ShortcutReference(keys: "⌥P", title: "Plan mode"),
+        ShortcutReference(keys: "⌥B", title: "Build mode"),
+    ]),
+]
+
+private struct KeyboardShortcutsReference: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ForEach(shortcutReferenceGroups) { group in
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(group.name.uppercased())
+                        .font(.system(size: 8, weight: .bold))
+                        .tracking(0.9)
+                        .foregroundStyle(LocusTheme.muted)
+                    VStack(spacing: 0) {
+                        ForEach(Array(group.shortcuts.enumerated()), id: \.element.id) { index, shortcut in
+                            HStack {
+                                Text(shortcut.title)
+                                    .font(.system(size: 10, weight: .medium))
+                                Spacer()
+                                Text(shortcut.keys)
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .foregroundStyle(LocusTheme.muted)
+                                    .padding(.horizontal, 7)
+                                    .frame(height: 20)
+                                    .background(LocusTheme.paperDeep)
+                                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                            }
+                            .padding(.horizontal, 11)
+                            .frame(minHeight: 34)
+                            if index < group.shortcuts.count - 1 {
+                                Divider().overlay(LocusTheme.line.opacity(0.6))
+                            }
+                        }
+                    }
+                    .locusCard(radius: 9)
+                }
+            }
+        }
+        .accessibilityIdentifier("shortcuts.reference")
+    }
+}
+
+/// The persistent reference requested in Settings, directly below Extensions.
+struct KeyboardShortcutsSettingsView: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Keyboard shortcuts")
+                    .font(.system(size: 15, weight: .bold))
+                Text("Everything in Locus remains reachable from the keyboard, including the command palette with ⌘K.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .padding(.bottom, 14)
+                KeyboardShortcutsReference()
+            }
+            .padding(20)
+        }
+        .background(LocusTheme.panel)
+        .accessibilityIdentifier("settings.shortcuts")
+    }
+}
+
+/// Keyboard shortcut reference, still presented with ⌘/ and `/shortcuts`.
 struct ShortcutsSheet: View {
     @Environment(\.dismiss) private var dismiss
-
-    private struct Shortcut: Identifiable {
-        let keys: String
-        let title: String
-        var id: String { keys + title }
-    }
-
-    private struct Group: Identifiable {
-        let name: String
-        let shortcuts: [Shortcut]
-        var id: String { name }
-    }
-
-    private let groups: [Group] = [
-        Group(name: "General", shortcuts: [
-            Shortcut(keys: "⌘K", title: "Command palette"),
-            Shortcut(keys: "⌘F", title: "Find in conversation"),
-            Shortcut(keys: "⌘/", title: "Keyboard shortcuts"),
-            Shortcut(keys: "⌘N", title: "New session"),
-            Shortcut(keys: "⌘⇧K", title: "Clear chat"),
-            Shortcut(keys: "⌘S", title: "Create checkpoint"),
-            Shortcut(keys: "⌘R", title: "Review changes"),
-        ]),
-        Group(name: "Composer", shortcuts: [
-            Shortcut(keys: "⌘↵", title: "Send message (queues while busy)"),
-            Shortcut(keys: "Esc", title: "Stop the current run / close popups"),
-            Shortcut(keys: "↑ ↓", title: "Browse prompt history (empty composer)"),
-            Shortcut(keys: "/", title: "Slash commands"),
-            Shortcut(keys: "@", title: "Mention a workspace file"),
-            Shortcut(keys: "↑↓ · 1–3 · ↵ · Esc", title: "Answer a permission request"),
-        ]),
-        Group(name: "Panels", shortcuts: [
-            Shortcut(keys: "⌘0", title: "Show/hide sidebar"),
-            Shortcut(keys: "⌘1–⌘7", title: "Plan · Changes · Files · Console · Preview · Checkpoints · AGENTS.md"),
-            Shortcut(keys: "⌘⌥I", title: "Show/hide inspector"),
-        ]),
-        Group(name: "Modes", shortcuts: [
-            Shortcut(keys: "⌥A", title: "Just Chat"),
-            Shortcut(keys: "⌥P", title: "Plan mode"),
-            Shortcut(keys: "⌥B", title: "Build mode"),
-        ]),
-    ]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -73,39 +130,8 @@ struct ShortcutsSheet: View {
             }
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    ForEach(groups) { group in
-                        VStack(alignment: .leading, spacing: 7) {
-                            Text(group.name.uppercased())
-                                .font(.system(size: 8, weight: .bold))
-                                .tracking(0.9)
-                                .foregroundStyle(LocusTheme.muted)
-                            VStack(spacing: 0) {
-                                ForEach(Array(group.shortcuts.enumerated()), id: \.element.id) { index, shortcut in
-                                    HStack {
-                                        Text(shortcut.title)
-                                            .font(.system(size: 10, weight: .medium))
-                                        Spacer()
-                                        Text(shortcut.keys)
-                                            .font(.system(size: 9, design: .monospaced))
-                                            .foregroundStyle(LocusTheme.muted)
-                                            .padding(.horizontal, 7)
-                                            .frame(height: 20)
-                                            .background(LocusTheme.paperDeep)
-                                            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                                    }
-                                    .padding(.horizontal, 11)
-                                    .frame(height: 34)
-                                    if index < group.shortcuts.count - 1 {
-                                        Divider().overlay(LocusTheme.line.opacity(0.6))
-                                    }
-                                }
-                            }
-                            .locusCard(radius: 9)
-                        }
-                    }
-                }
-                .padding(16)
+                KeyboardShortcutsReference()
+                    .padding(16)
             }
         }
         .frame(width: 430, height: 520)

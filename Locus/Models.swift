@@ -249,6 +249,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case knowledge = "Knowledge"
     case permissions = "Permissions"
     case extensions = "Extensions"
+    case shortcuts = "Keyboard Shortcuts"
 
     var id: String { rawValue }
 
@@ -261,7 +262,12 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .knowledge: "books.vertical.fill"
         case .permissions: "lock.shield"
         case .extensions: "puzzlepiece.extension"
+        case .shortcuts: "keyboard"
         }
+    }
+
+    var accessibilityKey: String {
+        self == .shortcuts ? "shortcuts" : rawValue.lowercased()
     }
 }
 

@@ -250,7 +250,14 @@ Example: if Wi-Fi drops during a reviewer job, reopen the same chat. Locus asks 
 
 While a team works, a compact status bar appears below the transcript. It shows the current phase and completed job count without expanding a large activity panel into the conversation.
 
-Click **Inspect Run** to open the full Run Inspector.
+The Team Progress button immediately left of the header's context meter opens
+the dispatcher, delegated-job, model, and usage summary. Click **Inspect Run**
+or **Open Runs** to open the full Run Inspector.
+
+While the dispatcher creates the plan, the composer becomes a progress card.
+It names the dispatcher route, elapsed time, request, observable stage, and any
+bounded validation correction. Raw model output and hidden reasoning are not
+shown.
 
 ### Run Inspector: Timeline view
 
@@ -259,6 +266,12 @@ The Timeline view shows the run in exact event order. It includes dispatching, a
 Use the filter box to search by agent, event type, job state, or attempt.
 
 Example: search for `fallback` to see whether the primary dispatcher failed and which fallback route Locus used.
+
+If a dispatcher returns a plan that Locus cannot validate, Team Progress first
+shows **Correcting dispatcher plan…**. The Timeline records the bounded reason.
+If the corrected plan is still invalid, Locus continues safely with the team's
+designated writer and states why specialists were skipped; raw provider output
+and credentials are not written to run history.
 
 ### Run Inspector: Dependencies view
 
@@ -456,14 +469,21 @@ Successful, unpinned evaluation checkouts are eligible for automatic cleanup aft
 
 ## 9. Editable dispatch plans
 
-### Automatic or preview dispatch
+### One approval for the complete plan
 
-Each team has a **Dispatch approval** setting:
+Every native Locus team pauses once after the dispatcher returns a validated
+plan and before any jobs begin. The plan appears in the composer with its jobs,
+assignments, dependencies, and budget.
 
-- **Automatic** starts a validated plan immediately.
-- **Preview** pauses before any jobs start and opens the dispatch editor.
+- **Run Plan** approves the entire dependency graph. Locus does not ask again
+  for each model, agent, job, or step.
+- **Re-dispatch** rejects that candidate and asks the dispatcher for a
+  replacement, which is shown for approval when ready.
+- **Cancel** stops the run before any jobs begin.
 
-Example: enable Preview for an expensive hosted team so you can inspect its plan before it spends tokens.
+Security-sensitive tool permission prompts remain separate and continue to
+follow the selected permission mode. Older teams saved as Automatic are moved
+to this one-time plan review behavior when Locus loads them.
 
 ### Dispatch graph editor
 
@@ -485,7 +505,7 @@ Example: the dispatcher proposes Research → Writer → Review. Add a parallel 
 - **Re-dispatch** asks the dispatcher for a new plan within the remaining budget.
 - **Cancel** returns without starting the plan.
 
-The pending approval survives reconnects.
+The pending one-time approval survives reconnects.
 
 Example: select Re-dispatch when the proposed plan spends three specialist jobs on documentation but the task is primarily a test failure.
 
@@ -729,7 +749,7 @@ The platform keeps these boundaries regardless of team or permission settings:
 Suppose you want a team to fix a Swift concurrency bug safely:
 
 1. In **Agents & Teams**, create a local Dispatcher, a read-only Researcher, one workspace-write Implementer, and a read-only Reviewer.
-2. Create `Swift Team`, enable dispatch Preview, choose scorecard routing, and set a `$3` estimated-cost ceiling.
+2. Create `Swift Team`, choose scorecard routing, and set a `$3` estimated-cost ceiling.
 3. In the composer, select Team and `Swift Team`, then send: `Investigate and fix the actor-isolation warnings. Add regression tests.`
 4. Review the proposed dependency graph. Add a parallel test-design job if needed, then choose **Run Plan**.
 5. Click **Inspect Run** to watch routing explanations, evidence, tokens, and checkpoints.

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +16,7 @@ from ollama_code.orchestration import (
     OrchestrationError,
     TeamOrchestrator,
     TeamPreparation,
+    normalize_dispatch_candidate,
     orchestration_fingerprint,
     parse_manifest,
     validate_dispatch_plan,
@@ -141,6 +144,47 @@ def test_dispatcher_progress_names_the_model_and_reports_completion(monkeypatch)
     assert events[-1]["message"] == "Dispatch plan ready"
 
 
+def test_preview_approves_the_complete_plan_once_before_any_jobs(monkeypatch):
+    events = []
+    approvals = []
+    manifest = _manifest(dispatch_approval_mode="preview")
+    _, team, profiles, forced = parse_manifest(manifest)
+    plan = validate_dispatch_plan(_valid_plan(), team, profiles, forced)
+
+    def approve(run_id, candidate):
+        approvals.append((run_id, candidate))
+        return {"action": "run"}
+
+    orchestrator = TeamOrchestrator(
+        events.append,
+        lambda: False,
+        approve_dispatch=approve,
+    )
+    dispatches = []
+
+    def dispatch_once(*_args):
+        dispatches.append("dispatch")
+        return plan
+
+    monkeypatch.setattr(orchestrator, "_dispatch_with_status", dispatch_once)
+    monkeypatch.setattr(orchestrator, "_run_pre_writer_jobs", lambda *_args: [])
+
+    prepared = orchestrator.prepare(
+        "Build it", "/tmp/workspace", manifest,
+    )
+
+    assert dispatches == ["dispatch"]
+    assert len(approvals) == 1
+    assert approvals[0][0] == "run-1"
+    assert [job["id"] for job in approvals[0][1]["jobs"]] == [
+        "plan", "write", "review",
+    ]
+    assert prepared.plan == plan
+    assert [event["type"] for event in events].count("dispatch_plan") == 1
+    assert events[-1]["type"] == "orchestration_state"
+    assert events[-1]["state"] == "running"
+
+
 def test_dispatch_cancel_does_not_start_repair_or_fallback_calls(monkeypatch):
     events = []
     _, team, profiles, forced = parse_manifest(_manifest())
@@ -155,11 +199,161 @@ def test_dispatch_cancel_does_not_start_repair_or_fallback_calls(monkeypatch):
 
     with pytest.raises(InterruptedError, match="cancelled"):
         orchestrator._dispatch(
-            "Build it", "/tmp/workspace", team, profiles,
+            "run-1", "Build it", "/tmp/workspace", team, profiles,
             profiles[team.dispatcher_id], forced,
         )
 
     assert calls == ["call"]
+
+
+def test_dispatch_cancel_after_rejection_does_not_start_repair(monkeypatch):
+    events = []
+    cancelled = False
+    _, team, profiles, forced = parse_manifest(_manifest())
+    orchestrator = TeamOrchestrator(events.append, lambda: cancelled)
+    calls = 0
+
+    def raw_call(*_args, **_kwargs):
+        nonlocal calls, cancelled
+        calls += 1
+        cancelled = True
+        return SimpleNamespace(
+            tool_calls=[],
+            content=json.dumps({"summary": "bad", "jobs": []}),
+        )
+
+    monkeypatch.setattr(orchestrator, "_raw_call", raw_call)
+
+    with pytest.raises(InterruptedError, match="cancelled"):
+        orchestrator._dispatch(
+            "run-1", "Build it", "/tmp/workspace", team, profiles,
+            profiles[team.dispatcher_id], forced,
+        )
+
+    assert calls == 1
+    assert events == []
+
+
+@pytest.mark.parametrize("wrapped", [
+    lambda plan: plan,
+    lambda plan: f"```json\n{json.dumps(plan)}\n```",
+    lambda plan: f"Candidate follows:\n{json.dumps(plan)}\nEnd candidate.",
+    lambda plan: {"plan": plan},
+    lambda plan: {
+        "function": {
+            "name": "submit_dispatch_plan",
+            "arguments": json.dumps(plan),
+        },
+    },
+    lambda plan: {"tool": "submit_dispatch_plan", "input": {"plan": plan}},
+    lambda plan: {"tool_calls": [{
+        "function": {
+            "name": "submit_dispatch_plan",
+            "arguments": json.dumps(plan),
+        },
+    }]},
+    lambda plan: {"_raw": json.dumps({"arguments": plan})},
+])
+def test_dispatch_candidate_normalizes_common_vllm_wrappers(wrapped):
+    assert normalize_dispatch_candidate(wrapped(_valid_plan())) == _valid_plan()
+
+
+def test_dispatch_repair_receives_the_candidate_and_exact_validation_error(monkeypatch):
+    events = []
+    _, team, profiles, forced = parse_manifest(_manifest())
+    orchestrator = TeamOrchestrator(events.append, lambda: False)
+    responses = [
+        SimpleNamespace(
+            tool_calls=[SimpleNamespace(
+                name="submit_dispatch_plan",
+                arguments={"summary": "bad", "jobs": []},
+            )],
+            content="",
+        ),
+        SimpleNamespace(tool_calls=[], content=json.dumps(_valid_plan())),
+    ]
+    calls = []
+
+    def raw_call(*args, **kwargs):
+        calls.append((args, kwargs))
+        return responses.pop(0)
+
+    monkeypatch.setattr(orchestrator, "_raw_call", raw_call)
+
+    plan = orchestrator._dispatch(
+        "run-1", "Build it", "/tmp/workspace", team, profiles,
+        profiles[team.dispatcher_id], forced,
+    )
+
+    assert plan.outcome == "repaired"
+    assert [job.id for job in plan.jobs] == ["plan", "write", "review"]
+    assert len(calls) == 2
+    repair_prompt = calls[1][0][2][-1]["content"]
+    assert "dispatcher plan has no jobs" in repair_prompt
+    assert '"summary":"bad"' in repair_prompt
+    assert '"default_writer_id"' not in repair_prompt  # schema, not a manifest rewrite
+    assert [event["stage"] for event in events] == ["initial"]
+    assert events[0]["will_retry"] is True
+    assert "jobs" not in events[0]
+
+
+def test_dispatch_accepts_a_valid_direct_tool_call_without_repair(monkeypatch):
+    events = []
+    _, team, profiles, forced = parse_manifest(_manifest())
+    orchestrator = TeamOrchestrator(events.append, lambda: False)
+    calls = 0
+
+    def raw_call(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return SimpleNamespace(
+            tool_calls=[SimpleNamespace(
+                name="submit_dispatch_plan",
+                arguments=_valid_plan(),
+            )],
+            content="",
+        )
+
+    monkeypatch.setattr(orchestrator, "_raw_call", raw_call)
+
+    plan = orchestrator._dispatch(
+        "run-1", "Build it", "/tmp/workspace", team, profiles,
+        profiles[team.dispatcher_id], forced,
+    )
+
+    assert plan.outcome == "valid"
+    assert calls == 1
+    assert events == []
+
+
+def test_dispatch_failed_repair_emits_safe_diagnostics_and_uses_writer(monkeypatch):
+    events = []
+    _, team, profiles, forced = parse_manifest(_manifest())
+    orchestrator = TeamOrchestrator(events.append, lambda: False)
+    invalid = {"summary": "bad", "jobs": [], "api_key": "must-not-be-persisted"}
+    responses = [
+        SimpleNamespace(tool_calls=[], content=json.dumps(invalid)),
+        SimpleNamespace(tool_calls=[], content=json.dumps(invalid)),
+    ]
+    monkeypatch.setattr(orchestrator, "_raw_call", lambda *_a, **_k: responses.pop(0))
+
+    plan = orchestrator._dispatch(
+        "run-1", "Build it", "/tmp/workspace", team, profiles,
+        profiles[team.dispatcher_id], forced,
+    )
+
+    assert plan.outcome == "fallback"
+    assert [(job.id, job.agent_id, job.kind) for job in plan.jobs] == [
+        ("writer", "writer", "writer"),
+    ]
+    assert "dispatcher plan has no jobs" in plan.summary
+    assert "Writer only" in plan.summary
+    diagnostics = [event for event in events if event["type"] == "dispatcher_plan_rejected"]
+    assert [event["stage"] for event in diagnostics] == ["initial", "repair"]
+    assert [event["will_retry"] for event in diagnostics] == [True, False]
+    encoded = json.dumps(diagnostics)
+    assert "must-not-be-persisted" not in encoded
+    assert "api_key" not in encoded
 
 
 def test_orchestration_fingerprint_ignores_credentials_but_tracks_models():

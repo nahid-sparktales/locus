@@ -29,6 +29,16 @@ struct ComposerView: View {
                 PermissionPromptView(request: request)
                     .frame(maxWidth: 740)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if model.shouldShowTeamDispatchApproval,
+                      let plan = model.pendingDispatchPlan
+            {
+                TeamDispatchApprovalPromptView(plan: plan)
+                    .frame(maxWidth: 740)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if model.shouldShowTeamDispatchProgress {
+                TeamDispatchProgressView()
+                    .frame(maxWidth: 740)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             } else if model.planApprovalPending {
                 // Same contract as the permission panel: the finished plan is
                 // a decision point, so the decision replaces the input.
@@ -95,6 +105,8 @@ struct ComposerView: View {
             )
         )
         .animation(.easeInOut(duration: 0.18), value: model.activePermissionRequest?.requestID)
+        .animation(.easeInOut(duration: 0.18), value: model.shouldShowTeamDispatchProgress)
+        .animation(.easeInOut(duration: 0.18), value: model.shouldShowTeamDispatchApproval)
         .animation(.easeInOut(duration: 0.18), value: model.planApprovalPending)
         .onAppear { restoreFocus() }
         .onChange(of: model.activePermissionRequest?.requestID) {
@@ -106,6 +118,11 @@ struct ComposerView: View {
             // Same for "keep planning": the natural next act is typing the
             // refinement, so the editor takes focus back.
             if !model.planApprovalPending { restoreFocus() }
+        }
+        .onChange(of: model.shouldShowTeamDispatchApproval) {
+            if !model.shouldShowTeamDispatchApproval && !model.shouldShowTeamDispatchProgress {
+                restoreFocus()
+            }
         }
         .onChange(of: model.draftText) {
             popupSelection = 0

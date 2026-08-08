@@ -5,6 +5,7 @@ import SwiftUI
 struct WorkspaceView: View {
     @EnvironmentObject private var model: AppModel
     @State private var modelPickerPresented = false
+    @State private var teamProgressPresented = false
 
     private var sessionTitle: String {
         model.sessions.first(where: { $0.id == model.currentSessionID })?.displayTitle
@@ -85,6 +86,43 @@ struct WorkspaceView: View {
 
             Spacer()
 
+            if model.selectedAgentTeam != nil {
+                Button {
+                    teamProgressPresented.toggle()
+                } label: {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: "waveform.path.ecg")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(LocusTheme.inkSoft)
+                            .frame(width: 32, height: 32)
+                        Circle()
+                            .fill(teamProgressColor)
+                            .frame(width: 7, height: 7)
+                            .overlay {
+                                Circle().stroke(LocusTheme.panel, lineWidth: 1.5)
+                            }
+                            .offset(x: -3, y: 3)
+                    }
+                    .background(LocusTheme.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(LocusTheme.line, lineWidth: 1)
+                    }
+                }
+                .buttonStyle(.plain)
+                .frame(width: 32, height: 32)
+                .help("Team progress · \(teamProgressTitle)")
+                .accessibilityLabel("Team progress, \(teamProgressTitle)")
+                .accessibilityIdentifier("workspace.teamProgress")
+                .popover(isPresented: $teamProgressPresented, arrowEdge: .top) {
+                    TeamProgressPopover {
+                        teamProgressPresented = false
+                    }
+                    .environmentObject(model)
+                }
+            }
+
             ContextUsageChip()
                 .environmentObject(model)
 
@@ -122,31 +160,13 @@ struct WorkspaceView: View {
                 ? "Active team, \(model.modelPickerLabel)"
                 : "Select model")
             .accessibilityIdentifier("workspace.modelPicker")
+            .frame(height: 32)
             .popover(isPresented: $modelPickerPresented, arrowEdge: .top) {
                 ModelPickerPopover {
                     modelPickerPresented = false
                 }
                 .environmentObject(model)
             }
-
-            Button {
-                model.commandPalettePresented = true
-            } label: {
-                Image(systemName: "command")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(LocusTheme.muted)
-                    .frame(width: 32, height: 32)
-                    .background(Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(LocusTheme.line, lineWidth: 1)
-                    }
-            }
-            .buttonStyle(.plain)
-            .help("Command palette (⌘K)")
-            .accessibilityLabel("Open command palette")
-            .accessibilityIdentifier("workspace.commandPalette")
 
             Menu {
                 // ⌘⇧K lives on the app menu's Clear Chat only — declaring it
@@ -184,6 +204,8 @@ struct WorkspaceView: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(LocusTheme.muted)
                     .frame(width: 32, height: 32)
+                    .background(LocusTheme.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .stroke(LocusTheme.line, lineWidth: 1)
@@ -191,6 +213,7 @@ struct WorkspaceView: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
+            .frame(width: 32, height: 32)
             .accessibilityLabel("Workspace actions")
             .accessibilityIdentifier("workspace.actions")
 
@@ -211,6 +234,23 @@ struct WorkspaceView: View {
         .background(LocusTheme.panel)
         .overlay(alignment: .bottom) {
             Rectangle().fill(LocusTheme.line).frame(height: 1)
+        }
+    }
+
+    private var teamProgressTitle: String {
+        if model.selectedTeamRouteIssue != nil { return "Needs setup" }
+        return model.orchestrationState?.title ?? "Ready"
+    }
+
+    private var teamProgressColor: Color {
+        if model.selectedTeamRouteIssue != nil { return LocusTheme.coral }
+        switch model.orchestrationState {
+        case .completed: return LocusTheme.success
+        case .failed, .interrupted, .cancelled, .discarded: return LocusTheme.coral
+        case .waitingPermission, .waitingComputer, .waitingDispatchApproval, .paused:
+            return LocusTheme.warning
+        case .queued, .dispatching, .running, .reviewing: return LocusTheme.signalDeep
+        case nil: return LocusTheme.success
         }
     }
 
@@ -317,6 +357,15 @@ private struct ModelPickerPopover: View {
                 ) {
                     dismiss()
                     model.settingsPage = .accounts
+                    model.settingsPresented = true
+                }
+                pickerAction(
+                    "Manage Agents & Teams…",
+                    symbol: "person.3.sequence.fill",
+                    identifier: "workspace.modelPicker.manageAgentsTeams"
+                ) {
+                    dismiss()
+                    model.settingsPage = .agents
                     model.settingsPresented = true
                 }
             }

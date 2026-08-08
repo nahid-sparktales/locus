@@ -184,7 +184,7 @@ class ChatService:
             event.setdefault("worker_id", self.worker_id)
             event.setdefault("process_id", os.getpid())
         if event_type.startswith(("agent_job_", "orchestration_", "scheduler_lease", "mcp_task_")) \
-                or event_type == "dispatch_plan":
+                or event_type in {"dispatch_plan", "dispatcher_plan_rejected"}:
             event = dict(event)
             event.setdefault("worker_id", self.worker_id)
         run_id = str(event.get("run_id") or self.active_run_id or "")
@@ -192,7 +192,7 @@ class ChatService:
             "message_start", "message_end", "tool_call_proposed", "permission_request",
             "tool_result", "steer_ack", "steer_applied", "computer_action_request",
             "workspace_changed", "note", "error", "dispatch_plan",
-            "orchestration_checkpoint", "dispatch_plan_ready",
+            "orchestration_checkpoint", "dispatch_plan_ready", "dispatcher_plan_rejected",
         }
         durable_agent_event = (
             event_type.startswith("agent_job_") and event_type != "agent_job_stream"
@@ -211,7 +211,8 @@ class ChatService:
                 # damaged or temporarily locked history store must never stop
                 # an otherwise healthy agent turn.
                 event = {**event, "persistence_error": str(exc)}
-        if event_type in {"agent_job_started", "agent_job_completed", "dispatch_plan"} \
+        if event_type in {"agent_job_started", "agent_job_completed", "dispatch_plan",
+                          "dispatcher_plan_rejected"} \
                 or event_type.startswith("orchestration_") \
                 or event_type.startswith("scheduler_lease") \
                 or event_type.startswith("mcp_task_"):

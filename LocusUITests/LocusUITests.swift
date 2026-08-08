@@ -40,7 +40,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testReopeningLocusKeepsOneMainWindowAndItsPresentedSheet() throws {
-        anyElement("workspace.commandPalette").click()
+        app.typeKey("k", modifierFlags: .command)
         let search = app.textFields["palette.search"]
         XCTAssertTrue(search.waitForExistence(timeout: 3))
         search.typeText("keep this state")
@@ -265,8 +265,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertEqual(app.windows.firstMatch.frame, originalFrame)
 
         anyElement("workspace.modelPicker.close").click()
-        XCTAssertTrue(anyElement("workspace.commandPalette").waitForExistence(timeout: 3))
-        anyElement("workspace.commandPalette").click()
+        app.typeKey("k", modifierFlags: .command)
         XCTAssertTrue(app.textFields["palette.search"].waitForExistence(timeout: 3))
     }
 
@@ -288,6 +287,21 @@ final class LocusUITests: XCTestCase {
         app.typeKey("/", modifierFlags: .command)
         XCTAssertTrue(app.buttons["shortcuts.close"].waitForExistence(timeout: 3))
         app.buttons["shortcuts.close"].click()
+    }
+
+    func testKeyboardShortcutsHaveASettingsTabBelowExtensions() {
+        anyElement("workspace.modelPicker").click()
+        anyElement("workspace.modelPicker.manageAccounts").click()
+
+        let extensions = anyElement("settings.page.extensions")
+        let shortcuts = anyElement("settings.page.shortcuts")
+        XCTAssertTrue(extensions.waitForExistence(timeout: 3))
+        XCTAssertTrue(shortcuts.exists)
+        XCTAssertLessThan(extensions.frame.maxY, shortcuts.frame.minY)
+
+        shortcuts.click()
+        XCTAssertTrue(anyElement("settings.shortcuts").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("shortcuts.reference").exists)
     }
 
     func testCommandPaletteNavigatesWithArrowKeys() {
@@ -473,10 +487,15 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }
 
-    private func relaunchWithRunFixture(_ fixture: String, uncleanRecovery: Bool = false) {
+    private func relaunchWithRunFixture(
+        _ fixture: String,
+        uncleanRecovery: Bool = false,
+        staleQuitState: Bool = false
+    ) {
         app.terminate()
         app.launchEnvironment["LOCUS_UI_TESTING_RUN_FIXTURE"] = fixture
         app.launchEnvironment["LOCUS_UI_TESTING_UNCLEAN_RECOVERY"] = uncleanRecovery ? "1" : nil
+        app.launchEnvironment["LOCUS_UI_TESTING_STALE_QUIT_STATE"] = staleQuitState ? "1" : nil
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }
@@ -515,6 +534,59 @@ final class LocusUITests: XCTestCase {
                 NSPredicate(format: "value CONTAINS[c] %@ OR label CONTAINS[c] %@", "can be resumed", "can be resumed")
             ).firstMatch.exists
         )
+    }
+
+    func testCompletedRunQuitsWithoutAStopRunningWarningFromStaleState() {
+        relaunchWithRunFixture("completed", staleQuitState: true)
+
+        app.typeKey("q", modifierFlags: .command)
+
+        XCTAssertTrue(
+            app.wait(for: .notRunning, timeout: 5),
+            "a durable completed run must not be mistaken for active work"
+        )
+    }
+
+    func testDispatcherRepairIsVisibleInProgressAndRuns() {
+        relaunchWithRunFixture("dispatcher-repair")
+
+        XCTAssertTrue(anyElement("teamDispatch.progress").waitForExistence(timeout: 3))
+        let progress = anyElement("workspace.teamProgress")
+        XCTAssertTrue(progress.waitForExistence(timeout: 3))
+        progress.click()
+        XCTAssertTrue(anyElement("teamProgress.popover").waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            app.staticTexts.matching(
+                NSPredicate(
+                    format: "value CONTAINS[c] %@ OR label CONTAINS[c] %@",
+                    "Correcting dispatcher plan",
+                    "Correcting dispatcher plan"
+                )
+            ).firstMatch.exists
+        )
+
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(
+            app.staticTexts.matching(
+                NSPredicate(
+                    format: "value CONTAINS[c] %@ OR label CONTAINS[c] %@",
+                    "dispatcher plan has no jobs",
+                    "dispatcher plan has no jobs"
+                )
+            ).firstMatch.waitForExistence(timeout: 3)
+        )
+    }
+
+    func testTeamPlanAppearsOnceInComposerWithWholePlanActions() {
+        relaunchWithRunFixture("dispatch-plan")
+
+        XCTAssertTrue(anyElement("teamDispatch.approval").waitForExistence(timeout: 3))
+        XCTAssertFalse(app.textViews["composer.input"].exists)
+        XCTAssertTrue(anyElement("teamDispatch.jobs").exists)
+        XCTAssertTrue(anyElement("teamDispatch.run").exists)
+        XCTAssertTrue(anyElement("teamDispatch.redispatch").exists)
+        XCTAssertTrue(anyElement("teamDispatch.cancel").exists)
+        XCTAssertTrue(anyElement("workspace.teamProgress").exists)
     }
 
     func testPermissionPanelRepliesWithTheKeyboard() {

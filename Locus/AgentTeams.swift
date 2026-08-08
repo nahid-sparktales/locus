@@ -308,6 +308,10 @@ struct AgentTeam: Identifiable, Codable, Hashable {
 
     mutating func clamp() {
         name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(64))
+        // Locus presents one review boundary for the complete dispatch plan.
+        // Keep decoding `automatic` for older stores and other protocol
+        // clients, but every team saved by the native app uses one-time review.
+        dispatchApprovalMode = .preview
         // Preserve the editor's order (dispatcher first in the common case)
         // while removing duplicates. Converting through Set made the team
         // model picker reshuffle on every save.
@@ -323,7 +327,7 @@ struct AgentTeam: Identifiable, Codable, Hashable {
         maximumEstimatedCost = min(max(maximumEstimatedCost ?? 0, 0), 100_000)
     }
 
-    var resolvedDispatchApprovalMode: DispatchApprovalMode { dispatchApprovalMode ?? .automatic }
+    var resolvedDispatchApprovalMode: DispatchApprovalMode { .preview }
     var resolvedRoutingMode: AgentRoutingMode { routingMode ?? .manual }
     var resolvedRoutingWeights: AgentScoreWeights { routingWeights ?? .init() }
 }
@@ -422,6 +426,18 @@ enum AgentTeamStore {
         decodeElements(AgentTeam.self, data: defaults.data(forKey: teamsKey))
     }
 
+    static func migrateToOneTimeApproval(_ teams: [AgentTeam]) -> (teams: [AgentTeam], changed: Bool) {
+        let changed = teams.contains { $0.dispatchApprovalMode != .preview }
+        return (
+            teams.map { stored in
+                var team = stored
+                team.dispatchApprovalMode = .preview
+                return team
+            },
+            changed
+        )
+    }
+
     static func save(profiles: [AgentProfile], teams: [AgentTeam], to defaults: UserDefaults = .standard) {
         if let data = try? JSONEncoder().encode(profiles) { defaults.set(data, forKey: profilesKey) }
         if let data = try? JSONEncoder().encode(teams) { defaults.set(data, forKey: teamsKey) }
@@ -458,6 +474,15 @@ enum TeamRunState: String, Codable, CaseIterable, Hashable {
     case interrupted
     case cancelled
     case discarded
+
+    var isTerminal: Bool {
+        switch self {
+        case .completed, .failed, .interrupted, .cancelled, .discarded:
+            true
+        default:
+            false
+        }
+    }
 
     var title: String {
         switch self {

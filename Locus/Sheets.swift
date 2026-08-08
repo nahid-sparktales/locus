@@ -990,7 +990,7 @@ struct SettingsView: View {
                 List(SettingsPage.allCases, selection: $model.settingsPage) { item in
                     Label(item.rawValue, systemImage: item.symbol)
                         .tag(item)
-                        .accessibilityIdentifier("settings.page.\(item.id.lowercased())")
+                        .accessibilityIdentifier("settings.page.\(item.accessibilityKey)")
                 }
                 .listStyle(.sidebar)
                 .frame(width: 155)
@@ -1011,6 +1011,8 @@ struct SettingsView: View {
                 case .extensions:
                     ExtensionsSettingsView()
                         .environmentObject(model)
+                case .shortcuts:
+                    KeyboardShortcutsSettingsView()
                 }
             }
 

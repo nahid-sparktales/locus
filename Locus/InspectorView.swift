@@ -651,6 +651,7 @@ struct InspectorRunsTab: View {
                 event.type, event.title, event.jobID, event.attemptID,
                 event.text("agent_name"), event.text("agent_id"),
                 event.text("state"), event.text("provider"), event.text("model"),
+                event.text("reason"),
             ]
                 .compactMap { $0 }.joined(separator: " ").lowercased().contains(query)
         }
