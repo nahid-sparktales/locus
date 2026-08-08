@@ -32,7 +32,7 @@ struct WorkspaceView: View {
                 .frame(maxHeight: .infinity)
 
             if !model.agentActivities.isEmpty || model.activeTaskRecord != nil {
-                TeamActivityPanel()
+                TeamRunStatusBar()
                     .environmentObject(model)
             }
 
@@ -264,6 +264,46 @@ struct WorkspaceView: View {
                 .fill((recovering ? LocusTheme.warning : LocusTheme.coral).opacity(0.25))
                 .frame(height: 1)
         }
+    }
+}
+
+private struct TeamRunStatusBar: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        Button {
+            model.selectInspectorTab(.runs)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "person.3.sequence.fill")
+                    .foregroundStyle(LocusTheme.signalDeep)
+                Text(model.orchestrationState?.title ?? "Team run")
+                    .font(.system(size: 9, weight: .semibold))
+                if !model.agentActivities.isEmpty {
+                    Text("\(model.agentActivities.filter { $0.state == .completed }.count)/\(model.agentActivities.count) jobs")
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                Spacer()
+                if let task = model.activeTaskRecord {
+                    Text(URL(fileURLWithPath: task.executionPath).lastPathComponent)
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                Text("Inspect Run")
+                    .font(.system(size: 8, weight: .bold))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+            }
+            .foregroundStyle(LocusTheme.ink)
+            .padding(.horizontal, 24)
+            .frame(height: 32)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(LocusTheme.paperDeep.opacity(0.75))
+        .overlay(alignment: .top) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+        .accessibilityIdentifier("teamRun.openInspector")
     }
 }
 

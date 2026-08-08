@@ -41,6 +41,7 @@ enum CredentialStore {
     /// one — the same accepted downgrade behavior the file already has, and the
     /// cost is re-entering one password.
     static let proxyCredentialKey = "network-proxy"
+    static let otlpAuthorizationKey = "telemetry-otlp-authorization"
 
     static var fileURL: URL {
         URL(fileURLWithPath: NSHomeDirectory())
@@ -147,7 +148,7 @@ enum CredentialStore {
         for (key, value) in entries {
             if key.hasPrefix(mcpCredentialPrefix) {
                 mcp[key] = value
-            } else if key == proxyCredentialKey {
+            } else if key == proxyCredentialKey || key == otlpAuthorizationKey {
                 // Its own section, not the provider fallback: the orphan sweep
                 // walks provider keys, and a proxy password that landed there
                 // would be collected as an account nothing owns.
@@ -337,6 +338,12 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
         let challenge = Self.base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
         let state = Self.randomURLSafeString(byteCount: 24)
         let redirectURI = oauth.redirectURI ?? "locus://mcp/oauth"
+        guard let expectedRedirect = URLComponents(string: redirectURI),
+              let expectedScheme = expectedRedirect.scheme?.lowercased()
+        else {
+            completion(.failure(authError("The MCP OAuth redirect URL is invalid.")))
+            return
+        }
         components.queryItems = (components.queryItems ?? []) + [
             URLQueryItem(name: "response_type", value: "code"),
             URLQueryItem(name: "client_id", value: oauth.clientID),
@@ -350,7 +357,7 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
             completion(.failure(authError("The MCP authorization URL is invalid.")))
             return
         }
-        let callbackScheme = URL(string: redirectURI)?.scheme ?? "locus"
+        let callbackScheme = expectedScheme
         let session = ASWebAuthenticationSession(
             url: authorizationURL,
             callbackURLScheme: callbackScheme
@@ -363,6 +370,7 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
             }
             guard let callbackURL,
                   let callback = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
+                  Self.callbackMatches(callback, expected: expectedRedirect),
                   callback.queryItems?.first(where: { $0.name == "state" })?.value == state,
                   let code = callback.queryItems?.first(where: { $0.name == "code" })?.value,
                   !code.isEmpty
@@ -445,6 +453,19 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
         NSApplication.shared.keyWindow
             ?? NSApplication.shared.windows.first
             ?? ASPresentationAnchor()
+    }
+
+    nonisolated static func callbackMatches(
+        _ callback: URLComponents,
+        expected: URLComponents
+    ) -> Bool {
+        callback.scheme?.lowercased() == expected.scheme?.lowercased()
+            && callback.host?.lowercased() == expected.host?.lowercased()
+            && callback.port == expected.port
+            && callback.path == expected.path
+            && callback.user == nil
+            && callback.password == nil
+            && callback.fragment == nil
     }
 
     private func exchangeCode(

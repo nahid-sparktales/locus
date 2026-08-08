@@ -1,4 +1,5 @@
 import Foundation
+import CoreServices
 
 /// Shared definition of the text file types Locus will read into context.
 enum ContextFileTypes {
@@ -94,4 +95,56 @@ enum WorkspaceIndex {
         guard !query.contains(where: { $0.isWhitespace || $0.isNewline }) else { return nil }
         return (atIndex..<draft.endIndex, String(query))
     }
+}
+
+/// Native recursive workspace notifications. The callback is intentionally
+/// path-agnostic: the backend's content hashes make a debounced full candidate
+/// scan incremental without trusting an event path that may already be stale.
+final class WorkspaceKnowledgeWatcher {
+    private var stream: FSEventStreamRef?
+    private var handler: (() -> Void)?
+
+    func start(path: String, handler: @escaping () -> Void) {
+        stop()
+        self.handler = handler
+        var context = FSEventStreamContext(
+            version: 0,
+            info: Unmanaged.passUnretained(self).toOpaque(),
+            retain: nil,
+            release: nil,
+            copyDescription: nil
+        )
+        let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
+            guard let info else { return }
+            let watcher = Unmanaged<WorkspaceKnowledgeWatcher>
+                .fromOpaque(info).takeUnretainedValue()
+            watcher.handler?()
+        }
+        guard let stream = FSEventStreamCreate(
+            nil,
+            callback,
+            &context,
+            [path] as CFArray,
+            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+            0.35,
+            FSEventStreamCreateFlags(
+                kFSEventStreamCreateFlagFileEvents
+                    | kFSEventStreamCreateFlagWatchRoot
+            )
+        ) else { return }
+        self.stream = stream
+        FSEventStreamSetDispatchQueue(stream, DispatchQueue.global(qos: .utility))
+        FSEventStreamStart(stream)
+    }
+
+    func stop() {
+        guard let stream else { return }
+        FSEventStreamStop(stream)
+        FSEventStreamInvalidate(stream)
+        FSEventStreamRelease(stream)
+        self.stream = nil
+        handler = nil
+    }
+
+    deinit { stop() }
 }

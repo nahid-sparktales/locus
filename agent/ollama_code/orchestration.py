@@ -20,15 +20,18 @@ from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from .capabilities import enabled as capability_enabled
 from .ollama import OllamaClient, OllamaError
 from .remote import AUTH_ANTHROPIC, RemoteClient
+from .runstore import RunStore
 
 Emit = Callable[[dict[str, Any]], None]
 Stop = Callable[[], bool]
+DispatchApproval = Callable[[str, dict[str, Any]], dict[str, Any]]
 
 MAX_TEAM_PROFILES = 32
 MAX_TEAM_JOBS = 16
@@ -36,6 +39,7 @@ MAX_TEAM_ROUNDS = 8
 MAX_TEAM_CALLS = 48
 MAX_TEAM_CONCURRENCY = 8
 MAX_TEAM_METERED_TOKENS = 2_000_000
+MAX_TEAM_ESTIMATED_COST = 100_000.0
 MAX_EVIDENCE_CHARS = 120_000
 MAX_AGENT_OUTPUT_CHARS = 120_000
 
@@ -89,6 +93,9 @@ class AgentProfile:
     timeout_seconds: int
     token_limit: int
     metering: str
+    input_cost_per_million: float
+    output_cost_per_million: float
+    mcp_policy: dict[str, Any]
     route: dict[str, Any] = field(repr=False)
 
     @classmethod
@@ -106,6 +113,9 @@ class AgentProfile:
             timeout_seconds=_integer(value.get("timeout_seconds"), 600),
             token_limit=_integer(value.get("token_limit"), 64_000),
             metering=str(value.get("metering") or "self_hosted"),
+            input_cost_per_million=_number(value.get("input_cost_per_million"), 0),
+            output_cost_per_million=_number(value.get("output_cost_per_million"), 0),
+            mcp_policy=_parse_mcp_policy(value.get("mcp_policy")),
             route=dict(value.get("route") or {}),
         )
         if not profile.name or not profile.model:
@@ -141,6 +151,11 @@ class AgentTeam:
     default_writer_id: str
     use_managed_worktree: bool
     budget: OrchestrationBudget
+    dispatch_approval_mode: str = "automatic"
+    routing_mode: str = "manual"
+    routing_weights: dict[str, float] = field(default_factory=dict)
+    evaluation_tags: tuple[str, ...] = ()
+    maximum_estimated_cost: float = 0
 
 
 @dataclass(frozen=True)
@@ -150,6 +165,9 @@ class AgentJob:
     goal: str
     dependencies: tuple[str, ...]
     kind: str
+    required_role: str = ""
+    capability_tags: tuple[str, ...] = ()
+    preferred_agent_id: str = ""
 
 
 @dataclass
@@ -197,6 +215,9 @@ class DispatchPlan:
                     "goal": job.goal,
                     "dependencies": list(job.dependencies),
                     "kind": job.kind,
+                    "required_role": job.required_role,
+                    "capability_tags": list(job.capability_tags),
+                    "preferred_agent_id": job.preferred_agent_id,
                 }
                 for job in self.jobs
             ],
@@ -410,6 +431,16 @@ class CrossProcessModelCallScheduler:
         with self._connect() as connection:
             return int(connection.execute("SELECT COUNT(*) FROM leases").fetchone()[0])
 
+    def has_active_lease(self, run_id: str) -> bool:
+        """Return whether *run_id* still owns a non-expired provider lease."""
+        self.cleanup_expired()
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM leases WHERE run_id = ? AND expires_at > ? LIMIT 1",
+                (run_id, time.time()),
+            ).fetchone()
+        return row is not None
+
 
 try:
     _GLOBAL_MODEL_LIMIT = int(os.environ.get("LOCUS_MODEL_CALL_LIMIT") or "3")
@@ -439,6 +470,8 @@ DISPATCH_TOOL = {
                             "goal": {"type": "string"},
                             "dependencies": {"type": "array", "items": {"type": "string"}},
                             "kind": {"type": "string", "enum": ["specialist", "writer", "reviewer"]},
+                            "required_role": {"type": "string"},
+                            "capability_tags": {"type": "array", "items": {"type": "string"}},
                         },
                         "required": ["id", "agent_id", "goal", "dependencies", "kind"],
                     },
@@ -456,17 +489,39 @@ class TeamOrchestrator:
         emit: Emit,
         should_stop: Stop,
         scheduler: ModelCallScheduler | CrossProcessModelCallScheduler = GLOBAL_MODEL_SCHEDULER,
+        run_store: RunStore | None = None,
+        approve_dispatch: DispatchApproval | None = None,
     ) -> None:
         self.emit = emit
         self.should_stop = should_stop
         self.scheduler = scheduler
+        self.run_store = run_store
+        self.approve_dispatch = approve_dispatch
         self._call_count = 0
         self._metered_tokens = 0
+        self._estimated_cost = 0.0
+        self._maximum_estimated_cost = 0.0
         self._guard = threading.Lock()
 
     def remaining_model_calls(self, budget: OrchestrationBudget) -> int:
         with self._guard:
             return max(budget.max_model_calls - self._call_count, 0)
+
+    def configure_run_budget(self, team: AgentTeam) -> None:
+        self._maximum_estimated_cost = team.maximum_estimated_cost
+
+    def route_plan(
+        self,
+        run_id: str,
+        plan: DispatchPlan,
+        team: AgentTeam,
+        profiles: dict[str, AgentProfile],
+        forced_agent: str | None = None,
+    ) -> DispatchPlan:
+        return self._resolve_scorecard(run_id, plan, team, profiles, forced_agent)
+
+    def scorecard(self, profile: AgentProfile, team: AgentTeam) -> dict[str, Any]:
+        return self._scorecard(profile, team)
 
     @contextmanager
     def writer_slot(self, run_id: str, profile: AgentProfile):
@@ -493,12 +548,21 @@ class TeamOrchestrator:
                 self._metered_tokens += used
                 if self._metered_tokens > budget.max_metered_tokens:
                     raise OrchestrationError("team metered-token budget exhausted")
+            self._estimated_cost += _estimated_call_cost(
+                profile, prompt_tokens, completion_tokens,
+            )
+            if (
+                self._maximum_estimated_cost > 0
+                and self._estimated_cost > self._maximum_estimated_cost
+            ):
+                raise OrchestrationError("team estimated-cost budget exhausted")
 
-    def usage(self) -> dict[str, int]:
+    def usage(self) -> dict[str, int | float]:
         with self._guard:
             return {
                 "model_calls": self._call_count,
                 "metered_tokens": self._metered_tokens,
+                "estimated_cost": self._estimated_cost,
             }
 
     @contextmanager
@@ -543,6 +607,7 @@ class TeamOrchestrator:
 
     def prepare(self, request: str, workspace: str, manifest: Any) -> TeamPreparation:
         run_id, team, profiles, forced_agent = parse_manifest(manifest)
+        self.configure_run_budget(team)
         self.emit({
             "type": "orchestration_started",
             "run_id": run_id,
@@ -566,6 +631,42 @@ class TeamOrchestrator:
                 "message": f"Primary dispatcher unavailable; trying {dispatcher.name}",
             })
             plan = self._dispatch(request, workspace, team, profiles, dispatcher, forced_agent)
+        plan = self._resolve_scorecard(run_id, plan, team, profiles, forced_agent)
+        if team.dispatch_approval_mode == "preview":
+            if self.approve_dispatch is None:
+                raise OrchestrationError("dispatch preview requires an interactive client")
+            while True:
+                preview = {
+                    **plan.structured(),
+                    "budget": team.budget.__dict__,
+                    "maximum_estimated_cost": team.maximum_estimated_cost,
+                }
+                decision = self.approve_dispatch(run_id, preview)
+                action = str(decision.get("action") or "cancel")
+                if action == "cancel":
+                    raise InterruptedError("dispatch cancelled")
+                if action == "redispatch":
+                    plan = self._dispatch(
+                        request, workspace, team, profiles, dispatcher, forced_agent,
+                    )
+                    plan = self._resolve_scorecard(run_id, plan, team, profiles, forced_agent)
+                    continue
+                if action != "run":
+                    raise OrchestrationError("unknown dispatch approval decision")
+                proposed = decision.get("plan") or preview
+                if isinstance(proposed, dict) and isinstance(proposed.get("budget"), dict):
+                    team = replace(team, budget=OrchestrationBudget.parse(proposed["budget"]))
+                if isinstance(proposed, dict) and "maximum_estimated_cost" in proposed:
+                    team = replace(
+                        team,
+                        maximum_estimated_cost=min(
+                            max(_number(proposed.get("maximum_estimated_cost"), 0), 0),
+                            MAX_TEAM_ESTIMATED_COST,
+                        ),
+                    )
+                plan = validate_dispatch_plan(proposed, team, profiles, forced_agent)
+                plan = self._resolve_scorecard(run_id, plan, team, profiles, forced_agent)
+                break
         self.emit({"type": "dispatch_plan", "run_id": run_id, "plan": plan.structured()})
         results = self._run_pre_writer_jobs(run_id, request, workspace, team, profiles, plan)
         writer = profiles[team.default_writer_id]
@@ -587,6 +688,192 @@ class TeamOrchestrator:
             original_request=request,
             workspace=workspace,
         )
+
+    def resume_preparation(
+        self,
+        request: str,
+        workspace: str,
+        manifest: Any,
+        checkpoint: dict[str, Any],
+    ) -> TeamPreparation:
+        """Rebuild preparation from a stable checkpoint without replaying jobs.
+
+        Only immutable completed specialist results are reused. A requested
+        retry or reassignment invalidates that job and every dependent result;
+        the normal dependency scheduler then recomputes exactly that suffix.
+        Writer and tool activity are never replayed here—the server starts a
+        fresh writer continuation against the preserved checkout.
+        """
+        run_id, team, profiles, forced_agent = parse_manifest(manifest)
+        self.configure_run_budget(team)
+        saved_fingerprint = str(checkpoint.get("orchestration_fingerprint") or "")
+        if saved_fingerprint and saved_fingerprint != orchestration_fingerprint(team, profiles):
+            raise OrchestrationError(
+                "the team or agent profiles changed; replay or duplicate instead of reusing results"
+            )
+        raw_plan = checkpoint.get("plan")
+        if not isinstance(raw_plan, dict):
+            raise OrchestrationError("the recovery checkpoint has no validated dispatch plan")
+        reassignment = manifest.get("_reassign")
+        if isinstance(reassignment, dict):
+            job_id = str(reassignment.get("job_id") or "")
+            agent_id = str(reassignment.get("agent_id") or "")
+            jobs = raw_plan.get("jobs") if isinstance(raw_plan.get("jobs"), list) else []
+            target = next((item for item in jobs if isinstance(item, dict)
+                           and str(item.get("id") or "") == job_id), None)
+            candidate = profiles.get(agent_id)
+            if target is None or candidate is None or agent_id not in team.member_ids:
+                raise OrchestrationError("the recovery reassignment is not an eligible team member")
+            if str(target.get("kind") or "") == "writer" or candidate.can_write:
+                raise OrchestrationError("the single writer cannot be reassigned")
+            if str(target.get("kind") or "") == "reviewer" and candidate.role != "reviewer":
+                raise OrchestrationError("reviewer jobs require Reviewer profiles")
+            target["agent_id"] = agent_id
+        plan = validate_dispatch_plan(raw_plan, team, profiles, forced_agent)
+        plan = self._resolve_scorecard(run_id, plan, team, profiles, forced_agent)
+        self.emit({
+            "type": "orchestration_started",
+            "run_id": run_id,
+            "team_id": team.id,
+            "team_name": team.name,
+            "state": "running",
+            "resumed": True,
+            "budget": team.budget.__dict__,
+        })
+        self.emit({"type": "dispatch_plan", "run_id": run_id, "plan": plan.structured(),
+                   "resumed": True})
+
+        saved: dict[str, AgentResult] = {}
+        for value in checkpoint.get("results") or []:
+            result = _parse_saved_result(value)
+            if result is not None and result.job_id in {job.id for job in plan.jobs}:
+                saved[result.job_id] = result
+        invalid = {str(manifest.get("_retry_job") or "")}
+        if isinstance(reassignment, dict):
+            invalid.add(str(reassignment.get("job_id") or ""))
+        invalid.discard("")
+        changed = True
+        while changed:
+            changed = False
+            for job in plan.jobs:
+                if job.id not in invalid and any(dep in invalid for dep in job.dependencies):
+                    invalid.add(job.id)
+                    changed = True
+        saved = {job_id: result for job_id, result in saved.items() if job_id not in invalid}
+        results = self._run_pre_writer_jobs(
+            run_id, request, workspace, team, profiles, plan, existing=saved,
+        )
+        writer = profiles[team.default_writer_id]
+        self.emit({
+            "type": "orchestration_state", "run_id": run_id, "state": "running",
+            "writer_id": writer.id, "message": "Continuing from the last stable checkpoint",
+        })
+        return TeamPreparation(
+            run_id=run_id,
+            team=team,
+            profiles=profiles,
+            plan=plan,
+            results=results,
+            writer=writer,
+            writer_prompt=_writer_prompt(request, plan, results, writer)
+            + "\n\nRecovery note: continue from the existing checkout diff. Verify current files "
+              "before changing them and never repeat a mutation merely because it appears in history.",
+            original_request=request,
+            workspace=workspace,
+        )
+
+    def _resolve_scorecard(
+        self,
+        run_id: str,
+        plan: DispatchPlan,
+        team: AgentTeam,
+        profiles: dict[str, AgentProfile],
+        forced_agent: str | None,
+    ) -> DispatchPlan:
+        if (
+            team.routing_mode != "scorecard"
+            or self.run_store is None
+            or not capability_enabled("adaptive_routing")
+        ):
+            return plan
+        resolved: list[AgentJob] = []
+        for job in plan.jobs:
+            if job.kind == "writer" or job.agent_id == forced_agent:
+                resolved.append(job)
+                continue
+            assigned = profiles[job.agent_id]
+            role = job.required_role or ("reviewer" if job.kind == "reviewer" else assigned.role)
+            candidates = [
+                profile for profile in profiles.values()
+                if not profile.can_write
+                and (not role or profile.role == role)
+                and set(job.capability_tags).issubset(set(profile.capabilities))
+            ]
+            if not candidates:
+                resolved.append(job)
+                self.emit({
+                    "type": "routing_decision", "run_id": run_id, "job_id": job.id,
+                    "selected_agent_id": job.agent_id, "limited_data": True,
+                    "reason": "No other team member passed the role and capability gates.",
+                    "candidates": [],
+                })
+                continue
+            scorecards = [self._scorecard(profile, team) for profile in candidates]
+            scorecards.sort(key=lambda item: (-float(item["score"]), str(item["agent_id"])))
+            selected_id = str(scorecards[0]["agent_id"])
+            resolved.append(AgentJob(
+                job.id, selected_id, job.goal, job.dependencies, job.kind,
+                job.required_role, job.capability_tags, job.agent_id,
+            ))
+            self.emit({
+                "type": "routing_decision", "run_id": run_id, "job_id": job.id,
+                "selected_agent_id": selected_id,
+                "preferred_agent_id": job.agent_id,
+                "limited_data": bool(scorecards[0]["limited_data"]),
+                "reason": "Highest eligible transparent scorecard total.",
+                "candidates": scorecards,
+            })
+        return DispatchPlan(plan.summary, tuple(resolved))
+
+    def _scorecard(self, profile: AgentProfile, team: AgentTeam) -> dict[str, Any]:
+        samples = self.run_store.routing_samples(
+            profile.id, list(team.evaluation_tags or profile.capabilities), limit=50,
+        ) if self.run_store is not None else []
+        evaluations = [sample for sample in samples if sample["evaluation"]
+                       and sample.get("quality") is not None]
+        quality_observed = _weighted_average(
+            [(float(sample["quality"]), index) for index, sample in enumerate(evaluations)]
+        ) if evaluations else 50.0
+        quality = (quality_observed * min(len(evaluations), 5) + 50.0 * max(5 - len(evaluations), 0)) / 5
+        reliability = _weighted_average([
+            (100.0 if sample["reliable"] else 0.0, index)
+            for index, sample in enumerate(samples)
+        ]) if samples else 50.0
+        latency_values = [
+            (max(0.0, 100.0 - min(int(sample["latency_ms"]) / 600, 100.0)), index)
+            for index, sample in enumerate(samples) if int(sample["latency_ms"]) > 0
+        ]
+        latency = _weighted_average(latency_values) if latency_values else 50.0
+        cost = 100.0 if profile.metering == "self_hosted" else (
+            _weighted_average([
+                (max(0.0, 100.0 - float(sample["estimated_cost"]) * 100), index)
+                for index, sample in enumerate(samples)
+            ]) if samples else 50.0
+        )
+        privacy = 100.0 if profile.route.get("provider") == "ollama" else 50.0
+        weights = _routing_weights(team.routing_weights)
+        components = {
+            "quality": round(quality, 2), "reliability": round(reliability, 2),
+            "privacy": round(privacy, 2), "latency": round(latency, 2),
+            "cost": round(cost, 2),
+        }
+        total = sum(components[name] * weights[name] for name in components)
+        return {
+            "agent_id": profile.id, "agent_name": profile.name,
+            "score": round(total, 2), "components": components, "weights": weights,
+            "sample_count": len(samples), "evaluation_count": len(evaluations),
+            "limited_data": len(evaluations) < 5,
+        }
 
     def review(self, prepared: TeamPreparation, diff_text: str, test_evidence: str = "") -> list[AgentResult]:
         reviewers = [
@@ -643,6 +930,52 @@ class TeamOrchestrator:
             stream_visible=False,
         )
         return result.output.strip()
+
+    def evaluate_rubric(
+        self,
+        run_id: str,
+        profile: AgentProfile,
+        budget: OrchestrationBudget,
+        *,
+        case: dict[str, Any],
+        output: str,
+        diff_text: str,
+        evidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Run one blinded, tool-free subjective evaluation."""
+        prompt = (
+            "You are a blinded evaluation judge. Provider, model, and agent identities are "
+            "intentionally unavailable. Score the result against the rubric from 0 through 100. "
+            "Return only JSON: {\"score\": number, \"reason\": string}. A deterministic failure "
+            "cannot be overridden by this score.\n\n"
+            + json.dumps({
+                "case": {
+                    "name": case.get("name"), "prompt": case.get("prompt"),
+                    "tags": case.get("tags"), "rubric": case.get("rubric"),
+                },
+                "output": output[:MAX_AGENT_OUTPUT_CHARS],
+                "diff": diff_text[:MAX_EVIDENCE_CHARS],
+                "deterministic_evidence": evidence,
+            }, ensure_ascii=False)
+        )
+        result = self._call_agent(
+            run_id,
+            AgentJob("rubric-judge", profile.id, prompt, (), "reviewer"),
+            profile,
+            budget,
+            stream_visible=False,
+        )
+        try:
+            value = _extract_json(result.output)
+            score = min(max(float(value.get("score")), 0.0), 100.0)
+            reason = str(value.get("reason") or "")[:4_000]
+        except (AttributeError, TypeError, ValueError, OrchestrationError):
+            raise OrchestrationError("the rubric judge did not return a valid score") from None
+        return {
+            "score": score, "reason": reason, "subjective": True,
+            "prompt_tokens": result.prompt_tokens,
+            "completion_tokens": result.completion_tokens,
+        }
 
     def _dispatch(
         self,
@@ -725,10 +1058,14 @@ class TeamOrchestrator:
         team: AgentTeam,
         profiles: dict[str, AgentProfile],
         plan: DispatchPlan,
+        existing: dict[str, AgentResult] | None = None,
     ) -> list[AgentResult]:
         evidence = collect_workspace_evidence(workspace)
-        pending = {job.id: job for job in plan.jobs if job.kind == "specialist"}
-        results: dict[str, AgentResult] = {}
+        results: dict[str, AgentResult] = dict(existing or {})
+        pending = {
+            job.id: job for job in plan.jobs
+            if job.kind == "specialist" and job.id not in results
+        }
         while pending:
             if self.should_stop():
                 raise InterruptedError("orchestration cancelled")
@@ -846,6 +1183,21 @@ class TeamOrchestrator:
             elapsed_ms=max(int((time.monotonic() - started) * 1_000), 0),
             reasoning_text=response.thinking[:MAX_AGENT_OUTPUT_CHARS],
         )
+        if self.run_store is not None:
+            estimated_cost = (
+                result.prompt_tokens * max(profile.input_cost_per_million, 0)
+                + result.completion_tokens * max(profile.output_cost_per_million, 0)
+            ) / 1_000_000
+            self.run_store.record_routing_sample(
+                profile.id,
+                tags=list(profile.capabilities),
+                quality=None,
+                reliable=not bool(result.error),
+                latency_ms=result.elapsed_ms,
+                estimated_cost=estimated_cost,
+                local=profile.route.get("provider") == "ollama",
+                evaluation=False,
+            )
         self._emit_result(run_id, result, "completed")
         return result
 
@@ -895,6 +1247,15 @@ class TeamOrchestrator:
                 self._metered_tokens += used
                 if self._metered_tokens > budget.max_metered_tokens:
                     raise OrchestrationError("team metered-token budget exhausted")
+        with self._guard:
+            self._estimated_cost += _estimated_call_cost(
+                profile, response.prompt_eval_count or used, response.eval_count,
+            )
+            if (
+                self._maximum_estimated_cost > 0
+                and self._estimated_cost > self._maximum_estimated_cost
+            ):
+                raise OrchestrationError("team estimated-cost budget exhausted")
         return response
 
     def _emit_result(self, run_id: str, result: AgentResult, state: str) -> None:
@@ -908,6 +1269,7 @@ class TeamOrchestrator:
                 "completion_tokens": result.completion_tokens,
                 "model_calls": self._call_count,
                 "metered_tokens": self._metered_tokens,
+                "estimated_cost": self._estimated_cost,
             },
         })
 
@@ -939,6 +1301,18 @@ def parse_manifest(value: Any) -> tuple[str, AgentTeam, dict[str, AgentProfile],
         default_writer_id=_identifier(raw.get("default_writer_id"), "default writer id"),
         use_managed_worktree=bool(raw.get("use_managed_worktree", True)),
         budget=OrchestrationBudget.parse(raw.get("budget")),
+        dispatch_approval_mode=str(raw.get("dispatch_approval_mode") or "automatic"),
+        routing_mode=str(raw.get("routing_mode") or "manual"),
+        routing_weights={
+            str(key): _number(number, 0)
+            for key, number in (raw.get("routing_weights") or {}).items()
+        } if isinstance(raw.get("routing_weights"), dict) else {},
+        evaluation_tags=tuple(str(item).strip().lower()[:40]
+                              for item in raw.get("evaluation_tags") or [])[:24],
+        maximum_estimated_cost=min(
+            max(_number(raw.get("maximum_estimated_cost"), 0), 0),
+            MAX_TEAM_ESTIMATED_COST,
+        ),
     )
     if not team.name or not members or len(set(members)) != len(members):
         raise OrchestrationError("team name and unique membership are required")
@@ -957,6 +1331,11 @@ def parse_manifest(value: Any) -> tuple[str, AgentTeam, dict[str, AgentProfile],
     writers = [profile for profile in profiles.values() if profile.can_write]
     if len(writers) != 1 or writers[0].id != team.default_writer_id:
         raise OrchestrationError("the team must have exactly one designated writer")
+    if team.dispatch_approval_mode not in {"automatic", "preview"}:
+        raise OrchestrationError("dispatch approval mode must be automatic or preview")
+    if team.routing_mode not in {"manual", "scorecard"}:
+        raise OrchestrationError("routing mode must be manual or scorecard")
+    _routing_weights(team.routing_weights)
     forced = str(value.get("forced_agent_id") or "") or None
     if forced and forced not in profiles:
         raise OrchestrationError("the forced agent is not an enabled team member")
@@ -986,6 +1365,10 @@ def validate_dispatch_plan(
             goal=str(raw.get("goal") or "").strip()[:16_000],
             dependencies=tuple(str(item) for item in raw.get("dependencies") or []),
             kind=str(raw.get("kind") or "specialist"),
+            required_role=str(raw.get("required_role") or "").strip().lower()[:40],
+            capability_tags=tuple(str(item).strip().lower()[:40]
+                                  for item in raw.get("capability_tags") or [])[:24],
+            preferred_agent_id=str(raw.get("preferred_agent_id") or "")[:128],
         )
         if job.agent_id not in profiles or job.agent_id not in team.member_ids:
             raise OrchestrationError(f"job {job.id} names an unknown team member")
@@ -1093,6 +1476,43 @@ def client_for_profile(profile: AgentProfile):
     return _client(profile)
 
 
+def orchestration_fingerprint(
+    team: AgentTeam,
+    profiles: dict[str, AgentProfile],
+) -> str:
+    """Fingerprint reusable orchestration inputs without credentials."""
+    profile_values = []
+    for identifier in sorted(profiles):
+        profile = profiles[identifier]
+        route = {
+            key: value for key, value in profile.route.items()
+            if key not in {"api_key", "authorization", "headers", "token", "secret"}
+        }
+        profile_values.append({
+            "id": profile.id, "name": profile.name, "model": profile.model,
+            "role": profile.role, "instructions": profile.instructions,
+            "capabilities": profile.capabilities, "access_ceiling": profile.access_ceiling,
+            "timeout_seconds": profile.timeout_seconds, "token_limit": profile.token_limit,
+            "metering": profile.metering, "route": route, "mcp_policy": profile.mcp_policy,
+        })
+    value = {
+        "team": {
+            "id": team.id, "dispatcher_id": team.dispatcher_id,
+            "fallback_dispatcher_id": team.fallback_dispatcher_id,
+            "member_ids": team.member_ids, "default_writer_id": team.default_writer_id,
+            "budget": team.budget.__dict__,
+            "dispatch_approval_mode": team.dispatch_approval_mode,
+            "routing_mode": team.routing_mode, "routing_weights": team.routing_weights,
+            "evaluation_tags": team.evaluation_tags,
+            "maximum_estimated_cost": team.maximum_estimated_cost,
+        },
+        "profiles": profile_values,
+    }
+    return hashlib.sha256(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
 def _validate_route(route: dict[str, Any], name: str) -> None:
     provider = str(route.get("provider") or "")
     if provider == "ollama":
@@ -1110,6 +1530,17 @@ def _route_label(route: dict[str, Any]) -> str:
     if route.get("provider") == "ollama":
         return "Local Ollama"
     return str(route.get("account_label") or route.get("base_url") or "Hosted provider")
+
+
+def _estimated_call_cost(
+    profile: AgentProfile, prompt_tokens: int, completion_tokens: int
+) -> float:
+    if profile.metering != "metered":
+        return 0.0
+    return (
+        max(prompt_tokens, 0) * max(profile.input_cost_per_million, 0)
+        + max(completion_tokens, 0) * max(profile.output_cost_per_million, 0)
+    ) / 1_000_000
 
 
 def _reject_cycles(jobs: list[AgentJob]) -> None:
@@ -1163,6 +1594,29 @@ def _extract_evidence(output: str) -> list[str]:
     return evidence
 
 
+def _parse_saved_result(value: Any) -> AgentResult | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        job_id = _identifier(value.get("job_id"), "saved job id")
+        agent_id = _identifier(value.get("agent_id"), "saved agent id")
+    except OrchestrationError:
+        return None
+    return AgentResult(
+        job_id=job_id,
+        agent_id=agent_id,
+        agent_name=str(value.get("agent_name") or "Agent")[:64],
+        role=str(value.get("role") or "generalist")[:40],
+        output=str(value.get("output") or "")[:MAX_AGENT_OUTPUT_CHARS],
+        evidence=[str(item)[:500] for item in value.get("evidence") or []][:128],
+        prompt_tokens=max(_integer(value.get("prompt_tokens"), 0), 0),
+        completion_tokens=max(_integer(value.get("completion_tokens"), 0), 0),
+        elapsed_ms=max(_integer(value.get("elapsed_ms"), 0), 0),
+        error=str(value.get("error") or "")[:4_000],
+        reasoning_text=str(value.get("reasoning_text") or "")[:MAX_AGENT_OUTPUT_CHARS],
+    )
+
+
 def _identifier(value: Any, label: str) -> str:
     text = str(value or "").strip()
     if not text or len(text) > 128 or any(character in text for character in "/\\\0"):
@@ -1179,6 +1633,60 @@ def _integer(value: Any, default: int) -> int:
         return default
 
 
+def _number(value: Any, default: float) -> float:
+    if isinstance(value, bool):
+        return default
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if number == number and abs(number) != float("inf") else default
+
+
+def _parse_mcp_policy(value: Any) -> dict[str, list[str]]:
+    raw = value if isinstance(value, dict) else {}
+    allowed_keys = {"server_ids", "tools", "resources", "prompts"}
+    unknown = set(raw) - allowed_keys
+    if unknown:
+        raise OrchestrationError(f"unknown MCP agent policy field: {sorted(unknown)[0]}")
+    result: dict[str, list[str]] = {}
+    for key in sorted(allowed_keys):
+        values = raw.get(key) or []
+        if not isinstance(values, list) or len(values) > 256:
+            raise OrchestrationError(f"MCP agent policy {key} must be a bounded list")
+        result[key] = [str(item)[:256] for item in values if str(item).strip()]
+    return result
+
+
+def _routing_weights(value: dict[str, float]) -> dict[str, float]:
+    defaults = {
+        "quality": 0.40,
+        "reliability": 0.20,
+        "privacy": 0.15,
+        "latency": 0.15,
+        "cost": 0.10,
+    }
+    if not value:
+        return defaults
+    weights = {name: max(_number(value.get(name), default), 0) for name, default in defaults.items()}
+    total = sum(weights.values())
+    if total <= 0:
+        raise OrchestrationError("routing score weights must contain a positive value")
+    return {name: number / total for name, number in weights.items()}
+
+
+def _weighted_average(values: list[tuple[float, int]]) -> float:
+    if not values:
+        return 50.0
+    weighted = 0.0
+    total = 0.0
+    for value, index in values:
+        weight = 0.95 ** index
+        weighted += max(0.0, min(value, 100.0)) * weight
+        total += weight
+    return weighted / total if total else 50.0
+
+
 __all__ = [
     "AgentJob",
     "AgentProfile",
@@ -1192,7 +1700,7 @@ __all__ = [
     "TeamOrchestrator",
     "TeamPreparation",
     "collect_workspace_evidence",
-    "client_for_profile",
+    "client_for_profile", "orchestration_fingerprint",
     "parse_manifest",
     "validate_dispatch_plan",
 ]

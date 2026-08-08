@@ -26,6 +26,7 @@ struct SlashCommand: Identifiable, Hashable {
         case retryLastResponse
         case stopRun
         case compact
+        case remember
         case setThinkingVisibility
     }
 
@@ -134,6 +135,11 @@ struct SlashCommand: Identifiable, Hashable {
             name: "compact", aliases: [],
             summary: "Ask the agent to compact the conversation",
             argumentHint: nil, symbol: "arrow.down.right.and.arrow.up.left", action: .compact
+        ),
+        SlashCommand(
+            name: "remember", aliases: [],
+            summary: "Save an approved fact or convention to this workspace",
+            argumentHint: "text", symbol: "bookmark", action: .remember
         ),
         SlashCommand(
             name: "permissions", aliases: ["perms"],

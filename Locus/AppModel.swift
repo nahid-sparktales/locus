@@ -51,6 +51,17 @@ final class AppModel: ObservableObject {
     @Published private(set) var activeTaskRecord: TaskRecord?
     @Published private(set) var taskHasChanges = false
     @Published private(set) var taskPatchBytes = 0
+    @Published private(set) var orchestrationRuns: [OrchestrationRun] = []
+    @Published private(set) var selectedOrchestrationRun: OrchestrationRun?
+    @Published private(set) var orchestrationEvents: [OrchestrationEvent] = []
+    @Published private(set) var pendingDispatchPlan: DispatchPlan?
+    @Published private(set) var evaluationSuites: [EvaluationSuite] = []
+    @Published private(set) var activeEvaluationID: String?
+    @Published private(set) var evaluationStatus: String?
+    @Published private(set) var knowledgeStatus: WorkspaceKnowledgeStatus?
+    @Published private(set) var workspaceMemories: [WorkspaceMemory] = []
+    @Published var mcpInputRequest: MCPInputRequest?
+    private var orchestrationEventIDs: Set<String> = []
     @Published var sessions: [SessionSummary] = []
     @Published var currentSessionID = ""
     @Published var sessionInfo: SessionInfo?
@@ -192,6 +203,8 @@ final class AppModel: ObservableObject {
     private let ollamaRuntime = OllamaRuntime()
     private let mcpAuthCoordinator = MCPAuthCoordinator()
     private let workspaceAccess: WorkspaceAccess
+    private let knowledgeWatcher = WorkspaceKnowledgeWatcher()
+    private var knowledgeReindexTask: Task<Void, Never>?
     private var initialWorkspacePath: String?
     private var streamingAssistantID: UUID?
     private var pendingTokens = ""
@@ -433,6 +446,11 @@ final class AppModel: ObservableObject {
                     self.agentRuntimePhase = .online
                     self.runtimeRecoveryAttempt = 0
                     self.sendComputerControlCapability()
+                    if let runID = self.orchestrationRunID {
+                        Task { @MainActor [weak self] in
+                            await self?.backfillOrchestrationEvents(runID)
+                        }
+                    }
                 } else if self.agentRuntimePhase.isOnline, !self.isShuttingDown {
                     self.agentRuntimePhase = .recovering("Reconnecting to the local agent…")
                     self.recoverFromLostConnection()
@@ -1076,6 +1094,8 @@ final class AppModel: ObservableObject {
         settingsPersistenceTask?.cancel()
         sessionResetWatchdog?.cancel()
         indexTask?.cancel()
+        knowledgeReindexTask?.cancel()
+        knowledgeWatcher.stop()
         agentInstructionsTask?.cancel()
         backend.disconnect()
         backendProcess.stop()
@@ -1115,6 +1135,38 @@ final class AppModel: ObservableObject {
             guard let self, self.workspacePath == root else { return }
             self.indexedWorkspacePath = root
             self.workspaceFileIndex = files
+        }
+    }
+
+    private func watchWorkspaceKnowledge(_ root: String) {
+        guard !isUITesting, !root.isEmpty else { return }
+        knowledgeWatcher.start(path: root) { [weak self] in
+            Task { @MainActor in self?.scheduleWorkspaceKnowledgeReindex(root) }
+        }
+        scheduleWorkspaceKnowledgeReindex(root, immediately: true)
+    }
+
+    private func scheduleWorkspaceKnowledgeReindex(
+        _ root: String,
+        immediately: Bool = false
+    ) {
+        knowledgeReindexTask?.cancel()
+        knowledgeReindexTask = Task { @MainActor [weak self] in
+            if !immediately { try? await Task.sleep(for: .milliseconds(650)) }
+            guard !Task.isCancelled, let self, self.workspacePath == root else { return }
+            do {
+                let _: WorkspaceKnowledgeStatus = try await self.backend.post(
+                    "/api/knowledge/reindex",
+                    body: ["workspace": root],
+                    as: WorkspaceKnowledgeStatus.self
+                )
+                if self.settingsPage == .knowledge {
+                    await self.refreshWorkspaceKnowledge()
+                }
+            } catch {
+                // Search triggers a lazy first index too. Watcher failures must
+                // never interrupt chat or workspace switching.
+            }
         }
     }
 
@@ -2290,6 +2342,15 @@ final class AppModel: ObservableObject {
             stop()
         case .compact:
             sendRaw("/compact")
+        case .remember:
+            if argument.isEmpty {
+                settingsPage = .knowledge
+                settingsPresented = true
+            } else {
+                rememberWorkspaceFact(
+                    title: String(argument.prefix(80)), content: argument, tags: []
+                )
+            }
         case .setThinkingVisibility:
             setThinkingVisibility(argument)
         }
@@ -2642,13 +2703,15 @@ final class AppModel: ObservableObject {
     /// Builds an in-memory manifest for one run. Provider credentials are
     /// included only in the WebSocket payload and are never written into the
     /// profile/team stores or transcript.
-    func teamManifest(for text: String) -> [String: Any]? {
+    func teamManifest(for text: String, teamID: UUID? = nil) -> [String: Any]? {
         let mention = TeamMentionResolver.selection(
             in: text,
             profiles: agentProfiles,
             teams: agentTeams
         )
-        let team = mention.team
+        let team = teamID.flatMap { requested in
+            agentTeams.first(where: { $0.id == requested })
+        } ?? mention.team
             ?? selectedAgentTeam
             ?? mention.agent.flatMap { agent in
                 agentTeams.first(where: { $0.memberIDs.contains(agent.id) })
@@ -2705,6 +2768,12 @@ final class AppModel: ObservableObject {
             ]
             if let rate = profile.inputCostPerMillion { entry["input_cost_per_million"] = rate }
             if let rate = profile.outputCostPerMillion { entry["output_cost_per_million"] = rate }
+            if let policy = profile.mcpPolicy,
+               let data = try? JSONEncoder().encode(policy),
+               let value = try? JSONSerialization.jsonObject(with: data)
+            {
+                entry["mcp_policy"] = value
+            }
             return entry
         }
         guard routes.count == members.count else {
@@ -2716,6 +2785,17 @@ final class AppModel: ObservableObject {
             "name": team.name,
             "member_ids": team.memberIDs.map(\.uuidString),
             "use_managed_worktree": team.useManagedWorktree,
+            "dispatch_approval_mode": team.resolvedDispatchApprovalMode.rawValue,
+            "routing_mode": team.resolvedRoutingMode.rawValue,
+            "routing_weights": [
+                "quality": team.resolvedRoutingWeights.quality,
+                "reliability": team.resolvedRoutingWeights.reliability,
+                "privacy": team.resolvedRoutingWeights.privacy,
+                "latency": team.resolvedRoutingWeights.latency,
+                "cost": team.resolvedRoutingWeights.cost,
+            ],
+            "evaluation_tags": team.evaluationTags ?? [],
+            "maximum_estimated_cost": team.maximumEstimatedCost ?? 0,
             "budget": [
                 "max_jobs": team.budget.maxJobs,
                 "max_rounds": team.budget.maxRounds,
@@ -2734,6 +2814,681 @@ final class AppModel: ObservableObject {
         ]
         if let id = mention.agent?.id { manifest["forced_agent_id"] = id.uuidString }
         return manifest
+    }
+
+    func refreshOrchestrationRuns(select runID: String? = nil) async {
+        do {
+            let response: OrchestrationRunsResponse = try await backend.get(
+                "/api/orchestrations",
+                query: currentSessionID.isEmpty ? [] : [URLQueryItem(name: "session_id", value: currentSessionID)],
+                as: OrchestrationRunsResponse.self
+            )
+            orchestrationRuns = response.runs
+            let selectedID = runID ?? selectedOrchestrationRun?.id
+                ?? orchestrationRunID ?? response.runs.first?.id
+            if let selectedID { await loadOrchestrationRun(selectedID) }
+        } catch {
+            showToast("Could not load team runs: \(error.localizedDescription)")
+        }
+    }
+
+    func loadOrchestrationRun(_ runID: String) async {
+        do {
+            async let detail: OrchestrationRun = backend.get(
+                "/api/orchestrations/\(runID)", as: OrchestrationRun.self
+            )
+            async let events: OrchestrationEventsResponse = backend.get(
+                "/api/orchestrations/\(runID)/events", as: OrchestrationEventsResponse.self
+            )
+            selectedOrchestrationRun = try await detail
+            orchestrationEvents = try await events.events
+            orchestrationEventIDs = Set(orchestrationEvents.map(\.id))
+        } catch {
+            showToast("Could not inspect that run: \(error.localizedDescription)")
+        }
+    }
+
+    func backfillOrchestrationEvents(_ runID: String) async {
+        let after = orchestrationEvents
+            .filter { $0.text("run_id") == runID }
+            .map(\.sequence)
+            .max() ?? 0
+        do {
+            let response: OrchestrationEventsResponse = try await backend.get(
+                "/api/orchestrations/\(runID)/events",
+                query: [URLQueryItem(name: "after_seq", value: String(after))],
+                as: OrchestrationEventsResponse.self
+            )
+            for event in response.events where !orchestrationEventIDs.contains(event.id) {
+                orchestrationEventIDs.insert(event.id)
+                orchestrationEvents.append(event)
+            }
+            orchestrationEvents.sort { $0.sequence < $1.sequence }
+        } catch {
+            // The inspector can still reload the full run on demand. A failed
+            // reconnect backfill must not disturb the active transcript.
+        }
+    }
+
+    func exportOrchestration(_ runID: String, includeContent: Bool) async {
+        do {
+            let value: [String: JSONValue] = try await backend.get(
+                "/api/orchestrations/\(runID)/export",
+                query: [URLQueryItem(
+                    name: "include_content", value: includeContent ? "true" : "false"
+                )],
+                as: [String: JSONValue].self
+            )
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            let data = try encoder.encode(value)
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = "\(runID).locusrun"
+            panel.allowedContentTypes = [UTType(filenameExtension: "locusrun") ?? .json]
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            try data.write(to: url, options: .atomic)
+            showToast(includeContent ? "Run exported with visible content" : "Redacted run exported")
+        } catch {
+            showToast("Could not export run: \(error.localizedDescription)")
+        }
+    }
+
+    private func exportOrchestrationToOTLP(_ runID: String) async {
+        guard settings.otlpExportEnabled,
+              !settings.otlpEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return }
+        do {
+            let _: SimpleActionResponse = try await backend.post(
+                "/api/orchestrations/\(runID)/otlp",
+                body: [
+                    "endpoint": settings.otlpEndpoint,
+                    "authorization": CredentialStore.get(
+                        account: CredentialStore.otlpAuthorizationKey
+                    ) ?? "",
+                    "include_content": settings.otlpIncludeContent,
+                ],
+                as: SimpleActionResponse.self
+            )
+        } catch {
+            showToast("Telemetry export failed: \(error.localizedDescription)")
+        }
+    }
+
+    func saveOTLPAuthorization(_ value: String) {
+        showToast(
+            CredentialStore.set(value, account: CredentialStore.otlpAuthorizationKey)
+                ? "Telemetry authorization saved"
+                : "Could not save telemetry authorization"
+        )
+    }
+
+    func pauseOrchestration(_ runID: String) {
+        orchestrationAction(path: "/api/orchestrations/\(runID)/pause", runID: runID)
+    }
+
+    func cancelOrchestration(_ runID: String) {
+        orchestrationAction(path: "/api/orchestrations/\(runID)/cancel", runID: runID)
+    }
+
+    func discardOrchestration(_ runID: String) {
+        orchestrationAction(path: "/api/orchestrations/\(runID)/discard", runID: nil)
+    }
+
+    func cleanupOrchestrationCheckout(_ run: OrchestrationRun) {
+        guard let taskID = run.taskID else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let _: SimpleActionResponse = try await backend.delete(
+                    "/api/tasks/\(taskID)", as: SimpleActionResponse.self
+                )
+                if activeTaskRecord?.id == taskID {
+                    activeTaskRecord = nil
+                    taskHasChanges = false
+                }
+                showToast("Managed checkout removed; workspace files were not changed")
+                await refreshOrchestrationRuns(select: run.id)
+            } catch {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    func setOrchestrationPinned(_ run: OrchestrationRun, pinned: Bool) {
+        Task {
+            do {
+                let updated: OrchestrationRun = try await backend.patch(
+                    "/api/orchestrations/\(run.id)",
+                    body: ["pinned": pinned],
+                    as: OrchestrationRun.self
+                )
+                selectedOrchestrationRun = updated
+                await refreshOrchestrationRuns(select: updated.id)
+            } catch {
+                showToast("Could not update run: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func resumeOrchestration(_ run: OrchestrationRun) {
+        guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
+              let manifest = teamManifest(for: run.request, teamID: teamID)
+        else {
+            showToast("Repair the team, models, or hosted consent before resuming")
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let assessment: RunRecoveryAssessment = try await backend.post(
+                    "/api/orchestrations/\(run.id)/recovery-assessment",
+                    body: ["manifest": manifest],
+                    as: RunRecoveryAssessment.self
+                )
+                guard assessment.canResume else {
+                    showToast(assessment.repairChecklist.first ?? "This run cannot be resumed")
+                    return
+                }
+                orchestrationAction(
+                    path: "/api/orchestrations/\(run.id)/resume",
+                    body: ["manifest": manifest],
+                    runID: run.id
+                )
+            } catch {
+                showToast("Could not assess recovery: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func retryOrchestrationJob(_ attempt: AgentJobAttempt, in run: OrchestrationRun) {
+        guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
+              let manifest = teamManifest(for: run.request, teamID: teamID)
+        else {
+            showToast("Repair the team before retrying this job")
+            return
+        }
+        orchestrationAction(
+            path: "/api/orchestrations/\(run.id)/jobs/\(attempt.jobID)/retry",
+            body: ["manifest": manifest],
+            runID: run.id
+        )
+    }
+
+    func reassignOrchestrationJob(
+        _ attempt: AgentJobAttempt,
+        in run: OrchestrationRun,
+        to profile: AgentProfile
+    ) {
+        guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
+              let manifest = teamManifest(for: run.request, teamID: teamID)
+        else {
+            showToast("Repair the team before reassigning this job")
+            return
+        }
+        orchestrationAction(
+            path: "/api/orchestrations/\(run.id)/jobs/\(attempt.jobID)/reassign",
+            body: ["manifest": manifest, "agent_id": profile.id.uuidString],
+            runID: run.id
+        )
+    }
+
+    func reassignmentCandidates(
+        for attempt: AgentJobAttempt,
+        in run: OrchestrationRun
+    ) -> [AgentProfile] {
+        guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
+              let team = agentTeams.first(where: { $0.id == teamID })
+        else { return [] }
+        return team.memberIDs.compactMap { id in
+            agentProfiles.first(where: { $0.id == id })
+        }.filter { profile in
+            !profile.accessCeiling.canWrite
+                && profile.id.uuidString != attempt.agentID
+                && (attempt.role != "reviewer" || profile.role == .reviewer)
+        }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    func replayOrchestration(_ run: OrchestrationRun) {
+        startOrchestrationCopy(run, action: "replay")
+    }
+
+    func duplicateOrchestration(_ run: OrchestrationRun) {
+        startOrchestrationCopy(run, action: "duplicate")
+    }
+
+    private func startOrchestrationCopy(_ run: OrchestrationRun, action: String) {
+        guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
+              let manifest = teamManifest(for: run.request, teamID: teamID)
+        else {
+            showToast("Repair the team, models, or hosted consent before continuing")
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response: OrchestrationMutationResponse = try await backend.post(
+                    "/api/orchestrations/\(run.id)/\(action)",
+                    body: ["manifest": manifest],
+                    timeout: 30,
+                    as: OrchestrationMutationResponse.self
+                )
+                orchestrationRunID = response.runID
+                await refreshOrchestrationRuns(select: response.runID)
+            } catch {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    func decideDispatch(_ action: String, editedPlan: DispatchPlan? = nil) {
+        guard let runID = orchestrationRunID else { return }
+        var payload: [String: Any] = ["type": "dispatch_decision", "run_id": runID, "action": action]
+        if let editedPlan, let value = encodedJSONObject(editedPlan) { payload["plan"] = value }
+        guard backend.send(payload) else {
+            showToast("The dispatch decision could not be delivered")
+            return
+        }
+        if action != "redispatch" { pendingDispatchPlan = nil }
+    }
+
+    func dispatchPlanErrors(_ plan: DispatchPlan) -> [String] {
+        let runTeamID = selectedOrchestrationRun?.teamID.flatMap(UUID.init(uuidString:))
+        guard let team = runTeamID.flatMap({ id in agentTeams.first(where: { $0.id == id }) })
+            ?? selectedAgentTeam
+        else { return ["The selected team is unavailable."] }
+        let profiles = Dictionary(uniqueKeysWithValues: agentProfiles.map { ($0.id, $0) })
+        let budget = plan.budget ?? team.budget
+        var errors: [String] = []
+        if plan.jobs.isEmpty || plan.jobs.count > budget.maxJobs {
+            errors.append("The plan must contain 1…\(budget.maxJobs) jobs.")
+        }
+        let ids = plan.jobs.map(\.id)
+        if ids.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+            || Set(ids).count != ids.count
+        {
+            errors.append("Every job needs a unique ID.")
+        }
+        let known = Set(ids)
+        for job in plan.jobs {
+            guard let agentID = UUID(uuidString: job.agentID),
+                  team.memberIDs.contains(agentID), let profile = profiles[agentID]
+            else {
+                errors.append("Job \(job.id) uses an unavailable team member.")
+                continue
+            }
+            if job.kind == "writer" && agentID != team.defaultWriterID {
+                errors.append("The writer must remain the team’s fixed writer.")
+            }
+            if job.kind != "writer" && profile.accessCeiling.canWrite {
+                errors.append("Only the writer may receive mutation access.")
+            }
+            if job.kind == "reviewer" && profile.role != .reviewer {
+                errors.append("Reviewer jobs require a Reviewer profile.")
+            }
+            if let role = job.requiredRole, !role.isEmpty, profile.role.rawValue != role {
+                errors.append("Job \(job.id) requires the \(role) role.")
+            }
+            if !Set(job.capabilityTags ?? []).isSubset(of: Set(profile.capabilityTags)) {
+                errors.append("Job \(job.id) requires capabilities its agent does not have.")
+            }
+            if job.dependencies.contains(job.id)
+                || job.dependencies.contains(where: { !known.contains($0) })
+            {
+                errors.append("Job \(job.id) has an invalid dependency.")
+            }
+        }
+        if plan.jobs.filter({ $0.kind == "writer" }).count != 1 {
+            errors.append("The plan must contain exactly one writer job.")
+        }
+        var visiting: Set<String> = []
+        var visited: Set<String> = []
+        let dependencies = Dictionary(uniqueKeysWithValues: plan.jobs.map { ($0.id, $0.dependencies) })
+        func visit(_ id: String) -> Bool {
+            if visited.contains(id) { return false }
+            if visiting.contains(id) { return true }
+            visiting.insert(id)
+            for dependency in dependencies[id] ?? [] where visit(dependency) { return true }
+            visiting.remove(id)
+            visited.insert(id)
+            return false
+        }
+        if ids.contains(where: visit) { errors.append("The job graph contains a dependency cycle.") }
+        if budget.maxConcurrentCalls > budget.maxModelCalls {
+            errors.append("Concurrent calls cannot exceed the model-call budget.")
+        }
+        for id in team.memberIDs {
+            if let accountID = profiles[id]?.route.accountID,
+               !teamRoutingConsentAccountIDs.contains(accountID)
+            {
+                errors.append("Hosted automatic-routing consent is missing.")
+                break
+            }
+        }
+        return Array(Set(errors)).sorted()
+    }
+
+    private func orchestrationAction(
+        path: String,
+        body: [String: Any] = [:],
+        runID: String?
+    ) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let _: SimpleActionResponse = try await backend.post(
+                    path, body: body, timeout: 30, as: SimpleActionResponse.self
+                )
+                await refreshOrchestrationRuns(select: runID)
+            } catch {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    func refreshEvaluations() async {
+        do {
+            let response: EvaluationSuitesResponse = try await backend.get(
+                "/api/evaluations",
+                query: [URLQueryItem(name: "workspace", value: workspacePath)],
+                as: EvaluationSuitesResponse.self
+            )
+            evaluationSuites = response.suites
+        } catch {
+            showToast("Could not load evaluations: \(error.localizedDescription)")
+        }
+    }
+
+    func loadEvaluationReport(_ suite: EvaluationSuite) async -> EvaluationReport? {
+        do {
+            return try await backend.get(
+                "/api/evaluations/\(suite.id)", as: EvaluationReport.self
+            )
+        } catch {
+            showToast("Could not load evaluation results: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    func createEvaluationSuite() {
+        let suite = EvaluationSuite(
+            name: "Workspace checks",
+            workspaceRoot: workspacePath,
+            cases: [EvaluationCase(name: "First case", prompt: "Describe the expected task here.")]
+        )
+        saveEvaluationSuite(suite)
+    }
+
+    func saveEvaluationSuite(_ suite: EvaluationSuite) {
+        guard let body = encodedJSONObject(suite) else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response: EvaluationSuiteResponse = try await backend.post(
+                    "/api/evaluations", body: body, as: EvaluationSuiteResponse.self
+                )
+                evaluationSuites.removeAll { $0.id == response.suite.id }
+                evaluationSuites.insert(response.suite, at: 0)
+                showToast("Saved evaluation suite")
+            } catch {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    func deleteEvaluationSuite(_ suite: EvaluationSuite) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let _: SimpleActionResponse = try await backend.delete(
+                    "/api/evaluations/\(suite.id)", as: SimpleActionResponse.self
+                )
+                evaluationSuites.removeAll { $0.id == suite.id }
+            } catch {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    func importEvaluationSuite() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            var suite = try JSONDecoder().decode(EvaluationSuite.self, from: Data(contentsOf: url))
+            suite.id = UUID().uuidString
+            saveEvaluationSuite(suite)
+        } catch {
+            showToast("Could not import evaluation suite: \(error.localizedDescription)")
+        }
+    }
+
+    func exportEvaluationSuite(_ suite: EvaluationSuite) {
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            let data = try encoder.encode(suite)
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.json]
+            panel.nameFieldStringValue = "\(suite.name.replacingOccurrences(of: "/", with: "-")) evaluation.json"
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            try data.write(to: url, options: .atomic)
+            showToast("Evaluation suite exported")
+        } catch {
+            showToast("Could not export evaluation suite: \(error.localizedDescription)")
+        }
+    }
+
+    func runEvaluationSuite(_ suite: EvaluationSuite) {
+        let needsTeam = suite.cases.contains { $0.target.caseInsensitiveCompare("team") == .orderedSame }
+        var body: [String: Any] = [:]
+        var manifests: [String: Any] = [:]
+        for evaluationCase in suite.cases where evaluationCase.target == "team" {
+            let requestedID = UUID(uuidString: evaluationCase.teamID) ?? selectedAgentTeamID
+            guard let requestedID,
+                  let manifest = teamManifest(for: evaluationCase.prompt, teamID: requestedID)
+            else {
+                showToast("Select or repair every team used by this suite")
+                return
+            }
+            manifests[requestedID.uuidString] = manifest
+        }
+        if !manifests.isEmpty { body["manifests"] = manifests }
+        if let selectedAgentTeamID,
+           let fallback = teamManifest(
+               for: suite.cases.first?.prompt ?? "", teamID: selectedAgentTeamID
+           )
+        {
+            body["manifest"] = fallback
+        }
+        if needsTeam && manifests.isEmpty {
+            showToast("Select a configured team before running this suite")
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response: EvaluationRunResponse = try await backend.post(
+                    "/api/evaluations/\(suite.id)/run",
+                    body: body,
+                    as: EvaluationRunResponse.self
+                )
+                activeEvaluationID = response.evaluationID
+                evaluationStatus = "Queued"
+            } catch {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    func refreshWorkspaceKnowledge() async {
+        do {
+            async let status: WorkspaceKnowledgeStatus = backend.get(
+                "/api/knowledge/status",
+                query: [URLQueryItem(name: "workspace", value: workspacePath)],
+                as: WorkspaceKnowledgeStatus.self
+            )
+            async let memories: WorkspaceMemoriesResponse = backend.get(
+                "/api/knowledge/memories",
+                query: [URLQueryItem(name: "workspace", value: workspacePath)],
+                as: WorkspaceMemoriesResponse.self
+            )
+            knowledgeStatus = try await status
+            workspaceMemories = try await memories.memories
+        } catch {
+            showToast("Could not load workspace knowledge: \(error.localizedDescription)")
+        }
+    }
+
+    func configureWorkspaceKnowledge(
+        enabled: Bool,
+        embeddingModel: String,
+        exclusions: [String] = []
+    ) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                knowledgeStatus = try await backend.post(
+                    "/api/knowledge/settings",
+                    body: [
+                        "workspace": workspacePath,
+                        "enabled": enabled,
+                        "embedding_model": embeddingModel,
+                        "ollama_host": lastOllamaHost,
+                        "exclusions": exclusions,
+                    ],
+                    as: WorkspaceKnowledgeStatus.self
+                )
+                showToast("Knowledge settings saved")
+            } catch {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    func rebuildWorkspaceKnowledge() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                knowledgeStatus = try await backend.post(
+                    "/api/knowledge/reindex",
+                    body: ["workspace": workspacePath],
+                    timeout: 600,
+                    as: WorkspaceKnowledgeStatus.self
+                )
+                await refreshWorkspaceKnowledge()
+                showToast("Workspace knowledge rebuilt")
+            } catch {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    func rememberWorkspaceFact(title: String, content: String, tags: [String]) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response: WorkspaceMemoryResponse = try await backend.post(
+                    "/api/knowledge/memories",
+                    body: [
+                        "workspace": workspacePath,
+                        "title": title,
+                        "content": content,
+                        "tags": tags,
+                        "source_session_id": currentSessionID,
+                        "source_run_id": orchestrationRunID ?? "",
+                    ],
+                    as: WorkspaceMemoryResponse.self
+                )
+                workspaceMemories.removeAll { $0.id == response.memory.id }
+                workspaceMemories.insert(response.memory, at: 0)
+                showToast("Remembered for this workspace")
+            } catch {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    func deleteWorkspaceMemory(_ memory: WorkspaceMemory) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let _: SimpleActionResponse = try await backend.delete(
+                    "/api/knowledge/memories/\(memory.id)",
+                    query: [URLQueryItem(name: "workspace", value: workspacePath)],
+                    as: SimpleActionResponse.self
+                )
+                workspaceMemories.removeAll { $0.id == memory.id }
+            } catch {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    func updateWorkspaceMemory(_ memory: WorkspaceMemory) {
+        guard let body = encodedJSONObject(memory) else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response: WorkspaceMemoryResponse = try await backend.put(
+                    "/api/knowledge/memories/\(memory.id)",
+                    body: ["workspace": workspacePath].merging(body) { _, new in new },
+                    as: WorkspaceMemoryResponse.self
+                )
+                if let index = workspaceMemories.firstIndex(where: { $0.id == memory.id }) {
+                    workspaceMemories[index] = response.memory
+                }
+            } catch {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    func openWorkspaceMemorySource(_ memory: WorkspaceMemory) {
+        if let runID = memory.sourceRunID, !runID.isEmpty {
+            selectInspectorTab(.agents)
+            inspectorCollapsed = false
+            Task { await loadOrchestrationRun(runID) }
+            return
+        }
+        if let sessionID = memory.sourceSessionID,
+           let session = sessions.first(where: { $0.id == sessionID })
+        {
+            resume(session)
+        } else {
+            showToast("The source chat is no longer available")
+        }
+    }
+
+    func deleteAllWorkspaceKnowledge() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let _: SimpleActionResponse = try await backend.delete(
+                    "/api/knowledge",
+                    query: [URLQueryItem(name: "workspace", value: workspacePath)],
+                    as: SimpleActionResponse.self
+                )
+                knowledgeStatus = nil
+                workspaceMemories = []
+                await refreshWorkspaceKnowledge()
+                showToast("Deleted workspace knowledge")
+            } catch {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    func answerMCPInput(action: String, content: [String: Any] = [:]) {
+        guard let request = mcpInputRequest else { return }
+        let sent = backend.send([
+            "type": "mcp_input_response",
+            "request_id": request.id,
+            "action": action,
+            "content": content,
+        ])
+        if sent { mcpInputRequest = nil }
+        else { showToast("The MCP input response could not be delivered") }
     }
 
     func applyActiveTaskToWorkspace() {
@@ -4210,6 +4965,9 @@ final class AppModel: ObservableObject {
             refreshGitStatus()
         }
         if tab == .files { refreshWorkspaceIndex() }
+        if tab == .runs {
+            Task { @MainActor [weak self] in await self?.refreshOrchestrationRuns() }
+        }
         if tab == .agents { refreshAgentInstructions() }
         settings.inspectorLastTab = tab.rawValue
     }
@@ -4655,6 +5413,16 @@ final class AppModel: ObservableObject {
 
     private func handle(_ event: [String: Any]) {
         guard let type = event["type"] as? String else { return }
+        if event["event_id"] != nil,
+           let runEvent = decode(OrchestrationEvent.self, from: event),
+           !orchestrationEventIDs.contains(runEvent.id),
+           selectedOrchestrationRun?.id == (event["run_id"] as? String)
+                || orchestrationRunID == (event["run_id"] as? String)
+        {
+            orchestrationEventIDs.insert(runEvent.id)
+            orchestrationEvents.append(runEvent)
+            orchestrationEvents.sort { $0.sequence < $1.sequence }
+        }
         switch type {
         case "worker_identity":
             activeWorkerID = event["worker_id"] as? String
@@ -4665,6 +5433,7 @@ final class AppModel: ObservableObject {
                 computerControl.beginSession(info.sessionID)
                 sessionInfo = info
                 currentSessionID = info.sessionID
+                watchWorkspaceKnowledge(info.workspaceRoot ?? info.cwd)
                 activeTaskRecord = info.task
                 // Only when a reply is not mid-flight. `approx_tokens` counts
                 // the assistant message once it has been committed, which
@@ -4679,6 +5448,11 @@ final class AppModel: ObservableObject {
                 }
                 noteLocalHost(from: info)
                 applyWorkspaceProfileIfNeeded(for: info)
+                if !currentSessionID.isEmpty {
+                    Task { @MainActor [weak self] in
+                        await self?.refreshOrchestrationRuns()
+                    }
+                }
             }
 
         case "session_started":
@@ -4792,6 +5566,7 @@ final class AppModel: ObservableObject {
         case "workspace_changed":
             // The agent touched the tree; the Changes panel is now stale.
             refreshGitStatus()
+            scheduleWorkspaceKnowledgeReindex(workspacePath)
 
         case "extensions_changed", "mcp_status", "mcp_credential_refresh":
             extensionRefreshTask?.cancel()
@@ -4805,6 +5580,14 @@ final class AppModel: ObservableObject {
             let name = event["server_name"] as? String ?? "MCP server"
             extensionErrorMessage = "\(name) needs authentication in Settings → Extensions."
             showToast("MCP authentication needed")
+
+        case "mcp_input_required":
+            mcpInputRequest = decode(MCPInputRequest.self, from: event)
+
+        case "mcp_input_rejected":
+            let message = event["message"] as? String
+                ?? "Sensitive MCP input must use a verified browser flow."
+            showToast(message)
 
         case "note":
             // Backend-side commentary: auto-compaction, truncated output.
@@ -4845,6 +5628,15 @@ final class AppModel: ObservableObject {
             agentActivities = []
             teamModelCalls = 0
             teamMeteredTokens = 0
+            pendingDispatchPlan = nil
+            if let runID = orchestrationRunID {
+                selectedOrchestrationRun = nil
+                orchestrationEvents = []
+                orchestrationEventIDs = []
+                Task { @MainActor [weak self] in
+                    await self?.loadOrchestrationRun(runID)
+                }
+            }
             updateTaskConversation(state: .dispatching, event: event)
             if persistenceEnabled { Task { await refreshMetadata() } }
 
@@ -4852,6 +5644,52 @@ final class AppModel: ObservableObject {
             orchestrationState = (event["state"] as? String)
                 .flatMap(TeamRunState.init(rawValue:))
             if let orchestrationState { updateTaskConversation(state: orchestrationState, event: event) }
+
+        case "dispatch_plan_ready":
+            orchestrationState = .waitingDispatchApproval
+            if let raw = event["plan"] as? [String: Any] {
+                pendingDispatchPlan = decode(DispatchPlan.self, from: raw)
+            }
+            updateTaskConversation(state: .waitingDispatchApproval, event: event)
+
+        case "orchestration_recovery_available":
+            if let raw = event["run"] as? [String: Any],
+               let run = decode(OrchestrationRun.self, from: raw)
+            {
+                orchestrationRuns.removeAll { $0.id == run.id }
+                orchestrationRuns.insert(run, at: 0)
+                showToast("A team run can be resumed")
+            }
+
+        case "orchestration_paused":
+            orchestrationState = .paused
+            if let runID = event["run_id"] as? String {
+                Task { @MainActor [weak self] in
+                    await self?.loadOrchestrationRun(runID)
+                }
+            }
+
+        case "orchestration_pause_requested":
+            showToast("Pausing at the next safe boundary")
+
+        case "evaluation_started":
+            activeEvaluationID = event["evaluation_id"] as? String
+            evaluationStatus = "Starting evaluation"
+
+        case "evaluation_case_started":
+            let index = (event["case_index"] as? Int ?? 0) + 1
+            let count = event["case_count"] as? Int
+            evaluationStatus = count.map { "Running case \(index) of \($0)" }
+                ?? "Running case \(index)"
+
+        case "evaluation_case_completed":
+            evaluationStatus = "Grading results"
+
+        case "evaluation_completed":
+            activeEvaluationID = nil
+            evaluationStatus = (event["state"] as? String) == "interrupted"
+                ? "Evaluation interrupted" : "Evaluation complete"
+            Task { @MainActor [weak self] in await self?.refreshEvaluations() }
 
         case "agent_job_started":
             let jobID = event["job_id"] as? String ?? UUID().uuidString
@@ -4914,6 +5752,12 @@ final class AppModel: ObservableObject {
             if let usage = event["usage"] as? [String: Any] {
                 teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
                 teamMeteredTokens = usage["metered_tokens"] as? Int ?? teamMeteredTokens
+            }
+            if let runID = event["run_id"] as? String {
+                Task { @MainActor [weak self] in
+                    await self?.refreshOrchestrationRuns(select: runID)
+                    await self?.exportOrchestrationToOTLP(runID)
+                }
             }
 
         case "task_ready":
@@ -5039,6 +5883,7 @@ final class AppModel: ObservableObject {
             isBusy = false
             pendingRetry = false
             steeringState = nil
+            mcpInputRequest = nil
             streamingAssistantID = nil
             streamedCharsThisTurn = 0
             streamingReply.resetTurn()
@@ -5771,6 +6616,11 @@ final class AppModel: ObservableObject {
         return try? JSONDecoder().decode(type, from: data)
     }
 
+    private func encodedJSONObject<T: Encodable>(_ value: T) -> [String: Any]? {
+        guard let data = try? JSONEncoder().encode(value) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
     nonisolated private static func readChatAttachments(
         _ selected: [URL],
         excluding existing: Set<URL>
@@ -6284,6 +7134,71 @@ private struct TaskApplyResponse: Codable {
     let applied: Bool
     let tree: String
     let paths: [String]
+}
+
+private struct SimpleActionResponse: Codable {
+    let ok: Bool
+}
+
+private struct OrchestrationMutationResponse: Codable {
+    let ok: Bool
+    let runID: String
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case runID = "run_id"
+    }
+}
+
+private struct OrchestrationRunsResponse: Codable {
+    let runs: [OrchestrationRun]
+    let readOnly: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case runs
+        case readOnly = "read_only"
+    }
+}
+
+private struct OrchestrationEventsResponse: Codable {
+    let runID: String
+    let events: [OrchestrationEvent]
+    let lastSequence: Int
+
+    enum CodingKeys: String, CodingKey {
+        case events
+        case runID = "run_id"
+        case lastSequence = "last_seq"
+    }
+}
+
+private struct EvaluationSuitesResponse: Codable {
+    let suites: [EvaluationSuite]
+}
+
+private struct EvaluationSuiteResponse: Codable {
+    let ok: Bool
+    let suite: EvaluationSuite
+}
+
+private struct EvaluationRunResponse: Codable {
+    let ok: Bool
+    let evaluationID: String
+    let state: String
+
+    enum CodingKeys: String, CodingKey {
+        case ok, state
+        case evaluationID = "evaluation_id"
+    }
+}
+
+private struct WorkspaceMemoriesResponse: Codable {
+    let memories: [WorkspaceMemory]
+}
+
+private struct WorkspaceMemoryResponse: Codable {
+    let ok: Bool
+    let memory: WorkspaceMemory
 }
 
 private struct NewSessionResponse: Codable {

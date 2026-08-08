@@ -198,7 +198,7 @@ Client → server: `user_message` (optionally with a bounded team manifest),
 `retry_last`, `interrupt`, `steer`,
 `permission_decision`, `set_model`, `set_cwd`, `set_permission_mode`,
 `set_computer_control`, `computer_action_result`, `new_session`, `clear`,
-`compact`, `resume`, `ping`.
+`compact`, `resume`, `mcp_input_response`, `ping`.
 
 Server → client: `session_info`, `session_started`, `orchestration_started`,
 `orchestration_state`, `dispatch_plan`, `agent_job_started`,
@@ -207,7 +207,13 @@ Server → client: `session_info`, `session_started`, `orchestration_started`,
 `thinking`, `message_end`, `plan_ready`, `steer_ack`, `steer_applied`,
 `computer_control_status`, `computer_action_request`, `tool_call_proposed`,
 `permission_request`, `tool_result`, `todo_update`, `turn_done`, `slash_result`,
-`error`, `pong`.
+ordered orchestration/checkpoint/recovery/routing events, evaluation progress,
+MCP task/input events, `error`, `pong`.
+
+The durable run inspector, recovery controls, Evaluation Lab, scorecard
+routing, workspace knowledge and modern MCP surface are independently gated.
+Their REST and ordering/redaction contracts are documented in
+[`PROTOCOL.md`](PROTOCOL.md).
 
 A turn runs in a worker thread; permission requests block that thread on a
 future until the client answers, so the UI stays responsive and no tool runs
@@ -225,7 +231,7 @@ an audit hook that fails the suite if anything writes to the real
 `~/.ollama-code`. `tests/live/` holds manual real-model smoke tests, not
 collected by pytest; each starts its own server on its own port.
 
-248 tests cover the tools (including atomic `multi_edit` and the binary-file
+367 tests cover the tools (including atomic `multi_edit` and the binary-file
 guard), permission modes and the deny list, streaming and `<think>` filtering,
 session metadata and trash recovery, the context window (that the number sent as
 `num_ctx` is the same one compaction budgets against, that a window a hosted
@@ -237,5 +243,6 @@ streamed tool-call assembly, the no-tools retry, and that the API key reaches
 neither disk nor any response), the session, config, git, permissions and
 provider HTTP endpoints, the WebSocket handshake, and the agent loop end to end
 against a scripted model. The extensions surface — plugins, skills, MCP servers
-and marketplaces — is covered at the unit level in `test_extensions.py`, but
-most of its routes have no HTTP-level test yet.
+and marketplaces — is covered at the unit level in `test_extensions.py`. The
+suite also covers capability flags, orchestration and recovery, durable run
+storage, evaluations, telemetry, local knowledge, and modern MCP behavior.

@@ -11,8 +11,19 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from ollama_code.extensions import ExtensionError, ExtensionManager, parse_plugin, parse_skill
-from ollama_code.mcp_runtime import MCPManager
+from ollama_code.extensions import (
+    ExtensionError,
+    ExtensionManager,
+    discover_oauth_metadata,
+    parse_plugin,
+    parse_skill,
+)
+from ollama_code.mcp_runtime import (
+    MCPManager,
+    _sensitive_elicitation_schema,
+    _validated_form_content,
+    _verified_elicitation_url,
+)
 from ollama_code.tool_registry import ToolRegistry
 from ollama_code.tools import ToolContext
 
@@ -171,6 +182,41 @@ def test_credentials_are_memory_only(tmp_path):
     assert manager.credentials(server["id"])["access_token"] == "bearer-secret"
 
 
+def test_oauth_metadata_discovery_validates_issuer_and_does_not_follow_redirects(monkeypatch):
+    seen = {}
+
+    class Response:
+        status_code = 200
+        content = b"{}"
+
+        @staticmethod
+        def json():
+            return {
+                "issuer": "https://auth.example",
+                "authorization_endpoint": "https://auth.example/authorize",
+                "token_endpoint": "https://auth.example/token",
+            }
+
+    def get(url, **kwargs):
+        seen.update(url=url, **kwargs)
+        return Response()
+
+    monkeypatch.setattr("ollama_code.extensions.requests.get", get)
+    value = discover_oauth_metadata({
+        "auth": "oauth",
+        "oauth": {"issuer": "https://auth.example", "client_id": "locus"},
+    })
+    assert value["oauth"]["token_endpoint"] == "https://auth.example/token"
+    assert seen["allow_redirects"] is False
+
+    Response.json = staticmethod(lambda: {"issuer": "https://attacker.example"})
+    with pytest.raises(ExtensionError, match="issuer"):
+        discover_oauth_metadata({
+            "auth": "oauth",
+            "oauth": {"issuer": "https://auth.example", "client_id": "locus"},
+        })
+
+
 class _FakeMCP:
     def available_tools(self):
         return [{
@@ -187,6 +233,26 @@ class _FakeMCP:
 
     def call_tool(self, server_id, tool_name, arguments, should_stop=None):
         return f"{server_id}:{tool_name}"
+
+    def available_resources(self):
+        return [{
+            "server_id": "remote-1", "server_name": "Linear",
+            "uri": "linear://issues", "name": "Issues", "title": "Team issues",
+            "description": "Current issue evidence",
+        }]
+
+    def read_resource(self, server_id, uri):
+        return f"Untrusted MCP resource content\n{server_id}:{uri}"
+
+    def available_prompts(self):
+        return [{
+            "server_id": "remote-1", "server_name": "Linear",
+            "name": "triage", "title": "Triage", "description": "Triage instructions",
+            "arguments": [{"name": "project"}],
+        }]
+
+    def load_prompt(self, server_id, prompt_name, arguments):
+        return f"Untrusted MCP prompt content\n{server_id}:{prompt_name}:{arguments}"
 
     def refresh(self, wait=True):
         return None
@@ -216,6 +282,99 @@ def test_deferred_tool_discovery_and_annotation_policy(tmp_path):
     qualified = next(name for name in names if name.startswith("mcp__"))
     assert registry.is_safe(qualified) is True
     assert registry.execute(qualified, {}, ToolContext(cwd=str(tmp_path))) == "remote-1:list_issues"
+
+
+def test_read_only_agent_cannot_use_mutating_mcp_even_when_server_says_allow(tmp_path):
+    class MutatingMCP(_FakeMCP):
+        def available_tools(self):
+            value = super().available_tools()[0]
+            return [{
+                **value,
+                "name": "delete_issue",
+                "approval_mode": "allow",
+                "annotations": {"readOnlyHint": False, "destructiveHint": True},
+            }]
+
+    manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
+    registry = ToolRegistry(manager, MutatingMCP())
+    registry.set_mcp_agent_policy({
+        "server_ids": ["remote-1"], "tools": ["delete_issue"],
+        "resources": [], "prompts": [],
+    }, access_ceiling="read_only", role="reviewer")
+    registry.begin_turn("review", str(tmp_path))
+    registry.execute(
+        "search_extension_tools", {"query": "delete"}, ToolContext(cwd=str(tmp_path))
+    )
+    name = "mcp__Linear__delete_issue"
+
+    assert registry.is_safe(name) is False
+    assert name not in {item["function"]["name"] for item in registry.schemas()}
+    assert "read-only MCP tools" in registry.execute(
+        name, {}, ToolContext(cwd=str(tmp_path))
+    )
+
+
+def test_resources_are_untrusted_and_prompts_require_agent_allowlisting(tmp_path):
+    manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
+    registry = ToolRegistry(manager, _FakeMCP())
+    context = ToolContext(cwd=str(tmp_path))
+    registry.set_mcp_agent_policy({
+        "server_ids": ["remote-1"],
+        "resources": ["linear://issues"],
+        "prompts": [],
+        "tools": [],
+    }, access_ceiling="read_only", role="reviewer")
+
+    found = registry.execute("search_extension_resources", {"query": "issues"}, context)
+    assert "untrusted external data" in found
+    assert "Untrusted MCP resource" in registry.execute(
+        "read_extension_resource",
+        {"server_id": "remote-1", "uri": "linear://issues"},
+        context,
+    )
+    assert "No allowed MCP prompts" in registry.execute(
+        "search_extension_prompts", {"query": "triage"}, context,
+    )
+
+    registry.set_mcp_agent_policy({
+        "server_ids": ["remote-1"], "resources": [],
+        "prompts": ["triage"], "tools": [],
+    }, access_ceiling="read_only", role="reviewer")
+    assert "Untrusted MCP prompt" in registry.execute(
+        "load_extension_prompt",
+        {"server_id": "remote-1", "prompt": "triage", "arguments": {"project": "app"}},
+        context,
+    )
+
+
+def test_mcp_elicitation_rejects_sensitive_forms_and_validates_bounded_values():
+    assert _sensitive_elicitation_schema({
+        "type": "object", "properties": {"api_key": {"type": "string"}},
+    })
+    assert _sensitive_elicitation_schema({
+        "type": "object", "properties": {
+            "account": {"type": "object", "properties": {
+                "password": {"type": "string"},
+            }},
+        },
+    })
+    schema = {
+        "type": "object",
+        "properties": {"project": {"type": "string"}, "count": {"type": "integer"}},
+        "required": ["project"],
+    }
+    assert _validated_form_content(schema, {"project": "Locus", "count": 2}) == {
+        "project": "Locus", "count": 2,
+    }
+    assert _validated_form_content(schema, {"project": "Locus", "extra": True}) is None
+    assert _validated_form_content(schema, {"count": 2}) is None
+    server = {
+        "url": "https://mcp.example/rpc",
+        "oauth": {"issuer": "https://login.example"},
+    }
+    assert _verified_elicitation_url("https://mcp.example/verify?id=1", server)
+    assert _verified_elicitation_url("https://login.example/approve?id=1", server)
+    assert not _verified_elicitation_url("https://attacker.example/approve", server)
 
 
 def test_mcp_namespace_collisions_are_stable(tmp_path):

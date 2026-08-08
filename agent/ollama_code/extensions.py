@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import requests
+
 from .paths import APP_DIR
 from .proxy import sanitized_child_environment
 
@@ -30,6 +32,7 @@ MAX_SKILL_BYTES = 256 * 1024
 MAX_SKILL_RESOURCE_BYTES = 8 * 1024 * 1024
 MAX_MARKETPLACE_BYTES = 4 * 1024 * 1024
 MAX_GIT_OUTPUT = 16_000
+MAX_OAUTH_METADATA_BYTES = 1024 * 1024
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,79}$")
 _GITHUB_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:@[^/]+)?$")
@@ -314,8 +317,11 @@ def _normalize_mcp_config(raw: dict[str, Any]) -> dict[str, Any]:
     env_headers = raw.get("env_http_headers") if isinstance(raw.get("env_http_headers"), dict) else {}
     enabled_tools = raw.get("enabled_tools") if isinstance(raw.get("enabled_tools"), list) else []
     disabled_tools = raw.get("disabled_tools") if isinstance(raw.get("disabled_tools"), list) else []
+    enabled_resources = raw.get("enabled_resources") if isinstance(raw.get("enabled_resources"), list) else []
+    enabled_prompts = raw.get("enabled_prompts") if isinstance(raw.get("enabled_prompts"), list) else []
     oauth_raw = raw.get("oauth") if isinstance(raw.get("oauth"), dict) else {}
     oauth = {
+        "issuer": str(oauth_raw.get("issuer") or "").rstrip("/"),
         "authorization_endpoint": str(oauth_raw.get("authorization_endpoint") or ""),
         "token_endpoint": str(oauth_raw.get("token_endpoint") or ""),
         "client_id": str(oauth_raw.get("client_id") or ""),
@@ -327,6 +333,11 @@ def _normalize_mcp_config(raw: dict[str, Any]) -> dict[str, Any]:
     if auth not in {"none", "bearer", "headers", "oauth"}:
         raise ExtensionError("MCP auth must be none, bearer, headers, or oauth")
     if auth == "oauth":
+        if oauth["issuer"]:
+            issuer = urlparse(oauth["issuer"])
+            if issuer.scheme != "https" or not issuer.hostname \
+                    or issuer.username or issuer.password or issuer.query or issuer.fragment:
+                raise ExtensionError("OAuth issuer must be a credential-free HTTPS URL")
         for field in ("authorization_endpoint", "token_endpoint"):
             endpoint = urlparse(oauth[field])
             if endpoint.scheme != "https" or not endpoint.hostname:
@@ -360,6 +371,10 @@ def _normalize_mcp_config(raw: dict[str, Any]) -> dict[str, Any]:
         "enabled": bool(raw.get("enabled", True)),
         "enabled_tools": [str(value) for value in enabled_tools],
         "disabled_tools": [str(value) for value in disabled_tools],
+        # Resources are evidence and are discoverable by default. Prompts are
+        # instructions, so their allowlist deliberately defaults to empty.
+        "enabled_resources": [str(value) for value in enabled_resources],
+        "enabled_prompts": [str(value) for value in enabled_prompts],
         "approval_mode": str(raw.get("default_tools_approval_mode") or "annotations").lower(),
         "tool_policies": raw.get("tools") if isinstance(raw.get("tools"), dict) else {},
         "status": "disconnected",
@@ -369,6 +384,51 @@ def _normalize_mcp_config(raw: dict[str, Any]) -> dict[str, Any]:
         "auth": auth,
         "oauth": oauth if auth == "oauth" else None,
     }
+
+
+def discover_oauth_metadata(raw: dict[str, Any]) -> dict[str, Any]:
+    """Resolve and validate an explicitly configured OAuth issuer."""
+    value = dict(raw)
+    oauth = dict(value.get("oauth") or {})
+    issuer = str(oauth.get("issuer") or "").rstrip("/")
+    if str(value.get("auth") or "").lower() != "oauth" or not issuer:
+        return value
+    parsed = urlparse(issuer)
+    if parsed.scheme != "https" or not parsed.hostname \
+            or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ExtensionError("OAuth issuer must be a credential-free HTTPS URL")
+    metadata_url = issuer + "/.well-known/oauth-authorization-server"
+    try:
+        response = requests.get(
+            metadata_url,
+            headers={"Accept": "application/json"},
+            timeout=(5, 15),
+            allow_redirects=False,
+        )
+    except requests.RequestException as exc:
+        raise ExtensionError(f"OAuth metadata discovery failed: {exc}") from exc
+    if 300 <= response.status_code < 400:
+        raise ExtensionError("OAuth metadata redirects are not followed")
+    if response.status_code != 200 or len(response.content) > MAX_OAUTH_METADATA_BYTES:
+        raise ExtensionError("OAuth metadata discovery returned an invalid response")
+    try:
+        metadata = response.json()
+    except (ValueError, requests.JSONDecodeError) as exc:
+        raise ExtensionError("OAuth metadata is not valid JSON") from exc
+    if not isinstance(metadata, dict) or str(metadata.get("issuer") or "").rstrip("/") != issuer:
+        raise ExtensionError("OAuth metadata issuer does not exactly match the configured issuer")
+    for key in ("authorization_endpoint", "token_endpoint"):
+        endpoint = str(metadata.get(key) or "")
+        parsed_endpoint = urlparse(endpoint)
+        if parsed_endpoint.scheme != "https" or not parsed_endpoint.hostname:
+            raise ExtensionError(f"OAuth metadata has no valid {key}")
+        configured = str(oauth.get(key) or "")
+        if configured and configured != endpoint:
+            raise ExtensionError(f"configured OAuth {key} does not match issuer metadata")
+        oauth[key] = endpoint
+    oauth["issuer"] = issuer
+    value["oauth"] = oauth
+    return value
 
 
 class ExtensionManager:
@@ -1220,7 +1280,7 @@ class ExtensionManager:
     def upsert_mcp_server(self, raw: dict[str, Any], server_id: str = "") -> dict[str, Any]:
         # Standalone secret values are accepted only as transient credentials.
         # Plugin manifests are parsed elsewhere and remain visible in trust review.
-        sanitized = dict(raw)
+        sanitized = discover_oauth_metadata(raw)
         transient_env = sanitized.pop("env", {}) if isinstance(sanitized.get("env"), dict) else {}
         transient_headers = (
             sanitized.pop("http_headers", {})

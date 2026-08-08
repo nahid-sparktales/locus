@@ -26,6 +26,8 @@ struct InspectorView: View {
                     InspectorPreviewTab()
                 case .checkpoints:
                     InspectorCheckpointsTab()
+                case .runs:
+                    InspectorRunsTab()
                 case .agents:
                     InspectorAgentsTab()
                 }
@@ -209,5 +211,494 @@ private struct InspectorResizeHandle: View {
                     .accessibilityLabel("Resize inspector")
                     .accessibilityIdentifier("inspector.resizeHandle")
             }
+    }
+}
+
+struct InspectorRunsTab: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var viewMode = "timeline"
+    @State private var filter = ""
+    @State private var draftPlan: DispatchPlan?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            if let plan = draftPlan, model.pendingDispatchPlan != nil {
+                dispatchEditor(plan)
+            } else if let run = model.selectedOrchestrationRun {
+                runBody(run)
+            } else {
+                InspectorPlaceholder(
+                    symbol: "point.3.connected.trianglepath.dotted",
+                    title: "No team run selected",
+                    message: "Team runs appear here with their ordered events, attempts, checkpoints, routing, and recovery controls.",
+                    identifier: "runs.empty"
+                )
+            }
+        }
+        .task { await model.refreshOrchestrationRuns() }
+        .onChange(of: model.pendingDispatchPlan) { _, value in draftPlan = value }
+        .onAppear { draftPlan = model.pendingDispatchPlan }
+    }
+
+    private var header: some View {
+        VStack(spacing: 9) {
+            HStack(spacing: 8) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .foregroundStyle(LocusTheme.signalDeep)
+                Text("TEAM RUN INSPECTOR")
+                    .font(.system(size: 8, weight: .bold))
+                    .tracking(0.7)
+                Spacer()
+                Button {
+                    Task { await model.refreshOrchestrationRuns() }
+                } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.plain)
+                    .help("Refresh run history")
+            }
+            if !model.orchestrationRuns.isEmpty {
+                Picker("Run", selection: Binding(
+                    get: { model.selectedOrchestrationRun?.id ?? "" },
+                    set: { id in Task { await model.loadOrchestrationRun(id) } }
+                )) {
+                    ForEach(model.orchestrationRuns) { run in
+                        Text("\(run.teamName ?? "Team") · \(run.state.replacingOccurrences(of: "_", with: " "))")
+                            .tag(run.id)
+                    }
+                }
+                .labelsHidden()
+            }
+        }
+        .padding(13)
+        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+    }
+
+    private func runBody(_ run: OrchestrationRun) -> some View {
+        VStack(spacing: 0) {
+            runSummary(run)
+            Picker("View", selection: $viewMode) {
+                Text("Timeline").tag("timeline")
+                Text("Dependencies").tag("graph")
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            if viewMode == "timeline" { timeline(run) } else { dependencyView(run) }
+        }
+    }
+
+    private func runSummary(_ run: OrchestrationRun) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(run.teamName ?? "Team run").font(.system(size: 11, weight: .bold))
+                    Text("\(run.state.replacingOccurrences(of: "_", with: " ")) · \(run.lastSequence) events")
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                Spacer()
+                runActions(run)
+            }
+            if let reason = run.recoveryReason, run.recoverable {
+                Label(reason, systemImage: "arrow.clockwise.circle.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(LocusTheme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let checkpoint = run.checkpoint {
+                Text("Checkpoint · \(checkpoint.kind.replacingOccurrences(of: "_", with: " ")) at event \(checkpoint.sequence)")
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            if let task = model.activeTaskRecord, task.id == run.taskID {
+                HStack(spacing: 7) {
+                    Button("Apply to Workspace") { model.applyActiveTaskToWorkspace() }
+                        .disabled(model.isBusy || !model.taskHasChanges)
+                    Button("Copy Patch") { model.copyActiveTaskPatch() }
+                        .disabled(model.isBusy || !model.taskHasChanges)
+                    Menu {
+                        Button("Open Checkout") { model.openActiveTaskCheckout() }
+                        Button("Reveal in Finder") { model.revealActiveTaskCheckout() }
+                    } label: { Image(systemName: "ellipsis.circle") }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            }
+        }
+        .padding(12)
+        .background(LocusTheme.paperDeep.opacity(0.5))
+    }
+
+    @ViewBuilder
+    private func runActions(_ run: OrchestrationRun) -> some View {
+        Menu {
+            Button(run.pinned ? "Unpin Run" : "Pin Run") {
+                model.setOrchestrationPinned(run, pinned: !run.pinned)
+            }
+            if run.recoverable {
+                Button("Resume") { model.resumeOrchestration(run) }
+            }
+            if run.taskID != nil && !run.legacy {
+                Button("Replay Same Baseline") { model.replayOrchestration(run) }
+            }
+            if !run.legacy {
+                Button("Duplicate from Current Workspace") { model.duplicateOrchestration(run) }
+            }
+            if run.id == model.orchestrationRunID, model.isBusy {
+                Button("Pause at Safe Boundary") { model.pauseOrchestration(run.id) }
+                Button("Stop Run", role: .destructive) { model.cancelOrchestration(run.id) }
+            }
+            Menu("Export") {
+                Button("Redacted .locusrun") {
+                    Task { await model.exportOrchestration(run.id, includeContent: false) }
+                }
+                Button("Include Visible Content…") {
+                    Task { await model.exportOrchestration(run.id, includeContent: true) }
+                }
+            }
+            Divider()
+            Button("Discard Run", role: .destructive) { model.discardOrchestration(run.id) }
+                .disabled(model.isBusy && run.id == model.orchestrationRunID)
+            if run.taskID != nil && ["discarded", "cancelled", "completed", "failed"].contains(run.state) {
+                Button("Clean Up Managed Checkout", role: .destructive) {
+                    model.cleanupOrchestrationCheckout(run)
+                }
+                .disabled(model.isBusy)
+            }
+        } label: { Image(systemName: "ellipsis.circle") }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+    }
+
+    private func timeline(_ run: OrchestrationRun) -> some View {
+        VStack(spacing: 0) {
+            TextField("Filter agent, event, state, or attempt", text: $filter)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 7)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(filteredEvents) { event in
+                        HStack(alignment: .top, spacing: 8) {
+                            Text("\(event.sequence)")
+                                .font(.system(size: 7, design: .monospaced))
+                                .foregroundStyle(LocusTheme.muted)
+                                .frame(width: 30, alignment: .trailing)
+                            Circle().fill(color(for: event.type)).frame(width: 6, height: 6).padding(.top, 3)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(event.type.replacingOccurrences(of: "_", with: " "))
+                                    .font(.system(size: 8, weight: .bold))
+                                Text(event.title)
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(LocusTheme.inkSoft)
+                                    .lineLimit(4)
+                                if let detail = event.detail, detail != event.title {
+                                    Text(detail)
+                                        .font(.system(size: 7, design: .monospaced))
+                                        .foregroundStyle(LocusTheme.muted)
+                                        .lineLimit(12)
+                                        .textSelection(.enabled)
+                                }
+                                if let job = event.jobID {
+                                    Text("job \(job)\(event.attemptID.map { " · \($0)" } ?? "")")
+                                        .font(.system(size: 7, design: .monospaced))
+                                        .foregroundStyle(LocusTheme.muted)
+                                }
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        Divider().padding(.leading, 54)
+                    }
+                }
+            }
+        }
+    }
+
+    private func dependencyView(_ run: OrchestrationRun) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(run.attempts ?? []) { attempt in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: attempt.state == "completed" ? "checkmark.circle.fill" : "circle.dotted")
+                            .foregroundStyle(attempt.state == "completed" ? LocusTheme.success : LocusTheme.signalDeep)
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack {
+                                Text(attempt.agentName ?? attempt.agentID ?? "Agent")
+                                    .font(.system(size: 9, weight: .bold))
+                                Text("attempt \(attempt.attempt)")
+                                    .font(.system(size: 7, design: .monospaced))
+                                    .foregroundStyle(LocusTheme.muted)
+                                Spacer()
+                                if attempt.state != "running" {
+                                    Menu {
+                                        Button("Retry with Same Agent") {
+                                            model.retryOrchestrationJob(attempt, in: run)
+                                        }
+                                        let candidates = model.reassignmentCandidates(
+                                            for: attempt, in: run
+                                        )
+                                        if !candidates.isEmpty {
+                                            Menu("Reassign") {
+                                                ForEach(candidates) { profile in
+                                                    Button(profile.name) {
+                                                        model.reassignOrchestrationJob(
+                                                            attempt, in: run, to: profile
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } label: {
+                                        Image(systemName: "arrow.clockwise.circle")
+                                    }
+                                    .menuStyle(.borderlessButton)
+                                    .menuIndicator(.hidden)
+                                }
+                            }
+                            Text(attempt.goal).font(.system(size: 8)).lineLimit(4)
+                            Text("\(attempt.role ?? "specialist") · \(attempt.state)")
+                                .font(.system(size: 7, design: .monospaced))
+                                .foregroundStyle(LocusTheme.muted)
+                            if let provider = attempt.provider, !provider.isEmpty {
+                                Text("\(provider) · \(attempt.model ?? "")")
+                                    .font(.system(size: 7, design: .monospaced))
+                                    .foregroundStyle(LocusTheme.muted)
+                            }
+                            if let output = attempt.output, !output.isEmpty {
+                                Text(output)
+                                    .font(.system(size: 8))
+                                    .lineLimit(12)
+                                    .textSelection(.enabled)
+                            }
+                            if let reasoning = attempt.reasoningText,
+                               !reasoning.isEmpty,
+                               model.thinkingVisibility != .hidden
+                            {
+                                DisclosureGroup("Reasoning") {
+                                    Text(reasoning)
+                                        .font(.system(size: 8))
+                                        .foregroundStyle(LocusTheme.inkSoft)
+                                        .textSelection(.enabled)
+                                }
+                                .font(.system(size: 8, weight: .semibold))
+                            }
+                            if !attempt.evidence.isEmpty {
+                                Text("Evidence · \(attempt.evidence.joined(separator: ", "))")
+                                    .font(.system(size: 7))
+                                    .foregroundStyle(LocusTheme.muted)
+                                    .lineLimit(4)
+                            }
+                            Text("\(attempt.elapsedMilliseconds) ms · \(attempt.promptTokens + attempt.completionTokens) tokens")
+                                .font(.system(size: 7, design: .monospaced))
+                                .foregroundStyle(LocusTheme.muted)
+                        }
+                    }
+                    .padding(9)
+                    .background(LocusTheme.white.opacity(0.55))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                }
+            }
+            .padding(12)
+        }
+    }
+
+    private func dispatchEditor(_ plan: DispatchPlan) -> some View {
+        let validationErrors = model.dispatchPlanErrors(draftPlan ?? plan)
+        return VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 5) {
+                Label("Review dispatch plan", systemImage: "checkmark.shield")
+                    .font(.system(size: 11, weight: .bold))
+                Text("Edit goals, assignments, and dependencies. Locus revalidates the team, budget, cycles, consent, and single-writer boundary before starting.")
+                    .font(.system(size: 8))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            .padding(12)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 9) {
+                    TextField("Plan summary", text: planBinding(\.summary))
+                    if draftPlan?.budget != nil {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("RUN BUDGET")
+                                .font(.system(size: 7, weight: .bold))
+                                .tracking(0.6)
+                                .foregroundStyle(LocusTheme.muted)
+                            Stepper(
+                                "Jobs · \(draftPlan?.budget?.maxJobs ?? 0)",
+                                value: budgetBinding(\.maxJobs), in: 1...16
+                            )
+                            Stepper(
+                                "Rounds · \(draftPlan?.budget?.maxRounds ?? 0)",
+                                value: budgetBinding(\.maxRounds), in: 1...8
+                            )
+                            Stepper(
+                                "Model calls · \(draftPlan?.budget?.maxModelCalls ?? 0)",
+                                value: budgetBinding(\.maxModelCalls), in: 1...48
+                            )
+                            Stepper(
+                                "Concurrent calls · \(draftPlan?.budget?.maxConcurrentCalls ?? 0)",
+                                value: budgetBinding(\.maxConcurrentCalls), in: 1...8
+                            )
+                            Stepper(
+                                "Hosted tokens · \(draftPlan?.budget?.maxMeteredTokens ?? 0)",
+                                value: budgetBinding(\.maxMeteredTokens),
+                                in: 1_000...2_000_000,
+                                step: 50_000
+                            )
+                            TextField(
+                                "Maximum estimated cost (0 disables)",
+                                value: maximumCostBinding,
+                                format: .number.precision(.fractionLength(0...4))
+                            )
+                        }
+                        .font(.system(size: 8))
+                        .padding(9)
+                        .background(LocusTheme.white.opacity(0.6))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                    }
+                    ForEach(Array(plan.jobs.enumerated()), id: \.element.id) { index, job in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(job.kind.capitalized).font(.system(size: 8, weight: .bold))
+                                Spacer()
+                                if job.kind != "writer" {
+                                    Button(role: .destructive) {
+                                        draftPlan?.jobs.remove(at: index)
+                                    } label: { Image(systemName: "trash") }
+                                        .buttonStyle(.plain)
+                                }
+                            }
+                            TextField("Goal", text: jobBinding(index, \.goal), axis: .vertical)
+                            Picker("Agent", selection: jobBinding(index, \.agentID)) {
+                                ForEach(model.agentProfiles.filter { profile in
+                                    model.selectedAgentTeam?.memberIDs.contains(profile.id) == true
+                                }) { profile in
+                                    Text(profile.name).tag(profile.id.uuidString)
+                                }
+                            }
+                            TextField("Dependencies", text: dependencyBinding(index), prompt: Text("job ids, comma separated"))
+                        }
+                        .padding(9)
+                        .background(LocusTheme.white.opacity(0.6))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                    }
+                    Button {
+                        draftPlan?.jobs.append(DispatchJob(
+                            id: "job-\((draftPlan?.jobs.count ?? 0) + 1)",
+                            agentID: model.selectedAgentTeam?.memberIDs.first?.uuidString ?? "",
+                            goal: "", dependencies: [], kind: "specialist"
+                        ))
+                    } label: { Label("Add Specialist Job", systemImage: "plus") }
+                        .buttonStyle(.borderless)
+                }
+                .padding(12)
+            }
+            HStack {
+                if let error = validationErrors.first {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(LocusTheme.coral)
+                        .lineLimit(2)
+                }
+                Button("Cancel") { model.decideDispatch("cancel") }
+                Button("Re-dispatch") { model.decideDispatch("redispatch") }
+                Spacer()
+                Button("Run Plan") { model.decideDispatch("run", editedPlan: draftPlan) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(LocusTheme.ink)
+                    .disabled(!validationErrors.isEmpty)
+            }
+            .padding(12)
+            .overlay(alignment: .top) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+        }
+    }
+
+    private var filteredEvents: [OrchestrationEvent] {
+        let query = filter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return model.orchestrationEvents }
+        return model.orchestrationEvents.filter { event in
+            [
+                event.type, event.title, event.jobID, event.attemptID,
+                event.text("agent_name"), event.text("agent_id"),
+                event.text("state"), event.text("provider"), event.text("model"),
+            ]
+                .compactMap { $0 }.joined(separator: " ").lowercased().contains(query)
+        }
+    }
+
+    private func planBinding(_ keyPath: WritableKeyPath<DispatchPlan, String>) -> Binding<String> {
+        Binding(
+            get: { draftPlan?[keyPath: keyPath] ?? "" },
+            set: { draftPlan?[keyPath: keyPath] = $0 }
+        )
+    }
+
+    private func jobBinding(
+        _ index: Int,
+        _ keyPath: WritableKeyPath<DispatchJob, String>
+    ) -> Binding<String> {
+        Binding(
+            get: {
+                guard let plan = draftPlan, plan.jobs.indices.contains(index) else { return "" }
+                return plan.jobs[index][keyPath: keyPath]
+            },
+            set: { value in
+                guard var plan = draftPlan, plan.jobs.indices.contains(index) else { return }
+                plan.jobs[index][keyPath: keyPath] = value
+                draftPlan = plan
+            }
+        )
+    }
+
+    private func dependencyBinding(_ index: Int) -> Binding<String> {
+        Binding(
+            get: {
+                guard let plan = draftPlan, plan.jobs.indices.contains(index) else { return "" }
+                return plan.jobs[index].dependencies.joined(separator: ", ")
+            },
+            set: { value in
+                guard var plan = draftPlan, plan.jobs.indices.contains(index) else { return }
+                plan.jobs[index].dependencies = value.split(separator: ",").map {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                }.filter { !$0.isEmpty }
+                draftPlan = plan
+            }
+        )
+    }
+
+    private func budgetBinding(
+        _ keyPath: WritableKeyPath<OrchestrationBudget, Int>
+    ) -> Binding<Int> {
+        Binding(
+            get: { draftPlan?.budget?[keyPath: keyPath] ?? 1 },
+            set: { value in
+                guard var plan = draftPlan, var budget = plan.budget else { return }
+                budget[keyPath: keyPath] = value
+                budget.clamp()
+                plan.budget = budget
+                draftPlan = plan
+            }
+        )
+    }
+
+    private var maximumCostBinding: Binding<Double> {
+        Binding(
+            get: { draftPlan?.maximumEstimatedCost ?? 0 },
+            set: { value in
+                guard var plan = draftPlan else { return }
+                plan.maximumEstimatedCost = min(max(value, 0), 100_000)
+                draftPlan = plan
+            }
+        )
+    }
+
+    private func color(for type: String) -> Color {
+        if type.contains("error") || type.contains("failed") { return LocusTheme.coral }
+        if type.contains("completed") { return LocusTheme.success }
+        if type.contains("waiting") || type.contains("permission") { return LocusTheme.warning }
+        return LocusTheme.signalDeep
     }
 }

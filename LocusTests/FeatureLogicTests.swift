@@ -7,7 +7,7 @@ final class FeatureLogicTests: XCTestCase {
     // MARK: - Application lifecycle
 
     func testMainWindowUsesTheCompactDefaultSize() {
-        XCTAssertEqual(LocusWindowSizing.defaultSize.width, 1_200)
+        XCTAssertEqual(LocusWindowSizing.defaultSize.width, 1_250)
         XCTAssertEqual(LocusWindowSizing.defaultSize.height, 760)
 
         let visibleFrame = NSRect(x: 20, y: 40, width: 1_600, height: 1_000)
@@ -233,7 +233,7 @@ final class FeatureLogicTests: XCTestCase {
     // MARK: - Inspector chrome
 
     func testInspectorTabsAreStableAndUnique() {
-        XCTAssertEqual(InspectorTab.allCases.count, 7)
+        XCTAssertEqual(InspectorTab.allCases.count, 8)
         let raws = InspectorTab.allCases.map(\.rawValue)
         XCTAssertEqual(Set(raws).count, raws.count)
         XCTAssertEqual(Set(InspectorTab.allCases.map(\.symbol)).count, raws.count)
@@ -242,13 +242,14 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(InspectorTab(rawValue: "plan"), .plan)
         XCTAssertEqual(InspectorTab(rawValue: "terminal"), .terminal)
         XCTAssertEqual(InspectorTab(rawValue: "checkpoints"), .checkpoints)
+        XCTAssertEqual(InspectorTab(rawValue: "runs"), .runs)
         XCTAssertEqual(InspectorTab(rawValue: "agents"), .agents)
     }
 
-    func testInspectorShortcutsAreOneThroughSeven() {
+    func testInspectorShortcutsAreOneThroughEight() {
         XCTAssertEqual(
             InspectorTab.allCases.map(\.shortcutKey),
-            ["1", "2", "3", "4", "5", "6", "7"]
+            ["1", "2", "3", "4", "5", "6", "7", "8"]
         )
     }
 
@@ -1674,6 +1675,20 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(AgentTeamStore.loadProfiles(from: defaults), [profile])
     }
 
+    func testOrchestrationBudgetDecodesLegacyAndProtocolKeys() throws {
+        let legacy = Data(#"{"maxJobs":2,"maxRounds":1,"maxModelCalls":5,"maxConcurrentCalls":2,"maxMeteredTokens":9000}"#.utf8)
+        let protocolValue = Data(#"{"max_jobs":3,"max_rounds":2,"max_model_calls":6,"max_concurrent_calls":3,"max_metered_tokens":12000}"#.utf8)
+
+        XCTAssertEqual(try JSONDecoder().decode(OrchestrationBudget.self, from: legacy).maxJobs, 2)
+        let decoded = try JSONDecoder().decode(OrchestrationBudget.self, from: protocolValue)
+        XCTAssertEqual(decoded.maxJobs, 3)
+        XCTAssertEqual(decoded.maxMeteredTokens, 12_000)
+
+        let encoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
+        XCTAssertTrue(encoded.contains("max_model_calls"))
+        XCTAssertFalse(encoded.contains("maxModelCalls"))
+    }
+
     func testSessionInfoDecodesManagedTaskMetadataTolerantly() throws {
         let data = Data(#"""
         {
@@ -1716,5 +1731,34 @@ final class FeatureLogicTests: XCTestCase {
         let data = try JSONEncoder().encode(state)
         XCTAssertEqual(try JSONDecoder().decode(TaskConversationState.self, from: data), state)
         XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("api_key"))
+    }
+
+    func testMCPCallbackMustMatchTheExactRegisteredRedirect() throws {
+        let expected = try XCTUnwrap(URLComponents(string: "locus://mcp/oauth"))
+        let valid = try XCTUnwrap(URLComponents(string: "locus://mcp/oauth?code=one&state=two"))
+        let wrongHost = try XCTUnwrap(URLComponents(string: "locus://attacker/oauth?code=one"))
+        let wrongPath = try XCTUnwrap(URLComponents(string: "locus://mcp/other?code=one"))
+        let fragment = try XCTUnwrap(URLComponents(string: "locus://mcp/oauth?code=one#leak"))
+
+        XCTAssertTrue(MCPAuthCoordinator.callbackMatches(valid, expected: expected))
+        XCTAssertFalse(MCPAuthCoordinator.callbackMatches(wrongHost, expected: expected))
+        XCTAssertFalse(MCPAuthCoordinator.callbackMatches(wrongPath, expected: expected))
+        XCTAssertFalse(MCPAuthCoordinator.callbackMatches(fragment, expected: expected))
+    }
+
+    func testTelemetryDefaultsOffAndRoundTripsWithoutAuthorization() throws {
+        XCTAssertFalse(AppSettings().otlpExportEnabled)
+        var settings = AppSettings()
+        settings.otlpExportEnabled = true
+        settings.otlpEndpoint = "https://collector.example/v1/traces"
+        settings.otlpIncludeContent = true
+
+        let data = try JSONEncoder().encode(settings)
+        let restored = try JSONDecoder().decode(AppSettings.self, from: data)
+        let encoded = String(decoding: data, as: UTF8.self)
+        XCTAssertTrue(restored.otlpExportEnabled)
+        XCTAssertEqual(restored.otlpEndpoint, settings.otlpEndpoint)
+        XCTAssertTrue(restored.otlpIncludeContent)
+        XCTAssertFalse(encoded.lowercased().contains("authorization"))
     }
 }

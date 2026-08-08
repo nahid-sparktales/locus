@@ -4,8 +4,8 @@ import SwiftUI
 private let locusIsUITesting = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1"
 
 enum LocusWindowSizing {
-    static let defaultSize = NSSize(width: 1_200, height: 760)
-    static let normalizationKey = "Locus.didNormalizeMainWindow.1200x760"
+    static let defaultSize = NSSize(width: 1_250, height: 760)
+    static let normalizationKey = "Locus.didNormalizeMainWindow.1250x760"
 
     static func centeredFrame(in visibleFrame: NSRect) -> NSRect {
         let size = NSSize(
@@ -303,6 +303,18 @@ struct RootView: View {
         .sheet(isPresented: $model.shortcutsPresented) {
             ShortcutsSheet()
         }
+        .sheet(item: Binding(
+            get: { model.mcpInputRequest },
+            set: { value in
+                if value == nil, model.mcpInputRequest != nil {
+                    model.answerMCPInput(action: "cancel")
+                }
+            }
+        )) { request in
+            MCPInputRequestView(request: request)
+                .environmentObject(model)
+                .interactiveDismissDisabled()
+        }
         .alert("Clear this chat?", isPresented: $model.clearChatConfirmationPresented) {
             Button("Cancel", role: .cancel) {}
             Button("Clear Chat") { model.clearChatConfirmed() }
@@ -319,5 +331,120 @@ struct RootView: View {
         } message: {
             Text("Previous sessions will move to a recovery folder. The active session, current chat, connection, and any running job will remain untouched.")
         }
+    }
+}
+
+private struct MCPInputRequestView: View {
+    @EnvironmentObject private var model: AppModel
+    let request: MCPInputRequest
+    @State private var textValues: [String: String] = [:]
+    @State private var boolValues: [String: Bool] = [:]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(
+                request.mode == "url" ? "Complete in your browser" : "Extension input requested",
+                systemImage: request.mode == "url" ? "safari" : "list.bullet.rectangle"
+            )
+            .font(.system(size: 14, weight: .bold))
+            Text(request.message)
+                .font(.system(size: 10))
+                .foregroundStyle(LocusTheme.inkSoft)
+                .fixedSize(horizontal: false, vertical: true)
+            if request.mode == "url" {
+                Text("Sensitive information stays on the extension's verified HTTPS page. Never paste credentials, payment details, or API keys into Locus.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Open Secure Page") {
+                    if let value = request.url.flatMap(URL.init(string:)) {
+                        NSWorkspace.shared.open(value)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(LocusTheme.ink)
+            } else {
+                ForEach(formFields, id: \.name) { field in
+                    if field.type == "boolean" {
+                        Toggle(field.title, isOn: Binding(
+                            get: { boolValues[field.name] ?? false },
+                            set: { boolValues[field.name] = $0 }
+                        ))
+                    } else {
+                        TextField(field.title, text: Binding(
+                            get: { textValues[field.name] ?? "" },
+                            set: { textValues[field.name] = $0 }
+                        ))
+                    }
+                }
+                Text("Only the displayed non-sensitive fields are returned to the extension.")
+                    .font(.system(size: 8))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            HStack {
+                Button("Decline") { model.answerMCPInput(action: "decline") }
+                Button("Cancel") { model.answerMCPInput(action: "cancel") }
+                Spacer()
+                Button(request.mode == "url" ? "I've Completed It" : "Submit") {
+                    model.answerMCPInput(action: "accept", content: formContent)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(LocusTheme.ink)
+                .disabled(request.mode != "url" && missingRequiredField)
+            }
+        }
+        .padding(22)
+        .frame(width: 500)
+    }
+
+    private struct Field {
+        let name: String
+        let title: String
+        let type: String
+        let required: Bool
+    }
+
+    private var formFields: [Field] {
+        guard case .object(let properties) = request.schema?["properties"] else { return [] }
+        let required: Set<String>
+        if case .array(let values) = request.schema?["required"] {
+            required = Set(values.compactMap(\.string))
+        } else {
+            required = []
+        }
+        return properties.keys.sorted().map { name in
+            let specification: [String: JSONValue]
+            if case .object(let value) = properties[name] { specification = value }
+            else { specification = [:] }
+            return Field(
+                name: name,
+                title: specification["title"]?.string ?? name.replacingOccurrences(of: "_", with: " ").capitalized,
+                type: specification["type"]?.string ?? "string",
+                required: required.contains(name)
+            )
+        }
+    }
+
+    private var missingRequiredField: Bool {
+        formFields.contains { field in
+            field.required && field.type != "boolean"
+                && (textValues[field.name] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private var formContent: [String: Any] {
+        var output: [String: Any] = [:]
+        for field in formFields {
+            if field.type == "boolean" {
+                output[field.name] = boolValues[field.name] ?? false
+            } else if field.type == "integer" {
+                output[field.name] = Int(textValues[field.name] ?? "") ?? 0
+            } else if field.type == "number" {
+                output[field.name] = Double(textValues[field.name] ?? "") ?? 0
+            } else {
+                output[field.name] = textValues[field.name] ?? ""
+            }
+        }
+        return output
     }
 }
