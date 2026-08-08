@@ -6567,6 +6567,18 @@ final class AppModel: ObservableObject {
         // The picker reads the local list, which a live refresh would normally
         // fill in.
         localModels = models
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_LONG_MODEL"] == "1" {
+            let account = ProviderAccount(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000401")!,
+                kind: .custom,
+                name: "Long vLLM route",
+                baseURLOverride: "https://example.invalid/v1",
+                preferredModel: "/repository/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-NEO-MAX-NEO-MTP-Q8_0.gguf"
+            )
+            providerAccounts = [account]
+            accountModels[account.id] = [account.preferredModel]
+            accountStatus[account.id] = .connected(models: 1)
+        }
         sessionInfo = SessionInfo(
             model: "qwen3:8b",
             host: "http://localhost:11434",

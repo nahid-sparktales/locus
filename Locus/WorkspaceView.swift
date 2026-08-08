@@ -4,6 +4,7 @@ import SwiftUI
 
 struct WorkspaceView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var modelPickerPresented = false
 
     private var sessionTitle: String {
         model.sessions.first(where: { $0.id == model.currentSessionID })?.displayTitle
@@ -87,60 +88,8 @@ struct WorkspaceView: View {
             ContextUsageChip()
                 .environmentObject(model)
 
-            Menu {
-                if let team = model.selectedAgentTeam {
-                    Section("Active team") {
-                        ForEach(model.selectedTeamModelNames, id: \.self) { name in
-                            Label(name, systemImage: "cpu")
-                        }
-                        Button("Manage \(team.name)…") {
-                            model.settingsPage = .agents
-                            model.settingsPresented = true
-                        }
-                        Button("Switch to Solo") {
-                            model.selectAgentTeam(nil)
-                        }
-                    }
-                    Divider()
-                }
-                ForEach(model.modelPickerSections) { section in
-                    Section(model.teamModeEnabled ? "Solo · \(section.title)" : section.title) {
-                        if let message = section.emptyMessage {
-                            Text(message)
-                        }
-                        ForEach(section.models, id: \.self) { name in
-                            Button {
-                                if model.teamModeEnabled { model.selectAgentTeam(nil) }
-                                model.selectModel(account: section.account, model: name)
-                            } label: {
-                                // The checkmark answers "which one am I using",
-                                // and the same model name can appear under two
-                                // accounts — so the account has to match too.
-                                if model.isCurrentRoute(account: section.account, model: name) {
-                                    Label(name, systemImage: "checkmark")
-                                } else {
-                                    Text(name)
-                                }
-                            }
-                        }
-                    }
-                }
-                Divider()
-                Button("Browse Hugging Face Models…") {
-                    model.modelLibraryPresented = true
-                }
-                .accessibilityIdentifier("workspace.modelPicker.browseHuggingFace")
-                Button("Refresh Models") {
-                    Task {
-                        await model.refreshMetadata()
-                        await model.refreshAccountCatalogs(force: true)
-                    }
-                }
-                Button("Manage Accounts…") {
-                    model.settingsPage = .accounts
-                    model.settingsPresented = true
-                }
-                .accessibilityIdentifier("workspace.modelPicker.manageAccounts")
+            Button {
+                modelPickerPresented.toggle()
             } label: {
                 HStack(spacing: 7) {
                     Image(systemName: model.teamModeEnabled
@@ -165,8 +114,7 @@ struct WorkspaceView: View {
                 }
                 .frame(maxWidth: 190)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
+            .buttonStyle(.plain)
             .help(model.teamModeEnabled
                 ? "Active team: \(model.selectedTeamModelNames.joined(separator: ", "))"
                 : "Select model")
@@ -174,6 +122,12 @@ struct WorkspaceView: View {
                 ? "Active team, \(model.modelPickerLabel)"
                 : "Select model")
             .accessibilityIdentifier("workspace.modelPicker")
+            .popover(isPresented: $modelPickerPresented, arrowEdge: .top) {
+                ModelPickerPopover {
+                    modelPickerPresented = false
+                }
+                .environmentObject(model)
+            }
 
             Button {
                 model.commandPalettePresented = true
@@ -287,6 +241,186 @@ struct WorkspaceView: View {
                 .fill((recovering ? LocusTheme.warning : LocusTheme.coral).opacity(0.25))
                 .frame(height: 1)
         }
+    }
+}
+
+/// A bounded picker instead of a native `Menu`. Provider model identifiers can
+/// be hundreds of characters long (especially vLLM repository paths); AppKit's
+/// menu adaptor repeatedly recomputed the window layout for those strings and
+/// could pin the main thread at 100% CPU. This popover owns its width and lets
+/// its contents scroll, so a long route can never resize the app or its menu.
+private struct ModelPickerPopover: View {
+    @EnvironmentObject private var model: AppModel
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Model")
+                    .font(.system(size: 12, weight: .bold))
+                    .accessibilityIdentifier("workspace.modelPicker.popover")
+                Spacer()
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close model picker")
+                .accessibilityIdentifier("workspace.modelPicker.close")
+            }
+            .padding(14)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if let team = model.selectedAgentTeam {
+                        teamSection(team)
+                        Divider()
+                    }
+
+                    ForEach(model.modelPickerSections) { section in
+                        routeSection(section)
+                    }
+                }
+                .padding(14)
+            }
+            .frame(maxHeight: 440)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 4) {
+                pickerAction(
+                    "Browse Hugging Face Models…",
+                    symbol: "shippingbox",
+                    identifier: "workspace.modelPicker.browseHuggingFace"
+                ) {
+                    dismiss()
+                    model.modelLibraryPresented = true
+                }
+                pickerAction(
+                    "Refresh Models",
+                    symbol: "arrow.clockwise",
+                    identifier: "workspace.modelPicker.refresh"
+                ) {
+                    Task {
+                        await model.refreshMetadata()
+                        await model.refreshAccountCatalogs(force: true)
+                    }
+                }
+                pickerAction(
+                    "Manage Accounts…",
+                    symbol: "person.crop.circle",
+                    identifier: "workspace.modelPicker.manageAccounts"
+                ) {
+                    dismiss()
+                    model.settingsPage = .accounts
+                    model.settingsPresented = true
+                }
+            }
+            .padding(10)
+        }
+        .frame(width: 380)
+        .background(LocusTheme.panel)
+    }
+
+    private func teamSection(_ team: AgentTeam) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionLabel("ACTIVE TEAM")
+            Text(team.name)
+                .font(.system(size: 11, weight: .bold))
+            ForEach(model.selectedTeamModelNames, id: \.self) { name in
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "cpu")
+                        .font(.system(size: 9))
+                        .foregroundStyle(LocusTheme.signalDeep)
+                        .frame(width: 13)
+                    Text(name)
+                        .font(.system(size: 8, design: .monospaced))
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                }
+                .accessibilityElement(children: .combine)
+            }
+            HStack(spacing: 14) {
+                Button("Manage \(team.name)…") {
+                    dismiss()
+                    model.settingsPage = .agents
+                    model.settingsPresented = true
+                }
+                .accessibilityIdentifier("workspace.modelPicker.manageTeam")
+                Button("Switch to Solo") {
+                    model.selectAgentTeam(nil)
+                }
+                .accessibilityIdentifier("workspace.modelPicker.switchToSolo")
+            }
+            .buttonStyle(.borderless)
+            .font(.system(size: 9, weight: .semibold))
+        }
+    }
+
+    private func routeSection(_ section: ModelPickerSection) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            sectionLabel(model.teamModeEnabled ? "SOLO · \(section.title)" : section.title.uppercased())
+            if let message = section.emptyMessage {
+                Text(message)
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            ForEach(section.models, id: \.self) { name in
+                Button {
+                    if model.teamModeEnabled { model.selectAgentTeam(nil) }
+                    model.selectModel(account: section.account, model: name)
+                    dismiss()
+                } label: {
+                    HStack(alignment: .top, spacing: 7) {
+                        Image(systemName: model.isCurrentRoute(account: section.account, model: name)
+                            ? "checkmark.circle.fill"
+                            : "circle")
+                            .font(.system(size: 9))
+                            .foregroundStyle(model.isCurrentRoute(account: section.account, model: name)
+                                ? LocusTheme.signalDeep
+                                : LocusTheme.muted)
+                            .frame(width: 13)
+                        Text(name)
+                            .font(.system(size: 9, design: .monospaced))
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Use \(name) from \(section.title)")
+            }
+        }
+    }
+
+    private func pickerAction(
+        _ title: String,
+        symbol: String,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .font(.system(size: 9, weight: .medium))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 4)
+        .frame(height: 26)
+        .accessibilityIdentifier(identifier)
+    }
+
+    private func sectionLabel(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 8, weight: .bold))
+            .tracking(0.7)
+            .foregroundStyle(LocusTheme.muted)
     }
 }
 

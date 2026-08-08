@@ -15,10 +15,9 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }
 
-    /// SwiftUI `Menu` controls surface as MenuButton (not Button) on current
-    /// macOS, so menu anchors are matched by identifier on any element type.
-    /// Identifiers can propagate to nested elements, so take the first match —
-    /// interactions on an ambiguous query fail outright.
+    /// SwiftUI controls do not expose a stable element type across macOS
+    /// releases. Match anchors by identifier on any element type and take the
+    /// first result, because interactions on an ambiguous query fail outright.
     private func anyElement(_ identifier: String) -> XCUIElement {
         app.descendants(matching: .any)[identifier].firstMatch
     }
@@ -176,7 +175,7 @@ final class LocusUITests: XCTestCase {
 
     func testExtensionsSettingsExposesAllExtensionCenters() {
         anyElement("workspace.modelPicker").click()
-        app.menuItems["Manage Accounts…"].click()
+        app.buttons["Manage Accounts…"].click()
 
         let extensionsPage = anyElement("settings.page.extensions")
         XCTAssertTrue(extensionsPage.waitForExistence(timeout: 3))
@@ -192,7 +191,7 @@ final class LocusUITests: XCTestCase {
 
     func testNetworkSettingsRevealManualProxyFieldsAndGateSave() {
         anyElement("workspace.modelPicker").click()
-        app.menuItems["Manage Accounts…"].click()
+        app.buttons["Manage Accounts…"].click()
 
         let networkPage = anyElement("settings.page.network")
         XCTAssertTrue(networkPage.waitForExistence(timeout: 3))
@@ -218,7 +217,7 @@ final class LocusUITests: XCTestCase {
 
     func testRuntimeSettingsShowAutomaticOnlineServices() {
         anyElement("workspace.modelPicker").click()
-        app.menuItems["Manage Accounts…"].click()
+        app.buttons["Manage Accounts…"].click()
 
         // Manage Accounts lands on the Accounts tab; the runtime readout lives
         // on General.
@@ -239,12 +238,36 @@ final class LocusUITests: XCTestCase {
         let picker = anyElement("workspace.modelPicker")
         XCTAssertTrue(picker.waitForExistence(timeout: 3))
         picker.click()
-        app.menuItems["Browse Hugging Face Models…"].click()
+        app.buttons["Browse Hugging Face Models…"].click()
 
         XCTAssertTrue(app.textFields["modelLibrary.search"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["modelLibrary.searchButton"].exists)
         XCTAssertTrue(app.buttons["modelLibrary.close"].exists)
         app.buttons["modelLibrary.close"].click()
+    }
+
+    func testModelPickerStaysResponsiveWithLongVLLMModelName() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_LONG_MODEL"] = "1"
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+
+        let originalFrame = app.windows.firstMatch.frame
+        anyElement("workspace.modelPicker").click()
+
+        XCTAssertTrue(anyElement("workspace.modelPicker.popover").waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            app.buttons.matching(
+                NSPredicate(format: "label CONTAINS %@", "Qwen3.6-27B-Fable-Fusion")
+            ).firstMatch.exists
+        )
+        XCTAssertTrue(anyElement("workspace.modelPicker.manageAccounts").exists)
+        XCTAssertEqual(app.windows.firstMatch.frame, originalFrame)
+
+        anyElement("workspace.modelPicker.close").click()
+        XCTAssertTrue(anyElement("workspace.commandPalette").waitForExistence(timeout: 3))
+        anyElement("workspace.commandPalette").click()
+        XCTAssertTrue(app.textFields["palette.search"].waitForExistence(timeout: 3))
     }
 
     func testSlashCommandPopupListsCommands() {
@@ -363,8 +386,8 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("checkpointTab.content").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("checkpointTab.create").exists)
 
-        // ⌘7 — AGENTS.md, with an explanation and the workspace editor.
-        app.typeKey("7", modifierFlags: .command)
+        // ⌘8 — AGENTS.md, with an explanation and the workspace editor.
+        app.typeKey("8", modifierFlags: .command)
         XCTAssertTrue(anyElement("agents.content").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("agents.editor").exists)
         XCTAssertTrue(anyElement("agents.save").exists)
