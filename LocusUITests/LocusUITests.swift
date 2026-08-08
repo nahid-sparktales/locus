@@ -473,6 +473,50 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }
 
+    private func relaunchWithRunFixture(_ fixture: String, uncleanRecovery: Bool = false) {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_RUN_FIXTURE"] = fixture
+        app.launchEnvironment["LOCUS_UI_TESTING_UNCLEAN_RECOVERY"] = uncleanRecovery ? "1" : nil
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+    }
+
+    func testCompletedRunWithLargeTimelineRemainsResponsiveAndRestoresAfterForceQuit() {
+        relaunchWithRunFixture("completed", uncleanRecovery: true)
+
+        let state = anyElement("runs.state")
+        XCTAssertTrue(state.waitForExistence(timeout: 3))
+        XCTAssertTrue((state.label + " \(state.value ?? "")").lowercased().contains("completed"))
+        XCTAssertTrue(anyElement("runs.recoveryExplanation").exists)
+        XCTAssertTrue(
+            app.staticTexts.matching(
+                NSPredicate(format: "value CONTAINS[c] %@ OR label CONTAINS[c] %@", "results were restored", "results were restored")
+            ).firstMatch.exists
+        )
+
+        let filter = app.textFields["runs.filter"]
+        filter.click()
+        filter.typeText("Team run completed")
+        XCTAssertEqual(filter.value as? String, "Team run completed")
+
+        // Exercise controls after the 1,200-event timeline has laid out.
+        app.typeKey("1", modifierFlags: .command)
+        XCTAssertTrue(anyElement("plan.create").waitForExistence(timeout: 3))
+        app.typeKey("7", modifierFlags: .command)
+        XCTAssertTrue(anyElement("runs.state").waitForExistence(timeout: 3))
+    }
+
+    func testForcedQuitRecoveryExplainsAResumableRun() {
+        relaunchWithRunFixture("recoverable", uncleanRecovery: true)
+
+        XCTAssertTrue(anyElement("runs.recoveryExplanation").waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            app.staticTexts.matching(
+                NSPredicate(format: "value CONTAINS[c] %@ OR label CONTAINS[c] %@", "can be resumed", "can be resumed")
+            ).firstMatch.exists
+        )
+    }
+
     func testPermissionPanelRepliesWithTheKeyboard() {
         relaunchWithPendingPermission()
 

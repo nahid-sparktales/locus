@@ -611,38 +611,50 @@ private struct TeamProgressPopover: View {
     @EnvironmentObject private var model: AppModel
     let dismiss: () -> Void
 
+    @ViewBuilder
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { timeline in
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                Divider()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if let issue = model.selectedTeamRouteIssue {
-                            Label(issue, systemImage: "exclamationmark.triangle.fill")
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundStyle(LocusTheme.coral)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .padding(10)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(LocusTheme.coral.opacity(0.08))
-                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                .accessibilityIdentifier("teamProgress.routeIssue")
-                        }
-
-                        dispatcherSection(now: timeline.date)
-                        delegatedJobs
-                        modelRoster
-                    }
-                    .padding(14)
-                }
-                .frame(maxHeight: 430)
-                Divider()
-                footer
+        if runIsActive {
+            TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                content(now: timeline.date)
             }
-            .frame(width: 370)
-            .background(LocusTheme.panel)
+        } else {
+            // A terminal run has no elapsed clock left to update. Keeping a
+            // periodic TimelineView alive here made the completed popover
+            // invalidate the entire sidebar once per second indefinitely.
+            content(now: Date())
         }
+    }
+
+    private func content(now: Date) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let issue = model.selectedTeamRouteIssue {
+                        Label(issue, systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(LocusTheme.coral)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(LocusTheme.coral.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .accessibilityIdentifier("teamProgress.routeIssue")
+                    }
+
+                    dispatcherSection(now: now)
+                    delegatedJobs
+                    modelRoster
+                }
+                .padding(14)
+            }
+            .frame(maxHeight: 430)
+            Divider()
+            footer
+        }
+        .frame(width: 370)
+        .background(LocusTheme.panel)
         .accessibilityIdentifier("teamProgress.popover")
     }
 
@@ -690,6 +702,7 @@ private struct TeamProgressPopover: View {
                     Text(dispatcherDetail(activity: activity))
                         .font(.system(size: 9))
                         .foregroundStyle(LocusTheme.inkSoft)
+                        .lineLimit(4)
                 }
                 Spacer(minLength: 6)
                 if startedAt != nil && runIsActive {

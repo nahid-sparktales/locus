@@ -17,11 +17,13 @@ final class BackendService {
     /// Pinned direct, over every proxy layer including the system's: the
     /// agent is a loopback child of this process, and no proxy configuration
     /// — however wrong — may ever sit between the app and it.
-    private let session: URLSession = {
+    private let session: URLSession
+
+    private static func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.default
         configuration.connectionProxyDictionary = [:]
         return URLSession(configuration: configuration)
-    }()
+    }
     private var socket: URLSessionWebSocketTask?
     private var baseURL: URL
     private var reconnectTask: Task<Void, Never>?
@@ -37,10 +39,12 @@ final class BackendService {
 
     init(
         baseURL: URL = URL(string: "http://127.0.0.1:8791")!,
-        authToken: String = BackendSecurity.launchToken
+        authToken: String = BackendSecurity.launchToken,
+        session: URLSession? = nil
     ) {
         self.baseURL = baseURL
         self.authToken = authToken
+        self.session = session ?? Self.makeSession()
     }
 
     func updateBaseURL(_ url: URL) {

@@ -223,6 +223,26 @@ struct InspectorRunsTab: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if let message = model.lifecycleRecoveryMessage {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "arrow.counterclockwise.circle.fill")
+                        .foregroundStyle(LocusTheme.signalDeep)
+                    Text(message)
+                        .font(.system(size: 9))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Button {
+                        model.dismissLifecycleRecoveryMessage()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss recovery explanation")
+                }
+                .padding(10)
+                .background(LocusTheme.signal.opacity(0.1))
+                .accessibilityIdentifier("runs.recoveryExplanation")
+            }
             if let plan = draftPlan, model.pendingDispatchPlan != nil {
                 dispatchEditor(plan)
             } else if let run = model.selectedOrchestrationRun {
@@ -236,7 +256,11 @@ struct InspectorRunsTab: View {
                 )
             }
         }
-        .task { await model.refreshOrchestrationRuns() }
+        .task {
+            if model.orchestrationRuns.isEmpty, model.selectedOrchestrationRun == nil {
+                await model.refreshOrchestrationRuns()
+            }
+        }
         .onChange(of: model.pendingDispatchPlan) { _, value in draftPlan = value }
         .onAppear { draftPlan = model.pendingDispatchPlan }
     }
@@ -295,6 +319,7 @@ struct InspectorRunsTab: View {
                     Text("\(run.state.replacingOccurrences(of: "_", with: " ")) · \(run.lastSequence) events")
                         .font(.system(size: 8, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
+                        .accessibilityIdentifier("runs.state")
                 }
                 Spacer()
                 runActions(run)
@@ -376,6 +401,7 @@ struct InspectorRunsTab: View {
         VStack(spacing: 0) {
             TextField("Filter agent, event, state, or attempt", text: $filter)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("runs.filter")
                 .padding(.horizontal, 12)
                 .padding(.bottom, 7)
             ScrollView {

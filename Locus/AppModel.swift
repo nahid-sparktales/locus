@@ -6,6 +6,79 @@ import QuartzCore
 import UniformTypeIdentifiers
 import UserNotifications
 
+struct AppLifecycleRunSnapshot: Codable, Equatable {
+    let sessionID: String
+    let runID: String
+    let state: TeamRunState
+    let updatedAt: Date
+}
+
+struct AppLifecycleRecovery: Equatable {
+    let snapshot: AppLifecycleRunSnapshot?
+
+    var message: String {
+        guard let snapshot else {
+            return "Locus did not close normally. Your last session was restored."
+        }
+        switch snapshot.state {
+        case .completed:
+            return "Locus was force quit after the team run completed. Its results were restored."
+        case .failed, .cancelled, .discarded:
+            return "Locus did not close normally. The last team run finished as \(snapshot.state.title.lowercased())."
+        case .interrupted:
+            return "Locus closed unexpectedly. The interrupted team run is ready to resume."
+        case .queued, .dispatching, .running, .waitingPermission, .waitingComputer,
+             .waitingDispatchApproval, .reviewing, .paused:
+            return "Locus closed unexpectedly. The last team run can be inspected and resumed."
+        }
+    }
+}
+
+/// A deliberately tiny crash journal. The durable session/run database remains
+/// authoritative; these defaults only tell the next launch what to reopen and
+/// whether the previous process reached its ordinary termination hook.
+final class AppLifecycleJournal {
+    private let defaults: UserDefaults
+    private let cleanKey: String
+    private let snapshotKey: String
+
+    init(defaults: UserDefaults = .standard, keyPrefix: String = "Locus.lifecycle") {
+        self.defaults = defaults
+        cleanKey = "\(keyPrefix).clean"
+        snapshotKey = "\(keyPrefix).latestRun"
+    }
+
+    @discardableResult
+    func beginLaunch() -> AppLifecycleRecovery? {
+        let hadPreviousLaunch = defaults.object(forKey: cleanKey) != nil
+        let previousLaunchWasClean = defaults.bool(forKey: cleanKey)
+        let snapshot = defaults.data(forKey: snapshotKey)
+            .flatMap { try? JSONDecoder().decode(AppLifecycleRunSnapshot.self, from: $0) }
+        // Set this before any services are started. Force Quit cannot run a
+        // callback, so leaving this false is the abnormal-exit signal.
+        defaults.set(false, forKey: cleanKey)
+        guard hadPreviousLaunch, !previousLaunchWasClean else { return nil }
+        return AppLifecycleRecovery(snapshot: snapshot)
+    }
+
+    func record(sessionID: String, runID: String, state: TeamRunState, at date: Date = Date()) {
+        guard !sessionID.isEmpty, !runID.isEmpty else { return }
+        let snapshot = AppLifecycleRunSnapshot(
+            sessionID: sessionID,
+            runID: runID,
+            state: state,
+            updatedAt: date
+        )
+        if let data = try? JSONEncoder().encode(snapshot) {
+            defaults.set(data, forKey: snapshotKey)
+        }
+    }
+
+    func markCleanExit() {
+        defaults.set(true, forKey: cleanKey)
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var agentRuntimePhase: RuntimePhase = .starting("Starting the local agent…")
@@ -180,6 +253,7 @@ final class AppModel: ObservableObject {
     @Published var streamRevision = 0
     @Published var toast: AppToast?
     var toastMessage: String? { toast?.message }
+    @Published private(set) var lifecycleRecoveryMessage: String?
     @Published var backendLogHint = ""
     @Published var contextNotice: String?
     @Published var isLoadingContext = false
@@ -293,6 +367,16 @@ final class AppModel: ObservableObject {
     private var commitDraftTask: Task<Void, Never>?
     private var filePreviewTask: Task<Void, Never>?
     private var agentInstructionsTask: Task<Void, Never>?
+    private var orchestrationRunsTasks: [String: (generation: Int, task: Task<OrchestrationRunsResponse, Error>)] = [:]
+    private var orchestrationDetailTasks: [String: Task<OrchestrationRun, Error>] = [:]
+    private var orchestrationEventTasks: [String: Task<OrchestrationEventsResponse, Error>] = [:]
+    private var orchestrationRunsGeneration = 0
+    private var orchestrationSelectionGeneration = 0
+    private var requestedOrchestrationRunID: String?
+    private var requestedOrchestrationLoadKey: String?
+    private var terminalRefreshRunIDs: Set<String> = []
+    private let lifecycleJournal: AppLifecycleJournal?
+    private var pendingLifecycleRecovery: AppLifecycleRecovery?
     private var indexedWorkspacePath: String?
     private var terminationObserver: NSObjectProtocol?
     private var activationObserver: NSObjectProtocol?
@@ -303,10 +387,17 @@ final class AppModel: ObservableObject {
     private let isUITesting: Bool
     private var isShuttingDown = false
 
-    init(startImmediately: Bool = true) {
+    init(
+        startImmediately: Bool = true,
+        backendOverride: BackendService? = nil,
+        lifecycleJournal: AppLifecycleJournal? = nil
+    ) {
         let isUITesting = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1"
         self.isUITesting = isUITesting
         persistenceEnabled = startImmediately && !isUITesting
+        let launchJournal = lifecycleJournal ?? AppLifecycleJournal()
+        self.lifecycleJournal = persistenceEnabled ? launchJournal : nil
+        pendingLifecycleRecovery = persistenceEnabled ? launchJournal.beginLaunch() : nil
         let defaults = UserDefaults.standard
         var loadedSettings: AppSettings
         // Gated on `persistenceEnabled` for the same reason the accounts below
@@ -460,7 +551,7 @@ final class AppModel: ObservableObject {
         sidebarCollapsed = loadedSettings.sidebarCollapsed
         inspectorTab = loadedSettings.resolvedInspectorTab
 
-        backend = BackendService(
+        backend = backendOverride ?? BackendService(
             baseURL: URL(string: loadedSettings.backendURL) ?? URL(string: "http://127.0.0.1:8791")!
         )
 
@@ -950,8 +1041,64 @@ final class AppModel: ObservableObject {
             immediate: true
         )
         await recovery?.value
+        await restoreAfterUncleanExitIfNeeded()
         requestNotificationAuthorization()
         startRuntimeMonitor()
+    }
+
+    private func restoreAfterUncleanExitIfNeeded() async {
+        guard let recovery = pendingLifecycleRecovery else { return }
+        pendingLifecycleRecovery = nil
+
+        if let snapshot = recovery.snapshot {
+            if currentSessionID != snapshot.sessionID,
+               let session = sessions.first(where: { $0.id == snapshot.sessionID })
+            {
+                resume(session)
+                // `resume` also serves ordinary UI actions and owns its Task.
+                // Wait briefly for that existing path instead of duplicating
+                // its transcript/workspace restoration logic here.
+                for _ in 0..<50 {
+                    guard currentSessionID != snapshot.sessionID else { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
+            if currentSessionID == snapshot.sessionID {
+                await refreshOrchestrationRuns(
+                    select: snapshot.runID,
+                    terminal: snapshot.state == .completed
+                        || snapshot.state == .failed
+                        || snapshot.state == .cancelled
+                        || snapshot.state == .discarded
+                        || snapshot.state == .interrupted
+                )
+            }
+        }
+
+        inspectorTab = .runs
+        inspectorCollapsed = false
+        settings.inspectorLastTab = InspectorTab.runs.rawValue
+        let message = lifecycleRecoveryExplanation(fallback: recovery)
+        lifecycleRecoveryMessage = message
+        showToast(message, duration: 8)
+    }
+
+    private func lifecycleRecoveryExplanation(fallback: AppLifecycleRecovery) -> String {
+        guard let run = selectedOrchestrationRun else { return fallback.message }
+        if run.state == TeamRunState.completed.rawValue {
+            return "Locus was force quit after the team run completed. Its results were restored."
+        }
+        if run.recoverable {
+            return "Locus closed unexpectedly. This team run can be resumed from its saved checkpoint."
+        }
+        if let state = TeamRunState(rawValue: run.state) {
+            return "Locus did not close normally. The restored team run is \(state.title.lowercased())."
+        }
+        return fallback.message
+    }
+
+    func dismissLifecycleRecoveryMessage() {
+        lifecycleRecoveryMessage = nil
     }
 
     @discardableResult
@@ -1133,6 +1280,7 @@ final class AppModel: ObservableObject {
 
     func shutdown() {
         isShuttingDown = true
+        lifecycleJournal?.markCleanExit()
         persistCurrentWorkspaceProfile()
         // Flush rather than cancel: a debounced settings write that is still
         // pending at quit would otherwise be dropped.
@@ -1147,6 +1295,12 @@ final class AppModel: ObservableObject {
         knowledgeReindexTask?.cancel()
         knowledgeWatcher.stop()
         agentInstructionsTask?.cancel()
+        orchestrationRunsTasks.values.forEach { $0.task.cancel() }
+        orchestrationDetailTasks.values.forEach { $0.cancel() }
+        orchestrationEventTasks.values.forEach { $0.cancel() }
+        orchestrationRunsTasks.removeAll()
+        orchestrationDetailTasks.removeAll()
+        orchestrationEventTasks.removeAll()
         backend.disconnect()
         backendProcess.stop()
         taskWorkers.values.forEach { $0.stop() }
@@ -2884,34 +3038,109 @@ final class AppModel: ObservableObject {
         return manifest
     }
 
-    func refreshOrchestrationRuns(select runID: String? = nil) async {
+    func refreshOrchestrationRuns(
+        select runID: String? = nil,
+        terminal: Bool = false
+    ) async {
+        let sessionID = currentSessionID
+        let requestKey = [sessionID, terminal ? "terminal:\(runID ?? "")" : "routine"]
+            .joined(separator: "|")
+        let request: (generation: Int, task: Task<OrchestrationRunsResponse, Error>)
+        if let existing = orchestrationRunsTasks[requestKey] {
+            request = existing
+        } else {
+            orchestrationRunsGeneration += 1
+            let generation = orchestrationRunsGeneration
+            let query = sessionID.isEmpty
+                ? []
+                : [URLQueryItem(name: "session_id", value: sessionID)]
+            let task = Task { [backend] in
+                try await backend.get(
+                    "/api/orchestrations",
+                    query: query,
+                    as: OrchestrationRunsResponse.self
+                )
+            }
+            request = (generation, task)
+            orchestrationRunsTasks[requestKey] = request
+        }
         do {
-            let response: OrchestrationRunsResponse = try await backend.get(
-                "/api/orchestrations",
-                query: currentSessionID.isEmpty ? [] : [URLQueryItem(name: "session_id", value: currentSessionID)],
-                as: OrchestrationRunsResponse.self
-            )
-            orchestrationRuns = response.runs
+            let response = try await request.task.value
+            if orchestrationRunsTasks[requestKey]?.generation == request.generation {
+                orchestrationRunsTasks.removeValue(forKey: requestKey)
+            }
+            guard request.generation == orchestrationRunsGeneration,
+                  currentSessionID == sessionID
+            else { return }
+            if orchestrationRuns != response.runs {
+                orchestrationRuns = response.runs
+            }
             let selectedID = runID ?? selectedOrchestrationRun?.id
                 ?? orchestrationRunID ?? response.runs.first?.id
-            if let selectedID { await loadOrchestrationRun(selectedID) }
+            if let selectedID {
+                await loadOrchestrationRun(selectedID, terminal: terminal)
+            }
         } catch {
+            if orchestrationRunsTasks[requestKey]?.generation == request.generation {
+                orchestrationRunsTasks.removeValue(forKey: requestKey)
+            }
+            guard !Task.isCancelled, request.generation == orchestrationRunsGeneration else { return }
             showToast("Could not load team runs: \(error.localizedDescription)")
         }
     }
 
-    func loadOrchestrationRun(_ runID: String) async {
+    func loadOrchestrationRun(_ runID: String, terminal: Bool = false) async {
+        let sameRun = selectedOrchestrationRun?.id == runID
+        let afterSequence = sameRun ? orchestrationEvents.map(\.sequence).max() ?? 0 : 0
+        let loadKey = "\(runID)|\(afterSequence)|\(terminal ? "terminal" : "routine")"
+        let generation: Int
+        if requestedOrchestrationLoadKey == loadKey {
+            generation = orchestrationSelectionGeneration
+        } else {
+            orchestrationSelectionGeneration += 1
+            generation = orchestrationSelectionGeneration
+            requestedOrchestrationLoadKey = loadKey
+            requestedOrchestrationRunID = runID
+        }
+        let detailKey = "\(runID)|\(terminal ? "terminal" : "routine")"
+        let eventsKey = "\(runID)|\(afterSequence)|\(terminal ? "terminal" : "routine")"
+        let detailTask = orchestrationDetailTask(runID: runID, key: detailKey)
+        let eventsTask = orchestrationEventsTask(
+            runID: runID,
+            afterSequence: afterSequence,
+            key: eventsKey
+        )
         do {
-            async let detail: OrchestrationRun = backend.get(
-                "/api/orchestrations/\(runID)", as: OrchestrationRun.self
-            )
-            async let events: OrchestrationEventsResponse = backend.get(
-                "/api/orchestrations/\(runID)/events", as: OrchestrationEventsResponse.self
-            )
-            selectedOrchestrationRun = try await detail
-            orchestrationEvents = try await events.events
-            orchestrationEventIDs = Set(orchestrationEvents.map(\.id))
+            let detail = try await detailTask.value
+            let response = try await eventsTask.value
+            if orchestrationDetailTasks[detailKey] != nil {
+                orchestrationDetailTasks.removeValue(forKey: detailKey)
+            }
+            if orchestrationEventTasks[eventsKey] != nil {
+                orchestrationEventTasks.removeValue(forKey: eventsKey)
+            }
+            guard generation == orchestrationSelectionGeneration,
+                  requestedOrchestrationRunID == runID
+            else { return }
+            let base = sameRun ? orchestrationEvents : []
+            let merged = Self.mergeOrchestrationEvents(base, with: response.events)
+            if selectedOrchestrationRun != detail {
+                selectedOrchestrationRun = detail
+            }
+            if orchestrationEvents != merged {
+                orchestrationEvents = merged
+            }
+            orchestrationEventIDs = Set(merged.map(\.id))
+            if orchestrationRunID == runID,
+               let state = TeamRunState(rawValue: detail.state),
+               orchestrationState != state
+            {
+                orchestrationState = state
+            }
         } catch {
+            orchestrationDetailTasks.removeValue(forKey: detailKey)
+            orchestrationEventTasks.removeValue(forKey: eventsKey)
+            guard !Task.isCancelled, generation == orchestrationSelectionGeneration else { return }
             showToast("Could not inspect that run: \(error.localizedDescription)")
         }
     }
@@ -2921,21 +3150,65 @@ final class AppModel: ObservableObject {
             .filter { $0.text("run_id") == runID }
             .map(\.sequence)
             .max() ?? 0
+        let key = "\(runID)|\(after)|routine"
+        let task = orchestrationEventsTask(runID: runID, afterSequence: after, key: key)
         do {
-            let response: OrchestrationEventsResponse = try await backend.get(
-                "/api/orchestrations/\(runID)/events",
-                query: [URLQueryItem(name: "after_seq", value: String(after))],
-                as: OrchestrationEventsResponse.self
-            )
-            for event in response.events where !orchestrationEventIDs.contains(event.id) {
-                orchestrationEventIDs.insert(event.id)
-                orchestrationEvents.append(event)
+            let response = try await task.value
+            orchestrationEventTasks.removeValue(forKey: key)
+            guard selectedOrchestrationRun?.id == runID || orchestrationRunID == runID else { return }
+            let merged = Self.mergeOrchestrationEvents(orchestrationEvents, with: response.events)
+            if merged != orchestrationEvents {
+                orchestrationEvents = merged
+                orchestrationEventIDs = Set(merged.map(\.id))
             }
-            orchestrationEvents.sort { $0.sequence < $1.sequence }
         } catch {
+            orchestrationEventTasks.removeValue(forKey: key)
             // The inspector can still reload the full run on demand. A failed
             // reconnect backfill must not disturb the active transcript.
         }
+    }
+
+    nonisolated static func mergeOrchestrationEvents(
+        _ existing: [OrchestrationEvent],
+        with incoming: [OrchestrationEvent]
+    ) -> [OrchestrationEvent] {
+        var byID: [String: OrchestrationEvent] = [:]
+        for event in existing where !event.isTransientStream { byID[event.id] = event }
+        for event in incoming where !event.isTransientStream { byID[event.id] = event }
+        return byID.values.sorted {
+            $0.sequence == $1.sequence ? $0.id < $1.id : $0.sequence < $1.sequence
+        }
+    }
+
+    private func orchestrationDetailTask(
+        runID: String,
+        key: String
+    ) -> Task<OrchestrationRun, Error> {
+        if let existing = orchestrationDetailTasks[key] { return existing }
+        let task = Task { [backend] in
+            try await backend.get(
+                "/api/orchestrations/\(runID)", as: OrchestrationRun.self
+            )
+        }
+        orchestrationDetailTasks[key] = task
+        return task
+    }
+
+    private func orchestrationEventsTask(
+        runID: String,
+        afterSequence: Int,
+        key: String
+    ) -> Task<OrchestrationEventsResponse, Error> {
+        if let existing = orchestrationEventTasks[key] { return existing }
+        let task = Task { [backend] in
+            try await backend.get(
+                "/api/orchestrations/\(runID)/events",
+                query: [URLQueryItem(name: "after_seq", value: String(afterSequence))],
+                as: OrchestrationEventsResponse.self
+            )
+        }
+        orchestrationEventTasks[key] = task
+        return task
     }
 
     func exportOrchestration(_ runID: String, includeContent: Bool) async {
@@ -3993,6 +4266,13 @@ final class AppModel: ObservableObject {
                         state: state,
                         updatedAt: Date()
                     )
+                    if let runID = response.orchestrationRunID {
+                        lifecycleJournal?.record(
+                            sessionID: response.sessionInfo.sessionID,
+                            runID: runID,
+                            state: state
+                        )
+                    }
                 }
                 touchWorkspaceProfile(response.sessionInfo.cwd)
                 showToast("Session resumed")
@@ -5418,7 +5698,7 @@ final class AppModel: ObservableObject {
             runtime.sessionInfo = runtime.sessionInfo?.replacingTask(record)
             state = record.state ?? state
         }
-        taskConversationStates[runtime.sessionID] = TaskConversationState(
+        let updated = TaskConversationState(
             sessionID: runtime.sessionID,
             taskID: taskID,
             teamID: (event["team_id"] as? String) ?? previous?.teamID,
@@ -5427,6 +5707,14 @@ final class AppModel: ObservableObject {
             state: state,
             updatedAt: Date()
         )
+        taskConversationStates[runtime.sessionID] = updated
+        if let runID = updated.runID {
+            lifecycleJournal?.record(
+                sessionID: runtime.sessionID,
+                runID: runID,
+                state: state
+            )
+        }
         if (type == "orchestration_started" || type == "turn_done"), persistenceEnabled {
             Task { await refreshMetadata() }
         }
@@ -5499,7 +5787,7 @@ final class AppModel: ObservableObject {
     ) {
         guard !currentSessionID.isEmpty else { return }
         let previous = taskConversationStates[currentSessionID]
-        taskConversationStates[currentSessionID] = TaskConversationState(
+        let updated = TaskConversationState(
             sessionID: currentSessionID,
             taskID: taskID ?? activeTaskRecord?.id ?? previous?.taskID,
             teamID: (event["team_id"] as? String) ?? previous?.teamID,
@@ -5508,6 +5796,18 @@ final class AppModel: ObservableObject {
             state: state,
             updatedAt: Date()
         )
+        if previous?.taskID == updated.taskID,
+           previous?.teamID == updated.teamID,
+           previous?.workerID == updated.workerID,
+           previous?.runID == updated.runID,
+           previous?.state == updated.state
+        {
+            return
+        }
+        taskConversationStates[currentSessionID] = updated
+        if let runID = updated.runID {
+            lifecycleJournal?.record(sessionID: currentSessionID, runID: runID, state: state)
+        }
     }
 
     private func handle(_ event: [String: Any]) {
@@ -5548,11 +5848,6 @@ final class AppModel: ObservableObject {
                 }
                 noteLocalHost(from: info)
                 applyWorkspaceProfileIfNeeded(for: info)
-                if !currentSessionID.isEmpty {
-                    Task { @MainActor [weak self] in
-                        await self?.refreshOrchestrationRuns()
-                    }
-                }
             }
 
         case "session_started":
@@ -5778,9 +6073,10 @@ final class AppModel: ObservableObject {
             }
 
         case "orchestration_state":
-            orchestrationState = (event["state"] as? String)
-                .flatMap(TeamRunState.init(rawValue:))
-            if let orchestrationState { updateTaskConversation(state: orchestrationState, event: event) }
+            if let state = (event["state"] as? String).flatMap(TeamRunState.init(rawValue:)) {
+                if orchestrationState != state { orchestrationState = state }
+                updateTaskConversation(state: state, event: event)
+            }
 
         case "dispatch_plan_ready":
             orchestrationState = .waitingDispatchApproval
@@ -5883,17 +6179,23 @@ final class AppModel: ObservableObject {
             }
 
         case "orchestration_completed":
-            orchestrationState = (event["state"] as? String)
+            let completedState = (event["state"] as? String)
                 .flatMap(TeamRunState.init(rawValue:)) ?? .completed
-            if let orchestrationState { updateTaskConversation(state: orchestrationState, event: event) }
+            if orchestrationState != completedState { orchestrationState = completedState }
+            updateTaskConversation(state: completedState, event: event)
             if let usage = event["usage"] as? [String: Any] {
                 teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
                 teamMeteredTokens = usage["metered_tokens"] as? Int ?? teamMeteredTokens
             }
             if let runID = event["run_id"] as? String {
-                Task { @MainActor [weak self] in
-                    await self?.refreshOrchestrationRuns(select: runID)
-                    await self?.exportOrchestrationToOTLP(runID)
+                // Reconnects can replay this durable terminal event. Only the
+                // first copy should start the final metadata + incremental
+                // timeline fetch; the live event itself is already deduped.
+                if terminalRefreshRunIDs.insert(runID).inserted {
+                    Task { @MainActor [weak self] in
+                        await self?.refreshOrchestrationRuns(select: runID, terminal: true)
+                        await self?.exportOrchestrationToOTLP(runID)
+                    }
                 }
             }
 
@@ -6715,6 +7017,61 @@ final class AppModel: ObservableObject {
                     requestID: "req-ui-1"
                 )
             ))
+        }
+        seedUITestRunFixtureIfNeeded()
+    }
+
+    private func seedUITestRunFixtureIfNeeded() {
+        guard let fixture = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_RUN_FIXTURE"],
+              fixture == "completed" || fixture == "recoverable"
+        else { return }
+        let state: TeamRunState = fixture == "completed" ? .completed : .interrupted
+        let run = OrchestrationRun(
+            id: "seed-run",
+            sessionID: "seed-current",
+            teamID: "seed-team",
+            teamName: "Codex Team",
+            workerID: "seed-worker",
+            workspaceRoot: "/tmp",
+            executionPath: "/tmp",
+            taskID: nil,
+            state: state.rawValue,
+            request: "Build a Pokémon Center stock checker",
+            createdAt: Date().addingTimeInterval(-300).timeIntervalSince1970,
+            updatedAt: Date().timeIntervalSince1970,
+            completedAt: fixture == "completed" ? Date().timeIntervalSince1970 : nil,
+            lastSequence: 1_200,
+            pinned: false,
+            legacy: false,
+            recoverable: fixture == "recoverable",
+            recoveryReason: fixture == "recoverable" ? "Saved checkpoint available" : nil,
+            checkpoint: nil,
+            attempts: nil
+        )
+        orchestrationRuns = [run]
+        selectedOrchestrationRun = run
+        orchestrationRunID = run.id
+        orchestrationState = state
+        let rawEvents: [[String: Any]] = (1...1_200).map { sequence in
+            [
+                "event_id": "seed-event-\(sequence)",
+                "run_id": run.id,
+                "seq": sequence,
+                "type": sequence == 1_200 ? "orchestration_completed" : "agent_job_completed",
+                "summary": sequence == 1_200 ? "Team run completed" : "Durable result \(sequence)",
+                "detail": String(repeating: "Verified output. ", count: 12),
+            ]
+        }
+        orchestrationEvents = rawEvents.compactMap {
+            decode(OrchestrationEvent.self, from: $0)
+        }
+        orchestrationEventIDs = Set(orchestrationEvents.map(\.id))
+        inspectorTab = .runs
+        inspectorCollapsed = false
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_UNCLEAN_RECOVERY"] == "1" {
+            lifecycleRecoveryMessage = fixture == "completed"
+                ? "Locus was force quit after the team run completed. Its results were restored."
+                : "Locus closed unexpectedly. This team run can be resumed from its saved checkpoint."
         }
     }
 
