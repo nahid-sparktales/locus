@@ -534,7 +534,13 @@ class RunStore:
                 "SELECT COALESCE(MAX(attempt), 0) + 1 FROM job_attempts WHERE run_id=? AND job_id=?",
                 (run_id, job_id),
             ).fetchone()[0])
-            attempt_id = str(event.get("attempt_id") or f"{job_id}:{attempt}")
+            # ``attempt_id`` is globally unique in the schema, while job IDs
+            # such as ``writer`` are intentionally reused by every team run.
+            # Include the run boundary so the second team run cannot collide
+            # with the first run's ``writer:1`` record.
+            attempt_id = str(
+                event.get("attempt_id") or f"{run_id}:{job_id}:{attempt}"
+            )
             event["attempt_id"] = attempt_id
             event["attempt"] = attempt
             connection.execute(
@@ -561,7 +567,7 @@ class RunStore:
                 (run_id, job_id),
             ).fetchone()
             if row is None:
-                attempt, attempt_id = 1, f"{job_id}:1"
+                attempt, attempt_id = 1, f"{run_id}:{job_id}:1"
                 connection.execute(
                     """INSERT INTO job_attempts(
                         run_id, job_id, attempt, attempt_id, agent_id, agent_name,

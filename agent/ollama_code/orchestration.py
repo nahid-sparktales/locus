@@ -912,6 +912,18 @@ class TeamOrchestrator:
         )
 
     def synthesize(self, prepared: TeamPreparation, reviews: list[AgentResult], diff_text: str) -> str:
+        if self.remaining_model_calls(prepared.team.budget) <= 0:
+            message = (
+                "Team work completed within the configured model-call budget. "
+                "The final dispatcher summary call was skipped because implementation and review "
+                "used the available calls; the writer's verified handoff remains above."
+            )
+            self.emit({
+                "type": "note",
+                "run_id": prepared.run_id,
+                "text": message,
+            })
+            return message
         dispatcher = prepared.profiles[prepared.team.dispatcher_id]
         payload = {
             "request": prepared.original_request,

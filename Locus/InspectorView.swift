@@ -618,8 +618,9 @@ struct InspectorRunsTab: View {
 
     private var filteredEvents: [OrchestrationEvent] {
         let query = filter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else { return model.orchestrationEvents }
-        return model.orchestrationEvents.filter { event in
+        let durableEvents = model.orchestrationEvents.filter { !$0.isTransientStream }
+        guard !query.isEmpty else { return durableEvents }
+        return durableEvents.filter { event in
             [
                 event.type, event.title, event.jobID, event.attemptID,
                 event.text("agent_name"), event.text("agent_id"),

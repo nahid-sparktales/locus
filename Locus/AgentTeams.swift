@@ -611,6 +611,10 @@ struct OrchestrationEvent: Identifiable, Codable, Hashable {
     var id: String { text("event_id") ?? "event-\(sequence)" }
     var sequence: Int { values["seq"]?.integer ?? 0 }
     var type: String { text("type") ?? "event" }
+    /// Per-token specialist output is intentionally transient. The completed
+    /// attempt carries the bounded output, while hundreds of token rows make
+    /// the durable timeline and Accessibility tree needlessly expensive.
+    var isTransientStream: Bool { type == "agent_job_stream" }
     var jobID: String? { text("job_id") }
     var attemptID: String? { text("attempt_id") }
     var occurredAt: Date? {

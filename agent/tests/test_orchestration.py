@@ -13,6 +13,7 @@ from ollama_code.orchestration import (
     ModelCallScheduler,
     OrchestrationError,
     TeamOrchestrator,
+    TeamPreparation,
     orchestration_fingerprint,
     parse_manifest,
     validate_dispatch_plan,
@@ -191,6 +192,32 @@ def test_maximum_estimated_cost_is_a_hard_run_budget() -> None:
         orchestrator.account_writer_usage(
             profiles["writer"], team.budget, 1, 1_000, 0,
         )
+
+
+def test_synthesis_uses_a_deterministic_handoff_when_budget_is_spent() -> None:
+    events = []
+    _, team, profiles, _ = parse_manifest(_manifest())
+    plan = validate_dispatch_plan(_valid_plan(), team, profiles)
+    prepared = TeamPreparation(
+        run_id="run-1",
+        team=team,
+        profiles=profiles,
+        plan=plan,
+        results=[],
+        writer=profiles[team.default_writer_id],
+        writer_prompt="write",
+        original_request="Build it",
+        workspace="/tmp/workspace",
+    )
+    orchestrator = TeamOrchestrator(events.append, lambda: False)
+    orchestrator.account_writer_usage(
+        prepared.writer, team.budget, team.budget.max_model_calls, 0, 0,
+    )
+
+    result = orchestrator.synthesize(prepared, [], "")
+
+    assert "final dispatcher summary call was skipped" in result
+    assert [event["type"] for event in events] == ["note"]
 
 
 def test_scorecard_uses_bounded_evaluations_and_deterministic_ties(tmp_path) -> None:
