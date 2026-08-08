@@ -5,6 +5,7 @@ import SwiftUI
 struct WorkspaceView: View {
     @EnvironmentObject private var model: AppModel
     @State private var modelPickerPresented = false
+    @State private var teamProgressPresented = false
 
     private var sessionTitle: String {
         model.sessions.first(where: { $0.id == model.currentSessionID })?.displayTitle
@@ -82,7 +83,7 @@ struct WorkspaceView: View {
 
             if model.selectedAgentTeam != nil {
                 Button {
-                    model.focusActiveTeamBoard()
+                    teamProgressPresented.toggle()
                 } label: {
                     ZStack(alignment: .topTrailing) {
                         Image(systemName: "waveform.path.ecg")
@@ -109,6 +110,12 @@ struct WorkspaceView: View {
                 .help("Team progress · \(teamProgressTitle)")
                 .accessibilityLabel("Team progress, \(teamProgressTitle)")
                 .accessibilityIdentifier("workspace.teamProgress")
+                .popover(isPresented: $teamProgressPresented, arrowEdge: .top) {
+                    TeamProgressPopover {
+                        teamProgressPresented = false
+                    }
+                    .environmentObject(model)
+                }
             }
 
             ContextUsageChip()
@@ -896,15 +903,6 @@ private struct ConversationView: View {
                     .buttonStyle(.plain)
                     .padding(.bottom, 12)
                     .accessibilityIdentifier("conversation.jumpToLatest")
-                }
-            }
-            .onChange(of: model.teamBoardFocusRequest) {
-                guard let runID = model.orchestrationRunID else {
-                    model.selectInspectorTab(.runs)
-                    return
-                }
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    proxy.scrollTo("team-board-\(runID)", anchor: .center)
                 }
             }
             .onChange(of: model.blocks.count) {

@@ -237,8 +237,8 @@ struct InspectorRunsTab: View {
                 )
             }
         }
-        .task {
-            if model.orchestrationRuns.isEmpty, model.selectedOrchestrationRun == nil {
+        .task(id: model.currentSessionID) {
+            if !model.isLoadingOrchestrationRuns {
                 await model.refreshOrchestrationRuns()
             }
         }
@@ -261,21 +261,34 @@ struct InspectorRunsTab: View {
                     .buttonStyle(.plain)
                     .help("Refresh run history")
             }
-            if !model.orchestrationRuns.isEmpty {
+            if !runPickerRuns.isEmpty || model.isLoadingOrchestrationRuns {
                 Picker("Run", selection: Binding(
-                    get: { model.selectedOrchestrationRun?.id ?? "" },
-                    set: { id in Task { await model.loadOrchestrationRun(id) } }
+                    get: { model.selectedOrchestrationRun?.id },
+                    set: { id in
+                        guard let id else { return }
+                        Task { await model.loadOrchestrationRun(id) }
+                    }
                 )) {
-                    ForEach(model.orchestrationRuns) { run in
+                    Text(model.isLoadingOrchestrationRuns ? "Loading team runs…" : "Select a run")
+                        .tag(nil as String?)
+                    ForEach(runPickerRuns) { run in
                         Text("\(run.teamName ?? "Team") · \(run.state.replacingOccurrences(of: "_", with: " "))")
-                            .tag(run.id)
+                            .tag(Optional(run.id))
                     }
                 }
                 .labelsHidden()
+                .accessibilityIdentifier("runs.picker")
             }
         }
         .padding(13)
         .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+    }
+
+    private var runPickerRuns: [OrchestrationRun] {
+        AppModel.orchestrationPickerRuns(
+            model.orchestrationRuns,
+            selected: model.selectedOrchestrationRun
+        )
     }
 
     private func runBody(_ run: OrchestrationRun) -> some View {
@@ -305,7 +318,8 @@ struct InspectorRunsTab: View {
                 Spacer()
                 runActions(run)
             }
-            if let reason = run.recoveryReason, run.recoverable {
+            let presentation = model.teamRunPresentation(for: run.id, durable: run)
+            if let reason = run.recoveryReason, presentation.canRecover {
                 Label(reason, systemImage: "arrow.clockwise.circle.fill")
                     .font(.system(size: 8))
                     .foregroundStyle(LocusTheme.warning)
@@ -334,11 +348,12 @@ struct InspectorRunsTab: View {
 
     @ViewBuilder
     private func runActions(_ run: OrchestrationRun) -> some View {
+        let presentation = model.teamRunPresentation(for: run.id, durable: run)
         Menu {
             Button(run.pinned ? "Unpin Run" : "Pin Run") {
                 model.setOrchestrationPinned(run, pinned: !run.pinned)
             }
-            if run.recoverable {
+            if presentation.canRecover {
                 Button("Resume") { model.resumeOrchestration(run) }
             }
             if run.taskID != nil && !run.legacy {
@@ -347,8 +362,10 @@ struct InspectorRunsTab: View {
             if !run.legacy {
                 Button("Duplicate from Current Workspace") { model.duplicateOrchestration(run) }
             }
-            if run.id == model.orchestrationRunID, model.isBusy {
+            if presentation.canPause {
                 Button("Pause at Safe Boundary") { model.pauseOrchestration(run.id) }
+            }
+            if presentation.canStop {
                 Button("Stop Run", role: .destructive) { model.cancelOrchestration(run.id) }
             }
             Menu("Export") {
@@ -361,7 +378,10 @@ struct InspectorRunsTab: View {
             }
             Divider()
             Button("Discard Run", role: .destructive) { model.discardOrchestration(run.id) }
-                .disabled(model.isBusy && run.id == model.orchestrationRunID)
+                .disabled(
+                    presentation.isActivelyOwned
+                        || (!presentation.state.isTerminal && !presentation.canRecover)
+                )
             if run.taskID != nil && ["discarded", "cancelled", "completed", "failed"].contains(run.state) {
                 Button("Clean Up Managed Checkout", role: .destructive) {
                     model.cleanupOrchestrationCheckout(run)
@@ -467,7 +487,10 @@ struct InspectorRunsTab: View {
                                             .font(.system(size: 7, design: .monospaced))
                                             .foregroundStyle(LocusTheme.muted)
                                         Spacer()
-                                        if attempt.state != "running"
+                                        if model.teamRunPresentation(
+                                            for: run.id, durable: run
+                                        ).canRecover,
+                                           attempt.state != "running"
                                             && !model.isCodingAttempt(attempt, in: run) {
                                             Menu {
                                                 Button("Retry with Same Agent") {
@@ -525,11 +548,16 @@ struct InspectorRunsTab: View {
                                 }
                             }
                         }
-                        if let reason = run.recoveryReason, !reason.isEmpty {
-                            Label(reason, systemImage: run.recoverable
+                        let presentation = model.teamRunPresentation(for: run.id, durable: run)
+                        if let reason = run.recoveryReason,
+                           !reason.isEmpty,
+                           presentation.canRecover || presentation.state.isTerminal
+                        {
+                            Label(reason, systemImage: presentation.canRecover
                                 ? "arrow.clockwise.circle.fill" : "exclamationmark.circle.fill")
                                 .font(.system(size: 8))
-                                .foregroundStyle(run.recoverable ? LocusTheme.warning : LocusTheme.coral)
+                                .foregroundStyle(presentation.canRecover
+                                    ? LocusTheme.warning : LocusTheme.coral)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -699,7 +727,10 @@ struct InspectorRunsTab: View {
                                     .font(.system(size: 7, design: .monospaced))
                                     .foregroundStyle(LocusTheme.muted)
                                 Spacer()
-                                if attempt.state != "running"
+                                if model.teamRunPresentation(
+                                    for: run.id, durable: run
+                                ).canRecover,
+                                   attempt.state != "running"
                                     && !model.isCodingAttempt(attempt, in: run) {
                                     Menu {
                                         Button("Retry with Same Agent") {
@@ -1042,7 +1073,7 @@ struct InspectorRunsTab: View {
     }
 
     private func runPhases(_ run: OrchestrationRun) -> [RunPhase] {
-        let state = TeamRunState(rawValue: run.state) ?? .failed
+        let state = model.teamRunPresentation(for: run.id, durable: run).state
         let current: Int = switch state {
         case .queued, .dispatching: 0
         case .waitingDispatchApproval: 1
@@ -1073,8 +1104,7 @@ struct InspectorRunsTab: View {
     }
 
     private func runStateTitle(_ run: OrchestrationRun) -> String {
-        let state = TeamRunState(rawValue: run.state)?.title
-            ?? run.state.replacingOccurrences(of: "_", with: " ").capitalized
+        let state = model.teamRunPresentation(for: run.id, durable: run).state.title
         let total = run.jobCount ?? 0
         guard total > 0 else { return state }
         return "\(state) · \(run.completedJobCount ?? 0) of \(total) jobs"

@@ -58,8 +58,11 @@ private final class OrchestrationURLProtocol: URLProtocol {
         let runID = parts.count >= 3 ? String(parts[2]) : "run-1"
         let run = runJSON(id: runID)
         if path == "/api/orchestrations" {
+            let sessionID = components?.queryItems?
+                .first(where: { $0.name == "session_id" })?.value
+            let runs = sessionID == "session-empty" ? [] : [runJSON(id: "run-1")]
             return try! JSONSerialization.data(withJSONObject: [
-                "runs": [runJSON(id: "run-1")],
+                "runs": runs,
                 "read_only": false,
             ])
         }
@@ -166,6 +169,107 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(urls.filter { $0.path == "/api/orchestrations" }.count, 1)
         XCTAssertEqual(urls.filter { $0.path == "/api/orchestrations/run-1" }.count, 1)
         XCTAssertEqual(urls.filter { $0.path.hasSuffix("/events") }.count, 1)
+    }
+
+    @MainActor
+    func testOpenTeamRunUsesOneCoordinatedRefresh() async throws {
+        let model = orchestrationModel()
+
+        model.openTeamRun("run-1")
+        model.openTeamRun("run-1")
+        model.openTeamRun("run-1")
+
+        for _ in 0..<50 where OrchestrationURLProtocol.requests.count < 3 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let urls = OrchestrationURLProtocol.requests
+        XCTAssertEqual(urls.filter { $0.path == "/api/orchestrations" }.count, 1)
+        XCTAssertEqual(urls.filter { $0.path == "/api/orchestrations/run-1" }.count, 1)
+        XCTAssertEqual(urls.filter { $0.path.hasSuffix("/events") }.count, 1)
+    }
+
+    @MainActor
+    func testLiveRunningStateRejectsStaleDurableRecoveryControls() {
+        let presentation = AppModel.resolveTeamRunPresentation(
+            runID: "run-1",
+            currentRunID: "run-1",
+            liveState: .running,
+            isBusy: true,
+            durableState: .interrupted,
+            durableRecoverable: true
+        )
+
+        XCTAssertEqual(presentation.state, .running)
+        XCTAssertTrue(presentation.canPause)
+        XCTAssertTrue(presentation.canStop)
+        XCTAssertFalse(presentation.canRecover)
+    }
+
+    @MainActor
+    func testInterruptedLiveStateWaitsForDurableRecoveryConfirmation() {
+        let presentation = AppModel.resolveTeamRunPresentation(
+            runID: "run-1",
+            currentRunID: "run-1",
+            liveState: .interrupted,
+            isBusy: false,
+            durableState: .running,
+            durableRecoverable: true
+        )
+
+        XCTAssertFalse(presentation.canRecover)
+        XCTAssertFalse(presentation.canPause)
+        XCTAssertFalse(presentation.canStop)
+    }
+
+    @MainActor
+    func testPausedRunOffersRecoveryOnlyAfterWorkerStops() {
+        let stillStopping = AppModel.resolveTeamRunPresentation(
+            runID: "run-1",
+            currentRunID: "run-1",
+            liveState: .paused,
+            isBusy: true,
+            durableState: .paused,
+            durableRecoverable: true
+        )
+        let stopped = AppModel.resolveTeamRunPresentation(
+            runID: "run-1",
+            currentRunID: "run-1",
+            liveState: .paused,
+            isBusy: false,
+            durableState: .paused,
+            durableRecoverable: true
+        )
+
+        XCTAssertFalse(stillStopping.canRecover)
+        XCTAssertTrue(stopped.canRecover)
+        XCTAssertFalse(stopped.canPause)
+        XCTAssertFalse(stopped.canStop)
+    }
+
+    @MainActor
+    func testPickerOptionsRetainASelectedRunMissingFromTheLatestList() async {
+        let model = orchestrationModel()
+        await model.loadOrchestrationRun("run-missing")
+
+        let options = AppModel.orchestrationPickerRuns(
+            model.orchestrationRuns,
+            selected: model.selectedOrchestrationRun
+        )
+
+        XCTAssertEqual(options.map(\.id), ["run-missing"])
+    }
+
+    @MainActor
+    func testChangingSessionsClearsASelectionOwnedByThePreviousSession() async {
+        let model = orchestrationModel()
+        await model.loadOrchestrationRun("run-1")
+        XCTAssertEqual(model.selectedOrchestrationRun?.sessionID, "session-1")
+
+        model.currentSessionID = "session-empty"
+        await model.refreshOrchestrationRuns()
+
+        XCTAssertNil(model.selectedOrchestrationRun)
+        XCTAssertTrue(model.orchestrationEvents.isEmpty)
     }
 
     @MainActor

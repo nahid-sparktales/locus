@@ -728,7 +728,7 @@ struct TeamProgressPopover: View {
             Text("\(model.teamModelCalls.formatted()) calls")
             Text("\(model.teamMeteredTokens.formatted()) hosted tokens")
             Spacer()
-            if runIsActive, let runID = model.orchestrationRunID {
+            if presentation?.canStop == true, let runID = model.orchestrationRunID {
                 Button("Stop", role: .destructive) {
                     model.cancelOrchestration(runID)
                 }
@@ -738,7 +738,11 @@ struct TeamProgressPopover: View {
                 .accessibilityIdentifier("teamProgress.stop")
             }
             Button("Open Runs") {
-                model.selectInspectorTab(.runs)
+                if let runID = model.orchestrationRunID {
+                    model.openTeamRun(runID)
+                } else {
+                    model.selectInspectorTab(.runs)
+                }
                 dismiss()
             }
             .buttonStyle(.borderless)
@@ -772,18 +776,18 @@ struct TeamProgressPopover: View {
     }
 
     private var runIsActive: Bool {
-        switch model.orchestrationState {
-        case .queued, .dispatching, .running, .waitingPermission, .waitingComputer,
-             .waitingDispatchApproval, .reviewing, .paused:
-            return true
-        case .completed, .failed, .interrupted, .cancelled, .discarded, nil:
-            return false
-        }
+        presentation?.isActivelyOwned == true
+    }
+
+    private var presentation: TeamRunPresentation? {
+        guard let runID = model.orchestrationRunID else { return nil }
+        let durable = model.orchestrationRuns.first(where: { $0.id == runID })
+        return model.teamRunPresentation(for: runID, durable: durable)
     }
 
     private var progressStateTitle: String {
         if model.selectedTeamRouteIssue != nil { return "Needs model setup" }
-        return model.orchestrationState?.title ?? "Ready"
+        return presentation?.state.title ?? "Ready"
     }
 
     private var progressStateColor: Color {

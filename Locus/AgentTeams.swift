@@ -543,6 +543,19 @@ enum TeamRunState: String, Codable, CaseIterable, Hashable {
     }
 }
 
+/// One resolved view of a run's live and durable state. UI surfaces consume
+/// this instead of independently mixing websocket state with saved metadata.
+struct TeamRunPresentation: Equatable {
+    let state: TeamRunState
+    let isCurrent: Bool
+    let isActivelyOwned: Bool
+    let canPause: Bool
+    let canStop: Bool
+    let canRecover: Bool
+
+    var shouldCollapseTerminal: Bool { state.isTerminal && !canRecover }
+}
+
 struct AgentActivity: Identifiable, Codable, Hashable {
     let id: String
     var agentName: String

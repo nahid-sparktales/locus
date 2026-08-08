@@ -553,6 +553,7 @@ final class LocusUITests: XCTestCase {
         let progress = anyElement("workspace.teamProgress")
         XCTAssertTrue(progress.waitForExistence(timeout: 3))
         progress.click()
+        XCTAssertTrue(anyElement("teamProgress.popover").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("teamBoard.seed-run").waitForExistence(timeout: 3))
         XCTAssertTrue(
             app.staticTexts.matching(

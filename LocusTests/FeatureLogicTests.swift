@@ -79,6 +79,36 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertTrue(BackendProcess.portIsAvailable(fallback))
     }
 
+    func testLoopbackReadinessDistinguishesListeningAndClosedPorts() throws {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        defer { close(descriptor) }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = 0
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        let bound = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        XCTAssertEqual(bound, 0)
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        XCTAssertEqual(withUnsafeMutablePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(descriptor, $0, &length)
+            }
+        }, 0)
+        let port = Int(UInt16(bigEndian: address.sin_port))
+        let endpoint = try XCTUnwrap(URL(string: "http://127.0.0.1:\(port)"))
+
+        XCTAssertFalse(BackendProcess.loopbackPortIsListening(at: endpoint))
+        XCTAssertEqual(listen(descriptor, 1), 0)
+        XCTAssertTrue(BackendProcess.loopbackPortIsListening(at: endpoint))
+    }
+
     func testLegacyAutomaticLaunchSettingIsIgnoredAndNotReencoded() throws {
         let legacy = #"{"backendURL":"http://127.0.0.1:8791","launchBackendAutomatically":false}"#
         let settings = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
