@@ -222,6 +222,21 @@ newest recovery batch. Returns
 Traversal-like batch names are refused and existing session files are never
 overwritten. Returns 409 while a turn is active.
 
+### Managed team tasks
+
+`GET /api/tasks/{task_id}` returns the task record, current tree, and complete
+baseline-relative binary patch. `POST /api/tasks/{task_id}/apply` first runs a
+complete `git apply --check`; only a clean check is applied to the source
+workspace, unstaged and uncommitted. A conflict leaves the source untouched.
+Successful application records the applied tree, so later rounds expose only
+their new delta. Task IDs are bounded identifiers and traversal is refused.
+
+Session summaries and details may include `task`, `team`, `workspace_root`,
+`execution_path`, and `environment`. Details and resume responses additionally
+include `agent_activities`, `orchestration_state`, `orchestration_run_id`, and
+`worker_id`. Agent activity comes from separate append-only JSONL records and
+never contains provider credentials or reasoning signatures.
+
 ### `GET /api/git/status` and `GET /api/git/diff`
 
 `status` accepts `untracked=normal|all|no` and returns branch, repository state,
@@ -344,7 +359,7 @@ Endpoint: `/ws/chat`.
 
 | `type` | Extra fields | Effect |
 |---|---|---|
-| `user_message` | `text: string`, optional `mode: "ask" \| "work" \| "plan" \| "build"`, optional `attachments` | Runs one agent turn. Existing `ask`, `plan`, and `build` values remain compatible; `work` is tools-enabled adaptive behavior. If `text` starts with `/` it is executed as a slash command and ends with a `slash_result` event instead of `turn_done`. |
+| `user_message` | `text: string`, optional `mode: "ask" \| "work" \| "plan" \| "build"`, optional `attachments`, optional `team` manifest | Runs one solo or dispatcher-led team turn. Existing modes remain compatible. A team manifest contains one explicit team, its enabled profiles and ephemeral routes, optional forced member, and bounded budgets. Credentials are accepted only in memory and are never echoed or persisted. Slash commands and Chat mode reject team routing. |
 | `permission_decision` | `request_id: string`, `decision: "once" \| "always" \| "deny"` | Answers a `permission_request`. Unknown/invalid values are treated as `deny`. Late answers are ignored. |
 | `interrupt` | — | Soft-interrupts the current turn: streaming stops after the current chunk, pending permission waits are denied, turn ends with `turn_done {reason: "interrupted"}`. Safe to send when idle. |
 | `steer` | `text: string` | Adds direction to the active turn. It interrupts only the current provider generation, waits for an already-running tool/native action to reach a safe boundary, and continues the same turn without an intermediate `turn_done`. |
@@ -388,9 +403,15 @@ every `turn_done`.
   "prompt_tokens": 0, "completion_tokens": 0,
   "max_iterations": 40,
   "has_project_context": false,
-  "permissions": { "skip_all": false, "allowed": ["bash", "write_file"] }
+  "permissions": { "skip_all": false, "allowed": ["bash", "write_file"] },
+  "worker_id": "per-process identity", "process_id": 1234
 }
 ```
+
+The macOS app keeps one control service and launches one additional local
+service/WebSocket per running team chat. Worker identity is repeated on every
+orchestration, job, and scheduler-lease event so background updates remain
+scoped to the correct chat.
 
 ### `session_started`
 
@@ -460,6 +481,34 @@ valid only for the latest Accessibility snapshot and must be refreshed after a
 mutation. A screenshot result is an ephemeral newest-only observation; routes
 that reject images are retried once without it and remain Accessibility-only
 for the session.
+
+### Team orchestration and scheduler events
+
+- `orchestration_started` identifies `run_id`, `team_id`, `team_name`,
+  `worker_id`, state, and the accepted hard budget.
+- `dispatch_plan` carries the validated, acyclic job graph. It is emitted only
+  after a required `submit_dispatch_plan` tool call, strict JSON fallback, one
+  JSON repair, or the deterministic default-writer recovery.
+- `orchestration_state` reports `dispatching`, `running`, `reviewing`, or a
+  permission/computer wait. Steering cancels unstarted jobs and returns to
+  dispatching without an intermediate `turn_done`.
+- `agent_job_started`, `agent_job_stream`, and `agent_job_completed` identify
+  the agent, exact provider/model, bounded goal, elapsed time, evidence, and
+  usage. Only explicitly supplied `reasoning_text` is retained; signatures and
+  redacted reasoning are never exposed. Stream chunks are not persisted.
+- `scheduler_lease_waiting`, `scheduler_lease_acquired`, and
+  `scheduler_lease_released` expose the authenticated local model-call lease.
+  Leases are shared across worker processes, round-robin by run, heartbeat
+  while held, and reclaimed after expiry or process failure.
+- `task_ready`, `task_changes`, `task_state`, and `task_applied` carry the
+  managed checkout record and baseline-relative change state.
+- `orchestration_completed` is terminal for the orchestration but not the chat;
+  exactly one `turn_done` follows it. `interrupt` cancels every job in the run.
+
+Dispatchers and read-only specialists receive no mutation, MCP, extension, or
+computer schemas. Specialists cannot recursively delegate. Only the designated
+writer enters the existing permission-controlled agent loop, and Computer
+Control remains foreground-only and globally exclusive in the native broker.
 
 ### `tool_call_proposed`
 The model asked to run a tool. Always emitted before any `permission_request`
@@ -577,6 +626,27 @@ message_start                      (model continues after tool result)
 token × N
 message_end
 turn_done             {reason: "complete"}
+session_info
+```
+
+Typical team turn:
+
+```
+orchestration_started
+scheduler_lease_waiting/acquired/released       (dispatcher)
+dispatch_plan
+agent_job_started/completed × N                 (read-only waves may overlap)
+agent_job_started                               (the only writer)
+message/tool/permission events × N              (ordinary permission loop)
+agent_job_completed                             (writer usage)
+orchestration_state {state: "reviewing"}
+agent_job_started/completed × N                 (baseline-relative review)
+[writer revision round]
+agent_job_started/completed                     (dispatcher synthesis)
+task_changes
+orchestration_completed
+task_state
+turn_done
 session_info
 ```
 

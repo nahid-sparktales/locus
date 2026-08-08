@@ -16,7 +16,10 @@ import binascii
 import ipaddress
 import os
 import signal
+import subprocess
 import sys
+import time
+import uuid
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeout
 from contextlib import asynccontextmanager, contextmanager
@@ -40,6 +43,13 @@ from .config import (
 from .core import AgentCore
 from .extensions import ExtensionError
 from .ollama import OllamaError, effective_context_length
+from .orchestration import (
+    OrchestrationError,
+    TeamOrchestrator,
+    TeamPreparation,
+    client_for_profile,
+    parse_manifest,
+)
 from .sessions import (
     MAX_SESSION_LINE_BYTES,
     SessionMeta,
@@ -48,6 +58,7 @@ from .sessions import (
     update_session_metadata,
 )
 from .terminal import TerminalManager, TerminalRejected
+from .worktrees import TaskCheckout, TaskCheckoutStore, WorktreeError
 
 #: Tools whose success means files on disk may have changed.
 _MUTATING_TOOLS = {"write_file", "edit_file", "multi_edit", "bash"}
@@ -85,6 +96,7 @@ class ChatService:
 
     def __init__(self, core: AgentCore) -> None:
         self.core = core
+        self.worker_id = uuid.uuid4().hex
         self.loop: asyncio.AbstractEventLoop | None = None
         self.queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.ws: WebSocket | None = None
@@ -92,6 +104,9 @@ class ChatService:
         self.pending_permissions: dict[str, Future[str]] = {}
         self.pending_computer_actions: dict[str, Future[dict[str, Any]]] = {}
         self.turn_future: Any = None
+        self.active_orchestrator: TeamOrchestrator | None = None
+        self.active_team: TeamPreparation | None = None
+        self.current_task: TaskCheckout | None = None
         self._state_guard = RLock()
         self._state_mutating = False
         core.on_event(self.emit)
@@ -111,6 +126,22 @@ class ChatService:
 
     # -- core event bridge (called from the worker thread) --
     def emit(self, event: dict[str, Any]) -> None:
+        event_type = str(event.get("type") or "")
+        if event_type == "session_info":
+            event = dict(event)
+            event.setdefault("worker_id", self.worker_id)
+            event.setdefault("process_id", os.getpid())
+        if event_type.startswith(("agent_job_", "orchestration_", "scheduler_lease")) \
+                or event_type == "dispatch_plan":
+            event = dict(event)
+            event.setdefault("worker_id", self.worker_id)
+        if event_type in {"agent_job_started", "agent_job_completed", "dispatch_plan"} \
+                or event_type.startswith("orchestration_") \
+                or event_type.startswith("scheduler_lease"):
+            # Separate append-only records keep the main transcript format
+            # compatible. Route credentials and provider signatures never
+            # enter these events.
+            self.core.session.append({"type": "agent_activity", "event": event})
         loop = self.loop
         if loop is None or not loop.is_running():
             return
@@ -247,7 +278,7 @@ class ChatService:
             ):
                 return False
             name = str(getattr(call, "__name__", ""))
-            steerable = name in {"_run_user_turn", "retry_last_response"}
+            steerable = name in {"_run_user_turn", "_run_team_turn", "retry_last_response"}
             if steerable:
                 self.core.begin_steerable_turn()
             try:
@@ -624,6 +655,7 @@ def session_detail(session_id: str) -> dict[str, Any]:
         messages = SessionStore.load(path)
     except SessionTooLargeError as e:
         raise HTTPException(413, str(e)) from e
+    activity = SessionStore.agent_activity(path)
     return {
         "id": session_id,
         "messages": AgentCore.sanitize_messages(messages),
@@ -634,7 +666,60 @@ def session_detail(session_id: str) -> dict[str, Any]:
         "cwd": header.get("cwd"),
         "model": header.get("model"),
         "started": header.get("started"),
+        "task": meta.get("task"),
+        "team": meta.get("team"),
+        "workspace_root": meta.get("workspace_root"),
+        "execution_path": meta.get("execution_path"),
+        "environment": meta.get("environment"),
+        "agent_activities": activity["activities"],
+        "orchestration_state": activity.get("orchestration_state"),
+        "orchestration_run_id": activity.get("run_id"),
+        "worker_id": activity.get("worker_id"),
     }
+
+
+@app.get("/api/tasks/{task_id}")
+def task_detail(task_id: str) -> dict[str, Any]:
+    """Return task metadata and its complete baseline-relative binary patch."""
+    task = TaskCheckoutStore.load(task_id)
+    if task is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    try:
+        patch, tree = task.patch()
+    except WorktreeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {
+        "ok": True,
+        "task": task.as_dict(),
+        "tree": tree,
+        "patch": patch,
+        "patch_bytes": len(patch.encode("utf-8", errors="surrogateescape")),
+    }
+
+
+@app.post("/api/tasks/{task_id}/apply")
+def task_apply(task_id: str) -> dict[str, Any]:
+    """Apply only after a complete dry run; leave source changes unstaged."""
+    svc = service()
+    task = TaskCheckoutStore.load(task_id)
+    if task is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    try:
+        with svc.state_mutation():
+            result = task.apply()
+            if svc.current_task and svc.current_task.id == task.id:
+                svc.current_task = task
+                svc.core.task_metadata = task.as_dict()
+            svc.queue_event({
+                "type": "task_applied",
+                "task": task.as_dict(),
+                **result,
+            })
+            return {"task": task.as_dict(), **result}
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except WorktreeError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.patch("/api/sessions/{session_id}")
@@ -682,6 +767,17 @@ def session_resume(session_id: str) -> dict[str, Any]:
     try:
         with svc.state_mutation():
             result = svc.core.resume_session(session_id)
+            meta = SessionMeta.get(session_id)
+            task_value = meta.get("task")
+            task_id = str(task_value.get("id") or "") if isinstance(task_value, dict) else ""
+            task = TaskCheckoutStore.load(task_id) if task_id else None
+            svc.current_task = task
+            if task is not None:
+                svc.core.enter_task_checkout(
+                    task.execution_path,
+                    task.workspace_root,
+                    task.as_dict(),
+                )
     except AgentBusyError as e:
         raise _busy_http() from e
     except FileNotFoundError as e:
@@ -690,11 +786,17 @@ def session_resume(session_id: str) -> dict[str, Any]:
         raise HTTPException(413, str(e)) from e
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
+    path = SessionStore.path_for(session_id)
+    activity = SessionStore.agent_activity(path) if path is not None else {"activities": []}
     return {
         "ok": True,
         "text": result.get("text"),
         "messages": (result.get("data") or {}).get("messages", []),
         "session_info": svc.core.session_info(),
+        "agent_activities": activity["activities"],
+        "orchestration_state": activity.get("orchestration_state"),
+        "orchestration_run_id": activity.get("run_id"),
+        "worker_id": activity.get("worker_id"),
     }
 
 
@@ -1242,6 +1344,352 @@ def _run_user_turn(
     )
 
 
+def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> None:
+    """Run specialists, one permission-controlled writer, review, and synthesis."""
+    core = svc.core
+    started = time.monotonic()
+    terminal_reason = "complete"
+    core._suppress_turn_done = True
+    try:
+        run_id, team, _, _ = parse_manifest(manifest)
+        # Persist the visible request before dispatch can spend minutes on
+        # specialists. This makes a brand-new background task immediately
+        # addressable in the sidebar. Internal writer prompts stay in memory.
+        core._add_message({"role": "user", "content": text})
+        workspace_root = core.workspace_root
+        if team.use_managed_worktree and svc.current_task is None \
+                and _is_git_workspace(workspace_root):
+            task = TaskCheckoutStore.create(workspace_root, run_id)
+            task.state = "running"
+            task.save()
+            svc.current_task = task
+            core.enter_task_checkout(task.execution_path, task.workspace_root, task.as_dict())
+            SessionMeta.update(
+                core.session.session_id,
+                task=task.as_dict(),
+                team={"id": team.id, "name": team.name},
+                workspace_root=task.workspace_root,
+                execution_path=task.execution_path,
+                environment={"isolation": "managed_worktree"},
+            )
+            svc.emit({"type": "task_ready", "task": task.as_dict(), "state": "running"})
+
+        orchestrator = TeamOrchestrator(svc.emit, core._should_stop_stream)
+        svc.active_orchestrator = orchestrator
+        prepared: TeamPreparation | None = None
+        request = text
+        for _round in range(team.budget.max_rounds):
+            try:
+                prepared = orchestrator.prepare(request, core.cwd, manifest)
+                break
+            except InterruptedError:
+                if core._interrupt.is_set():
+                    raise
+                if not core._apply_pending_steers():
+                    raise
+                update = str(core.messages[-1].get("content") or "")
+                request = f"{text}\n\nUser steering update:\n{update}"
+                svc.emit({
+                    "type": "orchestration_state",
+                    "run_id": run_id,
+                    "state": "dispatching",
+                    "message": "Replanning with the user's steering update",
+                })
+        if prepared is None:
+            raise OrchestrationError("the orchestration-round budget ended before dispatch completed")
+        svc.active_team = prepared
+
+        route_snapshot = _install_writer_route(core, prepared)
+        try:
+            _run_team_writer(
+                svc,
+                orchestrator,
+                prepared,
+                prepared.writer_prompt,
+                persisted_user_text=text,
+                job_id="writer",
+                goal=prepared.original_request,
+            )
+            terminal_reason = str(core.last_turn_result.get("reason") or "complete")
+            if terminal_reason not in {"complete", "max_iterations"}:
+                raise InterruptedError(terminal_reason)
+
+            core.begin_steerable_turn()
+            diff_text = _task_diff(svc, core.workspace_root, core.cwd)
+            try:
+                reviews = orchestrator.review(prepared, diff_text)
+            except InterruptedError:
+                if core._interrupt.is_set() or not core._apply_pending_steers():
+                    raise
+                update = str(core.messages[-1].get("content") or "")
+                svc.emit({
+                    "type": "orchestration_state",
+                    "run_id": run_id,
+                    "state": "dispatching",
+                    "message": "Replanning remaining work after steering",
+                })
+                prepared = orchestrator.prepare(
+                    f"{text}\n\nUser steering update:\n{update}",
+                    core.cwd,
+                    manifest,
+                )
+                _run_team_writer(
+                    svc,
+                    orchestrator,
+                    prepared,
+                    prepared.writer_prompt,
+                    persisted_user_text="[Team steering update]",
+                    job_id="writer-steered",
+                    goal="Apply the user's steering update to the existing task changes",
+                )
+                diff_text = _task_diff(svc, core.workspace_root, core.cwd)
+                reviews = orchestrator.review(prepared, diff_text)
+            revision = _revision_request(reviews)
+            if revision and prepared.team.budget.max_rounds > 1 and not core._interrupt.is_set():
+                _run_team_writer(
+                    svc,
+                    orchestrator,
+                    prepared,
+                    "Team review found issues that must be resolved before handoff. Verify each finding "
+                    "against the workspace, make warranted revisions, and rerun focused tests.\n\n"
+                    + revision,
+                    persisted_user_text="[Team review requested a revision]",
+                    job_id="writer-revision",
+                    goal="Resolve verified reviewer findings and rerun focused tests",
+                )
+                terminal_reason = str(core.last_turn_result.get("reason") or "complete")
+                diff_text = _task_diff(svc, core.workspace_root, core.cwd)
+
+            core.begin_steerable_turn()
+            synthesis = orchestrator.synthesize(prepared, reviews, diff_text)
+            if synthesis and not core._interrupt.is_set():
+                svc.emit({"type": "message_start", "agent": "dispatcher"})
+                svc.emit({"type": "token", "text": synthesis, "agent": "dispatcher"})
+                svc.emit({"type": "message_end", "agent": "dispatcher"})
+                core._add_message({"role": "assistant", "content": synthesis})
+        finally:
+            _restore_writer_route(core, route_snapshot)
+
+        if svc.current_task is not None:
+            patch_text, tree = svc.current_task.patch()
+            svc.emit({
+                "type": "task_changes",
+                "task_id": svc.current_task.id,
+                "tree": tree,
+                "has_changes": bool(patch_text),
+                "patch_bytes": len(patch_text.encode("utf-8", errors="surrogateescape")),
+            })
+        svc.emit({
+            "type": "orchestration_completed",
+            "run_id": prepared.run_id,
+            "state": "completed",
+            "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
+            "usage": orchestrator.usage(),
+        })
+    except InterruptedError:
+        terminal_reason = "interrupted"
+        svc.emit({
+            "type": "orchestration_completed",
+            "run_id": str(manifest.get("run_id") or ""),
+            "state": "interrupted",
+            "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
+        })
+    except (OrchestrationError, WorktreeError, OllamaError, ValueError) as exc:
+        terminal_reason = "error"
+        svc.emit({"type": "error", "message": str(exc)})
+        svc.emit({
+            "type": "orchestration_completed",
+            "run_id": str(manifest.get("run_id") or ""),
+            "state": "failed",
+            "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
+        })
+    finally:
+        if svc.current_task is not None:
+            task_state = {
+                "complete": "completed",
+                "max_iterations": "completed",
+                "interrupted": "interrupted",
+            }.get(terminal_reason, "failed")
+            svc.current_task.state = task_state
+            svc.current_task.save()
+            core.task_metadata = svc.current_task.as_dict()
+            SessionMeta.update(
+                core.session.session_id,
+                task=svc.current_task.as_dict(),
+            )
+            svc.emit({
+                "type": "task_state",
+                "task": svc.current_task.as_dict(),
+                "state": task_state,
+            })
+        core._suppress_turn_done = False
+        core.end_steerable_turn()
+        svc.active_orchestrator = None
+        svc.active_team = None
+        svc.emit({
+            "type": "turn_done",
+            "reason": terminal_reason,
+            "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
+        })
+        core._emit_info()
+
+
+def _run_team_writer(
+    svc: ChatService,
+    orchestrator: TeamOrchestrator,
+    prepared: TeamPreparation,
+    prompt: str,
+    *,
+    persisted_user_text: str,
+    job_id: str,
+    goal: str,
+) -> None:
+    """Run the only mutation-capable member under both permission and call budgets."""
+    core = svc.core
+    remaining = orchestrator.remaining_model_calls(prepared.team.budget)
+    if remaining <= 0:
+        raise OrchestrationError("team model-call budget exhausted before the writer ran")
+    started = time.monotonic()
+    prompt_before = core.total_prompt_tokens
+    completion_before = core.total_completion_tokens
+    route = prepared.writer.route
+    svc.emit({
+        "type": "agent_job_started",
+        "run_id": prepared.run_id,
+        "job_id": job_id,
+        "agent_id": prepared.writer.id,
+        "agent_name": prepared.writer.name,
+        "role": prepared.writer.role,
+        "provider": str(route.get("account_label") or route.get("provider") or ""),
+        "model": prepared.writer.model,
+        "goal": goal[:2_000],
+        "state": "running",
+    })
+    with orchestrator.writer_slot(prepared.run_id, prepared.writer):
+        core.run_turn(
+            prompt,
+            svc.decide,
+            allow_tools=True,
+            persisted_user_text=persisted_user_text,
+            model_call_limit=remaining,
+            persist_user_message=False,
+        )
+    prompt_tokens = max(core.total_prompt_tokens - prompt_before, 0)
+    completion_tokens = max(core.total_completion_tokens - completion_before, 0)
+    model_calls = int(core.last_turn_result.get("model_calls") or 0)
+    orchestrator.account_writer_usage(
+        prepared.writer,
+        prepared.team.budget,
+        model_calls,
+        prompt_tokens,
+        completion_tokens,
+    )
+    assistant = next(
+        (message for message in reversed(core.messages) if message.get("role") == "assistant"),
+        {},
+    )
+    output = str(assistant.get("content") or "")[:120_000]
+    reasoning = str(assistant.get("_display_reasoning") or "")[:120_000]
+    svc.emit({
+        "type": "agent_job_completed",
+        "run_id": prepared.run_id,
+        "state": "completed",
+        "result": {
+            "job_id": job_id,
+            "agent_id": prepared.writer.id,
+            "agent_name": prepared.writer.name,
+            "role": prepared.writer.role,
+            "output": output,
+            "reasoning_text": reasoning,
+            "evidence": [],
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "elapsed_ms": max(int((time.monotonic() - started) * 1_000), 0),
+            "error": "",
+        },
+        "usage": orchestrator.usage(),
+    })
+
+
+def _install_writer_route(core: AgentCore, prepared: TeamPreparation) -> dict[str, Any]:
+    """Temporarily route AgentCore through the selected writer without persistence."""
+    snapshot = {
+        "client": core.client,
+        "provider": core.provider,
+        "host": core.host,
+        "model": core.model,
+        "config": dict(core.config),
+        "context_limit": core.context_limit,
+        "context_source": core._context_source,
+        "context_requested": core._context_requested,
+        "context_for": core._context_limit_for,
+    }
+    client = client_for_profile(prepared.writer)
+    core.client = client
+    core.model = prepared.writer.model
+    core.host = client.host
+    core.provider = "ollama" if prepared.writer.route.get("provider") == "ollama" else "remote"
+    core.config["remote_account_label"] = str(
+        prepared.writer.route.get("account_label") or prepared.writer.name
+    ) if core.provider == "remote" else ""
+    core.context_limit = 0
+    core._context_source = "unknown"
+    core._context_requested = 0
+    core._context_limit_for = ""
+    core._emit_info()
+    return snapshot
+
+
+def _restore_writer_route(core: AgentCore, snapshot: dict[str, Any]) -> None:
+    core.client = snapshot["client"]
+    core.provider = snapshot["provider"]
+    core.host = snapshot["host"]
+    core.model = snapshot["model"]
+    core.config = snapshot["config"]
+    core.context_limit = snapshot["context_limit"]
+    core._context_source = snapshot["context_source"]
+    core._context_requested = snapshot["context_requested"]
+    core._context_limit_for = snapshot["context_for"]
+    core._emit_info()
+
+
+def _is_git_workspace(workspace: str) -> bool:
+    result = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=workspace,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=10,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _task_diff(svc: ChatService, workspace_root: str, execution_path: str) -> str:
+    if svc.current_task is not None:
+        return svc.current_task.patch()[0]
+    result = subprocess.run(
+        ["git", "diff", "--binary", "--full-index", "HEAD", "--"],
+        cwd=execution_path or workspace_root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=60,
+        check=False,
+    )
+    return result.stdout[:2_000_000]
+
+
+def _revision_request(reviews: list[Any]) -> str:
+    revisions: list[str] = []
+    for review in reviews:
+        text = str(review.output or "").strip()
+        lowered = text.lower().replace(" ", "")
+        if '"verdict":"revise"' in lowered or text.lower().startswith("revise"):
+            revisions.append(text)
+    return "\n\n".join(revisions)[:80_000]
+
+
 def _validated_chat_attachments(value: Any) -> list[dict[str, str]]:
     if value in (None, []):
         return []
@@ -1298,11 +1746,19 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         if attachments and not just_chat:
             _command_error(svc, str(mtype), "Message attachments require Chat mode.")
             return
-        call, args = (
-            (_run_slash, (svc, text))
-            if text.startswith("/") and not just_chat
-            else (_run_user_turn, (svc, text, just_chat, attachments))
-        )
+        team_manifest = msg.get("team")
+        if team_manifest is not None and (just_chat or text.startswith("/") or attachments):
+            _command_error(svc, str(mtype), "Team routing requires an ordinary Work message.")
+            return
+        if team_manifest is not None and not isinstance(team_manifest, dict):
+            _command_error(svc, str(mtype), "The team manifest is malformed.")
+            return
+        if text.startswith("/") and not just_chat:
+            call, args = _run_slash, (svc, text)
+        elif team_manifest is not None:
+            call, args = _run_team_turn, (svc, text, team_manifest)
+        else:
+            call, args = _run_user_turn, (svc, text, just_chat, attachments)
         if not svc.start_turn(loop, call, *args):
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
     elif mtype == "permission_decision":
@@ -1489,7 +1945,12 @@ async def ws_chat(ws: WebSocket) -> None:
         except Exception:  # noqa: BLE001
             pass
     svc.loop = asyncio.get_running_loop()
-    await ws.send_json({"type": "session_info", **svc.core.session_info()})
+    await ws.send_json({
+        "type": "session_info",
+        **svc.core.session_info(),
+        "worker_id": svc.worker_id,
+        "process_id": os.getpid(),
+    })
     # A console run survives a dropped socket — killing a build because the
     # laptop slept is worse than the state it costs to replay it.
     await ws.send_json({"type": "terminal_state", "runs": svc.terminal.snapshot()})

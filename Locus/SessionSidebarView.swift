@@ -37,7 +37,7 @@ struct SessionSidebarView: View {
                                 group: group,
                                 expanded: model.isWorkspaceExpanded(group.id),
                                 active: group.id == model.activeWorkspaceID,
-                                actionsDisabled: model.isBusy || model.hasPendingPermission,
+                                actionsDisabled: model.chatNavigationDisabled,
                                 onToggle: {
                                     model.setWorkspaceExpanded(
                                         group.id,
@@ -163,6 +163,17 @@ struct SessionSidebarView: View {
             }
 
             navigationRow(
+                symbol: "person.3.sequence.fill",
+                title: "Agents & Teams",
+                help: "Configure dispatchers, specialists, writers, and team budgets",
+                accessibilityLabel: "Manage agents and teams",
+                identifier: "sidebar.agentsTeams"
+            ) {
+                model.settingsPage = .agents
+                model.settingsPresented = true
+            }
+
+            navigationRow(
                 symbol: "shippingbox",
                 title: "Hugging Face",
                 help: "Browse and install GGUF models from Hugging Face",
@@ -257,7 +268,7 @@ struct SessionSidebarView: View {
                 .help("Add workspace")
                 .accessibilityLabel("Add workspace")
                 .accessibilityIdentifier("sidebar.addWorkspace")
-                .disabled(model.isBusy || model.hasPendingPermission)
+                .disabled(model.chatNavigationDisabled)
             }
 
             HStack(spacing: SidebarMetrics.iconGap) {
@@ -297,7 +308,8 @@ struct SessionSidebarView: View {
     private func sessionRow(_ session: SessionSummary) -> some View {
         SessionRow(
             session: session,
-            isActive: session.id == model.currentSessionID
+            isActive: session.id == model.currentSessionID,
+            teamState: model.teamRunState(for: session)
         ) {
             model.resume(session)
         }
@@ -625,6 +637,7 @@ private struct SectionLabel: View {
 private struct SessionRow: View {
     let session: SessionSummary
     let isActive: Bool
+    let teamState: TeamRunState?
     let action: () -> Void
 
     var body: some View {
@@ -642,9 +655,18 @@ private struct SessionRow: View {
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(LocusTheme.ink)
                         .lineLimit(1)
-                    Text(session.date, style: .relative)
-                        .font(.system(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                    HStack(spacing: 4) {
+                        if let teamState {
+                            Circle()
+                                .fill(statusColor(teamState))
+                                .frame(width: 5, height: 5)
+                            Text(teamState.title)
+                        } else {
+                            Text(session.date, style: .relative)
+                        }
+                    }
+                    .font(.system(size: 8))
+                    .foregroundStyle(LocusTheme.muted)
                 }
                 Spacer(minLength: 4)
                 if session.isPinned {
@@ -675,5 +697,15 @@ private struct SessionRow: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Resume \(session.displayTitle)")
         .accessibilityIdentifier("session.\(session.id)")
+    }
+
+    private func statusColor(_ state: TeamRunState) -> Color {
+        switch state {
+        case .completed: LocusTheme.success
+        case .failed: LocusTheme.coral
+        case .interrupted: LocusTheme.warning
+        case .waitingPermission, .waitingComputer: LocusTheme.warning
+        default: LocusTheme.signalDeep
+        }
     }
 }

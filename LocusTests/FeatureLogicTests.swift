@@ -1588,4 +1588,133 @@ final class FeatureLogicTests: XCTestCase {
             )
         }
     }
+
+    // MARK: - Agent teams
+
+    func testAgentTeamRequiresAReadOnlyDispatcherAndExactlyOneWriter() {
+        let dispatcher = AgentProfile(
+            name: "Dispatch",
+            model: "qwen",
+            role: .dispatcher
+        )
+        let writer = AgentProfile(
+            name: "Writer",
+            model: "kimi",
+            role: .implementer,
+            accessCeiling: .workspaceWrite
+        )
+        let valid = AgentTeam(
+            name: "Builders",
+            dispatcherID: dispatcher.id,
+            fallbackDispatcherID: nil,
+            memberIDs: [dispatcher.id, writer.id],
+            defaultWriterID: writer.id
+        )
+        XCTAssertTrue(AgentTeamValidation.errors(team: valid, profiles: [dispatcher, writer]).isEmpty)
+
+        var extraWriter = AgentProfile(
+            name: "Second Writer",
+            model: "claude",
+            role: .implementer,
+            accessCeiling: .computerControl
+        )
+        extraWriter.clamp()
+        var invalid = valid
+        invalid.memberIDs.append(extraWriter.id)
+        XCTAssertTrue(
+            AgentTeamValidation.errors(team: invalid, profiles: [dispatcher, writer, extraWriter])
+                .contains(where: { $0.contains("exactly one") })
+        )
+    }
+
+    func testTeamMentionsResolveAgentsAndTeamsWithoutMatchingOrdinaryText() {
+        let agent = AgentProfile(name: "CodeReviewer", model: "local", role: .reviewer)
+        let team = AgentTeam(
+            name: "CoreTeam",
+            dispatcherID: agent.id,
+            fallbackDispatcherID: nil,
+            memberIDs: [agent.id],
+            defaultWriterID: agent.id
+        )
+        XCTAssertEqual(
+            TeamMentionResolver.selection(
+                in: "Please use @CodeReviewer",
+                profiles: [agent],
+                teams: [team]
+            ).agent?.id,
+            agent.id
+        )
+        XCTAssertEqual(
+            TeamMentionResolver.selection(
+                in: "@CoreTeam handle this",
+                profiles: [agent],
+                teams: [team]
+            ).team?.id,
+            team.id
+        )
+        XCTAssertNil(
+            TeamMentionResolver.selection(
+                in: "CodeReviewer is a noun here",
+                profiles: [agent],
+                teams: [team]
+            ).agent
+        )
+    }
+
+    func testAgentProfileStoreSalvagesValidElements() throws {
+        let suite = "LocusTests.AgentTeams.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let profile = AgentProfile(name: "Planner", model: "qwen", role: .planner)
+        let valid = try JSONSerialization.jsonObject(with: JSONEncoder().encode(profile))
+        defaults.set(
+            try JSONSerialization.data(withJSONObject: [valid, ["id": 4, "broken": true]]),
+            forKey: AgentTeamStore.profilesKey
+        )
+        XCTAssertEqual(AgentTeamStore.loadProfiles(from: defaults), [profile])
+    }
+
+    func testSessionInfoDecodesManagedTaskMetadataTolerantly() throws {
+        let data = Data(#"""
+        {
+          "session_id":"s1","cwd":"/source","permissions":{},
+          "task":{"id":"t1","workspace_root":"/source","execution_path":"/private/checkout","baseline_tree":"abc"},
+          "workspace_root":"/source","execution_path":"/private/checkout"
+        }
+        """#.utf8)
+        let info = try JSONDecoder().decode(SessionInfo.self, from: data)
+        XCTAssertEqual(info.task?.id, "t1")
+        XCTAssertEqual(info.workspaceRoot, "/source")
+        XCTAssertEqual(info.executionPath, "/private/checkout")
+    }
+
+    func testAgentActivityDecodesProviderSuppliedReasoningAndUsage() throws {
+        let data = Data(#"""
+        {
+          "id":"review","agent_name":"Reviewer","role":"reviewer",
+          "provider":"Anthropic","model":"claude","goal":"Review",
+          "state":"completed","output":"Approved","reasoning_text":"Explicit reasoning",
+          "tool":null,"evidence":["App.swift:12"],"elapsed_milliseconds":42,
+          "prompt_tokens":20,"completion_tokens":5
+        }
+        """#.utf8)
+        let activity = try JSONDecoder().decode(AgentActivity.self, from: data)
+        XCTAssertEqual(activity.reasoningText, "Explicit reasoning")
+        XCTAssertEqual(activity.promptTokens + activity.completionTokens, 25)
+    }
+
+    func testTaskConversationStateRoundTripsWithoutConversationContent() throws {
+        let state = TaskConversationState(
+            sessionID: "session",
+            taskID: "task",
+            teamID: "team",
+            workerID: "worker",
+            runID: "run",
+            state: .waitingPermission,
+            updatedAt: Date(timeIntervalSince1970: 1)
+        )
+        let data = try JSONEncoder().encode(state)
+        XCTAssertEqual(try JSONDecoder().decode(TaskConversationState.self, from: data), state)
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("api_key"))
+    }
 }

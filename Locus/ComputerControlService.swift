@@ -86,6 +86,9 @@ final class ComputerControlService: ObservableObject {
         hostedProvider: String?,
         timeoutMilliseconds: Int = 60_000
     ) async -> [String: Any] {
+        guard !isExecuting else {
+            return ["error": "Computer Control is already in use by another foreground task."]
+        }
         guard Self.isAvailable else {
             return ["error": "Computer Control is unavailable in the App Store sandbox build."]
         }

@@ -316,6 +316,11 @@ class AgentCore:
         # given. Workspace confinement resolves symlinks where it matters, in
         # ToolContext.is_inside_workspace.
         self.cwd = str(Path(cwd).expanduser()) if cwd else os.getcwd()
+        # A managed team task executes in a detached private checkout while
+        # the session continues to belong to the user's source workspace.
+        self.workspace_root = self.cwd
+        self.execution_path = self.cwd
+        self.task_metadata: dict[str, Any] | None = None
         self.tool_ctx = ToolContext(cwd=self.cwd)
         self._event_handler: EventHandler | None = None
         self.extensions = ExtensionManager(self.cwd)
@@ -365,6 +370,8 @@ class AgentCore:
         self.computer_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self._pending_computer_screenshot: dict[str, str] | None = None
         self._ax_only_routes: set[str] = set()
+        self._suppress_turn_done = False
+        self.last_turn_result: dict[str, Any] = {"reason": "complete", "duration_ms": 0}
 
     # --------------------------------------------------------------- events
 
@@ -941,7 +948,7 @@ class AgentCore:
 
     def _new_session_store(self) -> SessionStore:
         return SessionStore(
-            self.cwd,
+            self.workspace_root,
             self.model,
             provider=self.provider,
             account=self.account_label,
@@ -976,6 +983,9 @@ class AgentCore:
             raise ValueError(f"not a directory: {path}")
         os.chdir(p)
         self.cwd = os.getcwd()
+        self.workspace_root = self.cwd
+        self.execution_path = self.cwd
+        self.task_metadata = None
         self.tool_ctx.cwd = self.cwd
         self.extensions.set_cwd(self.cwd)
         self.reload_context()
@@ -984,6 +994,28 @@ class AgentCore:
         self.tool_ctx.todos = []
         self.tool_ctx.plan_document = None
         self._emit({"type": "todo_update", "todos": []})
+        self.mcp.refresh(wait=False)
+        self._emit_info()
+
+    def enter_task_checkout(
+        self,
+        execution_path: str,
+        workspace_root: str,
+        task_metadata: dict[str, Any],
+    ) -> None:
+        """Move tool execution into a managed checkout without changing chats."""
+        path = Path(execution_path).expanduser()
+        root = Path(workspace_root).expanduser()
+        if not path.is_dir() or not root.is_dir():
+            raise ValueError("task checkout or source workspace is unavailable")
+        os.chdir(path)
+        self.cwd = os.getcwd()
+        self.execution_path = self.cwd
+        self.workspace_root = str(root.resolve())
+        self.task_metadata = dict(task_metadata)
+        self.tool_ctx.cwd = self.cwd
+        self.extensions.set_cwd(self.cwd)
+        self.reload_context()
         self.mcp.refresh(wait=False)
         self._emit_info()
 
@@ -1016,6 +1048,9 @@ class AgentCore:
                 raise ValueError(f"not a directory: {cwd}")
             os.chdir(path)
             self.cwd = os.getcwd()
+            self.workspace_root = self.cwd
+            self.execution_path = self.cwd
+            self.task_metadata = None
             self.tool_ctx.cwd = self.cwd
             self.extensions.set_cwd(self.cwd)
             self.reload_context()
@@ -1084,7 +1119,10 @@ class AgentCore:
         return {
             "model": self.model,
             "host": self.host,
-            "cwd": self.cwd,
+            "cwd": self.workspace_root,
+            "workspace_root": self.workspace_root,
+            "execution_path": self.execution_path,
+            "task": self.task_metadata,
             "session": str(self.session.path),
             "session_id": self.session.session_id,
             "messages": len(self.messages),
@@ -1117,15 +1155,16 @@ class AgentCore:
         persisted_message: dict[str, Any] | None = None,
         *,
         event_id: str = "",
+        persist: bool = True,
     ) -> None:
         record = {
             "type": "message",
             "message": persisted_message if persisted_message is not None else message,
         }
-        if event_id and not self.session.append_once(record, event_id):
+        if event_id and persist and not self.session.append_once(record, event_id):
             return
         self.messages.append(message)
-        if not event_id:
+        if persist and not event_id:
             self.session.append(record)
 
     def run_turn(
@@ -1135,6 +1174,9 @@ class AgentCore:
         *,
         allow_tools: bool = True,
         attachments: list[dict[str, str]] | None = None,
+        persisted_user_text: str | None = None,
+        model_call_limit: int | None = None,
+        persist_user_message: bool = True,
     ) -> None:
         """Run one local-agent turn."""
         self._run_classic_turn(
@@ -1142,6 +1184,9 @@ class AgentCore:
             decider,
             allow_tools=allow_tools,
             attachments=attachments,
+            persisted_user_text=persisted_user_text,
+            model_call_limit=model_call_limit,
+            persist_user_message=persist_user_message,
         )
 
     def _run_classic_turn(
@@ -1151,6 +1196,9 @@ class AgentCore:
         *,
         allow_tools: bool = True,
         attachments: list[dict[str, str]] | None = None,
+        persisted_user_text: str | None = None,
+        model_call_limit: int | None = None,
+        persist_user_message: bool = True,
     ) -> None:
         """One user turn: stream model responses and run tools until done."""
         started_at = time.monotonic()
@@ -1194,9 +1242,16 @@ class AgentCore:
                     "content": user_text,
                 }
             else:
-                persisted = None
-            self._add_message(user_message, persisted)
-            self._run_response_loop(decider, started_at=started_at)
+                persisted = (
+                    {"role": "user", "content": persisted_user_text}
+                    if persisted_user_text is not None else None
+                )
+            self._add_message(user_message, persisted, persist=persist_user_message)
+            self._run_response_loop(
+                decider,
+                started_at=started_at,
+                model_call_limit=model_call_limit,
+            )
             # And again now the model is certainly resident, so the next turn's
             # compaction check has a real number rather than having to wait a turn
             # for one. Announced so clients tracking session_info see it change.
@@ -1445,12 +1500,14 @@ class AgentCore:
         decider: PermissionDecider | None = None,
         *,
         started_at: float | None = None,
+        model_call_limit: int | None = None,
     ) -> None:
         started_at = time.monotonic() if started_at is None else started_at
         reason = "complete"
         iteration = 0
         iteration_limit = self.max_iterations
-        while iteration < iteration_limit:
+        hard_call_limit = max(int(model_call_limit), 0) if model_call_limit is not None else None
+        while iteration < iteration_limit and (hard_call_limit is None or iteration < hard_call_limit):
             iteration += 1
             if self._interrupt.is_set():
                 reason = "interrupted"
@@ -1615,11 +1672,15 @@ class AgentCore:
         # accepted before this point is either applied above or caused another
         # loop iteration; anything later belongs in Queue or Stop & Send.
         self.end_steerable_turn()
-        self._emit({
+        terminal = {
             "type": "turn_done",
             "reason": reason,
             "duration_ms": max(int((time.monotonic() - started_at) * 1000), 0),
-        })
+            "model_calls": iteration,
+        }
+        self.last_turn_result = terminal
+        if not self._suppress_turn_done:
+            self._emit(terminal)
         self._emit_info()
 
     def _extension_prompt(self) -> str:
@@ -2216,7 +2277,11 @@ class AgentCore:
             try:
                 os.chdir(cwd)
                 self.cwd = os.getcwd()
+                self.workspace_root = self.cwd
+                self.execution_path = self.cwd
+                self.task_metadata = None
                 self.tool_ctx.cwd = self.cwd
+                self.extensions.set_cwd(self.cwd)
                 self.reload_context()
             except OSError:
                 pass

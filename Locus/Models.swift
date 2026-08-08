@@ -241,6 +241,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case general = "General"
     case network = "Network"
     case accounts = "Accounts"
+    case agents = "Agents & Teams"
     case permissions = "Permissions"
     case extensions = "Extensions"
 
@@ -251,6 +252,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: "gearshape"
         case .network: "network"
         case .accounts: "person.crop.circle"
+        case .agents: "person.3.sequence.fill"
         case .permissions: "lock.shield"
         case .extensions: "puzzlepiece.extension"
         }
@@ -458,6 +460,9 @@ struct SessionInfo: Codable, Hashable {
     let maxIterations: Int
     let hasProjectContext: Bool
     let provider: String?
+    let task: TaskRecord?
+    let workspaceRoot: String?
+    let executionPath: String?
     let permissions: SessionPermissions
 
     init(
@@ -476,6 +481,9 @@ struct SessionInfo: Codable, Hashable {
         maxIterations: Int,
         hasProjectContext: Bool,
         provider: String? = nil,
+        task: TaskRecord? = nil,
+        workspaceRoot: String? = nil,
+        executionPath: String? = nil,
         permissions: SessionPermissions
     ) {
         self.model = model
@@ -493,6 +501,9 @@ struct SessionInfo: Codable, Hashable {
         self.maxIterations = maxIterations
         self.hasProjectContext = hasProjectContext
         self.provider = provider
+        self.task = task
+        self.workspaceRoot = workspaceRoot
+        self.executionPath = executionPath
         self.permissions = permissions
     }
 
@@ -519,12 +530,39 @@ struct SessionInfo: Codable, Hashable {
             maxIterations: maxIterations,
             hasProjectContext: hasProjectContext,
             provider: provider,
+            task: task,
+            workspaceRoot: workspaceRoot,
+            executionPath: executionPath,
+            permissions: permissions
+        )
+    }
+
+    func replacingTask(_ task: TaskRecord?) -> SessionInfo {
+        SessionInfo(
+            model: model,
+            host: host,
+            cwd: cwd,
+            session: session,
+            sessionID: sessionID,
+            messages: messages,
+            approxTokens: approxTokens,
+            promptTokens: promptTokens,
+            completionTokens: completionTokens,
+            contextLimit: contextLimit,
+            usableTokens: usableTokens,
+            contextSource: contextSource,
+            maxIterations: maxIterations,
+            hasProjectContext: hasProjectContext,
+            provider: provider,
+            task: task,
+            workspaceRoot: task?.workspaceRoot ?? workspaceRoot,
+            executionPath: task?.executionPath ?? executionPath,
             permissions: permissions
         )
     }
 
     enum CodingKeys: String, CodingKey {
-        case model, host, cwd, session, messages, provider, permissions
+        case model, host, cwd, session, messages, provider, permissions, task
         case sessionID = "session_id"
         case approxTokens = "approx_tokens"
         case promptTokens = "prompt_tokens"
@@ -534,6 +572,8 @@ struct SessionInfo: Codable, Hashable {
         case contextSource = "context_source"
         case maxIterations = "max_iterations"
         case hasProjectContext = "has_project_context"
+        case workspaceRoot = "workspace_root"
+        case executionPath = "execution_path"
     }
 
     // Tolerant decoding: `session_info` arrives on every turn, and a single
@@ -556,6 +596,9 @@ struct SessionInfo: Codable, Hashable {
         maxIterations = try container.decodeIfPresent(Int.self, forKey: .maxIterations) ?? 0
         hasProjectContext = try container.decodeIfPresent(Bool.self, forKey: .hasProjectContext) ?? false
         provider = try? container.decodeIfPresent(String.self, forKey: .provider)
+        task = try? container.decodeIfPresent(TaskRecord.self, forKey: .task)
+        workspaceRoot = try? container.decodeIfPresent(String.self, forKey: .workspaceRoot)
+        executionPath = try? container.decodeIfPresent(String.self, forKey: .executionPath)
         permissions = (try? container.decodeIfPresent(SessionPermissions.self, forKey: .permissions))
             ?? SessionPermissions(skipAll: false, allowed: [])
     }
@@ -625,6 +668,11 @@ struct SessionSummary: Codable, Hashable, Identifiable {
     /// Folder-backed workspace recorded in the transcript's leading meta row.
     /// Optional so sessions created by older agents remain visible.
     let cwd: String?
+    let task: TaskRecord?
+    let team: SessionTeamReference?
+    let workspaceRoot: String?
+    let executionPath: String?
+    let environment: [String: String]?
 
     init(
         id: String,
@@ -635,7 +683,12 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         title: String? = nil,
         pinned: Bool? = nil,
         archived: Bool? = nil,
-        cwd: String? = nil
+        cwd: String? = nil,
+        task: TaskRecord? = nil,
+        team: SessionTeamReference? = nil,
+        workspaceRoot: String? = nil,
+        executionPath: String? = nil,
+        environment: [String: String]? = nil
     ) {
         self.id = id
         self.name = name
@@ -646,6 +699,11 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         self.pinned = pinned
         self.archived = archived
         self.cwd = cwd
+        self.task = task
+        self.team = team
+        self.workspaceRoot = workspaceRoot
+        self.executionPath = executionPath
+        self.environment = environment
     }
 
     var displayTitle: String {

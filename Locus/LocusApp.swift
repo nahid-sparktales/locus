@@ -30,6 +30,7 @@ struct LocusApp: App {
         Window("Locus", id: "main") {
             RootView()
                 .environmentObject(model)
+                .onAppear { appDelegate.model = model }
                 .preferredColorScheme(.light)
                 .frame(
                     minWidth: locusIsUITesting ? 920 : 1_080,
@@ -114,6 +115,8 @@ struct LocusApp: App {
 @MainActor
 final class LocusApplicationDelegate: NSObject, NSApplicationDelegate {
     static let mainWindowIdentifier = NSUserInterfaceItemIdentifier("locus.main")
+    weak var model: AppModel?
+    private var terminationPending = false
 
     static func mainWindow(in windows: [NSWindow]) -> NSWindow? {
         windows.first { $0.identifier == mainWindowIdentifier }
@@ -149,6 +152,28 @@ final class LocusApplicationDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if terminationPending { return .terminateLater }
+        guard model?.hasRunningWorkForQuit == true else {
+            return .terminateNow
+        }
+        let alert = NSAlert()
+        alert.messageText = "Stop running work and quit Locus?"
+        alert.informativeText = "The active team and its private checkout will remain available to resume."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Stop and Quit")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return .terminateCancel
+        }
+        terminationPending = true
+        model?.stopRunningWorkForQuit { [weak self, weak sender] in
+            self?.terminationPending = false
+            sender?.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     @objc private func windowWillClose(_ notification: Notification) {

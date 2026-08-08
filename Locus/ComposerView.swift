@@ -9,6 +9,7 @@ struct ComposerView: View {
 
     private enum Popup {
         case slash([SlashCommand])
+        case routing([TeamMentionTarget])
         case mention([URL])
         case skill([ExtensionSkill])
     }
@@ -140,6 +141,16 @@ struct ComposerView: View {
         // the workspace or offer a skill that can instruct agentic work.
         guard !model.justChatEnabled else { return nil }
         if let mention = WorkspaceIndex.activeMention(in: model.draftText) {
+            let query = mention.query.lowercased()
+            let targets: [TeamMentionTarget] = (
+                model.agentTeams.map(TeamMentionTarget.team)
+                    + model.agentProfiles.map(TeamMentionTarget.agent)
+            ).filter {
+                query.isEmpty || $0.name.lowercased().contains(query)
+            }
+            if !targets.isEmpty {
+                return .routing(Array(targets.prefix(8)))
+            }
             let matches = WorkspaceIndex.matches(
                 query: mention.query,
                 in: model.workspaceFileIndex,
@@ -174,6 +185,7 @@ struct ComposerView: View {
     private func popupCount(_ popup: Popup) -> Int {
         switch popup {
         case .slash(let commands): commands.count
+        case .routing(let targets): targets.count
         case .mention(let files): files.count
         case .skill(let skills): skills.count
         }
@@ -184,6 +196,8 @@ struct ComposerView: View {
         case .slash(let commands):
             let index = min(popupSelection, commands.count - 1)
             applySlashCommand(commands[index])
+        case .routing(let targets):
+            applyRoutingTarget(targets[min(popupSelection, targets.count - 1)])
         case .mention(let files):
             let index = min(popupSelection, files.count - 1)
             model.applyMention(files[index])
@@ -208,6 +222,8 @@ struct ComposerView: View {
         case .slash(let commands):
             let command = commands[min(popupSelection, commands.count - 1)]
             model.draftText = "/\(command.name)\(command.argumentHint != nil ? " " : "")"
+        case .routing(let targets):
+            applyRoutingTarget(targets[min(popupSelection, targets.count - 1)])
         case .mention(let files):
             model.applyMention(files[min(popupSelection, files.count - 1)])
         case .skill(let skills):
@@ -218,6 +234,15 @@ struct ComposerView: View {
     private func applySkill(_ skill: ExtensionSkill) {
         guard let dollar = model.draftText.lastIndex(of: "$") else { return }
         model.draftText.replaceSubrange(dollar..., with: "$\(skill.id) ")
+        focused = true
+    }
+
+    private func applyRoutingTarget(_ target: TeamMentionTarget) {
+        guard let mention = WorkspaceIndex.activeMention(in: model.draftText) else { return }
+        let safeName = target.name.filter {
+            $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-"
+        }
+        model.draftText.replaceSubrange(mention.range, with: "@\(safeName) ")
         focused = true
     }
 
@@ -323,6 +348,19 @@ struct ComposerView: View {
                         applySlashCommand(command)
                     }
                 }
+            case .routing(let targets):
+                ForEach(Array(targets.enumerated()), id: \.element.id) { index, target in
+                    popupRow(
+                        index: index,
+                        symbol: target.symbol,
+                        title: "@\(target.name)",
+                        subtitle: target.subtitle,
+                        identifier: "composer.routing.\(target.id)"
+                    ) {
+                        popupSelection = index
+                        applyRoutingTarget(target)
+                    }
+                }
             case .mention(let files):
                 ForEach(Array(files.enumerated()), id: \.element) { index, file in
                     popupRow(
@@ -417,6 +455,49 @@ struct ComposerView: View {
                 .accessibilityValue(model.selectedMode == mode ? "Selected" : "Not selected")
                 .accessibilityIdentifier("composer.mode.\(mode.rawValue)")
             }
+            Divider().frame(height: 16).padding(.horizontal, 4)
+            Menu {
+                Button {
+                    model.selectAgentTeam(nil)
+                } label: {
+                    Label("Solo", systemImage: model.selectedAgentTeamID == nil ? "checkmark" : "person")
+                }
+                if !model.agentTeams.isEmpty {
+                    Divider()
+                    ForEach(model.agentTeams) { team in
+                        Button {
+                            model.selectAgentTeam(team.id)
+                        } label: {
+                            Label(
+                                team.name,
+                                systemImage: model.selectedAgentTeamID == team.id ? "checkmark" : "person.3"
+                            )
+                        }
+                    }
+                }
+                Divider()
+                Button("Manage Agents & Teams…", systemImage: "gearshape") {
+                    model.settingsPage = .agents
+                    model.settingsPresented = true
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: model.teamModeEnabled ? "person.3.fill" : "person.fill")
+                    Text(model.selectedAgentTeam?.name ?? "Solo")
+                        .lineLimit(1)
+                }
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(model.teamModeEnabled ? LocusTheme.signalDeep : LocusTheme.muted)
+                .padding(.horizontal, 8)
+                .frame(height: 24)
+                .background(LocusTheme.paperDeep.opacity(0.8))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .accessibilityLabel("Solo or team routing")
+            .accessibilityIdentifier("composer.team")
             Spacer()
             Text(model.selectedMode.description)
                 .font(.system(size: 8))

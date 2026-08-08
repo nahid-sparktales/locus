@@ -31,6 +31,11 @@ struct WorkspaceView: View {
             ConversationView(streamingReply: model.streamingReply)
                 .frame(maxHeight: .infinity)
 
+            if !model.agentActivities.isEmpty || model.activeTaskRecord != nil {
+                TeamActivityPanel()
+                    .environmentObject(model)
+            }
+
             WorkStatusStrip(streamingReply: model.streamingReply)
                 .environmentObject(model)
 
@@ -262,6 +267,190 @@ struct WorkspaceView: View {
     }
 }
 
+private struct TeamActivityPanel: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var expanded = true
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                    Image(systemName: "person.3.sequence.fill")
+                        .foregroundStyle(LocusTheme.signalDeep)
+                    Text("TEAM ACTIVITY")
+                        .font(.system(size: 8, weight: .bold))
+                        .tracking(0.7)
+                    if let state = model.orchestrationState {
+                        Text(state.title)
+                            .font(.system(size: 8, design: .monospaced))
+                            .foregroundStyle(LocusTheme.muted)
+                    }
+                    Spacer()
+                    if let task = model.activeTaskRecord {
+                        Text(URL(fileURLWithPath: task.executionPath).lastPathComponent)
+                            .font(.system(size: 8, design: .monospaced))
+                            .foregroundStyle(LocusTheme.muted)
+                    }
+                }
+                .foregroundStyle(LocusTheme.ink)
+                .padding(.horizontal, 24)
+                .frame(height: 31)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("teamActivity.toggle")
+
+            if expanded {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        ForEach(model.agentActivities) { activity in
+                            AgentActivityRow(
+                                activity: activity,
+                                thinkingVisibility: model.thinkingVisibility
+                            )
+                        }
+                        if let task = model.activeTaskRecord {
+                            taskActions(task)
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 10)
+                }
+                .frame(maxHeight: 180)
+            }
+        }
+        .background(LocusTheme.paperDeep.opacity(0.75))
+        .overlay(alignment: .top) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+    }
+
+    private func taskActions(_ task: TaskRecord) -> some View {
+        HStack(spacing: 8) {
+            Label(
+                model.taskHasChanges
+                    ? "\(ByteCountFormatter.string(fromByteCount: Int64(model.taskPatchBytes), countStyle: .file)) ready"
+                    : "Private checkout",
+                systemImage: "arrow.triangle.branch"
+            )
+            .font(.system(size: 8, design: .monospaced))
+            .foregroundStyle(LocusTheme.muted)
+            Spacer()
+            Button("Apply to Workspace") { model.applyActiveTaskToWorkspace() }
+                .disabled(model.isBusy || !model.taskHasChanges)
+            Button("Copy Patch") { model.copyActiveTaskPatch() }
+                .disabled(model.isBusy || !model.taskHasChanges)
+            Menu {
+                Button("Open Checkout") { model.openActiveTaskCheckout() }
+                Button("Reveal in Finder") { model.revealActiveTaskCheckout() }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .padding(.top, 3)
+        .accessibilityIdentifier("teamActivity.taskActions")
+    }
+}
+
+private struct AgentActivityRow: View {
+    let activity: AgentActivity
+    let thinkingVisibility: ThinkingVisibility
+    @State private var outputExpanded = false
+    @State private var reasoningExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                if !activity.output.isEmpty { outputExpanded.toggle() }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: stateSymbol)
+                        .foregroundStyle(stateColor)
+                        .frame(width: 13)
+                    Text(activity.agentName)
+                        .font(.system(size: 9, weight: .semibold))
+                    Text("\(activity.provider) · \(activity.model)")
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("\(activity.elapsedMilliseconds / 1_000)s · \((activity.promptTokens + activity.completionTokens).formatted()) tok")
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Text(activity.goal)
+                .font(.system(size: 8))
+                .foregroundStyle(LocusTheme.inkSoft)
+                .lineLimit(2)
+            if outputExpanded, !activity.output.isEmpty {
+                Text(activity.output)
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundStyle(LocusTheme.inkSoft)
+                    .textSelection(.enabled)
+                    .padding(7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(LocusTheme.white.opacity(0.7))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            if thinkingVisibility != .hidden,
+               let reasoning = activity.reasoningText,
+               !reasoning.isEmpty
+            {
+                if thinkingVisibility == .collapsed {
+                    Button {
+                        reasoningExpanded.toggle()
+                    } label: {
+                        Label(reasoningExpanded ? "Hide reasoning" : "Show reasoning", systemImage: "brain")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                }
+                if reasoningExpanded || thinkingVisibility == .expanded {
+                    Text(reasoning)
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                        .textSelection(.enabled)
+                        .padding(7)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(LocusTheme.paperDeep.opacity(0.65))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+            }
+        }
+        .padding(7)
+        .background(LocusTheme.white.opacity(0.48))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+    }
+
+    private var stateSymbol: String {
+        switch activity.state {
+        case .completed: "checkmark.circle.fill"
+        case .failed, .interrupted: "xmark.circle.fill"
+        case .waitingPermission, .waitingComputer: "pause.circle.fill"
+        default: "circle.dotted"
+        }
+    }
+
+    private var stateColor: Color {
+        switch activity.state {
+        case .completed: LocusTheme.success
+        case .failed, .interrupted: LocusTheme.coral
+        case .waitingPermission, .waitingComputer: LocusTheme.warning
+        default: LocusTheme.signalDeep
+        }
+    }
+}
+
 private struct WorkStatusStrip: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var streamingReply: StreamingReplyState
@@ -282,6 +471,12 @@ private struct WorkStatusStrip: View {
                 Spacer()
                 if model.isBusy {
                     Text("~\(model.estimatedStreamingTokens.formatted()) streamed tokens")
+                }
+                if model.orchestrationState != nil {
+                    Text("\(model.teamModelCalls.formatted()) team calls")
+                    if model.teamMeteredTokens > 0 {
+                        Text("\(model.teamMeteredTokens.formatted()) hosted tokens")
+                    }
                 }
                 if let info = model.sessionInfo {
                     Text("provider · \(info.promptTokens.formatted()) in / \(info.completionTokens.formatted()) out")

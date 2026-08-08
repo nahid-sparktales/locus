@@ -267,6 +267,97 @@ class SessionStore:
         return messages
 
     @staticmethod
+    def agent_activity(path: Path) -> dict[str, Any]:
+        """Rebuild the latest bounded team-activity snapshot in one pass.
+
+        Agent events are separate JSONL records, so older clients can continue
+        treating the file as an ordinary chat transcript. The stored events
+        never contain route credentials or provider reasoning signatures.
+        """
+        activities: dict[str, dict[str, Any]] = {}
+        orchestration_state: str | None = None
+        run_id: str | None = None
+        worker_id: str | None = None
+        seen = 0
+        try:
+            if path.stat().st_size > MAX_SESSION_BYTES:
+                return {"activities": []}
+            with path.open("rb") as handle:
+                for raw in handle:
+                    if len(raw) > MAX_SESSION_LINE_BYTES:
+                        break
+                    try:
+                        record = json.loads(raw.decode("utf-8", errors="replace"))
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(record, dict) or record.get("type") != "agent_activity":
+                        continue
+                    event = record.get("event")
+                    if not isinstance(event, dict):
+                        continue
+                    seen += 1
+                    if seen > 2_000:
+                        break
+                    event_type = str(event.get("type") or "")
+                    run_id = str(event.get("run_id") or run_id or "") or None
+                    worker_id = str(event.get("worker_id") or worker_id or "") or None
+                    if event_type in {"orchestration_started", "orchestration_state", "orchestration_completed"}:
+                        orchestration_state = str(event.get("state") or orchestration_state or "") or None
+                    if event_type == "agent_job_started":
+                        job_id = str(event.get("job_id") or "")
+                        if not job_id:
+                            continue
+                        activities[job_id] = {
+                            "id": job_id,
+                            "agent_name": str(event.get("agent_name") or "Agent"),
+                            "role": str(event.get("role") or "generalist"),
+                            "provider": str(event.get("provider") or ""),
+                            "model": str(event.get("model") or ""),
+                            "goal": str(event.get("goal") or "")[:2_000],
+                            "state": "running",
+                            "output": "",
+                            "reasoning_text": None,
+                            "tool": None,
+                            "evidence": [],
+                            "elapsed_milliseconds": 0,
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                        }
+                    elif event_type == "agent_job_completed":
+                        result = event.get("result")
+                        if not isinstance(result, dict):
+                            continue
+                        job_id = str(result.get("job_id") or "")
+                        if not job_id:
+                            continue
+                        current = activities.get(job_id, {})
+                        current.update({
+                            "id": job_id,
+                            "agent_name": str(result.get("agent_name") or current.get("agent_name") or "Agent"),
+                            "role": str(result.get("role") or current.get("role") or "generalist"),
+                            "provider": str(current.get("provider") or ""),
+                            "model": str(current.get("model") or ""),
+                            "goal": str(current.get("goal") or ""),
+                            "state": "failed" if event.get("state") == "failed" else "completed",
+                            "output": str(result.get("output") or result.get("error") or "")[:120_000],
+                            "reasoning_text": str(result.get("reasoning_text") or "")[:120_000] or None,
+                            "tool": None,
+                            "evidence": [str(item) for item in result.get("evidence") or []][:128],
+                            "elapsed_milliseconds": int(result.get("elapsed_ms") or 0),
+                            "prompt_tokens": int(result.get("prompt_tokens") or 0),
+                            "completion_tokens": int(result.get("completion_tokens") or 0),
+                        })
+                        activities[job_id] = current
+        except OSError:
+            pass
+        return {
+            "activities": list(activities.values()),
+            "orchestration_state": orchestration_state,
+            "run_id": run_id,
+            "worker_id": worker_id,
+        }
+
+    @staticmethod
     def header(path: Path) -> dict[str, Any]:
         """The leading meta record: cwd, model, started."""
         try:
@@ -452,6 +543,11 @@ class SessionStore:
                 "title": entry.get("title"),
                 "pinned": bool(entry.get("pinned", False)),
                 "archived": bool(entry.get("archived", False)),
+                "task": entry.get("task"),
+                "team": entry.get("team"),
+                "workspace_root": entry.get("workspace_root"),
+                "execution_path": entry.get("execution_path"),
+                "environment": entry.get("environment"),
             })
         # Sort before truncating, otherwise a pinned session drops off the
         # list as soon as `limit` newer sessions exist.

@@ -20,6 +20,37 @@ final class AppModel: ObservableObject {
     @Published private(set) var providerAccounts: [ProviderAccount] = []
     @Published private(set) var accountModels: [UUID: [String]] = [:]
     @Published private(set) var accountStatus: [UUID: ProviderAccountStatus] = [:]
+    @Published private(set) var agentProfiles: [AgentProfile] = []
+    @Published private(set) var agentTeams: [AgentTeam] = []
+    @Published private(set) var teamRoutingConsentAccountIDs: Set<UUID> = []
+    @Published var globalAgentConcurrency = 3 {
+        didSet {
+            let bounded = min(max(globalAgentConcurrency, 1), 8)
+            if bounded != globalAgentConcurrency {
+                globalAgentConcurrency = bounded
+                return
+            }
+            if persistenceEnabled {
+                UserDefaults.standard.set(bounded, forKey: AgentTeamStore.globalConcurrencyKey)
+            }
+        }
+    }
+    @Published var selectedAgentTeamID: UUID? = nil {
+        didSet {
+            guard persistenceEnabled else { return }
+            UserDefaults.standard.set(selectedAgentTeamID?.uuidString, forKey: AgentTeamStore.selectionKey)
+        }
+    }
+    @Published private(set) var orchestrationRunID: String?
+    @Published private(set) var orchestrationState: TeamRunState?
+    @Published private(set) var activeWorkerID: String?
+    @Published private(set) var taskConversationStates: [String: TaskConversationState] = [:]
+    @Published private(set) var agentActivities: [AgentActivity] = []
+    @Published private(set) var teamModelCalls = 0
+    @Published private(set) var teamMeteredTokens = 0
+    @Published private(set) var activeTaskRecord: TaskRecord?
+    @Published private(set) var taskHasChanges = false
+    @Published private(set) var taskPatchBytes = 0
     @Published var sessions: [SessionSummary] = []
     @Published var currentSessionID = ""
     @Published var sessionInfo: SessionInfo?
@@ -154,6 +185,10 @@ final class AppModel: ObservableObject {
 
     private let backend: BackendService
     private let backendProcess = BackendProcess()
+    private var taskWorkers: [String: TaskWorkerRuntime] = [:]
+    private var conversationBackend: BackendService {
+        taskWorkers[currentSessionID]?.service ?? backend
+    }
     private let ollamaRuntime = OllamaRuntime()
     private let mcpAuthCoordinator = MCPAuthCoordinator()
     private let workspaceAccess: WorkspaceAccess
@@ -316,6 +351,19 @@ final class AppModel: ObservableObject {
             {
                 defaults.set(data, forKey: "Locus.settings")
             }
+        }
+        if !isUITesting, persistenceEnabled {
+            let loadedProfiles = AgentTeamStore.loadProfiles(from: defaults)
+            let loadedTeams = AgentTeamStore.loadTeams(from: defaults)
+            let loadedSelection = defaults.string(forKey: AgentTeamStore.selectionKey)
+                .flatMap(UUID.init(uuidString:))
+            agentProfiles = loadedProfiles
+            agentTeams = loadedTeams
+            teamRoutingConsentAccountIDs = AgentTeamStore.loadConsent(from: defaults)
+            let storedConcurrency = defaults.integer(forKey: AgentTeamStore.globalConcurrencyKey)
+            globalAgentConcurrency = storedConcurrency == 0 ? 3 : min(max(storedConcurrency, 1), 8)
+            selectedAgentTeamID = loadedTeams.contains(where: { $0.id == loadedSelection })
+                ? loadedSelection : nil
         }
         let migrateLegacyBuildMode = !loadedSettings.adaptiveWorkMigrationCompleted
         loadedSettings.adaptiveWorkMigrationCompleted = true
@@ -526,6 +574,10 @@ final class AppModel: ObservableObject {
         SessionSummary.canonicalWorkspacePath(workspacePath)
     }
 
+    var chatNavigationDisabled: Bool {
+        (isBusy || hasPendingPermission) && taskWorkers[currentSessionID] == nil
+    }
+
     /// Folder-backed workspace sections plus a compatibility bucket for old
     /// transcripts whose meta record predates cwd provenance.
     var workspaceChatGroups: [WorkspaceChatGroup] {
@@ -591,6 +643,12 @@ final class AppModel: ObservableObject {
     private static func sessionSort(_ lhs: SessionSummary, _ rhs: SessionSummary) -> Bool {
         if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
         return lhs.mtime > rhs.mtime
+    }
+
+    func teamRunState(for session: SessionSummary) -> TeamRunState? {
+        if let state = taskConversationStates[session.id]?.state { return state }
+        if session.id == currentSessionID, let orchestrationState { return orchestrationState }
+        return session.task?.state
     }
 
     func isWorkspaceExpanded(_ id: String) -> Bool {
@@ -686,6 +744,7 @@ final class AppModel: ObservableObject {
 
     var currentWorkPhase: String {
         if let steeringState { return steeringState }
+        if let orchestrationState, isBusy { return orchestrationState.title }
         if let request = activePermissionRequest {
             return "Waiting for permission · \(request.tool)"
         }
@@ -1020,6 +1079,8 @@ final class AppModel: ObservableObject {
         agentInstructionsTask?.cancel()
         backend.disconnect()
         backendProcess.stop()
+        taskWorkers.values.forEach { $0.stop() }
+        taskWorkers.removeAll()
         ollamaRuntime.stopOwnedCLI()
         if let activationObserver {
             NotificationCenter.default.removeObserver(activationObserver)
@@ -1291,7 +1352,9 @@ final class AppModel: ObservableObject {
                 : "?limit=500"
             let response = try await backend.get("/api/sessions\(suffix)", as: SessionsResponse.self)
             sessions = response.sessions
-            currentSessionID = response.current
+            if taskWorkers[currentSessionID] == nil {
+                currentSessionID = response.current
+            }
             if let path = workspaceToOpenAfterReconnect {
                 workspaceToOpenAfterReconnect = nil
                 let canonical = SessionSummary.canonicalWorkspacePath(path)
@@ -1835,6 +1898,16 @@ final class AppModel: ObservableObject {
         // change the picker while that work is pending; the dispatched turn
         // must keep the safety contract it started with.
         let dispatchedMode = selectedMode
+        let teamMention = TeamMentionResolver.selection(
+            in: text,
+            profiles: agentProfiles,
+            teams: agentTeams
+        )
+        let wantsTeam = dispatchedMode != .ask
+            && !isSlashPassthrough
+            && (selectedAgentTeamID != nil || teamMention.agent != nil || teamMention.team != nil)
+        let dispatchedTeam = wantsTeam ? teamManifest(for: text) : nil
+        if wantsTeam, dispatchedTeam == nil { return }
         let dispatchedAttachments = dispatchedMode == .ask ? availableChatAttachments : []
         let messageText = text.isEmpty ? "Please analyze the attached files." : text
         isBusy = true
@@ -1848,6 +1921,22 @@ final class AppModel: ObservableObject {
         turnDispatchedMode = isSlashPassthrough ? nil : dispatchedMode
         Task { [weak self] in
             guard let self else { return }
+            var transport = self.conversationBackend
+            if dispatchedTeam != nil {
+                guard let worker = await self.ensureTeamWorker(for: self.currentSessionID) else {
+                    self.isBusy = false
+                    self.turnStartedAt = nil
+                    self.turnDispatchedMode = nil
+                    self.turnDispatchedInPlanMode = false
+                    self.stashUnsent(
+                        text,
+                        requeue: requeueingOnFailure,
+                        preserveDraft: preservingDraftOnFailure
+                    )
+                    return
+                }
+                transport = worker.service
+            }
             // Just Chat never reaches into the workspace, including through a
             // context pack selected during an earlier agentic turn.
             if dispatchedMode != .ask {
@@ -1865,6 +1954,7 @@ final class AppModel: ObservableObject {
                 "text": payload,
                 "mode": dispatchedMode.rawValue,
             ]
+            if let dispatchedTeam { request["team"] = dispatchedTeam }
             let imageAttachments: [[String: Any]] = dispatchedAttachments.compactMap { attachment in
                 guard attachment.kind == .image,
                       let data = attachment.imageData,
@@ -1879,7 +1969,7 @@ final class AppModel: ObservableObject {
             if !imageAttachments.isEmpty {
                 request["attachments"] = imageAttachments
             }
-            guard backend.send(request) else {
+            guard transport.send(request) else {
                 isBusy = false
                 turnStartedAt = nil
                 turnDispatchedMode = nil
@@ -1935,7 +2025,7 @@ final class AppModel: ObservableObject {
             return
         }
         guard isAgentOnline,
-              backend.send(["type": "user_message", "text": text])
+              conversationBackend.send(["type": "user_message", "text": text])
         else {
             showToast("Reconnect the local agent to run \(text)")
             return
@@ -1963,7 +2053,7 @@ final class AppModel: ObservableObject {
     func steerDraft() {
         let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isBusy, !hasPendingPermission, !text.isEmpty else { return }
-        guard backend.send(["type": "steer", "text": text]) else {
+        guard conversationBackend.send(["type": "steer", "text": text]) else {
             showToast("Reconnect the local agent — the direction was not sent")
             return
         }
@@ -1992,7 +2082,7 @@ final class AppModel: ObservableObject {
     func stopAndSendDraft() {
         let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isBusy, !hasPendingPermission, !text.isEmpty else { return }
-        guard backend.send(["type": "interrupt"]) else {
+        guard conversationBackend.send(["type": "interrupt"]) else {
             showToast("Reconnect the local agent — the active turn could not be stopped")
             return
         }
@@ -2084,7 +2174,7 @@ final class AppModel: ObservableObject {
         guard !isBusy, !hasPendingPermission,
               blocks.contains(where: { $0.kind == .user })
         else { return }
-        guard backend.send(["type": "retry_last"]) else {
+        guard conversationBackend.send(["type": "retry_last"]) else {
             showToast("Reconnect the local agent before retrying")
             return
         }
@@ -2103,7 +2193,7 @@ final class AppModel: ObservableObject {
         // If the interrupt cannot be delivered the run is still live on the
         // agent; leave the busy state to recoverFromLostConnection(), the one
         // place that reconciles cards and spinners after a drop.
-        guard backend.send(["type": "interrupt"]) else {
+        guard conversationBackend.send(["type": "interrupt"]) else {
             showToast("Reconnect the local agent — the run could not be stopped")
             return
         }
@@ -2111,6 +2201,34 @@ final class AppModel: ObservableObject {
         isBusy = false
         pendingRetry = false
         showToast("Stopping the current run")
+    }
+
+    var hasRunningWorkForQuit: Bool {
+        isBusy || hasPendingPermission || orchestrationState.map {
+            ![.completed, .failed, .interrupted].contains($0)
+        } == true || taskConversationStates.values.contains {
+            ![.completed, .failed, .interrupted].contains($0.state)
+        }
+    }
+
+    func stopRunningWorkForQuit(completion: @escaping @MainActor () -> Void) {
+        for runtime in taskWorkers.values {
+            _ = runtime.service.send(["type": "interrupt"])
+        }
+        _ = backend.send(["type": "interrupt"])
+        computerControl.cancelPendingActions()
+        Task { @MainActor in
+            // Give every worker a bounded window to append its interrupted
+            // task state and terminal event before shutdown stops processes.
+            for _ in 0..<20 {
+                let backgroundActive = taskConversationStates.values.contains {
+                    ![.completed, .failed, .interrupted].contains($0.state)
+                }
+                if !isBusy && !backgroundActive { break }
+                try? await Task.sleep(for: .milliseconds(150))
+            }
+            completion()
+        }
     }
 
     // MARK: - Slash commands
@@ -2253,7 +2371,7 @@ final class AppModel: ObservableObject {
         // UI tests drive the prompt against a dead socket; applying the
         // decision locally is what lets the panel advance and dismiss.
         if !isUITesting {
-            guard backend.send([
+            guard conversationBackend.send([
                 "type": "permission_decision",
                 "request_id": requestID,
                 "decision": decision,
@@ -2264,6 +2382,10 @@ final class AppModel: ObservableObject {
         }
         if let index = blocks.lastIndex(where: { $0.tool?.requestID == requestID }) {
             blocks[index].tool?.status = decision == "deny" ? .denied : .running
+        }
+        if orchestrationRunID != nil {
+            orchestrationState = .running
+            updateTaskConversation(state: .running, event: [:])
         }
     }
 
@@ -2362,6 +2484,311 @@ final class AppModel: ObservableObject {
     func persistProviderAccounts() {
         guard persistenceEnabled else { return }
         ProviderAccountStore.save(providerAccounts)
+    }
+
+    // MARK: - Agents and teams
+
+    var selectedAgentTeam: AgentTeam? {
+        selectedAgentTeamID.flatMap { id in agentTeams.first(where: { $0.id == id }) }
+    }
+
+    var teamModeEnabled: Bool { selectedAgentTeam != nil }
+
+    func selectAgentTeam(_ id: UUID?) {
+        selectedAgentTeamID = id
+        showToast(id == nil ? "Solo mode" : "Team mode")
+    }
+
+    func saveAgentProfile(_ profile: AgentProfile) {
+        var updated = profile
+        updated.clamp()
+        guard updated.isConfigured else {
+            showToast("Give the agent a name and exact model")
+            return
+        }
+        let collision = agentProfiles.contains {
+            $0.id != updated.id
+                && $0.name.caseInsensitiveCompare(updated.name) == .orderedSame
+        }
+        guard !collision else {
+            showToast("Agent names must be unique")
+            return
+        }
+        if let index = agentProfiles.firstIndex(where: { $0.id == updated.id }) {
+            agentProfiles[index] = updated
+        } else {
+            agentProfiles.append(updated)
+        }
+        persistAgentTeams()
+        showToast("Saved \(updated.name)")
+    }
+
+    func removeAgentProfile(_ profile: AgentProfile) {
+        guard !isBusy else {
+            showToast("Stop the active run before removing an agent")
+            return
+        }
+        agentProfiles.removeAll { $0.id == profile.id }
+        agentTeams = agentTeams.compactMap { team in
+            var updated = team
+            updated.memberIDs.removeAll { $0 == profile.id }
+            if updated.dispatcherID == profile.id { updated.dispatcherID = nil }
+            if updated.fallbackDispatcherID == profile.id { updated.fallbackDispatcherID = nil }
+            if updated.defaultWriterID == profile.id { updated.defaultWriterID = nil }
+            return updated
+        }
+        if selectedAgentTeamID.flatMap({ id in agentTeams.first(where: { $0.id == id }) }) == nil {
+            selectedAgentTeamID = nil
+        }
+        persistAgentTeams()
+    }
+
+    func saveAgentTeam(_ team: AgentTeam) {
+        var updated = team
+        updated.clamp()
+        let errors = AgentTeamValidation.errors(team: updated, profiles: agentProfiles)
+        guard errors.isEmpty else {
+            showToast(errors[0])
+            return
+        }
+        let collision = agentTeams.contains {
+            $0.id != updated.id
+                && $0.name.caseInsensitiveCompare(updated.name) == .orderedSame
+        }
+        guard !collision else {
+            showToast("Team names must be unique")
+            return
+        }
+        if let index = agentTeams.firstIndex(where: { $0.id == updated.id }) {
+            agentTeams[index] = updated
+        } else {
+            agentTeams.append(updated)
+        }
+        persistAgentTeams()
+        showToast("Saved \(updated.name)")
+    }
+
+    func removeAgentTeam(_ team: AgentTeam) {
+        guard !isBusy else {
+            showToast("Stop the active run before removing a team")
+            return
+        }
+        agentTeams.removeAll { $0.id == team.id }
+        if selectedAgentTeamID == team.id { selectedAgentTeamID = nil }
+        persistAgentTeams()
+    }
+
+    func grantAutomaticRoutingConsent(for accountID: UUID) {
+        teamRoutingConsentAccountIDs.insert(accountID)
+        persistAgentTeams()
+    }
+
+    func revokeAutomaticRoutingConsent(for accountID: UUID) {
+        teamRoutingConsentAccountIDs.remove(accountID)
+        persistAgentTeams()
+    }
+
+    func testAgentProfileConnection(_ profile: AgentProfile) async -> String {
+        switch profile.route {
+        case .localOllama:
+            guard let url = URL(string: lastOllamaHost + "/api/tags") else {
+                return "The local Ollama URL is invalid."
+            }
+            do {
+                let (data, response) = try await ProxyRuntime.shared.urlSession.data(from: url)
+                guard (200..<300).contains((response as? HTTPURLResponse)?.statusCode ?? -1) else {
+                    return "Ollama did not accept the connection."
+                }
+                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                let names = (object?["models"] as? [[String: Any]] ?? []).compactMap {
+                    $0["name"] as? String
+                }
+                if !profile.model.isEmpty,
+                   !names.contains(where: { $0.caseInsensitiveCompare(profile.model) == .orderedSame })
+                {
+                    return "Connected, but that exact model is not installed in Ollama."
+                }
+                return "Connected to local Ollama."
+            } catch {
+                return "Could not connect to Ollama: \(error.localizedDescription)"
+            }
+        case .providerAccount(let id):
+            guard let account = providerAccounts.first(where: { $0.id == id }) else {
+                return "That provider account is unavailable."
+            }
+            let result = await ProviderModelCatalog.fetch(for: account)
+            accountModels[id] = result.models
+            accountStatus[id] = result.status
+            guard result.status.isHealthy else { return result.status.summary }
+            if account.kind.listsModels,
+               !profile.model.isEmpty,
+               !result.models.contains(where: { $0.caseInsensitiveCompare(profile.model) == .orderedSame })
+            {
+                return "Connected, but the exact model was not in this account's catalog."
+            }
+            return result.status.summary
+        }
+    }
+
+    private func persistAgentTeams() {
+        guard persistenceEnabled else { return }
+        AgentTeamStore.save(profiles: agentProfiles, teams: agentTeams)
+        UserDefaults.standard.set(
+            teamRoutingConsentAccountIDs.map(\.uuidString).sorted(),
+            forKey: AgentTeamStore.consentKey
+        )
+    }
+
+    /// Builds an in-memory manifest for one run. Provider credentials are
+    /// included only in the WebSocket payload and are never written into the
+    /// profile/team stores or transcript.
+    func teamManifest(for text: String) -> [String: Any]? {
+        let mention = TeamMentionResolver.selection(
+            in: text,
+            profiles: agentProfiles,
+            teams: agentTeams
+        )
+        let team = mention.team
+            ?? selectedAgentTeam
+            ?? mention.agent.flatMap { agent in
+                agentTeams.first(where: { $0.memberIDs.contains(agent.id) })
+            }
+        guard let team else { return nil }
+        let errors = AgentTeamValidation.errors(team: team, profiles: agentProfiles)
+        guard errors.isEmpty else {
+            showToast(errors[0])
+            return nil
+        }
+        let members = team.memberIDs.compactMap { id in agentProfiles.first(where: { $0.id == id }) }
+        for profile in members {
+            guard let accountID = profile.route.accountID else { continue }
+            guard teamRoutingConsentAccountIDs.contains(accountID) else {
+                let label = providerAccounts.first(where: { $0.id == accountID })?.displayName
+                    ?? "hosted account"
+                showToast("Allow automatic team routing for \(label) in Agents & Teams")
+                return nil
+            }
+        }
+        let routes: [[String: Any]] = members.compactMap { profile in
+            var route: [String: Any]
+            switch profile.route {
+            case .localOllama:
+                route = [
+                    "provider": "ollama",
+                    "host": lastOllamaHost,
+                ]
+            case .providerAccount(let accountID):
+                guard let account = providerAccounts.first(where: { $0.id == accountID }),
+                      account.hasKey
+                else { return nil }
+                route = [
+                    "provider": "remote",
+                    "base_url": account.resolvedBaseURL,
+                    "api_key": CredentialStore.get(account: account.keychainAccount) ?? "",
+                    "auth_style": account.kind.authStyle,
+                    "lists_models": account.kind.listsModels,
+                    "account_label": account.displayName,
+                ]
+            }
+            var entry: [String: Any] = [
+                "id": profile.id.uuidString,
+                "name": profile.name,
+                "model": profile.model,
+                "role": profile.role.rawValue,
+                "instructions": profile.instructions,
+                "capabilities": profile.capabilityTags,
+                "access_ceiling": profile.accessCeiling.rawValue,
+                "timeout_seconds": profile.timeoutSeconds,
+                "token_limit": profile.tokenLimit,
+                "metering": profile.metering.rawValue,
+                "route": route,
+            ]
+            if let rate = profile.inputCostPerMillion { entry["input_cost_per_million"] = rate }
+            if let rate = profile.outputCostPerMillion { entry["output_cost_per_million"] = rate }
+            return entry
+        }
+        guard routes.count == members.count else {
+            showToast("A team member's provider account is unavailable")
+            return nil
+        }
+        var teamPayload: [String: Any] = [
+            "id": team.id.uuidString,
+            "name": team.name,
+            "member_ids": team.memberIDs.map(\.uuidString),
+            "use_managed_worktree": team.useManagedWorktree,
+            "budget": [
+                "max_jobs": team.budget.maxJobs,
+                "max_rounds": team.budget.maxRounds,
+                "max_model_calls": team.budget.maxModelCalls,
+                "max_concurrent_calls": team.budget.maxConcurrentCalls,
+                "max_metered_tokens": team.budget.maxMeteredTokens,
+            ],
+        ]
+        if let id = team.dispatcherID { teamPayload["dispatcher_id"] = id.uuidString }
+        if let id = team.fallbackDispatcherID { teamPayload["fallback_dispatcher_id"] = id.uuidString }
+        if let id = team.defaultWriterID { teamPayload["default_writer_id"] = id.uuidString }
+        var manifest: [String: Any] = [
+            "run_id": UUID().uuidString,
+            "team": teamPayload,
+            "profiles": routes,
+        ]
+        if let id = mention.agent?.id { manifest["forced_agent_id"] = id.uuidString }
+        return manifest
+    }
+
+    func applyActiveTaskToWorkspace() {
+        guard let task = activeTaskRecord else { return }
+        guard !isBusy, !hasPendingPermission else {
+            showToast("Wait for the team run to finish before applying changes")
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response: TaskApplyResponse = try await backend.post(
+                    "/api/tasks/\(task.id)/apply",
+                    body: [:],
+                    timeout: 120,
+                    as: TaskApplyResponse.self
+                )
+                activeTaskRecord = response.task
+                taskHasChanges = false
+                taskPatchBytes = 0
+                refreshGitStatus()
+                showToast(response.applied ? "Applied task changes to the workspace" : "No new task changes to apply")
+            } catch {
+                showToast("Workspace left untouched: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func copyActiveTaskPatch() {
+        guard let task = activeTaskRecord else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response: TaskDetailResponse = try await backend.get(
+                    "/api/tasks/\(task.id)",
+                    as: TaskDetailResponse.self
+                )
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(response.patch, forType: .string)
+                showToast("Copied task patch")
+            } catch {
+                showToast("Could not copy the task patch: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func openActiveTaskCheckout() {
+        guard let path = activeTaskRecord?.executionPath else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: path, isDirectory: true))
+    }
+
+    func revealActiveTaskCheckout() {
+        guard let path = activeTaskRecord?.executionPath else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path, isDirectory: true)])
     }
 
     /// Adds or updates an account. The key is written here rather than in the
@@ -2487,7 +2914,7 @@ final class AppModel: ObservableObject {
     }
 
     func requestClearChat() {
-        guard !isBusy, !hasPendingPermission else {
+        guard (!isBusy && !hasPendingPermission) || taskWorkers[currentSessionID] != nil else {
             showToast("Finish or stop the active run before clearing")
             return
         }
@@ -2504,11 +2931,12 @@ final class AppModel: ObservableObject {
         // Re-checked here, not just in requestClearChat(): a permission
         // request can arrive while the confirmation alert is open, and
         // clearing then would orphan the backend's blocked decision.
-        guard !hasPendingPermission else {
+        guard !hasPendingPermission || taskWorkers[currentSessionID] != nil else {
             showToast("Answer the permission request before clearing")
             return
         }
-        guard !isBusy, !pendingSessionReset else { return }
+        guard !isBusy || taskWorkers[currentSessionID] != nil, !pendingSessionReset else { return }
+        detachForegroundWorkerUIIfNeeded()
         pendingSessionReset = true
         armSessionResetWatchdog()
         showToast("Starting a fresh chat…")
@@ -2558,7 +2986,7 @@ final class AppModel: ObservableObject {
     }
 
     func openWorkspace(_ group: WorkspaceChatGroup) {
-        guard !isBusy, !hasPendingPermission else {
+        guard (!isBusy && !hasPendingPermission) || taskWorkers[currentSessionID] != nil else {
             showToast("Finish the active run before switching workspaces")
             return
         }
@@ -2571,10 +2999,12 @@ final class AppModel: ObservableObject {
     }
 
     private func startNewChat(in rawPath: String) {
-        guard !isBusy, !hasPendingPermission, !pendingSessionReset else {
+        guard (!isBusy && !hasPendingPermission) || taskWorkers[currentSessionID] != nil,
+              !pendingSessionReset else {
             showToast("Finish the active run before starting another chat")
             return
         }
+        detachForegroundWorkerUIIfNeeded()
         let path = SessionSummary.canonicalWorkspacePath(rawPath)
         guard FileManager.default.fileExists(atPath: path) else {
             showToast("That workspace is no longer available")
@@ -2649,7 +3079,8 @@ final class AppModel: ObservableObject {
     }
 
     func resume(_ session: SessionSummary) {
-        guard !isBusy, !hasPendingPermission else {
+        let currentIsBackgroundCapable = taskWorkers[currentSessionID] != nil
+        guard (!isBusy && !hasPendingPermission) || currentIsBackgroundCapable else {
             showToast("Finish the active run before switching sessions")
             return
         }
@@ -2667,6 +3098,11 @@ final class AppModel: ObservableObject {
             expandedWorkspaceIDs.insert(path)
             persistExpandedWorkspaces()
         }
+        if let runtime = taskWorkers[session.id] {
+            activateWorkerSession(session, runtime: runtime)
+            return
+        }
+        if currentIsBackgroundCapable { detachForegroundWorkerUIIfNeeded() }
         Task {
             do {
                 let response = try await backend.post(
@@ -2690,10 +3126,89 @@ final class AppModel: ObservableObject {
                 blocks = Self.blocks(from: response.messages)
                 sessionInfo = response.sessionInfo
                 currentSessionID = response.sessionInfo.sessionID
+                agentActivities = response.agentActivities
+                orchestrationState = response.orchestrationState
+                orchestrationRunID = response.orchestrationRunID
+                activeWorkerID = response.workerID
+                if let state = response.orchestrationState {
+                    taskConversationStates[response.sessionInfo.sessionID] = TaskConversationState(
+                        sessionID: response.sessionInfo.sessionID,
+                        taskID: response.sessionInfo.task?.id,
+                        teamID: session.team?.id,
+                        workerID: response.workerID,
+                        runID: response.orchestrationRunID,
+                        state: state,
+                        updatedAt: Date()
+                    )
+                }
                 touchWorkspaceProfile(response.sessionInfo.cwd)
                 showToast("Session resumed")
             } catch {
                 blocks.append(ChatBlock(kind: .error, text: error.localizedDescription))
+            }
+        }
+    }
+
+    private func detachForegroundWorkerUIIfNeeded() {
+        guard taskWorkers[currentSessionID] != nil else { return }
+        computerControl.cancelPendingActions()
+        flushPendingTokens()
+        finalizeStreamingBlocks()
+        streamingAssistantID = nil
+        streamingReply.resetTurn()
+        isBusy = false
+        orchestrationState = nil
+        agentActivities = []
+        activeTaskRecord = nil
+        taskHasChanges = false
+        taskPatchBytes = 0
+    }
+
+    private func activateWorkerSession(_ session: SessionSummary, runtime: TaskWorkerRuntime) {
+        flushPendingTokens()
+        finalizeStreamingBlocks()
+        streamingAssistantID = nil
+        streamingReply.resetTurn()
+        currentSessionID = runtime.sessionID
+        sessionInfo = runtime.sessionInfo
+        if let info = runtime.sessionInfo { computerControl.beginSession(info.sessionID) }
+        Task {
+            do {
+                let detail = try await backend.get(
+                    "/api/sessions/\(runtime.sessionID)",
+                    as: SessionDetailResponse.self
+                )
+                blocks = Self.blocks(from: detail.messages)
+                agentActivities = detail.agentActivities ?? []
+                orchestrationState = detail.orchestrationState
+                    ?? taskConversationStates[runtime.sessionID]?.state
+                    ?? detail.task?.state
+                orchestrationRunID = detail.orchestrationRunID
+                activeWorkerID = detail.workerID
+                activeTaskRecord = detail.task ?? runtime.sessionInfo?.task
+                let activeStates: Set<TeamRunState> = [
+                    .queued, .dispatching, .running, .waitingPermission,
+                    .waitingComputer, .reviewing,
+                ]
+                isBusy = orchestrationState.map(activeStates.contains) ?? false
+                if let pending = runtime.pendingForegroundEvent {
+                    runtime.pendingForegroundEvent = nil
+                    handle(pending)
+                }
+                if let task = activeTaskRecord,
+                   let taskDetail = try? await backend.get(
+                       "/api/tasks/\(task.id)",
+                       as: TaskDetailResponse.self
+                   )
+                {
+                    taskHasChanges = taskDetail.patchBytes > 0
+                    taskPatchBytes = taskDetail.patchBytes
+                }
+                touchWorkspaceProfile(session.workspacePath ?? workspacePath)
+                showToast(isBusy ? "Running task opened" : "Task opened")
+            } catch {
+                blocks.append(ChatBlock(kind: .error, text: error.localizedDescription))
+                isBusy = false
             }
         }
     }
@@ -2827,7 +3342,7 @@ final class AppModel: ObservableObject {
     }
 
     func chooseWorkspace() {
-        guard !isBusy, !hasPendingPermission else {
+        guard !chatNavigationDisabled else {
             showToast("Finish the active run before adding a workspace")
             return
         }
@@ -2850,7 +3365,7 @@ final class AppModel: ObservableObject {
 
     /// Creates a folder and opens it as the workspace in one step.
     func createWorkspace() {
-        guard !isBusy, !hasPendingPermission else {
+        guard !chatNavigationDisabled else {
             showToast("Finish the active run before creating a workspace")
             return
         }
@@ -2893,7 +3408,7 @@ final class AppModel: ObservableObject {
     }
 
     func switchWorkspace(to path: String) {
-        guard !isBusy, !hasPendingPermission else {
+        guard (!isBusy && !hasPendingPermission) || taskWorkers[currentSessionID] != nil else {
             showToast("Finish the active run before switching workspaces")
             return
         }
@@ -3310,6 +3825,13 @@ final class AppModel: ObservableObject {
                 body: providerRequestBody(verify: verify),
                 as: ProviderStateResponse.self
             )
+            if let worker = taskWorkers[currentSessionID] {
+                _ = try? await worker.service.post(
+                    "/api/provider",
+                    body: providerRequestBody(verify: false),
+                    as: ProviderStateResponse.self
+                )
+            }
             var ollamaFailure: RuntimePhase?
             if state.provider == "ollama" {
                 lastOllamaHost = state.host.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -3731,7 +4253,7 @@ final class AppModel: ObservableObject {
 
     private func changePermissionMode(_ mode: PermissionMode) async {
         do {
-            let state = try await backend.post(
+            let state = try await conversationBackend.post(
                 "/api/permissions",
                 body: ["mode": mode.rawValue],
                 as: PermissionStateResponse.self
@@ -3747,7 +4269,7 @@ final class AppModel: ObservableObject {
     func resetPermissions() {
         Task {
             do {
-                let state = try await backend.post(
+                let state = try await conversationBackend.post(
                     "/api/permissions",
                     body: ["reset": true],
                     as: PermissionStateResponse.self
@@ -3769,11 +4291,18 @@ final class AppModel: ObservableObject {
         settings.computerControlEnabled = enabled
         computerControl.refreshPermissionStatus()
         sendComputerControlCapability()
+        for runtime in taskWorkers.values where runtime.sessionID != currentSessionID {
+            sendComputerControlCapability(to: runtime.service)
+        }
         showToast(enabled ? "Computer Control enabled" : "Computer Control disabled")
     }
 
     private func sendComputerControlCapability() {
-        _ = backend.send([
+        sendComputerControlCapability(to: conversationBackend)
+    }
+
+    private func sendComputerControlCapability(to transport: BackendService) {
+        _ = transport.send([
             "type": "set_computer_control",
             "enabled": settings.computerControlEnabled,
             "native_available": ComputerControlService.isAvailable,
@@ -3864,6 +4393,188 @@ final class AppModel: ObservableObject {
         (try? await backend.get("/api/health", as: HealthResponse.self)) != nil
     }
 
+    private func ensureTeamWorker(for requestedSessionID: String) async -> TaskWorkerRuntime? {
+        if let existing = taskWorkers[requestedSessionID] { return existing }
+        let process = BackendProcess()
+        var workerEnvironment = ProxyConfigurator.agentEnvironmentOverlay(
+            settings: settings,
+            ollamaHost: lastOllamaHost
+        )
+        workerEnvironment["LOCUS_MODEL_CALL_LIMIT"] = String(globalAgentConcurrency)
+        let launch = process.start(
+            root: settings.backendRoot,
+            port: 0,
+            cwd: workspacePath,
+            environmentOverlay: workerEnvironment,
+            proxyCredential: ProxyConfigurator.childCredential(
+                settings: settings,
+                password: persistenceEnabled ? CredentialStore.proxyPassword() : nil
+            )
+        )
+        guard case .running(let endpoint) = launch else {
+            if case .failed(let message) = launch { showToast(message) }
+            return nil
+        }
+        let runtime = TaskWorkerRuntime(
+            requestedSessionID: requestedSessionID,
+            process: process,
+            endpoint: endpoint
+        )
+        taskWorkers[requestedSessionID] = runtime
+        runtime.process.onUnexpectedExit = { [weak self, weak runtime] _, output in
+            Task { @MainActor in
+                guard let self, let runtime else { return }
+                let state = TaskConversationState(
+                    sessionID: runtime.sessionID,
+                    taskID: runtime.sessionInfo?.task?.id,
+                    teamID: self.taskConversationStates[runtime.sessionID]?.teamID,
+                    workerID: self.taskConversationStates[runtime.sessionID]?.workerID,
+                    runID: self.taskConversationStates[runtime.sessionID]?.runID,
+                    state: .interrupted,
+                    updatedAt: Date()
+                )
+                self.taskConversationStates[runtime.sessionID] = state
+                if self.currentSessionID == runtime.sessionID {
+                    self.isBusy = false
+                    self.orchestrationState = .interrupted
+                    let detail = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.blocks.append(ChatBlock(
+                        kind: .error,
+                        text: detail.isEmpty ? "The task worker stopped unexpectedly." : String(detail.suffix(1_000))
+                    ))
+                }
+            }
+        }
+        runtime.service.onConnectionChange = { [weak runtime] connected in
+            runtime?.isConnected = connected
+        }
+        runtime.service.onEvent = { [weak self, weak runtime] event in
+            guard let self, let runtime else { return }
+            self.handleWorkerEvent(event, runtime: runtime)
+        }
+
+        var healthy = false
+        for _ in 0..<60 {
+            if (try? await runtime.service.get("/api/health", as: HealthResponse.self)) != nil {
+                healthy = true
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        guard healthy else {
+            taskWorkers.removeValue(forKey: requestedSessionID)
+            runtime.stop()
+            showToast("The task worker did not become ready")
+            return nil
+        }
+        runtime.service.connect()
+        for _ in 0..<40 where !runtime.isConnected {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        guard runtime.isConnected else {
+            taskWorkers.removeValue(forKey: requestedSessionID)
+            runtime.stop()
+            showToast("The task worker could not connect")
+            return nil
+        }
+
+        let detail = try? await backend.get(
+            "/api/sessions/\(requestedSessionID)",
+            as: SessionDetailResponse.self
+        )
+        if let detail, !detail.messages.isEmpty,
+           let response = try? await runtime.service.post(
+               "/api/sessions/\(requestedSessionID)/resume",
+               body: [:],
+               as: ResumeResponse.self
+           )
+        {
+            runtime.sessionID = response.sessionInfo.sessionID
+            runtime.sessionInfo = response.sessionInfo
+        } else if let info = runtime.sessionInfo {
+            // A brand-new chat has no message record to resume. Its dedicated
+            // worker's blank session becomes the chat before the first send.
+            runtime.sessionID = info.sessionID
+        } else {
+            taskWorkers.removeValue(forKey: requestedSessionID)
+            runtime.stop()
+            showToast("The task worker did not publish its session")
+            return nil
+        }
+        runtime.isAttaching = false
+        if runtime.sessionID != requestedSessionID {
+            taskWorkers.removeValue(forKey: requestedSessionID)
+            taskWorkers[runtime.sessionID] = runtime
+            if currentSessionID == requestedSessionID {
+                currentSessionID = runtime.sessionID
+            }
+        }
+        if currentSessionID == runtime.sessionID, let info = runtime.sessionInfo {
+            sessionInfo = info
+            activeTaskRecord = info.task
+        }
+        sendComputerControlCapability(to: runtime.service)
+        return runtime
+    }
+
+    private func handleWorkerEvent(_ event: [String: Any], runtime: TaskWorkerRuntime) {
+        if let rawType = event["type"] as? String, rawType == "session_info",
+           let info = decode(SessionInfo.self, from: event)
+        {
+            runtime.sessionInfo = info
+            if runtime.isAttaching { return }
+        }
+        guard currentSessionID == runtime.sessionID, !runtime.isAttaching else {
+            recordBackgroundWorkerEvent(event, runtime: runtime)
+            return
+        }
+        handle(event)
+    }
+
+    private func recordBackgroundWorkerEvent(
+        _ event: [String: Any],
+        runtime: TaskWorkerRuntime
+    ) {
+        guard let type = event["type"] as? String else { return }
+        let previous = taskConversationStates[runtime.sessionID]
+        var state = previous?.state ?? .running
+        if type == "orchestration_started" { state = .dispatching }
+        if type == "orchestration_state",
+           let raw = event["state"] as? String,
+           let updated = TeamRunState(rawValue: raw) { state = updated }
+        if type == "orchestration_completed",
+           let raw = event["state"] as? String,
+           let updated = TeamRunState(rawValue: raw) { state = updated }
+        if type == "permission_request" {
+            state = .waitingPermission
+            runtime.pendingForegroundEvent = event
+        }
+        if type == "computer_action_request" {
+            state = .waitingComputer
+            runtime.pendingForegroundEvent = event
+        }
+        var taskID = runtime.sessionInfo?.task?.id ?? previous?.taskID
+        if let raw = event["task"] as? [String: Any],
+           let record = decode(TaskRecord.self, from: raw)
+        {
+            taskID = record.id
+            runtime.sessionInfo = runtime.sessionInfo?.replacingTask(record)
+            state = record.state ?? state
+        }
+        taskConversationStates[runtime.sessionID] = TaskConversationState(
+            sessionID: runtime.sessionID,
+            taskID: taskID,
+            teamID: (event["team_id"] as? String) ?? previous?.teamID,
+            workerID: (event["worker_id"] as? String) ?? previous?.workerID,
+            runID: (event["run_id"] as? String) ?? previous?.runID,
+            state: state,
+            updatedAt: Date()
+        )
+        if (type == "orchestration_started" || type == "turn_done"), persistenceEnabled {
+            Task { await refreshMetadata() }
+        }
+    }
+
     func decoratedPrompt(
         _ text: String,
         mode: WorkMode,
@@ -3924,14 +4635,37 @@ final class AppModel: ObservableObject {
         return sections.joined(separator: "\n\n")
     }
 
+    private func updateTaskConversation(
+        state: TeamRunState,
+        event: [String: Any],
+        taskID: String? = nil
+    ) {
+        guard !currentSessionID.isEmpty else { return }
+        let previous = taskConversationStates[currentSessionID]
+        taskConversationStates[currentSessionID] = TaskConversationState(
+            sessionID: currentSessionID,
+            taskID: taskID ?? activeTaskRecord?.id ?? previous?.taskID,
+            teamID: (event["team_id"] as? String) ?? previous?.teamID,
+            workerID: (event["worker_id"] as? String) ?? activeWorkerID ?? previous?.workerID,
+            runID: (event["run_id"] as? String) ?? orchestrationRunID ?? previous?.runID,
+            state: state,
+            updatedAt: Date()
+        )
+    }
+
     private func handle(_ event: [String: Any]) {
         guard let type = event["type"] as? String else { return }
         switch type {
+        case "worker_identity":
+            activeWorkerID = event["worker_id"] as? String
+
         case "session_info":
             if let info = decode(SessionInfo.self, from: event) {
+                activeWorkerID = event["worker_id"] as? String ?? activeWorkerID
                 computerControl.beginSession(info.sessionID)
                 sessionInfo = info
                 currentSessionID = info.sessionID
+                activeTaskRecord = info.task
                 // Only when a reply is not mid-flight. `approx_tokens` counts
                 // the assistant message once it has been committed, which
                 // happens at message_end — the same moment streamingAssistantID
@@ -4021,6 +4755,10 @@ final class AppModel: ObservableObject {
                 )))
             }
             notifyPermissionRequestIfInactive()
+            if orchestrationRunID != nil {
+                orchestrationState = .waitingPermission
+                updateTaskConversation(state: .waitingPermission, event: event)
+            }
 
         case "tool_result":
             let toolID = event["id"] as? String ?? ""
@@ -4040,6 +4778,10 @@ final class AppModel: ObservableObject {
                     status: denied ? .denied : ok ? .done : .error,
                     result: event["result"] as? String
                 )))
+            }
+            if orchestrationRunID != nil {
+                orchestrationState = .running
+                updateTaskConversation(state: .running, event: event)
             }
 
         case "terminal_started", "terminal_output", "terminal_exit",
@@ -4096,11 +4838,132 @@ final class AppModel: ObservableObject {
             }
             steeringState = nil
 
+        case "orchestration_started":
+            orchestrationRunID = event["run_id"] as? String
+            orchestrationState = .dispatching
+            activeWorkerID = event["worker_id"] as? String ?? activeWorkerID
+            agentActivities = []
+            teamModelCalls = 0
+            teamMeteredTokens = 0
+            updateTaskConversation(state: .dispatching, event: event)
+            if persistenceEnabled { Task { await refreshMetadata() } }
+
+        case "orchestration_state":
+            orchestrationState = (event["state"] as? String)
+                .flatMap(TeamRunState.init(rawValue:))
+            if let orchestrationState { updateTaskConversation(state: orchestrationState, event: event) }
+
+        case "agent_job_started":
+            let jobID = event["job_id"] as? String ?? UUID().uuidString
+            if let index = agentActivities.firstIndex(where: { $0.id == jobID }) {
+                agentActivities[index].state = .running
+                agentActivities[index].startedAt = Date()
+            } else {
+                agentActivities.append(AgentActivity(
+                    id: jobID,
+                    agentName: event["agent_name"] as? String ?? "Agent",
+                    role: event["role"] as? String ?? "generalist",
+                    provider: event["provider"] as? String ?? "",
+                    model: event["model"] as? String ?? "",
+                    goal: event["goal"] as? String ?? "",
+                    state: .running,
+                    output: "",
+                    reasoningText: nil,
+                    tool: nil,
+                    evidence: [],
+                    startedAt: Date(),
+                    elapsedMilliseconds: 0,
+                    promptTokens: 0,
+                    completionTokens: 0
+                ))
+            }
+
+        case "agent_job_completed":
+            guard let result = event["result"] as? [String: Any] else { return }
+            let jobID = result["job_id"] as? String ?? ""
+            let state = (event["state"] as? String) == "failed"
+                ? TeamRunState.failed : .completed
+            let index = agentActivities.firstIndex(where: { $0.id == jobID })
+            let activity = AgentActivity(
+                id: jobID.isEmpty ? UUID().uuidString : jobID,
+                agentName: result["agent_name"] as? String ?? "Agent",
+                role: result["role"] as? String ?? "generalist",
+                provider: index.map { agentActivities[$0].provider } ?? "",
+                model: index.map { agentActivities[$0].model } ?? "",
+                goal: index.map { agentActivities[$0].goal } ?? "",
+                state: state,
+                output: result["output"] as? String ?? result["error"] as? String ?? "",
+                reasoningText: result["reasoning_text"] as? String,
+                tool: nil,
+                evidence: result["evidence"] as? [String] ?? [],
+                startedAt: index.flatMap { agentActivities[$0].startedAt },
+                elapsedMilliseconds: result["elapsed_ms"] as? Int ?? 0,
+                promptTokens: result["prompt_tokens"] as? Int ?? 0,
+                completionTokens: result["completion_tokens"] as? Int ?? 0
+            )
+            if let index { agentActivities[index] = activity } else { agentActivities.append(activity) }
+            if let usage = event["usage"] as? [String: Any] {
+                teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
+                teamMeteredTokens = usage["metered_tokens"] as? Int ?? teamMeteredTokens
+            }
+
+        case "orchestration_completed":
+            orchestrationState = (event["state"] as? String)
+                .flatMap(TeamRunState.init(rawValue:)) ?? .completed
+            if let orchestrationState { updateTaskConversation(state: orchestrationState, event: event) }
+            if let usage = event["usage"] as? [String: Any] {
+                teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
+                teamMeteredTokens = usage["metered_tokens"] as? Int ?? teamMeteredTokens
+            }
+
+        case "task_ready":
+            if let raw = event["task"] as? [String: Any],
+               let record = decode(TaskRecord.self, from: raw)
+            {
+                activeTaskRecord = record
+                taskHasChanges = false
+                taskPatchBytes = 0
+                updateTaskConversation(
+                    state: record.state ?? orchestrationState ?? .running,
+                    event: event,
+                    taskID: record.id
+                )
+            }
+
+        case "task_state":
+            if let raw = event["task"] as? [String: Any],
+               let record = decode(TaskRecord.self, from: raw)
+            {
+                activeTaskRecord = record
+                let state = record.state
+                    ?? (event["state"] as? String).flatMap(TeamRunState.init(rawValue:))
+                    ?? .completed
+                updateTaskConversation(state: state, event: event, taskID: record.id)
+            }
+
+        case "task_changes":
+            taskHasChanges = event["has_changes"] as? Bool == true
+            taskPatchBytes = event["patch_bytes"] as? Int ?? 0
+
+        case "task_applied":
+            if let raw = event["task"] as? [String: Any],
+               let record = decode(TaskRecord.self, from: raw)
+            {
+                activeTaskRecord = record
+            }
+            taskHasChanges = false
+            taskPatchBytes = 0
+            showToast("Applied task changes to the workspace")
+
         case "computer_action_request":
             guard let requestID = event["request_id"] as? String,
                   let tool = event["tool"] as? String,
                   let arguments = event["arguments"] as? [String: Any]
             else { return }
+            if orchestrationRunID != nil {
+                orchestrationState = .waitingComputer
+                updateTaskConversation(state: .waitingComputer, event: event)
+            }
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let result = await self.computerControl.perform(
@@ -4109,11 +4972,15 @@ final class AppModel: ObservableObject {
                     hostedProvider: self.activeAccount?.displayName,
                     timeoutMilliseconds: event["timeout_ms"] as? Int ?? 60_000
                 )
-                _ = self.backend.send([
+                _ = self.conversationBackend.send([
                     "type": "computer_action_result",
                     "request_id": requestID,
                     "result": result,
                 ])
+                if self.orchestrationRunID != nil {
+                    self.orchestrationState = .running
+                    self.updateTaskConversation(state: .running, event: event)
+                }
             }
 
         case "computer_control_status":
@@ -4285,6 +5152,7 @@ final class AppModel: ObservableObject {
         computerControl.beginSession(info.sessionID)
         sessionInfo = info
         currentSessionID = info.sessionID
+        activeTaskRecord = info.task
         if isDuplicateAcknowledgement { return }
         sessionResetWatchdog?.cancel()
 
@@ -4346,6 +5214,14 @@ final class AppModel: ObservableObject {
             restoredTranscriptContext = nil
             pendingSessionReset = false
             isBusy = false
+            orchestrationRunID = nil
+            orchestrationState = nil
+            activeWorkerID = nil
+            agentActivities = []
+            teamModelCalls = 0
+            teamMeteredTokens = 0
+            taskHasChanges = false
+            taskPatchBytes = 0
             showToast(reason == "deleted_active" ? "Fresh chat opened" : "Fresh chat started")
         }
         if persistenceEnabled {
@@ -5391,6 +6267,25 @@ private struct SessionsResponse: Codable {
     let current: String
 }
 
+private struct TaskDetailResponse: Codable {
+    let task: TaskRecord
+    let tree: String
+    let patch: String
+    let patchBytes: Int
+
+    enum CodingKeys: String, CodingKey {
+        case task, tree, patch
+        case patchBytes = "patch_bytes"
+    }
+}
+
+private struct TaskApplyResponse: Codable {
+    let task: TaskRecord
+    let applied: Bool
+    let tree: String
+    let paths: [String]
+}
+
 private struct NewSessionResponse: Codable {
     let ok: Bool
     let reason: String
@@ -5461,10 +6356,30 @@ private struct ResumeResponse: Codable {
     let text: String
     let messages: [HistoryMessage]
     let sessionInfo: SessionInfo
+    let agentActivities: [AgentActivity]
+    let orchestrationState: TeamRunState?
+    let orchestrationRunID: String?
+    let workerID: String?
 
     enum CodingKeys: String, CodingKey {
         case ok, text, messages
         case sessionInfo = "session_info"
+        case agentActivities = "agent_activities"
+        case orchestrationState = "orchestration_state"
+        case orchestrationRunID = "orchestration_run_id"
+        case workerID = "worker_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decode(Bool.self, forKey: .ok)
+        text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
+        messages = try container.decodeIfPresent([HistoryMessage].self, forKey: .messages) ?? []
+        sessionInfo = try container.decode(SessionInfo.self, forKey: .sessionInfo)
+        agentActivities = try container.decodeIfPresent([AgentActivity].self, forKey: .agentActivities) ?? []
+        orchestrationState = try container.decodeIfPresent(TeamRunState.self, forKey: .orchestrationState)
+        orchestrationRunID = try container.decodeIfPresent(String.self, forKey: .orchestrationRunID)
+        workerID = try container.decodeIfPresent(String.self, forKey: .workerID)
     }
 }
 
@@ -5478,6 +6393,24 @@ private struct SessionDetailResponse: Codable {
     let cwd: String?
     let model: String?
     let started: String?
+    let agentActivities: [AgentActivity]?
+    let orchestrationState: TeamRunState?
+    let orchestrationRunID: String?
+    let workerID: String?
+    let task: TaskRecord?
+    let team: SessionTeamReference?
+    let workspaceRoot: String?
+    let executionPath: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, messages, preview, title, pinned, archived, cwd, model, started, task, team
+        case agentActivities = "agent_activities"
+        case orchestrationState = "orchestration_state"
+        case orchestrationRunID = "orchestration_run_id"
+        case workerID = "worker_id"
+        case workspaceRoot = "workspace_root"
+        case executionPath = "execution_path"
+    }
 }
 
 private struct ContextLoadResult: Sendable {

@@ -997,6 +997,9 @@ struct SettingsView: View {
                 case .general: generalPage
                 case .network: networkPage
                 case .accounts: accountsPage
+                case .agents:
+                    AgentTeamsSettingsView()
+                        .environmentObject(model)
                 case .permissions: permissionsPage
                 case .extensions:
                     ExtensionsSettingsView()

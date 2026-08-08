@@ -56,6 +56,22 @@ absent in the App Store build and whenever the native broker is unavailable;
 read-only Accessibility inspection is automatic, while mutations use the same
 permission mode and retain non-bypassable high-consequence guardrails.
 
+## Parallel agent teams
+
+Locus can route a Work turn through an explicit team made from local Ollama,
+custom OpenAI-compatible/vLLM, Kimi, and Anthropic accounts. A dispatcher must
+submit a schema-constrained job graph first. Read-only planner, researcher,
+tester, and reviewer jobs may overlap, while exactly one designated writer uses
+the ordinary permission loop. Invalid dispatcher output gets strict-JSON
+parsing, one repair, then a deterministic writer-only recovery.
+
+Each running team chat owns a separate local worker process and WebSocket, so
+other chats and workspaces remain usable. Model calls obtain crash-recoverable,
+round-robin leases shared across workers (three by default). Git team chats use
+a detached managed worktree whose private baseline includes the source
+checkout's working state. Applying a result is explicit, dry-run checked, and
+leaves source changes unstaged and uncommitted.
+
 ## Model providers
 
 By default the agent talks to a local Ollama. It can also talk to Anthropic's
@@ -136,6 +152,8 @@ batch name; deleting a chat never touches files in its workspace.
 | GET | `/api/sessions/{id}` | Transcript, title, workspace, model, start time |
 | PATCH | `/api/sessions/{id}` | Set `title`, `pinned`, `archived` |
 | POST | `/api/sessions/{id}/resume` | Load a session into the agent |
+| GET | `/api/tasks/{id}` | Task record and complete baseline-relative binary patch |
+| POST | `/api/tasks/{id}/apply` | Dry-run check, then apply task changes unstaged |
 | GET | `/api/tools` | Tool schemas |
 | GET/POST | `/api/permissions` | Read or change the permission mode |
 | GET/POST | `/api/provider` | Switch between local Ollama and a remote endpoint |
@@ -176,12 +194,16 @@ which is the number worth comparing models by.
 
 ## WebSocket protocol (`/ws/chat`)
 
-Client → server: `user_message`, `retry_last`, `interrupt`, `steer`,
+Client → server: `user_message` (optionally with a bounded team manifest),
+`retry_last`, `interrupt`, `steer`,
 `permission_decision`, `set_model`, `set_cwd`, `set_permission_mode`,
 `set_computer_control`, `computer_action_result`, `new_session`, `clear`,
 `compact`, `resume`, `ping`.
 
-Server → client: `session_info`, `session_started`, `message_start`, `token`,
+Server → client: `session_info`, `session_started`, `orchestration_started`,
+`orchestration_state`, `dispatch_plan`, `agent_job_started`,
+`agent_job_stream`, `agent_job_completed`, scheduler-lease events, task events,
+`message_start`, `token`,
 `thinking`, `message_end`, `plan_ready`, `steer_ack`, `steer_applied`,
 `computer_control_status`, `computer_action_request`, `tool_call_proposed`,
 `permission_request`, `tool_result`, `todo_update`, `turn_done`, `slash_result`,

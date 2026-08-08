@@ -65,6 +65,69 @@ def test_new_session_endpoint_returns_explicit_acknowledgement(tmp_path) -> None
     assert result["session_info"]["session_id"] == core.session.path.stem
 
 
+def test_team_activity_restores_separately_without_credentials(tmp_path) -> None:
+    store = SessionStore(str(tmp_path))
+    store.append({
+        "type": "agent_activity",
+        "event": {
+            "type": "orchestration_started",
+            "run_id": "run-1",
+            "worker_id": "worker-1",
+            "state": "dispatching",
+        },
+    })
+    store.append({
+        "type": "agent_activity",
+        "event": {
+            "type": "agent_job_started",
+            "run_id": "run-1",
+            "worker_id": "worker-1",
+            "job_id": "research",
+            "agent_name": "Researcher",
+            "role": "researcher",
+            "provider": "Hosted",
+            "model": "exact-model",
+            "goal": "Inspect evidence",
+        },
+    })
+    store.append({
+        "type": "agent_activity",
+        "event": {
+            "type": "agent_job_completed",
+            "run_id": "run-1",
+            "worker_id": "worker-1",
+            "state": "completed",
+            "result": {
+                "job_id": "research",
+                "agent_name": "Researcher",
+                "role": "researcher",
+                "output": "Finding",
+                "reasoning_text": "Provider-supplied thought",
+                "evidence": ["Sources.swift:12"],
+                "prompt_tokens": 20,
+                "completion_tokens": 5,
+                "elapsed_ms": 42,
+            },
+        },
+    })
+    store.append({
+        "type": "agent_activity",
+        "event": {
+            "type": "orchestration_completed",
+            "run_id": "run-1",
+            "worker_id": "worker-1",
+            "state": "completed",
+        },
+    })
+
+    restored = SessionStore.agent_activity(store.path)
+
+    assert restored["orchestration_state"] == "completed"
+    assert restored["worker_id"] == "worker-1"
+    assert restored["activities"][0]["reasoning_text"] == "Provider-supplied thought"
+    assert "api_key" not in str(restored)
+
+
 def test_clear_saved_sessions_preserves_active_run_and_is_recoverable(
     tmp_path, clearable_sessions
 ) -> None:

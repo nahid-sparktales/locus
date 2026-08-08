@@ -2,6 +2,49 @@ import XCTest
 @testable import Locus
 
 final class AppModelTests: XCTestCase {
+    @MainActor
+    func testGlobalAgentConcurrencyStaysWithinApplicationCeiling() {
+        let model = AppModel(startImmediately: false)
+        model.globalAgentConcurrency = 99
+        XCTAssertEqual(model.globalAgentConcurrency, 8)
+        model.globalAgentConcurrency = 0
+        XCTAssertEqual(model.globalAgentConcurrency, 1)
+    }
+
+    @MainActor
+    func testLocalTeamManifestContainsOnlyEnabledMembersAndNoPersistedSecrets() throws {
+        let model = AppModel(startImmediately: false)
+        let dispatcher = AgentProfile(
+            name: "Dispatch",
+            model: "qwen3",
+            role: .dispatcher
+        )
+        let writer = AgentProfile(
+            name: "Writer",
+            model: "qwen3-code",
+            role: .implementer,
+            accessCeiling: .workspaceWrite
+        )
+        model.saveAgentProfile(dispatcher)
+        model.saveAgentProfile(writer)
+        let team = AgentTeam(
+            name: "LocalTeam",
+            dispatcherID: dispatcher.id,
+            fallbackDispatcherID: nil,
+            memberIDs: [dispatcher.id, writer.id],
+            defaultWriterID: writer.id
+        )
+        model.saveAgentTeam(team)
+        model.selectAgentTeam(team.id)
+
+        let manifest = try XCTUnwrap(model.teamManifest(for: "Implement this"))
+        let profiles = try XCTUnwrap(manifest["profiles"] as? [[String: Any]])
+        XCTAssertEqual(Set(profiles.compactMap { $0["id"] as? String }), Set(team.memberIDs.map(\.uuidString)))
+        XCTAssertTrue(JSONSerialization.isValidJSONObject(manifest))
+        let encoded = try JSONSerialization.data(withJSONObject: manifest)
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("api_key"))
+    }
+
     func testWorkModeInstructionsAreDistinct() {
         XCTAssertEqual(Set(WorkMode.allCases.map(\.instruction)).count, WorkMode.allCases.count)
         XCTAssertTrue(WorkMode.ask.instruction.contains("explicitly attached"))
