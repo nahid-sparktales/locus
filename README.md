@@ -16,8 +16,9 @@ like; macOS remembers the size you choose for later launches.
 ## What's new in 1.11
 
 - **Adaptive Work and explicit agent teams** can route a request across local or
-  hosted specialists while keeping one designated writer and isolating Git work
-  in a private managed worktree.
+  hosted specialists and multiple coding models. Coding jobs share one isolated
+  checkout and run in dependency order, so a backend model can finish before a
+  UI model continues without concurrent edits.
 - **Durable, inspectable runs** record timelines, evidence, routing decisions,
   costs, checkpoints, steering, pause/resume state, and recovery options in a
   local run store. Stop is routed to the worker that owns the run, waits for a
@@ -37,12 +38,14 @@ like; macOS remembers the size you choose for later launches.
   Qwen/vLLM plan wrappers are normalized before validation; when correction is
   needed, both Team Progress and Runs show the repair stage and exact bounded
   validation reason. If repair still fails, Locus explains why it is continuing
-  safely with the designated writer instead of silently skipping specialists.
+  safely with the Lead Writer instead of silently skipping specialists.
 - **Team-aware model controls** label the workspace with the selected team and
   distinct model count, list the exact team models in a bounded, scrollable
   header picker, and use provider-backed model dropdowns when editing agent
   profiles. Long vLLM repository identifiers wrap inside the picker instead of
-  resizing or stalling the app.
+  resizing or stalling the app. Temporary team routes are never saved as a solo
+  account preference, and fallback catalogs discard models that belong to a
+  different provider.
 - **Evaluation suites and transparent scorecard routing** compare Solo and team
   configurations against immutable fixtures, then explain why an eligible agent
   was selected.
@@ -51,7 +54,7 @@ like; macOS remembers the size you choose for later launches.
   context without exposing it to Just Chat.
 - **Modern MCP support** adds allowlisted resources and prompts, long-running
   tasks, progress, safe input requests, and per-agent access policies.
-- **Native Computer Control** gives the designated foreground writer guarded Mac
+- **Native Computer Control** gives the active foreground coding agent guarded Mac
   UI access in signed direct-download builds; it remains disabled by default and
   unavailable in the sandboxed App Store build.
 
@@ -300,6 +303,11 @@ different provider never arrives carrying the last one's model — that is how a
 Kimi model name ends up pointed at Anthropic and fails with an error that names
 neither problem.
 
+Team jobs also cannot rewrite that solo preference. Locus scopes cached and
+fallback model lists to the account that owns them, so a temporary Claude team
+route cannot appear under Kimi and a Kimi model cannot appear under a Qwen vLLM
+endpoint after relaunch.
+
 When a team is selected, the header menu shows the team name and distinct model
 count rather than the solo session's provider. Open it to see each exact model,
 switch back to Solo, or manage the team. Agent profiles use a model dropdown
@@ -313,6 +321,13 @@ composer with **Run Plan**, **Re-dispatch**, and **Cancel**. Run Plan is a
 single approval for the entire dependency graph; it is not repeated for each
 agent or step. Security-sensitive tool permissions still follow the permission
 mode selected separately.
+
+A team may include several write-capable coding profiles. The dispatcher must
+order every coding job through dependencies; Locus then runs them one at a time
+in the same checkout. The **Lead Writer** remains responsible for safe fallback
+and any combined fix requested after review. Each coding profile keeps its own
+provider, model, MCP policy, and access ceiling, while the global Ask / Accept
+Edits / Bypass permission choice remains in force.
 
 **Test Connection** confirms the account answers before you send a message,
 and reports the actual reason when it does not — a rejected key, a wrong URL,
@@ -586,7 +601,7 @@ xcodebuild \
 cd agent && .venv/bin/python -m pytest -q
 ```
 
-The repository currently contains 249 unit tests, 33 UI tests, and 392 backend
+The repository currently contains 251 unit tests, 33 UI tests, and 398 backend
 test cases.
 
 The unit suite covers work modes, lightweight context migration, session

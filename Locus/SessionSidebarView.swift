@@ -686,7 +686,7 @@ struct TeamProgressPopover: View {
                             .foregroundStyle(dispatcherColor(activity.state))
                             .frame(width: 13)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("\(activity.agentName) · \(activity.role.capitalized)")
+                            Text(activityTitle(activity))
                                 .font(.system(size: 9, weight: .semibold))
                             Text("\(activity.provider) · \(activity.model)")
                                 .font(.system(size: 8, design: .monospaced))
@@ -762,6 +762,13 @@ struct TeamProgressPopover: View {
 
     private var completedJobs: Int {
         model.agentActivities.filter { $0.state == .completed }.count
+    }
+
+    private func activityTitle(_ activity: AgentActivity) -> String {
+        if let position = activity.writerPosition, let total = activity.writerTotal {
+            return "\(activity.agentName) · Coding job \(position) of \(total)"
+        }
+        return "\(activity.agentName) · \(activity.role.capitalized)"
     }
 
     private var runIsActive: Bool {

@@ -164,9 +164,9 @@ Example: delete an obsolete debugging chat, then select Undo when you realize it
 
 Choose Solo or Team from the composer. `@AgentName` forces an eligible member of the selected team, while `@TeamName` selects a configured team.
 
-The dispatcher is the only agent that creates jobs. Read-only planners, researchers, testers, and reviewers may run concurrently, while exactly one writer owns mutation access. Specialists return structured results to the dispatcher and cannot recursively delegate.
+The dispatcher is the only agent that creates jobs. Read-only planners, researchers, testers, and reviewers may run concurrently. A plan may assign multiple write-capable coding agents, but every coding job is dependency-ordered and Locus runs them one at a time in the shared checkout. Specialists return structured results to the dispatcher and cannot recursively delegate.
 
-Example: send `@Mac App Team investigate the scrolling regression, implement a fix, run tests, and review the diff.` The dispatcher can schedule research and test-design in parallel, then start the fixed writer after their dependencies finish.
+Example: send `@Mac App Team investigate the scrolling regression, update the backend contract, implement the SwiftUI fix, run tests, and review the diff.` The dispatcher can schedule research and test-design in parallel, then run a backend coding job followed by a UI coding job.
 
 ### Global scheduling and background tasks
 
@@ -180,7 +180,7 @@ Example: start a team refactor in one workspace, switch to another chat for a qu
 
 New Git team tasks use a detached private worktree by default. Locus reproduces tracked, staged, unstaged, and untracked non-ignored source state in a private baseline without changing the source checkout.
 
-Only the designated writer can mutate this checkout. Specialists and reviewers see read-only state. **Use Current Folder** remains available when isolation is unsuitable; dirty submodules require an explicit choice rather than being flattened or copied unsafely.
+Only the currently active coding job can mutate this checkout. Coding jobs run serially and later writers see the files and combined diff left by earlier writers. Specialists and reviewers see read-only state. **Use Current Folder** remains available when isolation is unsuitable; dirty submodules require an explicit choice rather than being flattened or copied unsafely.
 
 Example: begin a team task with local uncommitted edits. The team receives a private baseline containing those edits, while your original branch, index, and working files remain untouched until you explicitly apply the patch.
 
@@ -217,12 +217,13 @@ A team defines which profiles may collaborate. The dispatcher cannot discover or
 Every team has:
 
 - One dispatcher and an optional fallback dispatcher
-- One fixed writer
+- One write-capable **Lead Writer** for safe fallback and combined review fixes
+- Any number of additional write-capable coding members
 - Any number of read-only specialists and reviewers
 - Dispatch and routing behavior
 - Hard limits for jobs, rounds, concurrent calls, total model calls, metered tokens, and estimated cost
 
-Example: create `Mac App Team`, select `Local Dispatcher`, `Code Researcher`, `Primary Writer`, and `Final Reviewer`, then set `Primary Writer` as the only writer.
+Example: create `Mac App Team`, select `Local Dispatcher`, `Code Researcher`, `Backend Writer`, `UI Writer`, and `Final Reviewer`, then set `Backend Writer` as Lead Writer. A plan can order Backend Writer before UI Writer, while the Lead Writer remains responsible for fallback and post-review integration.
 
 Hosted provider accounts require one-time consent under **Automatic Hosted Routing** before the dispatcher may send team data to them automatically.
 
@@ -270,7 +271,7 @@ Example: search for `fallback` to see whether the primary dispatcher failed and 
 If a dispatcher returns a plan that Locus cannot validate, Team Progress first
 shows **Correcting dispatcher plan…**. The Timeline records the bounded reason.
 If the corrected plan is still invalid, Locus continues safely with the team's
-designated writer and states why specialists were skipped; raw provider output
+Lead Writer and states why specialists were skipped; raw provider output
 and credentials are not written to run history.
 
 ### Run Inspector: Dependencies view
@@ -379,7 +380,7 @@ Reassignment cannot:
 
 - Select an account outside the team
 - Elevate the job's access
-- Replace the team's fixed writer
+- Change a completed coding job or replace the team's Lead Writer during recovery
 
 Example: move a read-only reviewer job from a temporarily unavailable hosted model to a local reviewer profile.
 
@@ -736,7 +737,7 @@ Example: launch a support build with `LOCUS_CAPABILITY_MODERN_MCP=0` to isolate 
 The platform keeps these boundaries regardless of team or permission settings:
 
 - Teams are explicit and non-recursive.
-- Exactly one writer may mutate a task checkout.
+- At most one coding job may mutate a task checkout at a time; all writer jobs are transitively dependency-ordered.
 - Read-only agents cannot elevate themselves or invoke mutation tools.
 - Computer Control remains writer-only, foreground-only, and unavailable in evaluations.
 - Evaluation changes cannot be applied to the source workspace.
@@ -748,7 +749,7 @@ The platform keeps these boundaries regardless of team or permission settings:
 
 Suppose you want a team to fix a Swift concurrency bug safely:
 
-1. In **Agents & Teams**, create a local Dispatcher, a read-only Researcher, one workspace-write Implementer, and a read-only Reviewer.
+1. In **Settings → Agents & Teams**, create a local Dispatcher, a read-only Researcher, one or more workspace-write Implementers, and a read-only Reviewer. Choose one Implementer as Lead Writer.
 2. Create `Swift Team`, choose scorecard routing, and set a `$3` estimated-cost ceiling.
 3. In the composer, select Team and `Swift Team`, then send: `Investigate and fix the actor-isolation warnings. Add regression tests.`
 4. Review the proposed dependency graph. Add a parallel test-design job if needed, then choose **Run Plan**.

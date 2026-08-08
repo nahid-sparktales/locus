@@ -61,9 +61,16 @@ permission mode and retain non-bypassable high-consequence guardrails.
 Locus can route a Work turn through an explicit team made from local Ollama,
 custom OpenAI-compatible/vLLM, Kimi, and Anthropic accounts. A dispatcher must
 submit a schema-constrained job graph first. Read-only planner, researcher,
-tester, and reviewer jobs may overlap, while exactly one designated writer uses
-the ordinary permission loop. Invalid dispatcher output gets strict-JSON
-parsing, one repair, then a deterministic writer-only recovery.
+tester, and reviewer jobs may overlap. One or more write-capable coding jobs use
+the ordinary permission loop sequentially in a shared checkout; every writer
+pair must be transitively ordered by dependencies. Invalid dispatcher output
+gets strict-JSON parsing, one repair, then deterministic Lead Writer recovery.
+
+The Lead Writer is the compatible `default_writer_id` on the wire. It owns safe
+fallback and combined review fixes, but another coding profile may own an
+initial backend or UI assignment. Completed coding-job IDs and bounded results
+are checkpointed so recovery skips finished mutations and continues with the
+next ordered writer.
 
 Each running team chat owns a separate local worker process and WebSocket, so
 other chats and workspaces remain usable. Model calls obtain crash-recoverable,

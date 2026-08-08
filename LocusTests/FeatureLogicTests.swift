@@ -1294,6 +1294,36 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(sections[0].emptyMessage, "No Ollama models found")
     }
 
+    func testProviderCatalogsRejectTransientTeamModelsFromOtherAccounts() {
+        let kimi = ProviderAccount(
+            kind: .kimiCode,
+            preferredModel: "claude-sonnet-4-5"
+        )
+        let kimiModels = ProviderModelCatalog.scopedModels(
+            for: kimi,
+            result: .init(
+                models: ["claude-sonnet-4-5"] + ProviderKind.kimiCode.curatedModels,
+                status: .keySaved
+            ),
+            routedModels: ["kimi-for-coding-highspeed"]
+        )
+        XCTAssertFalse(kimiModels.contains("claude-sonnet-4-5"))
+        XCTAssertTrue(kimiModels.contains("kimi-for-coding-highspeed"))
+
+        let qwen = ProviderAccount(
+            kind: .custom,
+            name: "Qwen vLLM",
+            baseURLOverride: "https://qwen.example/v1",
+            preferredModel: "k3"
+        )
+        let qwenModels = ProviderModelCatalog.scopedModels(
+            for: qwen,
+            result: .init(models: ["k3"], status: .failed("endpoint is offline")),
+            routedModels: ["/repository/Qwen3.6-27B.gguf"]
+        )
+        XCTAssertEqual(qwenModels, ["/repository/Qwen3.6-27B.gguf"])
+    }
+
     func testAnthropicAccountsSendTheNativeHeadersAsWell() {
         let anthropic = RemoteEndpointTester.authHeaders(apiKey: "sk-ant-x", kind: .claude)
         XCTAssertNil(anthropic["Authorization"])
@@ -1636,7 +1666,7 @@ final class FeatureLogicTests: XCTestCase {
 
     // MARK: - Agent teams
 
-    func testAgentTeamRequiresAReadOnlyDispatcherAndExactlyOneWriter() {
+    func testAgentTeamRequiresAReadOnlyDispatcherAndWriteCapableLead() {
         let dispatcher = AgentProfile(
             name: "Dispatch",
             model: "qwen",
@@ -1664,11 +1694,22 @@ final class FeatureLogicTests: XCTestCase {
             accessCeiling: .computerControl
         )
         extraWriter.clamp()
-        var invalid = valid
-        invalid.memberIDs.append(extraWriter.id)
+        var multiWriter = valid
+        multiWriter.memberIDs.append(extraWriter.id)
         XCTAssertTrue(
-            AgentTeamValidation.errors(team: invalid, profiles: [dispatcher, writer, extraWriter])
-                .contains(where: { $0.contains("exactly one") })
+            AgentTeamValidation.errors(
+                team: multiWriter,
+                profiles: [dispatcher, writer, extraWriter]
+            ).isEmpty
+        )
+
+        var invalidLead = multiWriter
+        invalidLead.defaultWriterID = dispatcher.id
+        XCTAssertTrue(
+            AgentTeamValidation.errors(
+                team: invalidLead,
+                profiles: [dispatcher, writer, extraWriter]
+            ).contains(where: { $0.contains("lead writer") })
         )
     }
 

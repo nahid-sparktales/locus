@@ -85,9 +85,46 @@ enum ProviderModelCatalog {
     private static func fallbackModels(for account: ProviderAccount) -> [String] {
         var models = account.kind.curatedModels
         let preferred = account.preferredModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !preferred.isEmpty, !models.contains(preferred) {
+        if !preferred.isEmpty,
+           (account.kind == .custom || ProviderModelFilter.matches(kind: account.kind, name: preferred)),
+           !models.contains(preferred)
+        {
             models.insert(preferred, at: 0)
         }
         return models
+    }
+
+    /// Keep one account's fallback history from becoming another provider's
+    /// catalog. Team jobs temporarily route the shared backend through several
+    /// models; older builds could persist that transient model beside the solo
+    /// account and then re-offer it here after relaunch.
+    static func scopedModels(
+        for account: ProviderAccount,
+        result: Result,
+        routedModels: [String]
+    ) -> [String] {
+        let clean = deduplicated(result.models)
+        if account.kind != .custom {
+            let matching = clean.filter {
+                ProviderModelFilter.matches(kind: account.kind, name: $0)
+            }
+            return matching.isEmpty ? account.kind.curatedModels : matching
+        }
+        if case .connected = result.status {
+            return clean
+        }
+        let routed = deduplicated(routedModels)
+        return routed.isEmpty ? clean : routed
+    }
+
+    private static func deduplicated(_ values: [String]) -> [String] {
+        var seen: Set<String> = []
+        return values.compactMap { value in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed.lowercased()).inserted else {
+                return nil
+            }
+            return trimmed
+        }
     }
 }

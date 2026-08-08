@@ -759,9 +759,10 @@ orchestration_started
 scheduler_lease_waiting/acquired/released       (dispatcher)
 dispatch_plan
 agent_job_started/completed × N                 (read-only waves may overlap)
-agent_job_started                               (the only writer)
+agent_job_started {writer_job_id, writer_position, writer_total}
 message/tool/permission events × N              (ordinary permission loop)
-agent_job_completed                             (writer usage)
+agent_job_completed {writer_job_id, writer_position, writer_total}
+… repeated sequentially for each coding job; writers never overlap
 orchestration_state {state: "reviewing"}
 agent_job_started/completed × N                 (baseline-relative review)
 [writer revision round]
@@ -782,7 +783,9 @@ automatic, while the protocol retains automatic mode for other clients. Tool
 permission requests remain independent. Every edit or re-dispatch is fully
 revalidated. With recovery,
 an `orchestration_checkpoint` follows validated dispatch and each terminal
-specialist wave, writer, review, revision, and synthesis boundary. Pause waits
+specialist wave, coding job, review, Lead Writer revision, and synthesis
+boundary. Coding checkpoints add `completed_writer_job_ids` and bounded
+`writer_results`; older clients may ignore both. Pause waits
 for a safe boundary: streams and cancellable tools stop cooperatively, while a
 non-cancellable action finishes before its checkpoint is marked.
 

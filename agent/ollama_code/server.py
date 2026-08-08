@@ -58,12 +58,15 @@ from .knowledge import KnowledgeError, KnowledgeStore
 from .ollama import OllamaError, effective_context_length
 from .orchestration import (
     GLOBAL_MODEL_SCHEDULER,
+    AgentProfile,
+    AgentResult,
     OrchestrationError,
     TeamOrchestrator,
     TeamPreparation,
     client_for_profile,
     orchestration_fingerprint,
     parse_manifest,
+    writer_prompt_for_job,
 )
 from .runstore import RunStore, RunStoreError
 from .sessions import (
@@ -2480,7 +2483,7 @@ def _run_user_turn(
 
 
 def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> None:
-    """Run specialists, one permission-controlled writer, review, and synthesis."""
+    """Run specialists, ordered permission-controlled writers, review, and synthesis."""
     core = svc.core
     started = time.monotonic()
     terminal_reason = "complete"
@@ -2565,32 +2568,26 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
             raise OrchestrationError("the orchestration-round budget ended before dispatch completed")
         svc.active_team = prepared
         svc.checkpoint(
-            "dispatch_complete", _team_checkpoint_state(prepared, "running", svc.current_task)
+            "dispatch_complete",
+            _team_checkpoint_state(
+                prepared, "running", svc.current_task, usage=orchestrator.usage(),
+            ),
         )
 
-        stage = "starting the writer"
-        route_snapshot = _install_writer_route(core, prepared)
-        try:
-            stage = "running the writer"
-            _run_team_writer(
-                svc,
-                orchestrator,
-                prepared,
-                prepared.writer_prompt,
-                persisted_user_text=(
-                    "[Resumed team run]" if isinstance(manifest.get("_resume"), dict) else text
-                ),
-                job_id="writer",
-                goal=prepared.original_request,
-                reserve_model_calls=2,
-            )
-            terminal_reason = str(core.last_turn_result.get("reason") or "complete")
-            if terminal_reason not in {"complete", "max_iterations"}:
-                raise InterruptedError(terminal_reason)
-            svc.checkpoint(
-                "writer_complete", _team_checkpoint_state(prepared, "reviewing", svc.current_task)
-            )
+        stage = "running ordered coding jobs"
+        _run_prepared_writers(
+            svc,
+            orchestrator,
+            prepared,
+            first_persisted_user_text=(
+                "[Resumed team run]" if isinstance(manifest.get("_resume"), dict) else text
+            ),
+        )
+        terminal_reason = str(core.last_turn_result.get("reason") or "complete")
+        if terminal_reason not in {"complete", "max_iterations"}:
+            raise InterruptedError(terminal_reason)
 
+        try:
             stage = "reviewing the changes"
             core.begin_steerable_turn()
             diff_text = _task_diff(svc, core.workspace_root, core.cwd)
@@ -2614,15 +2611,11 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
                     core.cwd,
                     manifest,
                 )
-                _run_team_writer(
+                _run_prepared_writers(
                     svc,
                     orchestrator,
                     prepared,
-                    prepared.writer_prompt,
-                    persisted_user_text="[Team steering update]",
-                    job_id="writer-steered",
-                    goal="Apply the user's steering update to the existing task changes",
-                    reserve_model_calls=2,
+                    first_persisted_user_text="[Team steering update]",
                 )
                 diff_text = _task_diff(svc, core.workspace_root, core.cwd)
                 reviews = orchestrator.review(
@@ -2633,29 +2626,44 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
             svc.checkpoint(
                 "review_complete",
                 _team_checkpoint_state(
-                    prepared, "reviewing", svc.current_task, reviews=reviews,
+                    prepared, "reviewing", svc.current_task,
+                    reviews=reviews, usage=orchestrator.usage(),
                 ),
             )
             revision = _revision_request(reviews)
-            if revision and prepared.team.budget.max_rounds > 1 and not core._interrupt.is_set():
-                _run_team_writer(
-                    svc,
-                    orchestrator,
-                    prepared,
-                    "Team review found issues that must be resolved before handoff. Verify each finding "
-                    "against the workspace, make warranted revisions, and rerun focused tests.\n\n"
-                    + revision,
-                    persisted_user_text="[Team review requested a revision]",
-                    job_id="writer-revision",
-                    goal="Resolve verified reviewer findings and rerun focused tests",
-                    reserve_model_calls=1,
-                )
+            if (
+                revision
+                and prepared.team.budget.max_rounds > 1
+                and not core._interrupt.is_set()
+                and orchestrator.remaining_model_calls(prepared.team.budget) > 1
+            ):
+                lead = prepared.writer
+                route_snapshot = _install_writer_route(core, lead)
+                try:
+                    _run_team_writer(
+                        svc,
+                        orchestrator,
+                        prepared,
+                        lead,
+                        "Team review found issues that must be resolved before handoff. Verify each finding "
+                        "against the workspace, make warranted revisions, and rerun focused tests.\n\n"
+                        + revision,
+                        persisted_user_text="[Team review requested a revision]",
+                        job_id="writer-revision",
+                        goal="Resolve verified reviewer findings and rerun focused tests",
+                        model_call_limit=max(
+                            orchestrator.remaining_model_calls(prepared.team.budget) - 1, 1,
+                        ),
+                    )
+                finally:
+                    _restore_writer_route(core, route_snapshot)
                 terminal_reason = str(core.last_turn_result.get("reason") or "complete")
                 diff_text = _task_diff(svc, core.workspace_root, core.cwd)
                 svc.checkpoint(
                     "revision_complete",
                     _team_checkpoint_state(
-                        prepared, "reviewing", svc.current_task, reviews=reviews,
+                        prepared, "reviewing", svc.current_task,
+                        reviews=reviews, usage=orchestrator.usage(),
                     ),
                 )
 
@@ -2670,11 +2678,12 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
                 svc.checkpoint(
                     "synthesis_complete",
                     _team_checkpoint_state(
-                        prepared, "completed", svc.current_task, reviews=reviews,
+                        prepared, "completed", svc.current_task,
+                        reviews=reviews, usage=orchestrator.usage(),
                     ),
                 )
         finally:
-            _restore_writer_route(core, route_snapshot)
+            core.end_steerable_turn()
 
         if svc.current_task is not None:
             patch_text, tree = svc.current_task.patch()
@@ -2699,7 +2708,9 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
         if paused and prepared is not None:
             svc.checkpoint(
                 "paused",
-                _team_checkpoint_state(prepared, "paused", svc.current_task),
+                _team_checkpoint_state(
+                    prepared, "paused", svc.current_task, usage=orchestrator.usage(),
+                ),
             )
             svc.emit({
                 "type": "orchestration_paused", "run_id": run_id,
@@ -2809,6 +2820,7 @@ def _team_checkpoint_state(
     task: TaskCheckout | None,
     *,
     reviews: list[Any] | None = None,
+    usage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "state": state,
@@ -2817,7 +2829,10 @@ def _team_checkpoint_state(
         "workspace": prepared.workspace,
         "plan": prepared.plan.structured(),
         "results": [result.structured() for result in prepared.results],
+        "writer_results": [result.structured() for result in prepared.writer_results],
+        "completed_writer_job_ids": sorted(prepared.completed_writer_job_ids),
         "reviews": [result.structured() for result in reviews or []],
+        "usage": dict(usage or {}),
         "writer_id": prepared.writer.id,
         "team_id": prepared.team.id,
         "orchestration_fingerprint": orchestration_fingerprint(
@@ -2827,40 +2842,143 @@ def _team_checkpoint_state(
     }
 
 
+def _review_call_count(prepared: TeamPreparation) -> int:
+    planned = sum(job.kind == "reviewer" for job in prepared.plan.jobs)
+    if planned:
+        return planned
+    return int(any(
+        profile.role == "reviewer" and not profile.can_write
+        for profile in prepared.profiles.values()
+    ))
+
+
+def _run_prepared_writers(
+    svc: ChatService,
+    orchestrator: TeamOrchestrator,
+    prepared: TeamPreparation,
+    *,
+    first_persisted_user_text: str,
+) -> None:
+    """Run pending coding jobs serially and checkpoint each completed mutation scope."""
+    pending = [
+        job for job in prepared.writer_jobs
+        if job.id not in prepared.completed_writer_job_ids
+    ]
+    if not pending:
+        return
+    non_writer_reserve = _review_call_count(prepared) + 1
+    if prepared.team.budget.max_rounds > 1:
+        non_writer_reserve += 1
+    remaining = orchestrator.remaining_model_calls(prepared.team.budget)
+    required = len(pending) + non_writer_reserve
+    if remaining < required:
+        raise OrchestrationError(
+            "team model-call budget is too small for the remaining coding jobs, review, "
+            "lead revision reserve, and synthesis"
+        )
+
+    total = len(prepared.writer_jobs)
+    first_pending = True
+    for job in prepared.writer_jobs:
+        if job.id in prepared.completed_writer_job_ids:
+            continue
+        if svc.core._interrupt.is_set():
+            raise InterruptedError("orchestration cancelled before the next coding job")
+        pending_count = sum(
+            candidate.id not in prepared.completed_writer_job_ids
+            for candidate in prepared.writer_jobs
+        )
+        remaining = orchestrator.remaining_model_calls(prepared.team.budget)
+        writer_pool = remaining - non_writer_reserve
+        if writer_pool < pending_count:
+            raise OrchestrationError(
+                "team model-call budget was exhausted before all coding jobs could run"
+            )
+        # Each remaining writer receives an equal share. Calls it does not use
+        # remain in the global budget and are included when the next share is
+        # recalculated, so unused capacity rolls forward without letting the
+        # first model consume later writers' reservations.
+        call_limit = max(writer_pool // pending_count, 1)
+        profile = prepared.profiles[job.agent_id]
+        position = prepared.writer_jobs.index(job) + 1
+        prompt = writer_prompt_for_job(prepared, job)
+        route_snapshot = _install_writer_route(svc.core, profile)
+        try:
+            result = _run_team_writer(
+                svc,
+                orchestrator,
+                prepared,
+                profile,
+                prompt,
+                persisted_user_text=(
+                    first_persisted_user_text
+                    if first_pending else f"[Team coding job {position} of {total}]"
+                ),
+                job_id=job.id,
+                goal=job.goal,
+                model_call_limit=call_limit,
+                writer_position=position,
+                writer_total=total,
+            )
+        finally:
+            _restore_writer_route(svc.core, route_snapshot)
+        first_pending = False
+        terminal_reason = str(svc.core.last_turn_result.get("reason") or "complete")
+        if terminal_reason not in {"complete", "max_iterations"}:
+            raise InterruptedError(terminal_reason)
+        prepared.writer_results.append(result)
+        prepared.completed_writer_job_ids.add(job.id)
+        svc.checkpoint(
+            f"writer_complete:{job.id}",
+            _team_checkpoint_state(
+                prepared,
+                "reviewing" if len(prepared.completed_writer_job_ids) == total else "running",
+                svc.current_task,
+                usage=orchestrator.usage(),
+            ),
+        )
+
+
 def _run_team_writer(
     svc: ChatService,
     orchestrator: TeamOrchestrator,
     prepared: TeamPreparation,
+    writer: AgentProfile,
     prompt: str,
     *,
     persisted_user_text: str,
     job_id: str,
     goal: str,
-    reserve_model_calls: int = 0,
-) -> None:
-    """Run the only mutation-capable member under both permission and call budgets."""
+    model_call_limit: int,
+    writer_position: int | None = None,
+    writer_total: int | None = None,
+) -> AgentResult:
+    """Run one mutation-capable member under permission and call budgets."""
     core = svc.core
     remaining = orchestrator.remaining_model_calls(prepared.team.budget)
     if remaining <= 0:
-        raise OrchestrationError("team model-call budget exhausted before the writer ran")
-    model_call_limit = max(remaining - max(reserve_model_calls, 0), 1)
+        raise OrchestrationError("team model-call budget exhausted before the coding job ran")
+    model_call_limit = max(min(model_call_limit, remaining), 1)
     started = time.monotonic()
     prompt_before = core.total_prompt_tokens
     completion_before = core.total_completion_tokens
-    route = prepared.writer.route
+    route = writer.route
     svc.emit({
         "type": "agent_job_started",
         "run_id": prepared.run_id,
         "job_id": job_id,
-        "agent_id": prepared.writer.id,
-        "agent_name": prepared.writer.name,
-        "role": prepared.writer.role,
+        "agent_id": writer.id,
+        "agent_name": writer.name,
+        "role": writer.role,
         "provider": str(route.get("account_label") or route.get("provider") or ""),
-        "model": prepared.writer.model,
+        "model": writer.model,
         "goal": goal[:2_000],
         "state": "running",
+        "writer_job_id": job_id,
+        "writer_position": writer_position,
+        "writer_total": writer_total,
     })
-    with orchestrator.writer_slot(prepared.run_id, prepared.writer):
+    with orchestrator.writer_slot(prepared.run_id, writer):
         core.run_turn(
             prompt,
             svc.decide,
@@ -2873,7 +2991,7 @@ def _run_team_writer(
     completion_tokens = max(core.total_completion_tokens - completion_before, 0)
     model_calls = int(core.last_turn_result.get("model_calls") or 0)
     orchestrator.account_writer_usage(
-        prepared.writer,
+        writer,
         prepared.team.budget,
         model_calls,
         prompt_tokens,
@@ -2885,25 +3003,30 @@ def _run_team_writer(
     )
     output = str(assistant.get("content") or "")[:120_000]
     reasoning = str(assistant.get("_display_reasoning") or "")[:120_000]
+    result = AgentResult(
+        job_id=job_id,
+        agent_id=writer.id,
+        agent_name=writer.name,
+        role=writer.role,
+        output=output,
+        reasoning_text=reasoning,
+        evidence=[],
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        elapsed_ms=max(int((time.monotonic() - started) * 1_000), 0),
+        error="",
+    )
     svc.emit({
         "type": "agent_job_completed",
         "run_id": prepared.run_id,
         "state": "completed",
-        "result": {
-            "job_id": job_id,
-            "agent_id": prepared.writer.id,
-            "agent_name": prepared.writer.name,
-            "role": prepared.writer.role,
-            "output": output,
-            "reasoning_text": reasoning,
-            "evidence": [],
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "elapsed_ms": max(int((time.monotonic() - started) * 1_000), 0),
-            "error": "",
-        },
+        "result": result.structured(),
+        "writer_job_id": job_id,
+        "writer_position": writer_position,
+        "writer_total": writer_total,
         "usage": orchestrator.usage(),
     })
+    return result
 
 
 def _latest_assistant_output(core: AgentCore) -> str:
@@ -2915,7 +3038,7 @@ def _latest_assistant_output(core: AgentCore) -> str:
     return str(assistant.get("content") or "")[:120_000]
 
 
-def _install_writer_route(core: AgentCore, prepared: TeamPreparation) -> dict[str, Any]:
+def _install_writer_route(core: AgentCore, writer: AgentProfile) -> dict[str, Any]:
     """Temporarily route AgentCore through the selected writer without persistence."""
     snapshot = {
         "client": core.client,
@@ -2929,13 +3052,13 @@ def _install_writer_route(core: AgentCore, prepared: TeamPreparation) -> dict[st
         "context_for": core._context_limit_for,
         "mcp_policy": core.tool_registry.mcp_agent_policy_snapshot(),
     }
-    client = client_for_profile(prepared.writer)
+    client = client_for_profile(writer)
     core.client = client
-    core.model = prepared.writer.model
+    core.model = writer.model
     core.host = client.host
-    core.provider = "ollama" if prepared.writer.route.get("provider") == "ollama" else "remote"
+    core.provider = "ollama" if writer.route.get("provider") == "ollama" else "remote"
     core.config["remote_account_label"] = str(
-        prepared.writer.route.get("account_label") or prepared.writer.name
+        writer.route.get("account_label") or writer.name
     ) if core.provider == "remote" else ""
     core.context_limit = 0
     core._context_source = "unknown"
@@ -2943,12 +3066,12 @@ def _install_writer_route(core: AgentCore, prepared: TeamPreparation) -> dict[st
     core._context_limit_for = ""
     access_ceiling = (
         "read_only" if bool(getattr(core, "evaluation_read_only", False))
-        else prepared.writer.access_ceiling
+        else writer.access_ceiling
     )
     core.tool_registry.set_mcp_agent_policy(
-        prepared.writer.mcp_policy,
+        writer.mcp_policy,
         access_ceiling=access_ceiling,
-        role=prepared.writer.role,
+        role=writer.role,
     )
     core._emit_info()
     return snapshot

@@ -27,6 +27,7 @@ from ollama_code import server as server_mod
 from ollama_code import sessions as sessions_mod
 from ollama_code.core import AgentCore
 from ollama_code.ollama import ChatResponse, OllamaError, process_chunk
+from ollama_code.orchestration import AgentResult
 from ollama_code.permissions import PermissionManager, build_preview
 from ollama_code.render import ThinkFilter, strip_think
 from ollama_code.sessions import SessionMeta, SessionStore, strip_prompt_decoration
@@ -2974,7 +2975,7 @@ def test_dispatcher_rejection_is_persisted_as_a_bounded_durable_event(tmp_path):
     assert "raw" not in events[0]
 
 
-def test_team_writer_reserves_calls_for_review_and_synthesis():
+def test_team_writer_honors_its_preallocated_call_share():
     observed = {}
     core = SimpleNamespace(
         total_prompt_tokens=0,
@@ -3016,16 +3017,221 @@ def test_team_writer_reserves_calls_for_review_and_synthesis():
         service,
         Orchestrator(),
         prepared,
+        writer,
         "write",
         persisted_user_text="request",
         job_id="writer",
         goal="implement",
-        reserve_model_calls=2,
+        model_call_limit=3,
     )
 
     assert observed["model_call_limit"] == 3
     assert events[0]["type"] == "agent_job_started"
     assert events[-1]["type"] == "agent_job_completed"
+
+
+def test_ordered_coding_jobs_never_overlap_and_second_observes_first(monkeypatch):
+    writer_one = SimpleNamespace(
+        id="backend", name="Backend", role="implementer", can_write=True,
+    )
+    writer_two = SimpleNamespace(
+        id="ui", name="UI", role="implementer", can_write=True,
+    )
+    jobs = (
+        SimpleNamespace(id="backend-job", agent_id="backend", goal="Build API", kind="writer"),
+        SimpleNamespace(id="ui-job", agent_id="ui", goal="Build UI", kind="writer"),
+    )
+    prepared = SimpleNamespace(
+        run_id="run",
+        writer_jobs=jobs,
+        completed_writer_job_ids=set(),
+        writer_results=[],
+        profiles={"backend": writer_one, "ui": writer_two},
+        plan=SimpleNamespace(jobs=list(jobs)),
+        team=SimpleNamespace(budget=SimpleNamespace(max_rounds=1)),
+    )
+    core = SimpleNamespace(_interrupt=threading.Event(), last_turn_result={"reason": "complete"})
+    checkpoints = []
+    service = SimpleNamespace(
+        core=core,
+        current_task=None,
+        checkpoint=lambda kind, state: checkpoints.append((kind, state)),
+    )
+
+    class Orchestrator:
+        calls = 0
+
+        def remaining_model_calls(self, _budget):
+            return 6 - self.calls
+
+        def usage(self):
+            return {"model_calls": self.calls}
+
+    orchestrator = Orchestrator()
+    active = []
+    observations = []
+
+    def prompt_for_job(value, job):
+        observations.append((job.id, [result.job_id for result in value.writer_results]))
+        return job.goal
+
+    def run_writer(_svc, _orchestrator, _prepared, writer, _prompt, **kwargs):
+        assert not active, "two mutation-capable models must never overlap"
+        active.append(writer.id)
+        orchestrator.calls += 1
+        active.pop()
+        return AgentResult(
+            kwargs["job_id"], writer.id, writer.name, "implementer",
+            f"finished {writer.id}", [], 0, 0, 1,
+        )
+
+    monkeypatch.setattr(server_mod, "writer_prompt_for_job", prompt_for_job)
+    monkeypatch.setattr(server_mod, "_install_writer_route", lambda _core, writer: writer.id)
+    monkeypatch.setattr(server_mod, "_restore_writer_route", lambda _core, _snapshot: None)
+    monkeypatch.setattr(server_mod, "_run_team_writer", run_writer)
+    monkeypatch.setattr(
+        server_mod,
+        "_team_checkpoint_state",
+        lambda value, state, _task, **_kwargs: {
+            "state": state,
+            "completed_writer_job_ids": sorted(value.completed_writer_job_ids),
+        },
+    )
+
+    server_mod._run_prepared_writers(
+        service, orchestrator, prepared, first_persisted_user_text="request",
+    )
+
+    assert observations == [
+        ("backend-job", []),
+        ("ui-job", ["backend-job"]),
+    ]
+    assert prepared.completed_writer_job_ids == {"backend-job", "ui-job"}
+    assert checkpoints[-1][1]["state"] == "reviewing"
+
+
+def test_cancellation_after_first_coding_job_never_starts_the_next(monkeypatch):
+    writer_one = SimpleNamespace(
+        id="backend", name="Backend", role="implementer", can_write=True,
+    )
+    writer_two = SimpleNamespace(
+        id="ui", name="UI", role="implementer", can_write=True,
+    )
+    jobs = (
+        SimpleNamespace(id="backend-job", agent_id="backend", goal="Build API", kind="writer"),
+        SimpleNamespace(id="ui-job", agent_id="ui", goal="Build UI", kind="writer"),
+    )
+    prepared = SimpleNamespace(
+        run_id="run",
+        writer_jobs=jobs,
+        completed_writer_job_ids=set(),
+        writer_results=[],
+        profiles={"backend": writer_one, "ui": writer_two},
+        plan=SimpleNamespace(jobs=list(jobs)),
+        team=SimpleNamespace(budget=SimpleNamespace(max_rounds=1)),
+    )
+    interrupt = threading.Event()
+    core = SimpleNamespace(_interrupt=interrupt, last_turn_result={"reason": "complete"})
+    checkpoints = []
+    service = SimpleNamespace(
+        core=core,
+        current_task=None,
+        checkpoint=lambda kind, state: checkpoints.append((kind, state)),
+    )
+
+    class Orchestrator:
+        calls = 0
+
+        def remaining_model_calls(self, _budget):
+            return 6 - self.calls
+
+        def usage(self):
+            return {"model_calls": self.calls}
+
+    orchestrator = Orchestrator()
+    started = []
+
+    def run_writer(_svc, _orchestrator, _prepared, writer, _prompt, **kwargs):
+        started.append(writer.id)
+        orchestrator.calls += 1
+        interrupt.set()
+        return AgentResult(
+            kwargs["job_id"], writer.id, writer.name, "implementer",
+            "done", [], 0, 0, 1,
+        )
+
+    monkeypatch.setattr(server_mod, "writer_prompt_for_job", lambda _value, job: job.goal)
+    monkeypatch.setattr(server_mod, "_install_writer_route", lambda _core, writer: writer.id)
+    monkeypatch.setattr(server_mod, "_restore_writer_route", lambda _core, _snapshot: None)
+    monkeypatch.setattr(server_mod, "_run_team_writer", run_writer)
+    monkeypatch.setattr(
+        server_mod,
+        "_team_checkpoint_state",
+        lambda value, state, _task, **_kwargs: {
+            "state": state,
+            "completed_writer_job_ids": sorted(value.completed_writer_job_ids),
+        },
+    )
+
+    with pytest.raises(InterruptedError, match="before the next coding job"):
+        server_mod._run_prepared_writers(
+            service, orchestrator, prepared, first_persisted_user_text="request",
+        )
+
+    assert started == ["backend"]
+    assert prepared.completed_writer_job_ids == {"backend-job"}
+    assert checkpoints[-1][1]["completed_writer_job_ids"] == ["backend-job"]
+
+
+def test_each_coding_job_installs_its_own_tool_ceiling(monkeypatch):
+    policy_calls = []
+
+    class Registry:
+        def mcp_agent_policy_snapshot(self):
+            return ({"old": True}, "read_only", "dispatcher")
+
+        def set_mcp_agent_policy(self, policy, *, access_ceiling, role):
+            policy_calls.append((policy, access_ceiling, role))
+
+    core = SimpleNamespace(
+        client=object(),
+        provider="remote",
+        host="https://solo.example",
+        model="solo",
+        config={"remote_account_label": "Solo"},
+        context_limit=32_000,
+        _context_source="reported",
+        _context_requested=32_000,
+        _context_limit_for="solo",
+        evaluation_read_only=False,
+        tool_registry=Registry(),
+        _emit_info=lambda: None,
+    )
+    backend = SimpleNamespace(
+        name="Backend", model="backend-model", role="implementer",
+        access_ceiling="workspace_write", mcp_policy={"filesystem": True},
+        route={"provider": "remote", "account_label": "Backend endpoint"},
+    )
+    ui = SimpleNamespace(
+        name="UI", model="ui-model", role="implementer",
+        access_ceiling="computer_control", mcp_policy={"computer": True},
+        route={"provider": "remote", "account_label": "UI endpoint"},
+    )
+    monkeypatch.setattr(
+        server_mod,
+        "client_for_profile",
+        lambda writer: SimpleNamespace(host=f"https://{writer.name.lower()}.example"),
+    )
+
+    first_snapshot = server_mod._install_writer_route(core, backend)
+    assert core.model == "backend-model"
+    server_mod._restore_writer_route(core, first_snapshot)
+    second_snapshot = server_mod._install_writer_route(core, ui)
+    assert core.model == "ui-model"
+    server_mod._restore_writer_route(core, second_snapshot)
+
+    assert ({"filesystem": True}, "workspace_write", "implementer") in policy_calls
+    assert ({"computer": True}, "computer_control", "implementer") in policy_calls
 
 
 def test_tool_call_runs_and_reports(tmp_path):

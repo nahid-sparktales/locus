@@ -18,6 +18,7 @@ from ollama_code.orchestration import (
     TeamPreparation,
     normalize_dispatch_candidate,
     orchestration_fingerprint,
+    ordered_writer_jobs,
     parse_manifest,
     validate_dispatch_plan,
 )
@@ -99,7 +100,7 @@ def _valid_plan():
     }
 
 
-def test_manifest_and_dispatch_plan_enforce_one_writer_and_known_members():
+def test_manifest_and_dispatch_plan_require_a_writer_and_known_members():
     _, team, profiles, forced = parse_manifest(_manifest())
     assert forced is None
     plan = validate_dispatch_plan(_valid_plan(), team, profiles)
@@ -112,8 +113,88 @@ def test_manifest_and_dispatch_plan_enforce_one_writer_and_known_members():
 
     no_writer = _valid_plan()
     no_writer["jobs"] = [no_writer["jobs"][0]]
-    with pytest.raises(OrchestrationError, match="exactly one writer"):
+    with pytest.raises(OrchestrationError, match="at least one coding job"):
         validate_dispatch_plan(no_writer, team, profiles)
+
+
+def test_multiple_coding_jobs_must_be_write_capable_and_transitively_ordered():
+    manifest = _manifest()
+    manifest["profiles"].append(
+        _profile("ui-writer", "implementer", "computer_control")
+    )
+    manifest["team"]["member_ids"].append("ui-writer")
+    _, team, profiles, _ = parse_manifest(manifest)
+    value = _valid_plan()
+    value["jobs"].insert(2, {
+        "id": "ui",
+        "agent_id": "ui-writer",
+        "goal": "Implement the UI after the backend contract exists",
+        "dependencies": ["write"],
+        "kind": "writer",
+    })
+    value["jobs"][-1]["dependencies"] = ["ui"]
+
+    plan = validate_dispatch_plan(value, team, profiles)
+    assert [job.id for job in ordered_writer_jobs(plan)] == ["write", "ui"]
+
+    unordered = json.loads(json.dumps(value))
+    unordered["jobs"][2]["dependencies"] = ["plan"]
+    with pytest.raises(OrchestrationError, match="every pair of coding jobs"):
+        validate_dispatch_plan(unordered, team, profiles)
+
+    read_only_writer = json.loads(json.dumps(value))
+    read_only_writer["jobs"][2]["agent_id"] = "planner"
+    with pytest.raises(OrchestrationError, match="write-capable"):
+        validate_dispatch_plan(read_only_writer, team, profiles)
+
+
+def test_multi_writer_recovery_skips_completed_coding_jobs(monkeypatch):
+    manifest = _manifest()
+    manifest["profiles"].append(_profile("ui-writer", "implementer", "workspace_write"))
+    manifest["team"]["member_ids"].append("ui-writer")
+    _, team, profiles, _ = parse_manifest(manifest)
+    value = _valid_plan()
+    value["jobs"].insert(2, {
+        "id": "ui",
+        "agent_id": "ui-writer",
+        "goal": "Integrate the UI with the completed backend",
+        "dependencies": ["write"],
+        "kind": "writer",
+    })
+    value["jobs"][-1]["dependencies"] = ["ui"]
+    plan = validate_dispatch_plan(value, team, profiles)
+    completed = {
+        "job_id": "write",
+        "agent_id": "writer",
+        "agent_name": "Writer",
+        "role": "implementer",
+        "output": "backend contract completed",
+        "evidence": [],
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "elapsed_ms": 20,
+        "error": "",
+        "reasoning_text": "",
+    }
+    checkpoint = {
+        "orchestration_fingerprint": orchestration_fingerprint(team, profiles),
+        "plan": plan.structured(),
+        "results": [],
+        "writer_results": [completed],
+        "completed_writer_job_ids": ["write"],
+    }
+    orchestrator = TeamOrchestrator(lambda _event: None, lambda: False)
+    monkeypatch.setattr(orchestrator, "_run_pre_writer_jobs", lambda *_args, **_kwargs: [])
+
+    prepared = orchestrator.resume_preparation(
+        "Build it", "/tmp/workspace", manifest, checkpoint,
+    )
+
+    assert prepared.completed_writer_job_ids == {"write"}
+    assert [job.id for job in prepared.writer_jobs] == ["write", "ui"]
+    assert [result.job_id for result in prepared.writer_results] == ["write"]
+    assert "ui" in prepared.writer_prompt
+    assert "backend contract completed" in prepared.writer_prompt
 
 
 def test_dispatcher_progress_names_the_model_and_reports_completion(monkeypatch):
@@ -454,12 +535,17 @@ def test_dispatch_plan_rejects_cycles_order_violations_and_ignored_forced_agent(
         validate_dispatch_plan(plan, team, profiles, forced)
 
 
-def test_manifest_rejects_multiple_writers_missing_credentials_and_limit_violations():
+def test_manifest_allows_multiple_writers_and_rejects_missing_credentials_and_limits():
     manifest = _manifest()
     manifest["profiles"].append(_profile("writer-2", "implementer", "workspace_write"))
     manifest["team"]["member_ids"].append("writer-2")
-    with pytest.raises(OrchestrationError, match="exactly one"):
-        parse_manifest(manifest)
+    _, team, profiles, _ = parse_manifest(manifest)
+    assert profiles[team.default_writer_id].can_write
+    assert sum(profile.can_write for profile in profiles.values()) == 2
+
+    bad_lead = _manifest(default_writer_id="planner")
+    with pytest.raises(OrchestrationError, match="lead writer must be write-capable"):
+        parse_manifest(bad_lead)
 
     manifest = _manifest()
     manifest["profiles"][1]["route"] = {
@@ -471,6 +557,19 @@ def test_manifest_rejects_multiple_writers_missing_credentials_and_limit_violati
 
     with pytest.raises(OrchestrationError, match="max_jobs"):
         parse_manifest(_manifest(budget={"max_jobs": 99}))
+
+
+def test_dispatch_plan_rejects_an_insufficient_multi_writer_call_budget():
+    manifest = _manifest(budget={
+        "max_jobs": 4,
+        "max_rounds": 2,
+        "max_model_calls": 4,
+        "max_concurrent_calls": 2,
+        "max_metered_tokens": 500_000,
+    })
+    _, team, profiles, _ = parse_manifest(manifest)
+    with pytest.raises(OrchestrationError, match="at least 6 model calls"):
+        validate_dispatch_plan(_valid_plan(), team, profiles)
 
 
 def test_model_scheduler_caps_concurrency_and_round_robins_waiting_runs():
