@@ -29,8 +29,14 @@ MAX_EXPORT_EVENTS = 50_000
 
 TERMINAL_STATES = {"completed", "failed", "interrupted", "cancelled", "discarded"}
 RECOVERABLE_STATES = {
-    "queued", "dispatching", "running", "reviewing", "paused",
-    "waiting_dispatch_approval", "waiting_permission", "waiting_computer",
+    "paused", "interrupted", "waiting_dispatch_approval",
+}
+
+# These states have a live owner.  A stale recovery bit from plan approval or
+# an earlier checkpoint must never survive once execution is moving again.
+ACTIVE_NONRECOVERABLE_STATES = {
+    "queued", "dispatching", "running", "reviewing", "pausing",
+    "waiting_permission", "waiting_computer",
 }
 
 _SECRET_KEY = re.compile(
@@ -512,8 +518,17 @@ class RunStore:
                 updates.append("state = ?")
                 values.append(state)
                 if state in TERMINAL_STATES:
-                    updates.extend(["completed_at = ?", "recoverable = 0"])
+                    updates.extend([
+                        "completed_at = ?", "recoverable = 0", "recovery_reason = NULL",
+                    ])
                     values.append(now)
+                elif state in ACTIVE_NONRECOVERABLE_STATES:
+                    updates.extend(["recoverable = 0", "recovery_reason = NULL"])
+            elif event_type in {"permission_request", "computer_action_request"}:
+                # These waits still have a live worker.  They must clear a
+                # stale approval/checkpoint recovery bit even though their
+                # durable event does not replace the orchestration state.
+                updates.extend(["recoverable = 0", "recovery_reason = NULL"])
             if isinstance(safe.get("usage"), dict):
                 updates.append("usage_json = ?")
                 values.append(_json(safe["usage"]))
@@ -753,11 +768,16 @@ class RunStore:
                   reason: str | None = None) -> None:
         if self.read_only:
             return
+        if state in ACTIVE_NONRECOVERABLE_STATES:
+            recoverable = False
+            reason = None
         values: list[Any] = [state, time.time()]
         fields = ["state=?", "updated_at=?"]
         if recoverable is not None:
             fields.append("recoverable=?")
             values.append(1 if recoverable else 0)
+            if not recoverable and reason is None:
+                fields.append("recovery_reason=NULL")
         if reason is not None:
             fields.append("recovery_reason=?")
             values.append(reason[:4_000])

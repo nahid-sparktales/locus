@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
 import subprocess
 import threading
 import time
@@ -1975,6 +1976,90 @@ def test_cancel_interrupts_the_worker_that_owns_the_run(client, tmp_path):
         svc.active_run_id = None
         svc.cancel_requested_runs.discard(run_id)
         svc.core._interrupt.clear()
+
+
+def test_running_run_cannot_be_assessed_or_resumed_from_stale_recovery_flag(
+    client, tmp_path,
+):
+    svc = client.app.state.service
+    run_id = "stale-running-recovery"
+    svc.run_store.start_run(
+        run_id,
+        session_id=svc.core.session.session_id,
+        team_id="team-1",
+        team_name="Team",
+        worker_id=svc.worker_id,
+        workspace_root=str(tmp_path),
+        execution_path=str(tmp_path),
+        request="Build something",
+        manifest={},
+        state="running",
+    )
+    # Reproduce the pre-fix database combination loaded by Team Runs.
+    with sqlite3.connect(svc.run_store.path) as connection:
+        connection.execute(
+            "UPDATE runs SET recoverable=1, recovery_reason=? WHERE id=?",
+            ("Stale approval checkpoint.", run_id),
+        )
+
+    assessment = client.post(
+        f"/api/orchestrations/{run_id}/recovery-assessment",
+        json={"manifest": {}},
+    )
+    resume = client.post(
+        f"/api/orchestrations/{run_id}/resume",
+        json={"manifest": {}},
+    )
+    retry = client.post(
+        f"/api/orchestrations/{run_id}/jobs/job-1/retry",
+        json={"manifest": {}},
+    )
+    reassign = client.post(
+        f"/api/orchestrations/{run_id}/jobs/job-1/reassign",
+        json={"manifest": {}, "agent_id": "agent-2"},
+    )
+
+    assert assessment.status_code == 200
+    assert assessment.json()["can_resume"] is False
+    assert any(
+        "not paused or interrupted" in item
+        for item in assessment.json()["repair_checklist"]
+    )
+    assert resume.status_code == 409
+    assert retry.status_code == 409
+    assert reassign.status_code == 409
+    assert "not in a recoverable state" in resume.json()["detail"]
+    assert svc.run_store.run(run_id)["state"] == "running"
+
+
+def test_confirmed_worker_exit_makes_active_run_recoverable(client, tmp_path):
+    svc = client.app.state.service
+    run_id = "exited-worker-run"
+    svc.run_store.start_run(
+        run_id,
+        session_id=svc.core.session.session_id,
+        team_id="team-1",
+        team_name="Team",
+        worker_id="exited-worker",
+        workspace_root=str(tmp_path),
+        execution_path=str(tmp_path),
+        request="Build something",
+        manifest={},
+        state="running",
+    )
+    with sqlite3.connect(svc.run_store.path) as connection:
+        connection.execute(
+            "UPDATE runs SET owner_pid=? WHERE id=?", (999_999_999, run_id),
+        )
+
+    response = client.post(
+        f"/api/orchestrations/{run_id}/reconcile-worker-exit",
+        json={"worker_id": "exited-worker"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "interrupted"
+    assert response.json()["recoverable"] is True
 
 
 def test_models_report_the_window_a_model_is_really_running_in(client, monkeypatch):

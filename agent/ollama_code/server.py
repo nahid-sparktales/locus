@@ -1609,12 +1609,45 @@ def orchestration_cancel(run_id: str) -> dict[str, Any]:
 def orchestration_discard(run_id: str) -> dict[str, Any]:
     _require_capability("recovery_controls")
     svc = service()
+    record = svc.run_store.run(run_id)
+    if record is None:
+        raise HTTPException(404, f"orchestration not found: {run_id}")
+    if str(record.get("state") or "") in {
+        "queued", "dispatching", "running", "reviewing", "pausing",
+        "waiting_dispatch_approval", "waiting_permission", "waiting_computer",
+    }:
+        raise HTTPException(409, "stop the active orchestration before discarding it")
     if svc.active_run_id == run_id and svc.busy:
         raise HTTPException(409, "stop the active orchestration before discarding it")
     try:
         return {"ok": True, "run": svc.run_store.discard(run_id)}
     except RunStoreError as exc:
         raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/orchestrations/{run_id}/reconcile-worker-exit")
+def orchestration_reconcile_worker_exit(
+    run_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    """Promote a run to recoverable only after its recorded worker exited."""
+    _require_capability("recovery_controls")
+    svc = service()
+    record = svc.run_store.run(run_id)
+    if record is None:
+        raise HTTPException(404, f"orchestration not found: {run_id}")
+    reported_worker = str(body.get("worker_id") or "")
+    recorded_worker = str(record.get("worker_id") or "")
+    if reported_worker and recorded_worker and reported_worker != recorded_worker:
+        return record
+    # This endpoint is called from the native Process termination handler.
+    # RunStore still verifies that the recorded owner PID is gone; once it is,
+    # a lease left behind by that dead process must not delay recovery for the
+    # scheduler's full expiry window.
+    svc.run_store.mark_abandoned()
+    updated = svc.run_store.run(run_id)
+    if updated is None:
+        raise HTTPException(404, f"orchestration not found: {run_id}")
+    return updated
 
 
 @app.post("/api/orchestrations/{run_id}/dispatch-decision")
@@ -1644,6 +1677,10 @@ async def _resume_orchestration(
     record = svc.run_store.run(run_id)
     if record is None:
         raise HTTPException(404, f"orchestration not found: {run_id}")
+    if not record.get("recoverable") or str(record.get("state") or "") not in {
+        "paused", "interrupted",
+    }:
+        raise HTTPException(409, "that orchestration is not in a recoverable state")
     if svc.busy:
         raise _busy_http()
     manifest = body.get("manifest")
@@ -1728,6 +1765,10 @@ def orchestration_recovery_assessment(
     if record is None:
         raise HTTPException(404, f"orchestration not found: {run_id}")
     repairs: list[str] = []
+    if not record.get("recoverable") or str(record.get("state") or "") not in {
+        "paused", "interrupted",
+    }:
+        repairs.append("This run is not paused or interrupted at a recoverable checkpoint.")
     checkpoint = record.get("checkpoint")
     state = checkpoint.get("state") if isinstance(checkpoint, dict) else None
     if record.get("legacy"):

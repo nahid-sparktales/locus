@@ -224,7 +224,7 @@ struct TeamRunBoardView: View {
 
     private var actionRow: some View {
         HStack(spacing: 9) {
-            if let run, run.recoverable, state != .completed {
+            if presentation.canRecover, let run {
                 Button("Resume") { model.resumeOrchestration(run) }
                     .buttonStyle(.borderedProminent)
                     .tint(LocusTheme.ink)
@@ -232,14 +232,18 @@ struct TeamRunBoardView: View {
                 Button("Discard", role: .destructive) { model.discardOrchestration(run.id) }
                     .buttonStyle(.borderless)
                     .accessibilityIdentifier("teamBoard.discard")
-            } else if isActive, model.isBusy, let activeID = model.orchestrationRunID {
-                Button("Pause at Safe Boundary") { model.pauseOrchestration(activeID) }
-                    .buttonStyle(.borderless)
-                    .accessibilityIdentifier("teamBoard.pause")
-                Button("Stop", role: .destructive) { model.cancelOrchestration(activeID) }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(LocusTheme.coral)
-                    .accessibilityIdentifier("teamBoard.stop")
+            } else if let activeID = model.orchestrationRunID {
+                if presentation.canPause {
+                    Button("Pause at Safe Boundary") { model.pauseOrchestration(activeID) }
+                        .buttonStyle(.borderless)
+                        .accessibilityIdentifier("teamBoard.pause")
+                }
+                if presentation.canStop {
+                    Button("Stop", role: .destructive) { model.cancelOrchestration(activeID) }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(LocusTheme.coral)
+                        .accessibilityIdentifier("teamBoard.stop")
+                }
             }
             if state == .completed, model.taskHasChanges, isActive {
                 Button("Apply to Workspace") { model.applyActiveTaskToWorkspace() }
@@ -259,13 +263,15 @@ struct TeamRunBoardView: View {
         return model.orchestrationRuns.first(where: { $0.id == runID })
     }
 
-    private var isActive: Bool { model.orchestrationRunID == runID }
+    private var presentation: TeamRunPresentation {
+        model.teamRunPresentation(for: runID, durable: run)
+    }
+    private var isActive: Bool { presentation.isCurrent }
     private var shouldCollapseTerminal: Bool {
-        state.isTerminal && run?.recoverable != true
+        presentation.shouldCollapseTerminal
     }
     private var state: TeamRunState {
-        if isActive, let state = model.orchestrationState { return state }
-        return run.flatMap { TeamRunState(rawValue: $0.state) } ?? .dispatching
+        presentation.state
     }
     private var teamName: String {
         if isActive, let name = model.activeOrchestrationTeam?.name { return name }
@@ -309,7 +315,7 @@ struct TeamRunBoardView: View {
     private var stateSymbol: String {
         switch state {
         case .completed: "checkmark.circle.fill"
-        case .interrupted where run?.recoverable == true: "pause.circle.fill"
+        case .interrupted where presentation.canRecover: "pause.circle.fill"
         case .failed, .interrupted, .cancelled, .discarded: "xmark.circle.fill"
         case .paused: "pause.circle.fill"
         case .waitingPermission, .waitingComputer, .waitingDispatchApproval: "clock.fill"
@@ -319,7 +325,7 @@ struct TeamRunBoardView: View {
     private var stateColor: Color {
         switch state {
         case .completed: LocusTheme.success
-        case .interrupted where run?.recoverable == true: LocusTheme.warning
+        case .interrupted where presentation.canRecover: LocusTheme.warning
         case .failed, .interrupted, .cancelled, .discarded: LocusTheme.coral
         case .paused, .waitingPermission, .waitingComputer, .waitingDispatchApproval: LocusTheme.warning
         default: LocusTheme.signalDeep

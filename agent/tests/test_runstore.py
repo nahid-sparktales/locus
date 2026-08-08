@@ -5,6 +5,8 @@ import os
 import sqlite3
 import time
 
+import pytest
+
 from ollama_code.runstore import RunStore, sanitize_event
 
 
@@ -109,6 +111,63 @@ def test_live_owner_is_not_marked_abandoned(tmp_path) -> None:
     with sqlite3.connect(store.path) as connection:
         connection.execute("UPDATE runs SET owner_pid=? WHERE id='run-1'", (os.getpid(),))
     assert store.mark_abandoned() == []
+
+
+def test_live_state_event_clears_stale_recovery_metadata(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    store.start_run("run-1", state="waiting_dispatch_approval")
+    store.set_state(
+        "run-1", "waiting_dispatch_approval", recoverable=True,
+        reason="Waiting for plan approval.",
+    )
+
+    store.append_event("run-1", {
+        "type": "orchestration_state", "state": "running",
+    })
+
+    run = store.run("run-1")
+    assert run["state"] == "running"
+    assert run["recoverable"] is False
+    assert run["recovery_reason"] is None
+
+    store.set_state(
+        "run-1", "running", recoverable=True,
+        reason="An older caller tried to restore stale recovery metadata.",
+    )
+    run = store.run("run-1")
+    assert run["recoverable"] is False
+    assert run["recovery_reason"] is None
+
+
+def test_pause_and_resume_transition_recovery_metadata(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    store.start_run("run-1", state="running")
+    store.set_state("run-1", "paused", recoverable=True, reason="Saved checkpoint.")
+    assert store.run("run-1")["recoverable"] is True
+
+    store.append_event("run-1", {
+        "type": "orchestration_started", "state": "running", "resumed": True,
+    })
+
+    run = store.run("run-1")
+    assert run["recoverable"] is False
+    assert run["recovery_reason"] is None
+
+
+@pytest.mark.parametrize("event_type", ["permission_request", "computer_action_request"])
+def test_active_wait_clears_stale_recovery_metadata(tmp_path, event_type: str) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    store.start_run("run-1", state="waiting_dispatch_approval")
+    store.set_state(
+        "run-1", "waiting_dispatch_approval", recoverable=True,
+        reason="Waiting for plan approval.",
+    )
+
+    store.append_event("run-1", {"type": event_type})
+
+    run = store.run("run-1")
+    assert run["recoverable"] is False
+    assert run["recovery_reason"] is None
 
 
 def test_active_scheduler_lease_prevents_abandoned_recovery(tmp_path) -> None:
