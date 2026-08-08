@@ -19,6 +19,7 @@ struct SessionSidebarView: View {
     @EnvironmentObject private var model: AppModel
     @State private var sessionToRename: SessionSummary?
     @State private var renameText = ""
+    @State private var teamProgressPresented = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -173,6 +174,10 @@ struct SessionSidebarView: View {
                 model.settingsPresented = true
             }
 
+            if model.selectedAgentTeam != nil {
+                teamProgressRow
+            }
+
             navigationRow(
                 symbol: "shippingbox",
                 title: "Hugging Face",
@@ -185,6 +190,62 @@ struct SessionSidebarView: View {
         }
         .padding(.horizontal, SidebarMetrics.gutter)
         .padding(.bottom, 10)
+    }
+
+    private var teamProgressRow: some View {
+        Button {
+            teamProgressPresented.toggle()
+        } label: {
+            HStack(spacing: SidebarMetrics.iconGap) {
+                Image(systemName: "waveform.path.ecg")
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: SidebarMetrics.iconColumn)
+                Text("Team progress")
+                    .font(.system(size: 10, weight: .semibold))
+                Spacer(minLength: 4)
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(teamProgressColor)
+                        .frame(width: 6, height: 6)
+                    Text(teamProgressTitle)
+                        .font(.system(size: 8, weight: .semibold))
+                        .lineLimit(1)
+                }
+            }
+            .foregroundStyle(LocusTheme.inkSoft)
+            .padding(.horizontal, SidebarMetrics.rowInset)
+            .frame(height: 30)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(teamProgressPresented ? LocusTheme.signal.opacity(0.12) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .help("Show the active team's dispatcher, jobs, models, and usage")
+        .accessibilityLabel("Team progress, \(teamProgressTitle)")
+        .accessibilityIdentifier("sidebar.teamProgress")
+        .popover(isPresented: $teamProgressPresented, arrowEdge: .leading) {
+            TeamProgressPopover {
+                teamProgressPresented = false
+            }
+            .environmentObject(model)
+        }
+    }
+
+    private var teamProgressTitle: String {
+        if model.selectedTeamRouteIssue != nil { return "Needs setup" }
+        return model.orchestrationState?.title ?? "Ready"
+    }
+
+    private var teamProgressColor: Color {
+        if model.selectedTeamRouteIssue != nil { return LocusTheme.coral }
+        switch model.orchestrationState {
+        case .completed: return LocusTheme.success
+        case .failed, .interrupted, .cancelled, .discarded: return LocusTheme.coral
+        case .waitingPermission, .waitingComputer, .waitingDispatchApproval, .paused:
+            return LocusTheme.warning
+        case .queued, .dispatching, .running, .reviewing: return LocusTheme.signalDeep
+        case nil: return LocusTheme.success
+        }
     }
 
     /// One row of the nav stack. They share an icon column with the New chat,
@@ -543,6 +604,306 @@ struct SessionSidebarView: View {
         case .online: LocusTheme.success
         case .unavailable: LocusTheme.coral
         }
+    }
+}
+
+private struct TeamProgressPopover: View {
+    @EnvironmentObject private var model: AppModel
+    let dismiss: () -> Void
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                Divider()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if let issue = model.selectedTeamRouteIssue {
+                            Label(issue, systemImage: "exclamationmark.triangle.fill")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(LocusTheme.coral)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(LocusTheme.coral.opacity(0.08))
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .accessibilityIdentifier("teamProgress.routeIssue")
+                        }
+
+                        dispatcherSection(now: timeline.date)
+                        delegatedJobs
+                        modelRoster
+                    }
+                    .padding(14)
+                }
+                .frame(maxHeight: 430)
+                Divider()
+                footer
+            }
+            .frame(width: 370)
+            .background(LocusTheme.panel)
+        }
+        .accessibilityIdentifier("teamProgress.popover")
+    }
+
+    private var header: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "person.3.sequence.fill")
+                .foregroundStyle(LocusTheme.signalDeep)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.selectedAgentTeam?.name ?? "Team")
+                    .font(.system(size: 12, weight: .bold))
+                Text(progressStateTitle)
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundStyle(progressStateColor)
+            }
+            Spacer()
+            if runIsActive {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Team run in progress")
+            }
+        }
+        .padding(14)
+    }
+
+    @ViewBuilder
+    private func dispatcherSection(now: Date) -> some View {
+        let activity = model.dispatcherActivity
+        let dispatcher = selectedDispatcher
+        let startedAt = activity?.startedAt ?? model.activeWorkStartedAt
+        let elapsed = startedAt.map { max(now.timeIntervalSince($0), 0) } ?? 0
+
+        VStack(alignment: .leading, spacing: 7) {
+            sectionLabel("DISPATCHER")
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: dispatcherSymbol(activity?.state))
+                    .foregroundStyle(dispatcherColor(activity?.state))
+                    .frame(width: 14)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(activity?.agentName ?? dispatcher?.name ?? "Dispatcher")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text(dispatcherRouteLine(activity: activity, profile: dispatcher))
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(dispatcherDetail(activity: activity))
+                        .font(.system(size: 9))
+                        .foregroundStyle(LocusTheme.inkSoft)
+                }
+                Spacer(minLength: 6)
+                if startedAt != nil && runIsActive {
+                    Text(duration(elapsed))
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+            }
+            if model.orchestrationState == .dispatching,
+               elapsed >= 30,
+               model.agentActivities.isEmpty
+            {
+                Label(
+                    "Still waiting for the dispatcher. No plan or delegated jobs have started.",
+                    systemImage: "clock.badge.exclamationmark"
+                )
+                .font(.system(size: 8, weight: .medium))
+                .foregroundStyle(LocusTheme.warning)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("teamProgress.dispatcherSlow")
+            }
+        }
+        .padding(10)
+        .background(LocusTheme.white.opacity(0.75))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(LocusTheme.line, lineWidth: 1)
+        }
+        .accessibilityIdentifier("teamProgress.dispatcher")
+    }
+
+    private var delegatedJobs: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                sectionLabel("DELEGATED JOBS")
+                Spacer()
+                Text("\(completedJobs)/\(model.agentActivities.count)")
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            if model.agentActivities.isEmpty {
+                Text(model.orchestrationState == nil
+                    ? "No run yet. Send a task with this team selected."
+                    : "Jobs appear here after the dispatcher returns a plan.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(model.agentActivities) { activity in
+                    HStack(spacing: 7) {
+                        Image(systemName: dispatcherSymbol(activity.state))
+                            .foregroundStyle(dispatcherColor(activity.state))
+                            .frame(width: 13)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("\(activity.agentName) · \(activity.role.capitalized)")
+                                .font(.system(size: 9, weight: .semibold))
+                            Text("\(activity.provider) · \(activity.model)")
+                                .font(.system(size: 8, design: .monospaced))
+                                .foregroundStyle(LocusTheme.muted)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        Text(activity.state.title)
+                            .font(.system(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                    }
+                }
+            }
+        }
+        .accessibilityIdentifier("teamProgress.jobs")
+    }
+
+    private var modelRoster: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            sectionLabel("TEAM MODELS")
+            ForEach(teamProfiles) { profile in
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Text(profile.role.title)
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(LocusTheme.muted)
+                        .frame(width: 72, alignment: .leading)
+                    Text(profile.model)
+                        .font(.system(size: 8, design: .monospaced))
+                        .lineLimit(2)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .accessibilityIdentifier("teamProgress.models")
+    }
+
+    private var footer: some View {
+        HStack(spacing: 12) {
+            Text("\(model.teamModelCalls.formatted()) calls")
+            Text("\(model.teamMeteredTokens.formatted()) hosted tokens")
+            Spacer()
+            if runIsActive, let runID = model.orchestrationRunID {
+                Button("Stop", role: .destructive) {
+                    model.cancelOrchestration(runID)
+                }
+                .buttonStyle(.borderless)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(LocusTheme.coral)
+                .accessibilityIdentifier("teamProgress.stop")
+            }
+            Button("Open Runs") {
+                model.selectInspectorTab(.runs)
+                dismiss()
+            }
+            .buttonStyle(.borderless)
+            .font(.system(size: 9, weight: .semibold))
+            .accessibilityIdentifier("teamProgress.openRuns")
+        }
+        .font(.system(size: 8, design: .monospaced))
+        .foregroundStyle(LocusTheme.muted)
+        .padding(12)
+    }
+
+    private var selectedDispatcher: AgentProfile? {
+        guard let id = model.selectedAgentTeam?.dispatcherID else { return nil }
+        return model.agentProfiles.first(where: { $0.id == id })
+    }
+
+    private var teamProfiles: [AgentProfile] {
+        guard let team = model.selectedAgentTeam else { return [] }
+        return team.memberIDs.compactMap { id in model.agentProfiles.first(where: { $0.id == id }) }
+    }
+
+    private var completedJobs: Int {
+        model.agentActivities.filter { $0.state == .completed }.count
+    }
+
+    private var runIsActive: Bool {
+        switch model.orchestrationState {
+        case .queued, .dispatching, .running, .waitingPermission, .waitingComputer,
+             .waitingDispatchApproval, .reviewing, .paused:
+            return true
+        case .completed, .failed, .interrupted, .cancelled, .discarded, nil:
+            return false
+        }
+    }
+
+    private var progressStateTitle: String {
+        if model.selectedTeamRouteIssue != nil { return "Needs model setup" }
+        return model.orchestrationState?.title ?? "Ready"
+    }
+
+    private var progressStateColor: Color {
+        if model.selectedTeamRouteIssue != nil { return LocusTheme.coral }
+        return dispatcherColor(model.orchestrationState)
+    }
+
+    private func dispatcherRouteLine(activity: AgentActivity?, profile: AgentProfile?) -> String {
+        if let activity, !activity.model.isEmpty {
+            return [activity.provider, activity.model].filter { !$0.isEmpty }.joined(separator: " · ")
+        }
+        guard let profile else { return "Model not configured" }
+        let provider: String
+        switch profile.route {
+        case .localOllama:
+            provider = "Local Ollama"
+        case .providerAccount(let id):
+            provider = model.providerAccounts.first(where: { $0.id == id })?.displayName
+                ?? "Unavailable provider"
+        }
+        return "\(provider) · \(profile.model)"
+    }
+
+    private func dispatcherDetail(activity: AgentActivity?) -> String {
+        if let activity, !activity.output.isEmpty { return activity.output }
+        switch model.orchestrationState {
+        case .dispatching: return "Creating and validating the job plan…"
+        case .waitingDispatchApproval: return "The plan is ready and waiting for approval."
+        case .running, .reviewing: return "Plan complete; team work is underway."
+        case .completed: return "The team run completed."
+        case .failed: return "The dispatcher or team run failed."
+        default: return "Ready to route the next task."
+        }
+    }
+
+    private func sectionLabel(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 8, weight: .bold))
+            .tracking(0.7)
+            .foregroundStyle(LocusTheme.muted)
+    }
+
+    private func dispatcherSymbol(_ state: TeamRunState?) -> String {
+        switch state {
+        case .completed: "checkmark.circle.fill"
+        case .failed, .interrupted, .cancelled, .discarded: "xmark.circle.fill"
+        case .waitingPermission, .waitingComputer, .waitingDispatchApproval, .paused:
+            "pause.circle.fill"
+        case .queued, .dispatching, .running, .reviewing: "circle.dotted"
+        case nil: "circle"
+        }
+    }
+
+    private func dispatcherColor(_ state: TeamRunState?) -> Color {
+        switch state {
+        case .completed: LocusTheme.success
+        case .failed, .interrupted, .cancelled, .discarded: LocusTheme.coral
+        case .waitingPermission, .waitingComputer, .waitingDispatchApproval, .paused:
+            LocusTheme.warning
+        case .queued, .dispatching, .running, .reviewing: LocusTheme.signalDeep
+        case nil: LocusTheme.muted
+        }
+    }
+
+    private func duration(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds)
+        if total < 60 { return "\(total)s" }
+        return "\(total / 60)m \(total % 60)s"
     }
 }
 

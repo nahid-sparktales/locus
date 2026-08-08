@@ -112,6 +112,55 @@ def test_manifest_and_dispatch_plan_enforce_one_writer_and_known_members():
         validate_dispatch_plan(no_writer, team, profiles)
 
 
+def test_dispatcher_progress_names_the_model_and_reports_completion(monkeypatch):
+    events = []
+    _, team, profiles, forced = parse_manifest(_manifest())
+    orchestrator = TeamOrchestrator(events.append, lambda: False)
+    expected = validate_dispatch_plan(_valid_plan(), team, profiles)
+    monkeypatch.setattr(orchestrator, "_dispatch", lambda *_args: expected)
+
+    actual = orchestrator._dispatch_with_status(
+        "run-1", "Build it", "/tmp/workspace", team, profiles,
+        profiles[team.dispatcher_id], forced,
+    )
+
+    assert actual == expected
+    assert events[0] == {
+        "type": "dispatcher_started",
+        "run_id": "run-1",
+        "agent_id": "dispatcher",
+        "agent_name": "Dispatcher",
+        "provider": "Local Ollama",
+        "model": "test-model",
+        "goal": "Creating the team plan",
+        "state": "running",
+    }
+    assert events[-1]["type"] == "dispatcher_completed"
+    assert events[-1]["state"] == "completed"
+    assert events[-1]["message"] == "Dispatch plan ready"
+
+
+def test_dispatch_cancel_does_not_start_repair_or_fallback_calls(monkeypatch):
+    events = []
+    _, team, profiles, forced = parse_manifest(_manifest())
+    orchestrator = TeamOrchestrator(events.append, lambda: True)
+    calls = []
+
+    def interrupted_call(*_args, **_kwargs):
+        calls.append("call")
+        raise InterruptedError("orchestration cancelled")
+
+    monkeypatch.setattr(orchestrator, "_raw_call", interrupted_call)
+
+    with pytest.raises(InterruptedError, match="cancelled"):
+        orchestrator._dispatch(
+            "Build it", "/tmp/workspace", team, profiles,
+            profiles[team.dispatcher_id], forced,
+        )
+
+    assert calls == ["call"]
+
+
 def test_orchestration_fingerprint_ignores_credentials_but_tracks_models():
     first = _manifest()
     _, team, profiles, _ = parse_manifest(first)

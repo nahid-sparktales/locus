@@ -45,6 +45,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var orchestrationState: TeamRunState?
     @Published private(set) var activeWorkerID: String?
     @Published private(set) var taskConversationStates: [String: TaskConversationState] = [:]
+    @Published private(set) var dispatcherActivity: AgentActivity?
     @Published private(set) var agentActivities: [AgentActivity] = []
     @Published private(set) var teamModelCalls = 0
     @Published private(set) var teamMeteredTokens = 0
@@ -199,6 +200,30 @@ final class AppModel: ObservableObject {
     private var taskWorkers: [String: TaskWorkerRuntime] = [:]
     private var conversationBackend: BackendService {
         taskWorkers[currentSessionID]?.service ?? backend
+    }
+
+    /// Team chats execute in dedicated worker processes. Run controls must go
+    /// back to the worker that owns the run; sending them to the main control
+    /// service can update the shared run database without interrupting the
+    /// model call, which makes a cancelled approval reappear on reconnect.
+    private func orchestrationBackend(for runID: String) -> BackendService {
+        guard let sessionID = Self.orchestrationOwnerSessionID(
+            for: runID,
+            currentSessionID: currentSessionID,
+            currentRunID: orchestrationRunID,
+            states: taskConversationStates
+        ) else { return backend }
+        return taskWorkers[sessionID]?.service ?? backend
+    }
+
+    static func orchestrationOwnerSessionID(
+        for runID: String,
+        currentSessionID: String,
+        currentRunID: String?,
+        states: [String: TaskConversationState]
+    ) -> String? {
+        if currentRunID == runID { return currentSessionID }
+        return states.first(where: { $0.value.runID == runID })?.key
     }
     private let ollamaRuntime = OllamaRuntime()
     private let mcpAuthCoordinator = MCPAuthCoordinator()
@@ -557,10 +582,35 @@ final class AppModel: ObservableObject {
     /// The closed picker's label. With an account it leads with the account's
     /// short name, because the model name alone no longer says where it runs.
     var modelPickerLabel: String {
+        if let team = selectedAgentTeam {
+            let count = selectedTeamModelNames.count
+            return "\(team.name) · \(count) \(count == 1 ? "model" : "models")"
+        }
         guard let account = activeAccount else {
             return localModels.isEmpty && models.isEmpty ? "Auto" : selectedModel
         }
         return "\(account.shortName) · \(selectedModel)"
+    }
+
+    var selectedTeamModelNames: [String] {
+        guard let team = selectedAgentTeam else { return [] }
+        var seen: Set<String> = []
+        return team.memberIDs.compactMap { id in
+            guard let profile = agentProfiles.first(where: { $0.id == id }) else { return nil }
+            let key = profile.model.lowercased()
+            guard seen.insert(key).inserted else { return nil }
+            return profile.model
+        }
+    }
+
+    var selectedTeamRouteIssue: String? {
+        guard let team = selectedAgentTeam else { return nil }
+        return AgentTeamValidation.routeErrors(
+            team: team,
+            profiles: agentProfiles,
+            accounts: providerAccounts,
+            accountModels: accountModels
+        ).first
     }
 
     var modelPickerSections: [ModelPickerSection] {
@@ -2093,7 +2143,11 @@ final class AppModel: ObservableObject {
 
     func submitDraft() {
         if isBusy {
-            steerDraft()
+            if steeringState?.hasPrefix("Stopping") == true {
+                queueDraft()
+            } else {
+                steerDraft()
+            }
         } else {
             send(draftText)
         }
@@ -2104,7 +2158,11 @@ final class AppModel: ObservableObject {
     /// and continues the same turn without an intermediate `turn_done`.
     func steerDraft() {
         let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isBusy, !hasPendingPermission, !text.isEmpty else { return }
+        guard isBusy,
+              steeringState?.hasPrefix("Stopping") != true,
+              !hasPendingPermission,
+              !text.isEmpty
+        else { return }
         guard conversationBackend.send(["type": "steer", "text": text]) else {
             showToast("Reconnect the local agent — the direction was not sent")
             return
@@ -2250,16 +2308,16 @@ final class AppModel: ObservableObject {
             return
         }
         computerControl.cancelPendingActions()
-        isBusy = false
         pendingRetry = false
+        steeringState = "Stopping the current run…"
         showToast("Stopping the current run")
     }
 
     var hasRunningWorkForQuit: Bool {
         isBusy || hasPendingPermission || orchestrationState.map {
-            ![.completed, .failed, .interrupted].contains($0)
+            ![.completed, .failed, .interrupted, .cancelled, .discarded].contains($0)
         } == true || taskConversationStates.values.contains {
-            ![.completed, .failed, .interrupted].contains($0.state)
+            ![.completed, .failed, .interrupted, .cancelled, .discarded].contains($0.state)
         }
     }
 
@@ -2722,6 +2780,16 @@ final class AppModel: ObservableObject {
             showToast(errors[0])
             return nil
         }
+        let routeErrors = AgentTeamValidation.routeErrors(
+            team: team,
+            profiles: agentProfiles,
+            accounts: providerAccounts,
+            accountModels: accountModels
+        )
+        guard routeErrors.isEmpty else {
+            showToast(routeErrors[0])
+            return nil
+        }
         let members = team.memberIDs.compactMap { id in agentProfiles.first(where: { $0.id == id }) }
         for profile in members {
             guard let accountID = profile.route.accountID else { continue }
@@ -2927,7 +2995,31 @@ final class AppModel: ObservableObject {
     }
 
     func cancelOrchestration(_ runID: String) {
-        orchestrationAction(path: "/api/orchestrations/\(runID)/cancel", runID: runID)
+        let transport = orchestrationBackend(for: runID)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let _: SimpleActionResponse = try await transport.post(
+                    "/api/orchestrations/\(runID)/cancel",
+                    body: [:],
+                    timeout: 30,
+                    as: SimpleActionResponse.self
+                )
+                if orchestrationRunID == runID {
+                    pendingDispatchPlan = nil
+                    orchestrationState = .cancelled
+                    steeringState = "Stopping the team run…"
+                    updateTaskConversation(
+                        state: .cancelled,
+                        event: ["run_id": runID]
+                    )
+                }
+                showToast("Stopping the team run")
+                await refreshOrchestrationRuns(select: runID)
+            } catch {
+                showToast("Could not stop the team run: \(error.localizedDescription)")
+            }
+        }
     }
 
     func discardOrchestration(_ runID: String) {
@@ -3082,9 +3174,13 @@ final class AppModel: ObservableObject {
 
     func decideDispatch(_ action: String, editedPlan: DispatchPlan? = nil) {
         guard let runID = orchestrationRunID else { return }
+        if action == "cancel" {
+            cancelOrchestration(runID)
+            return
+        }
         var payload: [String: Any] = ["type": "dispatch_decision", "run_id": runID, "action": action]
         if let editedPlan, let value = encodedJSONObject(editedPlan) { payload["plan"] = value }
-        guard backend.send(payload) else {
+        guard orchestrationBackend(for: runID).send(payload) else {
             showToast("The dispatch decision could not be delivered")
             return
         }
@@ -3172,10 +3268,11 @@ final class AppModel: ObservableObject {
         body: [String: Any] = [:],
         runID: String?
     ) {
+        let transport = runID.map(orchestrationBackend(for:)) ?? backend
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let _: SimpleActionResponse = try await backend.post(
+                let _: SimpleActionResponse = try await transport.post(
                     path, body: body, timeout: 30, as: SimpleActionResponse.self
                 )
                 await refreshOrchestrationRuns(select: runID)
@@ -3881,6 +3978,7 @@ final class AppModel: ObservableObject {
                 blocks = Self.blocks(from: response.messages)
                 sessionInfo = response.sessionInfo
                 currentSessionID = response.sessionInfo.sessionID
+                dispatcherActivity = nil
                 agentActivities = response.agentActivities
                 orchestrationState = response.orchestrationState
                 orchestrationRunID = response.orchestrationRunID
@@ -3913,6 +4011,7 @@ final class AppModel: ObservableObject {
         streamingReply.resetTurn()
         isBusy = false
         orchestrationState = nil
+        dispatcherActivity = nil
         agentActivities = []
         activeTaskRecord = nil
         taskHasChanges = false
@@ -5625,6 +5724,7 @@ final class AppModel: ObservableObject {
             orchestrationRunID = event["run_id"] as? String
             orchestrationState = .dispatching
             activeWorkerID = event["worker_id"] as? String ?? activeWorkerID
+            dispatcherActivity = nil
             agentActivities = []
             teamModelCalls = 0
             teamMeteredTokens = 0
@@ -5639,6 +5739,42 @@ final class AppModel: ObservableObject {
             }
             updateTaskConversation(state: .dispatching, event: event)
             if persistenceEnabled { Task { await refreshMetadata() } }
+
+        case "dispatcher_started":
+            let runID = event["run_id"] as? String ?? orchestrationRunID ?? "current"
+            dispatcherActivity = AgentActivity(
+                id: "dispatcher-\(runID)",
+                agentName: event["agent_name"] as? String ?? "Dispatcher",
+                role: AgentRole.dispatcher.rawValue,
+                provider: event["provider"] as? String ?? "",
+                model: event["model"] as? String ?? "",
+                goal: event["goal"] as? String ?? "Creating the team plan",
+                state: .running,
+                output: "",
+                reasoningText: nil,
+                tool: nil,
+                evidence: [],
+                startedAt: Date(),
+                elapsedMilliseconds: 0,
+                promptTokens: 0,
+                completionTokens: 0
+            )
+
+        case "dispatcher_completed":
+            let state = (event["state"] as? String) == TeamRunState.failed.rawValue
+                ? TeamRunState.failed : .completed
+            if var activity = dispatcherActivity {
+                activity.state = state
+                activity.output = event["message"] as? String ?? "Dispatch plan ready"
+                activity.elapsedMilliseconds = event["elapsed_ms"] as? Int ?? 0
+                activity.promptTokens = event["prompt_tokens"] as? Int ?? 0
+                activity.completionTokens = event["completion_tokens"] as? Int ?? 0
+                dispatcherActivity = activity
+            }
+            if let usage = event["usage"] as? [String: Any] {
+                teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
+                teamMeteredTokens = usage["metered_tokens"] as? Int ?? teamMeteredTokens
+            }
 
         case "orchestration_state":
             orchestrationState = (event["state"] as? String)
@@ -6062,6 +6198,7 @@ final class AppModel: ObservableObject {
             orchestrationRunID = nil
             orchestrationState = nil
             activeWorkerID = nil
+            dispatcherActivity = nil
             agentActivities = []
             teamModelCalls = 0
             teamMeteredTokens = 0

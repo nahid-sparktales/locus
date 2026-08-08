@@ -1628,6 +1628,51 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
+    func testAgentTeamRejectsAModelTheSelectedProviderDoesNotReport() {
+        let account = ProviderAccount(
+            kind: .custom,
+            name: "Hosted Qwen",
+            preferredModel: "served-model"
+        )
+        let dispatcher = AgentProfile(
+            name: "Dispatcher",
+            route: .providerAccount(account.id),
+            model: "friendly-but-invalid-name",
+            role: .dispatcher
+        )
+        let writer = AgentProfile(
+            name: "Writer",
+            model: "local-writer",
+            role: .implementer,
+            accessCeiling: .workspaceWrite
+        )
+        let team = AgentTeam(
+            name: "Validated routes",
+            dispatcherID: dispatcher.id,
+            fallbackDispatcherID: nil,
+            memberIDs: [dispatcher.id, writer.id],
+            defaultWriterID: writer.id
+        )
+
+        let errors = AgentTeamValidation.routeErrors(
+            team: team,
+            profiles: [dispatcher, writer],
+            accounts: [account],
+            accountModels: [account.id: ["served-model"]]
+        )
+
+        XCTAssertEqual(errors.count, 1)
+        XCTAssertTrue(errors[0].contains("does not report that model"))
+        XCTAssertTrue(
+            AgentTeamValidation.routeErrors(
+                team: team,
+                profiles: [dispatcher, writer],
+                accounts: [account],
+                accountModels: [account.id: [dispatcher.model]]
+            ).isEmpty
+        )
+    }
+
     func testTeamMentionsResolveAgentsAndTeamsWithoutMatchingOrdinaryText() {
         let agent = AgentProfile(name: "CodeReviewer", model: "local", role: .reviewer)
         let team = AgentTeam(

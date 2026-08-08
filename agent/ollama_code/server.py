@@ -124,6 +124,7 @@ class ChatService:
         self.active_orchestrator: TeamOrchestrator | None = None
         self.active_team: TeamPreparation | None = None
         self.active_run_id: str | None = None
+        self.cancel_requested_runs: set[str] = set()
         self.pause_requested = False
         self.active_evaluation_id: str | None = None
         self.active_evaluation_core: AgentCore | None = None
@@ -398,6 +399,11 @@ class ChatService:
             name = str(getattr(call, "__name__", ""))
             steerable = name in {"_run_user_turn", "_run_team_turn", "retry_last_response"}
             if steerable:
+                # Stop belongs to the turn it interrupted. Team dispatch uses
+                # the flag before AgentCore.run_turn (which clears it for solo
+                # turns), so carrying it forward makes the next team request
+                # terminate immediately after a successful cancellation.
+                self.core._interrupt.clear()
                 self.core.begin_steerable_turn()
             try:
                 self.turn_future = loop.run_in_executor(None, call, *args)
@@ -1532,17 +1538,25 @@ def orchestration_pause(run_id: str) -> dict[str, Any]:
 def orchestration_cancel(run_id: str) -> dict[str, Any]:
     _require_capability("recovery_controls")
     svc = service()
-    if svc.active_run_id == run_id and svc.busy:
-        svc.pause_requested = False
-        svc.core.interrupt()
-        svc.deny_all_pending()
-        svc.cancel_all_computer_actions()
-        svc.cancel_dispatch_decisions()
-        svc.core.mcp.cancel_pending_inputs()
-    try:
-        svc.run_store.set_state(run_id, "cancelled", recoverable=False)
-    except RunStoreError as exc:
-        raise HTTPException(404, str(exc)) from exc
+    record = svc.run_store.run(run_id)
+    if record is None:
+        raise HTTPException(404, f"orchestration not found: {run_id}")
+    terminal_states = {"cancelled", "completed", "failed", "interrupted", "discarded"}
+    if str(record.get("state") or "") in terminal_states:
+        return {"ok": True, "run_id": run_id, "state": str(record["state"])}
+    if svc.active_run_id != run_id or not svc.busy:
+        owner = str(record.get("worker_id") or "")
+        if owner and owner != svc.worker_id:
+            raise HTTPException(409, "that orchestration is active in another worker")
+        raise HTTPException(409, "that orchestration is not actively running")
+    svc.pause_requested = False
+    svc.cancel_requested_runs.add(run_id)
+    svc.core.interrupt()
+    svc.deny_all_pending()
+    svc.cancel_all_computer_actions()
+    svc.cancel_dispatch_decisions()
+    svc.core.mcp.cancel_pending_inputs()
+    svc.run_store.set_state(run_id, "cancelled", recoverable=False)
     return {"ok": True, "run_id": run_id, "state": "cancelled"}
 
 
@@ -2622,7 +2636,8 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
             "usage": orchestrator.usage(),
         })
     except InterruptedError:
-        terminal_reason = "interrupted"
+        cancelled = run_id in svc.cancel_requested_runs
+        terminal_reason = "cancelled" if cancelled else "interrupted"
         paused = svc.pause_requested
         if paused and prepared is not None:
             svc.checkpoint(
@@ -2651,14 +2666,24 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
         svc.emit({
             "type": "orchestration_completed",
             "run_id": str(manifest.get("run_id") or ""),
-            "state": "paused" if paused else "interrupted",
+            "state": "paused" if paused else terminal_reason,
             "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
         })
         svc.run_store.set_state(
             run_id,
-            "paused" if paused else "interrupted",
-            recoverable=paused or svc.run_store.latest_checkpoint(run_id) is not None,
-            reason=("Paused by the user." if paused else "The run was interrupted."),
+            "paused" if paused else terminal_reason,
+            # A user cancellation is final even when the run reached a
+            # checkpoint before Stop was pressed. Advertising that checkpoint
+            # as recoverable is what allowed the cancelled approval to be
+            # offered again after reconnecting.
+            recoverable=paused or (
+                not cancelled and svc.run_store.latest_checkpoint(run_id) is not None
+            ),
+            reason=(
+                "Paused by the user." if paused
+                else "Cancelled by the user." if cancelled
+                else "The run was interrupted."
+            ),
         )
     except (OrchestrationError, WorktreeError, OllamaError, ValueError) as exc:
         terminal_reason = "error"
@@ -2675,6 +2700,7 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
                 "complete": "completed",
                 "max_iterations": "completed",
                 "interrupted": "interrupted",
+                "cancelled": "cancelled",
             }.get(terminal_reason, "failed")
             svc.current_task.state = task_state
             svc.current_task.save()
@@ -2699,6 +2725,7 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
         })
         core._emit_info()
         svc.active_run_id = None
+        svc.cancel_requested_runs.discard(run_id)
         svc.pause_requested = False
 
 

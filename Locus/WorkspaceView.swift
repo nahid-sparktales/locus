@@ -88,13 +88,29 @@ struct WorkspaceView: View {
                 .environmentObject(model)
 
             Menu {
+                if let team = model.selectedAgentTeam {
+                    Section("Active team") {
+                        ForEach(model.selectedTeamModelNames, id: \.self) { name in
+                            Label(name, systemImage: "cpu")
+                        }
+                        Button("Manage \(team.name)…") {
+                            model.settingsPage = .agents
+                            model.settingsPresented = true
+                        }
+                        Button("Switch to Solo") {
+                            model.selectAgentTeam(nil)
+                        }
+                    }
+                    Divider()
+                }
                 ForEach(model.modelPickerSections) { section in
-                    Section(section.title) {
+                    Section(model.teamModeEnabled ? "Solo · \(section.title)" : section.title) {
                         if let message = section.emptyMessage {
                             Text(message)
                         }
                         ForEach(section.models, id: \.self) { name in
                             Button {
+                                if model.teamModeEnabled { model.selectAgentTeam(nil) }
                                 model.selectModel(account: section.account, model: name)
                             } label: {
                                 // The checkmark answers "which one am I using",
@@ -127,7 +143,9 @@ struct WorkspaceView: View {
                 .accessibilityIdentifier("workspace.modelPicker.manageAccounts")
             } label: {
                 HStack(spacing: 7) {
-                    Image(systemName: model.activeAccount == nil ? "bolt.fill" : "cloud.fill")
+                    Image(systemName: model.teamModeEnabled
+                        ? "person.3.sequence.fill"
+                        : (model.activeAccount == nil ? "bolt.fill" : "cloud.fill"))
                         .font(.system(size: 11))
                         .foregroundStyle(LocusTheme.signalDeep)
                     Text(model.modelPickerLabel)
@@ -149,7 +167,12 @@ struct WorkspaceView: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .accessibilityLabel("Select Ollama model")
+            .help(model.teamModeEnabled
+                ? "Active team: \(model.selectedTeamModelNames.joined(separator: ", "))"
+                : "Select model")
+            .accessibilityLabel(model.teamModeEnabled
+                ? "Active team, \(model.modelPickerLabel)"
+                : "Select model")
             .accessibilityIdentifier("workspace.modelPicker")
 
             Button {

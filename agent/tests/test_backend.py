@@ -12,6 +12,7 @@ import os
 import subprocess
 import threading
 import time
+from concurrent.futures import Future
 from pathlib import Path
 
 import pytest
@@ -1156,7 +1157,10 @@ def test_remote_stream_interrupt_closes_a_stalled_response(monkeypatch):
 
         def iter_lines(self, decode_unicode=True):
             self.closed.wait(2)
-            return iter(())
+            # urllib3 may dereference its cleared file handle after another
+            # thread closes the response. Cancellation still has to be
+            # reported as interrupted rather than entering provider fallback.
+            raise AttributeError("'NoneType' object has no attribute 'read'")
 
         def close(self):
             self.closed.set()
@@ -1897,6 +1901,66 @@ def test_health_and_models(client):
     assert models["models"][0]["name"] == "test-model"
     assert models["models"][0]["context_length"] == 32768
     assert models["current"] == "test-model"
+
+
+def test_cancel_rejects_a_run_owned_by_another_worker(client, tmp_path):
+    svc = client.app.state.service
+    svc.run_store.start_run(
+        "foreign-run",
+        session_id=svc.core.session.session_id,
+        team_id="team-1",
+        team_name="Team",
+        worker_id="worker-in-another-process",
+        workspace_root=str(tmp_path),
+        execution_path=str(tmp_path),
+        task_id="",
+        request="Build something",
+        manifest={},
+        state="dispatching",
+    )
+
+    response = client.post("/api/orchestrations/foreign-run/cancel")
+
+    assert response.status_code == 409
+    assert "another worker" in response.json()["detail"]
+    assert svc.run_store.run("foreign-run")["state"] == "dispatching"
+
+
+def test_cancel_interrupts_the_worker_that_owns_the_run(client, tmp_path):
+    svc = client.app.state.service
+    run_id = "local-run"
+    svc.run_store.start_run(
+        run_id,
+        session_id=svc.core.session.session_id,
+        team_id="team-1",
+        team_name="Team",
+        worker_id=svc.worker_id,
+        workspace_root=str(tmp_path),
+        execution_path=str(tmp_path),
+        task_id="",
+        request="Build something",
+        manifest={},
+        state="waiting_dispatch_approval",
+    )
+    turn: Future[None] = Future()
+    svc.turn_future = turn
+    svc.active_run_id = run_id
+    try:
+        response = client.post(f"/api/orchestrations/{run_id}/cancel")
+
+        assert response.status_code == 200
+        assert response.json()["state"] == "cancelled"
+        assert svc.core._interrupt.is_set()
+        assert run_id in svc.cancel_requested_runs
+        record = svc.run_store.run(run_id)
+        assert record["state"] == "cancelled"
+        assert record["recoverable"] is False
+    finally:
+        turn.set_result(None)
+        svc.turn_future = None
+        svc.active_run_id = None
+        svc.cancel_requested_runs.discard(run_id)
+        svc.core._interrupt.clear()
 
 
 def test_models_report_the_window_a_model_is_really_running_in(client, monkeypatch):
@@ -2789,6 +2853,26 @@ def test_terminal_event_is_not_sent_until_turn_slot_is_idle(tmp_path):
         await asyncio.sleep(0)
         assert socket.events == [{"type": "turn_done", "reason": "interrupted"}]
         pump.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_starting_a_new_team_turn_clears_the_previous_interrupt(tmp_path):
+    async def scenario():
+        core = _core(tmp_path, [])
+        service = server_mod.ChatService(core)
+        service.loop = asyncio.get_running_loop()
+        core.interrupt()
+        observed = []
+
+        def next_team_turn():
+            observed.append(core._interrupt.is_set())
+
+        next_team_turn.__name__ = "_run_team_turn"
+        assert service.start_turn(service.loop, next_team_turn)
+        await service.turn_future
+
+        assert observed == [False]
 
     asyncio.run(scenario())
 
