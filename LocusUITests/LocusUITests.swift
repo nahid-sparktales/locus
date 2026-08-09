@@ -395,6 +395,12 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("terminal.output").waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("terminal.empty").exists)
 
+        // ⌘5 — Browser. The address bar is unconditional chrome, so unlike the
+        // old Preview tab this needs no seeded page to assert on.
+        app.typeKey("5", modifierFlags: .command)
+        XCTAssertTrue(anyElement("browser.url").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("browser.empty").exists)
+
         // ⌘6 — Checkpoints, with its own creation and history panel.
         app.typeKey("6", modifierFlags: .command)
         XCTAssertTrue(anyElement("checkpointTab.content").waitForExistence(timeout: 3))

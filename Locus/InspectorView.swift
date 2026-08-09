@@ -23,7 +23,7 @@ struct InspectorView: View {
                 case .terminal:
                     InspectorTerminalTab()
                 case .preview:
-                    InspectorPreviewTab()
+                    InspectorBrowserTab()
                 case .checkpoints:
                     InspectorCheckpointsTab()
                 case .runs:

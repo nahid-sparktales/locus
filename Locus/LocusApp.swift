@@ -320,7 +320,7 @@ struct RootView: View {
             Button("Clear Chat") { model.clearChatConfirmed() }
                 .accessibilityIdentifier("clearChat.confirm")
         } message: {
-            Text("The current conversation will remain available in Sessions. Locus will start a fresh chat with the same workspace, model, mode, context, and preview.")
+            Text("The current conversation will remain available in Sessions. Locus will start a fresh chat with the same workspace, model, mode, context, and browser home.")
         }
         .alert("Clear saved sessions?", isPresented: $model.clearSessionsConfirmationPresented) {
             Button("Cancel", role: .cancel) {}

@@ -379,6 +379,11 @@ class ChatService:
             "tool": tool,
             "arguments": arguments,
             "timeout_ms": budget_ms,
+            # Names the owner so the app keys tabs to the agent that opened
+            # them. Without it a background worker's request falls back to the
+            # foreground conversation's id, and per-session cleanup misses its
+            # tabs entirely.
+            "session_id": self.core.session.session_id,
         })
         try:
             result = future.result(

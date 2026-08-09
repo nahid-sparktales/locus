@@ -251,7 +251,6 @@ final class AppModel: ObservableObject {
         didSet { transcriptSearchSelection = 0 }
     }
     @Published var transcriptSearchSelection = 0
-    @Published var previewReloadID = UUID()
     @Published var streamRevision = 0
     @Published var toast: AppToast?
     var toastMessage: String? { toast?.message }
@@ -616,6 +615,7 @@ final class AppModel: ObservableObject {
                     self.agentRuntimePhase = .online
                     self.runtimeRecoveryAttempt = 0
                     self.sendComputerControlCapability()
+                    self.browser.defaultViewport = self.settings.resolvedBrowserViewport.size
                     self.announceBrowserCapability()
                     if let runID = self.orchestrationRunID {
                         Task { @MainActor [weak self] in
@@ -2438,7 +2438,9 @@ final class AppModel: ObservableObject {
             return
         }
         computerControl.cancelPendingActions()
-        browser.cancelPendingActions()
+        // Scoped: only this conversation is being stopped; a background
+        // worker's in-flight page action keeps its real outcome.
+        browser.cancelPendingActions(ownedBy: currentSessionID)
         pendingStopAndSend = text
         if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
             draftText = ""
@@ -2550,7 +2552,7 @@ final class AppModel: ObservableObject {
             return
         }
         computerControl.cancelPendingActions()
-        browser.cancelPendingActions()
+        browser.cancelPendingActions(ownedBy: currentSessionID)
         pendingRetry = false
         steeringState = "Stopping the current run…"
         showToast("Stopping the current run")
@@ -4565,7 +4567,10 @@ final class AppModel: ObservableObject {
     private func detachForegroundWorkerUIIfNeeded() {
         guard taskWorkers[currentSessionID] != nil else { return }
         computerControl.cancelPendingActions()
-        browser.cancelPendingActions()
+        // No browser cancellation here, at any scope: the worker keeps running
+        // in the background and its browser actions are served on its own
+        // socket regardless of which conversation is in front — cancelling
+        // would kill an action that is still going to be answered.
         flushPendingTokens()
         finalizeStreamingBlocks()
         streamingAssistantID = nil
@@ -4667,6 +4672,9 @@ final class AppModel: ObservableObject {
                     applySessionStarted(replacement, reason: "deleted_active")
                 }
                 sessions.removeAll { $0.id == session.id }
+                // The conversation is gone; its pages have nothing to belong
+                // to. (An Undo restores the transcript, not live tabs.)
+                browser.closeTabs(ownedBy: session.id)
                 pendingDeletedChat = DeletedChatUndo(
                     session: session,
                     trashBatch: response.trashBatch,
@@ -5082,19 +5090,6 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func openPreviewExternally() {
-        guard let url = normalizedPreviewURL else {
-            showToast("Enter a valid preview URL")
-            return
-        }
-        NSWorkspace.shared.open(url)
-    }
-
-    func reloadPreview() {
-        previewReloadID = UUID()
-        showToast("Preview reloaded")
-    }
-
     func openWorkspaceInFinder() {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: workspacePath)])
     }
@@ -5124,6 +5119,7 @@ final class AppModel: ObservableObject {
         settings = newSettings
         persistSettings()
         settingsPresented = false
+        browser.defaultViewport = newSettings.resolvedBrowserViewport.size
 
         if proxyChanged {
             // Before any restart, so the relaunched agent and every rebuilt
@@ -5149,15 +5145,10 @@ final class AppModel: ObservableObject {
                 await backendProcess.stopAndWait()
                 await self.bootstrap()
             }
-            if proxyChanged {
-                // The preview webview re-applies its proxy on reload.
-                previewReloadID = UUID()
-            }
         } else {
             if providerChanged {
                 Task { await applyProvider() }
             }
-            previewReloadID = UUID()
         }
         if iterationLimitChanged {
             Task { await applyIterationLimit() }
@@ -5956,6 +5947,9 @@ final class AppModel: ObservableObject {
                 if let key = self.taskWorkers.first(where: { $0.value === runtime })?.key {
                     self.taskWorkers.removeValue(forKey: key)
                 }
+                // The worker process died; nothing will drive its tabs again.
+                self.browser.closeTabs(ownedBy: runtime.sessionID)
+                self.syncBrowserProtectedSessions()
                 let previous = self.taskConversationStates[runtime.sessionID]
                 let runID = previous?.runID
                 var durableRun: OrchestrationRun?
@@ -6081,7 +6075,14 @@ final class AppModel: ObservableObject {
         }
         sendComputerControlCapability(to: runtime.service)
         sendBrowserCapability(to: runtime.service)
+        syncBrowserProtectedSessions()
         return runtime
+    }
+
+    /// Mirror the live worker set into the browser so tab eviction never
+    /// sacrifices a tab an active agent is standing on.
+    private func syncBrowserProtectedSessions() {
+        browser.setProtectedSessions(Set(taskWorkers.values.map(\.sessionID)))
     }
 
     private func handleWorkerEvent(_ event: [String: Any], runtime: TaskWorkerRuntime) {

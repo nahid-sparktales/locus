@@ -140,11 +140,104 @@ final class BrowserServiceTests: XCTestCase {
         XCTAssertEqual(service.tabs.count, 2)
     }
 
-    func testStartingANewSessionDropsTheOldTabs() {
+    /// Switching the foreground conversation must not destroy anything: tabs
+    /// belong to the session that opened them, and a background team worker
+    /// keeps browsing while the user reads another chat.
+    func testSwitchingSessionsKeepsEverySessionsTabs() {
         _ = service.tab(for: "session-1")
-        XCTAssertEqual(service.tabs.count, 1)
+        _ = service.tab(for: "session-2")
+        XCTAssertEqual(service.tabs.count, 2)
         service.beginSession("session-2")
-        XCTAssertTrue(service.tabs.isEmpty)
+        XCTAssertEqual(service.tabs.count, 2)
+        service.beginSession("session-1")
+        XCTAssertEqual(service.tabs.count, 2)
+    }
+
+    func testClosingASessionsTabsLeavesTheOthersAlone() {
+        _ = service.tab(for: "session-1")
+        _ = service.tab(for: "session-2")
+        service.closeTabs(ownedBy: "session-1")
+        XCTAssertEqual(service.tabs.count, 1)
+        XCTAssertEqual(service.tabs.first?.ownerSessionID, "session-2")
+    }
+
+    /// A stop in one conversation must not relabel another conversation's
+    /// result as cancelled — generations are per session.
+    func testScopedCancelDoesNotDisturbOtherSessions() async {
+        _ = service.tab(for: "session-1")
+        _ = service.tab(for: "session-2")
+        service.cancelPendingActions(ownedBy: "session-1")
+
+        // session-2's next action reports its own honest error, not a
+        // cancellation echo from session-1's stop.
+        let result = await service.perform(
+            tool: "browser_read_page",
+            arguments: [:],
+            sessionID: "session-2",
+            timeoutMilliseconds: 5_000
+        )
+        XCTAssertEqual(
+            result["error"] as? String,
+            "no page is open; call browser_navigate first"
+        )
+    }
+
+    func testUserNavigationSharesTheAgentsSchemeRules() {
+        XCTAssertFalse(service.userNavigate("file:///etc/passwd", sessionID: "session-1"))
+        XCTAssertFalse(service.userNavigate("javascript:alert(1)", sessionID: "session-1"))
+        XCTAssertFalse(service.userNavigate("   ", sessionID: "session-1"))
+        // A bare host is coerced the way the preview always did it.
+        XCTAssertTrue(service.userNavigate("localhost:3000", sessionID: "session-1"))
+        XCTAssertEqual(service.tabs.count, 1)
+    }
+
+    func testSnapshotsCarryTheChromeState() {
+        _ = service.tab(for: "session-1")
+        let snapshot = service.activeSnapshot(for: "session-1")
+        XCTAssertNotNil(snapshot)
+        XCTAssertEqual(snapshot?.canGoBack, false)
+        XCTAssertEqual(snapshot?.canGoForward, false)
+        XCTAssertEqual(snapshot?.ownerSessionID, "session-1")
+        XCTAssertEqual(service.snapshots(for: "session-1").count, 1)
+        XCTAssertTrue(service.snapshots(for: "elsewhere").isEmpty)
+    }
+
+    func testTabCapEvictsDormantSessionsFirst() {
+        service.beginSession("current")
+        service.setProtectedSessions(["worker-1"])
+        _ = service.tab(for: "dormant")
+        _ = service.tab(for: "worker-1")
+        _ = service.tab(for: "current")
+        for index in 0..<BrowserService.maximumLiveTabs {
+            service.userNewTab(sessionID: index % 2 == 0 ? "current" : "worker-1")
+        }
+
+        let owners = Set(service.tabs.map(\.ownerSessionID))
+        // The dormant conversation's tab was the sacrifice; the foreground
+        // session and the live worker kept every one of theirs.
+        XCTAssertFalse(owners.contains("dormant"))
+        XCTAssertTrue(owners.contains("current"))
+        XCTAssertTrue(owners.contains("worker-1"))
+    }
+
+    func testUserTabManagementStaysInsideTheSession() {
+        _ = service.tab(for: "session-1")
+        _ = service.tab(for: "session-2")
+        let foreign = service.tabs.first { $0.ownerSessionID == "session-2" }!
+
+        // Another session's tab is not selectable or closable from here.
+        service.userSelectTab(foreign.id, sessionID: "session-1")
+        XCTAssertNotEqual(service.activeSnapshot(for: "session-1")?.id, foreign.id)
+        service.userCloseTab(foreign.id, sessionID: "session-1")
+        XCTAssertEqual(service.tabs.count, 2)
+
+        service.userNewTab(sessionID: "session-1")
+        XCTAssertEqual(service.snapshots(for: "session-1").count, 2)
+        let mine = service.snapshots(for: "session-1")
+        service.userSelectTab(mine[0].id, sessionID: "session-1")
+        XCTAssertEqual(service.activeSnapshot(for: "session-1")?.id, mine[0].id)
+        service.userCloseTab(mine[0].id, sessionID: "session-1")
+        XCTAssertEqual(service.snapshots(for: "session-1").count, 1)
     }
 }
 

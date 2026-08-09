@@ -92,9 +92,9 @@ struct SlashCommand: Identifiable, Hashable {
             argumentHint: nil, symbol: "doc.text.magnifyingglass", action: .reviewChanges
         ),
         SlashCommand(
-            name: "preview", aliases: [],
-            summary: "Open the live preview inspector",
-            argumentHint: nil, symbol: "play.rectangle", action: .openPreview
+            name: "browser", aliases: ["preview"],
+            summary: "Open the browser inspector",
+            argumentHint: nil, symbol: "globe", action: .openPreview
         ),
         SlashCommand(
             name: "context", aliases: ["add"],

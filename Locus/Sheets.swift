@@ -966,7 +966,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Locus Settings")
                         .font(.system(size: 16, weight: .bold))
-                    Text("Local agent and preview configuration")
+                    Text("Local agent and browser configuration")
                         .font(.system(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
@@ -1162,8 +1162,8 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Preview") {
-                TextField("Preview URL", text: $draft.previewURL)
+            Section("Browser") {
+                TextField("Home URL", text: $draft.previewURL)
                     .accessibilityIdentifier("settings.previewURL")
             }
 
@@ -1510,6 +1510,18 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings.resetPermissions")
 
                 Text("Reading, searching and listing inside the workspace never ask. Anything outside it always does, in every mode.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("Browser") {
+                Toggle("Let the agent browse the web", isOn: Binding(
+                    get: { model.settings.browserEnabled },
+                    set: { model.setBrowserEnabled($0) }
+                ))
+                .accessibilityIdentifier("settings.browser.enabled")
+                Text("The agent can open pages, read them, and act on them in the Browser tab. Reading never asks; running page JavaScript always does. Turning this off also removes the browser tools from the model.")
                     .font(.system(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)

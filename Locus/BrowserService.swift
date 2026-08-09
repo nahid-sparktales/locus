@@ -65,8 +65,12 @@ final class BrowserService: NSObject, ObservableObject {
         /// drive their own so one cannot navigate another's out from under it.
         let ownerSessionID: String
         let log = BrowserCaptureLog()
+        let openedAt = Date()
         fileprivate var gate: NavigationGate?
         fileprivate weak var service: BrowserService?
+        /// KVO tokens feeding the published snapshots. Held here so closing
+        /// the tab tears them down with it.
+        fileprivate var observations: [NSKeyValueObservation] = []
 
         init(id: String, host: OffscreenWebHost, ownerSessionID: String) {
             self.id = id
@@ -75,6 +79,11 @@ final class BrowserService: NSObject, ObservableObject {
         }
 
         var webView: WKWebView { host.webView }
+
+        func invalidateObservations() {
+            observations.forEach { $0.invalidate() }
+            observations.removeAll()
+        }
     }
 
     /// One-shot settlement for a navigation. `didFinish` and `didFail` can both
@@ -110,17 +119,38 @@ final class BrowserService: NSObject, ObservableObject {
         var url: String
         var isLoading: Bool
         var isActive: Bool
+        var progress: Double
+        var canGoBack: Bool
+        var canGoForward: Bool
+        var ownerSessionID: String
     }
 
     @Published private(set) var tabs: [TabSnapshot] = []
     @Published private(set) var isExecuting = false
+    /// True while the detached Browser window is showing the page. The
+    /// inspector's borrowed view checks this before lending, because a
+    /// `WKWebView` has one superview and the window holds the claim.
+    @Published var windowHosted = false
+
+    /// More live web views than this and the oldest idle one is closed. Each
+    /// carries a WebContent process; a long day of team runs must not
+    /// accumulate them without bound.
+    static let maximumLiveTabs = 12
 
     private var openTabs: [Tab] = []
     private var activeTabBySession: [String: String] = [:]
     private var tabCounter = 0
-    private var cancellationGeneration = 0
+    /// Cancellation is per agent session. One shared counter would let a stop
+    /// in one conversation relabel another conversation's genuine failure as
+    /// "cancelled" — actions from different sessions share the FIFO.
+    private var cancellationGenerations: [String: Int] = [:]
     private var currentSessionID: String?
     private var proxyGeneration: Int?
+    /// Session ids whose worker runtimes are alive, mirrored in by AppModel so
+    /// tab eviction never sacrifices a tab an active agent is standing on.
+    private var protectedSessionIDs: Set<String> = []
+    /// The emulated size new tabs start at; follows the settings preset.
+    var defaultViewport: CGSize = BrowserViewport.desktop.size
 
     // FIFO admission. Concurrent workers queue instead of being refused, so a
     // background agent's call is never dropped just because the foreground one
@@ -137,29 +167,54 @@ final class BrowserService: NSObject, ObservableObject {
 
     // MARK: - Session lifecycle
 
-    /// Drop everything tied to the previous conversation, mirroring
-    /// `ComputerControlService.beginSession`.
+    /// Note which conversation is in front. Deliberately *not* the computer
+    /// broker's scorched-earth reset: tabs belong to the agent session that
+    /// opened them, background team workers keep browsing while the user reads
+    /// another chat, and coming back to a conversation finds its pages as they
+    /// were.
     func beginSession(_ sessionID: String) {
         guard !sessionID.isEmpty, currentSessionID != sessionID else { return }
         currentSessionID = sessionID
-        cancelPendingActions()
-        closeAll()
+        HostedScreenshotConsent.shared.beginSession(sessionID)
+        publishTabs()
     }
 
-    func cancelPendingActions() {
-        cancellationGeneration += 1
-        for tab in openTabs {
+    /// Stop what one session is doing — or, with `nil`, everything. Only the
+    /// named session's generation moves, so an unaffected conversation's
+    /// in-flight action keeps its real result instead of being relabelled
+    /// "cancelled".
+    func cancelPendingActions(ownedBy sessionID: String? = nil) {
+        for tab in openTabs where sessionID == nil || tab.ownerSessionID == sessionID {
             tab.webView.stopLoading()
             tab.gate?.settle(.cancelled)
             tab.gate = nil
         }
-        isExecuting = false
+        if let sessionID {
+            cancellationGenerations[sessionID, default: 0] += 1
+        } else {
+            for key in cancellationGenerations.keys {
+                cancellationGenerations[key, default: 0] += 1
+            }
+            isExecuting = false
+        }
     }
 
-    private func closeAll() {
-        openTabs.removeAll()
-        activeTabBySession.removeAll()
+    /// A conversation ended — its worker stopped or the chat was deleted — so
+    /// its pages have nothing to belong to any more.
+    func closeTabs(ownedBy sessionID: String) {
+        cancelPendingActions(ownedBy: sessionID)
+        for tab in openTabs where tab.ownerSessionID == sessionID {
+            tab.invalidateObservations()
+        }
+        openTabs.removeAll { $0.ownerSessionID == sessionID }
+        activeTabBySession.removeValue(forKey: sessionID)
         publishTabs()
+    }
+
+    /// AppModel mirrors the live worker set in, so eviction can tell a
+    /// dormant conversation's tab from one an agent is actively using.
+    func setProtectedSessions(_ sessionIDs: Set<String>) {
+        protectedSessionIDs = sessionIDs
     }
 
     // MARK: - Tools
@@ -181,7 +236,7 @@ final class BrowserService: NSObject, ObservableObject {
             release()
         }
 
-        let generation = cancellationGeneration
+        let generation = cancellationGenerations[sessionID, default: 0]
         let budget = Duration.milliseconds(max(1_000, min(timeoutMilliseconds, 120_000)))
 
         do {
@@ -216,7 +271,7 @@ final class BrowserService: NSObject, ObservableObject {
         } catch let error as BrowserToolError {
             return ["error": error.message]
         } catch {
-            guard generation == cancellationGeneration else {
+            guard generation == cancellationGenerations[sessionID, default: 0] else {
                 return ["error": "cancelled by the user"]
             }
             return ["error": error.localizedDescription]
@@ -654,17 +709,10 @@ final class BrowserService: NSObject, ObservableObject {
             return ["text": "Switched to \(tab.id)."]
         case "close":
             guard let id = arguments["tab_id"] as? String,
-                  let index = openTabs.firstIndex(where: {
-                      $0.id == id && $0.ownerSessionID == sessionID
-                  })
+                  openTabs.contains(where: { $0.id == id && $0.ownerSessionID == sessionID })
             else { return ["error": "no tab of yours has that id"] }
-            let closed = openTabs.remove(at: index)
-            if activeTabBySession[sessionID] == closed.id {
-                activeTabBySession[sessionID] = openTabs
-                    .first { $0.ownerSessionID == sessionID }?.id
-            }
-            publishTabs()
-            return ["text": "Closed \(closed.id)."]
+            userCloseTab(id, sessionID: sessionID)
+            return ["text": "Closed \(id)."]
         default:
             // Only this session's tabs are listed, so concurrent team workers
             // cannot navigate each other's out from under them.
@@ -782,7 +830,7 @@ final class BrowserService: NSObject, ObservableObject {
         webView.isInspectable = true
         #endif
 
-        let host = OffscreenWebHost(webView: webView)
+        let host = OffscreenWebHost(webView: webView, viewport: defaultViewport)
         let tab = Tab(
             id: "tab_\(tabCounter)",
             host: host,
@@ -792,11 +840,48 @@ final class BrowserService: NSObject, ObservableObject {
         webView.navigationDelegate = self
         objc_setAssociatedObject(webView, &Self.tabKey, tab, .OBJC_ASSOCIATION_RETAIN)
 
+        // The delegate callbacks catch page loads; these catch everything else
+        // the chrome shows live — progress, title changes from the page's own
+        // script, pushState URL changes, history depth.
+        let republish: (WKWebView, Any) -> Void = { [weak self] _, _ in
+            self?.publishTabs()
+        }
+        tab.observations = [
+            webView.observe(\.estimatedProgress, changeHandler: republish),
+            webView.observe(\.title, changeHandler: republish),
+            webView.observe(\.url, changeHandler: republish),
+            webView.observe(\.canGoBack, changeHandler: republish),
+            webView.observe(\.canGoForward, changeHandler: republish),
+            webView.observe(\.isLoading, changeHandler: republish),
+        ]
+
         openTabs.append(tab)
         activeTabBySession[ownerSessionID] = tab.id
+        evictIfOverCap()
         applyProxyIfNeeded()
         publishTabs()
         return tab
+    }
+
+    /// Keep the live web-view count bounded. Victims are the oldest tabs from
+    /// conversations that are neither in front nor backed by a live worker —
+    /// a parked tab is a live agent's steady state between tool calls, so
+    /// idleness alone is not grounds.
+    private func evictIfOverCap() {
+        while openTabs.count > Self.maximumLiveTabs {
+            guard let victim = openTabs.first(where: { tab in
+                tab.ownerSessionID != currentSessionID
+                    && !protectedSessionIDs.contains(tab.ownerSessionID)
+                    && tab.host.isParked
+                    && tab.gate == nil
+            }) else { return }
+            victim.invalidateObservations()
+            openTabs.removeAll { $0 === victim }
+            if activeTabBySession[victim.ownerSessionID] == victim.id {
+                activeTabBySession[victim.ownerSessionID] = openTabs
+                    .first { $0.ownerSessionID == victim.ownerSessionID }?.id
+            }
+        }
     }
 
     private static var tabKey: UInt8 = 0
@@ -807,15 +892,117 @@ final class BrowserService: NSObject, ObservableObject {
 
     private func publishTabs() {
         let active = Set(activeTabBySession.values)
-        tabs = openTabs.map { tab in
+        let fresh = openTabs.map { tab in
             TabSnapshot(
                 id: tab.id,
                 title: tab.webView.title ?? "",
                 url: tab.webView.url?.absoluteString ?? "",
                 isLoading: tab.webView.isLoading,
-                isActive: active.contains(tab.id)
+                isActive: active.contains(tab.id),
+                progress: tab.webView.estimatedProgress,
+                canGoBack: tab.webView.canGoBack,
+                canGoForward: tab.webView.canGoForward,
+                ownerSessionID: tab.ownerSessionID
             )
         }
+        // KVO fires for every progress tick; only real changes republish.
+        if fresh != tabs { tabs = fresh }
+    }
+
+    // MARK: - Human driver
+
+    /// The person's actions go straight to the web view — no broker queue, no
+    /// permission layer — but through the same normalization and scheme
+    /// allowlist the agent gets, and the same proxy re-check.
+    @discardableResult
+    func userNavigate(_ raw: String, sessionID: String) -> Bool {
+        guard let url = BrowserScheme.normalize(raw), BrowserScheme.permits(url) else {
+            return false
+        }
+        applyProxyIfNeeded()
+        let tab = tab(for: sessionID)
+        tab.webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+        publishTabs()
+        return true
+    }
+
+    func userGoBack(sessionID: String) {
+        guard let tab = existingTab(for: sessionID), tab.webView.canGoBack else { return }
+        tab.webView.goBack()
+        publishTabs()
+    }
+
+    func userGoForward(sessionID: String) {
+        guard let tab = existingTab(for: sessionID), tab.webView.canGoForward else { return }
+        tab.webView.goForward()
+        publishTabs()
+    }
+
+    func userReload(sessionID: String) {
+        guard let tab = existingTab(for: sessionID) else { return }
+        applyProxyIfNeeded()
+        tab.webView.reload()
+        publishTabs()
+    }
+
+    func userStopLoading(sessionID: String) {
+        guard let tab = existingTab(for: sessionID) else { return }
+        tab.webView.stopLoading()
+        tab.gate?.settle(.cancelled)
+        tab.gate = nil
+        publishTabs()
+    }
+
+    func userNewTab(sessionID: String) {
+        _ = makeTab(ownerSessionID: sessionID)
+    }
+
+    func userSelectTab(_ tabID: String, sessionID: String) {
+        guard openTabs.contains(where: { $0.id == tabID && $0.ownerSessionID == sessionID })
+        else { return }
+        activeTabBySession[sessionID] = tabID
+        publishTabs()
+    }
+
+    func userCloseTab(_ tabID: String, sessionID: String) {
+        guard let index = openTabs.firstIndex(where: {
+            $0.id == tabID && $0.ownerSessionID == sessionID
+        }) else { return }
+        let closed = openTabs.remove(at: index)
+        closed.invalidateObservations()
+        closed.gate?.settle(.cancelled)
+        if activeTabBySession[sessionID] == closed.id {
+            activeTabBySession[sessionID] = openTabs
+                .first { $0.ownerSessionID == sessionID }?.id
+        }
+        publishTabs()
+    }
+
+    /// The live page in the default browser — the current URL, not a settings
+    /// field that may never have been visited.
+    func openCurrentTabExternally(sessionID: String) {
+        guard let url = existingTab(for: sessionID)?.webView.url else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// What the chrome should draw for this session right now.
+    func activeSnapshot(for sessionID: String) -> TabSnapshot? {
+        guard let id = activeTabBySession[sessionID] else { return nil }
+        return tabs.first { $0.id == id }
+    }
+
+    /// The live capture log behind the drawer, or nil before any page opens.
+    func activeLog(for sessionID: String) -> BrowserCaptureLog? {
+        existingTab(for: sessionID)?.log
+    }
+
+    /// The host whose web view a visible container may borrow.
+    func activeHost(for sessionID: String) -> OffscreenWebHost? {
+        existingTab(for: sessionID)?.host
+    }
+
+    func snapshots(for sessionID: String) -> [TabSnapshot] {
+        tabs.filter { $0.ownerSessionID == sessionID }
     }
 
     // MARK: - Plumbing

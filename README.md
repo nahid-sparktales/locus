@@ -1,8 +1,8 @@
 # Locus for macOS
 
 Locus 1.11 is a native workspace for building with local Ollama models. It combines
-conversation, planning, file context, change review, a console, and live preview
-in one calm SwiftUI interface. Local Ollama is the default; hosted providers are
+conversation, planning, file context, change review, a console, and a built-in
+browser the agent can drive in one calm SwiftUI interface. Local Ollama is the default; hosted providers are
 used only after you explicitly add and select an account.
 
 **[locushost.co](https://locushost.co)**
@@ -57,6 +57,11 @@ like; macOS remembers the size you choose for later launches.
 - **Native Computer Control** gives the active foreground coding agent guarded Mac
   UI access in signed direct-download builds; it remains disabled by default and
   unavailable in the sandboxed App Store build.
+- **An agent-drivable browser** lets the model open pages, read them as
+  addressable elements, click and type, capture screenshots, and inspect the
+  console and network — in the same Browser tab the user sees. It is on by
+  default, works in every build including the App Store one, and keeps reading
+  permission-free while page JavaScript always asks.
 
 See the [Agent Teams feature and usage guide](Docs/AGENT_TEAMS_FEATURE_GUIDE.md)
 for setup, examples, permission boundaries, recovery, and troubleshooting.
@@ -129,8 +134,8 @@ for setup, examples, permission boundaries, recovery, and troubleshooting.
   with the message back in the composer for editing.
 - **Session organizer** adds names, pins, soft archives, filtering, and Markdown
   export with workspace, model, timestamps, messages, and tool summaries.
-- **Workspace profiles** restore the last model, mode, preview URL, draft, and
-  context-file references for eight recent workspaces.
+- **Workspace profiles** restore the last model, mode, browser home URL, draft,
+  and context-file references for eight recent workspaces.
 - **Message tools** copy, reuse as an editable draft, and regenerate the latest
   response on a non-destructive session branch.
 - **Clear Chat** (`⌘⇧K`) starts a genuinely fresh saved session only after the
@@ -160,7 +165,7 @@ for setup, examples, permission boundaries, recovery, and troubleshooting.
 ## The inspector
 
 The right-hand panel keeps execution visible beside the conversation: **Plan,
-Changes, Files, Console, Preview, Checkpoints, Runs, and AGENTS.md**, selected
+Changes, Files, Console, Browser, Checkpoints, Runs, and AGENTS.md**, selected
 with `⌘1`–`⌘8`. It starts hidden — the conversation gets the room until you
 need it, and `⌘1`–`⌘8` or `⌘⌥I` bring it back; a restore control also sits in
 the workspace header. It
@@ -429,7 +434,7 @@ modes:
 - **Manual proxy** — an explicit HTTP/HTTPS (CONNECT) or SOCKS5 proxy, applied
   to everything: the app's requests, the agent's provider and Ollama traffic,
   the model's `web_fetch`, MCP servers (HTTP and stdio), extension marketplace
-  clones, and the preview pane. SOCKS5 uses `socks5h`, so DNS for proxied hosts
+  clones, and the browser pane. SOCKS5 uses `socks5h`, so DNS for proxied hosts
   resolves at the proxy rather than locally.
 
 What never goes through the proxy: loopback, the app ↔ agent link, and the

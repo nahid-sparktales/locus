@@ -42,15 +42,15 @@ struct BrowserNetworkEntry: Identifiable, Equatable {
 /// Caps matter more than they look: a page can produce these faster than
 /// anything can read them, and every entry arrives on the main actor.
 @MainActor
-final class BrowserCaptureLog {
+final class BrowserCaptureLog: ObservableObject {
     static let consoleLimit = 500
     static let networkLimit = 200
     /// Bodies are the expensive part, so only the newest entries keep theirs.
     static let bodyLimit = 25
 
-    private(set) var console: [BrowserConsoleEntry] = []
-    private(set) var network: [BrowserNetworkEntry] = []
-    private(set) var droppedEntries = 0
+    @Published private(set) var console: [BrowserConsoleEntry] = []
+    @Published private(set) var network: [BrowserNetworkEntry] = []
+    @Published private(set) var droppedEntries = 0
 
     func clear() {
         console.removeAll()

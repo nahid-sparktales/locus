@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.12.0 — 2026-08-09
+
+### Added
+
+- **A browser the agent can drive.** The model gains browser tools over the
+  native broker: open a page, read it as a tree of addressable elements, click
+  and type with framework-aware input, capture screenshots, wait for a
+  single-page app to settle, inspect console output and network requests,
+  manage tabs, resize the emulated viewport, and evaluate JavaScript for
+  debugging. Reading is permission-free — a reviewer can look at the page it is
+  reviewing — while running page JavaScript asks every time, Bypass included.
+  Navigation is limited to http and https, typed credentials are refused on
+  both sides of the broker, and page content is always labelled untrusted
+  external data. The browser is on by default, works in the sandboxed App Store
+  build, and can be turned off in Settings ▸ Permissions.
+- **The Preview tab is now the Browser tab.** The same live pages the agent
+  drives, with an address bar, back/forward, stop/reload, load progress, tab
+  chips, a console and network drawer, and an emulated-viewport picker. Pages
+  render off-screen while the panel shows another tab, so the agent keeps
+  browsing — and screenshots keep working — with the inspector collapsed.
+  `/browser` opens it; `/preview` still works. Tabs belong to the conversation
+  that opened them: background team workers keep their pages across chat
+  switches, and a conversation's tabs close when it ends.
+
 ## 1.11.0 — 2026-08-08
 
 ### Added
