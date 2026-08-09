@@ -1213,6 +1213,11 @@ struct AppSettings: Codable, Hashable {
     /// or change the number was to hand-edit the agent's config file.
     var maxIterations: Int?
     var inspectorWidth: Double = AppSettings.defaultInspectorWidth
+    /// The chat column's width while the panel is zoomed over the window.
+    /// The zoom flag itself is deliberately not persisted — it is a focus
+    /// mode, and relaunch returns to the normal layout — but the width the
+    /// user settled on is worth keeping.
+    var inspectorZoomedChatWidth: Double = AppSettings.defaultZoomedChatWidth
     /// The inspector starts collapsed: the conversation is the point, and
     /// ⌘1–⌘8 or ⌘⌥I bring the panel back the moment it is needed.
     var inspectorCollapsed = true
@@ -1270,6 +1275,15 @@ struct AppSettings: Codable, Hashable {
         return min(max(width, minimumInspectorWidth), maximumInspectorWidth)
     }
 
+    static let defaultZoomedChatWidth: Double = 420
+    static let minimumZoomedChatWidth: Double = 360
+    static let maximumZoomedChatWidth: Double = 600
+
+    static func clampZoomedChatWidth(_ width: Double) -> Double {
+        guard width.isFinite else { return defaultZoomedChatWidth }
+        return min(max(width, minimumZoomedChatWidth), maximumZoomedChatWidth)
+    }
+
     /// Ports outside 1...65535 read back as "not configured" rather than as a
     /// number the proxy layer would then try to dial.
     static func clampProxyPort(_ port: Int?) -> Int? {
@@ -1324,6 +1338,10 @@ struct AppSettings: Codable, Hashable {
         inspectorWidth = Self.clampInspectorWidth(
             try container.decodeIfPresent(Double.self, forKey: .inspectorWidth)
                 ?? defaults.inspectorWidth
+        )
+        inspectorZoomedChatWidth = Self.clampZoomedChatWidth(
+            try container.decodeIfPresent(Double.self, forKey: .inspectorZoomedChatWidth)
+                ?? defaults.inspectorZoomedChatWidth
         )
         inspectorCollapsed = try container.decodeIfPresent(Bool.self, forKey: .inspectorCollapsed)
             ?? defaults.inspectorCollapsed

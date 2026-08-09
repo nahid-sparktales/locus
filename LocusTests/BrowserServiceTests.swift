@@ -86,6 +86,29 @@ final class BrowserServiceTests: XCTestCase {
         XCTAssertFalse(service.snapshots(for: "session-store").isEmpty)
     }
 
+    func testClosedTabsActuallyDeallocate() {
+        // The associated object made the web view retain its Tab, the Tab its
+        // host, the host its web view — closing a tab freed nothing until
+        // retire() started breaking the cycle.
+        weak var closedTab: BrowserService.Tab?
+        autoreleasepool {
+            let tab = service.tab(for: "session-retire")
+            closedTab = tab
+            service.userCloseTab(tab.id, sessionID: "session-retire")
+        }
+        XCTAssertNil(closedTab, "closing a tab must break the webView→Tab retain cycle")
+    }
+
+    func testPrewarmSurfacesNoTabs() {
+        service.prewarm()
+        XCTAssertTrue(service.tabs.isEmpty, "prewarming must not publish a tab")
+
+        // Once a real tab exists the processes are up; prewarm stands down.
+        _ = service.tab(for: "session-warm")
+        service.prewarm()
+        XCTAssertEqual(service.snapshots(for: "session-warm").count, 1)
+    }
+
     func testNavigatingToARefusedSchemeExplainsItselfAndOpensNothing() async {
         let result = await service.perform(
             tool: "browser_navigate",

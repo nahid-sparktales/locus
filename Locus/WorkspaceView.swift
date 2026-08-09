@@ -211,18 +211,8 @@ struct WorkspaceView: View {
             .frame(width: 32, height: 32)
             .accessibilityLabel("Workspace actions")
             .accessibilityIdentifier("workspace.actions")
-
-            if model.inspectorCollapsed && !model.justChatEnabled {
-                HeaderIconButton(
-                    symbol: "sidebar.right",
-                    label: "Show inspector",
-                    identifier: "workspace.showInspector"
-                ) {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        model.inspectorCollapsed = false
-                    }
-                }
-            }
+            // The inspector-restore button lived here; the always-visible
+            // rail's toggle owns that job now.
         }
         .padding(.horizontal, 22)
         .frame(height: 72)

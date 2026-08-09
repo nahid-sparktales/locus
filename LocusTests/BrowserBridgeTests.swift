@@ -230,11 +230,27 @@ final class BrowserBridgeTests: XCTestCase {
 
     // MARK: - Capture script load-speed contract
 
-    func testCaptureScriptStaysOutOfSubframes() {
+    func testInjectedScriptsStayOutOfSubframes() {
         // Every ad iframe installing wrappers and observers was measurable
-        // load-time overhead; the reader stays all-frames for element refs.
+        // load-time overhead. Refs are minted only in the main frame —
+        // `callBridge` evaluates there and the walk stops at IFRAME — so the
+        // reader has no business in subframes either.
         XCTAssertTrue(BrowserBridge.captureScript().isForMainFrameOnly)
-        XCTAssertFalse(BrowserBridge.readerScript().isForMainFrameOnly)
+        XCTAssertTrue(BrowserBridge.readerScript().isForMainFrameOnly)
+    }
+
+    func testReaderObserverAttachesOnlyWhileRefsAreOutstanding() {
+        // The staleness suite above proves the observer works once attached;
+        // this pins the lazy-attach contract, which is a load-speed guarantee:
+        // a page nobody has called read_page on must not pay MutationRecord
+        // allocation during parsing and hydration.
+        let source = BrowserBridge.readerScript().source
+        XCTAssertTrue(source.contains("function startObserving()"))
+        XCTAssertTrue(source.contains("function stopObserving()"))
+        XCTAssertTrue(
+            source.contains("if (byId.size > 0) { startObserving(); }"),
+            "observation must begin only after a walk mints refs"
+        )
     }
 
     func testCaptureFetchWrapperNeverSitsBetweenTheNetworkAndThePage() {

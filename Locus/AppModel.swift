@@ -174,9 +174,21 @@ final class AppModel: ObservableObject {
         didSet {
             guard inspectorCollapsed != oldValue else { return }
             settings.inspectorCollapsed = inspectorCollapsed
+            // Zoom is a state of the *open* panel; closing it always lands
+            // back in the rail, never in a hidden-but-zoomed limbo.
+            if inspectorCollapsed { setInspectorZoomed(false) }
         }
     }
     @Published private(set) var inspectorWidth: CGFloat = CGFloat(AppSettings.defaultInspectorWidth)
+    /// The panel filling the window with chat squeezed to a column. A focus
+    /// mode, deliberately not persisted — relaunch returns to the normal
+    /// layout. Only `setInspectorZoomed(_:)` may change it.
+    @Published private(set) var inspectorZoomed = false
+    /// The chat column's width while zoomed. The panel takes the remainder,
+    /// so this is the value the divider drags in that state.
+    @Published private(set) var zoomedChatWidth: CGFloat = CGFloat(AppSettings.defaultZoomedChatWidth)
+    /// Whether un-zooming should reopen the session sidebar it auto-collapsed.
+    private var restoreSidebarAfterZoom = false
     @Published private(set) var planHasUnseenUpdate = false
     /// True between a completed Plan-mode turn that produced a plan and the
     /// user's answer to "implement this plan?". While set, the composer input
@@ -624,6 +636,7 @@ final class AppModel: ObservableObject {
         // Seeded here rather than in a didSet: assignments inside init skip
         // property observers, so this cannot echo back into persistence.
         inspectorWidth = CGFloat(loadedSettings.inspectorWidth)
+        zoomedChatWidth = CGFloat(loadedSettings.inspectorZoomedChatWidth)
         inspectorCollapsed = loadedSettings.inspectorCollapsed
         sidebarCollapsed = loadedSettings.sidebarCollapsed
         inspectorTab = loadedSettings.resolvedInspectorTab
@@ -662,6 +675,17 @@ final class AppModel: ObservableObject {
         terminal.transport = self
         browser.onUserNotice = { [weak self] notice in
             self?.showToast(notice)
+        }
+        if startImmediately, !isUITesting {
+            // Warm WebKit's helper processes once launch settles, so the
+            // first page load doesn't pay their cold start. Gated on the
+            // browser being enabled; the browser panel's onAppear re-arms
+            // this if the user flips it on later.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(1))
+                guard let self, self.settings.browserEnabled else { return }
+                self.browser.prewarm()
+            }
         }
 
         backendProcess.onUnexpectedExit = { [weak self] code, output in
@@ -1441,6 +1465,9 @@ final class AppModel: ObservableObject {
     func shutdown() {
         isShuttingDown = true
         lifecycleJournal?.markCleanExit()
+        // Zoom is transient and relaunch never restores it, so hand back the
+        // room it borrowed before the layout is flushed to disk.
+        setInspectorZoomed(false)
         persistCurrentWorkspaceProfile()
         // Flush rather than cancel: a debounced settings write that is still
         // pending at quit would otherwise be dropped.
@@ -5443,7 +5470,6 @@ final class AppModel: ObservableObject {
 
     /// Seven tab labels need almost the full inspector width; below this the
     /// icon-first strip keeps every target comfortably clickable.
-    var inspectorShowsLabels: Bool { inspectorWidth >= 500 }
 
     /// Files changed in the workspace, for the Changes badge.
     var changedFileCount: Int { gitChanges.count }
@@ -6021,6 +6047,9 @@ final class AppModel: ObservableObject {
             + "\n… \(lines.count - maxLines) more lines — open the file to see the rest."
     }
 
+    // Zoomed, the panel fills the window regardless of `inspectorWidth`.
+    var inspectorShowsLabels: Bool { inspectorZoomed || inspectorWidth >= 500 }
+
     func selectInspectorTab(_ tab: InspectorTab, selecting runID: String? = nil) {
         guard !justChatEnabled else { return }
         inspectorTab = tab
@@ -6058,6 +6087,51 @@ final class AppModel: ObservableObject {
         inspectorCollapsed.toggle()
     }
 
+    /// Rail icon behavior: a click on the open panel's own tab closes the
+    /// panel; anything else selects the tab (which opens the panel if needed).
+    func toggleInspectorTab(_ tab: InspectorTab) {
+        guard !justChatEnabled else { return }
+        if !inspectorCollapsed, inspectorTab == tab {
+            inspectorCollapsed = true
+        } else {
+            selectInspectorTab(tab)
+        }
+    }
+
+    /// Expand the panel over the window, or hand the space back. Zooming
+    /// opens a collapsed panel first, and borrows the session sidebar's
+    /// room — remembering to give it back — so the panel gets real width
+    /// without the window growing.
+    func setInspectorZoomed(_ zoomed: Bool) {
+        guard zoomed != inspectorZoomed else { return }
+        if zoomed {
+            guard !justChatEnabled else { return }
+            if inspectorCollapsed { inspectorCollapsed = false }
+            inspectorZoomed = true
+            if !sidebarCollapsed {
+                restoreSidebarAfterZoom = true
+                let savedPreference = settings.sidebarCollapsed
+                sidebarCollapsed = true
+                // The borrow is zoom-owned, not a preference: its didSet write
+                // must not survive a quit-while-zoomed, or relaunch — which
+                // never restores zoom — would come back with the sidebar
+                // silently gone.
+                settings.sidebarCollapsed = savedPreference
+            }
+        } else {
+            inspectorZoomed = false
+            let shouldRestore = restoreSidebarAfterZoom
+            restoreSidebarAfterZoom = false
+            // Only reopen what zoom itself closed — if the user reopened the
+            // sidebar while zoomed, their choice stands.
+            if shouldRestore, sidebarCollapsed { sidebarCollapsed = false }
+        }
+    }
+
+    func toggleInspectorZoom() {
+        setInspectorZoomed(!inspectorZoomed)
+    }
+
     func toggleSidebar() {
         sidebarCollapsed.toggle()
     }
@@ -6072,6 +6146,16 @@ final class AppModel: ObservableObject {
     /// debounced settings save 60 times a second.
     func commitInspectorWidth() {
         settings.inspectorWidth = Double(inspectorWidth)
+    }
+
+    /// Live width of the chat column during a zoomed-divider drag. Same
+    /// commit-on-release contract as `setInspectorWidth`.
+    func setZoomedChatWidth(_ width: CGFloat) {
+        zoomedChatWidth = CGFloat(AppSettings.clampZoomedChatWidth(Double(width)))
+    }
+
+    func commitZoomedChatWidth() {
+        settings.inspectorZoomedChatWidth = Double(zoomedChatWidth)
     }
 
     // MARK: - Permission mode

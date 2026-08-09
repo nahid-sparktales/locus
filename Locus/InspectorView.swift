@@ -2,15 +2,19 @@ import AppKit
 import SwiftUI
 
 /// The right-hand inspector: a tab shell around workspace run state, files,
-/// instructions, terminal, preview and checkpoints, with a drag handle on its
-/// leading edge.
+/// instructions, terminal and checkpoints, with a drag handle on its leading
+/// edge. Plan and Browser have first-class rail icons instead of strip tabs,
+/// so when either is selected the strip stands down and the panel gets the
+/// entire height.
 struct InspectorView: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
         VStack(spacing: 0) {
-            InspectorTabStrip()
-                .environmentObject(model)
+            if InspectorRail.overflowTabs.contains(model.inspectorTab) {
+                InspectorTabStrip()
+                    .environmentObject(model)
+            }
 
             Group {
                 switch model.inspectorTab {
@@ -43,6 +47,61 @@ struct InspectorView: View {
     }
 }
 
+/// Icon-first tab strip over the strip-hosted tabs — Plan and Browser live on
+/// the rail instead. Labels appear only when the panel is wide enough, and
+/// the attention badge sits on the icon so it survives icon-only mode.
+private struct InspectorTabStrip: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(InspectorRail.overflowTabs) { tab in
+                tabButton(tab)
+            }
+        }
+        .frame(height: 44)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LocusTheme.line).frame(height: 1)
+        }
+    }
+
+    private func tabButton(_ tab: InspectorTab) -> some View {
+        let selected = model.inspectorTab == tab
+        return Button {
+            model.selectInspectorTab(tab)
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: tab.symbol)
+                    .font(.system(size: 12, weight: .medium))
+                    .overlay(alignment: .topTrailing) {
+                        InspectorTabBadge(tab: tab)
+                    }
+                if model.inspectorShowsLabels {
+                    Text(tab.title)
+                        .font(.system(size: 9, weight: .semibold))
+                        .lineLimit(1)
+                }
+            }
+            .foregroundStyle(selected ? LocusTheme.ink : LocusTheme.muted)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .overlay(alignment: .bottom) {
+                if selected {
+                    Rectangle()
+                        .fill(LocusTheme.ink)
+                        .frame(height: 2)
+                        .padding(.horizontal, 8)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .help(tab.title)
+        .accessibilityLabel("\(tab.title) inspector")
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .accessibilityIdentifier("inspector.tab.\(tab.rawValue)")
+    }
+}
+
 /// Shared empty state for inspector tabs.
 struct InspectorPlaceholder: View {
     let symbol: String
@@ -69,77 +128,13 @@ struct InspectorPlaceholder: View {
     }
 }
 
-/// Icon-first tab strip. Labels appear only when the panel is wide enough, and
-/// the attention badge sits on the icon so it survives icon-only mode.
-private struct InspectorTabStrip: View {
+/// Attention badge on the rail's icons, so a collapsed inspector keeps
+/// asking for eyes exactly the way an open panel does.
+struct InspectorTabBadge: View {
     @EnvironmentObject private var model: AppModel
+    let tab: InspectorTab
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(InspectorTab.allCases) { tab in
-                tabButton(tab)
-            }
-
-            Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    model.inspectorCollapsed = true
-                }
-            } label: {
-                Image(systemName: "sidebar.right")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(LocusTheme.muted)
-                    .frame(width: 28, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Hide inspector")
-            .accessibilityLabel("Hide inspector")
-            .accessibilityIdentifier("inspector.collapse")
-        }
-        .frame(height: 44)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
-        }
-    }
-
-    private func tabButton(_ tab: InspectorTab) -> some View {
-        let selected = model.inspectorTab == tab
-        return Button {
-            model.selectInspectorTab(tab)
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: tab.symbol)
-                    .font(.system(size: 12, weight: .medium))
-                    .overlay(alignment: .topTrailing) {
-                        badge(for: tab)
-                    }
-                if model.inspectorShowsLabels {
-                    Text(tab.title)
-                        .font(.system(size: 9, weight: .semibold))
-                        .lineLimit(1)
-                }
-            }
-            .foregroundStyle(selected ? LocusTheme.ink : LocusTheme.muted)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .overlay(alignment: .bottom) {
-                if selected {
-                    Rectangle()
-                        .fill(LocusTheme.ink)
-                        .frame(height: 2)
-                        .padding(.horizontal, 8)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .help(tab.title)
-        .accessibilityLabel("\(tab.title) inspector")
-        .accessibilityValue(selected ? "Selected" : "Not selected")
-        .accessibilityIdentifier("inspector.tab.\(tab.rawValue)")
-    }
-
-    @ViewBuilder
-    private func badge(for tab: InspectorTab) -> some View {
         if tab == .changes, model.changedFileCount > 0 {
             // Coral only while the change is still unseen; once you have opened
             // the tab the count stays but stops asking for attention.
@@ -194,19 +189,37 @@ private struct InspectorResizeHandle: View {
                         DragGesture(minimumDistance: 1, coordinateSpace: .global)
                             .onChanged { value in
                                 // Accumulate from a captured start width so the
-                                // panel cannot drift over a long drag.
-                                let start = startWidth ?? model.inspectorWidth
-                                if startWidth == nil { startWidth = start }
-                                model.setInspectorWidth(start - value.translation.width)
+                                // panel cannot drift over a long drag. Zoomed,
+                                // the panel fills the remainder, so the same
+                                // divider drags the chat column instead —
+                                // rightward widens chat in both readings.
+                                if model.inspectorZoomed {
+                                    let start = startWidth ?? model.zoomedChatWidth
+                                    if startWidth == nil { startWidth = start }
+                                    model.setZoomedChatWidth(start + value.translation.width)
+                                } else {
+                                    let start = startWidth ?? model.inspectorWidth
+                                    if startWidth == nil { startWidth = start }
+                                    model.setInspectorWidth(start - value.translation.width)
+                                }
                             }
                             .onEnded { _ in
                                 startWidth = nil
-                                model.commitInspectorWidth()
+                                if model.inspectorZoomed {
+                                    model.commitZoomedChatWidth()
+                                } else {
+                                    model.commitInspectorWidth()
+                                }
                             }
                     )
                     .onTapGesture(count: 2) {
-                        model.setInspectorWidth(AppSettings.defaultInspectorWidth)
-                        model.commitInspectorWidth()
+                        if model.inspectorZoomed {
+                            model.setZoomedChatWidth(AppSettings.defaultZoomedChatWidth)
+                            model.commitZoomedChatWidth()
+                        } else {
+                            model.setInspectorWidth(AppSettings.defaultInspectorWidth)
+                            model.commitInspectorWidth()
+                        }
                     }
                     .accessibilityLabel("Resize inspector")
                     .accessibilityIdentifier("inspector.resizeHandle")

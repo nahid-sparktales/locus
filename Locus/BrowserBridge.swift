@@ -15,11 +15,15 @@ enum BrowserBridge {
     /// Name of the message handler the page-world capture posts to.
     static let captureHandlerName = "locusBrowserCapture"
 
+    /// Main frame only: refs are minted exclusively there — `callBridge`
+    /// evaluates with `in: nil` (the main frame) and `walk()` stops at IFRAME
+    /// with "contents not readable" — so a copy in every ad and embed iframe
+    /// was pure load-time overhead. Revisit if a tool ever wants subframe refs.
     static func readerScript() -> WKUserScript {
         WKUserScript(
             source: readerSource,
             injectionTime: .atDocumentStart,
-            forMainFrameOnly: false,
+            forMainFrameOnly: true,
             in: readerWorld
         )
     }
@@ -59,6 +63,7 @@ enum BrowserBridge {
         token += 1;
         byId.clear();
         counter = 0;
+        stopObserving();
       }
 
       // Refs are only meaningful for the snapshot that minted them. The
@@ -79,10 +84,28 @@ enum BrowserBridge {
           if (!element.isConnected) { invalidate(); return; }
         }
       });
-      observer.observe(document.documentElement || document, {
-        childList: true,
-        subtree: true,
-      });
+
+      // Attached only while refs are outstanding. An always-on subtree
+      // observer made WebKit allocate a MutationRecord for every childList
+      // change during parsing and SPA hydration, on every page, for a
+      // callback that immediately bailed. `observe` is synchronous and a JS
+      // turn is atomic, so nothing can mutate between minting and attaching.
+      let observing = false;
+
+      function startObserving() {
+        if (observing) { return; }
+        observer.observe(document.documentElement || document, {
+          childList: true,
+          subtree: true,
+        });
+        observing = true;
+      }
+
+      function stopObserving() {
+        if (!observing) { return; }
+        observer.disconnect();
+        observing = false;
+      }
 
       addEventListener('popstate', invalidate);
       addEventListener('pageshow', (event) => { if (event.persisted) { invalidate(); } });
@@ -324,6 +347,7 @@ enum BrowserBridge {
         }
 
         if (root) { walk(root, 0); }
+        if (byId.size > 0) { startObserving(); }
 
         return {
           token: token,
@@ -343,6 +367,7 @@ enum BrowserBridge {
         token += 1;
         byId.clear();
         counter = 0;
+        stopObserving();
       }
 
       function resolve(id) {

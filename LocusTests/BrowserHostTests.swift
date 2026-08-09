@@ -86,5 +86,32 @@ final class BrowserHostTests: XCTestCase {
         host.setViewport(CGSize(width: 99_999, height: 99_999))
         XCTAssertEqual(host.viewport, CGSize(width: 4_000, height: 4_000))
     }
+
+    func testBackgroundedHostStillCaptures() async throws {
+        // A background tab gives up its "visible" activity state so it stops
+        // competing with the loading page — but a capture must still work,
+        // because snapshotPNG restores the drawing area for the moment.
+        let (host, waiter) = makeHost()
+        host.webView.loadHTMLString(
+            "<body style=\"margin:0;background:#0000ff\"></body>",
+            baseURL: nil
+        )
+        try await waiter.wait()
+
+        host.setKeptLive(false)
+        XCTAssertFalse(host.isKeptLive)
+
+        let data = try await host.snapshotPNG()
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: data))
+        let centre = try XCTUnwrap(
+            bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)
+        )
+        let rgb = try XCTUnwrap(centre.usingColorSpace(.sRGB))
+        XCTAssertGreaterThan(rgb.blueComponent, 0.8, "expected a rendered blue page")
+        XCTAssertFalse(host.isKeptLive, "the capture must not leave the tab live")
+
+        host.setKeptLive(true)
+        XCTAssertTrue(host.isKeptLive)
+    }
 }
 

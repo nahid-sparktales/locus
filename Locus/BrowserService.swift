@@ -172,11 +172,6 @@ final class BrowserService: NSObject, ObservableObject {
         await BrowserService.proxiedFaviconFetch(url)
     }
     @Published private(set) var isExecuting = false
-    /// True while the detached Browser window is showing the page. The
-    /// inspector's borrowed view checks this before lending, because a
-    /// `WKWebView` has one superview and the window holds the claim.
-    @Published var windowHosted = false
-
     /// More live web views than this and the oldest idle one is closed. Each
     /// carries a WebContent process; a long day of team runs must not
     /// accumulate them without bound.
@@ -214,6 +209,13 @@ final class BrowserService: NSObject, ObservableObject {
     /// own cookies and nothing else's.
     private var persistentProfileID: UUID?
 
+    /// A blank web view created at idle purely to launch WebKit's WebContent,
+    /// Networking and GPU processes before the user's first navigation, which
+    /// otherwise pays their cold start inside the perceived page load. No
+    /// explicit process pool: WebKit shares processes app-wide since macOS 12,
+    /// so warming any web view on the same data store warms them all.
+    private var prewarmView: WKWebView?
+
     /// Point the browser at a workspace's profile. Ephemeral by default; the
     /// opt-in persistent store is keyed per **workspace** — session ids are
     /// re-keyed by worker processes and recycled by chat deletion's Undo, so
@@ -227,7 +229,7 @@ final class BrowserService: NSObject, ObservableObject {
         // A data store cannot be swapped under a live page; the pages go too.
         if !openTabs.isEmpty {
             cancelPendingActions()
-            for tab in openTabs { tab.invalidateObservations() }
+            for tab in openTabs { retire(tab) }
             openTabs.removeAll()
             activeTabBySession.removeAll()
             onUserNotice?("Browser tabs closed — the browsing profile changed")
@@ -236,6 +238,9 @@ final class BrowserService: NSObject, ObservableObject {
         dataStore = identifier.map { WKWebsiteDataStore(forIdentifier: $0) }
             ?? .nonPersistent()
         proxyGeneration = nil
+        // The prewarm view holds the old store; keeping it would warm the
+        // wrong networking process.
+        prewarmView = nil
         publishTabs()
     }
 
@@ -245,13 +250,14 @@ final class BrowserService: NSObject, ObservableObject {
         let identifier = persistentProfileID
         if !openTabs.isEmpty {
             cancelPendingActions()
-            for tab in openTabs { tab.invalidateObservations() }
+            for tab in openTabs { retire(tab) }
             openTabs.removeAll()
             activeTabBySession.removeAll()
         }
         dataStore = identifier.map { WKWebsiteDataStore(forIdentifier: $0) }
             ?? .nonPersistent()
         proxyGeneration = nil
+        prewarmView = nil
         // Icons are derived from browsed pages, so the sweeper covers them too.
         favicons.removeAll()
         faviconHostsAttempted.removeAll()
@@ -279,6 +285,20 @@ final class BrowserService: NSObject, ObservableObject {
             bytes[8], bytes[9], bytes[10], bytes[11],
             bytes[12], bytes[13], bytes[14], bytes[15]
         ))
+    }
+
+    // MARK: - Prewarm
+
+    /// Launch WebKit's helper processes before the first real navigation.
+    /// Loading `about:blank` in a throwaway view forces WebContent, Networking
+    /// and GPU processes up at idle, so the user's first page load starts from
+    /// a warm runtime instead of paying their cold start. Does nothing once a
+    /// real tab exists — the processes are already up.
+    func prewarm() {
+        guard prewarmView == nil, openTabs.isEmpty else { return }
+        let webView = WKWebView(frame: .zero, configuration: makeConfiguration())
+        webView.load(URLRequest(url: URL(string: "about:blank")!))
+        prewarmView = webView
     }
 
     // MARK: - Session lifecycle
@@ -320,7 +340,7 @@ final class BrowserService: NSObject, ObservableObject {
     func closeTabs(ownedBy sessionID: String) {
         cancelPendingActions(ownedBy: sessionID)
         for tab in openTabs where tab.ownerSessionID == sessionID {
-            tab.invalidateObservations()
+            retire(tab)
         }
         openTabs.removeAll { $0.ownerSessionID == sessionID }
         activeTabBySession.removeValue(forKey: sessionID)
@@ -964,8 +984,8 @@ final class BrowserService: NSObject, ObservableObject {
         return openTabs.first { $0.id == id }
     }
 
-    /// The session's active tab, opening one on first use. The inspector and
-    /// the detached window use this to borrow the live web view.
+    /// The session's active tab, opening one on first use. The inspector's
+    /// browser panel uses this to borrow the live web view.
     func tab(for sessionID: String) -> Tab {
         if let id = activeTabBySession[sessionID],
            let existing = openTabs.first(where: { $0.id == id })
@@ -990,27 +1010,7 @@ final class BrowserService: NSObject, ObservableObject {
             // the duplicate handler name.
             configuration = adopted
         } else {
-            configuration = WKWebViewConfiguration()
-            configuration.websiteDataStore = dataStore
-            configuration.userContentController.addUserScript(BrowserBridge.readerScript())
-            configuration.userContentController.addUserScript(BrowserBridge.captureScript())
-            // Weak, because the content controller retains its handlers
-            // strongly and the cycle would keep every closed tab's buffers
-            // alive for good.
-            configuration.userContentController.add(
-                WeakScriptMessageHandler(self),
-                name: BrowserBridge.captureHandlerName
-            )
-            // Agent clicks carry no user gesture, so this blocks programmatic
-            // window.open; links and user-gestured popups route through
-            // createWebViewWith into a managed tab.
-            configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
-            // Without this, the UA is the bare embedded-WebView signature
-            // (no Version/Safari tokens), which bot-detection vendors route
-            // into challenge interstitials and UA sniffers serve degraded
-            // fallbacks to. Completing the token set makes the UA read as
-            // the Safari this WebKit actually is.
-            configuration.applicationNameForUserAgent = "Version/17.4 Safari/605.1.15"
+            configuration = makeConfiguration()
         }
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -1035,9 +1035,12 @@ final class BrowserService: NSObject, ObservableObject {
 
         // The delegate callbacks catch page loads; these catch everything else
         // the chrome shows live — progress, title changes from the page's own
-        // script, pushState URL changes, history depth.
+        // script, pushState URL changes, history depth. Scheduled rather than
+        // immediate: a single navigation fires most of these in one runloop
+        // turn, and each used to rebuild every snapshot on the main actor
+        // while WebKit was mid-load.
         let republish: (WKWebView, Any) -> Void = { [weak self] _, _ in
-            self?.publishTabs()
+            self?.schedulePublish()
         }
         tab.observations = [
             webView.observe(\.estimatedProgress, changeHandler: republish),
@@ -1056,6 +1059,34 @@ final class BrowserService: NSObject, ObservableObject {
         return tab
     }
 
+    /// The configuration every managed tab starts from. Shared with the
+    /// prewarm view so the processes WebKit warms up are the ones real tabs
+    /// will use.
+    private func makeConfiguration() -> WKWebViewConfiguration {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = dataStore
+        configuration.userContentController.addUserScript(BrowserBridge.readerScript())
+        configuration.userContentController.addUserScript(BrowserBridge.captureScript())
+        // Weak, because the content controller retains its handlers
+        // strongly and the cycle would keep every closed tab's buffers
+        // alive for good.
+        configuration.userContentController.add(
+            WeakScriptMessageHandler(self),
+            name: BrowserBridge.captureHandlerName
+        )
+        // Agent clicks carry no user gesture, so this blocks programmatic
+        // window.open; links and user-gestured popups route through
+        // createWebViewWith into a managed tab.
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        // Without this, the UA is the bare embedded-WebView signature
+        // (no Version/Safari tokens), which bot-detection vendors route
+        // into challenge interstitials and UA sniffers serve degraded
+        // fallbacks to. Completing the token set makes the UA read as
+        // the Safari this WebKit actually is.
+        configuration.applicationNameForUserAgent = "Version/17.4 Safari/605.1.15"
+        return configuration
+    }
+
     /// Keep the live web-view count bounded. Victims are the oldest tabs from
     /// conversations that are neither in front nor backed by a live worker —
     /// a parked tab is a live agent's steady state between tool calls, so
@@ -1068,7 +1099,7 @@ final class BrowserService: NSObject, ObservableObject {
                     && tab.host.isParked
                     && tab.gate == nil
             }) else { return }
-            victim.invalidateObservations()
+            retire(victim)
             openTabs.removeAll { $0 === victim }
             if activeTabBySession[victim.ownerSessionID] == victim.id {
                 activeTabBySession[victim.ownerSessionID] = openTabs
@@ -1083,8 +1114,45 @@ final class BrowserService: NSObject, ObservableObject {
         objc_getAssociatedObject(webView, &Self.tabKey) as? Tab
     }
 
+    /// Tear down a tab that is leaving `openTabs`. Clearing the associated
+    /// object breaks the webView→Tab→host→webView retain cycle, so the whole
+    /// subgraph — WebContent process, off-screen panel, capture buffers —
+    /// actually deallocates instead of living forever; ordering the panel out
+    /// first stops the page rendering at full "visible" rate while ARC gets
+    /// there. Delegate callbacks that race the teardown find `tab(owning:)`
+    /// nil and stand down.
+    private func retire(_ tab: Tab) {
+        tab.invalidateObservations()
+        tab.gate?.settle(.cancelled)
+        tab.gate = nil
+        tab.host.setKeptLive(false)
+        objc_setAssociatedObject(tab.webView, &Self.tabKey, nil, .OBJC_ASSOCIATION_RETAIN)
+    }
+
+    /// True while a publish is queued behind the current runloop turn.
+    private var publishScheduled = false
+
+    /// Coalesce the KVO storm of a page load into one snapshot rebuild per
+    /// runloop turn. User actions keep calling `publishTabs()` directly —
+    /// they want the snapshot synchronously, and tests rely on that.
+    private func schedulePublish() {
+        guard !publishScheduled else { return }
+        publishScheduled = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.publishScheduled = false
+            self.publishTabs()
+        }
+    }
+
     private func publishTabs() {
         let active = Set(activeTabBySession.values)
+        // Only tabs a session is standing on keep WebKit's "visible" state;
+        // the rest throttle like any browser's background tabs instead of
+        // competing with the page actually being loaded.
+        for tab in openTabs {
+            tab.host.setKeptLive(active.contains(tab.id))
+        }
         let fresh = openTabs.map { tab in
             TabSnapshot(
                 id: tab.id,
@@ -1092,7 +1160,10 @@ final class BrowserService: NSObject, ObservableObject {
                 url: tab.webView.url?.absoluteString ?? "",
                 isLoading: tab.webView.isLoading,
                 isActive: active.contains(tab.id),
-                progress: tab.webView.estimatedProgress,
+                // Quantized so the snapshot diff below caps progress-driven
+                // publishes at ~20 per load instead of every KVO tick. The
+                // 2px progress line cannot show finer steps anyway.
+                progress: (tab.webView.estimatedProgress * 20).rounded() / 20,
                 canGoBack: tab.webView.canGoBack,
                 canGoForward: tab.webView.canGoForward,
                 ownerSessionID: tab.ownerSessionID
@@ -1162,8 +1233,7 @@ final class BrowserService: NSObject, ObservableObject {
             $0.id == tabID && $0.ownerSessionID == sessionID
         }) else { return }
         let closed = openTabs.remove(at: index)
-        closed.invalidateObservations()
-        closed.gate?.settle(.cancelled)
+        retire(closed)
         if activeTabBySession[sessionID] == closed.id {
             activeTabBySession[sessionID] = openTabs
                 .first { $0.ownerSessionID == sessionID }?.id
@@ -1186,8 +1256,7 @@ final class BrowserService: NSObject, ObservableObject {
         let victims = openTabs.filter { $0.ownerSessionID == sessionID && $0.id != tabID }
         guard !victims.isEmpty else { return }
         for tab in victims {
-            tab.invalidateObservations()
-            tab.gate?.settle(.cancelled)
+            retire(tab)
         }
         openTabs.removeAll { tab in victims.contains { $0 === tab } }
         activeTabBySession[sessionID] = tabID

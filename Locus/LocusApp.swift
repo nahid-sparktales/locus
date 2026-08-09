@@ -39,7 +39,8 @@ struct LocusApp: App {
                 .onAppear { appDelegate.model = model }
                 .preferredColorScheme(.light)
                 .frame(
-                    minWidth: locusIsUITesting ? 920 : 1_080,
+                    // Sidebar 260 + workspace 520 + panel 280 + rail 44.
+                    minWidth: locusIsUITesting ? 980 : 1_120,
                     minHeight: locusIsUITesting ? 620 : 700
                 )
                 .background {
@@ -105,8 +106,11 @@ struct LocusApp: App {
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
                 .disabled(model.justChatEnabled)
-                OpenBrowserWindowButton()
-                    .environmentObject(model)
+                Button(model.inspectorZoomed ? "Restore Panel" : "Expand Panel") {
+                    withAnimation(.easeInOut(duration: 0.18)) { model.toggleInspectorZoom() }
+                }
+                .keyboardShortcut("e", modifiers: [.command, .option])
+                .disabled(model.justChatEnabled)
                 Divider()
                 Button("Just Chat") { model.selectedMode = .ask }
                     .keyboardShortcut("a", modifiers: .option)
@@ -118,17 +122,6 @@ struct LocusApp: App {
                     .keyboardShortcut("b", modifiers: .option)
             }
         }
-
-        // The detached browser. Safe as a second scene: the app-terminating
-        // close handler below filters on the main window's identifier, and
-        // `MainWindowMarker` stamps only `RootView`'s window.
-        Window("Browser", id: "browser") {
-            BrowserWindowView()
-                .environmentObject(model)
-        }
-        .windowStyle(.hiddenTitleBar)
-        .windowToolbarStyle(.unifiedCompact(showsTitle: false))
-        .defaultSize(width: 1_280, height: 860)
 
         Settings {
             SettingsView()
@@ -271,19 +264,41 @@ struct RootView: View {
                     .transition(.move(edge: .leading).combined(with: .opacity))
             }
 
+            // Zoomed, chat becomes the fixed column and the panel takes the
+            // remainder; one frame call, because a stacked min-then-fixed
+            // pair would let the inner minimum win over the outer width.
             WorkspaceView()
-                .frame(minWidth: locusIsUITesting ? 400 : 520)
+                .frame(
+                    minWidth: model.inspectorZoomed
+                        ? model.zoomedChatWidth
+                        : (locusIsUITesting ? 400 : 520),
+                    maxWidth: model.inspectorZoomed ? model.zoomedChatWidth : .infinity
+                )
 
             if !model.inspectorCollapsed && !model.justChatEnabled {
                 InspectorView()
-                    .frame(width: locusIsUITesting ? 280 : model.inspectorWidth)
+                    .frame(
+                        minWidth: model.inspectorZoomed
+                            ? nil
+                            : (locusIsUITesting ? 280 : model.inspectorWidth),
+                        maxWidth: model.inspectorZoomed
+                            ? .infinity
+                            : (locusIsUITesting ? 280 : model.inspectorWidth)
+                    )
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
+
+            if !model.justChatEnabled {
+                InspectorRail()
+                    .environmentObject(model)
+            }
         }
-        // Keyed on the sidebar only: including the inspector would put the
-        // width change in scope too, and the panel would lag behind the cursor
-        // during a resize drag. Collapse animates at its call sites instead.
+        // Keyed on the sidebar and the zoom flag only: including the inspector
+        // would put the width change in scope too, and the panel would lag
+        // behind the cursor during a resize drag. Zoom is safe — it flips on
+        // toggle, never during a drag. Collapse animates at its call sites.
         .animation(.easeInOut(duration: 0.18), value: model.sidebarCollapsed)
+        .animation(.easeInOut(duration: 0.18), value: model.inspectorZoomed)
         .background(LocusTheme.paper)
         .overlay(alignment: .bottomTrailing) {
             if let toast = model.toast {
