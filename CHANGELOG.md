@@ -510,8 +510,7 @@
   license notices ship inside the app. The GPLv3 `_dbm` extension (and the
   unused `_tkinter`) are stripped from the runtime before signing, and
   `Tools/AuditDistribution.sh` blocks an archive that still contains
-  either. Docs/APP-STORE-RELEASE-2026-07-29.md records the 1.6.0 (9)
-  build already uploaded to App Store Connect.
+  either. The 1.6.0 (9) build was already uploaded to App Store Connect.
 
 ### Removed
 

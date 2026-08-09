@@ -865,8 +865,7 @@ missing third-party license materials. It also verifies the pinned Codex
 source, normalized Cargo lockfile, V8 inputs, helper architecture and SHA-256
 provenance, signatures, sandbox inheritance, and code-mode JIT entitlements.
 The component inventory is in
-`Locus/Resources/ThirdPartyNotices.md`; release history and remaining App
-Store work are documented in `Docs/APP-STORE-RELEASE-2026-07-29.md`.
+`Locus/Resources/ThirdPartyNotices.md`.
 
 ## Architecture
 

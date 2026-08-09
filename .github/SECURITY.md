@@ -16,11 +16,6 @@ window to ship a fix before publishing.
 Only the latest release receives fixes. Locus is distributed as a notarized
 direct download and through the Mac App Store; both track the same tag.
 
-| Version | Supported |
-| --- | --- |
-| 1.10.x | Yes |
-| < 1.10 | No |
-
 ## What Locus does with your credentials
 
 Worth stating plainly, because it changed in 1.10.0 and it is the thing most
