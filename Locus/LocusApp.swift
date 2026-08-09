@@ -2,6 +2,9 @@ import AppKit
 import SwiftUI
 
 private let locusIsUITesting = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1"
+private let locusIsUnitTesting =
+    ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        && !locusIsUITesting
 
 enum LocusWindowSizing {
     static let defaultSize = NSSize(width: 1_250, height: 760)
@@ -24,7 +27,10 @@ enum LocusWindowSizing {
 @main
 struct LocusApp: App {
     @NSApplicationDelegateAdaptor(LocusApplicationDelegate.self) private var appDelegate
-    @StateObject private var model = AppModel()
+    // XCTest injects the test bundle into the normal app host. Keep that host
+    // inert so it cannot start a second backend or workspace watcher alongside
+    // the models owned by unit tests. UI tests still need their seeded app.
+    @StateObject private var model = AppModel(startImmediately: !locusIsUnitTesting)
 
     var body: some Scene {
         Window("Locus", id: "main") {

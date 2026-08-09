@@ -29,6 +29,7 @@ struct TeamRunBoardView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("teamBoard.\(runID)")
     }
 
@@ -102,6 +103,7 @@ struct TeamRunBoardView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("\(teamName), \(state.title). \(terminalSummary). Expand")
+            .accessibilityIdentifier("teamBoard.terminalSummary")
             Button("Open Team Runs") { model.openTeamRun(runID) }
                 .buttonStyle(.borderless)
                 .font(.system(size: 8, weight: .semibold))
@@ -109,7 +111,7 @@ struct TeamRunBoardView: View {
         }
         .padding(12)
         .locusCard(radius: 10)
-        .accessibilityIdentifier("teamBoard.terminalSummary")
+        .accessibilityElement(children: .contain)
     }
 
     private func boardHeader(now: Date) -> some View {
@@ -339,7 +341,10 @@ struct TeamRunBoardView: View {
         }
         if state == .waitingPermission { return "A coding job is waiting for a tool permission decision below." }
         if state == .waitingComputer { return "A coding job is waiting for computer control." }
-        if state == .failed || state == .interrupted { return run?.recoveryReason ?? "The team run stopped before completion." }
+        if state == .failed || state == .interrupted {
+            if isActive, let recovery = model.lifecycleRecoveryMessage { return recovery }
+            return run?.recoveryReason ?? "The team run stopped before completion."
+        }
         return nil
     }
     private var terminalSummary: String {
@@ -389,6 +394,7 @@ struct TeamDispatchProgressView: View {
                         .font(.system(size: 8, weight: .bold))
                         .tracking(0.8)
                         .foregroundStyle(LocusTheme.signalDeep)
+                        .accessibilityIdentifier("teamDispatch.progress")
                     Text(model.activeOrchestrationTeam?.name ?? "Team run")
                         .font(.system(size: 12, weight: .bold))
                 }
@@ -492,7 +498,7 @@ struct TeamDispatchProgressView: View {
                 .stroke(LocusTheme.signalDeep.opacity(0.45), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.08), radius: 22, y: 9)
-        .accessibilityIdentifier("teamDispatch.progress")
+        .accessibilityElement(children: .contain)
     }
 
     private func stageRow(_ title: String, complete: Bool) -> some View {
@@ -611,7 +617,7 @@ struct TeamDispatchApprovalPromptView: View {
             return .handled
         }
         .onTapGesture { panelFocused = true }
-        .accessibilityIdentifier("teamDispatch.approval")
+        .accessibilityElement(children: .contain)
     }
 
     private var header: some View {
@@ -620,6 +626,7 @@ struct TeamDispatchApprovalPromptView: View {
                 .font(.system(size: 8, weight: .bold))
                 .tracking(0.8)
                 .foregroundStyle(LocusTheme.signalDeep)
+                .accessibilityIdentifier("teamDispatch.approval")
             HStack(spacing: 7) {
                 Image(systemName: "person.3.sequence.fill")
                     .font(.system(size: 12, weight: .semibold))

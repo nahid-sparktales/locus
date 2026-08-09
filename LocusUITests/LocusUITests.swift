@@ -189,6 +189,52 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Reusable workflows"].exists)
     }
 
+    func testAgentProfileEditorKeepsInstructionsAndAdvancedActionsVisible() {
+        anyElement("workspace.modelPicker").click()
+        app.buttons["Manage Agents & Teams…"].click()
+
+        let addAgent = app.buttons["Add Agent"]
+        XCTAssertTrue(addAgent.waitForExistence(timeout: 3))
+        addAgent.click()
+
+        let instructions = anyElement("agent.instructions")
+        let template = anyElement("agent.useRoleTemplate")
+        let tags = anyElement("agent.capabilityTags")
+        let advanced = anyElement("agent.advancedSettings")
+        let testConnection = anyElement("agent.testConnection")
+        let cancel = anyElement("agent.cancel")
+        let save = anyElement("agent.save")
+
+        XCTAssertTrue(instructions.waitForExistence(timeout: 3))
+        XCTAssertTrue(template.exists)
+        XCTAssertTrue(tags.exists)
+        XCTAssertTrue(advanced.exists)
+        XCTAssertTrue(advanced.isHittable)
+        XCTAssertTrue(testConnection.exists)
+        XCTAssertTrue(cancel.exists)
+        XCTAssertTrue(save.exists)
+        XCTAssertLessThan(instructions.frame.maxY, advanced.frame.minY)
+
+        instructions.click()
+        app.typeKey("a", modifierFlags: .command)
+        instructions.typeText("Custom editable instructions")
+        XCTAssertEqual(instructions.value as? String, "Custom editable instructions")
+
+        template.click()
+        XCTAssertNotEqual(instructions.value as? String, "Custom editable instructions")
+
+        let footerY = save.frame.minY
+        advanced.click()
+        XCTAssertTrue(anyElement("agent.advanced.timeout").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("agent.advanced.tokenLimit").exists)
+        XCTAssertTrue(testConnection.isHittable)
+        XCTAssertTrue(cancel.isHittable)
+        XCTAssertTrue(save.isHittable)
+        XCTAssertEqual(save.frame.minY, footerY, accuracy: 1)
+
+        cancel.click()
+    }
+
     func testNetworkSettingsRevealManualProxyFieldsAndGateSave() {
         anyElement("workspace.modelPicker").click()
         app.buttons["Manage Accounts…"].click()
@@ -515,7 +561,9 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(anyElement("runs.recoveryExplanation").exists)
         XCTAssertTrue(anyElement("teamBoard.terminalSummary").exists)
 
-        app.buttons["Activity"].firstMatch.click()
+        let activity = anyElement("runs.view.activity")
+        XCTAssertTrue(activity.waitForExistence(timeout: 3))
+        activity.click()
         let filter = app.textFields["runs.filter"]
         filter.click()
         filter.typeText("Team run completed")

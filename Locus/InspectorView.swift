@@ -295,8 +295,12 @@ struct InspectorRunsTab: View {
         VStack(spacing: 0) {
             runSummary(run)
             Picker("View", selection: $viewMode) {
-                Text("Overview").tag("overview")
-                Text("Activity").tag("activity")
+                Text("Overview")
+                    .accessibilityIdentifier("runs.view.overview")
+                    .tag("overview")
+                Text("Activity")
+                    .accessibilityIdentifier("runs.view.activity")
+                    .tag("activity")
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 12)
@@ -579,6 +583,7 @@ struct InspectorRunsTab: View {
             }
             .padding(12)
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("runs.overview")
     }
 
@@ -632,6 +637,7 @@ struct InspectorRunsTab: View {
                 }
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("runs.activity")
     }
 

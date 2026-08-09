@@ -464,145 +464,76 @@ private struct AgentProfileEditor: View {
     }
 
     var body: some View {
-        Form {
-            TextField("Name", text: $draft.name)
-            Picker("Role", selection: $draft.role) {
-                ForEach(AgentRole.allCases) { Text($0.title).tag($0) }
-            }
-            Picker("Provider route", selection: $draft.route) {
-                Text("Local Ollama").tag(AgentRoute.localOllama)
-                ForEach(model.providerAccounts) { account in
-                    Text(account.displayName).tag(AgentRoute.providerAccount(account.id))
-                }
-            }
-            LabeledContent("Model") {
-                HStack(spacing: 7) {
-                    if modelChoices.isEmpty {
-                        TextField("Exact model ID", text: $draft.model)
-                            .textFieldStyle(.roundedBorder)
-                            .accessibilityIdentifier("agent.model.manual")
-                    } else {
-                        Picker("Model", selection: $draft.model) {
-                            if modelSelectionUnavailable {
-                                Text("\(draft.model) — unavailable")
-                                    .tag(draft.model)
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                ScrollViewReader { scrollProxy in
+                    ScrollView {
+                        Form {
+                            TextField("Name", text: $draft.name)
+                            Picker("Role", selection: $draft.role) {
+                                ForEach(AgentRole.allCases) { Text($0.title).tag($0) }
                             }
-                            Text("Choose a model…").tag("")
-                            ForEach(modelChoices, id: \.self) { name in
-                                Text(name).tag(name)
+                            Picker("Provider route", selection: $draft.route) {
+                                Text("Local Ollama").tag(AgentRoute.localOllama)
+                                ForEach(model.providerAccounts) { account in
+                                    Text(account.displayName).tag(AgentRoute.providerAccount(account.id))
+                                }
+                            }
+                            modelPicker
+                            if modelSelectionUnavailable {
+                                Label(
+                                    "This provider does not report \(draft.model). Choose a model from the menu before saving.",
+                                    systemImage: "exclamationmark.triangle.fill"
+                                )
+                                .font(.system(size: 9))
+                                .foregroundStyle(LocusTheme.coral)
+                            } else if modelChoices.isEmpty {
+                                Text("This provider cannot list models, so enter its exact API model ID.")
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(LocusTheme.muted)
+                            } else {
+                                Text("Only models reported by the selected provider are shown.")
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(LocusTheme.muted)
+                            }
+                            Picker("Access ceiling", selection: $draft.accessCeiling) {
+                                ForEach(AgentAccessCeiling.allCases) { Text($0.title).tag($0) }
+                            }
+                            Picker("Classification", selection: $draft.metering) {
+                                ForEach(AgentMetering.allCases) { Text($0.title).tag($0) }
+                            }
+                            instructionsEditor
+                            TextField("Capability tags", text: $tags, prompt: Text("code, tests, research"))
+                                .accessibilityIdentifier("agent.capabilityTags")
+                            advancedDisclosure
+                                .id("agent.advancedSettings.section")
+                            if let connectionResult {
+                                Text(connectionResult)
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(LocusTheme.muted)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .accessibilityIdentifier("agent.connectionResult")
                             }
                         }
-                        .labelsHidden()
-                        .accessibilityIdentifier("agent.model.picker")
+                        .padding(20)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .animation(.easeInOut(duration: 0.2), value: advancedSettings)
                     }
-                    Button {
-                        Task { await refreshModels() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Refresh models from this provider")
-                    .accessibilityLabel("Refresh provider models")
-                    .accessibilityIdentifier("agent.model.refresh")
-                }
-            }
-            if modelSelectionUnavailable {
-                Label(
-                    "This provider does not report \(draft.model). Choose a model from the menu before saving.",
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-                .font(.system(size: 9))
-                .foregroundStyle(LocusTheme.coral)
-            } else if modelChoices.isEmpty {
-                Text("This provider cannot list models, so enter its exact API model ID.")
-                    .font(.system(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
-            } else {
-                Text("Only models reported by the selected provider are shown.")
-                    .font(.system(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
-            }
-            Picker("Access ceiling", selection: $draft.accessCeiling) {
-                ForEach(AgentAccessCeiling.allCases) { Text($0.title).tag($0) }
-            }
-            Picker("Classification", selection: $draft.metering) {
-                ForEach(AgentMetering.allCases) { Text($0.title).tag($0) }
-            }
-            Text("Custom role instructions").font(.caption).foregroundStyle(LocusTheme.muted)
-            TextEditor(text: $draft.instructions)
-                .frame(minHeight: 100)
-                .accessibilityIdentifier("agent.instructions")
-            Button("Use \(draft.role.title) Template") {
-                draft.instructions = draft.role.defaultInstructions
-            }
-            .buttonStyle(.borderless)
-            TextField("Capability tags", text: $tags, prompt: Text("code, tests, research"))
-            Toggle("Advanced Settings", isOn: $advancedSettings)
-                .accessibilityIdentifier("agent.advancedSettings")
-            if advancedSettings {
-                Section("Advanced Settings") {
-                    Stepper("Timeout: \(draft.timeoutSeconds)s", value: $draft.timeoutSeconds, in: 30...3_600, step: 30)
-                    Stepper("Token limit: \(draft.tokenLimit.formatted())", value: $draft.tokenLimit, in: 1_024...1_000_000, step: 1_024)
-                    if draft.metering == .metered {
-                        TextField("Input $ / 1M tokens", value: $draft.inputCostPerMillion, format: .number)
-                        TextField("Output $ / 1M tokens", value: $draft.outputCostPerMillion, format: .number)
+                    .accessibilityIdentifier("agent.scroll")
+                    .onChange(of: advancedSettings) { _, expanded in
+                        guard expanded else { return }
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            scrollProxy.scrollTo("agent.advancedSettings.section", anchor: .top)
+                        }
                     }
                 }
-                Section("MCP access · none by default") {
-                    ForEach(model.extensions.mcpServers) { server in
-                        Toggle(server.name, isOn: Binding(
-                            get: { draft.mcpPolicy?.serverIDs.contains(server.id) == true },
-                            set: { enabled in
-                                var policy = draft.mcpPolicy ?? MCPAgentPolicy()
-                                if enabled { policy.serverIDs.append(server.id) }
-                                else { policy.serverIDs.removeAll { $0 == server.id } }
-                                draft.mcpPolicy = policy
-                            }
-                        ))
-                    }
-                    TextField("Allowed tools", text: $mcpTools, prompt: Text("tool names, comma separated"))
-                    TextField("Allowed resources", text: $mcpResources, prompt: Text("resource URIs or names"))
-                    TextField("Allowed prompts", text: $mcpPrompts, prompt: Text("prompt names"))
-                    Text("Prompts introduce instructions and must be named explicitly. Mutating MCP tools remain writer-only.")
-                        .font(.system(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
-                }
-            }
-            if let connectionResult {
-                Text(connectionResult)
-                    .font(.system(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
-            }
-            HStack {
-                Button(testingConnection ? "Testing…" : "Test Connection") {
-                    testingConnection = true
-                    Task {
-                        connectionResult = await model.testAgentProfileConnection(draft)
-                        testingConnection = false
-                    }
-                }
-                .disabled(testingConnection || draft.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Save") {
-                    draft.capabilityTags = tags.split(separator: ",").map(String.init)
-                    var policy = draft.mcpPolicy ?? MCPAgentPolicy()
-                    policy.tools = csv(mcpTools)
-                    policy.resources = csv(mcpResources)
-                    policy.prompts = csv(mcpPrompts)
-                    draft.mcpPolicy = policy
-                    draft.clamp()
-                    onSave(draft)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
-                .disabled(
-                    draft.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || modelSelectionUnavailable
-                )
+                .frame(height: max(0, geometry.size.height - 57))
+
+                Divider()
+                footer
+                    .frame(height: 56)
             }
         }
-        .padding(20)
         .frame(width: 600, height: 720)
         .task { await refreshModels() }
         .onChange(of: draft.route) { _, _ in
@@ -610,6 +541,189 @@ private struct AgentProfileEditor: View {
             connectionResult = nil
             Task { await refreshModels() }
         }
+    }
+
+    private var modelPicker: some View {
+        LabeledContent("Model") {
+            HStack(spacing: 7) {
+                if modelChoices.isEmpty {
+                    TextField("Exact model ID", text: $draft.model)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("agent.model.manual")
+                } else {
+                    Picker("Model", selection: $draft.model) {
+                        if modelSelectionUnavailable {
+                            Text("\(draft.model) — unavailable")
+                                .tag(draft.model)
+                        }
+                        Text("Choose a model…").tag("")
+                        ForEach(modelChoices, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+                    .labelsHidden()
+                    .accessibilityIdentifier("agent.model.picker")
+                }
+                Button {
+                    Task { await refreshModels() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .help("Refresh models from this provider")
+                .accessibilityLabel("Refresh provider models")
+                .accessibilityIdentifier("agent.model.refresh")
+            }
+        }
+    }
+
+    private var instructionsEditor: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Custom role instructions")
+                .font(.caption)
+                .foregroundStyle(LocusTheme.muted)
+            TextEditor(text: $draft.instructions)
+                .font(.system(size: 11))
+                .foregroundStyle(LocusTheme.ink)
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .frame(height: 120)
+                .background(LocusTheme.white.opacity(0.88))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(LocusTheme.lineStrong, lineWidth: 1)
+                }
+                .accessibilityIdentifier("agent.instructions")
+            Button("Use \(draft.role.title) Template") {
+                draft.instructions = draft.role.defaultInstructions
+            }
+            .buttonStyle(.borderless)
+            .accessibilityIdentifier("agent.useRoleTemplate")
+        }
+    }
+
+    private var advancedDisclosure: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    advancedSettings.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "slider.horizontal.3")
+                        .foregroundStyle(LocusTheme.signalDeep)
+                    Text("Advanced Settings")
+                        .font(.system(size: 11, weight: .semibold))
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(LocusTheme.muted)
+                        .rotationEffect(.degrees(advancedSettings ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(advancedSettings ? "Expanded" : "Collapsed")
+            .accessibilityIdentifier("agent.advancedSettings")
+
+            if advancedSettings {
+                advancedSettingsContent
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+    }
+
+    private var advancedSettingsContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Divider()
+            Text("RUNTIME LIMITS")
+                .font(.system(size: 8, weight: .bold))
+                .tracking(0.8)
+                .foregroundStyle(LocusTheme.muted)
+            Stepper(
+                "Timeout: \(draft.timeoutSeconds)s",
+                value: $draft.timeoutSeconds,
+                in: 30...3_600,
+                step: 30
+            )
+            .accessibilityIdentifier("agent.advanced.timeout")
+            Stepper(
+                "Token limit: \(draft.tokenLimit.formatted())",
+                value: $draft.tokenLimit,
+                in: 1_024...1_000_000,
+                step: 1_024
+            )
+            .accessibilityIdentifier("agent.advanced.tokenLimit")
+            if draft.metering == .metered {
+                TextField("Input $ / 1M tokens", value: $draft.inputCostPerMillion, format: .number)
+                TextField("Output $ / 1M tokens", value: $draft.outputCostPerMillion, format: .number)
+            }
+
+            Divider()
+            Text("MCP ACCESS · NONE BY DEFAULT")
+                .font(.system(size: 8, weight: .bold))
+                .tracking(0.8)
+                .foregroundStyle(LocusTheme.muted)
+            ForEach(model.extensions.mcpServers) { server in
+                Toggle(server.name, isOn: Binding(
+                    get: { draft.mcpPolicy?.serverIDs.contains(server.id) == true },
+                    set: { enabled in
+                        var policy = draft.mcpPolicy ?? MCPAgentPolicy()
+                        if enabled { policy.serverIDs.append(server.id) }
+                        else { policy.serverIDs.removeAll { $0 == server.id } }
+                        draft.mcpPolicy = policy
+                    }
+                ))
+            }
+            TextField("Allowed tools", text: $mcpTools, prompt: Text("tool names, comma separated"))
+            TextField("Allowed resources", text: $mcpResources, prompt: Text("resource URIs or names"))
+            TextField("Allowed prompts", text: $mcpPrompts, prompt: Text("prompt names"))
+            Text("Prompts introduce instructions and must be named explicitly. Mutating MCP tools remain writer-only.")
+                .font(.system(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.leading, 4)
+    }
+
+    private var footer: some View {
+        HStack {
+            Button(testingConnection ? "Testing…" : "Test Connection") {
+                testingConnection = true
+                Task {
+                    connectionResult = await model.testAgentProfileConnection(draft)
+                    testingConnection = false
+                }
+            }
+            .disabled(testingConnection || draft.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityIdentifier("agent.testConnection")
+
+            Spacer()
+
+            Button("Cancel") { dismiss() }
+                .accessibilityIdentifier("agent.cancel")
+            Button("Save") {
+                draft.capabilityTags = tags.split(separator: ",").map(String.init)
+                var policy = draft.mcpPolicy ?? MCPAgentPolicy()
+                policy.tools = csv(mcpTools)
+                policy.resources = csv(mcpResources)
+                policy.prompts = csv(mcpPrompts)
+                draft.mcpPolicy = policy
+                draft.clamp()
+                onSave(draft)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(LocusTheme.ink)
+            .disabled(
+                draft.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || modelSelectionUnavailable
+            )
+            .accessibilityIdentifier("agent.save")
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(LocusTheme.paper)
     }
 
     private var modelChoices: [String] {
