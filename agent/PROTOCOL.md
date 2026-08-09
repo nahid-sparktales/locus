@@ -888,11 +888,17 @@ blocked for user takeover even in Bypass.
 When the browser broker is enabled the schema also contains `browser_read_page`,
 `browser_get_text`, `browser_find`, `browser_screenshot`, `browser_wait_for`,
 `browser_console`, `browser_network`, `browser_tabs`, `browser_navigate`,
-`browser_input`, `browser_resize`, and `browser_javascript`. The reading half is
+`browser_input`, `browser_resize`, `browser_javascript`, and
+`browser_dev_server`. The reading half is
 permission-free and stays available to read-only agents, which is a deliberate
 departure from computer control — a reviewer should be able to look at the page
 it is reviewing. Everything else follows the permission mode, and
-`browser_javascript` asks every time, Bypass included. Navigation is restricted
+`browser_javascript` and `browser_dev_server` ask every time, Bypass included.
+`browser_dev_server` is the one browser tool that never crosses the socket: the
+agent process spawns and owns the server itself, applies the shell deny list to
+its command, keeps a bounded output ring readable through `status`, and kills
+every server at backend shutdown — a server otherwise outlives the conversation
+that started it. Navigation is restricted
 to `http`, `https` and `about`: a `file:` URL would otherwise read any file
 without passing through `read_file`'s workspace scoping or its prompt. Typing a
 credential is hard blocked on both sides — by content in the agent, and by the

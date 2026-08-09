@@ -273,10 +273,9 @@ BROWSER_TOOL_SCHEMAS = [
     ),
     _schema(
         "browser_input",
-        "Act on the page. Address elements by the ref_N from browser_read_page. "
-        "Input is synthetic, so a page checking event.isTrusted will refuse it. "
-        "confirm()/prompt() dialogs are auto-dismissed unless you arm a response "
-        "first: action 'dialog' with response, then take the action that triggers it.",
+        "Act on the page via ref_N ids from browser_read_page. Input is synthetic "
+        "(event.isTrusted is false). Dialogs auto-dismiss unless armed first: "
+        "action 'dialog' plus response, then the click that triggers it.",
         {
             "action": {
                 "type": "string",
@@ -319,6 +318,19 @@ BROWSER_TOOL_SCHEMAS = [
         "implement behaviour: change the source instead.",
         {"code": {"type": "string"}},
         ["code"],
+    ),
+    _schema(
+        "browser_dev_server",
+        "Run the project's dev server. It keeps running until stopped; read output "
+        "with 'status', then open the page with browser_navigate.",
+        {
+            "action": {"type": "string", "enum": ["start", "stop", "status"]},
+            "command": {"type": "string", "description": "Shell command for 'start', e.g. npm run dev."},
+            "port": {"type": "integer", "description": "Wait for this port to accept connections."},
+            "cwd": {"type": "string", "description": "Working directory; the workspace by default."},
+            "name": {"type": "string", "description": "Name the server to run more than one."},
+        },
+        ["action"],
     ),
 ]
 

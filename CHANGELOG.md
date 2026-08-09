@@ -23,6 +23,22 @@
   `/browser` opens it; `/preview` still works. Tabs belong to the conversation
   that opened them: background team workers keep their pages across chat
   switches, and a conversation's tabs close when it ends.
+- **A detachable Browser window, safe dialogs, contained downloads.** The
+  Browser opens into its own full-size window and hands the page back to the
+  inspector when closed. JavaScript dialogs never block or prompt: alerts are
+  acknowledged, an unanswered confirm takes the safe branch, and the agent can
+  arm a one-shot answer before the click that triggers one — the outcome is
+  always reported in the action's own result. Popups become managed tabs, page
+  file-upload pickers are refused, and downloads land quarantined in Locus's
+  own folder — size-capped, never executed, never the user's Downloads.
+  Cookies are forgotten at quit unless the new per-workspace persistent
+  profile is switched on; Clear Browsing Data erases it.
+- **The agent can run the dev server.** `browser_dev_server` starts the
+  project's server in the agent process, waits for its port, keeps a bounded
+  output log readable on demand, and stops it on request or at quit. Starting
+  one asks every time, Bypass included, and the command passes the same deny
+  list the console enforces. The Console tab stays free for the user's own
+  commands.
 
 ## 1.11.0 — 2026-08-08
 

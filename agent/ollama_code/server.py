@@ -46,6 +46,7 @@ from .config import (
     save_config,
 )
 from .core import AgentCore
+from .devserver import DevServerError, DevServerManager
 from .evaluations import (
     EvaluationError,
     EvaluationStore,
@@ -180,6 +181,9 @@ class ChatService:
         core.on_event(self.emit)
         # Deliberately not sharing `turn_future`: a console command must never
         # occupy the chat's single turn slot.
+        # Dev servers are the terminal's opposite number: several at once,
+        # no deadline, and no Console events — see devserver.py's docstring.
+        self.dev_servers = DevServerManager(perms=core.perms, config=core.config)
         self.terminal = TerminalManager(
             emit=self.emit,
             perms=core.perms,
@@ -370,6 +374,11 @@ class ChatService:
         """
         if not self.core.tool_registry.browser_enabled:
             return "Error: the browser is disabled."
+        # The dev server runs here in the agent process — the backend owns
+        # child processes, not the app — so it never crosses the socket and
+        # the budget/future machinery below never applies to it.
+        if tool == "browser_dev_server":
+            return self._execute_dev_server(arguments)
         budget_ms = BROWSER_TOOL_BUDGET_MS.get(tool, BROWSER_DEFAULT_BUDGET_MS)
         future: Future[dict[str, Any]] = Future()
         self.pending_browser_actions[request_id] = future
@@ -406,6 +415,55 @@ class ChatService:
         if tool in _UNTRUSTED_BROWSER_TOOLS:
             return f"{_UNTRUSTED_BROWSER_NOTICE}\n\n{text}"
         return text
+
+    def _execute_dev_server(self, arguments: dict[str, Any]) -> str:
+        action = str(arguments.get("action") or "status").lower()
+        try:
+            if action == "start":
+                port = arguments.get("port")
+                result = self.dev_servers.start(
+                    command=str(arguments.get("command") or ""),
+                    cwd=str(arguments.get("cwd") or "") or self.core.execution_path,
+                    port=int(port) if port is not None else None,
+                    name=str(arguments.get("name") or ""),
+                    should_stop=self.core.tool_ctx.stopped,
+                )
+                tail = str(result.get("tail") or "").strip()
+                suffix = f"\n\nRecent output:\n{tail}" if tail else ""
+                if result.get("ready"):
+                    where = f"http://localhost:{result['port']}" if result.get("port") else "no port was given"
+                    return (
+                        f"Started '{result['name']}' (pid {result['pid']}); {result['reason']} — "
+                        f"{where}. A port accepting connections is not proof the app is healthy; "
+                        f"open it with browser_navigate to check. The server keeps running until "
+                        f"stopped or Locus quits.{suffix}"
+                    )
+                return (
+                    f"Error: '{result['name']}' did not become ready ({result['reason']})."
+                    f"{suffix}"
+                )
+            if action == "stop":
+                stopped = self.dev_servers.stop(str(arguments.get("name") or ""))
+                if not stopped:
+                    return "No matching server is running."
+                return f"Stopped {', '.join(stopped)}."
+            runs = self.dev_servers.status()
+            if not runs:
+                return "No dev servers are running."
+            lines = []
+            for run in runs:
+                state = "running" if run["running"] else f"exited ({run['exit_code']})"
+                where = f" on port {run['port']}" if run.get("port") else ""
+                lines.append(
+                    f"{run['name']}: {state}{where}, pid {run['pid']}, "
+                    f"up {run['uptime_seconds']}s — $ {run['command']}"
+                )
+                tail = str(run.get("tail") or "").strip()
+                if tail:
+                    lines.append(truncate_output(tail, 4_000))
+            return "\n".join(lines)
+        except (DevServerError, ValueError) as e:
+            return f"Error: {e}"
 
     def answer_browser(self, request_id: str, result: dict[str, Any]) -> bool:
         future = self.pending_browser_actions.get(request_id)
@@ -600,6 +658,9 @@ async def lifespan(app: FastAPI):
         svc: ChatService | None = getattr(app.state, "service", None)
         if svc is not None:
             svc.terminal.cancel_all(force=True)
+            # Dev servers deliberately have no deadline; shutdown is the one
+            # guaranteed reaper.
+            svc.dev_servers.stop_all()
             svc.core.close()
 
 

@@ -69,6 +69,18 @@ class PermissionManager:
             if any(term in text for term in takeover):
                 return "user takeover is required for credentials, contracts, security interstitials, and final financial transactions"
             return None
+        if tool_name == "browser_dev_server":
+            # A shell command by another name gets the shell command's checks.
+            # Handled here rather than in the module-level browser helpers
+            # because the deny list lives on the instance.
+            command = str(args.get("command", ""))
+            for segment in _command_segments(command):
+                for pattern in self.deny_commands:
+                    if pattern and _matches_deny_pattern(segment, pattern):
+                        return f"blocked by the deny list: commands matching '{pattern}'"
+            if _dynamic_root_delete(command):
+                return "blocked by the deny list: dynamic construction of a recursive root delete"
+            return None
         if tool_name.startswith("browser_"):
             return _browser_blocked_reason(tool_name, args)
         if tool_name != "bash":
@@ -477,6 +489,15 @@ def build_preview(
     if name == "browser_javascript":
         code = str(args.get("code") or "")
         return f"run JavaScript in the page: {_shorten(code, 70)}", code
+    if name == "browser_dev_server":
+        action = str(args.get("action") or "status")
+        if action == "start":
+            command = str(args.get("command") or "")
+            return f"start dev server: $ {_shorten(command, 80)}", command
+        if action == "stop":
+            target = str(args.get("name") or "every server")
+            return f"stop dev server ({target})", ""
+        return "list dev servers", ""
     if name == "git_status":
         return "git status", ""
     if name == "git_diff":
