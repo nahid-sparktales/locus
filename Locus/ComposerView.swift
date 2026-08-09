@@ -72,7 +72,7 @@ struct ComposerView: View {
                             .accessibilityIdentifier("composer.input")
                             .onKeyPress(.upArrow) { handleUpArrow() }
                             .onKeyPress(.downArrow) { handleDownArrow() }
-                            .onKeyPress(.return) { handleReturn() }
+                            .onKeyPress(.return, phases: .down) { press in handleReturn(press) }
                             .onKeyPress(.tab) { handleTab() }
                             .onKeyPress(.escape) { handleEscape() }
                     }
@@ -285,10 +285,23 @@ struct ComposerView: View {
         return .handled
     }
 
-    private func handleReturn() -> KeyPress.Result {
-        guard let popup = activePopup else { return .ignored }
-        applyPopupSelection(popup)
-        return .handled
+    private func handleReturn(_ press: KeyPress) -> KeyPress.Result {
+        switch ComposerReturnAction.current(
+            hasPopup: activePopup != nil,
+            enterSendsMessages: model.settings.enterSendsMessages,
+            canSubmit: canSubmit,
+            modifiers: press.modifiers
+        ) {
+        case .completePopup:
+            guard let popup = activePopup else { return .ignored }
+            applyPopupSelection(popup)
+            return .handled
+        case .submit:
+            submit()
+            return .handled
+        case .newline:
+            return .ignored
+        }
     }
 
     private func handleTab() -> KeyPress.Result {
@@ -736,7 +749,8 @@ struct ComposerView: View {
                     .buttonStyle(.plain)
                     .disabled(!canSubmit)
                     .help(isWaitingForTeamApproval
-                        ? "Queue for the next turn (⌘↵)" : "Steer the active turn (⌘↵)")
+                        ? "Queue for the next turn (\(sendKeyHint))"
+                        : "Steer the active turn (\(sendKeyHint))")
                     .accessibilityLabel(isWaitingForTeamApproval ? "Queue for next turn" : "Steer now")
                     .accessibilityIdentifier(isWaitingForTeamApproval ? "composer.queue" : "composer.steer")
                 }
@@ -766,7 +780,7 @@ struct ComposerView: View {
                 .help(
                     model.hasPendingPermission
                         ? "Answer the pending permission request first"
-                        : "Send (⌘↵)"
+                        : (model.settings.enterSendsMessages ? "Send (↵)" : "Send (⌘↵)")
                 )
                 .accessibilityLabel("Send message")
                 .accessibilityIdentifier("composer.send")
@@ -913,9 +927,13 @@ struct ComposerView: View {
         // No permission branch: while a request is pending the whole card —
         // including this hint — is replaced by the permission panel.
         model.isBusy
-            ? (isWaitingForTeamApproval ? "⌘↵ Queue for Next Turn" : "⌘↵ Steer Now")
-            : "⌘↵ Send"
+            ? (isWaitingForTeamApproval
+                ? "\(sendKeyHint) Queue for Next Turn"
+                : "\(sendKeyHint) Steer Now")
+            : "\(sendKeyHint) Send"
     }
+
+    private var sendKeyHint: String { model.settings.enterSendsMessages ? "↵" : "⌘↵" }
 
     private var placeholder: String {
         if isWaitingForTeamApproval {
@@ -961,6 +979,29 @@ enum ComposerPrimaryAction: Equatable {
         guard isBusy else { return .send }
         if isWaitingForTeamApproval { return .queue }
         return canSubmit ? .steer : .stop
+    }
+}
+
+enum ComposerReturnAction: Equatable {
+    case completePopup
+    case submit
+    case newline
+
+    static func current(
+        hasPopup: Bool,
+        enterSendsMessages: Bool,
+        canSubmit: Bool,
+        modifiers: EventModifiers
+    ) -> ComposerReturnAction {
+        if hasPopup { return .completePopup }
+        let textModifiers: EventModifiers = [.command, .control, .option, .shift]
+        if enterSendsMessages,
+           canSubmit,
+           modifiers.intersection(textModifiers).isEmpty
+        {
+            return .submit
+        }
+        return .newline
     }
 }
 

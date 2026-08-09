@@ -1150,13 +1150,56 @@ struct SettingsView: View {
             }
 
             Section("Agent") {
-                TextField("Maximum tool steps per turn (optional)", text: $iterationLimit)
+                TextField("Maximum tool steps per request — all models (optional)", text: $iterationLimit)
                     .accessibilityIdentifier("settings.maxIterations")
 
-                Text("Leave empty for 40. A turn that reaches the limit stops and says so — if turns are ending early for no obvious reason, this is the number to check.")
+                Text("Leave empty for 40. This ceiling applies to local, ChatGPT-plan, and API-backed requests because Locus still coordinates their tool loop. A request that reaches the limit stops and says so.")
                     .font(.system(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("Conversation") {
+                Toggle("Press Enter to send messages", isOn: Binding(
+                    get: { draft.enterSendsMessages },
+                    set: { value in
+                        draft.enterSendsMessages = value
+                        draft.sendShortcutPreferenceConfigured = true
+                    }
+                ))
+                    .accessibilityIdentifier("settings.enterSendsMessages")
+
+                Text(
+                    draft.enterSendsMessages
+                        ? "Enter sends. Shift–Enter adds a new line; Command–Enter still works."
+                        : "Command–Enter sends. Enter adds a new line."
+                )
+                .font(.system(size: 9))
+                .foregroundStyle(LocusTheme.muted)
+
+                Picker(
+                    "Solo requests — Context & Plan",
+                    selection: $draft.soloPlanPresentationRaw
+                ) {
+                    ForEach(AutomaticInspectorPresentation.allCases) { presentation in
+                        Text(presentation.title).tag(presentation.rawValue)
+                    }
+                }
+                .accessibilityIdentifier("settings.soloPlanPresentation")
+
+                Picker(
+                    "Team requests — Team Runs",
+                    selection: $draft.teamRunsPresentationRaw
+                ) {
+                    ForEach(AutomaticInspectorPresentation.allCases) { presentation in
+                        Text(presentation.title).tag(presentation.rawValue)
+                    }
+                }
+                .accessibilityIdentifier("settings.teamRunsPresentation")
+
+                Text("Solo and team choices are independent. Choosing “Ask the first time” shows the matching explanation when that kind of request is first sent.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
             }
 
             Section("Local agent") {

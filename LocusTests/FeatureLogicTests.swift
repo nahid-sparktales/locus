@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import SwiftUI
 import XCTest
 @testable import Locus
 
@@ -378,6 +379,11 @@ final class FeatureLogicTests: XCTestCase {
         settings.inspectorZoomedChatWidth = 480
         settings.inspectorCollapsed = true
         settings.inspectorLastTab = InspectorTab.terminal.rawValue
+        settings.inspectorLastWorkspaceTab = InspectorTab.files.rawValue
+        settings.soloPlanPresentationRaw = AutomaticInspectorPresentation.always.rawValue
+        settings.teamRunsPresentationRaw = AutomaticInspectorPresentation.never.rawValue
+        settings.enterSendsMessages = true
+        settings.sendShortcutPreferenceConfigured = true
 
         let restored = try JSONDecoder().decode(
             AppSettings.self,
@@ -387,6 +393,11 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(restored.inspectorZoomedChatWidth, 480)
         XCTAssertTrue(restored.inspectorCollapsed)
         XCTAssertEqual(restored.resolvedInspectorTab, .terminal)
+        XCTAssertEqual(restored.resolvedInspectorWorkspaceTab, .files)
+        XCTAssertEqual(restored.resolvedSoloPlanPresentation, .always)
+        XCTAssertEqual(restored.resolvedTeamRunsPresentation, .never)
+        XCTAssertTrue(restored.enterSendsMessages)
+        XCTAssertTrue(restored.sendShortcutPreferenceConfigured)
     }
 
     func testStoredInspectorWidthIsClampedOnDecode() throws {
@@ -413,7 +424,20 @@ final class FeatureLogicTests: XCTestCase {
         )
         XCTAssertTrue(restored.inspectorCollapsed, "the right panel starts collapsed")
         XCTAssertEqual(restored.resolvedInspectorTab, .plan)
+        XCTAssertEqual(restored.resolvedInspectorWorkspaceTab, .changes)
+        XCTAssertEqual(restored.resolvedSoloPlanPresentation, .ask)
+        XCTAssertEqual(restored.resolvedTeamRunsPresentation, .ask)
+        XCTAssertFalse(restored.enterSendsMessages)
+        XCTAssertFalse(restored.sendShortcutPreferenceConfigured)
         XCTAssertFalse(restored.sidebarCollapsed, "the session sidebar starts open")
+    }
+
+    func testCombinedInspectorPreferenceMigratesToSoloAndTeamChoices() throws {
+        let legacy = #"{"automaticInspectorPresentationRaw":"always"}"#
+        let restored = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
+
+        XCTAssertEqual(restored.resolvedSoloPlanPresentation, .always)
+        XCTAssertEqual(restored.resolvedTeamRunsPresentation, .always)
     }
 
     func testPanelStatesRoundTripThroughSettings() throws {
@@ -2162,6 +2186,48 @@ final class FeatureLogicTests: XCTestCase {
             ComposerPrimaryAction.current(
                 isBusy: true, canSubmit: false, isWaitingForTeamApproval: true
             ), .queue
+        )
+    }
+
+    func testPlainReturnOnlySendsWhenThePreferenceAllowsIt() {
+        XCTAssertEqual(
+            ComposerReturnAction.current(
+                hasPopup: false,
+                enterSendsMessages: false,
+                canSubmit: true,
+                modifiers: []
+            ),
+            .newline
+        )
+        XCTAssertEqual(
+            ComposerReturnAction.current(
+                hasPopup: false,
+                enterSendsMessages: true,
+                canSubmit: true,
+                modifiers: []
+            ),
+            .submit
+        )
+        for modifiers: EventModifiers in [.shift, .option, .control, .command] {
+            XCTAssertEqual(
+                ComposerReturnAction.current(
+                    hasPopup: false,
+                    enterSendsMessages: true,
+                    canSubmit: true,
+                    modifiers: modifiers
+                ),
+                .newline,
+                "modified Return stays available for new lines or its existing shortcut"
+            )
+        }
+        XCTAssertEqual(
+            ComposerReturnAction.current(
+                hasPopup: true,
+                enterSendsMessages: true,
+                canSubmit: true,
+                modifiers: []
+            ),
+            .completePopup
         )
     }
 

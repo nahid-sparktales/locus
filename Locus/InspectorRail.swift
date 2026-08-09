@@ -4,25 +4,24 @@ import SwiftUI
 /// the window edge: the panel's everyday tabs shrink to a few icons — Plan,
 /// Browser, and an ellipsis holding the rest — and the panel opens to the
 /// rail's left. Attention badges live on the icons, so a run can ask for eyes
-/// without the panel being open.
+/// without the panel being open. The top panel button always returns to the
+/// workspace tab strip; Plan and Browser are special-purpose destinations.
 struct InspectorRail: View {
     @EnvironmentObject private var model: AppModel
 
     /// Tabs that live behind the ellipsis rather than on the rail itself.
     /// Plan and Browser earn rail icons because they are the two surfaces a
     /// person reaches for mid-conversation; the rest are workspace plumbing.
-    static let overflowTabs: [InspectorTab] = [
-        .changes, .files, .terminal, .checkpoints, .runs, .agents,
-    ]
+    static let overflowTabs = InspectorTab.workspaceTabs
 
     var body: some View {
         VStack(spacing: 6) {
             toggleButton
-            zoomButton
             railTab(.plan)
             railTab(.preview)
             Spacer(minLength: 0)
             moreMenu
+            zoomButton
         }
         .padding(.vertical, 8)
         .frame(width: 44)
@@ -118,9 +117,6 @@ struct InspectorRail: View {
                 }
                 .accessibilityIdentifier("inspector.rail.menu.\(tab.rawValue)")
             }
-            Divider()
-            Button("Settings…") { model.settingsPresented = true }
-                .accessibilityIdentifier("inspector.rail.menu.settings")
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 12, weight: .semibold))

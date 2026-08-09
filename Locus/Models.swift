@@ -197,6 +197,15 @@ enum InspectorTab: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// The general workspace panels reached from the right-panel button. Plan
+    /// and Browser have dedicated rail buttons and open only when explicitly
+    /// requested (or when an active request needs them).
+    static let workspaceTabs: [InspectorTab] = [
+        .changes, .files, .terminal, .checkpoints, .runs, .agents,
+    ]
+
+    var isWorkspaceTab: Bool { Self.workspaceTabs.contains(self) }
+
     /// The visible label. Kept separate from `rawValue`, which is reserved for
     /// the accessibility identifier and the persisted preference — so copy can
     /// change without breaking either.
@@ -1188,6 +1197,22 @@ enum ProxyType: String, CaseIterable {
     case socks5
 }
 
+enum AutomaticInspectorPresentation: String, CaseIterable, Identifiable {
+    case ask
+    case always
+    case never
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .ask: "Ask the first time"
+        case .always: "Every request"
+        case .never: "Never"
+        }
+    }
+}
+
 struct AppSettings: Codable, Hashable {
     var backendURL = "http://127.0.0.1:8791"
     var backendRoot = NSString(string: "~/Documents/locus/agent").expandingTildeInPath
@@ -1228,6 +1253,24 @@ struct AppSettings: Codable, Hashable {
     /// version would otherwise fail the whole settings decode and reset
     /// everything else with it.
     var inspectorLastTab = InspectorTab.plan.rawValue
+    /// The last non-Plan, non-Browser panel. The right-panel button restores
+    /// this value so it never opens a special-purpose surface by accident.
+    var inspectorLastWorkspaceTab = InspectorTab.changes.rawValue
+    /// Legacy combined preference from the first implementation. It remains
+    /// encoded so a settings file written by that build migrates cleanly; new
+    /// UI writes the independent solo and team values below.
+    var automaticInspectorPresentationRaw = AutomaticInspectorPresentation.ask.rawValue
+    /// Whether a solo Work request should reveal Context & Plan.
+    var soloPlanPresentationRaw = AutomaticInspectorPresentation.ask.rawValue
+    /// Whether a team request should reveal Team Runs.
+    var teamRunsPresentationRaw = AutomaticInspectorPresentation.ask.rawValue
+    /// The multi-line composer keeps Command-Return as its default send
+    /// gesture; people who prefer chat-style input can opt into plain Return.
+    var enterSendsMessages = false
+    /// False until the one-time launch choice has been answered. Keeping this
+    /// separate from `enterSendsMessages` distinguishes the default from an
+    /// intentional Command-Return choice.
+    var sendShortcutPreferenceConfigured = false
     /// Raw string for the same forward-compatibility reason as the tab.
     var thinkingVisibilityRaw = ThinkingVisibility.collapsed.rawValue
     /// One-time compatibility marker: releases before adaptive Work persisted
@@ -1295,6 +1338,23 @@ struct AppSettings: Codable, Hashable {
         InspectorTab(rawValue: inspectorLastTab) ?? .plan
     }
 
+    var resolvedInspectorWorkspaceTab: InspectorTab {
+        let tab = InspectorTab(rawValue: inspectorLastWorkspaceTab) ?? .changes
+        return tab.isWorkspaceTab ? tab : .changes
+    }
+
+    var resolvedAutomaticInspectorPresentation: AutomaticInspectorPresentation {
+        AutomaticInspectorPresentation(rawValue: automaticInspectorPresentationRaw) ?? .ask
+    }
+
+    var resolvedSoloPlanPresentation: AutomaticInspectorPresentation {
+        AutomaticInspectorPresentation(rawValue: soloPlanPresentationRaw) ?? .ask
+    }
+
+    var resolvedTeamRunsPresentation: AutomaticInspectorPresentation {
+        AutomaticInspectorPresentation(rawValue: teamRunsPresentationRaw) ?? .ask
+    }
+
     var resolvedBrowserViewport: BrowserViewport {
         BrowserViewport(rawValue: browserViewportRaw) ?? .desktop
     }
@@ -1349,6 +1409,30 @@ struct AppSettings: Codable, Hashable {
             ?? defaults.sidebarCollapsed
         inspectorLastTab = try container.decodeIfPresent(String.self, forKey: .inspectorLastTab)
             ?? defaults.inspectorLastTab
+        inspectorLastWorkspaceTab = try container.decodeIfPresent(
+            String.self,
+            forKey: .inspectorLastWorkspaceTab
+        ) ?? defaults.inspectorLastWorkspaceTab
+        automaticInspectorPresentationRaw = try container.decodeIfPresent(
+            String.self,
+            forKey: .automaticInspectorPresentationRaw
+        ) ?? defaults.automaticInspectorPresentationRaw
+        // Settings written before solo/team choices were split carry one
+        // combined value. Use it for both new choices exactly once on decode.
+        soloPlanPresentationRaw = try container.decodeIfPresent(
+            String.self,
+            forKey: .soloPlanPresentationRaw
+        ) ?? automaticInspectorPresentationRaw
+        teamRunsPresentationRaw = try container.decodeIfPresent(
+            String.self,
+            forKey: .teamRunsPresentationRaw
+        ) ?? automaticInspectorPresentationRaw
+        enterSendsMessages = try container.decodeIfPresent(Bool.self, forKey: .enterSendsMessages)
+            ?? defaults.enterSendsMessages
+        sendShortcutPreferenceConfigured = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .sendShortcutPreferenceConfigured
+        ) ?? defaults.sendShortcutPreferenceConfigured
         thinkingVisibilityRaw = try container.decodeIfPresent(String.self, forKey: .thinkingVisibilityRaw)
             ?? defaults.thinkingVisibilityRaw
         adaptiveWorkMigrationCompleted = try container.decodeIfPresent(

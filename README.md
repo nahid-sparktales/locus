@@ -36,6 +36,15 @@ like; macOS remembers the size you choose for later launches.
   Hugging Face Models…** from Settings dismisses Settings first and opens the
   model library immediately. In the Browser inspector, the compact controls
   sit above the tab strip so each tab stays next to the address bar it drives.
+- **The inspector follows the request without taking over.** The general right
+  panel button always returns to its workspace tabs; Plan and Browser open only
+  when selected or needed by active work. Solo Context & Plan and team Team Runs
+  each explain themselves the first time that kind of request is sent, keep
+  independent automatic-opening choices, and point back to **Settings ▸
+  General**. On first launch Locus also asks whether Enter or Command–Enter
+  should send; General settings can change that choice later while Shift–Enter
+  always inserts a newline. Session rows distinguish solo and team chats, and
+  an elapsed timer appears only while work is actually running.
 
 - **Adaptive Work and explicit agent teams** can route a request across local or
   hosted specialists and multiple coding models. Coding jobs share one isolated
@@ -748,7 +757,7 @@ xcodebuild \
 cd agent && .venv/bin/python -m pytest -q
 ```
 
-The repository currently contains 376 Swift unit tests, 42 UI tests, and 458
+The repository currently contains 385 Swift unit tests, 43 UI tests, and 458
 collected backend test cases.
 
 The unit suite covers work modes, lightweight context migration, session

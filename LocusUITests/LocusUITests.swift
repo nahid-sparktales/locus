@@ -123,6 +123,10 @@ final class LocusUITests: XCTestCase {
     func testSessionOrganizerMenusAndArchivedFilter() {
         let current = app.buttons["session.seed-current"]
         XCTAssertTrue(current.waitForExistence(timeout: 2))
+        XCTAssertFalse(
+            anyElement("session.seed-current.activity").exists,
+            "an idle chat should not look as though its elapsed timer is still running"
+        )
         current.rightClick()
 
         XCTAssertTrue(app.menuItems["Rename…"].exists)
@@ -278,6 +282,27 @@ final class LocusUITests: XCTestCase {
         XCTAssertEqual(modelStatus.value as? String, "Online")
         XCTAssertFalse(anyElement("settings.autoLaunch").exists)
         XCTAssertFalse(anyElement("settings.retryLocalServices").exists)
+        XCTAssertTrue(anyElement("settings.enterSendsMessages").exists)
+        XCTAssertTrue(anyElement("settings.soloPlanPresentation").exists)
+        XCTAssertTrue(anyElement("settings.teamRunsPresentation").exists)
+    }
+
+    func testFirstLaunchAsksWhichShortcutShouldSendMessages() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TEST_SEND_SHORTCUT_PROMPT"] = "1"
+        app.launch()
+
+        let commandEnter = anyElement("sendShortcut.commandEnter")
+        let enter = anyElement("sendShortcut.enter")
+        XCTAssertTrue(commandEnter.waitForExistence(timeout: 3))
+        XCTAssertTrue(enter.exists)
+        XCTAssertTrue(app.staticTexts["Choose how to send messages"].exists)
+        XCTAssertTrue(
+            staticTextWithValue(containing: "Settings → General → Conversation").exists
+        )
+
+        enter.click()
+        XCTAssertFalse(commandEnter.exists)
     }
 
     func testHuggingFaceModelLibraryIsAvailableFromModelPicker() {
@@ -506,17 +531,23 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("inspector.rail.toggle").exists, "the rail returns with agentic modes")
     }
 
-    func testInspectorCollapsesAndRestoresFromRail() {
+    func testInspectorButtonAlwaysOpensTheWorkspacePanelThenTogglesIt() {
         let toggle = anyElement("inspector.rail.toggle")
         XCTAssertTrue(toggle.waitForExistence(timeout: 3))
-        toggle.click()
 
-        // The panel closes; the rail stays.
+        // The seeded panel starts on Plan. The general panel button must not
+        // restore that special-purpose tab; it opens the workspace strip.
+        toggle.click()
+        XCTAssertTrue(anyElement("changes.file.0").waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("plan.contextWindow").exists)
+
+        // A second press closes the workspace panel; the rail stays.
+        toggle.click()
+        XCTAssertFalse(anyElement("changes.file.0").exists)
         XCTAssertTrue(toggle.exists)
 
         toggle.click()
-        XCTAssertTrue(anyElement("plan.contextWindow").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("changes.file.0").waitForExistence(timeout: 3))
     }
 
     func testRailIconsOpenAndTogglePanels() {
@@ -538,7 +569,12 @@ final class LocusUITests: XCTestCase {
     func testRailMoreMenuReachesOverflowTabs() {
         let more = anyElement("inspector.rail.more")
         XCTAssertTrue(more.waitForExistence(timeout: 3))
+        let zoom = anyElement("inspector.zoom")
+        XCTAssertTrue(zoom.exists)
+        XCTAssertGreaterThan(zoom.frame.minY, more.frame.minY, "expand belongs at the rail bottom")
         more.click()
+
+        XCTAssertFalse(anyElement("inspector.rail.menu.settings").exists)
 
         let changes = app.menuItems.matching(
             NSPredicate(format: "identifier == %@", "inspector.rail.menu.changes")
