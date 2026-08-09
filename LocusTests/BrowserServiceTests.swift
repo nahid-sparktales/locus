@@ -391,6 +391,7 @@ final class BrowserActionRoutingTests: XCTestCase {
     /// session happens to be in front.
     func testBrowserActionsAnswerImmediatelyOnTheAskingTransport() async throws {
         let model = AppModel()
+        model.selectInspectorTab(.files)
         var replies: [[String: Any]] = []
 
         let task = model.runBrowserAction([
@@ -409,6 +410,24 @@ final class BrowserActionRoutingTests: XCTestCase {
         XCTAssertEqual(replies.first?["request_id"] as? String, "req-1")
         let result = try XCTUnwrap(replies.first?["result"] as? [String: Any])
         XCTAssertNotNil(result["error"], "an unopened tab is an error, not silence")
+        XCTAssertEqual(model.inspectorTab, .files, "background workers must not pull focus")
+    }
+
+    func testForegroundAgentBrowserActionOpensTheBrowserPanel() async {
+        let model = AppModel(startImmediately: false)
+        model.currentSessionID = "foreground"
+        model.selectInspectorTab(.files)
+
+        let task = model.runBrowserAction([
+            "request_id": "req-foreground",
+            "tool": "browser_read_page",
+            "arguments": [:],
+            "session_id": "foreground",
+        ]) { _ in }
+        await task?.value
+
+        XCTAssertEqual(model.inspectorTab, .preview)
+        XCTAssertFalse(model.inspectorCollapsed)
     }
 
     func testMalformedRequestsAreIgnoredRatherThanCrashing() {

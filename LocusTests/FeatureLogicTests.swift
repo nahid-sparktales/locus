@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import SwiftUI
 import XCTest
 @testable import Locus
 
@@ -378,6 +379,9 @@ final class FeatureLogicTests: XCTestCase {
         settings.inspectorZoomedChatWidth = 480
         settings.inspectorCollapsed = true
         settings.inspectorLastTab = InspectorTab.terminal.rawValue
+        settings.inspectorLastWorkspaceTab = InspectorTab.files.rawValue
+        settings.automaticInspectorPresentationRaw = AutomaticInspectorPresentation.always.rawValue
+        settings.enterSendsMessages = true
 
         let restored = try JSONDecoder().decode(
             AppSettings.self,
@@ -387,6 +391,9 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(restored.inspectorZoomedChatWidth, 480)
         XCTAssertTrue(restored.inspectorCollapsed)
         XCTAssertEqual(restored.resolvedInspectorTab, .terminal)
+        XCTAssertEqual(restored.resolvedInspectorWorkspaceTab, .files)
+        XCTAssertEqual(restored.resolvedAutomaticInspectorPresentation, .always)
+        XCTAssertTrue(restored.enterSendsMessages)
     }
 
     func testStoredInspectorWidthIsClampedOnDecode() throws {
@@ -413,6 +420,9 @@ final class FeatureLogicTests: XCTestCase {
         )
         XCTAssertTrue(restored.inspectorCollapsed, "the right panel starts collapsed")
         XCTAssertEqual(restored.resolvedInspectorTab, .plan)
+        XCTAssertEqual(restored.resolvedInspectorWorkspaceTab, .changes)
+        XCTAssertEqual(restored.resolvedAutomaticInspectorPresentation, .ask)
+        XCTAssertFalse(restored.enterSendsMessages)
         XCTAssertFalse(restored.sidebarCollapsed, "the session sidebar starts open")
     }
 
@@ -2162,6 +2172,48 @@ final class FeatureLogicTests: XCTestCase {
             ComposerPrimaryAction.current(
                 isBusy: true, canSubmit: false, isWaitingForTeamApproval: true
             ), .queue
+        )
+    }
+
+    func testPlainReturnOnlySendsWhenThePreferenceAllowsIt() {
+        XCTAssertEqual(
+            ComposerReturnAction.current(
+                hasPopup: false,
+                enterSendsMessages: false,
+                canSubmit: true,
+                modifiers: []
+            ),
+            .newline
+        )
+        XCTAssertEqual(
+            ComposerReturnAction.current(
+                hasPopup: false,
+                enterSendsMessages: true,
+                canSubmit: true,
+                modifiers: []
+            ),
+            .submit
+        )
+        for modifiers: EventModifiers in [.shift, .option, .control, .command] {
+            XCTAssertEqual(
+                ComposerReturnAction.current(
+                    hasPopup: false,
+                    enterSendsMessages: true,
+                    canSubmit: true,
+                    modifiers: modifiers
+                ),
+                .newline,
+                "modified Return stays available for new lines or its existing shortcut"
+            )
+        }
+        XCTAssertEqual(
+            ComposerReturnAction.current(
+                hasPopup: true,
+                enterSendsMessages: true,
+                canSubmit: true,
+                modifiers: []
+            ),
+            .completePopup
         )
     }
 

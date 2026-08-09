@@ -1891,6 +1891,76 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testGeneralInspectorButtonRestoresWorkspaceTabInsteadOfPlanOrBrowser() {
+        let model = AppModel(startImmediately: false)
+        model.selectInspectorTab(.files)
+        model.selectInspectorTab(.preview)
+
+        model.toggleInspector()
+
+        XCTAssertEqual(model.inspectorTab, .files)
+        XCTAssertFalse(model.inspectorCollapsed)
+
+        model.toggleInspector()
+        XCTAssertTrue(model.inspectorCollapsed, "a second press on the workspace panel closes it")
+
+        model.toggleInspector()
+        XCTAssertEqual(model.inspectorTab, .files)
+        XCTAssertFalse(model.inspectorCollapsed)
+    }
+
+    @MainActor
+    func testFirstSentRequestAsksThenPersistsAutomaticInspectorChoice() {
+        let model = AppModel(startImmediately: false)
+        model.inspectorCollapsed = true
+
+        model.presentInspectorForSentRequest(isTeam: false)
+
+        XCTAssertEqual(model.automaticInspectorPrompt?.tab, .plan)
+        XCTAssertTrue(model.inspectorCollapsed, "the one-time question decides whether to open")
+
+        model.answerAutomaticInspectorPrompt(showEveryTime: true)
+        XCTAssertEqual(
+            model.settings.resolvedAutomaticInspectorPresentation,
+            .always
+        )
+        XCTAssertNil(model.automaticInspectorPrompt)
+        XCTAssertEqual(model.inspectorTab, .plan)
+        XCTAssertFalse(model.inspectorCollapsed)
+
+        model.inspectorCollapsed = true
+        model.presentInspectorForSentRequest(isTeam: true, runID: "run-1")
+        XCTAssertEqual(model.inspectorTab, .runs)
+        XCTAssertFalse(model.inspectorCollapsed)
+        XCTAssertNil(model.automaticInspectorPrompt, "the saved choice must not ask again")
+    }
+
+    @MainActor
+    func testDecliningAutomaticInspectorKeepsFutureRequestsInChat() {
+        let model = AppModel(startImmediately: false)
+        model.inspectorCollapsed = true
+        model.presentInspectorForSentRequest(isTeam: false)
+
+        model.answerAutomaticInspectorPrompt(showEveryTime: false)
+        model.presentInspectorForSentRequest(isTeam: true, runID: "run-2")
+
+        XCTAssertEqual(model.settings.resolvedAutomaticInspectorPresentation, .never)
+        XCTAssertTrue(model.inspectorCollapsed)
+        XCTAssertNil(model.automaticInspectorPrompt)
+    }
+
+    @MainActor
+    func testJustChatDoesNotConsumeAutomaticInspectorChoice() {
+        let model = AppModel(startImmediately: false)
+        model.selectedMode = .ask
+
+        model.presentInspectorForSentRequest(isTeam: false)
+
+        XCTAssertNil(model.automaticInspectorPrompt)
+        XCTAssertEqual(model.settings.resolvedAutomaticInspectorPresentation, .ask)
+    }
+
+    @MainActor
     func testInspectorWidthPersistsOnlyWhenCommitted() {
         let model = AppModel(startImmediately: false)
         let original = model.settings.inspectorWidth

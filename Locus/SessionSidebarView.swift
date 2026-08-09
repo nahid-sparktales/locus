@@ -304,7 +304,9 @@ struct SessionSidebarView: View {
         SessionRow(
             session: session,
             isActive: session.id == model.currentSessionID,
-            teamState: model.teamRunState(for: session)
+            teamState: model.teamRunState(for: session),
+            isRunning: session.id == model.currentSessionID && model.isBusy,
+            startedAt: session.id == model.currentSessionID ? model.activeWorkStartedAt : nil
         ) {
             model.resume(session)
         }
@@ -1048,12 +1050,14 @@ private struct SessionRow: View {
     let session: SessionSummary
     let isActive: Bool
     let teamState: TeamRunState?
+    let isRunning: Bool
+    let startedAt: Date?
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 9) {
-                Image(systemName: isActive ? "sparkles" : "point.3.connected.trianglepath.dotted")
+                Image(systemName: sessionSymbol)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(isActive ? LocusTheme.ink : LocusTheme.muted)
                     .frame(width: 27, height: 27)
@@ -1065,18 +1069,28 @@ private struct SessionRow: View {
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(LocusTheme.ink)
                         .lineLimit(1)
-                    HStack(spacing: 4) {
-                        if let teamState {
-                            Circle()
-                                .fill(statusColor(teamState))
-                                .frame(width: 5, height: 5)
-                            Text(teamState.title)
-                        } else {
-                            Text(session.date, style: .relative)
+                    if isRunning || teamState != nil {
+                        HStack(spacing: 4) {
+                            if isRunning {
+                                Circle()
+                                    .fill(LocusTheme.signalDeep)
+                                    .frame(width: 5, height: 5)
+                                if let startedAt {
+                                    Text(startedAt, style: .timer)
+                                } else {
+                                    Text("Running")
+                                }
+                            } else if let teamState {
+                                Circle()
+                                    .fill(statusColor(teamState))
+                                    .frame(width: 5, height: 5)
+                                Text(teamState.title)
+                            }
                         }
+                        .font(.system(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                        .accessibilityIdentifier("session.\(session.id).activity")
                     }
-                    .font(.system(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
                 }
                 Spacer(minLength: 4)
                 if session.isPinned {
@@ -1107,6 +1121,16 @@ private struct SessionRow: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Resume \(session.displayTitle)")
         .accessibilityIdentifier("session.\(session.id)")
+    }
+
+    /// The icon describes the conversation, while fill and the green tile
+    /// describe selection. The previous sparkle/network pair made active and
+    /// inactive rows look like unrelated features.
+    private var sessionSymbol: String {
+        if teamState != nil {
+            return isActive ? "person.3.fill" : "person.3"
+        }
+        return isActive ? "bubble.left.fill" : "bubble.left"
     }
 
     private func statusColor(_ state: TeamRunState) -> Color {

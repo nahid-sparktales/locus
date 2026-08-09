@@ -361,6 +361,29 @@ struct RootView: View {
                 .environmentObject(model)
                 .interactiveDismissDisabled()
         }
+        .alert("Show request details automatically?", isPresented: Binding(
+            get: { model.automaticInspectorPrompt != nil },
+            set: { presented in
+                if !presented, model.automaticInspectorPrompt != nil {
+                    model.answerAutomaticInspectorPrompt(showEveryTime: false)
+                }
+            }
+        )) {
+            Button("Not Automatically", role: .cancel) {
+                model.answerAutomaticInspectorPrompt(showEveryTime: false)
+            }
+            .accessibilityIdentifier("inspector.automatic.never")
+            Button("Show Every Time") {
+                model.answerAutomaticInspectorPrompt(showEveryTime: true)
+            }
+            .accessibilityIdentifier("inspector.automatic.always")
+        } message: {
+            Text(
+                model.automaticInspectorPrompt?.tab == .runs
+                    ? "Locus can open Team Runs whenever you send a team request."
+                    : "Locus can open Context & Plan whenever you send a solo request."
+            )
+        }
         .alert("Clear this chat?", isPresented: $model.clearChatConfirmationPresented) {
             Button("Cancel", role: .cancel) {}
             Button("Clear Chat") { model.clearChatConfirmed() }

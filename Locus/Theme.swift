@@ -37,19 +37,24 @@ struct BrandMark: View {
         ZStack {
             RoundedRectangle(cornerRadius: compact ? 8 : 10, style: .continuous)
                 .fill(LocusTheme.signal)
-            VStack(spacing: compact ? 3 : 4) {
+            HStack(spacing: compact ? 2.5 : 3) {
                 Capsule()
                     .fill(LocusTheme.ink)
-                    .frame(width: compact ? 13 : 16, height: 2)
-                    .rotationEffect(.degrees(-42))
+                    .frame(width: compact ? 3 : 3.5, height: compact ? 12.5 : 15)
+                    .rotationEffect(.degrees(24))
                 Capsule()
                     .fill(LocusTheme.ink)
-                    .frame(width: compact ? 13 : 16, height: 2)
-                    .rotationEffect(.degrees(-42))
+                    .frame(width: compact ? 3 : 3.5, height: compact ? 12.5 : 15)
+                    .rotationEffect(.degrees(24))
             }
         }
         .frame(width: compact ? 30 : 36, height: compact ? 30 : 36)
-        .rotationEffect(.degrees(-3))
+        .overlay {
+            RoundedRectangle(cornerRadius: compact ? 8 : 10, style: .continuous)
+                .stroke(LocusTheme.ink, lineWidth: 1.5)
+        }
+        .shadow(color: .black.opacity(0.16), radius: 0, x: 2, y: 2)
+        .rotationEffect(.degrees(-2.5))
         .accessibilityHidden(true)
     }
 }
