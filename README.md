@@ -38,12 +38,13 @@ like; macOS remembers the size you choose for later launches.
   sit above the tab strip so each tab stays next to the address bar it drives.
 - **The inspector follows the request without taking over.** The general right
   panel button always returns to its workspace tabs; Plan and Browser open only
-  when selected or needed by active work. On the first request, Locus asks
-  whether Context & Plan should open for solo work and Team Runs for team work,
-  and the answer can be changed in **Settings ▸ General**. General settings can
-  also make plain Enter send while Shift–Enter inserts a newline. Session rows
-  distinguish solo and team chats, and an elapsed timer appears only while work
-  is actually running.
+  when selected or needed by active work. Solo Context & Plan and team Team Runs
+  each explain themselves the first time that kind of request is sent, keep
+  independent automatic-opening choices, and point back to **Settings ▸
+  General**. On first launch Locus also asks whether Enter or Command–Enter
+  should send; General settings can change that choice later while Shift–Enter
+  always inserts a newline. Session rows distinguish solo and team chats, and
+  an elapsed timer appears only while work is actually running.
 
 - **Adaptive Work and explicit agent teams** can route a request across local or
   hosted specialists and multiple coding models. Coding jobs share one isolated
@@ -756,7 +757,7 @@ xcodebuild \
 cd agent && .venv/bin/python -m pytest -q
 ```
 
-The repository currently contains 382 Swift unit tests, 42 UI tests, and 458
+The repository currently contains 385 Swift unit tests, 43 UI tests, and 458
 collected backend test cases.
 
 The unit suite covers work modes, lightweight context migration, session

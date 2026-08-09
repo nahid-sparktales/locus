@@ -1910,7 +1910,7 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testFirstSentRequestAsksThenPersistsAutomaticInspectorChoice() {
+    func testSoloAndTeamInspectorChoicesAreAskedAndPersistedIndependently() {
         let model = AppModel(startImmediately: false)
         model.inspectorCollapsed = true
 
@@ -1921,22 +1921,26 @@ final class AppModelTests: XCTestCase {
 
         model.answerAutomaticInspectorPrompt(showEveryTime: true)
         XCTAssertEqual(
-            model.settings.resolvedAutomaticInspectorPresentation,
+            model.settings.resolvedSoloPlanPresentation,
             .always
         )
+        XCTAssertEqual(model.settings.resolvedTeamRunsPresentation, .ask)
         XCTAssertNil(model.automaticInspectorPrompt)
         XCTAssertEqual(model.inspectorTab, .plan)
         XCTAssertFalse(model.inspectorCollapsed)
 
         model.inspectorCollapsed = true
         model.presentInspectorForSentRequest(isTeam: true, runID: "run-1")
-        XCTAssertEqual(model.inspectorTab, .runs)
-        XCTAssertFalse(model.inspectorCollapsed)
-        XCTAssertNil(model.automaticInspectorPrompt, "the saved choice must not ask again")
+        XCTAssertEqual(model.automaticInspectorPrompt?.tab, .runs)
+        XCTAssertTrue(model.inspectorCollapsed, "the team choice has not been answered yet")
+
+        model.answerAutomaticInspectorPrompt(showEveryTime: false)
+        XCTAssertEqual(model.settings.resolvedTeamRunsPresentation, .never)
+        XCTAssertEqual(model.settings.resolvedSoloPlanPresentation, .always)
     }
 
     @MainActor
-    func testDecliningAutomaticInspectorKeepsFutureRequestsInChat() {
+    func testDecliningSoloInspectorStillAsksAboutTeamRuns() {
         let model = AppModel(startImmediately: false)
         model.inspectorCollapsed = true
         model.presentInspectorForSentRequest(isTeam: false)
@@ -1944,9 +1948,10 @@ final class AppModelTests: XCTestCase {
         model.answerAutomaticInspectorPrompt(showEveryTime: false)
         model.presentInspectorForSentRequest(isTeam: true, runID: "run-2")
 
-        XCTAssertEqual(model.settings.resolvedAutomaticInspectorPresentation, .never)
+        XCTAssertEqual(model.settings.resolvedSoloPlanPresentation, .never)
+        XCTAssertEqual(model.settings.resolvedTeamRunsPresentation, .ask)
         XCTAssertTrue(model.inspectorCollapsed)
-        XCTAssertNil(model.automaticInspectorPrompt)
+        XCTAssertEqual(model.automaticInspectorPrompt?.tab, .runs)
     }
 
     @MainActor
@@ -1957,7 +1962,32 @@ final class AppModelTests: XCTestCase {
         model.presentInspectorForSentRequest(isTeam: false)
 
         XCTAssertNil(model.automaticInspectorPrompt)
-        XCTAssertEqual(model.settings.resolvedAutomaticInspectorPresentation, .ask)
+        XCTAssertEqual(model.settings.resolvedSoloPlanPresentation, .ask)
+        XCTAssertEqual(model.settings.resolvedTeamRunsPresentation, .ask)
+    }
+
+    func testSoloAndTeamInspectorPromptsHaveDistinctSettingsAwareCopy() {
+        let solo = AutomaticInspectorPrompt(tab: .plan, runID: nil)
+        let team = AutomaticInspectorPrompt(tab: .runs, runID: "run-3")
+
+        XCTAssertNotEqual(solo.title, team.title)
+        XCTAssertNotEqual(solo.message, team.message)
+        XCTAssertTrue(solo.title.contains("Context & Plan"))
+        XCTAssertTrue(team.title.contains("Team Runs"))
+        XCTAssertTrue(solo.message.contains("Settings → General → Conversation"))
+        XCTAssertTrue(team.message.contains("Settings → General → Conversation"))
+    }
+
+    @MainActor
+    func testMessageSendShortcutChoiceIsAskedOnceAndPersisted() {
+        let model = AppModel(startImmediately: false)
+        XCTAssertTrue(model.shouldAskMessageSendShortcutPreference)
+
+        model.chooseMessageSendShortcut(enterSends: true)
+
+        XCTAssertTrue(model.settings.enterSendsMessages)
+        XCTAssertTrue(model.settings.sendShortcutPreferenceConfigured)
+        XCTAssertFalse(model.shouldAskMessageSendShortcutPreference)
     }
 
     @MainActor

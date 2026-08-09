@@ -82,6 +82,25 @@ final class AppLifecycleJournal {
 struct AutomaticInspectorPrompt: Equatable {
     let tab: InspectorTab
     let runID: String?
+
+    var isTeamRun: Bool { tab == .runs }
+
+    var title: String {
+        isTeamRun
+            ? "Open Team Runs for team requests?"
+            : "Open Context & Plan for solo requests?"
+    }
+
+    var message: String {
+        if isTeamRun {
+            return "Locus can open Team Runs whenever you send a team request so you can follow its agents and progress. You can change this anytime in Settings → General → Conversation."
+        }
+        return "Locus can open Context & Plan whenever you send a solo Work request so you can follow context use and the current plan. You can change this anytime in Settings → General → Conversation."
+    }
+
+    var confirmationTitle: String {
+        isTeamRun ? "Open Team Runs Every Time" : "Open Context & Plan Every Time"
+    }
 }
 
 @MainActor
@@ -6269,7 +6288,10 @@ final class AppModel: ObservableObject {
         // consume the first-run choice for a panel that cannot be shown.
         guard !justChatEnabled else { return }
         let prompt = AutomaticInspectorPrompt(tab: isTeam ? .runs : .plan, runID: runID)
-        switch settings.resolvedAutomaticInspectorPresentation {
+        let presentation = isTeam
+            ? settings.resolvedTeamRunsPresentation
+            : settings.resolvedSoloPlanPresentation
+        switch presentation {
         case .ask:
             automaticInspectorPrompt = prompt
         case .always:
@@ -6282,12 +6304,28 @@ final class AppModel: ObservableObject {
     func answerAutomaticInspectorPrompt(showEveryTime: Bool) {
         guard let prompt = automaticInspectorPrompt else { return }
         automaticInspectorPrompt = nil
-        settings.automaticInspectorPresentationRaw = showEveryTime
+        let choice = showEveryTime
             ? AutomaticInspectorPresentation.always.rawValue
             : AutomaticInspectorPresentation.never.rawValue
+        if prompt.isTeamRun {
+            settings.teamRunsPresentationRaw = choice
+        } else {
+            settings.soloPlanPresentationRaw = choice
+        }
         if showEveryTime {
             openAutomaticInspector(prompt)
         }
+    }
+
+    var shouldAskMessageSendShortcutPreference: Bool {
+        !settings.sendShortcutPreferenceConfigured
+    }
+
+    func chooseMessageSendShortcut(enterSends: Bool) {
+        var updated = settings
+        updated.enterSendsMessages = enterSends
+        updated.sendShortcutPreferenceConfigured = true
+        settings = updated
     }
 
     private func openAutomaticInspector(_ prompt: AutomaticInspectorPrompt) {
@@ -8179,6 +8217,10 @@ final class AppModel: ObservableObject {
         // Most UI tests exercise unrelated controls and should not be covered
         // by the first-run choice. Preference behavior has focused model tests.
         settings.automaticInspectorPresentationRaw = AutomaticInspectorPresentation.never.rawValue
+        settings.soloPlanPresentationRaw = AutomaticInspectorPresentation.never.rawValue
+        settings.teamRunsPresentationRaw = AutomaticInspectorPresentation.never.rawValue
+        settings.sendShortcutPreferenceConfigured =
+            ProcessInfo.processInfo.environment["LOCUS_UI_TEST_SEND_SHORTCUT_PROMPT"] != "1"
         // The suite's inspector tests assume the panel starts open; the
         // collapsed default is covered by a settings unit test instead.
         inspectorTab = .plan

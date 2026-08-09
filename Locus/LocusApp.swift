@@ -361,7 +361,26 @@ struct RootView: View {
                 .environmentObject(model)
                 .interactiveDismissDisabled()
         }
-        .alert("Show request details automatically?", isPresented: Binding(
+        .alert("Choose how to send messages", isPresented: Binding(
+            get: { model.shouldAskMessageSendShortcutPreference },
+            set: { presented in
+                if !presented, model.shouldAskMessageSendShortcutPreference {
+                    model.chooseMessageSendShortcut(enterSends: false)
+                }
+            }
+        )) {
+            Button("Use Command–Enter", role: .cancel) {
+                model.chooseMessageSendShortcut(enterSends: false)
+            }
+            .accessibilityIdentifier("sendShortcut.commandEnter")
+            Button("Use Enter") {
+                model.chooseMessageSendShortcut(enterSends: true)
+            }
+            .accessibilityIdentifier("sendShortcut.enter")
+        } message: {
+            Text("Choose whether Command–Enter or plain Enter sends a message. You can change this anytime in Settings → General → Conversation.")
+        }
+        .alert(model.automaticInspectorPrompt?.title ?? "Open request details automatically?", isPresented: Binding(
             get: { model.automaticInspectorPrompt != nil },
             set: { presented in
                 if !presented, model.automaticInspectorPrompt != nil {
@@ -373,16 +392,12 @@ struct RootView: View {
                 model.answerAutomaticInspectorPrompt(showEveryTime: false)
             }
             .accessibilityIdentifier("inspector.automatic.never")
-            Button("Show Every Time") {
+            Button(model.automaticInspectorPrompt?.confirmationTitle ?? "Open Every Time") {
                 model.answerAutomaticInspectorPrompt(showEveryTime: true)
             }
             .accessibilityIdentifier("inspector.automatic.always")
         } message: {
-            Text(
-                model.automaticInspectorPrompt?.tab == .runs
-                    ? "Locus can open Team Runs whenever you send a team request."
-                    : "Locus can open Context & Plan whenever you send a solo request."
-            )
+            Text(model.automaticInspectorPrompt?.message ?? "")
         }
         .alert("Clear this chat?", isPresented: $model.clearChatConfirmationPresented) {
             Button("Cancel", role: .cancel) {}

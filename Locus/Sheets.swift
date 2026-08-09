@@ -1160,7 +1160,13 @@ struct SettingsView: View {
             }
 
             Section("Conversation") {
-                Toggle("Press Enter to send messages", isOn: $draft.enterSendsMessages)
+                Toggle("Press Enter to send messages", isOn: Binding(
+                    get: { draft.enterSendsMessages },
+                    set: { value in
+                        draft.enterSendsMessages = value
+                        draft.sendShortcutPreferenceConfigured = true
+                    }
+                ))
                     .accessibilityIdentifier("settings.enterSendsMessages")
 
                 Text(
@@ -1172,16 +1178,26 @@ struct SettingsView: View {
                 .foregroundStyle(LocusTheme.muted)
 
                 Picker(
-                    "Open request details",
-                    selection: $draft.automaticInspectorPresentationRaw
+                    "Solo requests — Context & Plan",
+                    selection: $draft.soloPlanPresentationRaw
                 ) {
                     ForEach(AutomaticInspectorPresentation.allCases) { presentation in
                         Text(presentation.title).tag(presentation.rawValue)
                     }
                 }
-                .accessibilityIdentifier("settings.automaticInspectorPresentation")
+                .accessibilityIdentifier("settings.soloPlanPresentation")
 
-                Text("Solo requests open Context & Plan; team requests open Team Runs.")
+                Picker(
+                    "Team requests — Team Runs",
+                    selection: $draft.teamRunsPresentationRaw
+                ) {
+                    ForEach(AutomaticInspectorPresentation.allCases) { presentation in
+                        Text(presentation.title).tag(presentation.rawValue)
+                    }
+                }
+                .accessibilityIdentifier("settings.teamRunsPresentation")
+
+                Text("Solo and team choices are independent. Choosing “Ask the first time” shows the matching explanation when that kind of request is first sent.")
                     .font(.system(size: 9))
                     .foregroundStyle(LocusTheme.muted)
             }

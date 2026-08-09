@@ -283,7 +283,26 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(anyElement("settings.autoLaunch").exists)
         XCTAssertFalse(anyElement("settings.retryLocalServices").exists)
         XCTAssertTrue(anyElement("settings.enterSendsMessages").exists)
-        XCTAssertTrue(anyElement("settings.automaticInspectorPresentation").exists)
+        XCTAssertTrue(anyElement("settings.soloPlanPresentation").exists)
+        XCTAssertTrue(anyElement("settings.teamRunsPresentation").exists)
+    }
+
+    func testFirstLaunchAsksWhichShortcutShouldSendMessages() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TEST_SEND_SHORTCUT_PROMPT"] = "1"
+        app.launch()
+
+        let commandEnter = anyElement("sendShortcut.commandEnter")
+        let enter = anyElement("sendShortcut.enter")
+        XCTAssertTrue(commandEnter.waitForExistence(timeout: 3))
+        XCTAssertTrue(enter.exists)
+        XCTAssertTrue(app.staticTexts["Choose how to send messages"].exists)
+        XCTAssertTrue(
+            staticTextWithValue(containing: "Settings → General → Conversation").exists
+        )
+
+        enter.click()
+        XCTAssertFalse(commandEnter.exists)
     }
 
     func testHuggingFaceModelLibraryIsAvailableFromModelPicker() {

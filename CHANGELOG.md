@@ -29,14 +29,16 @@
 - **The right rail and session list now say what they mean.** The general panel
   button restores the last workspace tab instead of accidentally reopening
   Plan or Browser, the expand arrow lives at the rail bottom, and the redundant
-  Settings item is gone. The first sent request asks whether Plan (solo) or
-  Team Runs (team) should open automatically; the choice is editable in
-  General settings. Foreground browser tool use still opens Browser. Session
-  rows use solo/team symbols with fill for the selected chat, and only running
-  work shows an elapsed timer; idle chats show a fixed timestamp.
-- **Composer and branding preferences.** General settings can make plain Enter
-  send while Shift–Enter keeps a newline and Command–Enter remains available.
-  The in-app green mark now matches the site's side-by-side `//` artwork.
+  Settings item is gone. Context & Plan for solo requests and Team Runs for
+  team requests now have separate first-use explanations and independent
+  automatic-opening choices; every prompt points back to General settings.
+  Foreground browser tool use still opens Browser. Session rows use solo/team
+  symbols with fill for the selected chat, and only running work shows an
+  elapsed timer; idle chats show no stale activity time.
+- **Composer and branding preferences.** First launch asks whether Enter or
+  Command–Enter should send, points back to General settings, and remembers the
+  answer. Shift–Enter keeps a newline and Command–Enter remains available. The
+  in-app green mark now matches the site's side-by-side `//` artwork.
 
 - **The browser got fast.** Three real defects made every page slow. Every
   navigation carried a forced hard-reload cache policy inherited from the old
