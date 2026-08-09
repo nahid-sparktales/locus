@@ -489,6 +489,14 @@ private struct GitChangeRow: View {
                             .foregroundStyle(LocusTheme.blue)
                             .lineLimit(1)
                             .truncationMode(.tail)
+                            // Keep the list marker on one leaf. Applying it to
+                            // the outer VStack makes AppKit inherit that ID onto
+                            // every hunk button and hides their stage/discard IDs.
+                            .accessibilityIdentifier(
+                                position == 0
+                                    ? "changes.file.\(index).hunks"
+                                    : "changes.file.\(index).hunk.\(position).header"
+                            )
                         Spacer(minLength: 4)
                         if model.selectedChangeShowsStaged {
                             hunkButton(
@@ -526,7 +534,6 @@ private struct GitChangeRow: View {
             }
         }
         .disabled(model.isPerformingGitAction)
-        .accessibilityIdentifier("changes.file.\(index).hunks")
     }
 
     private func hunkButton(

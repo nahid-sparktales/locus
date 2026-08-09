@@ -183,7 +183,10 @@ struct UsageDashboardView: View {
         }
         .frame(width: 780, height: 620)
         .background(LocusTheme.panel)
-        .onAppear { model.refreshUsageSummary(since: window.since) }
+        .onAppear {
+            model.refreshUsageSummary(since: window.since)
+            Task { await model.refreshChatGPTUsage() }
+        }
         .onChange(of: window) {
             model.refreshUsageSummary(since: window.since)
         }
@@ -227,6 +230,9 @@ struct UsageDashboardView: View {
     private func content(_ summary: UsageSummary) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                if let usage = model.chatGPTUsage, usage.status == "signed_in" {
+                    chatGPTPlanUsage(usage)
+                }
                 totals(summary)
                 if !summary.expensiveRuns.isEmpty {
                     expensiveRuns(summary.expensiveRuns)
@@ -256,6 +262,45 @@ struct UsageDashboardView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
+        }
+    }
+
+    private func chatGPTPlanUsage(_ usage: ChatGPTUsageResponse) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionLabel("CHATGPT PLAN USAGE")
+            HStack(spacing: 10) {
+                let primary = usage.rateLimits.rateLimits?.primary
+                totalTile(
+                    "Plan window used",
+                    primary.map { "\($0.usedPercent)%" } ?? "Unavailable",
+                    id: "usage.chatgpt.primary"
+                )
+                totalTile(
+                    "Resets",
+                    primary?.resetsAt.map {
+                        Date(timeIntervalSince1970: Double($0))
+                            .formatted(.relative(presentation: .named))
+                    } ?? "Unavailable",
+                    id: "usage.chatgpt.reset"
+                )
+                totalTile(
+                    "Lifetime activity",
+                    usage.activity.summary?.lifetimeTokens.map {
+                        $0.formatted(.number.notation(.compactName)) + " tokens"
+                    } ?? "Unavailable",
+                    id: "usage.chatgpt.tokens"
+                )
+                totalTile(
+                    "Plan",
+                    usage.planType?
+                        .replacingOccurrences(of: "_", with: " ")
+                        .capitalized ?? "ChatGPT",
+                    id: "usage.chatgpt.plan"
+                )
+            }
+            Text("Subscription limits are reported by OpenAI and are kept separate from API and local cost estimates below.")
+                .font(.system(size: 8))
+                .foregroundStyle(LocusTheme.muted)
         }
     }
 

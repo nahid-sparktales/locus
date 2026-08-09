@@ -292,6 +292,96 @@ final class LocusUITests: XCTestCase {
         app.buttons["modelLibrary.close"].click()
     }
 
+    func testHuggingFaceModelLibraryHandsOffFromSettings() {
+        anyElement("workspace.modelPicker").click()
+        anyElement("workspace.modelPicker.manageAccounts").click()
+
+        let browse = anyElement("settings.accounts.browseHuggingFace")
+        XCTAssertTrue(browse.waitForExistence(timeout: 3))
+        browse.click()
+
+        XCTAssertTrue(app.textFields["modelLibrary.search"].waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("settings.accounts.browseHuggingFace").exists)
+        app.buttons["modelLibrary.close"].click()
+    }
+
+    func testHuggingFaceModelLibraryHandsOffFromNativeSettingsWindow() {
+        app.typeKey(",", modifierFlags: .command)
+        let accounts = anyElement("settings.page.accounts")
+        XCTAssertTrue(accounts.waitForExistence(timeout: 3))
+        accounts.click()
+
+        let browse = anyElement("settings.accounts.browseHuggingFace")
+        XCTAssertTrue(browse.waitForExistence(timeout: 3))
+        browse.click()
+
+        XCTAssertTrue(app.textFields["modelLibrary.search"].waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("settings.page.accounts").exists)
+        app.buttons["modelLibrary.close"].click()
+    }
+
+    func testAccountInputRowsFocusAcrossTheirWidthAndPasteLeftToRight() {
+        anyElement("workspace.modelPicker").click()
+        anyElement("workspace.modelPicker.manageAccounts").click()
+        anyElement("settings.accounts.add").click()
+        app.menuItems["Custom endpoint"].click()
+
+        let name = anyElement("accountEditor.name")
+        let baseURL = anyElement("accountEditor.baseURL")
+        let apiKey = anyElement("accountEditor.apiKey")
+        let context = anyElement("accountEditor.contextWindow")
+        XCTAssertTrue(name.waitForExistence(timeout: 3))
+
+        func focusAndReplace(
+            _ field: XCUIElement,
+            with value: String,
+            horizontalOffset: CGFloat,
+            paste: Bool = false
+        ) {
+            field.coordinate(
+                withNormalizedOffset: CGVector(dx: horizontalOffset, dy: 0.5)
+            ).click()
+            app.typeKey("a", modifierFlags: .command)
+            if paste {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(value, forType: .string)
+                app.typeKey("v", modifierFlags: .command)
+            } else {
+                app.typeText(value)
+            }
+        }
+
+        // The far-left hit target must focus every row, even though the old
+        // Form layout put the actual editor only in a trailing column.
+        focusAndReplace(name, with: "Left", horizontalOffset: 0.02)
+        XCTAssertEqual(name.value as? String, "Left")
+        focusAndReplace(name, with: "Work", horizontalOffset: 0.5, paste: true)
+        XCTAssertEqual(name.value as? String, "Work")
+
+        focusAndReplace(baseURL, with: "h", horizontalOffset: 0.02)
+        focusAndReplace(
+            baseURL,
+            with: "https://api.example.com/v1",
+            horizontalOffset: 0.5,
+            paste: true
+        )
+        XCTAssertEqual(baseURL.value as? String, "https://api.example.com/v1")
+
+        focusAndReplace(apiKey, with: "x", horizontalOffset: 0.02)
+        focusAndReplace(apiKey, with: "sk-test-secret", horizontalOffset: 0.5, paste: true)
+        let masked = apiKey.value as? String ?? ""
+        XCTAssertFalse(masked.isEmpty)
+        XCTAssertNotEqual(masked, "sk-test-secret")
+
+        focusAndReplace(context, with: "8", horizontalOffset: 0.02)
+        focusAndReplace(context, with: "8192", horizontalOffset: 0.5, paste: true)
+        XCTAssertEqual(context.value as? String, "8192")
+        XCTAssertTrue(app.buttons["accountEditor.save"].isEnabled)
+
+        // Avoid leaving a test credential in the developer's account file.
+        app.buttons["accountEditor.cancel"].click()
+    }
+
     func testModelPickerStaysResponsiveWithLongVLLMModelName() {
         app.terminate()
         app.launchEnvironment["LOCUS_UI_TESTING_LONG_MODEL"] = "1"
@@ -561,7 +651,9 @@ final class LocusUITests: XCTestCase {
         discard.click()
 
         XCTAssertTrue(app.buttons["changes.discardHunk.confirm"].waitForExistence(timeout: 3))
-        app.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.click()
+        // Escape targets the active confirmation reliably on macOS 26. A title
+        // query can resolve to the mirrored Touch Bar cancel button instead.
+        app.typeKey(.escape, modifierFlags: [])
     }
 
     func testRemoteButtonsFollowTheSeededAvailability() {

@@ -1755,6 +1755,96 @@ struct ProviderStateResponse: Codable {
     }
 }
 
+struct ChatGPTAccountResponse: Codable, Hashable {
+    let status: String
+    let runtimeAvailable: Bool
+    let runtimeVersion: String?
+    let email: String?
+    let planType: String?
+    let message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status, email, message
+        case runtimeAvailable = "runtime_available"
+        case runtimeVersion = "runtime_version"
+        case planType = "plan_type"
+    }
+}
+
+struct ChatGPTLoginResponse: Codable, Hashable {
+    let status: String
+    let loginID: String
+    let authURL: String
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case loginID = "login_id"
+        case authURL = "auth_url"
+    }
+}
+
+struct ChatGPTModelsResponse: Codable, Hashable {
+    struct Model: Codable, Hashable, Identifiable {
+        let id: String
+        let displayName: String
+        let description: String
+        let isDefault: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case id, description
+            case displayName = "display_name"
+            case isDefault = "is_default"
+        }
+    }
+
+    let status: String
+    let models: [Model]
+    let message: String?
+}
+
+struct ChatGPTUsageResponse: Codable, Hashable {
+    struct Window: Codable, Hashable {
+        let usedPercent: Int
+        let resetsAt: Int?
+        let windowDurationMins: Int?
+    }
+
+    struct Snapshot: Codable, Hashable {
+        let planType: String?
+        let primary: Window?
+        let secondary: Window?
+        let spendControlReached: Bool?
+    }
+
+    struct RateLimits: Codable, Hashable {
+        let rateLimits: Snapshot?
+    }
+
+    struct ActivitySummary: Codable, Hashable {
+        let lifetimeTokens: Int?
+        let peakDailyTokens: Int?
+        let longestRunningTurnSec: Int?
+        let currentStreakDays: Int?
+        let longestStreakDays: Int?
+    }
+
+    struct Activity: Codable, Hashable {
+        let summary: ActivitySummary?
+    }
+
+    let status: String
+    let planType: String?
+    let rateLimits: RateLimits
+    let activity: Activity
+    let message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status, activity, message
+        case planType = "plan_type"
+        case rateLimits = "rate_limits"
+    }
+}
+
 struct WorkspaceProfile: Identifiable, Codable, Hashable {
     var id: String { path }
     let path: String

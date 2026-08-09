@@ -267,6 +267,50 @@ class SessionStore:
         return messages
 
     @staticmethod
+    def chatgpt_thread_state(path: Path) -> dict[str, Any] | None:
+        """Return the latest secret-free managed-thread resume marker.
+
+        The marker stays outside message history so exports and canonical
+        transcript rebuilds never treat a helper id as user content. Reads use
+        the normal transcript ceilings to keep damaged files bounded.
+        """
+        latest: dict[str, Any] | None = None
+        try:
+            if path.stat().st_size > MAX_SESSION_BYTES:
+                return None
+            with path.open("rb") as handle:
+                for raw in handle:
+                    if len(raw) > MAX_SESSION_LINE_BYTES:
+                        return None
+                    if not raw.strip():
+                        continue
+                    try:
+                        record = json.loads(raw.decode("utf-8", errors="replace"))
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(record, dict) or record.get("type") != "chatgpt_thread":
+                        continue
+                    thread_id = record.get("thread_id")
+                    protocol = record.get("protocol_version")
+                    fingerprint = record.get("tool_schema_fingerprint")
+                    revision = record.get("history_revision")
+                    if (
+                        isinstance(thread_id, str) and thread_id
+                        and isinstance(protocol, str) and protocol
+                        and isinstance(fingerprint, str) and fingerprint
+                        and isinstance(revision, int) and revision >= 0
+                    ):
+                        latest = {
+                            "thread_id": thread_id,
+                            "protocol_version": protocol,
+                            "tool_schema_fingerprint": fingerprint,
+                            "history_revision": revision,
+                        }
+        except OSError:
+            return None
+        return latest
+
+    @staticmethod
     def agent_activity(path: Path) -> dict[str, Any]:
         """Rebuild the latest bounded team-activity snapshot in one pass.
 

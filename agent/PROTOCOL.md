@@ -5,6 +5,7 @@ The server exposes the agent core (`ollama_code/core.py`) over:
 
 - REST: `http://127.0.0.1:8791/api/...`
 - WebSocket: `ws://127.0.0.1:8791/ws/chat`
+- Internal ChatGPT worker broker: `ws://127.0.0.1:8791/ws/internal/codex`
 
 Start it with:
 
@@ -209,14 +210,41 @@ about vision — `null` means "not known", never a guess. 502 if Ollama is down.
   "account_label": "Claude — Work" }
 ```
 
-`POST` accepts `provider: "ollama" | "remote"`. Ollama accepts optional `host`
-and `context_window`. Remote requires `base_url` and accepts `api_key`, `model`,
-`auth_style`, `account_label`, `lists_models`, `context_window`, and `verify`.
+`POST` accepts `provider: "ollama" | "remote" | "chatgpt"`. Ollama accepts
+optional `host` and `context_window`. Remote requires `base_url` and accepts
+`api_key`, `model`, `auth_style`, `account_label`, `lists_models`,
+`context_window`, and `verify`.
 Omitting a credential or account field keeps its in-memory value; an explicit
 empty key clears it. Keys are never returned or persisted. Anthropic uses its
 native Messages API; other remote providers use OpenAI chat completions.
 Authenticated non-loopback HTTP and every redirect are rejected. Errors: 409
 busy, 422 invalid configuration, 502 verification failure.
+
+The `chatgpt` variant requires `account_id`, with optional `account_label` and
+`model`, and rejects `api_key`, `base_url`, or `remote_base_url`. It uses the
+primary service's bundled Codex App Server and never falls back to `remote`.
+
+### Managed ChatGPT account API
+
+All responses are secret-free. `GET /api/chatgpt/account` returns `status`,
+`runtime_available`, `runtime_version`, `email`, `plan_type`, and a user-facing
+`message`; `?refresh=true` asks the helper to refresh authentication first.
+
+- `POST /api/chatgpt/login/start` returns `status: "signing_in"`, `login_id`,
+  and OpenAI's `auth_url` for the browser.
+- `POST /api/chatgpt/login/cancel` requires `{ "login_id": "…" }`.
+- `POST /api/chatgpt/logout` clears the managed session and returns active
+  ChatGPT routing to Ollama.
+- `GET /api/chatgpt/models` returns the signed-in account's visible App Server
+  model list.
+- `GET /api/chatgpt/usage` returns plan type, rate-limit windows, reset times,
+  spend-control state, and token-activity summaries.
+
+The app-owned backend is the only process allowed to launch App Server. The
+internal `/ws/internal/codex` broker requires the per-launch `X-Locus-Token`,
+rejects browser origins and nested brokers, and multiplexes account, model,
+usage, thread start/resume, turn/interrupt, dynamic tool, and tool-result
+operations for isolated team workers. OAuth values never cross this broker.
 
 ### `GET /api/sessions`
 
@@ -611,6 +639,12 @@ only clear or branch their visible transcript after this event.
 `reason` is `clear_chat`, `retry`, or another server-defined session-start
 reason. A retry copies history only through the latest user message; the source
 session is never modified.
+
+### `chatgpt_account_updated` / `chatgpt_usage_updated`
+
+App Server notifications are reduced to invalidation events. The native client
+refetches the corresponding secret-free REST resource; token values and raw
+helper payloads are never placed on the chat WebSocket.
 
 ### `message_start` / `token` / `thinking` / `message_end`
 Assistant streaming. `token` carries `{ "type": "token", "text": "<piece>" }`;

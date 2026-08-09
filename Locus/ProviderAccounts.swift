@@ -6,6 +6,10 @@ import Foundation
 /// protocol. The agent adapter hides that difference from the rest of the app.
 enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     case claude
+    /// OpenAI-managed ChatGPT subscription access. Authentication and model
+    /// traffic stay inside the bundled Codex App Server helper; this is never
+    /// interchangeable with an API key account.
+    case chatGPT = "chatgpt"
     case codex
     case kimi
     /// Moonshot's coding service, billed through a Kimi membership rather than
@@ -23,7 +27,8 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     var marketingName: String {
         switch self {
         case .claude: "Claude"
-        case .codex: "Codex"
+        case .chatGPT: "ChatGPT plan"
+        case .codex: "OpenAI API"
         case .kimi: "Kimi"
         case .kimiCode: "Kimi Code"
         case .custom: "Custom endpoint"
@@ -34,7 +39,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     var vendorName: String {
         switch self {
         case .claude: "Anthropic"
-        case .codex: "OpenAI"
+        case .chatGPT, .codex: "OpenAI"
         case .kimi, .kimiCode: "Moonshot AI"
         case .custom: ""
         }
@@ -47,6 +52,9 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     var defaultBaseURL: String {
         switch self {
         case .claude: "https://api.anthropic.com/v1"
+        // A display/documentation origin only. Managed ChatGPT traffic never
+        // uses this as an inference endpoint.
+        case .chatGPT: "https://chatgpt.com"
         case .codex: "https://api.openai.com/v1"
         case .kimi: "https://api.moonshot.ai/v1"
         case .kimiCode: "https://api.kimi.com/coding/v1"
@@ -58,6 +66,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     var keyDocsURL: String {
         switch self {
         case .claude: "https://console.anthropic.com/settings/keys"
+        case .chatGPT: "https://learn.chatgpt.com/docs/auth#openai-authentication"
         case .codex: "https://platform.openai.com/api-keys"
         case .kimi: "https://platform.moonshot.ai/console/api-keys"
         case .kimiCode: "https://www.kimi.com/code/docs/en/"
@@ -68,6 +77,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     var keyPlaceholder: String {
         switch self {
         case .claude: "sk-ant-…"
+        case .chatGPT: ""
         case .codex, .kimi: "sk-…"
         // Moonshot documents no prefix for these; guessing one would contradict
         // what the user is about to paste.
@@ -81,9 +91,14 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     var authStyle: String {
         switch self {
         case .claude: "anthropic"
+        case .chatGPT: "managed"
         case .codex, .kimi, .kimiCode, .custom: "bearer"
         }
     }
+
+    var requiresAPIKey: Bool { self != .chatGPT }
+
+    var usesManagedChatGPTAuthentication: Bool { self == .chatGPT }
 
     /// Whether `GET {base}/models` is a route this provider actually serves.
     ///
@@ -102,6 +117,8 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .claude:
             ["claude-opus-5", "claude-sonnet-5", "claude-fable-5", "claude-haiku-4-5"]
+        case .chatGPT:
+            ["gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.1-codex-max"]
         case .codex:
             ["gpt-5.6", "gpt-5", "gpt-5-mini", "gpt-4.1", "o3"]
         case .kimi:
@@ -140,7 +157,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
             if name.contains("haiku-4-5") { return 200_000 }
             if name.hasPrefix("claude-") && name.contains("-4") { return 200_000 }
             return nil
-        case .codex:
+        case .chatGPT, .codex:
             if name == "gpt-5.6" || name.hasPrefix("gpt-5.6-") { return 1_050_000 }
             if name == "gpt-5" || name.hasPrefix("gpt-5-") { return 400_000 }
             if name.hasPrefix("gpt-4.1") { return 1_047_576 }
@@ -199,7 +216,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
                 linkTitle: "",
                 linkURL: ""
             )
-        case .codex, .custom:
+        case .chatGPT, .codex, .custom:
             nil
         }
     }
@@ -242,7 +259,7 @@ enum ProviderModelFilter {
         switch kind {
         case .claude:
             return lowered.hasPrefix("claude")
-        case .codex:
+        case .chatGPT, .codex:
             return codexPrefixes.contains { lowered.hasPrefix($0) }
         case .kimi:
             return lowered.hasPrefix("kimi") || lowered.hasPrefix("moonshot")
@@ -340,7 +357,10 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
         legacyKeychainAccount ?? CredentialStore.providerAccountKey(id)
     }
 
-    var hasKey: Bool { CredentialStore.has(account: keychainAccount) }
+    var hasKey: Bool {
+        kind.usesManagedChatGPTAuthentication
+            || CredentialStore.has(account: keychainAccount)
+    }
 
     /// The window to budget this account against: what the user set, else
     /// the provider's published figure for the selected model, else none.
@@ -448,6 +468,11 @@ enum ProviderAccountStore {
 
 /// How an account is doing, for the Settings row and the picker.
 enum ProviderAccountStatus: Equatable {
+    case signingIn
+    case signedIn(email: String?, plan: String?)
+    case signedOut
+    case runtimeUnavailable(String)
+    case rateLimited(resetAt: Date?)
     /// A key is saved but nothing has confirmed it yet.
     case keySaved
     /// The provider answered — `models` is what it offered.
@@ -461,6 +486,20 @@ enum ProviderAccountStatus: Equatable {
 
     var summary: String {
         switch self {
+        case .signingIn: "Waiting for ChatGPT sign-in"
+        case let .signedIn(email, plan):
+            {
+                let details = [email, plan?.capitalized]
+                    .compactMap { $0 }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " · ")
+                return details.isEmpty ? "Signed in" : details
+            }()
+        case .signedOut: "Not signed in"
+        case let .runtimeUnavailable(message): message
+        case let .rateLimited(resetAt):
+            resetAt.map { "Limit reached · resets \($0.formatted(.relative(presentation: .named)))" }
+                ?? "ChatGPT plan limit reached"
         case .keySaved: "Key saved"
         case let .connected(models):
             models == 1 ? "Connected · 1 model" : "Connected · \(models) models"
@@ -472,8 +511,9 @@ enum ProviderAccountStatus: Equatable {
 
     var isHealthy: Bool {
         switch self {
-        case .connected, .keySaved: true
-        case .keyRejected, .failed, .noKey: false
+        case .connected, .keySaved, .signedIn: true
+        case .signingIn, .signedOut, .runtimeUnavailable, .rateLimited,
+             .keyRejected, .failed, .noKey: false
         }
     }
 }

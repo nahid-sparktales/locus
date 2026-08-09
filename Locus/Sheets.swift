@@ -944,6 +944,11 @@ struct CheckpointSheet: View {
     }
 }
 
+enum SettingsPresentationContext {
+    case sheet
+    case settingsWindow
+}
+
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -959,6 +964,11 @@ struct SettingsView: View {
     @State private var addingAccount: ProviderAccount?
     @State private var editingAccount: ProviderAccount?
     @State private var accountPendingRemoval: ProviderAccount?
+    let presentationContext: SettingsPresentationContext
+
+    init(presentationContext: SettingsPresentationContext = .sheet) {
+        self.presentationContext = presentationContext
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1083,6 +1093,11 @@ struct SettingsView: View {
         .onExitCommand {
             dismiss()
             model.settingsPresented = false
+        }
+        .onDisappear {
+            if presentationContext == .settingsWindow {
+                model.completeSettingsDismissal()
+            }
         }
         // Accounts are saved as they are edited rather than with the rest of
         // the draft: they write the credential file, and Cancel cannot un-write it.
@@ -1448,11 +1463,15 @@ struct SettingsView: View {
                         Button(kind.title) {
                             addingAccount = ProviderAccount(kind: kind)
                         }
+                        .disabled(
+                            kind == .chatGPT
+                                && model.providerAccounts.contains { $0.kind == .chatGPT }
+                        )
                     }
                 }
                 .accessibilityIdentifier("settings.accounts.add")
 
-                Text("Each account keeps its API key in \(CredentialStore.displayPath), a file readable only by your macOS user account. Keys are passed to the local agent in memory and only ever sent to their own provider. Any program running as you can read that file.")
+                Text("API accounts keep their keys in \(CredentialStore.displayPath), readable only by your macOS user account. ChatGPT plan sign-in is isolated in OpenAI's managed runtime and its tokens never enter Locus account files.")
                     .font(.system(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1467,7 +1486,8 @@ struct SettingsView: View {
                 .foregroundStyle(LocusTheme.muted)
 
                 Button("Browse Hugging Face Models…") {
-                    model.modelLibraryPresented = true
+                    model.openModelLibraryFromSettings()
+                    dismiss()
                 }
                 .accessibilityIdentifier("settings.accounts.browseHuggingFace")
             }
@@ -1613,6 +1633,20 @@ struct SettingsView: View {
     private func accountDetail(_ account: ProviderAccount) -> String {
         let status = model.accountStatus[account.id]
             ?? (account.hasKey ? .keySaved : .noKey)
+        if account.kind == .chatGPT,
+           let window = model.chatGPTUsage?.rateLimits.rateLimits?.primary
+        {
+            let reset = window.resetsAt.map {
+                "resets " + Date(timeIntervalSince1970: Double($0))
+                    .formatted(.relative(presentation: .named))
+            }
+            let activity = model.chatGPTUsage?.activity.summary?.lifetimeTokens.map {
+                $0.formatted(.number.notation(.compactName)) + " activity tokens"
+            }
+            return [status.summary, "\(window.usedPercent)% used", reset, activity]
+                .compactMap { $0 }
+                .joined(separator: " · ")
+        }
         let host = URL(string: RemoteEndpointTester.normalizeBaseURL(account.resolvedBaseURL))?.host
         return [host, status.summary].compactMap { $0 }.joined(separator: " · ")
     }

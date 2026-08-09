@@ -22,6 +22,7 @@ mode="${LOCUS_BUNDLE_MODE:-standalone}"
 resources="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
 runtime="${resources}/AgentRuntime"
 source_package="${backend_root}/ollama_code"
+codex_cache="${LOCUS_CODEX_CACHE:-${repo_root}/.codex-app-server}"
 
 if [[ "${mode}" == "skip" ]]; then
     echo "note: LOCUS_BUNDLE_MODE=skip — agent runtime not bundled."
@@ -55,6 +56,62 @@ write_provenance() {
 }
 
 write_provenance
+
+bundle_codex_helper() {
+    [[ "${LOCUS_BUNDLE_CODEX:-build}" != "skip" ]] || return 0
+    LOCUS_CODEX_ARCHS="${ARCHS:-$(/usr/bin/uname -m)}" \
+        "${script_dir}/PrepareCodexAppServer.sh"
+    local helpers="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers"
+    local helper="${helpers}/codex"
+    local code_mode_host_helper="${helpers}/codex-code-mode-host"
+    /bin/mkdir -p "${helpers}"
+    /usr/bin/ditto "${codex_cache}/bin/codex" "${helper}"
+    /usr/bin/ditto "${codex_cache}/bin/codex-code-mode-host" "${code_mode_host_helper}"
+    /usr/bin/ditto "${codex_cache}/PROVENANCE" "${resources}/CodexAppServerProvenance.txt"
+    /bin/mkdir -p "${resources}/ThirdPartyLicenses/openai-codex-0.147.0"
+    /usr/bin/ditto "${codex_cache}/source-rust-v0.147.0/LICENSE" \
+        "${resources}/ThirdPartyLicenses/openai-codex-0.147.0/LICENSE"
+    /usr/bin/ditto "${codex_cache}/source-rust-v0.147.0/NOTICE" \
+        "${resources}/ThirdPartyLicenses/openai-codex-0.147.0/NOTICE"
+    /bin/chmod 755 "${helper}" "${code_mode_host_helper}"
+
+    local identity="${EXPANDED_CODE_SIGN_IDENTITY:-}"
+    if [[ "${CODE_SIGNING_ALLOWED:-NO}" == "YES" && -n "${identity}" ]]; then
+        local hardened=()
+        [[ "${ENABLE_HARDENED_RUNTIME:-NO}" == "YES" ]] && hardened=(--options runtime)
+        local sealed_helper identifier
+        for sealed_helper in "${helper}" "${code_mode_host_helper}"; do
+            identifier="io.sparktales.locus.${sealed_helper:t}"
+            if [[ "${ENABLE_APP_SANDBOX:-NO}" == "YES" ]]; then
+                local entitlements="${repo_root}/Config/AgentRuntime.entitlements"
+                if [[ "${sealed_helper}" == "${code_mode_host_helper}" ]]; then
+                    entitlements="${repo_root}/Config/CodexCodeModeHostSandbox.entitlements"
+                fi
+                /usr/bin/codesign --force "${hardened[@]}" \
+                    --identifier "${identifier}" \
+                    --entitlements "${entitlements}" \
+                    --sign "${identity}" "${sealed_helper}"
+            elif [[ "${sealed_helper}" == "${code_mode_host_helper}" ]]; then
+                /usr/bin/codesign --force "${hardened[@]}" \
+                    --identifier "${identifier}" \
+                    --entitlements "${repo_root}/Config/CodexCodeModeHost.entitlements" \
+                    --sign "${identity}" "${sealed_helper}"
+            else
+                /usr/bin/codesign --force "${hardened[@]}" --sign "${identity}" "${sealed_helper}"
+            fi
+        done
+    fi
+    # Signing changes Mach-O bytes. Record the exact sealed helper shipped in
+    # this app, while the source and lockfile hashes remain from the build cache.
+    local shipped_sha
+    shipped_sha="$(/usr/bin/shasum -a 256 "${helper}" | /usr/bin/awk '{print $1}')"
+    /usr/bin/sed -i '' "s/^binary_sha256=.*/binary_sha256=${shipped_sha}/" \
+        "${resources}/CodexAppServerProvenance.txt"
+    shipped_sha="$(/usr/bin/shasum -a 256 "${code_mode_host_helper}" | /usr/bin/awk '{print $1}')"
+    /usr/bin/sed -i '' \
+        "s/^code_mode_host_sha256=.*/code_mode_host_sha256=${shipped_sha}/" \
+        "${resources}/CodexAppServerProvenance.txt"
+}
 
 bundle_source() {
     /bin/rm -rf "${runtime}"
@@ -191,6 +248,7 @@ if [[ "${mode}" == "venv" ]]; then
     if ! bundle_venv; then
         echo "warning: venv bundling failed; runtime not bundled."
     fi
+    bundle_codex_helper
     exit 0
 fi
 
@@ -199,3 +257,4 @@ if ! bundle_standalone; then
     echo "error: use LOCUS_BUNDLE_MODE=venv explicitly for a local-only venv build" >&2
     exit 1
 fi
+bundle_codex_helper

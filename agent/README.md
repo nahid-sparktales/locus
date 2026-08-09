@@ -1,15 +1,16 @@
 # ollama-code
 
-A local coding agent powered by [Ollama](https://ollama.com). It ships as two
-front ends over one agent core:
+A local coding-agent runtime with [Ollama](https://ollama.com) as its default
+model source and explicit support for hosted accounts. It ships as two front
+ends over one agent core:
 
 - **`ollama-code`** — an interactive terminal REPL.
 - **`ollama-code-server`** — the REST + WebSocket service that Locus for
   macOS (the app in the repository root above this folder) drives.
 
 Everything runs on your machine by default. No prompt, file, or model response
-leaves it unless you deliberately point the agent at a remote endpoint — see
-*Model providers*.
+leaves it unless you deliberately select a hosted API account or the managed
+ChatGPT-plan route — see *Model providers*.
 
 ## Install
 
@@ -59,7 +60,8 @@ permission mode and retain non-bypassable high-consequence guardrails.
 ## Parallel agent teams
 
 Locus can route a Work turn through an explicit team made from local Ollama,
-custom OpenAI-compatible/vLLM, Kimi, and Anthropic accounts. A dispatcher must
+managed ChatGPT-plan, custom OpenAI-compatible/vLLM, OpenAI API, Kimi, and
+Anthropic accounts. A dispatcher must
 submit a schema-constrained job graph first. Read-only planner, researcher,
 tester, and reviewer jobs may overlap. One or more write-capable coding jobs use
 the ordinary permission loop sequentially in a shared checkout; every writer
@@ -89,9 +91,10 @@ leaves source changes unstaged and uncommitted.
 
 ## Model providers
 
-By default the agent talks to a local Ollama. It can also talk to Anthropic's
-native API or any OpenAI-compatible endpoint — a Hugging Face Inference
-Endpoint, the HF Inference Providers router, or vLLM/TGI on a rented GPU:
+By default the agent talks to a local Ollama. It can also use a bundled OpenAI
+Codex App Server with managed ChatGPT sign-in, Anthropic's native API, or any
+OpenAI-compatible endpoint — a Hugging Face Inference Endpoint, the HF
+Inference Providers router, or vLLM/TGI on a rented GPU:
 
 ```bash
 .venv/bin/ollama-code-server \
@@ -109,6 +112,14 @@ credential file via `POST /api/provider`. **It is never written to
 An API key may be sent over HTTP only to loopback (`localhost`, `127.0.0.0/8`,
 or `::1`); every other authenticated endpoint must use HTTPS. Redirects are
 refused rather than followed with credentials.
+
+The ChatGPT-plan variant of `POST /api/provider` takes `provider: "chatgpt"`,
+`account_id`, `account_label`, and `model`; it rejects API-key and base-URL
+fields. The primary app-owned service lazily starts one pinned App Server over
+JSONL/stdio in an isolated `CODEX_HOME`. OAuth values remain inside that
+helper. Team workers reach it only through the launch-token-authenticated
+`/ws/internal/codex` broker, so they never receive credentials or start their
+own helper.
 
 Endpoints that reject tool calling get one automatic retry without tools, and
 the reply says so instead of failing.
@@ -171,7 +182,13 @@ batch name; deleting a chat never touches files in its workspace.
 | POST | `/api/tasks/{id}/apply` | Dry-run check, then apply task changes unstaged |
 | GET | `/api/tools` | Tool schemas |
 | GET/POST | `/api/permissions` | Read or change the permission mode |
-| GET/POST | `/api/provider` | Switch between local Ollama and a remote endpoint |
+| GET/POST | `/api/provider` | Switch among local Ollama, a managed ChatGPT account, and an API endpoint |
+| GET | `/api/chatgpt/account` | Managed sign-in state and secret-free account metadata |
+| POST | `/api/chatgpt/login/start` | Start OpenAI's browser login flow |
+| POST | `/api/chatgpt/login/cancel` | Cancel the active browser login |
+| POST | `/api/chatgpt/logout` | Clear the managed session and leave active ChatGPT routing |
+| GET | `/api/chatgpt/models` | Models available to the signed-in ChatGPT account |
+| GET | `/api/chatgpt/usage` | Plan rate limits and token-activity summary |
 | GET/POST | `/api/config` | Model, host, working directory, context window |
 
 ### Context window
@@ -219,7 +236,8 @@ Server → client: `session_info`, `session_started`, `orchestration_started`,
 `orchestration_state`, `dispatch_plan`, `agent_job_started`,
 `agent_job_stream`, `agent_job_completed`, scheduler-lease events, task events,
 `message_start`, `token`,
-`thinking`, `message_end`, `plan_ready`, `steer_ack`, `steer_applied`,
+`thinking`, `message_end`, `chatgpt_account_updated`,
+`chatgpt_usage_updated`, `plan_ready`, `steer_ack`, `steer_applied`,
 `computer_control_status`, `computer_action_request`, `tool_call_proposed`,
 `permission_request`, `tool_result`, `todo_update`, `turn_done`, `slash_result`,
 ordered orchestration/checkpoint/recovery/routing events, evaluation progress,
@@ -246,7 +264,7 @@ an audit hook that fails the suite if anything writes to the real
 `~/.ollama-code`. `tests/live/` holds manual real-model smoke tests, not
 collected by pytest; each starts its own server on its own port.
 
-367 tests cover the tools (including atomic `multi_edit` and the binary-file
+458 collected tests cover the tools (including atomic `multi_edit` and the binary-file
 guard), permission modes and the deny list, streaming and `<think>` filtering,
 session metadata and trash recovery, the context window (that the number sent as
 `num_ctx` is the same one compaction budgets against, that a window a hosted
@@ -260,4 +278,7 @@ provider HTTP endpoints, the WebSocket handshake, and the agent loop end to end
 against a scripted model. The extensions surface — plugins, skills, MCP servers
 and marketplaces — is covered at the unit level in `test_extensions.py`. The
 suite also covers capability flags, orchestration and recovery, durable run
-storage, evaluations, telemetry, local knowledge, and modern MCP behavior.
+storage, evaluations, telemetry, local knowledge, modern MCP behavior, and a
+deterministic fake App Server for managed authentication, model/usage lookup,
+dynamic tool correlation, permission denial, streaming, interruption, restart,
+thread resume, and reasoning-summary mapping.

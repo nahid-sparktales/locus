@@ -1210,6 +1210,32 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(restored[0].kind, .codex)
     }
 
+    func testLegacyCodexAccountRemainsAnOpenAIAPIAccount() throws {
+        let id = UUID()
+        let json = """
+        [{"id":"\(id.uuidString)","kindRaw":"codex","name":"Existing",
+          "preferredModel":"gpt-5","createdAt":0}]
+        """
+
+        let account = try XCTUnwrap(ProviderAccountStore.decode(Data(json.utf8)).first)
+
+        XCTAssertEqual(account.kind, .codex)
+        XCTAssertEqual(account.kindRaw, "codex", "the stored raw value remains backward compatible")
+        XCTAssertEqual(account.kind.marketingName, "OpenAI API")
+        XCTAssertEqual(account.displayName, "OpenAI API — Existing")
+        XCTAssertTrue(account.kind.requiresAPIKey)
+    }
+
+    func testChatGPTPlanIsASeparateManagedAccountKind() {
+        let account = ProviderAccount(kind: .chatGPT, name: "Personal")
+
+        XCTAssertEqual(account.kindRaw, "chatgpt")
+        XCTAssertEqual(account.displayName, "ChatGPT plan — Personal")
+        XCTAssertFalse(account.kind.requiresAPIKey)
+        XCTAssertTrue(account.kind.usesManagedChatGPTAuthentication)
+        XCTAssertFalse(account.kind.allowsBaseURLOverride)
+    }
+
     func testLegacyRemoteEndpointMigratesIntoACustomAccount() {
         var settings = AppSettings()
         settings.provider = .remote

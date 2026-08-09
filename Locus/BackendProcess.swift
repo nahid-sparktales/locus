@@ -85,20 +85,30 @@ final class BackendProcess {
         // written there at import time would invalidate the code signature,
         // so byte-code writing must stay off no matter where we run from.
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
-        if WorkspaceAccess.isSandboxed,
-           let support = FileManager.default.urls(
+        if let support = FileManager.default.urls(
                for: .applicationSupportDirectory,
                in: .userDomainMask
            ).first
         {
-            let agentHome = support
-                .appending(path: "Locus", directoryHint: .isDirectory)
-                .appending(path: "Agent", directoryHint: .isDirectory)
+            let locusSupport = support.appending(path: "Locus", directoryHint: .isDirectory)
+            let agentHome = locusSupport.appending(path: "Agent", directoryHint: .isDirectory)
+            let codexHome = locusSupport.appending(path: "Codex", directoryHint: .isDirectory)
             try? FileManager.default.createDirectory(
                 at: agentHome,
                 withIntermediateDirectories: true
             )
-            environment["OLLAMA_CODE_HOME"] = agentHome.path
+            try? FileManager.default.createDirectory(
+                at: codexHome,
+                withIntermediateDirectories: true
+            )
+            if WorkspaceAccess.isSandboxed {
+                environment["OLLAMA_CODE_HOME"] = agentHome.path
+            }
+            environment["LOCUS_CODEX_HOME"] = codexHome.path
+        }
+        let helper = Bundle.main.bundleURL.appending(path: "Contents/Helpers/codex")
+        if FileManager.default.isExecutableFile(atPath: helper.path) {
+            environment["LOCUS_CODEX_APP_SERVER_PATH"] = helper.path
         }
         if let packages = launch.packages {
             environment["PYTHONPATH"] = [
