@@ -25,7 +25,8 @@ from pathlib import Path
 from typing import Any
 
 from .capabilities import enabled as capability_enabled
-from .ollama import OllamaClient, OllamaError, looks_like_image_rejection
+from .codex_app_server import CodexBrokerClient
+from .ollama import ChatResponse, OllamaClient, OllamaError, looks_like_image_rejection
 from .remote import AUTH_ANTHROPIC, RemoteClient
 from .runstore import RunStore
 
@@ -1834,10 +1835,92 @@ def writer_prompt_for_job(prepared: TeamPreparation, job: AgentJob) -> str:
     )
 
 
+class ChatGPTTeamClient:
+    """Tool-free orchestration adapter backed by the primary Codex broker."""
+
+    host = "chatgpt://managed"
+
+    def __init__(self, broker: Any, timeout_seconds: int) -> None:
+        self.broker = broker
+        self.timeout_seconds = timeout_seconds
+
+    def chat_stream(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        on_token: Callable[[str], None] | None = None,
+        should_stop: Stop | None = None,
+        options: dict[str, Any] | None = None,
+        **_: Any,
+    ) -> ChatResponse:
+        if should_stop is not None and should_stop():
+            raise InterruptedError("orchestration cancelled")
+        system = "\n\n".join(
+            str(message.get("content") or "")
+            for message in messages if message.get("role") == "system"
+        )
+        prompt = "\n\n".join(
+            f"{str(message.get('role') or 'user').upper()}: "
+            f"{str(message.get('content') or '')}"
+            for message in messages if message.get("role") != "system"
+        )
+        output_schema = None
+        if tools:
+            function = tools[0].get("function") if isinstance(tools[0], dict) else None
+            if isinstance(function, dict) and isinstance(function.get("parameters"), dict):
+                output_schema = function["parameters"]
+        result = self.broker.complete(
+            model=model,
+            cwd=os.getcwd(),
+            base_instructions=system,
+            prompt=prompt,
+            output_schema=output_schema,
+            timeout=self.timeout_seconds,
+        )
+        text = str(result.get("text") or "")
+        if on_token is not None and text:
+            on_token(text)
+        usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+        last = usage.get("last") if isinstance(usage.get("last"), dict) else {}
+        response = ChatResponse(
+            content_parts=[text],
+            done=True,
+            done_reason="stop",
+            prompt_eval_count=int(last.get("inputTokens") or 0),
+            eval_count=int(last.get("outputTokens") or 0),
+        )
+        if should_stop is not None and should_stop():
+            raise InterruptedError("orchestration cancelled")
+        return response
+
+
+_TEAM_CODEX_BROKER_URL = os.environ.get("LOCUS_CODEX_BROKER_URL", "").strip()
+_TEAM_CODEX_BROKER_TOKEN = os.environ.get("LOCUS_CODEX_BROKER_TOKEN", "").strip()
+_TEAM_CODEX_BROKER = (
+    CodexBrokerClient(_TEAM_CODEX_BROKER_URL, _TEAM_CODEX_BROKER_TOKEN)
+    if _TEAM_CODEX_BROKER_URL and _TEAM_CODEX_BROKER_TOKEN else None
+)
+
+
+def configure_chatgpt_manager(manager: Any) -> None:
+    """Install the primary manager when orchestration runs in that process."""
+    global _TEAM_CODEX_BROKER
+    if _TEAM_CODEX_BROKER is None:
+        _TEAM_CODEX_BROKER = manager
+
+
 def _client(profile: AgentProfile):
     route = profile.route
     if route.get("provider") == "ollama":
         return OllamaClient(str(route.get("host") or "http://localhost:11434"), profile.timeout_seconds)
+    if route.get("provider") == "chatgpt":
+        # The module captures this before ChatService removes the environment
+        # values, so tools and child processes never inherit the broker token.
+        broker = _TEAM_CODEX_BROKER
+        if broker is None:
+            raise OrchestrationError("the primary ChatGPT broker is unavailable")
+        return ChatGPTTeamClient(broker, profile.timeout_seconds)
     return RemoteClient(
         base_url=str(route.get("base_url") or ""),
         api_key=str(route.get("api_key") or ""),
@@ -1897,6 +1980,13 @@ def _validate_route(route: dict[str, Any], name: str) -> None:
         if not host:
             raise OrchestrationError(f"local route for {name} has no Ollama host")
         return
+    if provider == "chatgpt":
+        if not str(route.get("account_id") or ""):
+            raise OrchestrationError(f"ChatGPT route for {name} has no account id")
+        forbidden = {"api_key", "base_url", "authorization", "token"}.intersection(route)
+        if forbidden:
+            raise OrchestrationError(f"ChatGPT route for {name} contains credentials")
+        return
     if provider != "remote" or not str(route.get("base_url") or ""):
         raise OrchestrationError(f"provider route for {name} is unavailable")
     if not str(route.get("api_key") or ""):
@@ -1906,6 +1996,8 @@ def _validate_route(route: dict[str, Any], name: str) -> None:
 def _route_label(route: dict[str, Any]) -> str:
     if route.get("provider") == "ollama":
         return "Local Ollama"
+    if route.get("provider") == "chatgpt":
+        return str(route.get("account_label") or "ChatGPT plan")
     return str(route.get("account_label") or route.get("base_url") or "Hosted provider")
 
 

@@ -4,6 +4,29 @@
 
 ### Added
 
+- **Use included ChatGPT-plan access without an API key.** A separate,
+  single-identity ChatGPT account opens OpenAI's managed browser sign-in,
+  discovers available models, routes solo chats, teams, and evaluations, and
+  shows plan rate limits plus token activity separately from API cost
+  estimates. The existing stored `codex` account remains backward compatible
+  and is now labelled **OpenAI API**. There is no dependency on an installed or
+  running ChatGPT/Codex app, and the managed route never falls back to a
+  billable API key.
+- **A pinned Codex App Server bridge that keeps Locus in control.** Locus builds
+  and signs OpenAI Codex `rust-v0.147.0` plus its companion code-mode host from
+  checksum-pinned source and V8 inputs, isolates file-backed OAuth state, and
+  exposes only Locus's current tools through dynamic tools and its existing
+  permission system. A primary-backend broker multiplexes team workers without
+  sharing OAuth credentials. Models, usage, interruptions, failures, thread
+  resume, and provider-supplied reasoning summaries map into Locus's existing
+  UI and transcript model; raw private reasoning is ignored.
+- **Account fields and Settings handoff now behave naturally.** Clicking
+  anywhere across Name, URL, API-key, or context-window rows focuses the field,
+  and typing or pasting starts at the left and advances left-to-right. Browse
+  Hugging Face Models dismisses either Settings presentation and opens the
+  library immediately. The Browser's compact control bar now sits above its
+  tabs, keeping tabs adjacent to the address bar they control.
+
 - **The browser got fast.** Three real defects made every page slow. Every
   navigation carried a forced hard-reload cache policy inherited from the old
   dev-server Preview pane — WebKit propagates it to every subresource, so each

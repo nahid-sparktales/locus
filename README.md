@@ -1,9 +1,10 @@
 # Locus for macOS
 
-Locus 1.11 is a native workspace for building with local Ollama models. It combines
-conversation, planning, file context, change review, a console, and a built-in
-browser the agent can drive in one calm SwiftUI interface. Local Ollama is the default; hosted providers are
-used only after you explicitly add and select an account.
+Locus is a native workspace for building with local and hosted models. It
+combines conversation, planning, file context, change review, a console, and a
+built-in browser the agent can drive in one calm SwiftUI interface. Local
+Ollama is the default; a ChatGPT plan or an API-backed provider is used only
+after you explicitly add and select that account.
 
 **[locushost.co](https://locushost.co)**
 
@@ -13,7 +14,28 @@ Locus opens in a 1250×760 workspace by default, keeping the sidebar, conversati
 and inspector visible without clipping the right edge. Resize it whenever you
 like; macOS remembers the size you choose for later launches.
 
-## What's new in 1.11
+## Highlights
+
+- **Use your ChatGPT plan without an API key.** Add the single **ChatGPT plan**
+  account, choose **Sign in with ChatGPT**, and finish OpenAI's managed sign-in
+  in your browser. Locus then discovers the models available to that account,
+  routes normal chats, teams, and evaluations through included plan usage, and
+  shows rate-limit windows plus token activity separately from API/local cost
+  estimates. The ChatGPT and Codex apps do not need to be installed or open,
+  and this route never silently falls back to billable API usage.
+- **Locus stays in charge of tools and permissions.** ChatGPT-plan turns use a
+  pinned, bundled OpenAI Codex App Server over local JSONL/stdio, but expose
+  only Locus's current tools through App Server dynamic tools. File, shell,
+  browser, Computer Control, MCP, and extension calls still pass through the
+  same Locus permission manager, budgets, and user-visible activity. OpenAI's
+  readable reasoning summaries can stream into the existing Thinking cards;
+  raw private reasoning is neither requested for display nor persisted.
+- **Account and model-library interactions behave like native controls.** Every
+  account input row is a full-width click target, and its caret, typing, and
+  pasted text start at the left and advance left-to-right. Choosing **Browse
+  Hugging Face Models…** from Settings dismisses Settings first and opens the
+  model library immediately. In the Browser inspector, the compact controls
+  sit above the tab strip so each tab stays next to the address bar it drives.
 
 - **Adaptive Work and explicit agent teams** can route a request across local or
   hosted specialists and multiple coding models. Coding jobs share one isolated
@@ -76,9 +98,10 @@ for setup, examples, permission boundaries, recovery, and troubleshooting.
   its state across launches.
 - **Workspaces** open from a folder picker that can create folders, or with
   **New Workspace…**, which names a folder, creates it, and opens it.
-- **Local or rented GPU.** Point Locus at local Ollama, or at any
-  OpenAI-compatible endpoint — a Hugging Face Inference Endpoint, vLLM, or TGI
-  on a rented box — with an API key kept in a file only you can read.
+- **Local, subscription, or API-backed models.** Use local Ollama, sign in to
+  use included ChatGPT plan access, or point Locus at an API provider or an
+  OpenAI-compatible endpoint such as a Hugging Face Inference Endpoint, vLLM,
+  or TGI on a rented GPU.
 - **Proxy support** for networks that require one. **Settings ▸ Network**
   follows the macOS proxy configuration or takes an explicit HTTP/HTTPS or
   SOCKS5 proxy, with optional sign-in and a bypass list, and covers both the
@@ -107,14 +130,18 @@ for setup, examples, permission boundaries, recovery, and troubleshooting.
   by agent, model, and workspace with the most expensive runs one click from
   their timelines. Estimates come from the per-agent rates you entered;
   local Ollama is free, and the sheet says plainly that it is not a bill.
+  **ChatGPT plan usage** has its own section for OpenAI-reported rate-limit
+  windows, reset times, and token activity, never mixed into cost estimates.
 - **Slash commands** (`/clear`, `/model`, `/plan`, `/checkpoint`, `/export`,
   `/help`, …) with an autocomplete popup; unknown commands pass through to the
   local agent.
 - **`@` file mentions** fuzzy-search the workspace and attach the chosen file
   to the context pack as they complete.
-- **Thinking blocks** render reasoning-model `<think>` output as collapsible
-  cards; finished responses get full markdown with copyable code blocks, and
-  tool output that looks like a diff is colored line by line. A transcript-wide
+- **Thinking blocks** render local reasoning-model `<think>` output and
+  OpenAI-provided ChatGPT reasoning summaries as collapsible cards; raw private
+  reasoning from the managed runtime is ignored. Finished responses get full
+  markdown with copyable code blocks, and tool output that looks like a diff is
+  colored line by line. A transcript-wide
   view mode — `/thinking hidden|collapsed|expanded`, also in the workspace
   `…` menu — hides reasoning entirely, keeps the collapsed cards, or pins
   every card open.
@@ -174,7 +201,9 @@ for setup, examples, permission boundaries, recovery, and troubleshooting.
   whatever you set on the account.
 - **Local Model Library** searches GGUF repositories on Hugging Face, scans
   available quantizations and sizes, then downloads the selected build through
-  Ollama with native progress, cancellation, refresh, and selection.
+  Ollama with native progress, cancellation, refresh, and selection. Opening it
+  from Settings cleanly hands off from the Settings sheet or native Settings
+  window instead of leaving the library hidden behind it.
 
 ## The inspector
 
@@ -235,10 +264,12 @@ deny list below applies to what you type, too.
 
 ![Console tab](Docs/locus-console.jpg)
 
-**Browser** shows the same live pages the agent drives, with real tabs: an
-always-visible strip with favicons, loading spinners, URL tooltips, and a
-right-click menu (close, close others, copy URL, open in the default
-browser); ⌘T, ⌘W, and ⇧⌘]/⇧⌘[ work while the panel is showing. Ordinary
+**Browser** shows the same live pages the agent drives, with compact viewport,
+capture, drawer, external-browser, and expand controls at the top. Directly
+below is an always-visible tab strip with favicons, loading spinners, URL
+tooltips, and a right-click menu (close, close others, copy URL, open in the
+default browser), followed by the address bar each tab controls; ⌘T, ⌘W, and
+⇧⌘]/⇧⌘[ work while the panel is showing. Ordinary
 navigation browses through the HTTP cache — only loopback dev servers hard
 reload, where a stale asset would hide the edit you just made — and the
 camera button captures the visible page into an annotation sheet (crop, pen,
@@ -279,13 +310,17 @@ sandbox: the agent runs with your privileges by design.
 
 - Apple Silicon Mac
 - macOS 14 or newer
-- [Ollama](https://ollama.com) installed locally (the app or command-line tool)
-- At least one installed, tool-capable model
+- One model source:
+  - [Ollama](https://ollama.com) and an installed, tool-capable local model;
+  - an eligible ChatGPT plan; or
+  - an API key for a supported hosted provider or custom endpoint.
 
-That is the whole list — the app bundles its own agent runtime, so there is
-nothing else to install. No Python, no Homebrew. Locus starts its agent and
-local Ollama automatically; the selected model remains unloaded until the first
-prompt.
+That is the whole end-user list. The app bundles its Python agent runtime,
+OpenAI Codex App Server, and the companion code-mode host, so there is no
+Python, Homebrew, Rust, Codex CLI, Codex app, or ChatGPT app dependency. Locus
+starts the local services it needs. When you use a ChatGPT plan, sign-in opens
+your default browser once; neither OpenAI desktop app needs to open or remain
+running afterward.
 
 New models can also be installed without leaving Locus: open the model picker,
 choose **Browse Hugging Face Models…**, search or paste a repository URL,
@@ -294,25 +329,45 @@ as the balanced default when a repository provides it.
 
 Ollama and model weights are not bundled.
 
-## Hosted models: Claude, Codex, Kimi
+## Model accounts: ChatGPT plan, OpenAI API, Claude, and Kimi
 
 **Local Ollama is the default and stays the default.** A fresh install talks to
 your own machine and nothing else; hosted providers only ever come into play
 once you add an account, and removing the last one drops you straight back to
 local. The model picker always opens with the local section first.
 
-Every hosted provider here is authenticated with an **API key you supply**.
-Locus does not sign in to anyone's account and does not carry OAuth
-credentials. In **Settings ▸ Accounts** — or **Manage Accounts** in the
-sidebar — choose **Add Account…** and pick a provider:
+In **Settings ▸ Accounts** — or **Manage Accounts** in the sidebar — choose
+**Add Account…** and pick one of these distinct routes:
 
-| Provider | Endpoint | Where the key comes from |
+| Account | Authentication | Service |
 | --- | --- | --- |
-| Claude (Anthropic) | `https://api.anthropic.com/v1` | console.anthropic.com |
-| Codex (OpenAI) | `https://api.openai.com/v1` | platform.openai.com |
-| Kimi (Moonshot AI) | `https://api.moonshot.ai/v1` | platform.moonshot.ai |
-| Kimi Code (Moonshot AI) | `https://api.kimi.com/coding/v1` | Kimi Code Console |
-| Custom endpoint | whatever you paste | your own host |
+| ChatGPT plan | OpenAI-managed browser sign-in; no API key | Included usage and limits from the signed-in ChatGPT workspace |
+| OpenAI API | API key from [platform.openai.com](https://platform.openai.com/api-keys) | `https://api.openai.com/v1` |
+| Claude (Anthropic) | API key from [console.anthropic.com](https://console.anthropic.com/settings/keys) | `https://api.anthropic.com/v1` |
+| Kimi (Moonshot AI) | API key from [platform.moonshot.ai](https://platform.moonshot.ai/console/api-keys) | `https://api.moonshot.ai/v1` |
+| Kimi Code (Moonshot AI) | Key from the Kimi Code Console | `https://api.kimi.com/coding/v1` |
+| Custom endpoint | API key from your host | Whatever OpenAI-compatible URL you paste |
+
+**ChatGPT plan** and **OpenAI API** are deliberately separate. ChatGPT sign-in
+uses subscription access; API-key use is billed by the OpenAI Platform. Locus
+never converts one into the other and never falls back from ChatGPT-plan usage
+to an API key. Existing accounts stored under the historical `codex` value
+continue to work unchanged and now appear as **OpenAI API**.
+
+Choose **Sign in with ChatGPT** and complete OpenAI's browser flow. The bundled
+helper refreshes that session, lists the account's available models, and reports
+plan status and usage. Locus supports one signed-in ChatGPT identity in this
+release; it can be selected for ordinary chats, agent-team roles, and
+evaluations. Sign-out visibly returns active ChatGPT routes to local Ollama and
+does not delete Locus transcripts.
+
+The integration uses OpenAI's official [Codex App
+Server](https://learn.chatgpt.com/docs/app-server) over local JSONL/stdio and
+the official [ChatGPT authentication
+flow](https://learn.chatgpt.com/docs/auth#openai-authentication). Some of the
+tool-bridging interface is experimental, so Locus pins OpenAI Codex
+`rust-v0.147.0` and treats version or protocol mismatches as visible errors
+instead of trying another paid route.
 
 **Kimi Code** is the one whose key bills against a subscription rather than
 per token: its keys come from the Kimi Code Console and draw on a Kimi
@@ -320,18 +375,16 @@ membership. It is still a key you paste, just a differently billed one. It is a
 separate account type from **Kimi** — different host, different key, different
 models — and the two keys are not interchangeable.
 
-There is no equivalent for Claude or Codex, and this is a rule rather than a
-gap. Anthropic does not permit third-party apps to sign in with a Claude.ai
-account or to route requests through Pro or Max plan credentials, so Claude
-accounts need a console API key; the account editor says so and links to their
-terms. Codex accounts likewise use an OpenAI API key.
+There is no managed Claude.ai sign-in here. Claude accounts use Anthropic
+console API keys; the account editor says so and links to their terms.
 
-Give the account a name — "Work", "Personal" — paste its API key, and it joins
-the model picker as its own section. **You can add as many accounts as you
+Give an API account a name — "Work", "Personal" — paste its key, and it joins
+the model picker as its own section. **You can add as many API accounts as you
 like, including several for the same provider**: two Claude keys appear as
 "Claude — Work" and "Claude — Personal", each with its own models, and the
 picker's checkmark tracks the account as well as the model, so identically
-named models never blur together.
+named models never blur together. The ChatGPT-plan identity remains the one
+single-account exception.
 
 Choosing a model routes the session through that account. Choosing one during a
 turn is held until the turn finishes rather than refused, because the agent
@@ -379,16 +432,18 @@ and any combined fix requested after review. Each coding profile keeps its own
 provider, model, MCP policy, and access ceiling, while the global Ask / Accept
 Edits / Bypass permission choice remains in force.
 
-**Test Connection** confirms the account answers before you send a message,
+**Test Connection** confirms an API account answers before you send a message,
 and reports the actual reason when it does not — a rejected key, a wrong URL,
 or a scaled-to-zero GPU that is still waking up. For providers that publish no
 model listing, it sends a one-token completion instead, which is the only thing
-that really proves a key works.
+that really proves a key works. The ChatGPT-plan editor instead shows managed
+sign-in status with Refresh, Cancel Login, and Sign Out controls.
 
-Claude uses Anthropic's native Messages protocol; the other built-in hosted
-providers and custom endpoints use their documented OpenAI-compatible routes.
+Claude uses Anthropic's native Messages protocol; the API-key-backed OpenAI,
+Kimi, and custom providers use their documented OpenAI-compatible routes.
 Authenticated non-loopback endpoints must use HTTPS, and provider redirects are
-refused so credentials can never follow a response to a different URL.
+refused so credentials can never follow a response to a different URL. The
+ChatGPT-plan route uses App Server rather than either raw inference protocol.
 
 Locus identifies itself as `Locus/<version>` on every request it makes,
 including the pages the model browses. That is a fixed value rather than a
@@ -427,25 +482,35 @@ Windows measured on one host are remembered for that host alone, so a model
 served at 32K on the LAN box does not report 32K when the same model is served
 at 4K here.
 
-### About the keys
+### Credential storage
 
-Each account keeps its key in `~/.locus/auth.json`, in its own entry, and passes
-it to the local agent process in memory. The file is mode `0600` inside a `0700`
-directory, so no other account on the Mac can read it; in the sandboxed App
-Store build it lives in the app container instead. A key is never written to the
-agent's config, never returned by any API, and only ever sent to its own
-provider. Removing an account deletes its key with it.
+Each API account keeps its key in `~/.locus/auth.json`, in its own entry, and
+passes it to the local agent process in memory. The file is mode `0600` inside a
+`0700` directory, so no other user account on the Mac can read it; in the
+sandboxed App Store build it lives in the app container instead. A key is never
+written to the agent's config, never returned by any API, and only ever sent to
+its own provider. Removing an API account deletes its key with it.
+
+ChatGPT-plan OAuth credentials are different. OpenAI's bundled helper owns and
+refreshes them in a separate file-backed `CODEX_HOME` under
+`~/Library/Application Support/Locus/Codex` (or the app container). Swift
+models, Locus's API-key store, team manifests, transcripts, logs, and provider
+routes never receive those token values. Locus writes only the helper's local
+policy file; it does not read or rewrite `auth.json`. Signing out asks the
+helper to clear its managed session.
 
 Be clear about what that does and does not buy you. File permissions keep the
-keys away from *other users* of the machine. They do not keep them away from
-anything running as **you** — any program you launch can read that file. Earlier
+credentials away from *other users* of the machine. They do not keep them away
+from anything running as **you** — any program you launch can read those files
+in the direct-download build. Earlier
 releases used the login keychain, which added per-application access control and
-an authorization prompt; this does not. That is the same trade Codex makes with
-`~/.codex/auth.json`, and it is a real reduction in protection, not a wash. If no key is passed that way, the
-agent falls back to the first of `LOCUS_REMOTE_API_KEY`, `OLLAMA_CODE_API_KEY`,
-`HF_TOKEN`, `HUGGING_FACE_HUB_TOKEN`, or `OPENAI_API_KEY` in its own
-environment — that is how you supply one when running the agent from a
-terminal.
+an authorization prompt; these file-backed stores do not. That is a real
+reduction in protection, not a wash. If no API key is passed from Locus, the
+agent falls back to the first of `LOCUS_REMOTE_API_KEY`,
+`OLLAMA_CODE_API_KEY`, `HF_TOKEN`, `HUGGING_FACE_HUB_TOKEN`, or
+`OPENAI_API_KEY` in its own environment — that is how you supply an API key
+when running the agent from a terminal. Those variables are deliberately
+removed from the managed ChatGPT helper's environment.
 
 The local REST/WebSocket service is loopback-only, rejects browser origins, and
 the app protects each launch with a fresh capability header shared only with
@@ -521,6 +586,15 @@ service does not validate `Host`, so a DNS-rebinding page could still reach
 some read endpoints. The real boundary is that the service is local-only and
 the permission system gates anything that touches your files.
 
+For a ChatGPT-plan route, that Python service lazily starts one bundled
+`codex app-server` process and communicates with it over JSONL/stdio. The
+primary service is the only helper owner; authenticated local worker brokers
+multiplex team and evaluation threads back through it. Locus disables the
+helper's native shell, file, web, apps, plugins, skills, multi-agent, analytics,
+and update surfaces, supplies Locus's system instructions, and publishes only
+the active Locus tool registry through dynamic tools. Unexpected built-in tool
+or approval requests fail the route as a protocol mismatch.
+
 The build embeds that service together with a **relocatable CPython** from
 [python-build-standalone](https://github.com/astral-sh/python-build-standalone)
 and the service's dependencies. The interpreter resolves its dylib and
@@ -539,9 +613,9 @@ folder**. The bundled copy wins whenever its files are present.
 
 Download `Locus-macOS.zip` from [locushost.co](https://locushost.co) or this
 repository's Releases page, move Locus to Applications, and open it. The agent
-runtime and its Python are inside the app, so there is nothing else to install —
-you only need [Ollama](https://ollama.com) (or a remote endpoint) for the
-models. Releases up to 1.5.1 were published from the old `locus-macos`
+runtime, Python, and managed ChatGPT helpers are inside the app, so there is
+nothing else to install — choose Ollama, a ChatGPT plan, or an API-backed
+endpoint for models. Releases up to 1.5.1 were published from the old `locus-macos`
 repository and required Homebrew's `python@3.14`; builds from this repository
 do not.
 
@@ -575,6 +649,7 @@ Everything the app needs lives in this repository:
 ```text
 locus/
 ├── project.yml     # xcodegen spec — regenerate after adding/removing files
+├── Config/         # app and helper signing entitlements
 ├── Locus/          # the SwiftUI app
 ├── LocusTests/     # unit tests
 ├── LocusUITests/   # UI tests
@@ -593,11 +668,30 @@ cd ~/Documents/locus && xcodegen generate
 ```
 
 Open `Locus.xcodeproj`, select the Locus scheme, and run **My Mac**. The
-project was built and verified with Xcode 26. The first build downloads a
-relocatable CPython (~26 MB, from python-build-standalone) into
-`.agent-runtime/`, installs the agent's dependencies into it, and embeds the
-result; later builds — including offline ones — reuse that cache. No Python
-needs to be installed for this.
+project was built and verified with Xcode 26. Source builds require
+[Rust through rustup](https://rustup.rs/) because Locus builds its pinned Codex
+App Server instead of trusting an installed Codex or ChatGPT app:
+
+```bash
+rustup toolchain install 1.95.0 --profile minimal --component rust-src
+rustup target add aarch64-apple-darwin x86_64-apple-darwin --toolchain 1.95.0
+```
+
+The OpenAI source includes `rust-toolchain.toml`, so the build automatically
+uses Rust/Cargo 1.95 even if a newer stable toolchain is your default. The first
+build downloads a relocatable CPython (~26 MB), the checksum-pinned OpenAI
+Codex `rust-v0.147.0` source, and OpenAI's pinned V8 artifacts, then compiles
+`codex` and `codex-code-mode-host` for the requested architectures. That first
+Rust compile can take tens of minutes per architecture. Later builds reuse
+`.agent-runtime/` and `.codex-app-server/`; when inputs and architectures have
+not changed, helper preparation is effectively immediate and works offline.
+No system Python needs to be installed.
+
+Build both helper architectures up front when preparing a universal artifact:
+
+```bash
+LOCUS_CODEX_ARCHS="arm64 x86_64" Tools/PrepareCodexAppServer.sh
+```
 
 The bundling step takes environment overrides:
 
@@ -611,6 +705,9 @@ LOCUS_BUNDLE_MODE=skip xcodebuild -project Locus.xcodeproj -scheme Locus
 
 # Bundle an agent checkout from another location:
 LOCUS_BACKEND_ROOT=/path/to/agent xcodebuild -project Locus.xcodeproj -scheme Locus
+
+# Skip only the managed ChatGPT helper for a quick UI-only development build:
+LOCUS_BUNDLE_CODEX=skip xcodebuild -project Locus.xcodeproj -scheme Locus
 ```
 
 Working on the agent itself needs a venv (any Python 3.10 or newer):
@@ -651,8 +748,8 @@ xcodebuild \
 cd agent && .venv/bin/python -m pytest -q
 ```
 
-The repository currently contains 255 unit tests, 33 UI tests, and 403 backend
-test cases.
+The repository currently contains 376 Swift unit tests, 42 UI tests, and 458
+collected backend test cases.
 
 The unit suite covers work modes, lightweight context migration, session
 acknowledgements and retry branches, recoverable session clearing, Hugging Face
@@ -664,19 +761,26 @@ local execution, thinking-block and markdown-fragment parsing, diff detection,
 inspector width clamping and settings round-trips, agent/team validation,
 orchestration-budget compatibility, managed-run state, MCP callback validation,
 telemetry defaults, console output assembly and its bounded buffer, and the rule
-that a run badges a tab instead of switching to it. The UI suite checks Clear
+that a run badges a tab instead of switching to it. It also covers legacy
+OpenAI-account decoding, managed ChatGPT provider payloads, the one-account
+rule, and usage/status formatting. The UI suite checks Clear
 Chat, Clear Saved Sessions, the Local Model Library, message actions and rewind,
 session organization, archived filtering,
 recent workspaces, context controls, prompt history, the slash command popup,
 the shortcuts sheet, command-palette keyboard navigation, and the inspector —
 collapse and restore, `⌘1`–`⌘8`, the Changes, Files, Checkpoints, Runs, and
-AGENTS.md tabs, and the console — through accessibility identifiers. The backend
-suite covers the tools,
+AGENTS.md tabs, and the console — through accessibility identifiers. It also
+clicks the left and center of every account row, types and pastes exact values,
+and verifies both Settings-to-Hugging-Face presentation paths. The backend suite
+covers the tools,
 permission modes and the deny list, streaming, session metadata and trash
 recovery, most HTTP endpoints, the git status and diff endpoints, the console
 protocol, the WebSocket handshake, durable run storage, capabilities, recovery,
 evaluations, routing telemetry, local knowledge, modern MCP behavior, and the
-agent loop end to end against a scripted model.
+agent loop end to end against a scripted model. A deterministic fake App Server
+additionally exercises JSONL correlation, managed authentication, models and
+usage, dynamic tools, permission denial, interruption, restart, thread resume,
+reasoning-summary mapping, protocol rejection, and transcript deduplication.
 
 UI tests drive a real window, so run them from a terminal with UI automation
 permission — not from a sandboxed shell, where the app launches without a
@@ -695,9 +799,11 @@ LOCUS_NOTARIZE=1 Tools/PackageRelease.sh /path/to/Locus.app artifacts/direct/Loc
 ```
 
 `PackageRelease.sh` signs in an order that cannot ship a broken seal: every
-Mach-O in the bundled runtime first, then the app, verify, exercise the runtime,
-verify again — so a bundle dirtied by its own import check fails the build
-rather than the user's launch. With `LOCUS_NOTARIZE=1` it submits to Apple,
+Mach-O in the bundled runtime and both Codex helpers first, then the app,
+verify, exercise the runtime, verify again — so a bundle dirtied by its own
+import check fails the build rather than the user's launch. The companion
+code-mode host receives the JIT entitlements V8 requires; App Store helpers
+also inherit the app sandbox. With `LOCUS_NOTARIZE=1` it submits to Apple,
 waits, staples the ticket into the `.app`, rebuilds the zip, and then checks
 that a fresh extraction still passes `spctl` and carries the ticket. Signing
 identity comes from `LOCUS_SIGN_IDENTITY`, else the first Developer ID
@@ -746,7 +852,10 @@ than a confusing authentication error later.
 
 Every archive runs `Tools/AuditDistribution.sh` before export. The audit
 rejects unused GPL-licensed GNU gdbm content, the broken Tk extension, and
-missing third-party license materials. The component inventory is in
+missing third-party license materials. It also verifies the pinned Codex
+source, normalized Cargo lockfile, V8 inputs, helper architecture and SHA-256
+provenance, signatures, sandbox inheritance, and code-mode JIT entitlements.
+The component inventory is in
 `Locus/Resources/ThirdPartyNotices.md`; release history and remaining App
 Store work are documented in `Docs/APP-STORE-RELEASE-2026-07-29.md`.
 
@@ -759,6 +868,14 @@ communicates with that service through REST and WebSocket endpoints on
 one WebSocket for the turn — streamed tokens, proposed tool calls, permission
 requests, and plan updates — and for the console, which shares that socket but
 runs outside the turn, so a command keeps streaming while the model works.
+
+The managed ChatGPT path adds one lazily started, version-checked Codex App
+Server child process over JSONL/stdio. OAuth state remains in its isolated
+Locus `CODEX_HOME`; Locus persists only helper thread IDs, protocol/history
+revisions, and tool-schema fingerprints. If helper history is missing or no
+longer compatible, the Python service rebuilds it from the canonical Locus
+transcript. Dedicated team workers use the launch-scoped authenticated local
+broker instead of starting helpers or receiving OAuth credentials themselves.
 
 Conversations are append-only JSONL under `~/.ollama-code/sessions`. Titles,
 pins, and archive flags live in a sidecar manifest, so renaming a conversation
@@ -782,8 +899,10 @@ not grant rights to the project's trademarks. The name *Locus* and the SparkTale
 identity are not part of what the license gives away.
 
 The app bundles third-party components — CPython and its statically linked
-libraries, and 41 pinned Python packages — which remain under their own licenses.
-The inventory, versions and licenses are in
+libraries, 41 pinned Python packages, and OpenAI Codex App Server plus its
+companion code-mode host — which remain under their own licenses. The Codex
+helpers are built from checksum-pinned Apache-2.0 source and ship with upstream
+license, notice, and build provenance. The inventory, versions and licenses are in
 [Locus/Resources/ThirdPartyNotices.md](Locus/Resources/ThirdPartyNotices.md), the
 full texts ship inside the app, and `Tools/AuditDistribution.sh` fails a release
 that omits them. Ollama, hosted models and model weights are not distributed with

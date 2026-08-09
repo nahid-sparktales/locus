@@ -78,6 +78,20 @@ Each package's complete license text is retained in its installed
 The SOCKS proxy packages' license texts are additionally retained at
 `ThirdPartyLicenses/pysocks-1.7.1/` and `ThirdPartyLicenses/socksio-1.0.0/`.
 
+## OpenAI Codex App Server
+
+Locus includes the `codex app-server` helper built from OpenAI Codex release
+`rust-v0.147.0`. It is used only for OpenAI-managed ChatGPT authentication and
+agent turns selected by the user.
+
+- Source: https://github.com/openai/codex/releases/tag/rust-v0.147.0
+- Version: 0.147.0
+- License: Apache License 2.0
+- License and upstream notice: `ThirdPartyLicenses/openai-codex-0.147.0/`
+
+The app bundle also contains `CodexAppServerProvenance.txt`, recording the
+pinned source archive, Cargo lockfile, and helper binary SHA-256 digests.
+
 Ollama, Hugging Face services, hosted models, and model weights are not
 distributed with Locus. Locus only connects to services configured by the
 user.

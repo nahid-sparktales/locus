@@ -7,6 +7,8 @@ setopt null_glob
 app="${1:?usage: AuditDistribution.sh <Locus.app>}"
 resources="${app}/Contents/Resources"
 runtime="${resources}/AgentRuntime"
+codex_helper="${app}/Contents/Helpers/codex"
+code_mode_host="${app}/Contents/Helpers/codex-code-mode-host"
 licenses="${resources}/ThirdPartyLicenses/python-build-standalone-20260728"
 
 [[ -d "${runtime}" ]] || {
@@ -23,6 +25,73 @@ licenses="${resources}/ThirdPartyLicenses/python-build-standalone-20260728"
 }
 [[ -f "${resources}/BuildProvenance.txt" ]] || {
     echo "error: BuildProvenance.txt is missing from the app" >&2
+    exit 1
+}
+[[ -x "${codex_helper}" ]] || {
+    echo "error: bundled Codex App Server helper is missing" >&2
+    exit 1
+}
+[[ -x "${code_mode_host}" ]] || {
+    echo "error: bundled Codex code-mode host is missing" >&2
+    exit 1
+}
+[[ -f "${resources}/CodexAppServerProvenance.txt" ]] || {
+    echo "error: Codex App Server provenance is missing" >&2
+    exit 1
+}
+[[ -f "${resources}/ThirdPartyLicenses/openai-codex-0.147.0/LICENSE" ]] || {
+    echo "error: Codex App Server Apache license is missing" >&2
+    exit 1
+}
+[[ -f "${resources}/ThirdPartyLicenses/openai-codex-0.147.0/NOTICE" ]] || {
+    echo "error: Codex App Server upstream notice is missing" >&2
+    exit 1
+}
+for pin in \
+    "tag=rust-v0.147.0" \
+    "version=0.147.0" \
+    "source_sha256=355bde4b40d5ba6deea2e469d36f91708315729f3e84c9c69cce6b041a5ba593" \
+    "upstream_cargo_lock_sha256=eeab4e9d3466da54037032251e2f13ad1ed11eae18bb8ee7dd2c89dbb86f645d" \
+    "cargo_lock_normalization=workspace_versions_0.0.0_to_0.147.0" \
+    "cargo_lock_sha256=bc4fe450de929afe82928734f860ca83e5f9dc5f9f1211b0974ea47b57af77ca" \
+    "v8_version=150.4.0" \
+    "v8_aarch64_archive_sha256=00adbb48798848c77550441c68673a5e8529b8e1b73eabcdee232cb39b40f4a1" \
+    "v8_aarch64_binding_sha256=ca5adf0cf89c9a70ad460ae73648b2fe89b74aa113b3cb7f757b6a02b758394f" \
+    "v8_x86_64_archive_sha256=e0d9bb64e8b3a034c2930c83972f3f35760211148342fa0407b38250ef330856" \
+    "v8_x86_64_binding_sha256=ca5adf0cf89c9a70ad460ae73648b2fe89b74aa113b3cb7f757b6a02b758394f"
+do
+    /usr/bin/grep -Fq -- "${pin}" "${resources}/CodexAppServerProvenance.txt" || {
+        echo "error: Codex helper provenance is missing ${pin}" >&2
+        exit 1
+    }
+done
+expected_helper_sha="$(/usr/bin/awk -F= '$1 == "binary_sha256" { print $2 }' \
+    "${resources}/CodexAppServerProvenance.txt")"
+actual_helper_sha="$(/usr/bin/shasum -a 256 "${codex_helper}" | /usr/bin/awk '{print $1}')"
+[[ -n "${expected_helper_sha}" && "${expected_helper_sha}" == "${actual_helper_sha}" ]] || {
+    echo "error: bundled Codex helper checksum does not match provenance" >&2
+    exit 1
+}
+expected_code_mode_host_sha="$(/usr/bin/awk -F= '$1 == "code_mode_host_sha256" { print $2 }' \
+    "${resources}/CodexAppServerProvenance.txt")"
+actual_code_mode_host_sha="$(/usr/bin/shasum -a 256 "${code_mode_host}" | /usr/bin/awk '{print $1}')"
+[[ -n "${expected_code_mode_host_sha}" \
+    && "${expected_code_mode_host_sha}" == "${actual_code_mode_host_sha}" ]] || {
+    echo "error: bundled Codex code-mode host checksum does not match provenance" >&2
+    exit 1
+}
+expected_archs="$(/usr/bin/awk -F= '$1 == "architectures" { print $2 }' \
+    "${resources}/CodexAppServerProvenance.txt")"
+actual_archs="$(/usr/bin/lipo -archs "${codex_helper}" | /usr/bin/tr ' ' '\n' \
+    | /usr/bin/sort -u | /usr/bin/tr '\n' ' ' | /usr/bin/sed 's/ $//')"
+[[ -n "${expected_archs}" && "${expected_archs}" == "${actual_archs}" ]] || {
+    echo "error: bundled Codex helper architectures do not match provenance" >&2
+    exit 1
+}
+actual_code_mode_host_archs="$(/usr/bin/lipo -archs "${code_mode_host}" | /usr/bin/tr ' ' '\n' \
+    | /usr/bin/sort -u | /usr/bin/tr '\n' ' ' | /usr/bin/sed 's/ $//')"
+[[ "${expected_archs}" == "${actual_code_mode_host_archs}" ]] || {
+    echo "error: bundled Codex code-mode host architectures do not match provenance" >&2
     exit 1
 }
 
@@ -105,5 +174,35 @@ if /usr/bin/codesign -d --entitlements "${entitlements}" "${app}" >/dev/null 2>&
         }
     done
 fi
+
+for sealed_helper in "${codex_helper}" "${code_mode_host}"; do
+    helper_entitlements="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-helper-entitlements.XXXXXX")"
+    if /usr/bin/codesign -d --entitlements "${helper_entitlements}" \
+        "${sealed_helper}" >/dev/null 2>&1; then
+        if /usr/bin/plutil -extract com.apple.security.app-sandbox raw -o - \
+            "${entitlements}" >/dev/null 2>&1; then
+            inherit="$(/usr/bin/plutil -extract com.apple.security.inherit raw -o - \
+                "${helper_entitlements}" 2>/dev/null || true)"
+            [[ "${inherit}" == "true" ]] || {
+                echo "error: sandboxed Codex helper is not signed with inherit: ${sealed_helper:t}" >&2
+                exit 1
+            }
+        fi
+        if [[ "${sealed_helper}" == "${code_mode_host}" ]]; then
+            for required_jit_entitlement in \
+                com.apple.security.cs.allow-jit \
+                com.apple.security.cs.allow-unsigned-executable-memory
+            do
+                enabled="$(/usr/bin/plutil -extract "${required_jit_entitlement}" raw -o - \
+                    "${helper_entitlements}" 2>/dev/null || true)"
+                [[ "${enabled}" == "true" ]] || {
+                    echo "error: Codex code-mode host is missing ${required_jit_entitlement}" >&2
+                    exit 1
+                }
+            done
+        fi
+    fi
+    /bin/rm -f "${helper_entitlements}"
+done
 
 echo "Distribution audit passed: notices present; gdbm and tkinter absent."

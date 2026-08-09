@@ -1211,6 +1211,39 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testChatGPTProviderRequestBodyContainsOnlyManagedAccountMetadata() {
+        let model = AppModel(startImmediately: false)
+        let account = ProviderAccount(
+            kind: .chatGPT,
+            name: "Personal",
+            preferredModel: "gpt-5.3-codex"
+        )
+        model.saveProviderAccount(account, apiKey: "must-not-be-used")
+        model.settings.activeAccountID = account.id.uuidString
+
+        let body = model.providerRequestBody()
+
+        XCTAssertEqual(body["provider"] as? String, "chatgpt")
+        XCTAssertEqual(body["account_id"] as? String, account.id.uuidString)
+        XCTAssertEqual(body["account_label"] as? String, "ChatGPT plan — Personal")
+        XCTAssertEqual(body["model"] as? String, "gpt-5.3-codex")
+        XCTAssertNil(body["api_key"])
+        XCTAssertNil(body["base_url"])
+        XCTAssertNil(body["context_window"])
+        XCTAssertFalse(CredentialStore.has(account: account.keychainAccount))
+    }
+
+    @MainActor
+    func testOnlyOneChatGPTPlanAccountCanBeSaved() {
+        let model = AppModel(startImmediately: false)
+        model.saveProviderAccount(ProviderAccount(kind: .chatGPT, name: "First"), apiKey: nil)
+        model.saveProviderAccount(ProviderAccount(kind: .chatGPT, name: "Second"), apiKey: nil)
+
+        XCTAssertEqual(model.providerAccounts.filter { $0.kind == .chatGPT }.count, 1)
+        XCTAssertEqual(model.providerAccounts.first?.name, "First")
+    }
+
+    @MainActor
     func testProviderRequestBodySendsTheUsersWindowAndThePublishedOneSeparately() {
         // The regression test for the bug at the layer that caused it. These two
         // facts used to be collapsed into one field, so our own table's figure

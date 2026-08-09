@@ -124,7 +124,7 @@ struct LocusApp: App {
         }
 
         Settings {
-            SettingsView()
+            SettingsView(presentationContext: .settingsWindow)
                 .environmentObject(model)
         }
     }
@@ -332,8 +332,10 @@ struct RootView: View {
             CheckpointSheet()
                 .environmentObject(model)
         }
-        .sheet(isPresented: $model.settingsPresented) {
-            SettingsView()
+        .sheet(isPresented: $model.settingsPresented, onDismiss: {
+            model.completeSettingsDismissal()
+        }) {
+            SettingsView(presentationContext: .sheet)
                 .environmentObject(model)
         }
         .sheet(isPresented: $model.usageDashboardPresented) {

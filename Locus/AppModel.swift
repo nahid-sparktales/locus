@@ -93,6 +93,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var providerAccounts: [ProviderAccount] = []
     @Published private(set) var accountModels: [UUID: [String]] = [:]
     @Published private(set) var accountStatus: [UUID: ProviderAccountStatus] = [:]
+    @Published private(set) var chatGPTAccount: ChatGPTAccountResponse?
+    @Published private(set) var chatGPTUsage: ChatGPTUsageResponse?
+    @Published private(set) var chatGPTLoginID: String?
     @Published private(set) var agentProfiles: [AgentProfile] = []
     @Published private(set) var agentTeams: [AgentTeam] = []
     @Published private(set) var teamRoutingConsentAccountIDs: Set<UUID> = []
@@ -266,6 +269,7 @@ final class AppModel: ObservableObject {
     @Published var usageSummary: UsageSummary?
     @Published var settingsPage: SettingsPage = .general
     @Published var modelLibraryPresented = false
+    private var modelLibraryPendingSettingsDismissal = false
     @Published var commandPalettePresented = false
     @Published var checkpointPresented = false
     @Published var clearChatConfirmationPresented = false
@@ -2265,8 +2269,23 @@ final class AppModel: ObservableObject {
         guard !due.isEmpty else { return }
         let now = Date()
         for account in due { accountCatalogFetchedAt[account.id] = now }
+        for account in due where account.kind == .chatGPT {
+            do {
+                let response = try await backend.get(
+                    "/api/chatgpt/models",
+                    as: ChatGPTModelsResponse.self
+                )
+                let names = response.models.map(\.id)
+                accountModels[account.id] = names.isEmpty ? account.kind.curatedModels : names
+                await refreshChatGPTAccount()
+            } catch {
+                accountModels[account.id] = account.kind.curatedModels
+                accountStatus[account.id] = .runtimeUnavailable(error.localizedDescription)
+            }
+        }
+        let endpointAccounts = due.filter { $0.kind != .chatGPT }
         await withTaskGroup(of: (UUID, ProviderModelCatalog.Result).self) { group in
-            for account in due {
+            for account in endpointAccounts {
                 group.addTask { (account.id, await ProviderModelCatalog.fetch(for: account)) }
             }
             for await (id, result) in group {
@@ -3270,14 +3289,22 @@ final class AppModel: ObservableObject {
                 guard let account = providerAccounts.first(where: { $0.id == accountID }),
                       account.hasKey
                 else { return nil }
-                route = [
-                    "provider": "remote",
-                    "base_url": account.resolvedBaseURL,
-                    "api_key": CredentialStore.get(account: account.keychainAccount) ?? "",
-                    "auth_style": account.kind.authStyle,
-                    "lists_models": account.kind.listsModels,
-                    "account_label": account.displayName,
-                ]
+                if account.kind == .chatGPT {
+                    route = [
+                        "provider": "chatgpt",
+                        "account_id": account.id.uuidString,
+                        "account_label": account.displayName,
+                    ]
+                } else {
+                    route = [
+                        "provider": "remote",
+                        "base_url": account.resolvedBaseURL,
+                        "api_key": CredentialStore.get(account: account.keychainAccount) ?? "",
+                        "auth_style": account.kind.authStyle,
+                        "lists_models": account.kind.listsModels,
+                        "account_label": account.displayName,
+                    ]
+                }
             }
             var entry: [String: Any] = [
                 "id": profile.id.uuidString,
@@ -3289,7 +3316,9 @@ final class AppModel: ObservableObject {
                 "access_ceiling": profile.accessCeiling.rawValue,
                 "timeout_seconds": profile.timeoutSeconds,
                 "token_limit": profile.tokenLimit,
-                "metering": profile.metering.rawValue,
+                "metering": route["provider"] as? String == "chatgpt"
+                    ? AgentMetering.selfHosted.rawValue
+                    : profile.metering.rawValue,
                 "route": route,
             ]
             if let rate = profile.inputCostPerMillion { entry["input_cost_per_million"] = rate }
@@ -4340,13 +4369,20 @@ final class AppModel: ObservableObject {
     /// editor so an abandoned sheet leaves nothing behind; `apiKey` nil means
     /// "keep the saved one".
     func saveProviderAccount(_ account: ProviderAccount, apiKey: String?) {
-        let effectiveKey = apiKey ?? CredentialStore.get(account: account.keychainAccount) ?? ""
-        if let error = RemoteEndpointTester.securityError(
-            baseURL: account.resolvedBaseURL,
-            apiKey: effectiveKey
-        ) {
-            showToast(error)
-            return
+        if account.kind == .chatGPT {
+            if providerAccounts.contains(where: { $0.kind == .chatGPT && $0.id != account.id }) {
+                showToast("Only one ChatGPT plan account can be added")
+                return
+            }
+        } else {
+            let effectiveKey = apiKey ?? CredentialStore.get(account: account.keychainAccount) ?? ""
+            if let error = RemoteEndpointTester.securityError(
+                baseURL: account.resolvedBaseURL,
+                apiKey: effectiveKey
+            ) {
+                showToast(error)
+                return
+            }
         }
         var updated = account
         updated.name = ProviderAccountStore.uniqueName(
@@ -4360,7 +4396,7 @@ final class AppModel: ObservableObject {
         } else {
             providerAccounts.append(updated)
         }
-        if let apiKey {
+        if let apiKey, updated.kind.requiresAPIKey {
             CredentialStore.set(apiKey, account: updated.keychainAccount)
         }
         persistProviderAccounts()
@@ -4374,6 +4410,122 @@ final class AppModel: ObservableObject {
             }
         }
         showToast("Saved \(updated.displayName)")
+    }
+
+    func refreshChatGPTAccount(forceTokenRefresh: Bool = false) async {
+        let query = forceTokenRefresh
+            ? [URLQueryItem(name: "refresh", value: "true")]
+            : []
+        do {
+            let state = try await backend.get(
+                "/api/chatgpt/account",
+                query: query,
+                as: ChatGPTAccountResponse.self
+            )
+            chatGPTAccount = state
+            let status: ProviderAccountStatus = switch state.status {
+            case "signed_in": .signedIn(email: state.email, plan: state.planType)
+            case "runtime_unavailable":
+                .runtimeUnavailable(state.message ?? "The ChatGPT runtime is unavailable")
+            case "signing_in": .signingIn
+            default: .signedOut
+            }
+            for account in providerAccounts where account.kind == .chatGPT {
+                accountStatus[account.id] = status
+            }
+            if state.status == "signed_in" {
+                chatGPTLoginID = nil
+                await refreshChatGPTUsage()
+            }
+        } catch {
+            let status = ProviderAccountStatus.runtimeUnavailable(error.localizedDescription)
+            for account in providerAccounts where account.kind == .chatGPT {
+                accountStatus[account.id] = status
+            }
+        }
+    }
+
+    func startChatGPTLogin() async {
+        do {
+            let response = try await backend.post(
+                "/api/chatgpt/login/start",
+                body: [:],
+                as: ChatGPTLoginResponse.self
+            )
+            chatGPTLoginID = response.loginID
+            for account in providerAccounts where account.kind == .chatGPT {
+                accountStatus[account.id] = .signingIn
+            }
+            guard let url = URL(string: response.authURL), NSWorkspace.shared.open(url) else {
+                showToast("Could not open the ChatGPT sign-in page")
+                return
+            }
+        } catch {
+            showToast("Could not start ChatGPT sign-in: \(error.localizedDescription)")
+            await refreshChatGPTAccount()
+        }
+    }
+
+    func cancelChatGPTLogin() async {
+        guard let loginID = chatGPTLoginID else { return }
+        do {
+            let state = try await backend.post(
+                "/api/chatgpt/login/cancel",
+                body: ["login_id": loginID],
+                as: ChatGPTAccountResponse.self
+            )
+            chatGPTLoginID = nil
+            chatGPTAccount = state
+            await refreshChatGPTAccount()
+        } catch {
+            showToast("Could not cancel ChatGPT sign-in: \(error.localizedDescription)")
+        }
+    }
+
+    func signOutChatGPT() async {
+        do {
+            let state = try await backend.post(
+                "/api/chatgpt/logout",
+                body: [:],
+                as: ChatGPTAccountResponse.self
+            )
+            chatGPTAccount = state
+            chatGPTLoginID = nil
+            for account in providerAccounts where account.kind == .chatGPT {
+                accountStatus[account.id] = .signedOut
+            }
+            if activeAccount?.kind == .chatGPT {
+                settings.activeAccountID = nil
+                await applyProvider(announce: false)
+            }
+        } catch {
+            showToast("Could not sign out of ChatGPT: \(error.localizedDescription)")
+        }
+    }
+
+    func refreshChatGPTUsage() async {
+        guard providerAccounts.contains(where: { $0.kind == .chatGPT }) else {
+            chatGPTUsage = nil
+            return
+        }
+        do {
+            let usage = try await backend.get(
+                "/api/chatgpt/usage",
+                as: ChatGPTUsageResponse.self
+            )
+            chatGPTUsage = usage
+            if let window = usage.rateLimits.rateLimits?.primary,
+               window.usedPercent >= 100
+            {
+                let reset = window.resetsAt.map { Date(timeIntervalSince1970: Double($0)) }
+                for account in providerAccounts where account.kind == .chatGPT {
+                    accountStatus[account.id] = .rateLimited(resetAt: reset)
+                }
+            }
+        } catch {
+            // Usage is supplementary; the account and working providers stay
+            // available when this one read fails.
+        }
     }
 
     /// Removes an account, its key, and — if it was the one in use — the
@@ -5385,6 +5537,14 @@ final class AppModel: ObservableObject {
             body["context_window"] = settings.localContextWindow ?? 0
             return body
         }
+        if account.kind == .chatGPT {
+            return [
+                "provider": "chatgpt",
+                "account_id": account.id.uuidString,
+                "account_label": account.displayName,
+                "model": account.preferredModel,
+            ]
+        }
         return [
             "provider": "remote",
             "base_url": account.resolvedBaseURL,
@@ -5417,7 +5577,7 @@ final class AppModel: ObservableObject {
     /// writes it to its own config, so it is re-sent on every launch.
     func applyProvider(verify: Bool = false, announce: Bool = true) async {
         let account = activeAccount
-        if let account, account.resolvedBaseURL.isEmpty {
+        if let account, account.kind != .chatGPT, account.resolvedBaseURL.isEmpty {
             if announce {
                 showToast("Add the endpoint URL for \(account.displayName) in Settings")
             }
@@ -5450,7 +5610,7 @@ final class AppModel: ObservableObject {
             }
             guard announce else { return }
             showToast(
-                state.provider == "remote"
+                state.provider == "remote" || state.provider == "chatgpt"
                     ? "Using \(account?.displayName ?? shortHost(state.host))"
                     : "Using local Ollama"
             )
@@ -6421,6 +6581,19 @@ final class AppModel: ObservableObject {
         handle(event)
     }
 
+    /// SwiftUI queues a sibling sheet while Settings is still visible. Record
+    /// the destination and complete the handoff from the dismissal callback.
+    func openModelLibraryFromSettings() {
+        modelLibraryPendingSettingsDismissal = true
+        settingsPresented = false
+    }
+
+    func completeSettingsDismissal() {
+        guard modelLibraryPendingSettingsDismissal else { return }
+        modelLibraryPendingSettingsDismissal = false
+        modelLibraryPresented = true
+    }
+
     static func migrateLegacyBuildProfiles(_ profiles: [WorkspaceProfile]) -> [WorkspaceProfile] {
         profiles.map { profile in
             guard profile.mode == .build else { return profile }
@@ -6445,6 +6618,16 @@ final class AppModel: ObservableObject {
             ollamaHost: lastOllamaHost
         )
         workerEnvironment["LOCUS_MODEL_CALL_LIMIT"] = String(globalAgentConcurrency)
+        var brokerComponents = URLComponents(
+            url: backend.currentBaseURL,
+            resolvingAgainstBaseURL: false
+        )
+        brokerComponents?.scheme = backend.currentBaseURL.scheme == "https" ? "wss" : "ws"
+        brokerComponents?.path = "/ws/internal/codex"
+        if let brokerURL = brokerComponents?.url?.absoluteString {
+            workerEnvironment["LOCUS_CODEX_BROKER_URL"] = brokerURL
+            workerEnvironment["LOCUS_CODEX_BROKER_TOKEN"] = BackendSecurity.launchToken
+        }
         let launch = process.start(
             root: settings.backendRoot,
             port: 0,
@@ -6799,6 +6982,15 @@ final class AppModel: ObservableObject {
             orchestrationEvents.sort { $0.sequence < $1.sequence }
         }
         switch type {
+        case "chatgpt_account_updated":
+            Task {
+                await refreshChatGPTAccount()
+                await refreshAccountCatalogs(force: true)
+            }
+
+        case "chatgpt_usage_updated":
+            Task { await refreshChatGPTUsage() }
+
         case "worker_identity":
             activeWorkerID = event["worker_id"] as? String
 

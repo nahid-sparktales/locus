@@ -31,14 +31,22 @@ mode `0600` inside a `0700` directory. In the sandboxed Mac App Store build the
 file lives in the app container instead. Earlier versions used the macOS login
 keychain.
 
+A ChatGPT-plan sign-in is separate. The bundled OpenAI Codex helper owns and
+refreshes its OAuth credentials in a file-backed, Locus-specific `CODEX_HOME`
+under `~/Library/Application Support/Locus/Codex` (or the app container).
+Locus does not copy those tokens into Swift state, `~/.locus/auth.json`, team
+manifests, transcripts, logs, or API-key provider routes.
+
 **File permissions keep those secrets from other user accounts on the Mac and
-from nothing else.** Any program running as you can read that file. There is no
-per-application access control and no authorization prompt — the keychain
-provided those and this deliberately does not. This is a known and accepted
-trade-off, not an oversight; please do not report it as a vulnerability. A
-report that Locus writes credentials somewhere *other* than that file, exposes
-them over the network, returns them from an API, or leaves them world-readable
-is very much in scope.
+from nothing else.** In the direct-download build, any program running as you
+can read either credential file. There is no per-application access control and
+no authorization prompt — the keychain provided those and these file-backed
+stores deliberately do not. This is a known and accepted trade-off, not an
+oversight; please do not report the documented storage choice alone as a
+vulnerability. A report that Locus exposes credentials over the network,
+returns them from an API, persists them outside the two documented stores, puts
+OAuth tokens into Locus-owned state, or leaves either file world-readable is
+very much in scope.
 
 ## Scope
 

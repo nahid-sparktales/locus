@@ -37,6 +37,12 @@ from fastapi.responses import JSONResponse
 from . import __version__, gitinfo, proxy
 from .capabilities import enabled as capability_enabled
 from .capabilities import snapshot as capability_snapshot
+from .codex_app_server import (
+    CodexAppServerError,
+    CodexAppServerManager,
+    CodexBrokerClient,
+    CodexProtocolMismatch,
+)
 from .config import (
     MAX_ITERATIONS_CEILING,
     MINIMUM_CONTEXT_WINDOW,
@@ -65,6 +71,7 @@ from .orchestration import (
     TeamOrchestrator,
     TeamPreparation,
     client_for_profile,
+    configure_chatgpt_manager,
     orchestration_fingerprint,
     parse_manifest,
     writer_prompt_for_job,
@@ -141,6 +148,15 @@ class ChatService:
 
     def __init__(self, core: AgentCore) -> None:
         self.core = core
+        broker_url = os.environ.pop("LOCUS_CODEX_BROKER_URL", "").strip()
+        broker_token = os.environ.pop("LOCUS_CODEX_BROKER_TOKEN", "").strip()
+        self.codex = (
+            CodexBrokerClient(broker_url, broker_token)
+            if broker_url else CodexAppServerManager(client_version=__version__)
+        )
+        configure_chatgpt_manager(self.codex)
+        self.core.codex_manager = self.codex
+        self.codex.add_listener(self._on_codex_event)
         self.worker_id = uuid.uuid4().hex
         self.loop: asyncio.AbstractEventLoop | None = None
         self.queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -191,6 +207,14 @@ class ChatService:
             record=lambda record: self.core.session.append(record),
             config=core.config,
         )
+
+    def _on_codex_event(self, event: dict[str, Any]) -> None:
+        """Expose only account/limit invalidations, never helper payloads."""
+        method = str(event.get("method") or "")
+        if method in {"account/login/completed", "account/updated"}:
+            self.emit({"type": "chatgpt_account_updated"})
+        elif method == "account/rateLimits/updated":
+            self.emit({"type": "chatgpt_usage_updated"})
 
     def resolve_context_limit_soon(self) -> None:
         """Ask the core to settle its window off-thread, if probing is allowed."""
@@ -690,6 +714,7 @@ async def lifespan(app: FastAPI):
             # Dev servers deliberately have no deadline; shutdown is the one
             # guaranteed reaper.
             svc.dev_servers.stop_all()
+            svc.codex.close()
             svc.core.close()
 
 
@@ -746,13 +771,18 @@ def _require_capability(name: str) -> None:
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     svc = service()
-    try:
-        svc.core.client.check()
-        reachable = True
-        error = None
-    except OllamaError as e:
-        reachable = False
-        error = str(e)
+    if svc.core.provider == "chatgpt":
+        state = _chatgpt_account_payload(svc)
+        reachable = state["status"] == "signed_in"
+        error = None if reachable else state.get("message") or "ChatGPT sign-in is required"
+    else:
+        try:
+            svc.core.client.check()
+            reachable = True
+            error = None
+        except OllamaError as e:
+            reachable = False
+            error = str(e)
     return {
         "ok": True,
         "version": __version__,
@@ -1127,6 +1157,11 @@ def _run_evaluation_suite(
                     role="evaluation",
                 )
                 evaluation_service = ChatService(evaluation_core)
+                # Evaluations in a dedicated worker share that worker's
+                # authenticated proxy; they never launch another App Server.
+                evaluation_service.codex.close()
+                evaluation_service.codex = parent.codex
+                evaluation_service.core.codex_manager = parent.codex
                 evaluation_service.run_store = parent.run_store
                 evaluation_service.core.mcp.task_store = parent.run_store
                 evaluation_service.current_task = task
@@ -1386,6 +1421,133 @@ def _evaluation_changed_paths(task: TaskCheckout, current_tree: str) -> list[str
     ]
 
 
+def _chatgpt_account_payload(svc: ChatService, *, refresh: bool = False) -> dict[str, Any]:
+    """Stable, secret-free account shape for native clients."""
+    if not svc.codex.available:
+        return {
+            "status": "runtime_unavailable",
+            "runtime_available": False,
+            "message": "The bundled ChatGPT runtime is unavailable.",
+            "email": None,
+            "plan_type": None,
+        }
+    try:
+        raw = svc.codex.account(refresh=refresh)
+    except CodexAppServerError as error:
+        return {
+            "status": "runtime_unavailable",
+            "runtime_available": False,
+            "message": str(error),
+            "email": None,
+            "plan_type": None,
+        }
+    account = raw.get("account")
+    signed_in = isinstance(account, dict) and account.get("type") == "chatgpt"
+    return {
+        "status": "signed_in" if signed_in else "signed_out",
+        "runtime_available": True,
+        "runtime_version": str(raw.get("runtimeVersion") or ""),
+        "email": account.get("email") if signed_in else None,
+        "plan_type": account.get("planType") if signed_in else None,
+        "message": "" if signed_in else "Sign in to use included ChatGPT plan usage.",
+    }
+
+
+@app.get("/api/chatgpt/account")
+def chatgpt_account(refresh: bool = Query(default=False)) -> dict[str, Any]:
+    return _chatgpt_account_payload(service(), refresh=refresh)
+
+
+@app.post("/api/chatgpt/login/start")
+def chatgpt_login_start() -> dict[str, Any]:
+    svc = service()
+    try:
+        result = svc.codex.start_login()
+    except CodexAppServerError as error:
+        raise HTTPException(503, str(error)) from error
+    return {
+        "status": "signing_in",
+        "login_id": str(result.get("loginId") or ""),
+        "auth_url": str(result.get("authUrl") or ""),
+    }
+
+
+@app.post("/api/chatgpt/login/cancel")
+def chatgpt_login_cancel(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    login_id = str(body.get("login_id") or "").strip()
+    if not login_id:
+        raise HTTPException(422, "login_id is required")
+    try:
+        service().codex.cancel_login(login_id)
+    except CodexAppServerError as error:
+        raise HTTPException(409, str(error)) from error
+    return _chatgpt_account_payload(service())
+
+
+@app.post("/api/chatgpt/logout")
+def chatgpt_logout() -> dict[str, Any]:
+    svc = service()
+    try:
+        with svc.state_mutation():
+            svc.codex.logout()
+            if svc.core.provider == "chatgpt":
+                svc.core.use_ollama()
+    except AgentBusyError as error:
+        raise _busy_http() from error
+    except CodexAppServerError as error:
+        raise HTTPException(409, str(error)) from error
+    return _chatgpt_account_payload(svc)
+
+
+@app.get("/api/chatgpt/models")
+def chatgpt_models() -> dict[str, Any]:
+    svc = service()
+    account = _chatgpt_account_payload(svc)
+    if account["status"] != "signed_in":
+        return {"models": [], "status": account["status"], "message": account["message"]}
+    try:
+        rows = svc.codex.models()
+    except CodexAppServerError as error:
+        raise HTTPException(503, str(error)) from error
+    return {
+        "status": "signed_in",
+        "models": [
+            {
+                "id": str(row.get("model") or row.get("id") or ""),
+                "display_name": str(row.get("displayName") or row.get("model") or row.get("id") or ""),
+                "description": str(row.get("description") or ""),
+                "is_default": bool(row.get("isDefault")),
+            }
+            for row in rows if row.get("model") or row.get("id")
+        ],
+    }
+
+
+@app.get("/api/chatgpt/usage")
+def chatgpt_usage() -> dict[str, Any]:
+    svc = service()
+    account = _chatgpt_account_payload(svc)
+    if account["status"] != "signed_in":
+        return {
+            "status": account["status"],
+            "plan_type": account.get("plan_type"),
+            "rate_limits": {},
+            "activity": {},
+            "message": account["message"],
+        }
+    try:
+        raw = svc.codex.usage()
+    except CodexAppServerError as error:
+        raise HTTPException(503, str(error)) from error
+    return {
+        "status": "signed_in",
+        "plan_type": account.get("plan_type"),
+        "rate_limits": raw.get("rateLimits") or {},
+        "activity": raw.get("activity") or {},
+        "message": "",
+    }
+
+
 @app.post("/api/provider")
 def set_provider(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     """Switch between the local runtime and a hosted endpoint.
@@ -1404,8 +1566,8 @@ def set_provider(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str,
 def _apply_provider(svc: ChatService, body: dict[str, Any]) -> dict[str, Any]:
     """Apply a provider request after the service has reserved mutable state."""
     provider = str(body.get("provider") or "").strip().lower()
-    if provider not in ("ollama", "remote"):
-        raise HTTPException(422, "provider must be 'ollama' or 'remote'")
+    if provider not in ("ollama", "remote", "chatgpt"):
+        raise HTTPException(422, "provider must be 'ollama', 'remote', or 'chatgpt'")
 
     if provider == "ollama":
         try:
@@ -1416,6 +1578,27 @@ def _apply_provider(svc: ChatService, body: dict[str, Any]) -> dict[str, Any]:
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
         svc.resolve_context_limit_soon()
+        return svc.core.provider_state()
+
+    if provider == "chatgpt":
+        forbidden = [key for key in ("api_key", "base_url", "remote_base_url") if key in body]
+        if forbidden:
+            raise HTTPException(
+                422,
+                "the ChatGPT provider rejects API-key and base-URL fields",
+            )
+        account_id = str(body.get("account_id") or "").strip()
+        if not account_id:
+            raise HTTPException(422, "account_id is required for the ChatGPT provider")
+        try:
+            svc.core.use_chatgpt(
+                account_id=account_id,
+                model=str(body.get("model") or ""),
+                account_label=str(body.get("account_label") or "ChatGPT plan"),
+                manager=svc.codex,
+            )
+        except (ValueError, CodexAppServerError) as error:
+            raise HTTPException(409, str(error)) from error
         return svc.core.provider_state()
 
     base_url = str(body.get("base_url") or body.get("remote_base_url") or "").strip()
@@ -1455,6 +1638,28 @@ def _apply_provider(svc: ChatService, body: dict[str, Any]) -> dict[str, Any]:
 @app.get("/api/models")
 def models() -> dict[str, Any]:
     svc = service()
+    if svc.core.provider == "chatgpt":
+        try:
+            return {
+                "models": [
+                    {
+                        "name": str(item.get("model") or item.get("id") or ""),
+                        "size": 0,
+                        "parameter_size": "ChatGPT plan",
+                        "context_length": 0,
+                        "trained_context_length": 0,
+                        "vision": (
+                            "image" in item.get("inputModalities", [])
+                            if isinstance(item.get("inputModalities"), list) else None
+                        ),
+                    }
+                    for item in svc.codex.models()
+                    if item.get("model") or item.get("id")
+                ],
+                "current": svc.core.model,
+            }
+        except CodexAppServerError as error:
+            raise HTTPException(503, str(error)) from error
     try:
         raw = svc.core.client.list_models()
     except OllamaError as e:
@@ -3597,16 +3802,29 @@ def _install_writer_route(core: AgentCore, writer: AgentProfile) -> dict[str, An
         "context_source": core._context_source,
         "context_requested": core._context_requested,
         "context_for": core._context_limit_for,
+        "chatgpt_thread_id": getattr(core, "_chatgpt_thread_id", ""),
+        "chatgpt_thread_fingerprint": getattr(core, "_chatgpt_thread_fingerprint", ""),
         "mcp_policy": core.tool_registry.mcp_agent_policy_snapshot(),
     }
-    client = client_for_profile(writer)
-    core.client = client
     core.model = writer.model
-    core.host = client.host
-    core.provider = "ollama" if writer.route.get("provider") == "ollama" else "remote"
-    core.config["remote_account_label"] = str(
-        writer.route.get("account_label") or writer.name
-    ) if core.provider == "remote" else ""
+    if writer.route.get("provider") == "chatgpt":
+        core.provider = "chatgpt"
+        core.host = "chatgpt://managed"
+        core.config["chatgpt_account_id"] = str(writer.route.get("account_id") or "")
+        core.config["chatgpt_account_label"] = str(
+            writer.route.get("account_label") or writer.name
+        )
+        core.config["chatgpt_model"] = writer.model
+        core._chatgpt_thread_id = ""
+        core._chatgpt_thread_fingerprint = ""
+    else:
+        client = client_for_profile(writer)
+        core.client = client
+        core.host = client.host
+        core.provider = "ollama" if writer.route.get("provider") == "ollama" else "remote"
+        core.config["remote_account_label"] = str(
+            writer.route.get("account_label") or writer.name
+        ) if core.provider == "remote" else ""
     core.context_limit = 0
     core._context_source = "unknown"
     core._context_requested = 0
@@ -3634,6 +3852,8 @@ def _restore_writer_route(core: AgentCore, snapshot: dict[str, Any]) -> None:
     core._context_source = snapshot["context_source"]
     core._context_requested = snapshot["context_requested"]
     core._context_limit_for = snapshot["context_for"]
+    core._chatgpt_thread_id = snapshot.get("chatgpt_thread_id", "")
+    core._chatgpt_thread_fingerprint = snapshot.get("chatgpt_thread_fingerprint", "")
     policy, access_ceiling, role = snapshot["mcp_policy"]
     core.tool_registry.set_mcp_agent_policy(
         policy, access_ceiling=access_ceiling, role=role,
@@ -3940,6 +4160,138 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         svc.queue_event({"type": "pong"})
     else:
         _command_error(svc, str(mtype or "unknown"), f"unknown message type: {mtype}")
+
+
+@app.websocket("/ws/internal/codex")
+async def ws_codex_broker(ws: WebSocket) -> None:
+    """Authenticated duplex broker for isolated team worker processes."""
+    origin = ws.headers.get("origin")
+    if origin:
+        await ws.close(code=1008, reason="browser connections are not allowed")
+        return
+    token = str(getattr(app.state, "auth_token", "") or "")
+    if not token or ws.headers.get("x-locus-token") != token:
+        await ws.close(code=1008, reason="internal broker authentication failed")
+        return
+    await ws.accept()
+    svc = service()
+    # A worker must never cause another helper to launch behind the broker.
+    if isinstance(svc.codex, CodexBrokerClient):
+        await ws.send_json({"type": "error", "message": "nested ChatGPT brokers are forbidden"})
+        await ws.close(code=1008)
+        return
+    try:
+        request = await ws.receive_json()
+        operation = str(request.get("op") or "")
+        if operation == "account":
+            result = await asyncio.to_thread(
+                svc.codex.account, refresh=bool(request.get("refresh"))
+            )
+            await ws.send_json({"type": "result", "result": result})
+        elif operation == "models":
+            await ws.send_json({
+                "type": "result", "result": await asyncio.to_thread(svc.codex.models),
+            })
+        elif operation == "usage":
+            await ws.send_json({
+                "type": "result", "result": await asyncio.to_thread(svc.codex.usage),
+            })
+        elif operation == "thread_start":
+            result = await asyncio.to_thread(
+                svc.codex.start_thread,
+                model=str(request.get("model") or ""),
+                cwd=str(request.get("cwd") or svc.core.cwd),
+                base_instructions=str(request.get("base_instructions") or ""),
+                tools=request.get("tools") if isinstance(request.get("tools"), list) else [],
+                ephemeral=bool(request.get("ephemeral")),
+            )
+            await ws.send_json({"type": "result", "result": result})
+        elif operation == "thread_resume":
+            result = await asyncio.to_thread(
+                svc.codex.resume_thread,
+                str(request.get("thread_id") or ""),
+                model=str(request.get("model") or ""),
+                cwd=str(request.get("cwd") or svc.core.cwd),
+            )
+            await ws.send_json({"type": "result", "result": result})
+        elif operation == "complete":
+            result = await asyncio.to_thread(
+                svc.codex.complete,
+                model=str(request.get("model") or ""),
+                cwd=str(request.get("cwd") or svc.core.cwd),
+                base_instructions=str(request.get("base_instructions") or ""),
+                prompt=str(request.get("prompt") or ""),
+                output_schema=(
+                    request.get("output_schema")
+                    if isinstance(request.get("output_schema"), dict) else None
+                ),
+                timeout=float(request.get("timeout") or 300),
+            )
+            await ws.send_json({"type": "result", "result": result})
+        elif operation == "turn_run":
+            loop = asyncio.get_running_loop()
+            inbound: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+            interrupted = threading.Event()
+
+            async def receive_worker_results() -> None:
+                while True:
+                    message = await ws.receive_json()
+                    if message.get("type") == "interrupt":
+                        interrupted.set()
+                    else:
+                        await inbound.put(message)
+
+            receiver = asyncio.create_task(receive_worker_results())
+
+            def send_from_helper(message: dict[str, Any]) -> None:
+                future = asyncio.run_coroutine_threadsafe(ws.send_json(message), loop)
+                future.result(timeout=30)
+
+            def forward_event(event: dict[str, Any]) -> None:
+                send_from_helper({"type": "event", "event": event})
+
+            def run_tool(name: str, arguments: dict[str, Any], call_id: str) -> str:
+                send_from_helper({
+                    "type": "tool_call", "tool": name,
+                    "arguments": arguments, "call_id": call_id,
+                })
+                future = asyncio.run_coroutine_threadsafe(inbound.get(), loop)
+                reply = future.result(timeout=1_800)
+                if reply.get("type") != "tool_result" or reply.get("call_id") != call_id:
+                    raise CodexProtocolMismatch("worker returned an invalid dynamic tool result")
+                return str(reply.get("result") or "")
+
+            try:
+                turn = await asyncio.to_thread(
+                    svc.codex.run_turn,
+                    thread_id=str(request.get("thread_id") or ""),
+                    text=str(request.get("text") or ""),
+                    input_items=(
+                        request.get("input_items")
+                        if isinstance(request.get("input_items"), list) else None
+                    ),
+                    model=str(request.get("model") or ""),
+                    output_schema=(
+                        request.get("output_schema")
+                        if isinstance(request.get("output_schema"), dict) else None
+                    ),
+                    tool_handler=run_tool,
+                    event_handler=forward_event,
+                    should_interrupt=interrupted.is_set,
+                    timeout=float(request.get("timeout") or 1_800),
+                )
+                await ws.send_json({"type": "completed", "turn": turn})
+            finally:
+                receiver.cancel()
+        else:
+            await ws.send_json({"type": "error", "message": "unknown broker operation"})
+    except (CodexAppServerError, CodexProtocolMismatch, ValueError, RuntimeError) as error:
+        try:
+            await ws.send_json({"type": "error", "message": str(error)})
+        except RuntimeError:
+            pass
+    except WebSocketDisconnect:
+        return
 
 
 @app.websocket("/ws/chat")

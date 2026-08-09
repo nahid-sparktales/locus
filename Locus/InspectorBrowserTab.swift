@@ -65,8 +65,8 @@ struct BrowserPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            tabChips
             controlsBar
+            tabChips
             toolbar
             progressLine
             content
@@ -389,8 +389,8 @@ struct BrowserPanel: View {
     }
 
     /// Viewport, capture, drawer, open-external and expand — one compact bar
-    /// between the tab chips and the address bar, so all of the browser's
-    /// chrome lives at the top and the page owns everything below it.
+    /// at the very top, above the tab chips, so the chips sit directly on the
+    /// address bar they steer and the page owns everything below.
     private var controlsBar: some View {
         HStack(spacing: 8) {
             Menu {

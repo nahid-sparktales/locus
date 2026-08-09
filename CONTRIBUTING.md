@@ -78,9 +78,11 @@ change will be overwritten.
 - **Never commit credentials.** API keys belong in `~/.locus/auth.json`, written
   mode `0600` through `CredentialStore`, and reach the agent in memory only.
   Nothing key-bearing may reach the agent's `config.json`, a session transcript,
-  `UserDefaults`, or any API response. That file is the *only* place a secret is
-  persisted — if you add a new kind of credential, put it there rather than
-  inventing a second store.
+  `UserDefaults`, or any API response. Managed ChatGPT OAuth is the only
+  exception: the bundled Codex helper owns it in Locus's isolated
+  file-backed `CODEX_HOME`; Locus code must never read, copy, log, or pass those
+  tokens through API-key routes. Any new credential store needs an explicit
+  threat-model and documentation update.
 
 ## Reporting a security issue
 
