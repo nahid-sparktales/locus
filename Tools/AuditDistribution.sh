@@ -161,13 +161,16 @@ fi
 
 entitlements="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-entitlements.XXXXXX")"
 trap '/bin/rm -f "${entitlements}"' EXIT
-if /usr/bin/codesign -d --entitlements "${entitlements}" "${app}" >/dev/null 2>&1; then
+# --xml: without it codesign writes a human-readable dump plutil cannot parse,
+# and every extraction below fails open. Dots in entitlement names must be
+# escaped or plutil walks them as a key path and never finds the key.
+if /usr/bin/codesign -d --entitlements "${entitlements}" --xml "${app}" >/dev/null 2>&1; then
     for forbidden in \
         com.apple.security.get-task-allow \
         com.apple.security.cs.allow-dyld-environment-variables \
         com.apple.security.cs.disable-library-validation
     do
-        value="$(/usr/bin/plutil -extract "${forbidden}" raw -o - "${entitlements}" 2>/dev/null || true)"
+        value="$(/usr/bin/plutil -extract "${forbidden//./\\.}" raw -o - "${entitlements}" 2>/dev/null || true)"
         [[ "${value}" != "true" ]] || {
             echo "error: forbidden release entitlement is enabled: ${forbidden}" >&2
             exit 1
@@ -177,11 +180,11 @@ fi
 
 for sealed_helper in "${codex_helper}" "${code_mode_host}"; do
     helper_entitlements="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-helper-entitlements.XXXXXX")"
-    if /usr/bin/codesign -d --entitlements "${helper_entitlements}" \
+    if /usr/bin/codesign -d --entitlements "${helper_entitlements}" --xml \
         "${sealed_helper}" >/dev/null 2>&1; then
-        if /usr/bin/plutil -extract com.apple.security.app-sandbox raw -o - \
+        if /usr/bin/plutil -extract 'com\.apple\.security\.app-sandbox' raw -o - \
             "${entitlements}" >/dev/null 2>&1; then
-            inherit="$(/usr/bin/plutil -extract com.apple.security.inherit raw -o - \
+            inherit="$(/usr/bin/plutil -extract 'com\.apple\.security\.inherit' raw -o - \
                 "${helper_entitlements}" 2>/dev/null || true)"
             [[ "${inherit}" == "true" ]] || {
                 echo "error: sandboxed Codex helper is not signed with inherit: ${sealed_helper:t}" >&2
@@ -193,7 +196,7 @@ for sealed_helper in "${codex_helper}" "${code_mode_host}"; do
                 com.apple.security.cs.allow-jit \
                 com.apple.security.cs.allow-unsigned-executable-memory
             do
-                enabled="$(/usr/bin/plutil -extract "${required_jit_entitlement}" raw -o - \
+                enabled="$(/usr/bin/plutil -extract "${required_jit_entitlement//./\\.}" raw -o - \
                     "${helper_entitlements}" 2>/dev/null || true)"
                 [[ "${enabled}" == "true" ]] || {
                     echo "error: Codex code-mode host is missing ${required_jit_entitlement}" >&2
