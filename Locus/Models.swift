@@ -1145,6 +1145,10 @@ struct AppSettings: Codable, Hashable {
     /// Raw string, like the tab: an unknown preset from a future version must
     /// not fail the whole settings decode.
     var browserViewportRaw = BrowserViewport.desktop.rawValue
+    /// Cookies and logins survive relaunch only when the user opts in; the
+    /// default forgets everything when the app quits, because an agent that
+    /// can browse anywhere should not quietly accumulate a signed-in profile.
+    var browserPersistProfile = false
     /// OpenTelemetry export is explicit and disabled by default. Endpoint
     /// authorization lives in CredentialStore, never in these settings.
     var otlpExportEnabled = false
@@ -1250,6 +1254,10 @@ struct AppSettings: Codable, Hashable {
             ?? defaults.browserEnabled
         browserViewportRaw = try container.decodeIfPresent(String.self, forKey: .browserViewportRaw)
             ?? defaults.browserViewportRaw
+        browserPersistProfile = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .browserPersistProfile
+        ) ?? defaults.browserPersistProfile
         otlpExportEnabled = try container.decodeIfPresent(Bool.self, forKey: .otlpExportEnabled)
             ?? defaults.otlpExportEnabled
         otlpEndpoint = try container.decodeIfPresent(String.self, forKey: .otlpEndpoint)

@@ -636,6 +636,9 @@ final class AppModel: ObservableObject {
         }
 
         terminal.transport = self
+        browser.onUserNotice = { [weak self] notice in
+            self?.showToast(notice)
+        }
 
         backendProcess.onUnexpectedExit = { [weak self] code, output in
             Task { @MainActor in
@@ -4594,6 +4597,7 @@ final class AppModel: ObservableObject {
         sessionInfo = runtime.sessionInfo
         if let info = runtime.sessionInfo { computerControl.beginSession(info.sessionID) }
         if let info = runtime.sessionInfo { browser.beginSession(info.sessionID) }
+        syncBrowserProfile()
         Task {
             do {
                 let detail = try await backend.get(
@@ -5786,6 +5790,11 @@ final class AppModel: ObservableObject {
         if !enabled { browser.cancelPendingActions() }
     }
 
+    func setBrowserPersistProfile(_ persistent: Bool) {
+        settings.browserPersistProfile = persistent
+        syncBrowserProfile()
+    }
+
     /// Tell every live backend, not just whichever one happens to be in front.
     ///
     /// The computer-control version resolves `conversationBackend`, so when a
@@ -6085,6 +6094,14 @@ final class AppModel: ObservableObject {
         browser.setProtectedSessions(Set(taskWorkers.values.map(\.sessionID)))
     }
 
+    /// Keep the browsing profile pointed at the open workspace.
+    func syncBrowserProfile() {
+        browser.configureProfile(
+            workspacePath: workspacePath,
+            persistent: settings.browserPersistProfile
+        )
+    }
+
     private func handleWorkerEvent(_ event: [String: Any], runtime: TaskWorkerRuntime) {
         if let rawType = event["type"] as? String, rawType == "session_info",
            let info = decode(SessionInfo.self, from: event)
@@ -6270,6 +6287,7 @@ final class AppModel: ObservableObject {
                 activeWorkerID = event["worker_id"] as? String ?? activeWorkerID
                 computerControl.beginSession(info.sessionID)
                 browser.beginSession(info.sessionID)
+                syncBrowserProfile()
                 sessionInfo = info
                 currentSessionID = info.sessionID
                 watchWorkspaceKnowledge(info.workspaceRoot ?? info.cwd)
@@ -6943,6 +6961,7 @@ final class AppModel: ObservableObject {
         computerControl.beginSession(info.sessionID)
         browser.beginSession(info.sessionID)
         sessionInfo = info
+        syncBrowserProfile()
         currentSessionID = info.sessionID
         activeTaskRecord = info.task
         if isDuplicateAcknowledgement { return }

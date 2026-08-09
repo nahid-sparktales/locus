@@ -1,4 +1,6 @@
 import AppKit
+import CoreServices
+import CryptoKit
 import Foundation
 import WebKit
 
@@ -37,12 +39,16 @@ enum BrowserScheme {
 
 /// How a navigation ended. A slow page returns `stillLoading` rather than an
 /// error: the load is genuinely still running, and telling the model it failed
-/// would desynchronise its picture of the page from the real one.
+/// would desynchronise its picture of the page from the real one. A link that
+/// turns out to be a file fires neither `didFinish` nor `didFail` — without its
+/// own case the navigation would sit on its full budget and then claim the
+/// page never loaded.
 enum BrowserLoadOutcome {
     case finished
     case failed(String)
     case stillLoading
     case cancelled
+    case becameDownload
 }
 
 /// Native broker for the in-app browser.
@@ -68,6 +74,16 @@ final class BrowserService: NSObject, ObservableObject {
         let openedAt = Date()
         fileprivate var gate: NavigationGate?
         fileprivate weak var service: BrowserService?
+        /// One-shot answer for the next `confirm`/`prompt`, armed by
+        /// `browser_input {action: "dialog"}` before the click that triggers
+        /// it. A tool that answered an *open* dialog would deadlock: the dialog
+        /// blocks the click's JavaScript call, which holds the FIFO slot the
+        /// answering tool would need.
+        fileprivate var armedDialogResponse: (accept: Bool, text: String?)?
+        /// Dialog outcomes since the last agent action, folded into that
+        /// action's result text — a model should not have to guess why its
+        /// click "did nothing".
+        fileprivate var dialogNotices: [String] = []
         /// KVO tokens feeding the published snapshots. Held here so closing
         /// the tab tears them down with it.
         fileprivate var observations: [NSKeyValueObservation] = []
@@ -151,6 +167,8 @@ final class BrowserService: NSObject, ObservableObject {
     private var protectedSessionIDs: Set<String> = []
     /// The emulated size new tabs start at; follows the settings preset.
     var defaultViewport: CGSize = BrowserViewport.desktop.size
+    /// Surfaced as a toast by AppModel — download completions and the like.
+    var onUserNotice: ((String) -> Void)?
 
     // FIFO admission. Concurrent workers queue instead of being refused, so a
     // background agent's call is never dropped just because the foreground one
@@ -158,12 +176,75 @@ final class BrowserService: NSObject, ObservableObject {
     private var isBusy = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
-    private lazy var dataStore: WKWebsiteDataStore = {
-        // One store for the whole browser. `nonPersistent()` hands back a *new*
-        // store on every call, so building one per tab would mean tabs silently
-        // not sharing cookies — a login on one would not carry to the next.
-        WKWebsiteDataStore.nonPersistent()
-    }()
+    // One store for the whole browser. `nonPersistent()` hands back a *new*
+    // store on every call, so building one per tab would mean tabs silently
+    // not sharing cookies — a login on one would not carry to the next.
+    private var dataStore: WKWebsiteDataStore = .nonPersistent()
+    /// Set while the opt-in persistent profile is active; the identifier is
+    /// derived from the workspace path, so the same project always finds its
+    /// own cookies and nothing else's.
+    private var persistentProfileID: UUID?
+
+    /// Point the browser at a workspace's profile. Ephemeral by default; the
+    /// opt-in persistent store is keyed per **workspace** — session ids are
+    /// re-keyed by worker processes and recycled by chat deletion's Undo, so
+    /// they are not a stable identity for a cookie jar.
+    func configureProfile(workspacePath: String, persistent: Bool) {
+        let identifier = persistent ? Self.profileIdentifier(for: workspacePath) : nil
+        guard identifier != persistentProfileID || openTabs.isEmpty else { return }
+        // A data store cannot be swapped under a live page; the pages go too.
+        if !openTabs.isEmpty {
+            cancelPendingActions()
+            for tab in openTabs { tab.invalidateObservations() }
+            openTabs.removeAll()
+            activeTabBySession.removeAll()
+            onUserNotice?("Browser tabs closed — the browsing profile changed")
+        }
+        persistentProfileID = identifier
+        dataStore = identifier.map { WKWebsiteDataStore(forIdentifier: $0) }
+            ?? .nonPersistent()
+        proxyGeneration = nil
+        publishTabs()
+    }
+
+    /// Erase the active profile. The only sweeper this data has: nothing else
+    /// garbage-collects an abandoned workspace's cookies.
+    func clearBrowsingData() {
+        let identifier = persistentProfileID
+        if !openTabs.isEmpty {
+            cancelPendingActions()
+            for tab in openTabs { tab.invalidateObservations() }
+            openTabs.removeAll()
+            activeTabBySession.removeAll()
+        }
+        dataStore = identifier.map { WKWebsiteDataStore(forIdentifier: $0) }
+            ?? .nonPersistent()
+        proxyGeneration = nil
+        publishTabs()
+        if let identifier {
+            Task {
+                // Removal wants no live store references; recreate after.
+                try? await WKWebsiteDataStore.remove(forIdentifier: identifier)
+            }
+        }
+        onUserNotice?("Browsing data cleared")
+    }
+
+    /// Deterministic per-workspace identity: the first 16 bytes of the
+    /// canonical path's SHA-256. No registry to maintain, stable across
+    /// launches, distinct per project.
+    static func profileIdentifier(for workspacePath: String) -> UUID {
+        let canonical = URL(fileURLWithPath: workspacePath)
+            .standardizedFileURL.resolvingSymlinksInPath().path
+        let digest = SHA256.hash(data: Data(canonical.utf8))
+        let bytes = Array(digest.prefix(16))
+        return UUID(uuid: (
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15]
+        ))
+    }
 
     // MARK: - Session lifecycle
 
@@ -240,6 +321,31 @@ final class BrowserService: NSObject, ObservableObject {
         let budget = Duration.milliseconds(max(1_000, min(timeoutMilliseconds, 120_000)))
 
         do {
+            let result = try await dispatch(
+                tool,
+                arguments: arguments,
+                sessionID: sessionID,
+                hostedProvider: hostedProvider,
+                budget: budget
+            )
+            return annotatingDialogNotices(result, sessionID: sessionID)
+        } catch let error as BrowserToolError {
+            return ["error": error.message]
+        } catch {
+            guard generation == cancellationGenerations[sessionID, default: 0] else {
+                return ["error": "cancelled by the user"]
+            }
+            return ["error": error.localizedDescription]
+        }
+    }
+
+    private func dispatch(
+        _ tool: String,
+        arguments: [String: Any],
+        sessionID: String,
+        hostedProvider: String?,
+        budget: Duration
+    ) async throws -> [String: Any] {
             switch tool {
             case "browser_navigate":
                 return try await navigate(arguments, sessionID: sessionID, budget: budget)
@@ -268,14 +374,24 @@ final class BrowserService: NSObject, ObservableObject {
             default:
                 return ["error": "unsupported browser tool '\(tool)'"]
             }
-        } catch let error as BrowserToolError {
-            return ["error": error.message]
-        } catch {
-            guard generation == cancellationGenerations[sessionID, default: 0] else {
-                return ["error": "cancelled by the user"]
-            }
-            return ["error": error.localizedDescription]
+    }
+
+    /// Fold any dialogs that fired during the action into its result, so the
+    /// model learns immediately that its click met a confirm() and what
+    /// happened to it.
+    private func annotatingDialogNotices(
+        _ result: [String: Any],
+        sessionID: String
+    ) -> [String: Any] {
+        guard let tab = existingTab(for: sessionID), !tab.dialogNotices.isEmpty else {
+            return result
         }
+        let notices = tab.dialogNotices.joined(separator: "\n")
+        tab.dialogNotices.removeAll()
+        guard let text = result["text"] as? String else { return result }
+        var annotated = result
+        annotated["text"] = "\(text)\n\n\(notices)"
+        return annotated
     }
 
     private func navigate(
@@ -344,6 +460,12 @@ final class BrowserService: NSObject, ObservableObject {
             Opened \(location) — still loading when the wait ran out. \
             The page is live and readable; call browser_read_page, or \
             browser_navigate again to retry.
+            """]
+        case .becameDownload:
+            return ["text": """
+            That link is a file, not a page: it is downloading into Locus's \
+            own folder and will be reported when it finishes. The previous \
+            page is still open.
             """]
         case .finished:
             let heading = title.isEmpty ? location : "\(title) — \(location)"
@@ -561,6 +683,21 @@ final class BrowserService: NSObject, ObservableObject {
                 tab, "return __locus.pressKey(key, modifiers)", ["key": key, "modifiers": modifiers]
             )
             return ["text": "Pressed \(key). Call browser_read_page to see what changed."]
+
+        case "dialog":
+            let response = (arguments["response"] as? String)?.lowercased() ?? "dismiss"
+            guard response == "accept" || response == "dismiss" else {
+                throw BrowserToolError("'response' must be accept or dismiss")
+            }
+            tab.armedDialogResponse = (
+                accept: response == "accept",
+                text: arguments["text"] as? String
+            )
+            return ["text": """
+            Armed: the next confirm or prompt on this tab will be \
+            \(response == "accept" ? "accepted" : "dismissed"). Now take the \
+            action that triggers it.
+            """]
 
         case "type", "set_value":
             let value = (arguments["text"] as? String) ?? (arguments["value"] as? String) ?? ""
@@ -804,22 +941,36 @@ final class BrowserService: NSObject, ObservableObject {
     }
 
     @discardableResult
-    private func makeTab(ownerSessionID: String) -> Tab {
+    private func makeTab(
+        ownerSessionID: String,
+        adopting adopted: WKWebViewConfiguration? = nil
+    ) -> Tab {
         tabCounter += 1
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = dataStore
-        configuration.userContentController.addUserScript(BrowserBridge.readerScript())
-        configuration.userContentController.addUserScript(BrowserBridge.captureScript())
-        // Weak, because the content controller retains its handlers strongly and
-        // the cycle would keep every closed tab's buffers alive for good.
-        configuration.userContentController.add(
-            WeakScriptMessageHandler(self),
-            name: BrowserBridge.captureHandlerName
-        )
-        // Agent clicks carry no user gesture, so this would block programmatic
-        // window.open anyway; keeping the default off is the honest posture
-        // until managed tabs land.
-        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        let configuration: WKWebViewConfiguration
+        if let adopted {
+            // A window.open popup: the API contract requires building the view
+            // with exactly the configuration WebKit handed over — and it
+            // already carries the opener's data store, user scripts and
+            // capture handler, so re-registering any of them would crash on
+            // the duplicate handler name.
+            configuration = adopted
+        } else {
+            configuration = WKWebViewConfiguration()
+            configuration.websiteDataStore = dataStore
+            configuration.userContentController.addUserScript(BrowserBridge.readerScript())
+            configuration.userContentController.addUserScript(BrowserBridge.captureScript())
+            // Weak, because the content controller retains its handlers
+            // strongly and the cycle would keep every closed tab's buffers
+            // alive for good.
+            configuration.userContentController.add(
+                WeakScriptMessageHandler(self),
+                name: BrowserBridge.captureHandlerName
+            )
+            // Agent clicks carry no user gesture, so this blocks programmatic
+            // window.open; links and user-gestured popups route through
+            // createWebViewWith into a managed tab.
+            configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        }
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.underPageBackgroundColor = .clear
@@ -838,6 +989,7 @@ final class BrowserService: NSObject, ObservableObject {
         )
         tab.service = self
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         objc_setAssociatedObject(webView, &Self.tabKey, tab, .OBJC_ASSOCIATION_RETAIN)
 
         // The delegate callbacks catch page loads; these catch everything else
@@ -1121,9 +1273,273 @@ extension BrowserService: WKNavigationDelegate {
 
     /// A crashed content process leaves a permanently blank rectangle unless
     /// something reloads it.
+    /// The only place the main document's status is visible, and the fork
+    /// where a response that cannot render becomes a download instead of a
+    /// blank page.
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationResponse: WKNavigationResponse,
+        decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+    ) {
+        decisionHandler(navigationResponse.canShowMIMEType ? .allow : .download)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        navigationResponse: WKNavigationResponse,
+        didBecome download: WKDownload
+    ) {
+        adopt(download, from: webView)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        navigationAction: WKNavigationAction,
+        didBecome download: WKDownload
+    ) {
+        adopt(download, from: webView)
+    }
+
+    /// Basic-auth and TLS challenges get the system's default handling and
+    /// nothing more — never a blanket trust, never a stored credential.
+    func webView(
+        _ webView: WKWebView,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        completionHandler(.performDefaultHandling, nil)
+    }
+
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         tab(owning: webView)?.gate?.settle(.failed("the page's content process stopped"))
         webView.reload()
+    }
+}
+
+// MARK: - Dialogs, popups, uploads
+
+extension BrowserService: WKUIDelegate {
+    /// Every completion handler here fires synchronously. Skipping one raises
+    /// an uncatchable exception, and a nested modal would deadlock against the
+    /// JavaScript call the dialog is blocking.
+    func webView(
+        _ webView: WKWebView,
+        runJavaScriptAlertPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping () -> Void
+    ) {
+        recordDialog(on: webView, kind: "alert", message: message, outcome: "shown")
+        completionHandler()
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        runJavaScriptConfirmPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping (Bool) -> Void
+    ) {
+        // Auto-accepting is more dangerous than auto-cancelling: an unarmed
+        // "Delete this?" takes the safe branch.
+        let armed = tab(owning: webView)?.armedDialogResponse
+        tab(owning: webView)?.armedDialogResponse = nil
+        let accept = armed?.accept ?? false
+        recordDialog(
+            on: webView,
+            kind: "confirm",
+            message: message,
+            outcome: armed == nil
+                ? "auto-dismissed (arm a response with browser_input action=dialog to accept)"
+                : (accept ? "accepted as armed" : "dismissed as armed")
+        )
+        completionHandler(accept)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        runJavaScriptTextInputPanelWithPrompt prompt: String,
+        defaultText: String?,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping (String?) -> Void
+    ) {
+        let armed = tab(owning: webView)?.armedDialogResponse
+        tab(owning: webView)?.armedDialogResponse = nil
+        let answer: String? = (armed?.accept == true) ? (armed?.text ?? defaultText ?? "") : nil
+        recordDialog(
+            on: webView,
+            kind: "prompt",
+            message: prompt,
+            outcome: answer.map { "answered \"\($0)\"" }
+                ?? "auto-dismissed (arm a response with browser_input action=dialog to answer)"
+        )
+        completionHandler(answer)
+    }
+
+    /// `window.open` and `target="_blank"` become a managed tab owned by the
+    /// opener's session. The API contract requires the returned view to be
+    /// built with exactly this configuration — which also carries the opener's
+    /// data store, scripts and capture handler, so nothing is re-registered —
+    /// and WebKit performs the load itself.
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        guard let opener = tab(owning: webView) else { return nil }
+        guard let url = navigationAction.request.url, BrowserScheme.permits(url) else {
+            return nil
+        }
+        let popup = makeTab(ownerSessionID: opener.ownerSessionID, adopting: configuration)
+        return popup.webView
+    }
+
+    func webViewDidClose(_ webView: WKWebView) {
+        guard let tab = tab(owning: webView) else { return }
+        userCloseTab(tab.id, sessionID: tab.ownerSessionID)
+    }
+
+    /// A page's file input must never reach the user's files: an agent click
+    /// on `<input type=file>` would otherwise open a picker over their disk.
+    func webView(
+        _ webView: WKWebView,
+        runOpenPanelWith parameters: WKOpenPanelParameters,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping ([URL]?) -> Void
+    ) {
+        recordDialog(
+            on: webView,
+            kind: "file picker",
+            message: "the page asked for a file upload",
+            outcome: "refused; Locus does not upload local files"
+        )
+        completionHandler(nil)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        type: WKMediaCaptureType,
+        decisionHandler: @escaping (WKPermissionDecision) -> Void
+    ) {
+        decisionHandler(.deny)
+    }
+
+    private func recordDialog(
+        on webView: WKWebView,
+        kind: String,
+        message: String,
+        outcome: String
+    ) {
+        guard let tab = tab(owning: webView) else { return }
+        let line = "[dialog] \(kind): \"\(message.prefix(300))\" — \(outcome)"
+        tab.dialogNotices.append(line)
+        tab.log.append(console: BrowserConsoleEntry(
+            level: "dialog",
+            message: line,
+            url: webView.url?.absoluteString ?? "",
+            at: Date()
+        ))
+    }
+}
+
+// MARK: - Downloads
+
+extension BrowserService: WKDownloadDelegate {
+    /// Everything lands in Locus's own folder — never the user's Downloads —
+    /// uniquified, size-capped, quarantined, and never opened. That containment
+    /// is why no per-download prompt exists: the permission layer cannot see a
+    /// download coming anyway (it arises from an ordinary click's navigation
+    /// policy, not a tool call).
+    static let maximumDownloadBytes: Int64 = 512 * 1_024 * 1_024
+
+    private static var downloadDestinationKey: UInt8 = 0
+
+    private func adopt(_ download: WKDownload, from webView: WKWebView) {
+        download.delegate = self
+        // The navigation this became will never fire didFinish/didFail; the
+        // waiting tool gets its own honest answer.
+        tab(owning: webView)?.gate?.settle(.becameDownload)
+    }
+
+    static func downloadsDirectory() -> URL? {
+        guard let base = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else { return nil }
+        let directory = base.appendingPathComponent("Locus/Downloads", isDirectory: true)
+        try? FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        return directory
+    }
+
+    func download(
+        _ download: WKDownload,
+        decideDestinationUsing response: URLResponse,
+        suggestedFilename: String,
+        completionHandler: @escaping (URL?) -> Void
+    ) {
+        if response.expectedContentLength > Self.maximumDownloadBytes {
+            notifyDownload(download, line: "[download] refused: larger than 512 MB")
+            completionHandler(nil)
+            return
+        }
+        guard let directory = Self.downloadsDirectory() else {
+            completionHandler(nil)
+            return
+        }
+        // The destination must not exist; step the name until it doesn't.
+        let base = suggestedFilename.isEmpty ? "download" : suggestedFilename
+        var candidate = directory.appendingPathComponent(base)
+        var counter = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            let stem = (base as NSString).deletingPathExtension
+            let ext = (base as NSString).pathExtension
+            let renamed = ext.isEmpty ? "\(stem)-\(counter)" : "\(stem)-\(counter).\(ext)"
+            candidate = directory.appendingPathComponent(renamed)
+            counter += 1
+        }
+        objc_setAssociatedObject(
+            download, &Self.downloadDestinationKey, candidate, .OBJC_ASSOCIATION_RETAIN
+        )
+        completionHandler(candidate)
+    }
+
+    func downloadDidFinish(_ download: WKDownload) {
+        guard let destination = objc_getAssociatedObject(
+            download, &Self.downloadDestinationKey
+        ) as? URL else { return }
+        // Quarantined per file — the targeted alternative to a process-wide
+        // LSFileQuarantineEnabled, which would stamp every file the app writes.
+        var values = URLResourceValues()
+        values.quarantineProperties = [
+            kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload as String,
+        ]
+        var url = destination
+        try? url.setResourceValues(values)
+        notifyDownload(download, line: "[download] saved \(destination.lastPathComponent) to \(destination.path)")
+    }
+
+    func download(
+        _ download: WKDownload,
+        didFailWithError error: Error,
+        resumeData: Data?
+    ) {
+        notifyDownload(download, line: "[download] failed: \(error.localizedDescription)")
+    }
+
+    private func notifyDownload(_ download: WKDownload, line: String) {
+        onUserNotice?(line)
+        guard let webView = download.webView, let tab = tab(owning: webView) else { return }
+        tab.dialogNotices.append(line)
+        tab.log.append(console: BrowserConsoleEntry(
+            level: "download",
+            message: line,
+            url: webView.url?.absoluteString ?? "",
+            at: Date()
+        ))
     }
 }
 

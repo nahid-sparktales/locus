@@ -274,20 +274,27 @@ BROWSER_TOOL_SCHEMAS = [
     _schema(
         "browser_input",
         "Act on the page. Address elements by the ref_N from browser_read_page. "
-        "Input is synthetic, so a page checking event.isTrusted will refuse it.",
+        "Input is synthetic, so a page checking event.isTrusted will refuse it. "
+        "confirm()/prompt() dialogs are auto-dismissed unless you arm a response "
+        "first: action 'dialog' with response, then take the action that triggers it.",
         {
             "action": {
                 "type": "string",
                 "enum": [
                     "click", "double_click", "triple_click", "right_click", "hover",
-                    "drag", "type", "set_value", "key", "scroll", "scroll_to",
+                    "drag", "type", "set_value", "key", "scroll", "scroll_to", "dialog",
                 ],
             },
             "ref": {"type": "string", "description": "Target element."},
             "from_ref": {"type": "string", "description": "Drag source."},
             "to_ref": {"type": "string", "description": "Drag destination."},
-            "text": {"type": "string", "description": "Text for 'type' and 'set_value'."},
+            "text": {"type": "string", "description": "Text for 'type', 'set_value', and a 'dialog' prompt answer."},
             "key": {"type": "string", "description": "Key name for 'key', such as Enter."},
+            "response": {
+                "type": "string",
+                "enum": ["accept", "dismiss"],
+                "description": "With 'dialog': how to answer the next confirm or prompt on this tab.",
+            },
             "delta_x": {"type": "integer"},
             "delta_y": {"type": "integer"},
             "modifiers": {"type": "array", "items": {"type": "string"}},

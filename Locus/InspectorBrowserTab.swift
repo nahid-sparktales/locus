@@ -27,7 +27,11 @@ struct BrowserPanel: View {
     let sessionID: String
     let homeURL: URL?
     @Binding var viewportRaw: String
+    /// True inside the detached window, which holds the borrowing claim while
+    /// it is open; the inspector instance defers to it.
+    var isWindowHost = false
 
+    @Environment(\.openWindow) private var openWindow
     @State private var draft = ""
     @State private var drawerOpen = false
     @FocusState private var addressFocused: Bool
@@ -224,7 +228,7 @@ struct BrowserPanel: View {
     @ViewBuilder
     private var content: some View {
         if let host = browser.activeHost(for: sessionID), snapshot?.url.isEmpty == false {
-            if browser.windowHosted {
+            if browser.windowHosted, !isWindowHost {
                 InspectorPlaceholder(
                     symbol: "macwindow",
                     title: "Browsing in the Browser window",
@@ -307,6 +311,20 @@ struct BrowserPanel: View {
             .help("Open in your default browser")
             .accessibilityLabel("Open in default browser")
             .accessibilityIdentifier("browser.openExternal")
+
+            if !isWindowHost {
+                Button {
+                    openWindow(id: "browser")
+                } label: {
+                    Image(systemName: "macwindow.on.rectangle")
+                        .font(.system(size: 10))
+                        .foregroundStyle(LocusTheme.ink)
+                }
+                .buttonStyle(.plain)
+                .help("Open in the Browser window")
+                .accessibilityLabel("Detach into a window")
+                .accessibilityIdentifier("browser.detach")
+            }
         }
         .padding(.horizontal, 10)
         .frame(height: 30)

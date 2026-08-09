@@ -93,6 +93,8 @@ struct LocusApp: App {
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
                 .disabled(model.justChatEnabled)
+                OpenBrowserWindowButton()
+                    .environmentObject(model)
                 Divider()
                 Button("Just Chat") { model.selectedMode = .ask }
                     .keyboardShortcut("a", modifiers: .option)
@@ -104,6 +106,17 @@ struct LocusApp: App {
                     .keyboardShortcut("b", modifiers: .option)
             }
         }
+
+        // The detached browser. Safe as a second scene: the app-terminating
+        // close handler below filters on the main window's identifier, and
+        // `MainWindowMarker` stamps only `RootView`'s window.
+        Window("Browser", id: "browser") {
+            BrowserWindowView()
+                .environmentObject(model)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unifiedCompact(showsTitle: false))
+        .defaultSize(width: 1_280, height: 860)
 
         Settings {
             SettingsView()

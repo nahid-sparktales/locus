@@ -1525,6 +1525,19 @@ struct SettingsView: View {
                     .font(.system(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
+                Toggle("Keep cookies and logins per workspace", isOn: Binding(
+                    get: { model.settings.browserPersistProfile },
+                    set: { model.setBrowserPersistProfile($0) }
+                ))
+                .accessibilityIdentifier("settings.browser.persistProfile")
+                Text("Off, browsing is forgotten when Locus quits. On, each workspace keeps its own profile across launches. Switching closes open tabs.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Clear Browsing Data") {
+                    model.browser.clearBrowsingData()
+                }
+                .accessibilityIdentifier("settings.browser.clearData")
             }
 
             Section("Computer Control") {

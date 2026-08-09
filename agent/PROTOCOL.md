@@ -899,6 +899,18 @@ credential is hard blocked on both sides — by content in the agent, and by the
 field's own type, its autocomplete hint, and whether its form holds a password
 in the app.
 
+JavaScript dialogs never block the page: alerts are acknowledged, and an
+unarmed `confirm`/`prompt` takes the safe branch — dismissed — with the outcome
+folded into the triggering action's result. `browser_input` with action
+`dialog` arms a one-shot answer for the next dialog on the tab; answering an
+*open* dialog is structurally impossible, since it blocks the click that still
+holds the broker's single execution slot. `window.open` and `target="_blank"`
+become managed tabs owned by the opener's session. Files a page cannot render
+download into the app's own container — size-capped, quarantined per file,
+never executed, never the user's Downloads folder — and a page's file-upload
+picker is always refused. Cookies are forgotten at quit unless the user opts
+into the per-workspace persistent profile.
+
 Page text, console output and network payloads are labelled untrusted external
 data. Capture is JavaScript-level: `fetch` and `XMLHttpRequest` are recorded in
 full, sub-resources appear as timing only, main-document status codes come from
