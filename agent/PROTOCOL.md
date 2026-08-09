@@ -983,10 +983,15 @@ picker is always refused. Cookies are forgotten at quit unless the user opts
 into the per-workspace persistent profile.
 
 Page text, console output and network payloads are labelled untrusted external
-data. Capture is JavaScript-level: `fetch` and `XMLHttpRequest` are recorded in
-full, sub-resources appear as timing only, main-document status codes come from
+data. Capture is JavaScript-level and observes from outside the page's own
+await chain: `fetch` and `XMLHttpRequest` are recorded with their bodies read
+after the response is already in the page's hands, streaming responses
+(`text/event-stream`, or anything without a Content-Length) are recorded as
+headers and status only, and capture runs in the main frame only —
+sub-resources appear as timing only, main-document status codes come from
 the navigation delegate, and anything logged before the page's own scripts ran
-is not recorded. Results are truncated to the same 30 000-character bound the
+is not recorded. `browser_wait_for` with no arguments therefore settles
+truthfully on pages that keep a stream open. Results are truncated to the same 30 000-character bound the
 built-in tools use, because a session record over 2 MB is written and then
 skipped on read.
 

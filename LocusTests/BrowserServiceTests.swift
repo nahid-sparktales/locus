@@ -42,6 +42,50 @@ final class BrowserServiceTests: XCTestCase {
         XCTAssertNil(BrowserScheme.normalize("   "))
     }
 
+    func testOrdinaryBrowsingUsesTheCacheAndLoopbackHardReloads() {
+        // The hard-reload policy came from the dev-server Preview pane, where
+        // stale assets hide the user's edit; WebKit propagates it to every
+        // subresource, so applying it to the open web refetched everything on
+        // every navigation.
+        XCTAssertEqual(
+            BrowserScheme.cachePolicy(for: URL(string: "https://example.com")!),
+            .useProtocolCachePolicy
+        )
+        for loopback in [
+            "http://localhost:3000/app", "http://127.0.0.1:8080",
+            "http://app.localhost:5173", "http://[::1]:9000",
+        ] {
+            XCTAssertEqual(
+                BrowserScheme.cachePolicy(for: URL(string: loopback)!),
+                .reloadIgnoringLocalCacheData,
+                loopback
+            )
+        }
+    }
+
+    func testTabsIdentifyAsSafariToAvoidBotInterstitials() async {
+        let tab = service.tab(for: "session-ua")
+        let userAgent = try? await tab.webView.evaluateJavaScript("navigator.userAgent") as? String
+        XCTAssertTrue(
+            userAgent?.contains("Safari/") == true && userAgent?.contains("Version/") == true,
+            userAgent ?? "no user agent"
+        )
+    }
+
+    func testUnchangedProfileIdentityKeepsTheSameStore() {
+        let tab = service.tab(for: "session-store")
+        let store = tab.webView.configuration.websiteDataStore
+
+        // This runs on every session_info; an ephemeral→ephemeral rebuild
+        // used to throw away the in-memory cache each time.
+        service.configureProfile(workspacePath: "/tmp/ws", persistent: false)
+
+        XCTAssertTrue(
+            service.tab(for: "session-store").webView.configuration.websiteDataStore === store
+        )
+        XCTAssertFalse(service.snapshots(for: "session-store").isEmpty)
+    }
+
     func testNavigatingToARefusedSchemeExplainsItselfAndOpensNothing() async {
         let result = await service.perform(
             tool: "browser_navigate",
@@ -238,6 +282,80 @@ final class BrowserServiceTests: XCTestCase {
         XCTAssertEqual(service.activeSnapshot(for: "session-1")?.id, mine[0].id)
         service.userCloseTab(mine[0].id, sessionID: "session-1")
         XCTAssertEqual(service.snapshots(for: "session-1").count, 1)
+    }
+
+    func testCloseOtherTabsClosesOnlyTheSessionsOwnAndActivatesTheKeeper() {
+        _ = service.tab(for: "session-1")
+        service.userNewTab(sessionID: "session-1")
+        service.userNewTab(sessionID: "session-1")
+        _ = service.tab(for: "session-2")
+        let keeper = service.snapshots(for: "session-1")[1]
+
+        service.userCloseOtherTabs(keeping: keeper.id, sessionID: "session-1")
+
+        XCTAssertEqual(service.snapshots(for: "session-1").map(\.id), [keeper.id])
+        XCTAssertEqual(service.activeSnapshot(for: "session-1")?.id, keeper.id)
+        XCTAssertEqual(service.snapshots(for: "session-2").count, 1)
+    }
+
+    func testCloseOtherTabsRefusesAForeignKeeper() {
+        _ = service.tab(for: "session-1")
+        service.userNewTab(sessionID: "session-1")
+        let foreign = service.tab(for: "session-2")
+
+        // A keeper the session does not own must be a no-op, never a partial
+        // close of the session's own tabs.
+        service.userCloseOtherTabs(keeping: foreign.id, sessionID: "session-1")
+
+        XCTAssertEqual(service.snapshots(for: "session-1").count, 2)
+        XCTAssertEqual(service.snapshots(for: "session-2").count, 1)
+    }
+
+    func testCycleTabWrapsAndStaysInsideTheSession() {
+        _ = service.tab(for: "session-1")
+        service.userNewTab(sessionID: "session-1")
+        service.userNewTab(sessionID: "session-1")
+        _ = service.tab(for: "session-2")
+        let mine = service.snapshots(for: "session-1").map(\.id)
+        service.userSelectTab(mine[2], sessionID: "session-1")
+
+        service.userCycleTab(sessionID: "session-1", forward: true)
+        XCTAssertEqual(service.activeSnapshot(for: "session-1")?.id, mine[0], "forward wraps")
+        service.userCycleTab(sessionID: "session-1", forward: false)
+        XCTAssertEqual(service.activeSnapshot(for: "session-1")?.id, mine[2], "backward wraps")
+
+        let visited = (0..<6).map { _ -> String? in
+            service.userCycleTab(sessionID: "session-1", forward: true)
+            return service.activeSnapshot(for: "session-1")?.ownerSessionID
+        }
+        XCTAssertTrue(visited.allSatisfy { $0 == "session-1" }, "the ring never leaves the session")
+    }
+
+    func testFaviconIsFetchedOncePerHostAndFailureNeverRetries() async {
+        var fetches = 0
+        service.faviconFetcher = { _ in
+            fetches += 1
+            return nil  // a failed fetch
+        }
+        let tab = service.tab(for: "session-fav")
+        // The probe path needs a live page URL; drive the cache directly the
+        // way didFinish does, twice, with the JS hop bypassed by an
+        // about-blank page that declares nothing.
+        tab.webView.loadHTMLString("<title>x</title>", baseURL: URL(string: "https://icons.example"))
+        // Wait for the load so webView.url is set.
+        for _ in 0..<200 where tab.webView.url == nil {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        service.noteFaviconOpportunity(for: tab.webView)
+        service.noteFaviconOpportunity(for: tab.webView)
+        // Let the fetch tasks drain.
+        for _ in 0..<100 where fetches == 0 {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTAssertEqual(fetches, 1, "one attempt per origin, in-flight and failed never retry")
+        XCTAssertNil(service.favicon(forPageURL: URL(string: "https://icons.example")))
     }
 }
 

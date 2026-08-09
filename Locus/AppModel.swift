@@ -5061,14 +5061,21 @@ final class AppModel: ObservableObject {
         if chatAttachments.isEmpty { chatAttachmentNotice = nil }
     }
 
-    /// Attach images that exist only on the pasteboard, under the same caps as
-    /// file attachments: 10 files, 15 MB each, 25 MB of image data in total.
-    func addPastedImages(_ images: [(data: Data, mimeType: String)]) {
-        guard !images.isEmpty else { return }
+    /// Attach images that exist only on the pasteboard — or were captured by
+    /// the browser's annotator — under the same caps as file attachments:
+    /// 10 files, 15 MB each, 25 MB of image data in total. Returns whether
+    /// anything was attached, so callers holding user work (the annotation
+    /// sheet) can refuse to discard it on a rejection.
+    @discardableResult
+    func addPastedImages(
+        _ images: [(data: Data, mimeType: String)],
+        nameStem: String = "Pasted image"
+    ) -> Bool {
+        guard !images.isEmpty else { return false }
         let remainingSlots = max(10 - chatAttachments.count, 0)
         guard remainingSlots > 0 else {
             chatAttachmentNotice = "A chat message can include up to 10 attachments."
-            return
+            return false
         }
         var totalImageBytes = chatAttachments.reduce(0) { $0 + ($1.imageData?.count ?? 0) }
         var added: [ChatAttachment] = []
@@ -5081,7 +5088,11 @@ final class AppModel: ObservableObject {
                 continue
             }
             totalImageBytes += image.data.count
-            added.append(ChatAttachment.pasted(imageData: image.data, mimeType: image.mimeType))
+            added.append(ChatAttachment.pasted(
+                imageData: image.data,
+                mimeType: image.mimeType,
+                nameStem: nameStem
+            ))
         }
         chatAttachments.append(contentsOf: added)
         chatAttachmentNotice = oversized > 0
@@ -5092,6 +5103,7 @@ final class AppModel: ObservableObject {
         } else if oversized > 0 {
             showToast("The pasted image is over the size limit")
         }
+        return !added.isEmpty
     }
 
     /// True only when the selected local model is known to refuse images.

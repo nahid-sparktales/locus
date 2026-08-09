@@ -670,7 +670,7 @@ struct ComposerView: View {
                 .foregroundStyle(LocusTheme.muted.opacity(0.62))
 
             if model.isBusy {
-                if !isWaitingForTeamApproval {
+                if primaryAction != .stop, !isWaitingForTeamApproval {
                     Menu {
                         Button("Queue for Next Turn", systemImage: "tray.and.arrow.down") {
                             model.queueDraft()
@@ -694,23 +694,52 @@ struct ComposerView: View {
                     .accessibilityIdentifier("composer.sendChoices")
                 }
 
-                Button {
-                    submit()
-                } label: {
-                    Image(systemName: isWaitingForTeamApproval
-                        ? "tray.and.arrow.down.fill" : "arrow.turn.up.right")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(canSubmit ? Color.white : LocusTheme.muted)
+                if primaryAction == .stop {
+                    // Empty composer during a run: this slot used to hold a
+                    // disabled steer arrow — dead space exactly where every
+                    // coding agent puts its stop control. Typing switches it
+                    // back to steering, which is the deliberate 1.11 design.
+                    Button {
+                        submit()
+                    } label: {
+                        Group {
+                            if isStopping {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "stop.fill")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(Color.white)
+                            }
+                        }
                         .frame(width: 30, height: 30)
-                        .background(canSubmit ? LocusTheme.signal : LocusTheme.paperDeep)
+                        .background(LocusTheme.coral)
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isStopping)
+                    .help(isStopping ? "Stopping…" : "Stop the current run (⌘↵ or Esc)")
+                    .accessibilityLabel(isStopping ? "Stopping" : "Stop the current run")
+                    .accessibilityIdentifier("composer.stop")
+                } else {
+                    Button {
+                        submit()
+                    } label: {
+                        Image(systemName: isWaitingForTeamApproval
+                            ? "tray.and.arrow.down.fill" : "arrow.turn.up.right")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(canSubmit ? Color.white : LocusTheme.muted)
+                            .frame(width: 30, height: 30)
+                            .background(canSubmit ? LocusTheme.signal : LocusTheme.paperDeep)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSubmit)
+                    .help(isWaitingForTeamApproval
+                        ? "Queue for the next turn (⌘↵)" : "Steer the active turn (⌘↵)")
+                    .accessibilityLabel(isWaitingForTeamApproval ? "Queue for next turn" : "Steer now")
+                    .accessibilityIdentifier(isWaitingForTeamApproval ? "composer.queue" : "composer.steer")
                 }
-                .buttonStyle(.plain)
-                .disabled(!canSubmit)
-                .help(isWaitingForTeamApproval
-                    ? "Queue for the next turn (⌘↵)" : "Steer the active turn (⌘↵)")
-                .accessibilityLabel(isWaitingForTeamApproval ? "Queue for next turn" : "Steer now")
-                .accessibilityIdentifier(isWaitingForTeamApproval ? "composer.queue" : "composer.steer")
 
                 // The visible menu cannot own the shortcut, so this zero-size
                 // target makes the primary busy action deterministic.
@@ -809,6 +838,18 @@ struct ComposerView: View {
         !promptTrimmed.isEmpty || !model.availableChatAttachments.isEmpty
     }
 
+    private var primaryAction: ComposerPrimaryAction {
+        .current(
+            isBusy: model.isBusy,
+            canSubmit: canSubmit,
+            isWaitingForTeamApproval: isWaitingForTeamApproval
+        )
+    }
+
+    private var isStopping: Bool {
+        model.steeringState?.hasPrefix("Stopping") == true
+    }
+
     private var attachmentWarningActive: Bool {
         model.activeModelRejectsImages
             && model.chatAttachments.contains { $0.kind == .image }
@@ -893,9 +934,33 @@ struct ComposerView: View {
     }
 
     private func submit() {
+        if primaryAction == .stop {
+            guard !isStopping else { return }
+            model.stop()
+            return
+        }
         guard canSubmit else { return }
         model.submitDraft()
         focused = true
+    }
+}
+
+/// What the composer's primary button does right now. Pure, so the whole
+/// decision table is unit-testable away from the view.
+enum ComposerPrimaryAction: Equatable {
+    case send
+    case steer
+    case queue
+    case stop
+
+    static func current(
+        isBusy: Bool,
+        canSubmit: Bool,
+        isWaitingForTeamApproval: Bool
+    ) -> ComposerPrimaryAction {
+        guard isBusy else { return .send }
+        if isWaitingForTeamApproval { return .queue }
+        return canSubmit ? .steer : .stop
     }
 }
 

@@ -17,7 +17,13 @@ struct InspectorBrowserTab: View {
             viewportRaw: Binding(
                 get: { model.settings.browserViewportRaw },
                 set: { model.settings.browserViewportRaw = $0 }
-            )
+            ),
+            onAttachToChat: { [weak model] data in
+                model?.addPastedImages(
+                    [(data: data, mimeType: "image/png")],
+                    nameStem: "Browser screenshot"
+                ) ?? false
+            }
         )
     }
 }
@@ -30,10 +36,18 @@ struct BrowserPanel: View {
     /// True inside the detached window, which holds the borrowing claim while
     /// it is open; the inspector instance defers to it.
     var isWindowHost = false
+    /// Receives the flattened, annotated capture and reports whether the
+    /// composer accepted it. A closure rather than an AppModel dependency, so
+    /// the panel stays previewable and its redraws stay scoped to the
+    /// browser service.
+    var onAttachToChat: ((Data) -> Bool)? = nil
 
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
     @State private var draft = ""
     @State private var drawerOpen = false
+    @State private var screenshotDraft: BrowserScreenshotDraft?
+    @State private var isCapturing = false
     @FocusState private var addressFocused: Bool
 
     private var snapshot: BrowserService.TabSnapshot? {
@@ -46,9 +60,7 @@ struct BrowserPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if sessionTabs.count > 1 {
-                tabChips
-            }
+            tabChips
             toolbar
             progressLine
             content
@@ -64,31 +76,116 @@ struct BrowserPanel: View {
         .onAppear {
             if let url = snapshot?.url, !url.isEmpty { draft = url }
         }
+        .background(shortcutHost)
+        .sheet(item: $screenshotDraft) { draft in
+            BrowserScreenshotSheet(draft: draft) { data in
+                onAttachToChat?(data) ?? false
+            }
+        }
+    }
+
+    /// Capture the visible viewport for the annotation sheet. No consent gate
+    /// and no size cap: those guard the *agent* shipping pixels autonomously,
+    /// while this is the user capturing, seeing, editing, and explicitly
+    /// attaching — the composer's own attachment caps still apply.
+    private func captureForAnnotation() {
+        guard let host = browser.activeHost(for: sessionID), !isCapturing else { return }
+        isCapturing = true
+        let title = snapshot?.title ?? ""
+        Task {
+            defer { isCapturing = false }
+            guard let data = try? await host.snapshotPNG(),
+                  let image = NSBitmapImageRep(data: data)?.cgImage
+            else {
+                NSSound.beep()
+                return
+            }
+            screenshotDraft = BrowserScreenshotDraft(image: image, pageTitle: title)
+        }
+    }
+
+    /// Browser keyboard shortcuts, active exactly while this panel sits in the
+    /// key window's hierarchy — the inspector removes it structurally on tab
+    /// switch, and the detached window has its own copy. ⌘W is deliberately
+    /// shadowed here the way ⌘⇧K is in the workspace: while staring at the
+    /// browser it means "close tab" (and in the main window, un-shadowed ⌘W
+    /// would quit the app); everywhere else it keeps meaning Close Window.
+    /// While the detached window holds the borrowing claim, the inspector
+    /// copy shows a hand-off notice — its shortcuts must stand down too, or
+    /// main-window ⌘W would close the tab the user is viewing over there.
+    private var deferringToDetachedWindow: Bool {
+        browser.windowHosted && !isWindowHost
+    }
+
+    private var shortcutHost: some View {
+        Group {
+            Button("") { newTabFocusingAddress() }
+                .keyboardShortcut("t", modifiers: .command)
+                .disabled(deferringToDetachedWindow)
+            Button("") { closeActiveTab() }
+                .keyboardShortcut("w", modifiers: .command)
+                .disabled(snapshot == nil || deferringToDetachedWindow)
+            Button("") { browser.userCycleTab(sessionID: sessionID, forward: true) }
+                .keyboardShortcut("]", modifiers: [.command, .shift])
+                .disabled(sessionTabs.count < 2 || deferringToDetachedWindow)
+            Button("") { browser.userCycleTab(sessionID: sessionID, forward: false) }
+                .keyboardShortcut("[", modifiers: [.command, .shift])
+                .disabled(sessionTabs.count < 2 || deferringToDetachedWindow)
+        }
+        .buttonStyle(.plain)
+        .frame(width: 0, height: 0)
+        .opacity(0)
+        .accessibilityHidden(true)
+    }
+
+    private func newTabFocusingAddress() {
+        browser.userNewTab(sessionID: sessionID)
+        draft = ""
+        addressFocused = true
+    }
+
+    private func closeActiveTab() {
+        guard let active = snapshot else { return }
+        let wasLast = sessionTabs.count == 1
+        browser.userCloseTab(active.id, sessionID: sessionID)
+        if wasLast, isWindowHost {
+            dismissWindow(id: "browser")
+        }
     }
 
     // MARK: - Chrome
 
     private var tabChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                ForEach(sessionTabs) { tab in
-                    chip(for: tab)
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(sessionTabs) { tab in
+                        chip(for: tab)
+                            .id(tab.id)
+                    }
+                    Button {
+                        newTabFocusingAddress()
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(LocusTheme.muted)
+                            .frame(width: 20, height: 20)
+                    }
+                    .buttonStyle(.plain)
+                    .help("New tab (⌘T)")
+                    .accessibilityLabel("New browser tab")
+                    .accessibilityIdentifier("browser.tabs.new")
                 }
-                Button {
-                    browser.userNewTab(sessionID: sessionID)
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
-                        .frame(width: 20, height: 20)
-                }
-                .buttonStyle(.plain)
-                .help("New tab")
-                .accessibilityLabel("New browser tab")
-                .accessibilityIdentifier("browser.tabs.new")
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .onChange(of: snapshot?.id) { _, activeID in
+                // Switching — including via ⇧⌘] — must reveal the active chip
+                // at the inspector's narrowest widths.
+                if let activeID {
+                    withAnimation { proxy.scrollTo(activeID) }
+                }
+            }
         }
         .accessibilityIdentifier("browser.tabs")
         .background(LocusTheme.paperDeep)
@@ -102,6 +199,23 @@ struct BrowserPanel: View {
             ? (URL(string: tab.url)?.host ?? "New Tab")
             : tab.title
         return HStack(spacing: 4) {
+            Group {
+                if tab.isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.55)
+                } else if let icon = browser.favicon(forPageURL: URL(string: tab.url)) {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .interpolation(.medium)
+                } else {
+                    Image(systemName: "globe")
+                        .font(.system(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+            }
+            .frame(width: 12, height: 12)
+            .clipShape(RoundedRectangle(cornerRadius: 2, style: .continuous))
             Text(title)
                 .font(.system(size: 9, weight: tab.isActive ? .semibold : .regular))
                 .foregroundStyle(tab.isActive ? LocusTheme.ink : LocusTheme.muted)
@@ -132,8 +246,29 @@ struct BrowserPanel: View {
         .onTapGesture {
             browser.userSelectTab(tab.id, sessionID: sessionID)
         }
+        .contextMenu {
+            Button("Close Tab") {
+                browser.userCloseTab(tab.id, sessionID: sessionID)
+            }
+            Button("Close Other Tabs") {
+                browser.userCloseOtherTabs(keeping: tab.id, sessionID: sessionID)
+            }
+            .disabled(sessionTabs.count < 2)
+            Divider()
+            Button("Copy URL") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(tab.url, forType: .string)
+            }
+            .disabled(tab.url.isEmpty)
+            Button("Open in Default Browser") {
+                browser.userOpenTabExternally(tab.id, sessionID: sessionID)
+            }
+            .disabled(tab.url.isEmpty)
+        }
+        .help(tab.url.isEmpty ? "New Tab" : tab.url)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title) tab")
+        .accessibilityIdentifier("browser.tab.\(tab.id)")
         .accessibilityAddTraits(tab.isActive ? [.isSelected] : [])
     }
 
@@ -242,14 +377,24 @@ struct BrowserPanel: View {
         } else {
             InspectorPlaceholder(
                 symbol: "globe",
-                title: "Browser",
+                title: placeholderTitle,
                 message: placeholderMessage,
                 identifier: "browser.empty"
             )
         }
     }
 
+    private var placeholderTitle: String {
+        snapshot != nil && snapshot?.url.isEmpty == true ? "New Tab" : "Browser"
+    }
+
     private var placeholderMessage: String {
+        if snapshot != nil, snapshot?.url.isEmpty == true {
+            if let homeURL {
+                return "Type an address above, or press ↵ to open \(homeURL.absoluteString)."
+            }
+            return "Type an address above to browse."
+        }
         if let homeURL {
             return "Enter an address, or press Go to open \(homeURL.absoluteString).\n\nThe agent browses here too: pages it opens appear in this panel."
         }
@@ -286,6 +431,23 @@ struct BrowserPanel: View {
             .accessibilityIdentifier("browser.viewport")
 
             Spacer()
+
+            Button {
+                captureForAnnotation()
+            } label: {
+                Image(systemName: "camera")
+                    .font(.system(size: 10))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            .buttonStyle(.plain)
+            .disabled(
+                isCapturing
+                    || snapshot?.url.isEmpty != false
+                    || (browser.windowHosted && !isWindowHost)
+            )
+            .help("Capture the page to annotate and attach")
+            .accessibilityLabel("Capture page for chat")
+            .accessibilityIdentifier("browser.capture")
 
             Button {
                 drawerOpen.toggle()

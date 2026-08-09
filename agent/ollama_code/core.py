@@ -221,11 +221,17 @@ Environment:
 - OS: {os_name}
 - Working directory: {cwd}
 - Date: {date}
+- Underlying model: {model_identity}
+
+"ollama-code" names this agent, not the model. When asked which model or LLM
+you are, answer with the underlying model named above.
 """
 
 JUST_CHAT_SYSTEM_PROMPT = """You are Locus in Just Chat mode.
 
 Answer the user's question conversationally using only the conversation shown to you. This mode has no workspace access: do not inspect, read, search, create, edit, or delete files; do not run commands; and do not use skills, plugins, MCP servers, or other tools. If the answer requires workspace or external information, explain that the user must turn off Just Chat first. Be concise and directly helpful.
+
+"Locus" names this app, not the model. Your underlying model: {model_identity}. When asked which model or LLM you are, answer with that.
 """
 
 INIT_PROMPT = (
@@ -449,11 +455,29 @@ class AgentCore:
                     continue
                 break
 
+    def model_identity_label(self) -> str:
+        """The underlying model, named for the prompt.
+
+        Without this every model claims to *be* ollama-code or Locus — the
+        persona the prompt assigns — because nothing ever told it what it
+        actually is. Strong self-identifying models broke through; compliant
+        ones did not, which read as smart models "knowing" and others not.
+        """
+        if self.provider == "remote":
+            provider_label = (
+                str(self.config.get("remote_account_label") or "").strip()
+                or str(self.config.get("remote_base_url") or "a remote endpoint")
+            )
+        else:
+            provider_label = "local Ollama"
+        return f"{self.model or 'not yet selected'} via {provider_label}"
+
     def system_message(self) -> dict[str, str]:
         text = BASE_SYSTEM_PROMPT.format(
             os_name=f"{platform.system()} {platform.release()}",
             cwd=self.cwd,
             date=datetime.now().strftime("%Y-%m-%d"),
+            model_identity=self.model_identity_label(),
         )
         if self.project_context:
             name, content = self.project_context
@@ -845,6 +869,7 @@ class AgentCore:
         self._context_requested = 0
         self._trained_window_for = ""
         save_config(self.config)
+        self.reset_system_message()
         self._emit_info()
 
     def use_remote(
@@ -923,6 +948,7 @@ class AgentCore:
         self._context_limit_for = ""
         self.refresh_context_limit()
         save_config(self.config)  # never writes the key
+        self.reset_system_message()
         self._emit_info()
 
     def provider_state(self) -> dict[str, Any]:
@@ -966,6 +992,7 @@ class AgentCore:
         self.session.append({"type": "model", "model": name})
         save_config(self.config)
         self.refresh_context_limit()
+        self.reset_system_message()
         self._emit_info()
 
     def set_cwd(self, path: str) -> None:
@@ -1229,8 +1256,11 @@ class AgentCore:
             # require a backend restart, while Just Chat remains isolated from
             # workspace instructions.
             self.reload_context()
-            self.reset_system_message()
             self.tool_registry.begin_turn(user_text, self.cwd)
+        # Every mode refreshes the system message: the date and the underlying
+        # model line must be true in Just Chat too, and a /model switch would
+        # otherwise leave the old identity in messages[0] there.
+        self.reset_system_message()
         try:
             # Ollama only says what window it chose once the model is resident, so
             # the first turn budgets against nothing and every turn after that
@@ -1758,10 +1788,13 @@ class AgentCore:
             for message in self.messages
         ]
         if not self._turn_allows_tools:
+            chat_prompt = JUST_CHAT_SYSTEM_PROMPT.format(
+                model_identity=self.model_identity_label()
+            )
             if messages and messages[0].get("role") == "system":
-                messages[0]["content"] = JUST_CHAT_SYSTEM_PROMPT
+                messages[0]["content"] = chat_prompt
             else:
-                messages.insert(0, {"role": "system", "content": JUST_CHAT_SYSTEM_PROMPT})
+                messages.insert(0, {"role": "system", "content": chat_prompt})
             return messages
         prompt = self._extension_prompt()
         if messages and messages[0].get("role") == "system":

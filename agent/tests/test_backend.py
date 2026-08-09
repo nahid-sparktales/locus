@@ -3286,6 +3286,33 @@ def test_computer_screenshot_retries_only_for_explicit_image_rejection(tmp_path)
     assert core._computer_route_key() in core._ax_only_routes
 
 
+def test_system_prompt_names_the_underlying_model(tmp_path):
+    core = _core(tmp_path, [])
+
+    message = core.system_message()["content"]
+
+    assert "Underlying model: test-model via local Ollama" in message
+    assert "names this agent, not the model" in message
+
+
+def test_model_switch_refreshes_the_identity_mid_conversation(tmp_path):
+    core = _core(tmp_path, [
+        ChatResponse(content_parts=["hello"], done=True),
+        ChatResponse(content_parts=["I am other-model"], done=True),
+    ])
+    core.run_turn("hi", allow_tools=False)
+    assert "test-model via local Ollama" in core.messages[0]["content"]
+
+    core.set_model("other-model")
+    assert "other-model via local Ollama" in core.messages[0]["content"]
+
+    # Just Chat swaps in its own system prompt; the identity must ride it too.
+    core.run_turn("what llm are you", allow_tools=False)
+    request = core.client.seen_messages[-1]
+    assert "Your underlying model: other-model via local Ollama" in request[0]["content"]
+    assert "names this app, not the model" in request[0]["content"]
+
+
 def test_image_rejection_strips_user_attachments_and_retries_once(tmp_path):
     class ImageRejectingClient(FakeClient):
         def chat_stream(self, model, messages, tools=None, on_token=None, should_stop=None,

@@ -114,6 +114,14 @@ final class OffscreenWebHost {
         webView.frame = NSRect(origin: .zero, size: viewport)
         webView.autoresizingMask = [.width, .height]
         panel.contentView?.addSubview(webView)
+        // The parked panel keeps WebKit's "visible" state so pages stay live,
+        // which also means a background video keeps decoding at full rate
+        // against whatever the user is actually loading. A one-shot pause —
+        // deliberately not setAllMediaPlaybackSuspended, whose page-level veto
+        // survives navigations and would make every page the agent loads in a
+        // parked tab reject play(), reporting false media defects that vanish
+        // the moment the user looks.
+        webView.pauseAllMediaPlayback(completionHandler: nil)
     }
 
     /// Resize the emulated viewport. Takes effect immediately while parked;

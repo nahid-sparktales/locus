@@ -4,6 +4,53 @@
 
 ### Added
 
+- **The browser got fast.** Three real defects made every page slow. Every
+  navigation carried a forced hard-reload cache policy inherited from the old
+  dev-server Preview pane — WebKit propagates it to every subresource, so each
+  Enter refetched every script, style, and image; ordinary browsing now uses
+  the HTTP cache, and the hard reload survives only for loopback hosts, where
+  a stale asset would hide the edit you just made. The injected network
+  capture used to sit between the network and the page, holding every fetch
+  until its whole body downloaded — and deadlocking forever on
+  server-sent-event streams; capture now reads bodies after the page already
+  has its response, skips streaming bodies entirely, and stays out of
+  sub-frames, so `browser_wait_for` settles truthfully on streaming pages.
+  And the browser now completes its user-agent with the Safari token the
+  WebKit engine actually is, which stops bot-detection vendors from routing
+  it into challenge interstitials. Parked background tabs also suspend media
+  playback, and the default ephemeral profile stops being rebuilt on every
+  session event.
+- **Screenshot, annotate, attach.** A camera button in the browser captures
+  the visible page into an annotation sheet — crop, pen, box, arrow, text
+  labels, five colors, undo — and one click attaches the flattened PNG to
+  the composer, named "Browser screenshot …", ready for a vision model in
+  any mode. Copy and Save PNG… are there too. The user's own capture asks no
+  consent and has no size cap: those guard the agent shipping pixels
+  autonomously, not you cropping your own screenshot — and the composer's
+  attachment limits still apply.
+- **Real tabs.** The tab strip is always visible with a reachable "+" (a new
+  tab focuses the address bar), chips carry the page's favicon — fetched once
+  per host, through the configured proxy, never retried on failure — or a
+  loading spinner, tooltips show the full URL, and a right-click offers Close
+  Tab, Close Other Tabs, Copy URL, and Open in Default Browser. ⌘T, ⌘W, and
+  ⇧⌘]/⇧⌘[ work while the browser panel is showing — ⌘W is deliberately
+  shadowed there to mean "close tab" (and in the main window an un-shadowed
+  ⌘W would quit the app); everywhere else it keeps meaning Close Window.
+  Dragging chips to reorder is deferred: per-session tab counts are small,
+  and a drag inside the scrolling strip needs machinery the release does not
+  earn yet.
+- **A stop button.** While a solo run is active and the composer is empty,
+  the send slot shows a stop control — the space that used to hold a disabled
+  arrow — and ⌘↵ or Esc stops the run. Typing switches the slot back to
+  steering, which stays the primary busy action on purpose. Team runs keep
+  their own Stop on the run board.
+- **Models now know what they are.** Every model used to answer "what LLM are
+  you" with "I'm ollama-code" or "I'm Locus" — the persona the system prompt
+  assigns — because nothing ever told it what it actually was; only strongly
+  self-identifying models broke through, which read as smart models "knowing".
+  Both prompts now state the underlying model and provider, refreshed on
+  every model switch, in Just Chat too.
+
 - **Screenshot-to-fix: attachments in every mode.** Images and files attach to
   Work, Plan, and Build messages — not just Just Chat — so "here's a
   screenshot of the bug, fix it" finally works. Drag files onto the composer

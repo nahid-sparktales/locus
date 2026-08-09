@@ -24,7 +24,7 @@ private let shortcutReferenceGroups: [ShortcutReferenceGroup] = [
         ShortcutReference(keys: "⌘R", title: "Review changes"),
     ]),
     ShortcutReferenceGroup(name: "Composer", shortcuts: [
-        ShortcutReference(keys: "⌘↵", title: "Send message (queues while busy)"),
+        ShortcutReference(keys: "⌘↵", title: "Send · steer while busy · stop when empty"),
         ShortcutReference(keys: "Esc", title: "Stop the current run / close popups"),
         ShortcutReference(keys: "↑ ↓", title: "Browse prompt history (empty composer)"),
         ShortcutReference(keys: "/", title: "Slash commands"),
@@ -35,6 +35,11 @@ private let shortcutReferenceGroups: [ShortcutReferenceGroup] = [
         ShortcutReference(keys: "⌘0", title: "Show/hide sidebar"),
         ShortcutReference(keys: "⌘1–⌘8", title: "Open inspector tabs"),
         ShortcutReference(keys: "⌘⌥I", title: "Show/hide inspector"),
+    ]),
+    ShortcutReferenceGroup(name: "Browser (while the panel is showing)", shortcuts: [
+        ShortcutReference(keys: "⌘T", title: "New tab"),
+        ShortcutReference(keys: "⌘W", title: "Close tab"),
+        ShortcutReference(keys: "⇧⌘] ⇧⌘[", title: "Next / previous tab"),
     ]),
     ShortcutReferenceGroup(name: "Modes", shortcuts: [
         ShortcutReference(keys: "⌥A", title: "Just Chat"),

@@ -28,11 +28,14 @@ enum BrowserBridge {
     /// the only place a patched `console` or `fetch` is visible to the page's
     /// own scripts — which is also why a page can read, unpatch or forge
     /// anything this layer reports. It is report-only for exactly that reason.
+    /// Main frame only: the capture drawer is a debugging surface for the page
+    /// the user is looking at, and every ad or embed iframe installing its own
+    /// observers and wrappers was pure load-time overhead.
     static func captureScript() -> WKUserScript {
         WKUserScript(
             source: captureSource,
             injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
+            forMainFrameOnly: true
         )
     }
 
@@ -755,6 +758,15 @@ enum BrowserBridge {
       let sequence = 0;
       const MAX_BODY = 16000;
       const TEXTUAL = /json|text|javascript|xml|html/i;
+      // Streams must never be buffered: an event-stream body only "ends" when
+      // the connection dies, and reading it would sit between the network and
+      // the page forever. Anything without a Content-Length gets the same
+      // caution — it may be a stream even without the canonical type.
+      function capturableBody(response, type) {
+        if (!TEXTUAL.test(type)) { return false; }
+        if (/event-stream/i.test(type)) { return false; }
+        return response.headers.has('content-length');
+      }
 
       function record(entry) {
         sequence += 1;
@@ -770,28 +782,37 @@ enum BrowserBridge {
             || 'GET';
           const url = typeof input === 'string' ? input : (input && input.url) || '';
           globalThis.__locusInFlight += 1;
-          return originalFetch.apply(this, arguments).then(async (response) => {
+          return originalFetch.apply(this, arguments).then((response) => {
             globalThis.__locusInFlight -= 1;
-            let body = '';
             const type = response.headers.get('content-type') || '';
-            if (TEXTUAL.test(type)) {
-              try {
-                // Cloned, so the page still gets an unread stream.
-                body = (await response.clone().text()).slice(0, MAX_BODY);
-              } catch (error) { body = ''; }
-            }
-            record({
+            const entry = {
               method: String(method).toUpperCase(),
               url: url,
               status: response.status,
               ok: response.ok,
               duration_ms: Math.round(performance.now() - started),
               content_type: type,
-              body: body,
+              body: '',
               source: 'fetch',
+            };
+            if (!capturableBody(response, type)) {
+              // Headers and status still report; the body is a stream or
+              // unbounded, and reading it is not this layer's business.
+              record(entry);
+              return response;
+            }
+            // The page gets its response NOW — the clone is read after the
+            // fact, off the page's own await chain, so capture can never
+            // delay or deadlock the application it is observing.
+            const clone = response.clone();
+            queueMicrotask(() => {
+              clone.text().then((text) => {
+                entry.body = String(text).slice(0, MAX_BODY);
+                record(entry);
+              }, () => { record(entry); });
             });
             return response;
-          }).catch((error) => {
+          }, (error) => {
             globalThis.__locusInFlight -= 1;
             record({
               method: String(method).toUpperCase(),

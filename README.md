@@ -235,6 +235,18 @@ deny list below applies to what you type, too.
 
 ![Console tab](Docs/locus-console.jpg)
 
+**Browser** shows the same live pages the agent drives, with real tabs: an
+always-visible strip with favicons, loading spinners, URL tooltips, and a
+right-click menu (close, close others, copy URL, open in the default
+browser); ⌘T, ⌘W, and ⇧⌘]/⇧⌘[ work while the panel is showing. Ordinary
+navigation browses through the HTTP cache — only loopback dev servers hard
+reload, where a stale asset would hide the edit you just made — and the
+camera button captures the visible page into an annotation sheet (crop, pen,
+box, arrow, text) whose result attaches straight to the composer for a
+vision model. While a solo run is active and the composer is empty, the send
+button becomes a **stop** button; ⌘↵ or Esc stops the run, and typing
+switches it back to steering.
+
 ## Permissions
 
 When a tool needs approval, the **permission prompt replaces the composer** —

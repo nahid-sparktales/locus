@@ -227,4 +227,28 @@ final class BrowserBridgeTests: XCTestCase {
         let tree = try XCTUnwrap(page["tree"] as? String)
         XCTAssertTrue(tree.contains("iframe \"Payment\" (contents not readable)"), tree)
     }
+
+    // MARK: - Capture script load-speed contract
+
+    func testCaptureScriptStaysOutOfSubframes() {
+        // Every ad iframe installing wrappers and observers was measurable
+        // load-time overhead; the reader stays all-frames for element refs.
+        XCTAssertTrue(BrowserBridge.captureScript().isForMainFrameOnly)
+        XCTAssertFalse(BrowserBridge.readerScript().isForMainFrameOnly)
+    }
+
+    func testCaptureFetchWrapperNeverSitsBetweenTheNetworkAndThePage() {
+        let source = BrowserBridge.captureScript().source
+        // The response must be returned before any body is read: the clone is
+        // consumed off the page's await chain, and streaming responses are
+        // excluded outright — an event-stream body only ends when the
+        // connection dies, and reading it deadlocked the page's own fetch.
+        XCTAssertTrue(source.contains("queueMicrotask"), "body capture must be detached")
+        XCTAssertTrue(source.contains("event-stream"), "streams must be excluded")
+        XCTAssertTrue(source.contains("content-length"), "unbounded bodies must be excluded")
+        XCTAssertFalse(
+            source.contains("await response.clone()"),
+            "the page's fetch promise must not wait for capture"
+        )
+    }
 }

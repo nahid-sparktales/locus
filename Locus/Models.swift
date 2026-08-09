@@ -1094,7 +1094,12 @@ struct ChatAttachment: Identifiable, Hashable, Sendable {
         self.overrideName = overrideName
     }
 
-    static func pasted(imageData: Data, mimeType: String, date: Date = Date()) -> ChatAttachment {
+    static func pasted(
+        imageData: Data,
+        mimeType: String,
+        date: Date = Date(),
+        nameStem: String = "Pasted image"
+    ) -> ChatAttachment {
         let stamp = date.formatted(
             Date.FormatStyle()
                 .year().month(.twoDigits).day(.twoDigits)
@@ -1108,7 +1113,7 @@ struct ChatAttachment: Identifiable, Hashable, Sendable {
             kind: .image,
             imageData: imageData,
             mimeType: mimeType,
-            overrideName: "Pasted image \(stamp).\(fileExtension)"
+            overrideName: "\(nameStem) \(stamp).\(fileExtension)"
         )
     }
 

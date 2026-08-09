@@ -2037,6 +2037,95 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertFalse(encoded.lowercased().contains("authorization"))
     }
 
+    func testFaviconCandidateURLDecisionTable() {
+        let page = URL(string: "https://docs.example.com/guide")!
+
+        // A declared web icon wins, absolute or already resolved by the probe.
+        XCTAssertEqual(
+            FaviconLogic.candidateURL(
+                declared: "https://cdn.example.com/icon.png", pageURL: page
+            )?.absoluteString,
+            "https://cdn.example.com/icon.png"
+        )
+        // Non-web declarations fall back to the origin's favicon.ico.
+        for rejected in ["data:image/png;base64,AAAA", "javascript:alert(1)", "not a url at all"] {
+            XCTAssertEqual(
+                FaviconLogic.candidateURL(declared: rejected, pageURL: page)?.absoluteString,
+                "https://docs.example.com/favicon.ico",
+                rejected
+            )
+        }
+        XCTAssertEqual(
+            FaviconLogic.candidateURL(declared: nil, pageURL: page)?.absoluteString,
+            "https://docs.example.com/favicon.ico"
+        )
+        // The fallback preserves the port — dev servers live on one.
+        XCTAssertEqual(
+            FaviconLogic.candidateURL(
+                declared: nil, pageURL: URL(string: "http://localhost:3000/app")!
+            )?.absoluteString,
+            "http://localhost:3000/favicon.ico"
+        )
+        // No host, no icon.
+        XCTAssertNil(FaviconLogic.candidateURL(declared: nil, pageURL: URL(string: "about:blank")!))
+
+        // The cache key is the origin, port included: two dev servers on
+        // localhost are different sites with different icons.
+        XCTAssertEqual(
+            FaviconLogic.cacheKey(for: URL(string: "http://localhost:3000/app")),
+            "http://localhost:3000"
+        )
+        XCTAssertEqual(
+            FaviconLogic.cacheKey(for: URL(string: "http://localhost:5173/app")),
+            "http://localhost:5173"
+        )
+        XCTAssertEqual(
+            FaviconLogic.cacheKey(for: URL(string: "https://docs.example.com/guide")),
+            "https://docs.example.com:443"
+        )
+        XCTAssertNil(FaviconLogic.cacheKey(for: URL(string: "about:blank")))
+        XCTAssertNil(FaviconLogic.cacheKey(for: nil))
+    }
+
+    func testComposerPrimaryActionCoversEveryState() {
+        // Idle always sends, whatever the draft state — send itself guards.
+        XCTAssertEqual(
+            ComposerPrimaryAction.current(
+                isBusy: false, canSubmit: true, isWaitingForTeamApproval: false
+            ), .send
+        )
+        XCTAssertEqual(
+            ComposerPrimaryAction.current(
+                isBusy: false, canSubmit: false, isWaitingForTeamApproval: false
+            ), .send
+        )
+        // Busy with text typed: steering stays primary — typing is intent.
+        XCTAssertEqual(
+            ComposerPrimaryAction.current(
+                isBusy: true, canSubmit: true, isWaitingForTeamApproval: false
+            ), .steer
+        )
+        // Busy with an empty composer: the slot that used to be a disabled
+        // arrow is the stop control.
+        XCTAssertEqual(
+            ComposerPrimaryAction.current(
+                isBusy: true, canSubmit: false, isWaitingForTeamApproval: false
+            ), .stop
+        )
+        // A pending team-plan decision queues; stopping a team run belongs to
+        // its run board, not this button.
+        XCTAssertEqual(
+            ComposerPrimaryAction.current(
+                isBusy: true, canSubmit: true, isWaitingForTeamApproval: true
+            ), .queue
+        )
+        XCTAssertEqual(
+            ComposerPrimaryAction.current(
+                isBusy: true, canSubmit: false, isWaitingForTeamApproval: true
+            ), .queue
+        )
+    }
+
     func testPasteboardClassificationPrefersTextOverIncidentalImages() {
         let png = PastedImage(data: Data([0x89, 0x50]), mimeType: "image/png")
 

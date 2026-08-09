@@ -35,6 +35,23 @@ enum BrowserScheme {
         }
         return url
     }
+
+    /// Whether a URL points at this machine — the hot-reloading dev-server
+    /// case, where stale cached assets hide the edit the user just made.
+    static func isLoopback(_ url: URL) -> Bool {
+        let host = url.host?.lowercased() ?? ""
+        return host == "localhost" || host == "127.0.0.1" || host == "::1"
+            || host == "[::1]" || host.hasSuffix(".localhost")
+    }
+
+    /// Cache policy per destination. WebKit propagates the main document's
+    /// `reloadIgnoringLocalCacheData` to every subresource, so using it for
+    /// ordinary browsing refetches all assets on every navigation — the
+    /// policy came from the dev-server Preview pane and stays only for its
+    /// loopback case. Everything else browses through the HTTP cache.
+    static func cachePolicy(for url: URL) -> URLRequest.CachePolicy {
+        isLoopback(url) ? .reloadIgnoringLocalCacheData : .useProtocolCachePolicy
+    }
 }
 
 /// How a navigation ended. A slow page returns `stillLoading` rather than an
@@ -142,6 +159,18 @@ final class BrowserService: NSObject, ObservableObject {
     }
 
     @Published private(set) var tabs: [TabSnapshot] = []
+    /// Page icons keyed by host — deliberately not on `TabSnapshot`, so the
+    /// snapshot diff stays untouched and same-host tabs share one icon.
+    /// Written only by the favicon extension (BrowserFavicons.swift), which
+    /// is why the setter is not file-private.
+    @Published var favicons: [String: NSImage] = [:]
+    /// Hosts fetched, in-flight, or failed. One attempt per host per app
+    /// session: tab churn must never become request churn.
+    var faviconHostsAttempted: Set<String> = []
+    /// Injectable for tests; the default rides the configured proxy.
+    var faviconFetcher: (URL) async -> Data? = { url in
+        await BrowserService.proxiedFaviconFetch(url)
+    }
     @Published private(set) var isExecuting = false
     /// True while the detached Browser window is showing the page. The
     /// inspector's borrowed view checks this before lending, because a
@@ -191,7 +220,10 @@ final class BrowserService: NSObject, ObservableObject {
     /// they are not a stable identity for a cookie jar.
     func configureProfile(workspacePath: String, persistent: Bool) {
         let identifier = persistent ? Self.profileIdentifier(for: workspacePath) : nil
-        guard identifier != persistentProfileID || openTabs.isEmpty else { return }
+        // Same identity — including ephemeral→ephemeral — keeps the same
+        // store. This runs on every session_info; rebuilding `.nonPersistent()`
+        // each time silently threw away the in-memory cache and cookies.
+        guard identifier != persistentProfileID else { return }
         // A data store cannot be swapped under a live page; the pages go too.
         if !openTabs.isEmpty {
             cancelPendingActions()
@@ -220,6 +252,9 @@ final class BrowserService: NSObject, ObservableObject {
         dataStore = identifier.map { WKWebsiteDataStore(forIdentifier: $0) }
             ?? .nonPersistent()
         proxyGeneration = nil
+        // Icons are derived from browsed pages, so the sweeper covers them too.
+        favicons.removeAll()
+        faviconHostsAttempted.removeAll()
         publishTabs()
         if let identifier {
             Task {
@@ -441,7 +476,7 @@ final class BrowserService: NSObject, ObservableObject {
                     + "the browser opens http and https pages only"
                 )
             }
-            tab.webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+            tab.webView.load(URLRequest(url: url, cachePolicy: BrowserScheme.cachePolicy(for: url)))
         }
 
         let outcome = await withDeadline(gate: gate, budget: budget)
@@ -970,6 +1005,12 @@ final class BrowserService: NSObject, ObservableObject {
             // window.open; links and user-gestured popups route through
             // createWebViewWith into a managed tab.
             configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+            // Without this, the UA is the bare embedded-WebView signature
+            // (no Version/Safari tokens), which bot-detection vendors route
+            // into challenge interstitials and UA sniffers serve degraded
+            // fallbacks to. Completing the token set makes the UA read as
+            // the Safari this WebKit actually is.
+            configuration.applicationNameForUserAgent = "Version/17.4 Safari/605.1.15"
         }
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -1073,7 +1114,7 @@ final class BrowserService: NSObject, ObservableObject {
         }
         applyProxyIfNeeded()
         let tab = tab(for: sessionID)
-        tab.webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+        tab.webView.load(URLRequest(url: url, cachePolicy: BrowserScheme.cachePolicy(for: url)))
         publishTabs()
         return true
     }
@@ -1134,6 +1175,43 @@ final class BrowserService: NSObject, ObservableObject {
     /// field that may never have been visited.
     func openCurrentTabExternally(sessionID: String) {
         guard let url = existingTab(for: sessionID)?.webView.url else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Close every other tab the session owns. A keeper the session does not
+    /// own is refused outright — a partial close would be worse than a no-op.
+    func userCloseOtherTabs(keeping tabID: String, sessionID: String) {
+        guard openTabs.contains(where: { $0.id == tabID && $0.ownerSessionID == sessionID })
+        else { return }
+        let victims = openTabs.filter { $0.ownerSessionID == sessionID && $0.id != tabID }
+        guard !victims.isEmpty else { return }
+        for tab in victims {
+            tab.invalidateObservations()
+            tab.gate?.settle(.cancelled)
+        }
+        openTabs.removeAll { tab in victims.contains { $0 === tab } }
+        activeTabBySession[sessionID] = tabID
+        publishTabs()
+    }
+
+    /// Move the active tab within the session's own ring, wrapping both ways.
+    func userCycleTab(sessionID: String, forward: Bool) {
+        let mine = openTabs.filter { $0.ownerSessionID == sessionID }
+        guard mine.count > 1,
+              let activeID = activeTabBySession[sessionID],
+              let index = mine.firstIndex(where: { $0.id == activeID })
+        else { return }
+        let next = mine[(index + (forward ? 1 : mine.count - 1)) % mine.count]
+        activeTabBySession[sessionID] = next.id
+        publishTabs()
+    }
+
+    /// Any of the session's tabs in the default browser, not just the active
+    /// one — the chip context menu addresses tabs directly.
+    func userOpenTabExternally(_ tabID: String, sessionID: String) {
+        guard let tab = openTabs.first(where: {
+            $0.id == tabID && $0.ownerSessionID == sessionID
+        }), let url = tab.webView.url else { return }
         NSWorkspace.shared.open(url)
     }
 
@@ -1240,6 +1318,7 @@ extension BrowserService: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         tab(owning: webView)?.gate?.settle(.finished)
+        noteFaviconOpportunity(for: webView)
         publishTabs()
     }
 

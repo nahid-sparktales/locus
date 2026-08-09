@@ -30,7 +30,13 @@ struct BrowserWindowView: View {
                 get: { model.settings.browserViewportRaw },
                 set: { model.settings.browserViewportRaw = $0 }
             ),
-            isWindowHost: true
+            isWindowHost: true,
+            onAttachToChat: { [weak model] data in
+                model?.addPastedImages(
+                    [(data: data, mimeType: "image/png")],
+                    nameStem: "Browser screenshot"
+                ) ?? false
+            }
         )
         .frame(minWidth: 600, minHeight: 400)
         .background(LocusTheme.paper)
