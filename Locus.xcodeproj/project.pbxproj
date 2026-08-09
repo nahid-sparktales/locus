@@ -47,7 +47,6 @@
 		7161D1119A9B7183F6843C62 /* AgentTeamsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29912FD4FFA8E9056AD4FCA2 /* AgentTeamsSettingsView.swift */; };
 		74A5BCF6953128864737A070 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2D4CA41C622A34E45EF21F54 /* Assets.xcassets */; };
 		77D7EC97E924FD976475CB02 /* PlanApprovalPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEF0BEF00F2EA8083877CC21 /* PlanApprovalPromptView.swift */; };
-		898CACE2D3C19165183DB184 /* BrowserWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C783D4221C2C81F7C17C173 /* BrowserWindow.swift */; };
 		938383A0E816F7A0C1B97A10 /* TaskWorkerRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1616CD8FA01FCC15741F95EF /* TaskWorkerRuntime.swift */; };
 		9A0515892C46D782017B431C /* BrowserFavicons.swift in Sources */ = {isa = PBXBuildFile; fileRef = A256B308D8C600193136B212 /* BrowserFavicons.swift */; };
 		A168BD7079B3C4263A512D9D /* BrowserHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DAA191A144F0B1DE7901A9D /* BrowserHostTests.swift */; };
@@ -75,6 +74,7 @@
 		F01F72892D90A52009E99BC3 /* SessionSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A37D5FE4583645B552296C /* SessionSidebarView.swift */; };
 		F9405ED899AAD041CF6BAD66 /* BackendService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3793FC69B1D813ED07567A2E /* BackendService.swift */; };
 		FCCDEFB817C5CCEC225278D5 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C24AE13FC7723F12A5F2380 /* Models.swift */; };
+		FED1D1E807720C78D3AAC510 /* InspectorRail.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D508444E398AA3AB5441198 /* InspectorRail.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -107,12 +107,12 @@
 		22DCECBAA7DADB611159A90E /* BrowserService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserService.swift; sourceTree = "<group>"; };
 		28BF95EE575D10DBDE8FA1B3 /* PermissionPromptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionPromptView.swift; sourceTree = "<group>"; };
 		29912FD4FFA8E9056AD4FCA2 /* AgentTeamsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTeamsSettingsView.swift; sourceTree = "<group>"; };
-		2C783D4221C2C81F7C17C173 /* BrowserWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserWindow.swift; sourceTree = "<group>"; };
 		2D4CA41C622A34E45EF21F54 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		2E2B58EEFFFA7A86BC2AF7F6 /* InspectorAgentsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorAgentsTab.swift; sourceTree = "<group>"; };
 		319231FBA55F2DE9A5EB9377 /* HostedScreenshotConsent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedScreenshotConsent.swift; sourceTree = "<group>"; };
 		3793FC69B1D813ED07567A2E /* BackendService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendService.swift; sourceTree = "<group>"; };
 		38EED4FF1CBA575694CE08AA /* LocusTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocusTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		3D508444E398AA3AB5441198 /* InspectorRail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorRail.swift; sourceTree = "<group>"; };
 		40301E70BE817C7039EA22EB /* ThirdPartyLicenses */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ThirdPartyLicenses; path = Locus/Resources/ThirdPartyLicenses; sourceTree = SOURCE_ROOT; };
 		428755E5B586F084930BCE41 /* BrowserHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserHost.swift; sourceTree = "<group>"; };
 		491C7A81B9570B8692EB32B2 /* BrowserCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserCapture.swift; sourceTree = "<group>"; };
@@ -231,7 +231,6 @@
 				A256B308D8C600193136B212 /* BrowserFavicons.swift */,
 				428755E5B586F084930BCE41 /* BrowserHost.swift */,
 				22DCECBAA7DADB611159A90E /* BrowserService.swift */,
-				2C783D4221C2C81F7C17C173 /* BrowserWindow.swift */,
 				4CCD53839428838B380300D2 /* ChatAttachmentIngest.swift */,
 				E18BD6EB5EBD180B3E69FBD6 /* ComposerView.swift */,
 				731F4ECD2268E698A675A53D /* ComputerControlService.swift */,
@@ -247,6 +246,7 @@
 				CCCD81AAF0691EDC3F6B0D64 /* InspectorChangesTab.swift */,
 				10D6D002C03E3AA6EB9FEFD0 /* InspectorFilesTab.swift */,
 				BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */,
+				3D508444E398AA3AB5441198 /* InspectorRail.swift */,
 				9C90DE8FC778C6A106DF35EB /* InspectorTerminalTab.swift */,
 				CF3D3389D598BBECBE77E38F /* InspectorView.swift */,
 				C55065A982A7FB563B8DEA87 /* LocalRuntimeCoordinator.swift */,
@@ -452,7 +452,6 @@
 				9A0515892C46D782017B431C /* BrowserFavicons.swift in Sources */,
 				D73CE056DABC107BDDD4684B /* BrowserHost.swift in Sources */,
 				3D805FA7BB37C64980BE38D1 /* BrowserService.swift in Sources */,
-				898CACE2D3C19165183DB184 /* BrowserWindow.swift in Sources */,
 				DA93FDB52763A2AE42AFBEED /* ChatAttachmentIngest.swift in Sources */,
 				E6B5E9C34E90B735A5A84C22 /* ComposerView.swift in Sources */,
 				3850B68F64BA26287AD5633E /* ComputerControlService.swift in Sources */,
@@ -467,6 +466,7 @@
 				D586AEB96691BDCC5A9F0418 /* InspectorChangesTab.swift in Sources */,
 				56B2392CBBC3354BD5A6E359 /* InspectorFilesTab.swift in Sources */,
 				C0EB8EF86FF9954D89CC082E /* InspectorPlanTab.swift in Sources */,
+				FED1D1E807720C78D3AAC510 /* InspectorRail.swift in Sources */,
 				4C25B8F53E842CD8D5556308 /* InspectorTerminalTab.swift in Sources */,
 				35872DC7D25B9CE5D3A43C6E /* InspectorView.swift in Sources */,
 				B302C713CDCD5A21C3CF431C /* LocalRuntimeCoordinator.swift in Sources */,

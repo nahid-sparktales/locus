@@ -64,6 +64,24 @@ final class OffscreenWebHost {
     /// than lent to a visible container.
     var isParked: Bool { webView.superview === panel.contentView }
 
+    /// Whether the parked panel is ordered front, keeping WebKit's "visible"
+    /// activity state. Background tabs give this up so a dozen parked pages
+    /// don't run rAF and unthrottled timers against the tab actually loading.
+    private(set) var isKeptLive = true
+
+    /// Order the parked panel in or out. The session's active tab stays live —
+    /// the agent reads and screenshots it while the inspector shows something
+    /// else — and everything else throttles like a normal background tab.
+    func setKeptLive(_ live: Bool) {
+        guard live != isKeptLive else { return }
+        isKeptLive = live
+        if live {
+            panel.orderFront(nil)
+        } else {
+            panel.orderOut(nil)
+        }
+    }
+
     init(webView: WKWebView, viewport: CGSize = BrowserViewport.desktop.size) {
         self.webView = webView
         self.viewport = viewport
@@ -148,6 +166,16 @@ final class OffscreenWebHost {
     /// coordinates and clipped to what is laid out, and WebKit has no
     /// capture-beyond-viewport equivalent.
     func snapshotPNG(maximumWidth: CGFloat = 1_600) async throws -> Data {
+        // A backgrounded panel is ordered out and has no drawing area; bring
+        // it back for the capture and restore the throttled state after. The
+        // defer re-reads `isKeptLive` rather than trusting the entry value:
+        // a tab switch during the awaits below flips it through setKeptLive,
+        // and ordering out a tab that just became live again would strand it
+        // throttled — with the flag claiming otherwise, so nothing would
+        // ever order it back front.
+        let broughtForward = !isKeptLive && isParked
+        if broughtForward { panel.orderFront(nil) }
+        defer { if broughtForward, !isKeptLive { panel.orderOut(nil) } }
         let configuration = WKSnapshotConfiguration()
         configuration.afterScreenUpdates = true
         let width = min(webView.bounds.width, maximumWidth)

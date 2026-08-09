@@ -1871,6 +1871,123 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testZoomOpensThePanelAndCollapseClearsZoom() {
+        let model = AppModel(startImmediately: false)
+        model.inspectorCollapsed = true
+
+        model.setInspectorZoomed(true)
+        XCTAssertFalse(model.inspectorCollapsed, "zooming opens a collapsed panel first")
+        XCTAssertTrue(model.inspectorZoomed)
+
+        model.inspectorCollapsed = true
+        XCTAssertFalse(model.inspectorZoomed, "closing the panel never leaves a hidden-but-zoomed limbo")
+    }
+
+    @MainActor
+    func testToggleInspectorTabCollapsesOnSecondClickAndSwitchesOtherwise() {
+        let model = AppModel(startImmediately: false)
+        model.selectInspectorTab(.plan)
+        XCTAssertFalse(model.inspectorCollapsed)
+
+        model.toggleInspectorTab(.preview)
+        XCTAssertEqual(model.inspectorTab, .preview, "a different tab switches without collapsing")
+        XCTAssertFalse(model.inspectorCollapsed)
+
+        model.toggleInspectorTab(.preview)
+        XCTAssertTrue(model.inspectorCollapsed, "the open tab's own icon closes the panel")
+
+        model.toggleInspectorTab(.preview)
+        XCTAssertFalse(model.inspectorCollapsed, "and reopens it")
+        XCTAssertEqual(model.inspectorTab, .preview)
+    }
+
+    @MainActor
+    func testZoomBorrowsTheSidebarAndGivesItBack() {
+        let model = AppModel(startImmediately: false)
+        model.sidebarCollapsed = false
+
+        model.setInspectorZoomed(true)
+        XCTAssertTrue(model.sidebarCollapsed, "zoom borrows the sidebar's room")
+
+        model.setInspectorZoomed(false)
+        XCTAssertFalse(model.sidebarCollapsed, "un-zooming returns what zoom took")
+    }
+
+    @MainActor
+    func testZoomsBorrowedSidebarCollapseIsNeverPersisted() {
+        let model = AppModel(startImmediately: false)
+        model.sidebarCollapsed = false
+        XCTAssertFalse(model.settings.sidebarCollapsed)
+
+        model.setInspectorZoomed(true)
+        XCTAssertTrue(model.sidebarCollapsed, "the borrow is visual")
+        XCTAssertFalse(
+            model.settings.sidebarCollapsed,
+            "the borrow must not reach settings — a quit-while-zoomed would otherwise lose the sidebar for good"
+        )
+
+        model.setInspectorZoomed(false)
+        XCTAssertFalse(model.sidebarCollapsed)
+        XCTAssertFalse(model.settings.sidebarCollapsed)
+    }
+
+    @MainActor
+    func testZoomLeavesAUserReopenedSidebarAlone() {
+        let model = AppModel(startImmediately: false)
+        model.sidebarCollapsed = false
+
+        model.setInspectorZoomed(true)
+        model.sidebarCollapsed = false
+
+        model.setInspectorZoomed(false)
+        XCTAssertFalse(model.sidebarCollapsed, "the user's explicit reopen stands")
+    }
+
+    @MainActor
+    func testZoomDoesNotReopenASidebarTheUserAlreadyKeptClosed() {
+        let model = AppModel(startImmediately: false)
+        model.sidebarCollapsed = true
+
+        model.setInspectorZoomed(true)
+        model.setInspectorZoomed(false)
+        XCTAssertTrue(model.sidebarCollapsed, "zoom only returns what it actually took")
+    }
+
+    @MainActor
+    func testZoomedChatWidthPersistsOnlyWhenCommitted() {
+        let model = AppModel(startImmediately: false)
+        let original = model.settings.inspectorZoomedChatWidth
+
+        model.setZoomedChatWidth(50)
+        XCTAssertEqual(model.zoomedChatWidth, 360, "clamped to the minimum")
+        XCTAssertEqual(
+            model.settings.inspectorZoomedChatWidth,
+            original,
+            "a drag must not persist per frame"
+        )
+
+        model.commitZoomedChatWidth()
+        XCTAssertEqual(model.settings.inspectorZoomedChatWidth, 360)
+    }
+
+    @MainActor
+    func testZoomIsInertInJustChatAndClearedByEnteringIt() {
+        let model = AppModel(startImmediately: false)
+        model.selectInspectorTab(.preview)
+        model.setInspectorZoomed(true)
+
+        model.setJustChatEnabled(true)
+        XCTAssertFalse(model.inspectorZoomed, "Just Chat clears the zoom with the panel")
+
+        model.setInspectorZoomed(true)
+        XCTAssertFalse(model.inspectorZoomed, "zoom stays inert in Just Chat")
+
+        model.setJustChatEnabled(false)
+        XCTAssertFalse(model.inspectorCollapsed, "leaving Just Chat restores the open panel")
+        XCTAssertFalse(model.inspectorZoomed, "restored open, never zoomed")
+    }
+
+    @MainActor
     func testBackendNoteEventsBecomeVisibleBlocks() {
         let model = AppModel(startImmediately: false)
 

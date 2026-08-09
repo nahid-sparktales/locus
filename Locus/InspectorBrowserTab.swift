@@ -23,6 +23,12 @@ struct InspectorBrowserTab: View {
                     [(data: data, mimeType: "image/png")],
                     nameStem: "Browser screenshot"
                 ) ?? false
+            },
+            isExpanded: model.inspectorZoomed,
+            onToggleExpand: { [weak model] in
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    model?.toggleInspectorZoom()
+                }
             }
         )
     }
@@ -33,17 +39,16 @@ struct BrowserPanel: View {
     let sessionID: String
     let homeURL: URL?
     @Binding var viewportRaw: String
-    /// True inside the detached window, which holds the borrowing claim while
-    /// it is open; the inspector instance defers to it.
-    var isWindowHost = false
     /// Receives the flattened, annotated capture and reports whether the
     /// composer accepted it. A closure rather than an AppModel dependency, so
     /// the panel stays previewable and its redraws stay scoped to the
     /// browser service.
     var onAttachToChat: ((Data) -> Bool)? = nil
+    /// Zoom state and toggle, injected the same closure-shaped way. Full
+    /// size is the zoomed panel — there is no separate browser window.
+    var isExpanded = false
+    var onToggleExpand: (() -> Void)? = nil
 
-    @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismissWindow) private var dismissWindow
     @State private var draft = ""
     @State private var drawerOpen = false
     @State private var screenshotDraft: BrowserScreenshotDraft?
@@ -61,13 +66,13 @@ struct BrowserPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             tabChips
+            controlsBar
             toolbar
             progressLine
             content
             if drawerOpen, let log = browser.activeLog(for: sessionID) {
                 CaptureDrawer(log: log)
             }
-            footer
         }
         .onChange(of: snapshot?.url) { _, updated in
             // The address bar mirrors the page unless the user is typing.
@@ -75,6 +80,9 @@ struct BrowserPanel: View {
         }
         .onAppear {
             if let url = snapshot?.url, !url.isEmpty { draft = url }
+            // Opening the panel is the clearest signal a navigation is coming;
+            // warm WebKit's processes before the user finishes typing the URL.
+            browser.prewarm()
         }
         .background(shortcutHost)
         .sheet(item: $screenshotDraft) { draft in
@@ -106,31 +114,23 @@ struct BrowserPanel: View {
 
     /// Browser keyboard shortcuts, active exactly while this panel sits in the
     /// key window's hierarchy — the inspector removes it structurally on tab
-    /// switch, and the detached window has its own copy. ⌘W is deliberately
-    /// shadowed here the way ⌘⇧K is in the workspace: while staring at the
-    /// browser it means "close tab" (and in the main window, un-shadowed ⌘W
-    /// would quit the app); everywhere else it keeps meaning Close Window.
-    /// While the detached window holds the borrowing claim, the inspector
-    /// copy shows a hand-off notice — its shortcuts must stand down too, or
-    /// main-window ⌘W would close the tab the user is viewing over there.
-    private var deferringToDetachedWindow: Bool {
-        browser.windowHosted && !isWindowHost
-    }
-
+    /// switch. ⌘W is deliberately shadowed here the way ⌘⇧K is in the
+    /// workspace: while staring at the browser it means "close tab" (and in
+    /// the main window, un-shadowed ⌘W would quit the app); everywhere else
+    /// it keeps meaning Close Window.
     private var shortcutHost: some View {
         Group {
             Button("") { newTabFocusingAddress() }
                 .keyboardShortcut("t", modifiers: .command)
-                .disabled(deferringToDetachedWindow)
             Button("") { closeActiveTab() }
                 .keyboardShortcut("w", modifiers: .command)
-                .disabled(snapshot == nil || deferringToDetachedWindow)
+                .disabled(snapshot == nil)
             Button("") { browser.userCycleTab(sessionID: sessionID, forward: true) }
                 .keyboardShortcut("]", modifiers: [.command, .shift])
-                .disabled(sessionTabs.count < 2 || deferringToDetachedWindow)
+                .disabled(sessionTabs.count < 2)
             Button("") { browser.userCycleTab(sessionID: sessionID, forward: false) }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
-                .disabled(sessionTabs.count < 2 || deferringToDetachedWindow)
+                .disabled(sessionTabs.count < 2)
         }
         .buttonStyle(.plain)
         .frame(width: 0, height: 0)
@@ -146,11 +146,7 @@ struct BrowserPanel: View {
 
     private func closeActiveTab() {
         guard let active = snapshot else { return }
-        let wasLast = sessionTabs.count == 1
         browser.userCloseTab(active.id, sessionID: sessionID)
-        if wasLast, isWindowHost {
-            dismissWindow(id: "browser")
-        }
     }
 
     // MARK: - Chrome
@@ -363,17 +359,8 @@ struct BrowserPanel: View {
     @ViewBuilder
     private var content: some View {
         if let host = browser.activeHost(for: sessionID), snapshot?.url.isEmpty == false {
-            if browser.windowHosted, !isWindowHost {
-                InspectorPlaceholder(
-                    symbol: "macwindow",
-                    title: "Browsing in the Browser window",
-                    message: "The page is showing in its own window. Close it to bring browsing back into this panel.",
-                    identifier: "browser.detached"
-                )
-            } else {
-                BorrowedWebView(host: host)
-                    .accessibilityLabel("Web page")
-            }
+            BorrowedWebView(host: host)
+                .accessibilityLabel("Web page")
         } else {
             InspectorPlaceholder(
                 symbol: "globe",
@@ -401,7 +388,10 @@ struct BrowserPanel: View {
         return "Enter an address to browse.\n\nThe agent browses here too: pages it opens appear in this panel."
     }
 
-    private var footer: some View {
+    /// Viewport, capture, drawer, open-external and expand — one compact bar
+    /// between the tab chips and the address bar, so all of the browser's
+    /// chrome lives at the top and the page owns everything below it.
+    private var controlsBar: some View {
         HStack(spacing: 8) {
             Menu {
                 ForEach(BrowserViewport.allCases) { preset in
@@ -440,11 +430,7 @@ struct BrowserPanel: View {
                     .foregroundStyle(LocusTheme.muted)
             }
             .buttonStyle(.plain)
-            .disabled(
-                isCapturing
-                    || snapshot?.url.isEmpty != false
-                    || (browser.windowHosted && !isWindowHost)
-            )
+            .disabled(isCapturing || snapshot?.url.isEmpty != false)
             .help("Capture the page to annotate and attach")
             .accessibilityLabel("Capture page for chat")
             .accessibilityIdentifier("browser.capture")
@@ -474,24 +460,28 @@ struct BrowserPanel: View {
             .accessibilityLabel("Open in default browser")
             .accessibilityIdentifier("browser.openExternal")
 
-            if !isWindowHost {
+            if let onToggleExpand {
                 Button {
-                    openWindow(id: "browser")
+                    onToggleExpand()
                 } label: {
-                    Image(systemName: "macwindow.on.rectangle")
-                        .font(.system(size: 10))
-                        .foregroundStyle(LocusTheme.ink)
+                    Image(
+                        systemName: isExpanded
+                            ? "arrow.down.right.and.arrow.up.left"
+                            : "arrow.up.left.and.arrow.down.right"
+                    )
+                    .font(.system(size: 10))
+                    .foregroundStyle(LocusTheme.ink)
                 }
                 .buttonStyle(.plain)
-                .help("Open in the Browser window")
-                .accessibilityLabel("Detach into a window")
-                .accessibilityIdentifier("browser.detach")
+                .help(isExpanded ? "Restore panel size" : "Expand in window")
+                .accessibilityLabel(isExpanded ? "Restore panel size" : "Expand in window")
+                .accessibilityIdentifier("browser.expand")
             }
         }
         .padding(.horizontal, 10)
         .frame(height: 30)
         .background(LocusTheme.paperDeep)
-        .overlay(alignment: .top) {
+        .overlay(alignment: .bottom) {
             Rectangle().fill(LocusTheme.line).frame(height: 1)
         }
     }
@@ -509,9 +499,9 @@ struct BrowserPanel: View {
 
 /// Shows the service-owned `WKWebView` without ever creating one. `lend` steals
 /// safely, so the only rule that matters is: never park a view this container
-/// no longer owns — SwiftUI does not order a detached window's lend against
-/// this view's teardown within a transaction, and an unconditional park would
-/// yank the page back out of whoever borrowed it since.
+/// no longer owns — SwiftUI does not order a successor's lend against this
+/// view's teardown within a transaction, and an unconditional park would yank
+/// the page back out of whoever borrowed it since.
 struct BorrowedWebView: NSViewRepresentable {
     let host: OffscreenWebHost
 

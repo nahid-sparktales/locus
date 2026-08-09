@@ -395,8 +395,10 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(anyElement("composer.context").exists)
         XCTAssertFalse(anyElement("composer.mode.plan").exists)
         XCTAssertFalse(anyElement("composer.mode.build").exists)
-        XCTAssertFalse(anyElement("inspector.tab.plan").exists)
-        XCTAssertFalse(anyElement("workspace.showInspector").exists)
+        XCTAssertFalse(anyElement("plan.contextWindow").exists)
+        // Just Chat is not a workspace surface, so the rail goes with the
+        // panel — the whole right side disappears.
+        XCTAssertFalse(anyElement("inspector.rail.toggle").exists)
 
         XCTAssertTrue(
             anyElement("turnCompletion.00000000-0000-0000-0000-000000000103")
@@ -404,27 +406,75 @@ final class LocusUITests: XCTestCase {
         )
 
         app.typeKey("1", modifierFlags: .command)
-        XCTAssertFalse(anyElement("inspector.tab.plan").exists)
+        XCTAssertFalse(anyElement("plan.contextWindow").exists)
 
         work.click()
         XCTAssertTrue(work.isSelected)
         XCTAssertTrue(anyElement("composer.mode.plan").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("composer.mode.build").exists)
         XCTAssertTrue(anyElement("plan.contextWindow").waitForExistence(timeout: 3))
-        XCTAssertFalse(anyElement("workspace.showInspector").exists)
+        XCTAssertTrue(anyElement("inspector.rail.toggle").exists, "the rail returns with agentic modes")
     }
 
-    func testInspectorCollapsesAndRestoresFromWorkspaceHeader() {
-        let collapse = anyElement("inspector.collapse")
-        XCTAssertTrue(collapse.waitForExistence(timeout: 3))
-        collapse.click()
+    func testInspectorCollapsesAndRestoresFromRail() {
+        let toggle = anyElement("inspector.rail.toggle")
+        XCTAssertTrue(toggle.waitForExistence(timeout: 3))
+        toggle.click()
 
-        let restore = anyElement("workspace.showInspector")
-        XCTAssertTrue(restore.waitForExistence(timeout: 3))
-        XCTAssertFalse(anyElement("inspector.tab.plan").exists)
+        // The panel closes; the rail stays.
+        XCTAssertFalse(anyElement("plan.contextWindow").exists)
+        XCTAssertTrue(toggle.exists)
 
-        restore.click()
-        XCTAssertTrue(anyElement("inspector.tab.plan").waitForExistence(timeout: 3))
+        toggle.click()
+        XCTAssertTrue(anyElement("plan.contextWindow").waitForExistence(timeout: 3))
+    }
+
+    func testRailIconsOpenAndTogglePanels() {
+        // The suite seeds the panel open on Plan; the Plan icon's second
+        // click collapses, its next click reopens.
+        let planIcon = anyElement("inspector.rail.plan")
+        XCTAssertTrue(planIcon.waitForExistence(timeout: 3))
+        planIcon.click()
+        XCTAssertFalse(anyElement("plan.contextWindow").exists)
+        XCTAssertTrue(anyElement("inspector.rail.toggle").exists)
+
+        // A different tab's icon opens the panel straight onto that tab.
+        let browserIcon = anyElement("inspector.rail.preview")
+        XCTAssertTrue(browserIcon.exists)
+        browserIcon.click()
+        XCTAssertTrue(anyElement("browser.url").waitForExistence(timeout: 3))
+    }
+
+    func testRailMoreMenuReachesOverflowTabs() {
+        let more = anyElement("inspector.rail.more")
+        XCTAssertTrue(more.waitForExistence(timeout: 3))
+        more.click()
+
+        let changes = app.menuItems.matching(
+            NSPredicate(format: "identifier == %@", "inspector.rail.menu.changes")
+        ).firstMatch
+        XCTAssertTrue(changes.waitForExistence(timeout: 3))
+        changes.click()
+        XCTAssertTrue(anyElement("changes.file.0").waitForExistence(timeout: 3))
+    }
+
+    func testBrowserExpandsInPlaceAndRestores() {
+        // ⌘5 opens the Browser tab; its top controls bar carries the expand
+        // control.
+        app.typeKey("5", modifierFlags: .command)
+        let expand = anyElement("browser.expand")
+        XCTAssertTrue(expand.waitForExistence(timeout: 3))
+        expand.click()
+
+        // Zoomed: the rail's zoom button flips to "restore" and the session
+        // sidebar hands its room to the panel.
+        let zoom = anyElement("inspector.zoom")
+        XCTAssertTrue(zoom.waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("sidebar.brand").exists)
+
+        zoom.click()
+        XCTAssertTrue(anyElement("sidebar.brand").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("browser.url").exists)
     }
 
     func testInspectorTabsSwitchWithCommandNumberShortcuts() {

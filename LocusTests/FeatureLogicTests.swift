@@ -365,9 +365,17 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(AppSettings.clampInspectorWidth(.nan), 340, "a corrupt value must not survive")
     }
 
+    func testZoomedChatWidthIsClampedToTheUsableRange() {
+        XCTAssertEqual(AppSettings.clampZoomedChatWidth(0), 360)
+        XCTAssertEqual(AppSettings.clampZoomedChatWidth(9999), 600)
+        XCTAssertEqual(AppSettings.clampZoomedChatWidth(480), 480)
+        XCTAssertEqual(AppSettings.clampZoomedChatWidth(.nan), 420, "a corrupt value must not survive")
+    }
+
     func testInspectorChromeSurvivesASettingsRoundTrip() throws {
         var settings = AppSettings()
         settings.inspectorWidth = 412
+        settings.inspectorZoomedChatWidth = 480
         settings.inspectorCollapsed = true
         settings.inspectorLastTab = InspectorTab.terminal.rawValue
 
@@ -376,6 +384,7 @@ final class FeatureLogicTests: XCTestCase {
             from: try JSONEncoder().encode(settings)
         )
         XCTAssertEqual(restored.inspectorWidth, 412)
+        XCTAssertEqual(restored.inspectorZoomedChatWidth, 480)
         XCTAssertTrue(restored.inspectorCollapsed)
         XCTAssertEqual(restored.resolvedInspectorTab, .terminal)
     }
@@ -398,6 +407,10 @@ final class FeatureLogicTests: XCTestCase {
         let legacy = #"{"backendURL":"http://127.0.0.1:8791"}"#
         let restored = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
         XCTAssertEqual(restored.inspectorWidth, 340)
+        XCTAssertEqual(
+            restored.inspectorZoomedChatWidth, 420,
+            "payloads from before the zoom feature decode to its default"
+        )
         XCTAssertTrue(restored.inspectorCollapsed, "the right panel starts collapsed")
         XCTAssertEqual(restored.resolvedInspectorTab, .plan)
         XCTAssertFalse(restored.sidebarCollapsed, "the session sidebar starts open")

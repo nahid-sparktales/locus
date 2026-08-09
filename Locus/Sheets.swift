@@ -1525,12 +1525,15 @@ struct SettingsView: View {
                     .font(.system(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
-                Toggle("Keep cookies and logins per workspace", isOn: Binding(
+                Picker("Browsing profile", selection: Binding(
                     get: { model.settings.browserPersistProfile },
                     set: { model.setBrowserPersistProfile($0) }
-                ))
+                )) {
+                    Text("Forget when Locus quits").tag(false)
+                    Text("Keep per workspace").tag(true)
+                }
                 .accessibilityIdentifier("settings.browser.persistProfile")
-                Text("Off, browsing is forgotten when Locus quits. On, each workspace keeps its own profile across launches. Switching closes open tabs.")
+                Text("Forgetting browses ephemerally: no cookies, logins, or cache outlive the app, and every launch starts cold. Keeping stores each workspace's profile on disk — pages load noticeably faster across launches, and the agent browses with that workspace's logins. Switching closes open tabs.")
                     .font(.system(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
