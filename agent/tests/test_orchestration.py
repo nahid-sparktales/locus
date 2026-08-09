@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from ollama_code.ollama import OllamaError
 from ollama_code.orchestration import (
     AgentJob,
     CrossProcessModelCallScheduler,
@@ -215,7 +216,7 @@ def test_dispatcher_progress_names_the_model_and_reports_completion(monkeypatch)
     _, team, profiles, forced = parse_manifest(_manifest())
     orchestrator = TeamOrchestrator(events.append, lambda: False)
     expected = validate_dispatch_plan(_valid_plan(), team, profiles)
-    monkeypatch.setattr(orchestrator, "_dispatch", lambda *_args: expected)
+    monkeypatch.setattr(orchestrator, "_dispatch", lambda *_args, **_kwargs: expected)
 
     actual = orchestrator._dispatch_with_status(
         "run-1", "Build it", "/tmp/workspace", team, profiles,
@@ -256,7 +257,7 @@ def test_preview_approves_the_complete_plan_once_before_any_jobs(monkeypatch):
     )
     dispatches = []
 
-    def dispatch_once(*_args):
+    def dispatch_once(*_args, **_kwargs):
         dispatches.append("dispatch")
         return plan
 
@@ -418,6 +419,69 @@ def test_dispatch_accepts_a_valid_direct_tool_call_without_repair(monkeypatch):
     assert plan.outcome == "valid"
     assert calls == 1
     assert events == []
+
+
+def test_dispatcher_receives_attachments_on_its_user_message(monkeypatch):
+    _, team, profiles, forced = parse_manifest(_manifest())
+    orchestrator = TeamOrchestrator(lambda _event: None, lambda: False)
+    seen = []
+
+    def raw_call(run_id, profile, messages, budget, **_kwargs):
+        seen.append(messages)
+        return SimpleNamespace(
+            tool_calls=[SimpleNamespace(
+                name="submit_dispatch_plan",
+                arguments=_valid_plan(),
+            )],
+            content="",
+        )
+
+    monkeypatch.setattr(orchestrator, "_raw_call", raw_call)
+    attachments = [{"name": "bug.png", "mime_type": "image/png", "data": "cG5n"}]
+
+    plan = orchestrator._dispatch(
+        "run-1", "Fix the layout in this screenshot", "/tmp/workspace",
+        team, profiles, profiles[team.dispatcher_id], forced,
+        attachments=attachments,
+    )
+
+    assert plan.outcome == "valid"
+    user_messages = [m for m in seen[0] if m["role"] == "user"]
+    assert user_messages[0]["attachments"] == attachments
+
+
+def test_dispatch_retries_without_images_when_the_model_rejects_them(monkeypatch):
+    events = []
+    _, team, profiles, forced = parse_manifest(_manifest())
+    orchestrator = TeamOrchestrator(events.append, lambda: False)
+    seen = []
+
+    def raw_call(run_id, profile, messages, budget, **_kwargs):
+        seen.append(messages)
+        if len(seen) == 1:
+            raise OllamaError("this model does not support image input")
+        assert not any(message.get("attachments") for message in messages)
+        return SimpleNamespace(
+            tool_calls=[SimpleNamespace(
+                name="submit_dispatch_plan",
+                arguments=_valid_plan(),
+            )],
+            content="",
+        )
+
+    monkeypatch.setattr(orchestrator, "_raw_call", raw_call)
+    attachments = [{"name": "bug.png", "mime_type": "image/png", "data": "cG5n"}]
+
+    plan = orchestrator._dispatch(
+        "run-1", "Fix the layout in this screenshot", "/tmp/workspace",
+        team, profiles, profiles[team.dispatcher_id], forced,
+        attachments=attachments,
+    )
+
+    assert plan.outcome == "valid"
+    assert len(seen) == 2
+    notes = [event for event in events if event.get("type") == "note"]
+    assert any("without the attached images" in str(note["text"]) for note in notes)
 
 
 def test_dispatch_failed_repair_emits_safe_diagnostics_and_uses_writer(monkeypatch):

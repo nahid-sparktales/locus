@@ -21,7 +21,7 @@ from typing import Any
 
 from . import paths
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DEFAULT_RETENTION_DAYS = 90
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EVENT_JSON_BYTES = 512 * 1024
@@ -286,6 +286,30 @@ class RunStore:
                 connection.execute("ALTER TABLE job_attempts ADD COLUMN provider TEXT")
                 connection.execute("ALTER TABLE job_attempts ADD COLUMN model TEXT")
                 connection.execute("UPDATE schema_meta SET version=3 WHERE singleton=1")
+                connection.commit()
+            if version < 4:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS turn_usage (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_id TEXT NOT NULL,
+                        workspace_root TEXT,
+                        provider TEXT,
+                        model TEXT,
+                        account TEXT,
+                        kind TEXT NOT NULL DEFAULT 'solo',
+                        prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                        completion_tokens INTEGER NOT NULL DEFAULT 0,
+                        occurred_at REAL NOT NULL
+                    )
+                    """
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS turn_usage_time_idx"
+                    " ON turn_usage(occurred_at DESC)"
+                )
+                connection.execute("UPDATE schema_meta SET version=4 WHERE singleton=1")
                 connection.commit()
 
     def upsert_mcp_task(
@@ -868,6 +892,122 @@ class RunStore:
             if len(output) >= limit:
                 break
         return output
+
+    def record_turn_usage(
+        self, *, session_id: str, workspace_root: str = "", provider: str = "",
+        model: str = "", account: str = "", kind: str = "solo",
+        prompt_tokens: int = 0, completion_tokens: int = 0,
+    ) -> None:
+        """Persist one solo turn's token spend. Counts only — never content."""
+        if self.read_only:
+            return
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT INTO turn_usage(
+                    session_id, workspace_root, provider, model, account, kind,
+                    prompt_tokens, completion_tokens, occurred_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (session_id, workspace_root, provider, model, account,
+                 kind if kind in {"solo", "evaluation"} else "solo",
+                 max(int(prompt_tokens), 0), max(int(completion_tokens), 0),
+                 time.time()),
+            )
+
+    def usage_summary(self, *, since: float = 0.0) -> dict[str, Any]:
+        """Roll up recorded spend. Pure reads, so it works on a read-only store."""
+        with self._connect(readonly=True) as connection:
+            orchestration = dict(connection.execute(
+                """SELECT COUNT(*) AS runs,
+                          COALESCE(SUM(json_extract(usage_json,'$.model_calls')), 0) AS model_calls,
+                          COALESCE(SUM(json_extract(usage_json,'$.metered_tokens')), 0) AS metered_tokens,
+                          COALESCE(SUM(json_extract(usage_json,'$.estimated_cost')), 0) AS estimated_cost
+                   FROM runs WHERE legacy=0 AND created_at >= ?""",
+                (since,),
+            ).fetchone())
+            by_day = [dict(row) for row in connection.execute(
+                """SELECT strftime('%Y-%m-%d', created_at, 'unixepoch', 'localtime') AS day,
+                          COUNT(*) AS runs,
+                          COALESCE(SUM(json_extract(usage_json,'$.metered_tokens')), 0) AS metered_tokens,
+                          COALESCE(SUM(json_extract(usage_json,'$.estimated_cost')), 0) AS estimated_cost
+                   FROM runs WHERE legacy=0 AND created_at >= ?
+                   GROUP BY day ORDER BY day DESC LIMIT 120""",
+                (since,),
+            ).fetchall()]
+            by_workspace = [dict(row) for row in connection.execute(
+                """SELECT COALESCE(workspace_root, '') AS workspace_root,
+                          COUNT(*) AS runs,
+                          COALESCE(SUM(json_extract(usage_json,'$.estimated_cost')), 0) AS estimated_cost
+                   FROM runs WHERE legacy=0 AND created_at >= ?
+                   GROUP BY workspace_root ORDER BY estimated_cost DESC LIMIT 50""",
+                (since,),
+            ).fetchall()]
+            by_model = [dict(row) for row in connection.execute(
+                """SELECT COALESCE(a.provider, '') AS provider,
+                          COALESCE(a.model, '') AS model,
+                          COUNT(*) AS attempts,
+                          COALESCE(SUM(json_extract(a.result_json,'$.prompt_tokens')), 0) AS prompt_tokens,
+                          COALESCE(SUM(json_extract(a.result_json,'$.completion_tokens')), 0) AS completion_tokens
+                   FROM job_attempts a JOIN runs r ON r.id = a.run_id
+                   WHERE r.legacy=0 AND r.created_at >= ?
+                   GROUP BY provider, model ORDER BY prompt_tokens + completion_tokens DESC
+                   LIMIT 50""",
+                (since,),
+            ).fetchall()]
+            by_agent = [dict(row) for row in connection.execute(
+                """SELECT agent_id, COUNT(*) AS samples,
+                          COALESCE(SUM(estimated_cost), 0) AS estimated_cost,
+                          MAX(local) AS local
+                   FROM routing_samples WHERE occurred_at >= ?
+                   GROUP BY agent_id ORDER BY estimated_cost DESC LIMIT 50""",
+                (since,),
+            ).fetchall()]
+            evaluations = dict(connection.execute(
+                """SELECT COUNT(*) AS cases,
+                          COALESCE(SUM(json_extract(payload_json,'$.estimated_cost')), 0) AS estimated_cost
+                   FROM evaluation_results
+                   WHERE state IN ('passed', 'failed') AND created_at >= ?""",
+                (since,),
+            ).fetchone())
+            try:
+                solo = dict(connection.execute(
+                    """SELECT COUNT(*) AS turns,
+                              COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                              COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                              MIN(occurred_at) AS recorded_since
+                       FROM turn_usage WHERE kind='solo' AND occurred_at >= ?""",
+                    (since,),
+                ).fetchone())
+            except sqlite3.OperationalError:
+                # A store that failed the v4 migration reopens read-only
+                # without the turn_usage table; the run rollups above still
+                # serve, and an empty solo section is the honest answer.
+                solo = {
+                    "turns": 0, "prompt_tokens": 0, "completion_tokens": 0,
+                    "recorded_since": None,
+                }
+            expensive = [dict(row) for row in connection.execute(
+                """SELECT id, team_name, workspace_root, created_at, state,
+                          COALESCE(json_extract(usage_json,'$.estimated_cost'), 0) AS estimated_cost
+                   FROM runs WHERE legacy=0 AND created_at >= ?
+                   ORDER BY estimated_cost DESC, created_at DESC LIMIT 10""",
+                (since,),
+            ).fetchall()]
+        by_agent = [
+            {**row, "local": bool(row.get("local"))} for row in by_agent
+        ]
+        return {
+            "since": since,
+            "generated_at": time.time(),
+            "read_only": self.read_only,
+            "orchestration": orchestration,
+            "by_day": by_day,
+            "by_workspace": by_workspace,
+            "by_model": by_model,
+            "by_agent": by_agent,
+            "evaluations": evaluations,
+            "solo": solo,
+            "expensive_runs": expensive,
+        }
 
     def prune(self, *, retention_days: int = DEFAULT_RETENTION_DAYS,
               max_bytes: int = DEFAULT_MAX_BYTES) -> int:

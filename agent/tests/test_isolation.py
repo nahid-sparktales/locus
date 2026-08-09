@@ -13,10 +13,14 @@ from ollama_code import config as config_mod
 from ollama_code import extensions as extensions_mod
 from ollama_code import paths as paths_mod
 from ollama_code import sessions as sessions_mod
+from ollama_code import transcript_search as transcript_search_mod
 from ollama_code.extensions import ExtensionManager
 from ollama_code.sessions import SessionStore
 
-_MODULES = (paths_mod, config_mod, sessions_mod, extensions_mod, app_mod)
+_MODULES = (
+    paths_mod, config_mod, sessions_mod, extensions_mod, app_mod,
+    transcript_search_mod,
+)
 
 
 def test_every_app_dir_constant_points_inside_this_tests_home(

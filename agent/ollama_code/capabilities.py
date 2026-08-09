@@ -16,6 +16,7 @@ CAPABILITY_ENV = {
     "workspace_knowledge": "LOCUS_CAPABILITY_WORKSPACE_KNOWLEDGE",
     "modern_mcp": "LOCUS_CAPABILITY_MODERN_MCP",
     "browser": "LOCUS_CAPABILITY_BROWSER",
+    "transcript_search": "LOCUS_CAPABILITY_TRANSCRIPT_SEARCH",
 }
 
 

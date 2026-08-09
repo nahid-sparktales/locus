@@ -885,6 +885,7 @@ private struct ConversationView: View {
             .background {
                 TranscriptScrollBridge(coordinator: scrollCoordinator)
             }
+            .chatAttachmentDropTarget()
             .overlay(alignment: .bottom) {
                 if scrollCoordinator.followState.showsJumpToLatest, !model.blocks.isEmpty {
                     Button {

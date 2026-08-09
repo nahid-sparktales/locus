@@ -80,6 +80,7 @@ from .sessions import (
 from .telemetry import TelemetryError, send_otlp
 from .terminal import TerminalManager, TerminalRejected
 from .tools import truncate_output
+from .transcript_search import TranscriptIndex, TranscriptSearchError
 from .worktrees import TaskCheckout, TaskCheckoutStore, WorktreeError
 
 logger = logging.getLogger(__name__)
@@ -203,11 +204,39 @@ class ChatService:
             "tool_call_id": self.core.active_tool_call_id,
         }
 
+    def _record_turn_usage(self, event: dict[str, Any]) -> None:
+        """Persist a solo turn's token spend for the usage dashboard.
+
+        Orchestrated runs account their own usage in the run record, and usage
+        recording is observability: like event persistence, it must never stop
+        an otherwise healthy turn.
+        """
+        if self.active_orchestrator is not None:
+            return
+        prompt_tokens = int(event.get("prompt_tokens") or 0)
+        completion_tokens = int(event.get("completion_tokens") or 0)
+        if prompt_tokens <= 0 and completion_tokens <= 0:
+            return
+        try:
+            self.run_store.record_turn_usage(
+                session_id=str(event.get("session_id") or ""),
+                workspace_root=str(event.get("workspace_root") or ""),
+                provider=str(event.get("provider") or ""),
+                model=str(event.get("model") or ""),
+                account=str(event.get("account_label") or ""),
+                kind="evaluation" if self.active_evaluation_id else "solo",
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+        except (RunStoreError, sqlite3.DatabaseError, OSError):
+            pass
+
     # -- core event bridge (called from the worker thread) --
     def emit(self, event: dict[str, Any]) -> None:
         event_type = str(event.get("type") or "")
         if event_type == "turn_done":
             self._terminal_events += 1
+            self._record_turn_usage(event)
         if event_type == "session_info":
             event = dict(event)
             event.setdefault("worker_id", self.worker_id)
@@ -1101,6 +1130,10 @@ def _run_evaluation_suite(
                 evaluation_service.run_store = parent.run_store
                 evaluation_service.core.mcp.task_store = parent.run_store
                 evaluation_service.current_task = task
+                # The per-case service records this case's turn_done spend into
+                # the shared store; without the flag those rows land as the
+                # user's own "solo" usage on the dashboard.
+                evaluation_service.active_evaluation_id = evaluation_id
                 evaluation_service.core.enter_task_checkout(
                     task.execution_path, task.workspace_root, task.as_dict(),
                 )
@@ -1455,6 +1488,10 @@ def models() -> dict[str, Any]:
         # A configured window only describes the model the agent is actually
         # running: `num_ctx` is sent for that one alone, so claiming the rest
         # run in it too would be a guess about models nobody has loaded.
+        # Vision follows the same honesty rule as the window: Ollama's show
+        # response states it outright, a remote listing says nothing, and null
+        # means "not known" rather than a guess either way.
+        vision: bool | None = None
         if is_ollama:
             trained = svc.core.client.context_length(name)
             model_configured = configured if name == svc.core.model else 0
@@ -1466,6 +1503,7 @@ def models() -> dict[str, Any]:
                 # observation, and it keeps the meter alive for a model Ollama
                 # has evicted rather than blanking it every five idle minutes.
                 window = svc.core.remembered_model_window(name)
+            vision = svc.core.client.vision_capability(name)
         else:
             # Whatever the endpoint stated about itself, parsed out of the
             # listing this call already fetched — no extra request, and no
@@ -1484,6 +1522,7 @@ def models() -> dict[str, Any]:
             "parameter_size": (m.get("details") or {}).get("parameter_size", ""),
             "context_length": window,
             "trained_context_length": trained,
+            "vision": vision,
         })
     return {"models": out, "current": svc.core.model}
 
@@ -1503,6 +1542,42 @@ def sessions(
         ),
         "current": svc.core.session.session_id,
     }
+
+
+_TRANSCRIPT_INDEX: TranscriptIndex | None = None
+_TRANSCRIPT_INDEX_LOCK = threading.Lock()
+
+
+def _transcript_index() -> TranscriptIndex:
+    """Process-wide index instance, rebuilt if the data home moved (tests).
+
+    Sync endpoints run on a threadpool, so two first-touch requests race this
+    initializer; unlocked, each would build its own instance over the same
+    database — separate RLocks, so nothing serializes their syncs, and every
+    transcript indexes twice.
+    """
+    global _TRANSCRIPT_INDEX
+    from . import transcript_search as transcript_search_mod
+
+    with _TRANSCRIPT_INDEX_LOCK:
+        if _TRANSCRIPT_INDEX is None \
+                or _TRANSCRIPT_INDEX.path != transcript_search_mod.DEFAULT_PATH:
+            _TRANSCRIPT_INDEX = TranscriptIndex()
+        return _TRANSCRIPT_INDEX
+
+
+# Declared before ``GET /api/sessions/{session_id}``: FastAPI matches routes in
+# declaration order, and "search" must not be captured as a session id.
+@app.get("/api/sessions/search")
+def sessions_search(
+    query: str = Query(min_length=1, max_length=500),
+    limit: int = Query(20, ge=1, le=50),
+) -> dict[str, Any]:
+    _require_capability("transcript_search")
+    try:
+        return _transcript_index().search(query, limit=limit)
+    except TranscriptSearchError as e:
+        raise HTTPException(422, str(e)) from e
 
 
 @app.post("/api/sessions/new")
@@ -1530,6 +1605,12 @@ def sessions_clear() -> dict[str, Any]:
     try:
         with svc.state_mutation():
             result = svc.core.clear_saved_sessions()
+            # The search index duplicates transcript text; a mass clear must
+            # not leave that copy behind until the next sync prunes it.
+            try:
+                _transcript_index().delete_all()
+            except (OSError, sqlite3.DatabaseError):
+                pass
             return {"ok": True, "job_active": False, **result}
     except AgentBusyError as e:
         raise _busy_http() from e
@@ -1613,6 +1694,13 @@ def session_detail(session_id: str) -> dict[str, Any]:
 
 
 # ------------------------------------------------------- Durable orchestrations
+
+
+@app.get("/api/usage/summary")
+def usage_summary(since: float = Query(default=0.0, ge=0.0)) -> dict[str, Any]:
+    """Spend and token rollups over data already on disk — a view, not a bill."""
+    _require_capability("durable_runs")
+    return service().run_store.usage_summary(since=since)
 
 
 @app.get("/api/orchestrations")
@@ -2678,9 +2766,17 @@ def _run_user_turn(
     )
 
 
-def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> None:
+def _run_team_turn(
+    svc: ChatService,
+    text: str,
+    manifest: dict[str, Any],
+    attachments: list[dict[str, str]] | None = None,
+) -> None:
     """Run specialists, ordered permission-controlled writers, review, and synthesis."""
     core = svc.core
+    if isinstance(manifest.get("_resume"), dict):
+        # Attachments are never persisted, so a resumed run cannot carry them.
+        attachments = None
     started = time.monotonic()
     terminal_reason = "complete"
     core._suppress_turn_done = True
@@ -2730,6 +2826,13 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
             svc.emit({"type": "task_ready", "task": task.as_dict(), "state": "running"})
 
         stage = "preparing the dispatch plan"
+        if attachments:
+            svc.emit({
+                "type": "note",
+                "text": "Attached images are shown to the dispatcher and the "
+                        "first coding job; specialists and reviewers receive "
+                        "text evidence only.",
+            })
         orchestrator = TeamOrchestrator(
             svc.emit,
             core._should_stop_stream,
@@ -2747,7 +2850,9 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
                         request, core.cwd, manifest, resume_state,
                     )
                 else:
-                    prepared = orchestrator.prepare(request, core.cwd, manifest)
+                    prepared = orchestrator.prepare(
+                        request, core.cwd, manifest, attachments=attachments,
+                    )
                 break
             except InterruptedError:
                 if core._interrupt.is_set():
@@ -2780,6 +2885,7 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
             first_persisted_user_text=(
                 "[Resumed team run]" if isinstance(manifest.get("_resume"), dict) else text
             ),
+            first_attachments=attachments,
         )
         terminal_reason = str(core.last_turn_result.get("reason") or "complete")
         if terminal_reason != "complete":
@@ -2808,6 +2914,7 @@ def _run_team_turn(svc: ChatService, text: str, manifest: dict[str, Any]) -> Non
                     f"{text}\n\nUser steering update:\n{update}",
                     core.cwd,
                     manifest,
+                    attachments=attachments,
                 )
                 _run_prepared_writers(
                     svc,
@@ -3175,6 +3282,7 @@ def _run_prepared_writers(
     prepared: TeamPreparation,
     *,
     first_persisted_user_text: str,
+    first_attachments: list[dict[str, str]] | None = None,
 ) -> None:
     """Run pending coding jobs serially and checkpoint each completed mutation scope."""
     emit = getattr(svc, "emit", lambda _event: None)
@@ -3244,6 +3352,11 @@ def _run_prepared_writers(
                         first_persisted_user_text
                         if first_pending and not continuation
                         else f"[Team coding job {position} of {total} continuation]"
+                    ),
+                    attachments=(
+                        first_attachments
+                        if first_pending and not continuation
+                        else None
                     ),
                     job_id=job.id,
                     goal=job.goal,
@@ -3347,6 +3460,7 @@ def _run_team_writer(
     job_id: str,
     goal: str,
     model_call_limit: int,
+    attachments: list[dict[str, str]] | None = None,
     writer_position: int | None = None,
     writer_total: int | None = None,
     continuation: bool = False,
@@ -3390,6 +3504,7 @@ def _run_team_writer(
                 prompt,
                 svc.decide,
                 allow_tools=True,
+                attachments=attachments,
                 persisted_user_text=persisted_user_text,
                 model_call_limit=model_call_limit,
                 persist_user_message=False,
@@ -3616,11 +3731,8 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         except ValueError as exc:
             _command_error(svc, str(mtype), str(exc))
             return
-        if attachments and not just_chat:
-            _command_error(svc, str(mtype), "Message attachments require Chat mode.")
-            return
         team_manifest = msg.get("team")
-        if team_manifest is not None and (just_chat or text.startswith("/") or attachments):
+        if team_manifest is not None and (just_chat or text.startswith("/")):
             _command_error(svc, str(mtype), "Team routing requires an ordinary Work message.")
             return
         if team_manifest is not None and not isinstance(team_manifest, dict):
@@ -3629,7 +3741,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         if text.startswith("/") and not just_chat:
             call, args = _run_slash, (svc, text)
         elif team_manifest is not None:
-            call, args = _run_team_turn, (svc, text, team_manifest)
+            call, args = _run_team_turn, (svc, text, team_manifest, attachments)
         else:
             call, args = _run_user_turn, (svc, text, just_chat, attachments)
         if not svc.start_turn(loop, call, *args):

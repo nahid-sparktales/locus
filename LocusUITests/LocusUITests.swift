@@ -489,9 +489,38 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(firstFile.waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("changes.summary").exists)
         XCTAssertTrue(app.buttons["changes.refresh"].exists)
+        XCTAssertTrue(anyElement("changes.branch").exists)
+        XCTAssertTrue(anyElement("changes.sync.counts").exists)
 
         firstFile.click()
-        XCTAssertTrue(anyElement("changes.file.0.diff").waitForExistence(timeout: 3))
+        // The seeded diff parses into hunks, so per-hunk controls replace the
+        // flat diff for this file.
+        XCTAssertTrue(anyElement("changes.file.0.hunks").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("changes.file.0.hunk.0.stage").exists)
+        XCTAssertTrue(anyElement("changes.file.0.hunk.1.discard").exists)
+    }
+
+    func testDiscardingAHunkAsksForConfirmationFirst() {
+        app.typeKey("2", modifierFlags: .command)
+
+        let firstFile = anyElement("changes.file.0")
+        XCTAssertTrue(firstFile.waitForExistence(timeout: 3))
+        firstFile.click()
+        let discard = anyElement("changes.file.0.hunk.0.discard")
+        XCTAssertTrue(discard.waitForExistence(timeout: 3))
+        discard.click()
+
+        XCTAssertTrue(app.buttons["changes.discardHunk.confirm"].waitForExistence(timeout: 3))
+        app.buttons.matching(NSPredicate(format: "title == 'Cancel'")).firstMatch.click()
+    }
+
+    func testRemoteButtonsFollowTheSeededAvailability() {
+        app.typeKey("2", modifierFlags: .command)
+
+        XCTAssertTrue(anyElement("changes.file.0").waitForExistence(timeout: 3))
+        // The seeded run does not mark origin as GitHub, so the PR button
+        // must stay hidden regardless of build flavor.
+        XCTAssertFalse(anyElement("changes.pr").exists)
     }
 
     func testFilesTabFiltersTheWorkspaceIndex() {

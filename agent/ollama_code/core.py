@@ -53,6 +53,7 @@ from .ollama import (
     OllamaError,
     ToolCall,
     effective_context_length,
+    looks_like_image_rejection,
     pinned_context_length,
 )
 from .permissions import PermissionManager, build_preview
@@ -203,18 +204,6 @@ def _looks_like_window_overflow(error_text: str) -> bool:
     lowered = error_text.lower()
     return any(marker in lowered for marker in _WINDOW_OVERFLOW_MARKERS)
 
-
-def _looks_like_image_rejection(error_text: str) -> bool:
-    """Whether a provider explicitly rejected an image-bearing request."""
-    lowered = error_text.lower()
-    image_terms = ("image", "vision", "multimodal", "image_url", "input_image")
-    rejection_terms = (
-        "not support", "unsupported", "not allowed", "invalid", "cannot", "can't",
-        "could not", "unable", "does not accept", "unknown content type",
-    )
-    return any(term in lowered for term in image_terms) and any(
-        term in lowered for term in rejection_terms
-    )
 
 BASE_SYSTEM_PROMPT = """You are ollama-code, a CLI coding agent running in the user's terminal on macOS.
 
@@ -1521,6 +1510,8 @@ class AgentCore:
         model_call_limit: int | None = None,
     ) -> None:
         started_at = time.monotonic() if started_at is None else started_at
+        prompt_tokens_before = self.total_prompt_tokens
+        completion_tokens_before = self.total_completion_tokens
         reason = "complete"
         iteration = 0
         iteration_limit = self.max_iterations
@@ -1706,6 +1697,21 @@ class AgentCore:
             "model_calls": iteration,
             "iteration_limit": iteration_limit,
             "model_call_limit": hard_call_limit,
+            # This turn's token spend and provenance, additive so old clients
+            # ignore them. The server persists these for the usage dashboard;
+            # the totals on the core keep counting the whole conversation.
+            "prompt_tokens": max(self.total_prompt_tokens - prompt_tokens_before, 0),
+            "completion_tokens": max(
+                self.total_completion_tokens - completion_tokens_before, 0
+            ),
+            "provider": self.provider,
+            "model": self.model,
+            "account_label": (
+                str(self.config.get("remote_account_label") or "")
+                if self.provider == "remote" else ""
+            ),
+            "workspace_root": self.workspace_root,
+            "session_id": self.session.session_id,
         }
         self.last_turn_result = terminal
         if not self._suppress_turn_done:
@@ -1833,21 +1839,32 @@ class AgentCore:
                 allow_image_retry
                 and not partial
                 and not self._interrupt.is_set()
-                and _looks_like_image_rejection(str(e))
-                and any(
-                    m.get("_computer_observation") and m.get("attachments")
-                    for m in self.messages
-                )
+                and looks_like_image_rejection(str(e))
+                and any(m.get("attachments") for m in self.messages)
             ):
+                # Strip every image the history carries — user attachments as
+                # well as computer-control screenshots — or the poisoned
+                # request would fail identically on every later turn too.
+                stripped_observation = False
                 for message in self.messages:
-                    if message.get("_computer_observation"):
+                    if message.get("attachments"):
+                        if message.get("_computer_observation"):
+                            stripped_observation = True
                         message.pop("attachments", None)
-                self._ax_only_routes.add(self._computer_route_key())
+                if stripped_observation:
+                    self._ax_only_routes.add(self._computer_route_key())
+                    note = (
+                        "This model route rejected a screenshot, so Locus is "
+                        "retrying with Accessibility text only for the rest of "
+                        "the session."
+                    )
+                else:
+                    note = (
+                        "This model rejected image input, so Locus removed the "
+                        "attached images and retried with their descriptions only."
+                    )
                 finish_message("")
-                self._emit({
-                    "type": "note",
-                    "text": "This model route rejected a screenshot, so Locus is retrying with Accessibility text only for the rest of the session.",
-                })
+                self._emit({"type": "note", "text": note})
                 return self._stream_response(
                     allow_overflow_retry=allow_overflow_retry,
                     allow_image_retry=False,

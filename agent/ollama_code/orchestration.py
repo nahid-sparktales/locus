@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from .capabilities import enabled as capability_enabled
-from .ollama import OllamaClient, OllamaError
+from .ollama import OllamaClient, OllamaError, looks_like_image_rejection
 from .remote import AUTH_ANTHROPIC, RemoteClient
 from .runstore import RunStore
 
@@ -640,7 +640,13 @@ class TeamOrchestrator:
                     "lease_id": lease_id,
                 })
 
-    def prepare(self, request: str, workspace: str, manifest: Any) -> TeamPreparation:
+    def prepare(
+        self,
+        request: str,
+        workspace: str,
+        manifest: Any,
+        attachments: list[dict[str, str]] | None = None,
+    ) -> TeamPreparation:
         run_id, team, profiles, forced_agent = parse_manifest(manifest)
         self.configure_run_budget(team)
         self.emit({
@@ -655,6 +661,7 @@ class TeamOrchestrator:
         try:
             plan = self._dispatch_with_status(
                 run_id, request, workspace, team, profiles, dispatcher, forced_agent,
+                attachments=attachments,
             )
         except OllamaError:
             fallback_id = team.fallback_dispatcher_id
@@ -669,6 +676,7 @@ class TeamOrchestrator:
             })
             plan = self._dispatch_with_status(
                 run_id, request, workspace, team, profiles, dispatcher, forced_agent,
+                attachments=attachments,
             )
         plan = self._resolve_scorecard(run_id, plan, team, profiles, forced_agent)
         if team.dispatch_approval_mode == "preview":
@@ -687,6 +695,7 @@ class TeamOrchestrator:
                 if action == "redispatch":
                     plan = self._dispatch_with_status(
                         run_id, request, workspace, team, profiles, dispatcher, forced_agent,
+                        attachments=attachments,
                     )
                     plan = self._resolve_scorecard(run_id, plan, team, profiles, forced_agent)
                     continue
@@ -1082,6 +1091,7 @@ class TeamOrchestrator:
         profiles: dict[str, AgentProfile],
         dispatcher: AgentProfile,
         forced_agent: str | None,
+        attachments: list[dict[str, str]] | None = None,
     ) -> DispatchPlan:
         started = time.monotonic()
         self.emit({
@@ -1097,6 +1107,7 @@ class TeamOrchestrator:
         try:
             plan = self._dispatch(
                 run_id, request, workspace, team, profiles, dispatcher, forced_agent,
+                attachments=attachments,
             )
         except Exception as exc:
             self.emit({
@@ -1135,7 +1146,35 @@ class TeamOrchestrator:
         profiles: dict[str, AgentProfile],
         dispatcher: AgentProfile,
         forced_agent: str | None,
+        attachments: list[dict[str, str]] | None = None,
     ) -> DispatchPlan:
+        def call_with_images(messages: list[dict[str, Any]], **kwargs: Any):
+            nonlocal attachments
+            try:
+                return self._raw_call(
+                    run_id, dispatcher, messages, team.budget, **kwargs,
+                )
+            except OllamaError as exc:
+                if not attachments or not looks_like_image_rejection(str(exc)):
+                    raise
+                attachments = None
+                self.emit({
+                    "type": "note",
+                    "text": f"{dispatcher.name} rejected image input, so the "
+                            "dispatch request was retried without the attached "
+                            "images.",
+                })
+                return self._raw_call(
+                    run_id,
+                    dispatcher,
+                    [
+                        {k: v for k, v in message.items() if k != "attachments"}
+                        for message in messages
+                    ],
+                    team.budget,
+                    **kwargs,
+                )
+
         roster = [
             {
                 "id": p.id,
@@ -1158,14 +1197,14 @@ class TeamOrchestrator:
             f"Lead writer: {team.default_writer_id}\nForced member: {forced_agent or 'none'}\n"
             f"Hard max jobs: {team.budget.max_jobs}\nRoster:\n{json.dumps(roster)}"
         )
-        response = self._raw_call(
-            run_id,
-            dispatcher,
+        initial_user: dict[str, Any] = {"role": "user", "content": prompt}
+        if attachments:
+            initial_user["attachments"] = attachments
+        response = call_with_images(
             [
                 {"role": "system", "content": dispatcher.instructions},
-                {"role": "user", "content": prompt},
+                initial_user,
             ],
-            team.budget,
             tools=[DISPATCH_TOOL],
             force_tool="submit_dispatch_plan",
         )
@@ -1203,12 +1242,13 @@ class TeamOrchestrator:
             "Arguments schema:\n"
             f"{json.dumps(DISPATCH_TOOL['function']['parameters'], ensure_ascii=False)}"
         )
-        repair = self._raw_call(
-            run_id,
-            dispatcher,
+        replayed_user: dict[str, Any] = {"role": "user", "content": prompt}
+        if attachments:
+            replayed_user["attachments"] = attachments
+        repair = call_with_images(
             [
                 {"role": "system", "content": dispatcher.instructions},
-                {"role": "user", "content": prompt},
+                replayed_user,
                 {
                     "role": "assistant",
                     "content": _bounded_dispatch_candidate(
@@ -1220,7 +1260,6 @@ class TeamOrchestrator:
                     "content": repair_prompt,
                 },
             ],
-            team.budget,
         )
         repaired, _, repair_source, repair_reason = _validate_dispatch_response(
             repair, team, profiles, forced_agent,

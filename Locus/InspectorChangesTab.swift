@@ -4,6 +4,8 @@ import SwiftUI
 /// the current conversation happened to touch.
 struct InspectorChangesTab: View {
     @EnvironmentObject private var model: AppModel
+    @State private var newBranchPresented = false
+    @State private var newBranchName = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,6 +31,19 @@ struct InspectorChangesTab: View {
 
                 commitArea
             }
+
+            if model.isGitRepository, !GitRemoteFeatures.isAvailable {
+                Text(
+                    "Push and pull need your keychain and SSH keys, which the "
+                    + "App Store sandbox cannot reach — use the direct build or a terminal."
+                )
+                .font(.system(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .accessibilityIdentifier("changes.remoteUnavailable")
+            }
         }
         .task(id: model.workspacePath) {
             model.refreshGitStatus()
@@ -47,6 +62,35 @@ struct InspectorChangesTab: View {
             Text(model.pendingDiscard?.status == .untracked
                 ? "This file is not tracked by git — it will move to the Trash."
                 : "Staged and unstaged edits to this file will be restored to the last committed version.")
+        }
+        .alert(
+            "Discard this hunk?",
+            isPresented: Binding(
+                get: { model.pendingHunkDiscard != nil },
+                set: { if !$0 { model.pendingHunkDiscard = nil } }
+            )
+        ) {
+            Button("Cancel", role: .cancel) {}
+            Button("Discard", role: .destructive) { model.discardHunkConfirmed() }
+                .accessibilityIdentifier("changes.discardHunk.confirm")
+        } message: {
+            Text(
+                "This hunk's edits will be removed from the file on disk. "
+                + "This confirmation is the only recovery gate."
+            )
+        }
+        .alert("New Branch", isPresented: $newBranchPresented) {
+            TextField("Branch name", text: $newBranchName)
+                .accessibilityIdentifier("changes.branch.create.input")
+            Button("Cancel", role: .cancel) { newBranchName = "" }
+            Button("Create") {
+                model.createBranch(newBranchName)
+                newBranchName = ""
+            }
+            .disabled(GitBranchName.validationError(newBranchName) != nil)
+            .accessibilityIdentifier("changes.branch.create.confirm")
+        } message: {
+            Text("Created from the current HEAD; working-tree edits ride along.")
         }
     }
 
@@ -112,16 +156,22 @@ struct InspectorChangesTab: View {
     private var header: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("WORKING TREE")
-                    .font(.system(size: 8, weight: .bold))
-                    .tracking(0.8)
-                    .foregroundStyle(LocusTheme.muted)
+                if model.isGitRepository {
+                    branchControl
+                } else {
+                    Text("WORKING TREE")
+                        .font(.system(size: 8, weight: .bold))
+                        .tracking(0.8)
+                        .foregroundStyle(LocusTheme.muted)
+                }
                 Text(model.gitChangeSummary)
                     .font(.system(size: 11, weight: .bold))
                     .lineLimit(1)
                     .accessibilityIdentifier("changes.summary")
             }
             Spacer(minLength: 4)
+
+            syncCluster
 
             if model.lastGitRefreshFailed {
                 Image(systemName: "exclamationmark.triangle")
@@ -161,6 +211,125 @@ struct InspectorChangesTab: View {
         .overlay(alignment: .bottom) {
             Rectangle().fill(LocusTheme.line).frame(height: 1)
         }
+    }
+
+    /// The current branch as a switch/create menu; a detached HEAD renders
+    /// the short SHA and the menu is disabled — there is no branch to leave.
+    @ViewBuilder
+    private var branchControl: some View {
+        if model.gitDetached {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.triangle.branch")
+                Text(model.gitBranch ?? "detached HEAD")
+            }
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(LocusTheme.muted)
+            .help("Detached HEAD — check out a branch from a terminal to switch here")
+            .accessibilityIdentifier("changes.branch")
+        } else {
+            Menu {
+                ForEach(model.localBranches, id: \.self) { branch in
+                    Button {
+                        model.switchBranch(branch)
+                    } label: {
+                        if branch == model.gitBranch {
+                            Label(branch, systemImage: "checkmark")
+                        } else {
+                            Text(branch)
+                        }
+                    }
+                    .disabled(branch == model.gitBranch)
+                }
+                Divider()
+                Button("New Branch…") { newBranchPresented = true }
+                    .accessibilityIdentifier("changes.branch.create")
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.triangle.branch")
+                    Text(model.gitBranch ?? "no branch")
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 6, weight: .bold))
+                }
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(LocusTheme.muted)
+                .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            // Menus have no will-open hook; hover precedes the click that
+            // opens one, so the list is fresh by the time it shows.
+            .onHover { hovering in
+                if hovering { model.loadLocalBranches() }
+            }
+            .disabled(model.isPerformingGitAction)
+            .help("Switch or create a branch")
+            .accessibilityLabel("Branch \(model.gitBranch ?? "unknown")")
+            .accessibilityIdentifier("changes.branch")
+        }
+    }
+
+    @ViewBuilder
+    private var syncCluster: some View {
+        if model.isGitRepository, !model.gitDetached {
+            if model.gitAhead > 0 || model.gitBehind > 0 {
+                Text("↑\(model.gitAhead) ↓\(model.gitBehind)")
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundStyle(LocusTheme.muted)
+                    .help("\(model.gitAhead) to push, \(model.gitBehind) to pull")
+                    .accessibilityIdentifier("changes.sync.counts")
+            }
+            if model.isSyncingRemote {
+                ProgressView().controlSize(.mini)
+            }
+            if GitRemoteFeatures.isAvailable {
+                headerButton(
+                    symbol: "arrow.down.circle",
+                    help: "Fetch from the remote",
+                    identifier: "changes.fetch"
+                ) { model.fetchRemote() }
+                    .disabled(model.isSyncingRemote)
+                headerButton(
+                    symbol: "arrow.down.to.line",
+                    help: "Pull (fast-forward only)",
+                    identifier: "changes.pull"
+                ) { model.pullFastForwardOnly() }
+                    .disabled(model.isSyncingRemote || model.gitBehind == 0)
+                headerButton(
+                    symbol: "arrow.up.circle",
+                    help: model.gitUpstream == nil
+                        ? "Publish this branch to origin"
+                        : "Push to \(model.gitUpstream ?? "the upstream")",
+                    identifier: "changes.push"
+                ) { model.pushCurrentBranch() }
+                    .disabled(model.isSyncingRemote || !model.gitHasCommits)
+            }
+            if model.originIsGitHub, model.gitUpstream != nil {
+                headerButton(
+                    symbol: "arrow.triangle.pull",
+                    help: "Open a pull request on GitHub",
+                    identifier: "changes.pr"
+                ) { model.openPullRequest() }
+            }
+        }
+    }
+
+    private func headerButton(
+        symbol: String,
+        help: String,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .semibold))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(LocusTheme.muted)
+        .help(help)
+        .accessibilityLabel(help)
+        .accessibilityIdentifier(identifier)
     }
 
     private var emptyState: some View {
@@ -243,11 +412,19 @@ private struct GitChangeRow: View {
             if isSelected {
                 Divider().overlay(LocusTheme.line)
                 Group {
+                    if change.staged, change.unstaged {
+                        diffScopePicker
+                    }
                     if let diff = model.selectedChangeDiff {
-                        // Bounded height, so this row's size does not change
-                        // as the enclosing lazy stack materializes it.
-                        DiffTextView(text: diff, maxHeight: 420)
-                            .accessibilityIdentifier("changes.file.\(index).diff")
+                        if let parsed = model.selectedChangeParsedDiff,
+                           !parsed.hunks.isEmpty, !parsed.isRenameOrCopy {
+                            hunkList(parsed)
+                        } else {
+                            // Bounded height, so this row's size does not
+                            // change as the lazy stack materializes it.
+                            DiffTextView(text: diff, maxHeight: 420)
+                                .accessibilityIdentifier("changes.file.\(index).diff")
+                        }
                     } else {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
@@ -279,6 +456,96 @@ private struct GitChangeRow: View {
     /// is unreachable for accessibility and UI tests.
     private var showsActions: Bool {
         isHovering || isSelected
+    }
+
+    /// "Unstaged | Staged" for a file with both kinds of edits, so per-hunk
+    /// actions always operate on the side the user is looking at.
+    private var diffScopePicker: some View {
+        Picker("Diff scope", selection: Binding(
+            get: { model.selectedChangeShowsStaged },
+            set: { model.loadDiff(for: change, staged: $0) }
+        )) {
+            Text("Unstaged").tag(false)
+            Text("Staged").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.mini)
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+        .accessibilityIdentifier("changes.file.\(index).diffScope")
+    }
+
+    /// The parsed diff as one section per hunk, each with its own actions.
+    /// Reverse-applying from the staged side would need `--cached` semantics
+    /// the worktree copy may not match, so discard stays unstaged-only.
+    private func hunkList(_ parsed: ParsedFileDiff) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(parsed.hunks.enumerated()), id: \.element.id) { position, hunk in
+                VStack(spacing: 0) {
+                    HStack(spacing: 6) {
+                        Text(hunk.header)
+                            .font(.system(size: 8, design: .monospaced))
+                            .foregroundStyle(LocusTheme.blue)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Spacer(minLength: 4)
+                        if model.selectedChangeShowsStaged {
+                            hunkButton(
+                                symbol: "minus.circle",
+                                help: "Unstage this hunk",
+                                identifier: "changes.file.\(index).hunk.\(position).unstage"
+                            ) { model.unstageHunk(hunk) }
+                                .disabled(!model.gitHasCommits)
+                        } else {
+                            hunkButton(
+                                symbol: "plus.circle",
+                                help: "Stage this hunk",
+                                identifier: "changes.file.\(index).hunk.\(position).stage"
+                            ) { model.stageHunk(hunk) }
+                            hunkButton(
+                                symbol: "arrow.uturn.backward",
+                                help: "Discard this hunk…",
+                                identifier: "changes.file.\(index).hunk.\(position).discard"
+                            ) { model.requestDiscardHunk(hunk) }
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(height: 26)
+                    .background(LocusTheme.paperDeep.opacity(0.5))
+                    .focusable()
+
+                    DiffTextView(
+                        text: hunk.lines.joined(separator: "\n"),
+                        maxHeight: 260
+                    )
+                }
+                if position < parsed.hunks.count - 1 {
+                    Divider().overlay(LocusTheme.line.opacity(0.6))
+                }
+            }
+        }
+        .disabled(model.isPerformingGitAction)
+        .accessibilityIdentifier("changes.file.\(index).hunks")
+    }
+
+    private func hunkButton(
+        symbol: String,
+        help: String,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(LocusTheme.muted)
+                .frame(width: 16, height: 16)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+        .accessibilityIdentifier(identifier)
     }
 
     private var actionCluster: some View {

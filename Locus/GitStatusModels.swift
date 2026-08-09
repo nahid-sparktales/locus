@@ -114,12 +114,18 @@ struct GitStatusResponse: Codable {
     let branch: String?
     let ahead: Int?
     let behind: Int?
+    /// `origin/main`-style tracking ref; the agent has always sent it, the
+    /// app now reads it. Absent from older agents, so optional.
+    let upstream: String?
+    let detached: Bool
+    let hasCommits: Bool
     let files: [GitChange]
     let error: String?
 
     enum CodingKeys: String, CodingKey {
-        case ok, branch, ahead, behind, files, error
+        case ok, branch, ahead, behind, upstream, detached, files, error
         case isRepo = "is_repo"
+        case hasCommits = "has_commits"
     }
 
     init(from decoder: Decoder) throws {
@@ -129,6 +135,11 @@ struct GitStatusResponse: Codable {
         branch = try container.decodeIfPresent(String.self, forKey: .branch)
         ahead = try container.decodeIfPresent(Int.self, forKey: .ahead)
         behind = try container.decodeIfPresent(Int.self, forKey: .behind)
+        upstream = try container.decodeIfPresent(String.self, forKey: .upstream)
+        detached = try container.decodeIfPresent(Bool.self, forKey: .detached) ?? false
+        // Absent means an old agent; assume commits exist rather than hide
+        // push/unstage behind a wrong default.
+        hasCommits = try container.decodeIfPresent(Bool.self, forKey: .hasCommits) ?? true
         files = try container.decodeIfPresent([GitChange].self, forKey: .files) ?? []
         error = try container.decodeIfPresent(String.self, forKey: .error)
     }

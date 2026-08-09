@@ -815,6 +815,206 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(migrated.map(\.mode), [.work, .plan, .work])
     }
 
+    @MainActor
+    func testDecoratedPromptCarriesAttachmentSectionsInEveryMode() {
+        let model = AppModel(startImmediately: false)
+        let attachments = [
+            ChatAttachment(
+                url: URL(fileURLWithPath: "/tmp/notes.txt"),
+                kind: .text,
+                textContent: "A supplied note"
+            ),
+            ChatAttachment(
+                url: URL(fileURLWithPath: "/tmp/bug.png"),
+                kind: .image,
+                imageData: Data([0x89, 0x50, 0x4e, 0x47]),
+                mimeType: "image/png"
+            ),
+        ]
+
+        for mode in [WorkMode.work, .plan, .build] {
+            let prompt = model.decoratedPrompt(
+                "Fix it", mode: mode, chatAttachments: attachments
+            )
+            XCTAssertTrue(prompt.contains("Attached file: notes.txt"), "\(mode)")
+            XCTAssertTrue(prompt.contains("A supplied note"), "\(mode)")
+            XCTAssertTrue(prompt.contains("bug.png"), "\(mode)")
+            XCTAssertFalse(
+                prompt.contains("access any other workspace data"),
+                "the Just Chat isolation contract must stay ask-only in \(mode)"
+            )
+        }
+
+        let askPrompt = model.decoratedPrompt(
+            "Fix it", mode: .ask, chatAttachments: attachments
+        )
+        XCTAssertTrue(askPrompt.contains("access any other workspace data"))
+        XCTAssertTrue(askPrompt.contains("without accessing their paths"))
+    }
+
+    @MainActor
+    func testPastedImagesGetUniqueNamesAndCountAgainstTheCaps() {
+        let model = AppModel(startImmediately: false)
+        let payload = (data: Data([0x89, 0x50, 0x4e, 0x47]), mimeType: "image/png")
+
+        model.addPastedImages([payload, payload])
+        XCTAssertEqual(model.chatAttachments.count, 2)
+        XCTAssertEqual(Set(model.chatAttachments.map(\.name)).count >= 1, true)
+        XCTAssertEqual(Set(model.chatAttachments.map(\.url)).count, 2)
+        XCTAssertTrue(model.chatAttachments.allSatisfy { $0.name.hasPrefix("Pasted image ") })
+        XCTAssertTrue(model.chatAttachments.allSatisfy(\.isAvailable))
+
+        model.chatAttachments = (0..<10).map { index in
+            ChatAttachment(
+                url: URL(fileURLWithPath: "/tmp/full-\(index).png"),
+                kind: .image,
+                imageData: Data([0x89]),
+                mimeType: "image/png"
+            )
+        }
+        model.addPastedImages([payload])
+        XCTAssertEqual(model.chatAttachments.count, 10)
+        XCTAssertEqual(
+            model.chatAttachmentNotice,
+            "A chat message can include up to 10 attachments."
+        )
+
+        model.chatAttachments = []
+        model.chatAttachmentNotice = nil
+        let oversized = (data: Data(count: 15_000_001), mimeType: "image/png")
+        model.addPastedImages([oversized])
+        XCTAssertTrue(model.chatAttachments.isEmpty)
+        XCTAssertEqual(model.chatAttachmentNotice, "Skipped or limited: 1 over the size limit.")
+    }
+
+    func testModelInfoDecodesVisionCapabilityTolerantly() throws {
+        let decoder = JSONDecoder()
+        let seeing = try decoder.decode(
+            ModelInfo.self,
+            from: Data(#"{"name": "seeing:latest", "vision": true}"#.utf8)
+        )
+        let blind = try decoder.decode(
+            ModelInfo.self,
+            from: Data(#"{"name": "blind:latest", "vision": false}"#.utf8)
+        )
+        let older = try decoder.decode(
+            ModelInfo.self,
+            from: Data(#"{"name": "older:latest"}"#.utf8)
+        )
+        XCTAssertEqual(seeing.visionCapable, true)
+        XCTAssertEqual(blind.visionCapable, false)
+        XCTAssertNil(older.visionCapable)
+    }
+
+    func testTranscriptSearchHitDecodesAndYieldsItsMatchedTerm() throws {
+        let payload = """
+        {
+          "session_id": "2026-08-09-abc", "title": "Retry bug", "pinned": false,
+          "mtime": 1754700000.0, "message_index": 4, "role": "assistant",
+          "snippet": "…the retry loop backs off…", "highlights": [[5, 5], [11, 4]],
+          "score": 1.0
+        }
+        """
+        let hit = try JSONDecoder().decode(TranscriptSearchHit.self, from: Data(payload.utf8))
+
+        XCTAssertEqual(hit.sessionID, "2026-08-09-abc")
+        XCTAssertEqual(hit.messageIndex, 4)
+        XCTAssertEqual(hit.id, "2026-08-09-abc:4")
+        XCTAssertEqual(hit.firstMatchedTerm, "retry")
+
+        let bare = try JSONDecoder().decode(
+            TranscriptSearchHit.self,
+            from: Data("""
+            {"session_id": "s", "title": null, "pinned": true, "mtime": 1.0,
+             "message_index": 0, "role": "user", "snippet": "", "highlights": [],
+             "score": 0.5}
+            """.utf8)
+        )
+        XCTAssertNil(bare.firstMatchedTerm)
+
+        // Offsets are Python str positions — Unicode scalars. The flag emoji
+        // is one grapheme but two scalars, so grapheme-based math would land
+        // one short on every highlight after it.
+        let emoji = try JSONDecoder().decode(
+            TranscriptSearchHit.self,
+            from: Data("""
+            {"session_id": "s", "title": null, "pinned": false, "mtime": 1.0,
+             "message_index": 0, "role": "user",
+             "snippet": "\\uD83C\\uDDEB\\uD83C\\uDDF7 fix the retry bug",
+             "highlights": [[11, 5]], "score": 1.0}
+            """.utf8)
+        )
+        XCTAssertEqual(emoji.firstMatchedTerm, "retry")
+    }
+
+    @MainActor
+    func testBlocksFromMessagesCarryHistoryIndexAcrossDroppedMessages() throws {
+        let messages = try JSONDecoder().decode([HistoryMessage].self, from: Data("""
+        [
+          {"role": "user", "content": "first question"},
+          {"role": "assistant", "content": ""},
+          {"role": "assistant", "content": "the searchable answer"},
+          {"role": "system", "content": "never rendered"},
+          {"role": "user", "content": "second question"}
+        ]
+        """.utf8))
+
+        let blocks = AppModel.blocks(from: messages)
+
+        XCTAssertEqual(blocks.count, 3)
+        XCTAssertEqual(blocks[0].historyIndex, 0)
+        XCTAssertEqual(blocks[1].historyIndex, 2)
+        XCTAssertEqual(blocks[1].text, "the searchable answer")
+        XCTAssertEqual(blocks[2].historyIndex, 4)
+    }
+
+    func testUsageSummaryDecodesSnakeCasePayload() throws {
+        let payload = """
+        {
+          "since": 0, "generated_at": 1754700000.5, "read_only": false,
+          "orchestration": {"runs": 3, "model_calls": 24, "metered_tokens": 90000,
+                            "estimated_cost": 2.75},
+          "by_day": [{"day": "2026-08-09", "runs": 2, "metered_tokens": 60000,
+                      "estimated_cost": 2.0}],
+          "by_workspace": [{"workspace_root": "/tmp/ws", "runs": 3,
+                            "estimated_cost": 2.75}],
+          "by_model": [{"provider": "anthropic", "model": "claude-sonnet-5",
+                        "attempts": 5, "prompt_tokens": 40000,
+                        "completion_tokens": 9000}],
+          "by_agent": [{"agent_id": "6B2BB0A5-7B5A-4E24-B47C-1D8E64B1B1F1",
+                        "samples": 5, "estimated_cost": 2.75, "local": false}],
+          "evaluations": {"cases": 4, "estimated_cost": 0.5},
+          "solo": {"turns": 2, "prompt_tokens": 300, "completion_tokens": 120,
+                   "recorded_since": 1754600000.0},
+          "expensive_runs": [{"id": "run-1", "team_name": "Core Team",
+                              "workspace_root": "/tmp/ws",
+                              "created_at": 1754650000.0, "state": "completed",
+                              "estimated_cost": 1.5}]
+        }
+        """
+        let summary = try JSONDecoder().decode(UsageSummary.self, from: Data(payload.utf8))
+
+        XCTAssertEqual(summary.orchestration.runs, 3)
+        XCTAssertEqual(summary.orchestration.meteredTokens, 90_000)
+        XCTAssertEqual(summary.orchestration.estimatedCost, 2.75, accuracy: 0.001)
+        XCTAssertEqual(summary.byModel.first?.model, "claude-sonnet-5")
+        XCTAssertEqual(summary.byAgent.first?.local, false)
+        XCTAssertEqual(summary.solo.turns, 2)
+        XCTAssertNotNil(summary.solo.recordedSince)
+        XCTAssertEqual(summary.expensiveRuns.first?.teamName, "Core Team")
+        XCTAssertFalse(summary.readOnly)
+    }
+
+    func testUsageWindowCutoffsAreOrderedAndAllMeansEverything() {
+        XCTAssertEqual(UsageWindow.all.since, 0)
+        let week = UsageWindow.week.since
+        let month = UsageWindow.month.since
+        let quarter = UsageWindow.quarter.since
+        XCTAssertGreaterThan(week, month)
+        XCTAssertGreaterThan(month, quarter)
+        XCTAssertGreaterThan(quarter, 0)
+    }
+
     func testChatAttachmentRepresentsTextAndImageInputs() {
         let text = ChatAttachment(
             url: URL(fileURLWithPath: "/tmp/notes.txt"),

@@ -633,12 +633,16 @@ struct ModelInfo: Codable, Hashable, Identifiable {
     let contextLength: Int
     /// The window the model was built for; the number to compare models by.
     let trainedContextLength: Int
+    /// Whether the model accepts image input. Ollama states it outright; a
+    /// remote listing says nothing, so nil means "not known", never a guess.
+    let visionCapable: Bool?
 
     enum CodingKeys: String, CodingKey {
         case name, size
         case parameterSize = "parameter_size"
         case contextLength = "context_length"
         case trainedContextLength = "trained_context_length"
+        case visionCapable = "vision"
     }
 
     init(
@@ -646,13 +650,15 @@ struct ModelInfo: Codable, Hashable, Identifiable {
         size: Int64,
         parameterSize: String,
         contextLength: Int,
-        trainedContextLength: Int = 0
+        trainedContextLength: Int = 0,
+        visionCapable: Bool? = nil
     ) {
         self.name = name
         self.size = size
         self.parameterSize = parameterSize
         self.contextLength = contextLength
         self.trainedContextLength = trainedContextLength
+        self.visionCapable = visionCapable
     }
 
     // Only the name is essential; a model whose metadata is missing must
@@ -664,6 +670,7 @@ struct ModelInfo: Codable, Hashable, Identifiable {
         parameterSize = try container.decodeIfPresent(String.self, forKey: .parameterSize) ?? ""
         contextLength = try container.decodeIfPresent(Int.self, forKey: .contextLength) ?? 0
         trainedContextLength = try container.decodeIfPresent(Int.self, forKey: .trainedContextLength) ?? 0
+        visionCapable = try container.decodeIfPresent(Bool.self, forKey: .visionCapable)
     }
 
     var detail: String {
@@ -918,6 +925,10 @@ struct ChatBlock: Identifiable, Codable, Hashable {
     /// Links a team request to its durable board without changing ordinary
     /// transcript rendering. Optional decoding keeps existing checkpoints.
     var teamRunID: String?
+    /// Position in the restored message array, so a cross-session search hit
+    /// can address this block even after empty messages were dropped.
+    /// Optional decoding keeps existing checkpoints.
+    var historyIndex: Int?
 
     init(
         id: UUID = UUID(),
@@ -927,7 +938,8 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         isStreaming: Bool = false,
         tool: ToolPayload? = nil,
         completion: TurnCompletion? = nil,
-        teamRunID: String? = nil
+        teamRunID: String? = nil,
+        historyIndex: Int? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -937,7 +949,57 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         self.tool = tool
         self.completion = completion
         self.teamRunID = teamRunID
+        self.historyIndex = historyIndex
     }
+}
+
+/// One `/api/sessions/search` hit — a message position inside a saved session.
+struct TranscriptSearchHit: Codable, Hashable, Identifiable {
+    let sessionID: String
+    let title: String?
+    let pinned: Bool
+    let mtime: Double
+    let messageIndex: Int
+    let role: String
+    let snippet: String
+    /// `[start, length]` character ranges inside `snippet` to emphasize.
+    let highlights: [[Int]]
+    let score: Double
+
+    var id: String { "\(sessionID):\(messageIndex)" }
+
+    enum CodingKeys: String, CodingKey {
+        case title, pinned, mtime, role, snippet, highlights, score
+        case sessionID = "session_id"
+        case messageIndex = "message_index"
+    }
+
+    /// The first term the index actually matched — by construction it appears
+    /// verbatim in the message text, so it can drive the in-conversation find.
+    var firstMatchedTerm: String? {
+        guard let range = stringRange(of: highlights.first) else { return nil }
+        return String(snippet[range])
+    }
+
+    /// Highlight offsets are Python `str` positions — Unicode scalars, not
+    /// Swift's grapheme clusters — so index math must run on the scalar view
+    /// or any emoji in a snippet shifts every later highlight.
+    func stringRange(of highlight: [Int]?) -> Range<String.Index>? {
+        guard let highlight, highlight.count == 2 else { return nil }
+        let scalars = snippet.unicodeScalars
+        guard let start = scalars.index(
+            scalars.startIndex, offsetBy: highlight[0], limitedBy: scalars.endIndex
+        ), let end = scalars.index(
+            start, offsetBy: highlight[1], limitedBy: scalars.endIndex
+        ) else { return nil }
+        return start..<end
+    }
+}
+
+struct TranscriptSearchResponse: Codable {
+    let query: String
+    let indexing: Bool
+    let results: [TranscriptSearchHit]
 }
 
 struct ContextFile: Identifiable, Codable, Hashable {
@@ -996,9 +1058,10 @@ enum ChatAttachmentKind: String, Hashable, Sendable {
     case image
 }
 
-/// An explicitly selected, one-message input for Just Chat. Unlike a Work
-/// context pack, these attachments do not grant access to their path or to any
-/// neighboring workspace files, and they are removed after a successful send.
+/// An explicitly selected, one-message input for the composer, valid in every
+/// mode. Unlike a Work context pack, these attachments do not grant access to
+/// their path or to any neighboring workspace files, and they are removed
+/// after a successful send.
 struct ChatAttachment: Identifiable, Hashable, Sendable {
     let id: UUID
     let url: URL
@@ -1007,6 +1070,9 @@ struct ChatAttachment: Identifiable, Hashable, Sendable {
     let imageData: Data?
     let mimeType: String?
     let issue: String?
+    /// Display name for content with no real file behind it (pasted images);
+    /// the synthesized `url` then only provides Hashable/dedupe identity.
+    let overrideName: String?
 
     init(
         id: UUID = UUID(),
@@ -1015,7 +1081,8 @@ struct ChatAttachment: Identifiable, Hashable, Sendable {
         textContent: String? = nil,
         imageData: Data? = nil,
         mimeType: String? = nil,
-        issue: String? = nil
+        issue: String? = nil,
+        overrideName: String? = nil
     ) {
         self.id = id
         self.url = url
@@ -1024,9 +1091,28 @@ struct ChatAttachment: Identifiable, Hashable, Sendable {
         self.imageData = imageData
         self.mimeType = mimeType
         self.issue = issue
+        self.overrideName = overrideName
     }
 
-    var name: String { url.lastPathComponent }
+    static func pasted(imageData: Data, mimeType: String, date: Date = Date()) -> ChatAttachment {
+        let stamp = date.formatted(
+            Date.FormatStyle()
+                .year().month(.twoDigits).day(.twoDigits)
+                .hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits)
+        )
+        let fileExtension = mimeType.split(separator: "/").last.map(String.init) ?? "png"
+        let identity = UUID()
+        return ChatAttachment(
+            id: identity,
+            url: URL(fileURLWithPath: "/dev/null/pasted-\(identity.uuidString).\(fileExtension)"),
+            kind: .image,
+            imageData: imageData,
+            mimeType: mimeType,
+            overrideName: "Pasted image \(stamp).\(fileExtension)"
+        )
+    }
+
+    var name: String { overrideName ?? url.lastPathComponent }
     var isAvailable: Bool {
         guard issue == nil else { return false }
         switch kind {

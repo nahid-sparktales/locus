@@ -16,6 +16,7 @@ private let shortcutReferenceGroups: [ShortcutReferenceGroup] = [
     ShortcutReferenceGroup(name: "General", shortcuts: [
         ShortcutReference(keys: "⌘K", title: "Command palette"),
         ShortcutReference(keys: "⌘F", title: "Find in conversation"),
+        ShortcutReference(keys: "⇧⌘F", title: "Search all conversations"),
         ShortcutReference(keys: "⌘/", title: "Keyboard shortcuts"),
         ShortcutReference(keys: "⌘N", title: "New session"),
         ShortcutReference(keys: "⌘⇧K", title: "Clear chat"),

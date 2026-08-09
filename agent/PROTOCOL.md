@@ -37,7 +37,8 @@ refused unless the capability is configured.
   "error": null,
   "capabilities": {
     "durable_runs": true, "recovery_controls": true, "evaluations": true,
-    "adaptive_routing": true, "workspace_knowledge": true, "modern_mcp": true
+    "adaptive_routing": true, "workspace_knowledge": true, "modern_mcp": true,
+    "browser": true, "transcript_search": true
   }
 }
 ```
@@ -72,6 +73,18 @@ requested; credentials and provider signatures are always redacted.
 include_content?}` and sends an OTLP/HTTP JSON trace without following
 redirects. Remote endpoints require HTTPS. Authorization is transient and is
 never written by the backend.
+
+`GET /api/usage/summary?since=<unix seconds, optional>` rolls up recorded
+spend and tokens on a read-only connection: orchestration totals and by-day /
+by-workspace splits from `runs.usage_json`, a by-model token split from
+`job_attempts`, by-agent dollars from `routing_samples` (keyed by agent-profile
+UUID; the client resolves names), evaluation cost from graded results, the ten
+most expensive runs, and a `solo` section fed by the `turn_usage` table that
+`turn_done` terminals populate. Costs are estimates computed from user-entered
+per-agent rates — the summary is a view, not a bill — and solo rows carry
+tokens only, since no pricing exists outside agent profiles. `recorded_since`
+reports when solo recording began; earlier turns were never recorded and
+cannot be backfilled. Gated by the `durable_runs` capability.
 
 Recovery controls are `POST /pause`, `/resume`, `/cancel`, `/discard`,
 `/jobs/{job_id}/retry`, `/jobs/{job_id}/reassign`, `/replay`, and `/duplicate`.
@@ -167,7 +180,8 @@ permissions and hard guardrails.
       "size": 17420432739,
       "parameter_size": "27.8B",
       "context_length": 32768,
-      "trained_context_length": 262144
+      "trained_context_length": 262144,
+      "vision": false
     }
   ],
   "current": "huihui_ai/qwen3-abliterated:latest"
@@ -179,7 +193,10 @@ in** — read back from Ollama once it is resident — and is what a session sho
 be metered against; it is 0 when that is not known, which includes any model
 that is not currently loaded and any OpenAI-compatible endpoint.
 `trained_context_length` is the window the model was built for, which is what to
-compare models by; it is 0 when it cannot be determined. 502 if Ollama is down.
+compare models by; it is 0 when it cannot be determined. `vision` is whether the
+model accepts image input, read from Ollama's own capability list; it is `null`
+when Ollama does not say and for every remote listing, which report nothing
+about vision — `null` means "not known", never a guess. 502 if Ollama is down.
 
 ### `GET/POST /api/provider`
 
@@ -225,6 +242,41 @@ Pinned sessions sort first, then all remaining sessions by modification date.
 `id` is the filename stem. Existing sessions receive empty-title, unpinned,
 unarchived defaults automatically. `cwd` is optional for compatibility with
 older sessions; clients may group missing values under an unassigned section.
+
+### `GET /api/sessions/search`
+
+Full-text search over every saved transcript's user and assistant messages.
+
+```json
+{
+  "query": "retry loop",
+  "indexing": false,
+  "duration_ms": 12,
+  "results": [
+    { "session_id": "20260723-010948-123456-users-nahid",
+      "title": "Shipping checklist", "pinned": false,
+      "mtime": 1784783548.44, "message_index": 14, "role": "assistant",
+      "snippet": "…the retry loop backs off…", "highlights": [[4, 5], [10, 4]],
+      "score": 1.0 }
+  ]
+}
+```
+
+Query parameters: `query` (required, 1–500 chars; empty is 422) and `limit`
+(1–50, default 20). The index is one global SQLite FTS5 database at
+`~/.ollama-code/transcript-index.sqlite3` (mode 0600), built lazily on the
+first search and kept current by a stat-diff sync before each search — the
+session write path is untouched, so appends, trash, restore, delete, and
+CLI-written sessions are all picked up. A large first build continues on a
+background thread; until it finishes, responses carry partial results and
+`"indexing": true`. `message_index` addresses the same position in the array
+`GET /api/sessions/{session_id}` returns. `highlights` are `[start, length]`
+character ranges inside `snippet`; matched terms appear verbatim in the
+message text. At most 3 hits per session; results order by bm25 rank. The
+unicode61 tokenizer does not segment CJK text. Prompt decoration is stripped
+from user messages before indexing, and clearing all sessions empties the
+index immediately. Gated by the `transcript_search` capability
+(`LOCUS_CAPABILITY_TRANSCRIPT_SEARCH`; disabled returns 404).
 
 ### `DELETE /api/sessions`
 
@@ -356,10 +408,16 @@ never contains provider credentials or reasoning signatures.
 
 ### `GET /api/git/status` and `GET /api/git/diff`
 
-`status` accepts `untracked=normal|all|no` and returns branch, repository state,
-and changed files. `diff` requires a percent-encoded `path` and accepts
-`staged`, `context`, and bounded `max_bytes`. Paths outside the workspace are
-refused. Both are read-only and remain available during a turn.
+`status` accepts `untracked=normal|all|no` and returns branch, repository
+state, and changed files — including `upstream` (the `origin/main`-style
+tracking ref, or null), `ahead`, `behind`, `detached`, and `has_commits`,
+which the app's branch and push controls read. These fields have always been
+in the response; this section now names them. `diff` requires a
+percent-encoded `path` and accepts `staged`, `context`, and bounded
+`max_bytes`. Paths outside the workspace are refused. Both are read-only and
+remain available during a turn — every git *mutation* (stage, commit, branch,
+push, per-hunk apply) runs in the app's own `GitClient`, never through the
+agent.
 
 ### `GET /api/tools`
 
@@ -476,7 +534,7 @@ Endpoint: `/ws/chat`.
 
 | `type` | Extra fields | Effect |
 |---|---|---|
-| `user_message` | `text: string`, optional `mode: "ask" \| "work" \| "plan" \| "build"`, optional `attachments`, optional `team` manifest | Runs one solo or dispatcher-led team turn. Existing modes remain compatible. A team manifest contains one explicit team, its enabled profiles and ephemeral routes, optional forced member, and bounded budgets. Credentials are accepted only in memory and are never echoed or persisted. Slash commands and Chat mode reject team routing. |
+| `user_message` | `text: string`, optional `mode: "ask" \| "work" \| "plan" \| "build"`, optional `attachments`, optional `team` manifest | Runs one solo or dispatcher-led team turn. Existing modes remain compatible. A team manifest contains one explicit team, its enabled profiles and ephemeral routes, optional forced member, and bounded budgets. Credentials are accepted only in memory and are never echoed or persisted. Slash commands and Chat mode reject team routing. Image `attachments` are valid in **every** mode: PNG/JPEG/GIF/WebP, at most 10 per message, 15 MB per image, 25 MB in total, base64 `data` with a `mime_type` and optional `name`. They ride the turn in memory only — the persisted session record keeps the text and attachment names, never image bytes, so a restored or resumed conversation carries no images. On a team turn the images reach the dispatcher and the first coding job's first slice; specialists, reviewers, and synthesis receive text evidence only, and the server emits a `note` event saying so before dispatch. A provider that explicitly rejects image input triggers one automatic retry with the images stripped from history, announced by a `note`. |
 | `permission_decision` | `request_id: string`, `decision: "once" \| "always" \| "deny"` | Answers a `permission_request`. Unknown/invalid values are treated as `deny`. Late answers are ignored. |
 | `interrupt` | — | Soft-interrupts the current turn: streaming stops after the current chunk, pending permission waits are denied, turn ends with `turn_done {reason: "interrupted"}`. Safe to send when idle. |
 | `steer` | `text: string` | Adds direction to the active turn. It interrupts only the current provider generation, waits for an already-running tool/native action to reach a safe boundary, and continues the same turn without an intermediate `turn_done`. |
@@ -745,6 +803,13 @@ Ends a turn started by `user_message` (non-slash input).
 `model_call_budget` | `error`. Limit outcomes add `iteration_limit` and/or
 `model_call_limit`, plus the model calls used, so clients name the boundary that
 actually ended the turn.
+The terminal also carries this turn's spend and provenance — `prompt_tokens`
+and `completion_tokens` (deltas for the turn, not conversation totals),
+`provider`, `model`, `account_label` (empty for local Ollama),
+`workspace_root`, and `session_id`. The fields are additive; old clients
+ignore them. The server persists solo turns with nonzero tokens into the run
+store's `turn_usage` table for `GET /api/usage/summary`; orchestrated runs
+account usage in their own run records instead.
 A `session_info` event follows immediately.
 
 ### `command_error`

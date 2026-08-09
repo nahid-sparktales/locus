@@ -89,10 +89,24 @@ for setup, examples, permission boundaries, recovery, and troubleshooting.
   proxy](#working-behind-a-proxy).
 - **Chat and Work stay visibly separate.** Chat answers from the conversation
   and files explicitly attached to the current message, while keeping tools,
-  skills, integrations, workspace browsing, and edits disabled. It accepts
-  text and source files, PDFs, and common image formats (with a vision-capable
-  model). Work restores the Plan and Build controls and the prior inspector
-  layout.
+  skills, integrations, workspace browsing, and edits disabled. Work restores
+  the Plan and Build controls and the prior inspector layout.
+- **Attachments in every mode.** Text and source files, PDFs, and common
+  image formats attach to any message — drag them onto the composer or the
+  conversation, paste an image with ⌘V, or pick files with the paperclip.
+  "Here's a screenshot of the bug, fix it" works in Work mode with a
+  vision-capable model; local models report vision support straight from
+  Ollama, and the composer warns before sending images to one known to refuse
+  them. Attachments ride the one message and are never persisted; in a team
+  run the images reach the dispatcher and the first coding job, announced by
+  a note in the transcript.
+- **Search across all conversations.** The sidebar search looks inside every
+  transcript, ranks matching messages with highlighted snippets, and opens
+  the session scrolled to the exact message. `⇧⌘F` focuses it from anywhere.
+- **Usage & Costs** (sidebar ▸ ••• menu) rolls up estimated spend and tokens
+  by agent, model, and workspace with the most expensive runs one click from
+  their timelines. Estimates come from the per-agent rates you entered;
+  local Ollama is free, and the sheet says plainly that it is not a bill.
 - **Slash commands** (`/clear`, `/model`, `/plan`, `/checkpoint`, `/export`,
   `/help`, …) with an autocomplete popup; unknown commands pass through to the
   local agent.
@@ -188,9 +202,18 @@ outside Locus, by another tool, or by a console command. The tab badge counts
 changed files (capped at `99+`) and stays coral until you have looked. Rendered
 diffs are capped at 2,000 lines. Each row stages, unstages, or discards its
 file (discarding always confirms; an untracked file moves to the Trash rather
-than being deleted), and a commit area at the bottom commits the staged set —
-**Draft with AI** writes the message from the staged diff with the local
-model, falling back to a plain summary when no local model is available.
+than being deleted), and each hunk inside a diff stages, unstages, or discards
+independently — a hunk that changed since the diff was read is re-located by
+content or refused, never guessed. A commit area at the bottom commits the
+staged set — **Draft with AI** writes the message from the staged diff with
+the local model, falling back to a plain summary when no local model is
+available. The header names the current branch and switches or creates
+branches; fetch, fast-forward-only pull, and push (publishing the branch on
+first push) appear in the direct-download build — the App Store sandbox
+cannot reach your keychain or SSH keys, so there a footnote says why they are
+absent. **Open Pull Request** lands on GitHub's compare page with the branch
+prefilled; the Create button stays yours. Locus never stores or prompts for
+git credentials in any build.
 
 ![Changes tab](Docs/locus-changes.jpg)
 

@@ -30,9 +30,15 @@ struct GitClient: Sendable {
     let workspaceRoot: String
 
     /// Runs `git <args>`, throwing on non-zero exit with stderr as the message.
+    /// `stdin` feeds the process and closes — how a synthesized patch reaches
+    /// `git apply`, mirroring the agent's own patch-over-stdin path.
     @discardableResult
-    func run(_ args: [String], timeout: TimeInterval = 15) async throws -> GitCommandResult {
-        let result = try await launch(args, timeout: timeout)
+    func run(
+        _ args: [String],
+        stdin: Data? = nil,
+        timeout: TimeInterval = 15
+    ) async throws -> GitCommandResult {
+        let result = try await launch(args, stdin: stdin, timeout: timeout)
         guard result.exitCode == 0 else {
             throw GitClientError.failed(
                 command: args.first ?? "",
@@ -42,7 +48,11 @@ struct GitClient: Sendable {
         return result
     }
 
-    private func launch(_ args: [String], timeout: TimeInterval) async throws -> GitCommandResult {
+    private func launch(
+        _ args: [String],
+        stdin: Data? = nil,
+        timeout: TimeInterval
+    ) async throws -> GitCommandResult {
         let process = Process()
         // `env` for the same reason BackendProcess uses it; --literal-pathspecs
         // and quotepath keep filenames byte-exact both directions.
@@ -58,6 +68,8 @@ struct GitClient: Sendable {
         let stderrPipe = Pipe()
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
+        let stdinPipe: Pipe? = stdin == nil ? nil : Pipe()
+        if let stdinPipe { process.standardInput = stdinPipe }
 
         // Both pipes are drained continuously — a command with more than the
         // pipe's 64 KB of output would otherwise block and never terminate.
@@ -106,6 +118,19 @@ struct GitClient: Sendable {
             }
             do {
                 try process.run()
+                if let stdin, let stdinPipe {
+                    // Written off the caller's thread: a patch larger than the
+                    // pipe buffer would otherwise deadlock against a git that
+                    // has not started reading yet. The throwing write, not the
+                    // legacy one — a git that exits without reading (a fast
+                    // `apply` refusal) closes the pipe, and EPIPE must surface
+                    // as the command's own exit status, not an uncaught
+                    // exception.
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        try? stdinPipe.fileHandleForWriting.write(contentsOf: stdin)
+                        try? stdinPipe.fileHandleForWriting.close()
+                    }
+                }
             } catch {
                 watchdog.cancel()
                 process.terminationHandler = nil

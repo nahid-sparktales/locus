@@ -49,6 +49,7 @@ from ollama_code import config as config_mod  # noqa: E402
 from ollama_code import extensions as extensions_mod  # noqa: E402
 from ollama_code import paths as paths_mod  # noqa: E402
 from ollama_code import sessions as sessions_mod  # noqa: E402
+from ollama_code import transcript_search as transcript_search_mod  # noqa: E402
 
 # Fails now, loudly, rather than at some later write: if anything imported
 # ollama_code above the assignment, every constant below is already pointing at
@@ -73,6 +74,8 @@ _APP_DIR_CONSTANTS: tuple[tuple[Any, str, str | None], ...] = (
     (extensions_mod, "APP_DIR", None),
     (app_mod, "APP_DIR", None),
     (app_mod, "HISTORY_FILE", "history"),
+    (transcript_search_mod, "APP_DIR", None),
+    (transcript_search_mod, "DEFAULT_PATH", "transcript-index.sqlite3"),
 )
 
 

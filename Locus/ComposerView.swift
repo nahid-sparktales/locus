@@ -3,6 +3,7 @@ import SwiftUI
 struct ComposerView: View {
     @EnvironmentObject private var model: AppModel
     @State private var contextPresented = false
+    @State private var attachmentsPresented = false
     @State private var popupSelection = 0
     @State private var popupDismissedDraft: String?
     @FocusState private var focused: Bool
@@ -76,10 +77,16 @@ struct ComposerView: View {
                             .onKeyPress(.escape) { handleEscape() }
                     }
 
+                    if !model.chatAttachments.isEmpty {
+                        attachmentChipsRow
+                    }
+
                     actionRow
                 }
                 .frame(maxWidth: 740)
                 .locusCard(radius: 13)
+                .chatAttachmentDropTarget()
+                .chatPasteInterceptor(editorFocused: focused)
                 .shadow(color: .black.opacity(0.08), radius: 22, y: 9)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -617,6 +624,42 @@ struct ComposerView: View {
                 .accessibilityIdentifier("composer.addContext")
                 .disabled(model.isLoadingContext)
 
+                Button {
+                    contextPresented = false
+                    attachmentsPresented.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "paperclip")
+                        if !model.availableChatAttachments.isEmpty {
+                            Text("\(model.availableChatAttachments.count)")
+                        }
+                    }
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(
+                        attachmentWarningActive ? LocusTheme.warning : LocusTheme.ink
+                    )
+                    .padding(.horizontal, 8)
+                    .frame(height: 27)
+                    .background(LocusTheme.paperDeep.opacity(0.75))
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .stroke(
+                                attachmentWarningActive
+                                    ? LocusTheme.warning.opacity(0.55) : LocusTheme.line,
+                                lineWidth: 1
+                            )
+                    }
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $attachmentsPresented, arrowEdge: .bottom) {
+                    ChatAttachmentsPopover()
+                        .environmentObject(model)
+                }
+                .help("Attach files, PDFs, or images to this message")
+                .accessibilityLabel("Open message attachments")
+                .accessibilityIdentifier("composer.chatAttachments")
+
                 permissionChip
             }
 
@@ -763,8 +806,66 @@ struct ComposerView: View {
     }
 
     private var canSubmit: Bool {
-        !promptTrimmed.isEmpty
-            || (model.justChatEnabled && !model.availableChatAttachments.isEmpty)
+        !promptTrimmed.isEmpty || !model.availableChatAttachments.isEmpty
+    }
+
+    private var attachmentWarningActive: Bool {
+        model.activeModelRejectsImages
+            && model.chatAttachments.contains { $0.kind == .image }
+    }
+
+    private var attachmentChipsRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(model.chatAttachments) { attachment in
+                    HStack(spacing: 6) {
+                        if attachment.kind == .image,
+                           let data = attachment.imageData,
+                           let image = NSImage(data: data) {
+                            Image(nsImage: image)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 22, height: 22)
+                                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        } else {
+                            Image(systemName: attachment.kind == .image ? "photo" : "doc.text")
+                                .font(.system(size: 10))
+                                .foregroundStyle(
+                                    attachment.isAvailable ? LocusTheme.muted : LocusTheme.warning
+                                )
+                                .frame(width: 22, height: 22)
+                        }
+                        Text(attachment.name)
+                            .font(.system(size: 9, weight: .semibold))
+                            .lineLimit(1)
+                            .frame(maxWidth: 140, alignment: .leading)
+                        Button {
+                            model.removeChatAttachment(attachment)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(LocusTheme.muted)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Remove \(attachment.name)")
+                        .accessibilityIdentifier(
+                            "composer.attachmentChip.\(attachment.id.uuidString).remove"
+                        )
+                    }
+                    .padding(.horizontal, 7)
+                    .frame(height: 30)
+                    .background(LocusTheme.paperDeep.opacity(0.75))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(LocusTheme.line, lineWidth: 1)
+                    }
+                    .accessibilityIdentifier("composer.attachmentChip.\(attachment.id.uuidString)")
+                }
+            }
+            .padding(.horizontal, 10)
+        }
+        .frame(height: 38)
     }
 
     private var sendHint: String {
@@ -781,9 +882,9 @@ struct ComposerView: View {
         }
         return switch model.selectedMode {
         case .ask: "Ask anything…  (attach files or images · no workspace tools)"
-        case .work: "What should Locus work on?  ( / commands · @ files )"
-        case .plan: "Describe the change you want to plan…  ( / commands · @ files )"
-        case .build: "What should we build next?  ( / commands · @ files )"
+        case .work: "What should Locus work on?  ( / commands · @ files · ⌘V images )"
+        case .plan: "Describe the change you want to plan…  ( / commands · @ files · ⌘V images )"
+        case .build: "What should we build next?  ( / commands · @ files · ⌘V images )"
         }
     }
 
@@ -826,8 +927,12 @@ private struct ChatAttachmentsPopover: View {
             .padding(13)
 
             Label(
-                "Only these files are supplied to the model. Chat cannot browse their folders, use tools, or edit anything.",
-                systemImage: "lock.shield"
+                model.justChatEnabled
+                    ? "Only these files are supplied to the model. Chat cannot browse "
+                        + "their folders, use tools, or edit anything."
+                    : "These files ride with this one message as direct evidence. In a "
+                        + "team run, images reach the dispatcher and the first coding job.",
+                systemImage: model.justChatEnabled ? "lock.shield" : "paperclip"
             )
             .font(.system(size: 8))
             .foregroundStyle(LocusTheme.muted)
@@ -836,6 +941,24 @@ private struct ChatAttachmentsPopover: View {
             .padding(.horizontal, 13)
             .padding(.vertical, 9)
             .background(LocusTheme.paperDeep.opacity(0.7))
+
+            if model.activeModelRejectsImages,
+               model.chatAttachments.contains(where: { $0.kind == .image }) {
+                Label(
+                    "\(model.selectedModel) reports no vision support. Locus will "
+                        + "send the images and fall back to their names if the model "
+                        + "rejects them.",
+                    systemImage: "eye.slash"
+                )
+                .font(.system(size: 8))
+                .foregroundStyle(LocusTheme.warning)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 8)
+                .background(LocusTheme.warning.opacity(0.08))
+                .accessibilityIdentifier("chatAttachments.visionWarning")
+            }
 
             if model.isLoadingChatAttachments {
                 VStack(spacing: 10) {

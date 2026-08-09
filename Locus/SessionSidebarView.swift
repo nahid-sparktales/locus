@@ -19,6 +19,7 @@ struct SessionSidebarView: View {
     @EnvironmentObject private var model: AppModel
     @State private var sessionToRename: SessionSummary?
     @State private var renameText = ""
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -66,6 +67,7 @@ struct SessionSidebarView: View {
                             }
                         }
                     }
+                    transcriptHitsSection
                 }
                 .padding(.horizontal, 10)
                 .padding(.bottom, 12)
@@ -268,6 +270,10 @@ struct SessionSidebarView: View {
                 TextField("Search sessions", text: $model.searchQuery)
                     .textFieldStyle(.plain)
                     .font(.system(size: 11))
+                    .focused($searchFocused)
+                    .onChange(of: model.sidebarSearchFocusToken) {
+                        searchFocused = true
+                    }
                 if !model.searchQuery.isEmpty {
                     Button {
                         model.searchQuery = ""
@@ -331,6 +337,95 @@ struct SessionSidebarView: View {
         }
     }
 
+    /// Cross-session transcript hits under the title matches. Rendered only
+    /// while the search has enough characters to have queried the index.
+    @ViewBuilder
+    private var transcriptHitsSection: some View {
+        let query = model.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.count >= 2 {
+            SectionLabel("In conversations")
+                .padding(.top, 8)
+            if model.isSearchingTranscripts || model.transcriptSearchIndexing {
+                HStack(spacing: 7) {
+                    ProgressView()
+                        .controlSize(.mini)
+                    Text(model.transcriptSearchIndexing
+                        ? "Indexing conversations…" : "Searching…")
+                        .font(.system(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, SidebarMetrics.rowInset)
+                .padding(.vertical, 6)
+                .accessibilityIdentifier("sidebar.search.progress")
+            }
+            if model.transcriptHits.isEmpty,
+               !model.isSearchingTranscripts, !model.transcriptSearchIndexing {
+                Text("No matching messages")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, SidebarMetrics.rowInset)
+                    .padding(.vertical, 6)
+            }
+            ForEach(model.transcriptHits) { hit in
+                transcriptHitRow(hit)
+            }
+        }
+    }
+
+    private func transcriptHitRow(_ hit: TranscriptSearchHit) -> some View {
+        Button {
+            model.openSearchHit(hit)
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 5) {
+                    Image(systemName: hit.role == "user" ? "person" : "sparkle")
+                        .font(.system(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                    Text(hit.title?.nilIfEmpty ?? "Untitled chat")
+                        .font(.system(size: 9, weight: .semibold))
+                        .lineLimit(1)
+                    Spacer()
+                    Text(
+                        Date(timeIntervalSince1970: hit.mtime)
+                            .formatted(.relative(presentation: .named))
+                    )
+                    .font(.system(size: 7))
+                    .foregroundStyle(LocusTheme.muted)
+                }
+                Text(highlightedSnippet(hit))
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+            .padding(.horizontal, SidebarMetrics.rowInset)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.white.opacity(0.001))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(model.chatNavigationDisabled)
+        .accessibilityIdentifier("sidebar.hit.\(hit.id)")
+    }
+
+    private func highlightedSnippet(_ hit: TranscriptSearchHit) -> AttributedString {
+        var text = AttributedString(hit.snippet)
+        for highlight in hit.highlights {
+            // Offsets are Unicode scalars (Python str positions); the hit
+            // converts them on the string, then the range maps across.
+            guard let stringRange = hit.stringRange(of: highlight),
+                  let range = Range(stringRange, in: text)
+            else { continue }
+            text[range].font = .system(size: 9, weight: .bold)
+            text[range].foregroundColor = LocusTheme.signalDeep
+        }
+        return text
+    }
+
     private var emptyState: some View {
         VStack(spacing: 9) {
             Image(systemName: "bubble.left")
@@ -377,6 +472,8 @@ struct SessionSidebarView: View {
         Menu {
             Button("Settings…") { model.settingsPresented = true }
                 .accessibilityIdentifier("sidebar.settings")
+            Button("Usage & Costs…") { model.usageDashboardPresented = true }
+                .accessibilityIdentifier("sidebar.usage")
             Button("Session Checkpoints…") { model.checkpointPresented = true }
                 .accessibilityIdentifier("sidebar.checkpoints")
             Divider()

@@ -194,6 +194,20 @@ final class AppModel: ObservableObject {
     @Published private(set) var changesHaveUnseenUpdate = false
     @Published private(set) var selectedChangePath: String?
     @Published private(set) var selectedChangeDiff: String?
+    @Published private(set) var selectedChangeParsedDiff: ParsedFileDiff?
+    @Published var selectedChangeShowsStaged = false
+    @Published private(set) var gitUpstream: String?
+    @Published private(set) var gitAhead = 0
+    @Published private(set) var gitBehind = 0
+    @Published private(set) var gitDetached = false
+    @Published private(set) var gitHasCommits = true
+    @Published private(set) var localBranches: [String] = []
+    @Published var pendingHunkDiscard: DiffHunk?
+    @Published private(set) var isSyncingRemote = false
+    /// Whether origin looked like GitHub at the last check. Shows or hides
+    /// the PR button; the action itself re-reads the remote at click time.
+    @Published private(set) var originIsGitHub = false
+    private var originCheckedForWorkspace: String?
     @Published var fileQuery = ""
     @Published private(set) var previewedFilePath: String?
     @Published private(set) var previewedFileContents: String?
@@ -236,6 +250,8 @@ final class AppModel: ObservableObject {
         }
     }
     @Published var settingsPresented = false
+    @Published var usageDashboardPresented = false
+    @Published var usageSummary: UsageSummary?
     @Published var settingsPage: SettingsPage = .general
     @Published var modelLibraryPresented = false
     @Published var commandPalettePresented = false
@@ -244,7 +260,15 @@ final class AppModel: ObservableObject {
     @Published var clearSessionsConfirmationPresented = false
     @Published var isClearingSessions = false
     @Published var showArchivedSessions = false
-    @Published var searchQuery = ""
+    @Published var searchQuery = "" {
+        didSet { scheduleTranscriptHitSearch() }
+    }
+    @Published var transcriptHits: [TranscriptSearchHit] = []
+    @Published var isSearchingTranscripts = false
+    @Published var transcriptSearchIndexing = false
+    @Published var sidebarSearchFocusToken = UUID()
+    private var transcriptHitsTask: Task<Void, Never>?
+    private var pendingSearchHit: TranscriptSearchHit?
     @Published var expandedWorkspaceIDs: Set<String> = []
     @Published var transcriptSearchPresented = false
     @Published var transcriptSearchQuery = "" {
@@ -1078,6 +1102,79 @@ final class AppModel: ObservableObject {
 
     func openTranscriptSearch() {
         transcriptSearchPresented = true
+    }
+
+    // MARK: - Cross-session transcript search
+
+    /// Debounced fetch behind the sidebar search field. Title filtering stays
+    /// client-side and instant; transcript hits arrive from the agent's FTS
+    /// index shortly after. An old agent (404) degrades to titles-only.
+    private func scheduleTranscriptHitSearch() {
+        transcriptHitsTask?.cancel()
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query.count >= 2 else {
+            transcriptHits = []
+            isSearchingTranscripts = false
+            transcriptSearchIndexing = false
+            return
+        }
+        isSearchingTranscripts = true
+        transcriptHitsTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard let self, !Task.isCancelled else { return }
+            let response = try? await backend.get(
+                "/api/sessions/search",
+                query: [
+                    URLQueryItem(name: "query", value: query),
+                    URLQueryItem(name: "limit", value: "20"),
+                ],
+                as: TranscriptSearchResponse.self
+            )
+            guard !Task.isCancelled else { return }
+            isSearchingTranscripts = false
+            transcriptSearchIndexing = response?.indexing ?? false
+            transcriptHits = response?.results ?? []
+        }
+    }
+
+    /// Open the hit's session and outline the matched message, reusing the
+    /// in-conversation find for the scroll-and-outline work.
+    func openSearchHit(_ hit: TranscriptSearchHit) {
+        if hit.sessionID == currentSessionID {
+            revealSearchHit(hit)
+            return
+        }
+        guard let summary = sessions.first(where: { $0.id == hit.sessionID }) else {
+            showToast("That conversation is no longer listed")
+            return
+        }
+        pendingSearchHit = hit
+        resume(summary)
+    }
+
+    func applyPendingSearchHitIfNeeded() {
+        guard let hit = pendingSearchHit else { return }
+        pendingSearchHit = nil
+        // A resume that failed leaves the hit pending; a later unrelated
+        // resume must not fire the find bar in whatever session it opened.
+        guard hit.sessionID == currentSessionID else { return }
+        revealSearchHit(hit)
+    }
+
+    private func revealSearchHit(_ hit: TranscriptSearchHit) {
+        // The find bar needs a term that literally occurs in the block text;
+        // the hit's own highlight is exactly that. Falling back to the typed
+        // query keeps the flow alive if highlights are ever empty.
+        let term = hit.firstMatchedTerm
+            ?? searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return }
+        transcriptSearchQuery = term
+        transcriptSearchPresented = true
+        guard let block = blocks.first(where: { $0.historyIndex == hit.messageIndex })
+        else { return }
+        if let position = transcriptSearchMatches.firstIndex(of: block.id) {
+            transcriptSearchSelection = position
+        }
     }
 
     func closeTranscriptSearch() {
@@ -2195,10 +2292,12 @@ final class AppModel: ObservableObject {
     private func send(
         _ rawText: String,
         preservingDraftOnFailure: Bool,
-        requeueingOnFailure: Bool = false
+        requeueingOnFailure: Bool = false,
+        includeAttachments: Bool = true
     ) {
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let hasChatAttachments = selectedMode == .ask && !availableChatAttachments.isEmpty
+        let availableAttachments = includeAttachments ? availableChatAttachments : []
+        let hasChatAttachments = !availableAttachments.isEmpty
         guard !text.isEmpty || hasChatAttachments else { return }
 
         // Slash commands that Locus can run itself execute immediately, even
@@ -2248,7 +2347,11 @@ final class AppModel: ObservableObject {
             && (selectedAgentTeamID != nil || teamMention.agent != nil || teamMention.team != nil)
         let dispatchedTeam = wantsTeam ? teamManifest(for: text) : nil
         if wantsTeam, dispatchedTeam == nil { return }
-        let dispatchedAttachments = dispatchedMode == .ask ? availableChatAttachments : []
+        // Agent-side slash commands never receive attachments (the server
+        // routes them past the turn machinery), so dispatching any would
+        // silently drop them — keep the chips for the next real message.
+        let dispatchedAttachments = isSlashPassthrough && dispatchedMode != .ask
+            ? [] : availableAttachments
         let messageText = text.isEmpty ? "Please analyze the attached files." : text
         isBusy = true
         turnStartedAt = Date()
@@ -2463,7 +2566,14 @@ final class AppModel: ObservableObject {
             return
         }
         guard isAgentOnline else { return }
-        send(queuedMessages.removeFirst(), preservingDraftOnFailure: false, requeueingOnFailure: true)
+        // A queued message was composed before any attachments added while it
+        // waited; those belong to the user's next explicit send.
+        send(
+            queuedMessages.removeFirst(),
+            preservingDraftOnFailure: false,
+            requeueingOnFailure: true,
+            includeAttachments: false
+        )
     }
 
     func previousPrompt() {
@@ -4533,6 +4643,7 @@ final class AppModel: ObservableObject {
                 pendingWorkspacePath = nil
                 blocks = Self.blocks(from: response.messages)
                 refreshAnchoredTeamRunsIfNeeded()
+                applyPendingSearchHitIfNeeded()
                 sessionInfo = response.sessionInfo
                 currentSessionID = response.sessionInfo.sessionID
                 dispatcherActivity = nil
@@ -4906,8 +5017,8 @@ final class AppModel: ObservableObject {
 
     func addChatAttachments() {
         let panel = NSOpenPanel()
-        panel.title = "Attach files to this chat message"
-        panel.message = "Locus will send only the files you choose. Chat mode cannot browse their folders."
+        panel.title = "Attach files to this message"
+        panel.message = "Locus will send only the files you choose; attachments never grant folder access."
         panel.prompt = "Attach"
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -4948,6 +5059,47 @@ final class AppModel: ObservableObject {
     func removeChatAttachment(_ attachment: ChatAttachment) {
         chatAttachments.removeAll { $0.id == attachment.id }
         if chatAttachments.isEmpty { chatAttachmentNotice = nil }
+    }
+
+    /// Attach images that exist only on the pasteboard, under the same caps as
+    /// file attachments: 10 files, 15 MB each, 25 MB of image data in total.
+    func addPastedImages(_ images: [(data: Data, mimeType: String)]) {
+        guard !images.isEmpty else { return }
+        let remainingSlots = max(10 - chatAttachments.count, 0)
+        guard remainingSlots > 0 else {
+            chatAttachmentNotice = "A chat message can include up to 10 attachments."
+            return
+        }
+        var totalImageBytes = chatAttachments.reduce(0) { $0 + ($1.imageData?.count ?? 0) }
+        var added: [ChatAttachment] = []
+        var oversized = 0
+        for image in images.prefix(remainingSlots) {
+            guard image.data.count <= 15_000_000,
+                  totalImageBytes + image.data.count <= 25_000_000
+            else {
+                oversized += 1
+                continue
+            }
+            totalImageBytes += image.data.count
+            added.append(ChatAttachment.pasted(imageData: image.data, mimeType: image.mimeType))
+        }
+        chatAttachments.append(contentsOf: added)
+        chatAttachmentNotice = oversized > 0
+            ? "Skipped or limited: \(oversized) over the size limit."
+            : chatAttachmentNotice
+        if !added.isEmpty {
+            showToast("Attached \(added.count) image\(added.count == 1 ? "" : "s")")
+        } else if oversized > 0 {
+            showToast("The pasted image is over the size limit")
+        }
+    }
+
+    /// True only when the selected local model is known to refuse images.
+    /// Remote models report nothing about vision, and an unknown is not a
+    /// warning — the runtime strip-and-retry covers an actual rejection.
+    var activeModelRejectsImages: Bool {
+        guard activeAccount == nil else { return false }
+        return models.first { $0.name == selectedModel }?.visionCapable == false
     }
 
     func loadContext(from urls: [URL]) {
@@ -5332,6 +5484,15 @@ final class AppModel: ObservableObject {
         if response.isRepo, let branch = response.branch {
             gitBranch = branch
         }
+        gitUpstream = response.upstream
+        gitAhead = response.ahead ?? 0
+        gitBehind = response.behind ?? 0
+        gitDetached = response.detached
+        gitHasCommits = response.hasCommits
+        if response.isRepo, originCheckedForWorkspace != workspacePath {
+            originCheckedForWorkspace = workspacePath
+            refreshOriginKind()
+        }
         if Self.changesAreUnseen(
             previous: previous,
             current: response.files,
@@ -5393,6 +5554,227 @@ final class AppModel: ObservableObject {
                 ["restore", "--staged", "--worktree", "--", change.path],
                 success: "Discarded changes to \(change.name)"
             )
+        }
+    }
+
+    // MARK: - Branch, remote, and PR flow
+
+    /// Local branches, newest activity first, for the branch menu.
+    func loadLocalBranches() {
+        guard isGitRepository else { return }
+        let client = gitClient
+        Task { [weak self] in
+            let result = try? await client.run([
+                "for-each-ref", "refs/heads",
+                "--format=%(refname:short)", "--sort=-committerdate",
+            ])
+            guard let self, let result else { return }
+            localBranches = result.stdout
+                .split(separator: "\n")
+                .prefix(100)
+                .map(String.init)
+        }
+    }
+
+    /// `git switch -c`: safe on a dirty tree (edits ride along) and on an
+    /// unborn HEAD. `check-ref-format` stays the naming authority.
+    func createBranch(_ name: String) {
+        let branch = name.trimmingCharacters(in: .whitespaces)
+        if let problem = GitBranchName.validationError(branch) {
+            showToast(problem)
+            return
+        }
+        guard isGitRepository, !isPerformingGitAction else { return }
+        isPerformingGitAction = true
+        let client = gitClient
+        Task { [weak self] in
+            do {
+                try await client.run(["check-ref-format", "--branch", branch])
+                try await client.run(["switch", "-c", branch])
+                self?.showToast("Created and switched to \(branch)")
+            } catch {
+                self?.showToast(error.localizedDescription)
+            }
+            self?.isPerformingGitAction = false
+            self?.refreshGitStatus()
+        }
+    }
+
+    /// Plain `git switch`, no auto-stash: git itself refuses a switch that
+    /// would clobber local edits, and that refusal is surfaced verbatim —
+    /// the simplest behavior that can never lose work.
+    func switchBranch(_ name: String) {
+        guard isGitRepository, !isPerformingGitAction, name != gitBranch else { return }
+        performGitAction(["switch", name], success: "Switched to \(name)")
+    }
+
+    /// Push the current branch; publish it when no upstream exists yet.
+    func pushCurrentBranch() {
+        guard GitRemoteFeatures.isAvailable, isGitRepository,
+              !gitDetached, gitHasCommits, !isSyncingRemote,
+              let branch = gitBranch
+        else { return }
+        isSyncingRemote = true
+        let client = gitClient
+        let args = GitPushPlan.arguments(branch: branch, upstream: gitUpstream)
+        Task { [weak self] in
+            do {
+                try await client.run(args, timeout: 120)
+                self?.showToast(
+                    self?.gitUpstream == nil ? "Published \(branch)" : "Pushed \(branch)"
+                )
+            } catch {
+                var message = error.localizedDescription
+                if message.contains("rejected") || message.contains("non-fast-forward") {
+                    message += " — Fetch/pull first, or push from a terminal."
+                }
+                self?.showToast(message)
+            }
+            self?.isSyncingRemote = false
+            self?.refreshGitStatus()
+        }
+    }
+
+    func fetchRemote() {
+        guard GitRemoteFeatures.isAvailable, isGitRepository, !isSyncingRemote else { return }
+        isSyncingRemote = true
+        let client = gitClient
+        Task { [weak self] in
+            do {
+                try await client.run(["fetch"], timeout: 60)
+                self?.showToast("Fetched from the remote")
+            } catch {
+                self?.showToast(error.localizedDescription)
+            }
+            self?.isSyncingRemote = false
+            self?.refreshGitStatus()
+        }
+    }
+
+    /// `--ff-only`: the only merge-free, conflict-free pull. Its refusal
+    /// ("not possible to fast-forward") is honest and surfaced as-is.
+    func pullFastForwardOnly() {
+        guard GitRemoteFeatures.isAvailable, isGitRepository, !isSyncingRemote else { return }
+        isSyncingRemote = true
+        let client = gitClient
+        Task { [weak self] in
+            do {
+                let result = try await client.run(["pull", "--ff-only"], timeout: 120)
+                let summary = result.stdout.split(separator: "\n").last.map(String.init)
+                self?.showToast(summary?.nilIfEmpty ?? "Pulled fast-forward")
+            } catch {
+                self?.showToast(error.localizedDescription)
+            }
+            self?.isSyncingRemote = false
+            self?.refreshGitStatus()
+        }
+    }
+
+    /// Opens GitHub's compare page for the current branch — the human owns
+    /// the actual PR creation. Reads the remote at click time; non-GitHub
+    /// remotes never show the button, so a miss here only means the remote
+    /// changed since the last status.
+    func openPullRequest() {
+        guard let branch = gitBranch else { return }
+        let client = gitClient
+        Task { [weak self] in
+            guard let remote = try? await client.run(["remote", "get-url", "origin"]),
+                  let url = GitRemoteURL.githubCompareURL(
+                      remote: remote.stdout.trimmingCharacters(in: .whitespacesAndNewlines),
+                      branch: branch
+                  )
+            else {
+                self?.showToast("The origin remote is not a GitHub repository")
+                return
+            }
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    func refreshOriginKind() {
+        guard isGitRepository else { return }
+        let client = gitClient
+        Task { [weak self] in
+            let remote = (try? await client.run(["remote", "get-url", "origin"]))?
+                .stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard let self else { return }
+            originIsGitHub = GitRemoteURL.githubCompareURL(
+                remote: remote, branch: "x"
+            ) != nil
+        }
+    }
+
+    // MARK: - Per-hunk review
+
+    func stageHunk(_ hunk: DiffHunk) {
+        performHunkAction(hunk, scope: .unstaged, apply: ["apply", "--cached"])
+    }
+
+    func unstageHunk(_ hunk: DiffHunk) {
+        guard gitHasCommits else { return }
+        performHunkAction(hunk, scope: .staged, apply: ["apply", "--cached", "-R"])
+    }
+
+    func requestDiscardHunk(_ hunk: DiffHunk) {
+        pendingHunkDiscard = hunk
+    }
+
+    func discardHunkConfirmed() {
+        guard let hunk = pendingHunkDiscard else { return }
+        pendingHunkDiscard = nil
+        performHunkAction(hunk, scope: .unstaged, apply: ["apply", "-R"])
+    }
+
+    private enum HunkScope {
+        case staged
+        case unstaged
+    }
+
+    /// The shared mechanics: re-take the diff at click time, re-locate the
+    /// hunk (exact header, then content identity), synthesize the minimal
+    /// patch, and apply. A hunk that drifted is never applied — the diff
+    /// refreshes and the user reviews again.
+    private func performHunkAction(
+        _ hunk: DiffHunk,
+        scope: HunkScope,
+        apply applyArgs: [String]
+    ) {
+        guard isGitRepository, !isPerformingGitAction,
+              let path = selectedChangePath,
+              let change = gitChanges.first(where: { $0.path == path })
+        else { return }
+        isPerformingGitAction = true
+        let client = gitClient
+        let diffArgs = scope == .staged
+            ? ["diff", "-U3", "--cached", "--", path]
+            : ["diff", "-U3", "--", path]
+        Task { [weak self] in
+            defer {
+                self?.isPerformingGitAction = false
+                self?.refreshGitStatus()
+                self?.loadDiff(for: change)
+            }
+            do {
+                let fresh = try await client.run(diffArgs)
+                guard let parsed = ParsedFileDiff.parse(fresh.stdout),
+                      let located = parsed.matching(hunk),
+                      let patch = parsed.minimalPatch(for: located)
+                else {
+                    self?.showToast(
+                        "That change moved since the diff was read — review the refreshed diff"
+                    )
+                    return
+                }
+                do {
+                    try await client.run(applyArgs, stdin: Data(patch.utf8))
+                } catch {
+                    // The agent's own git may hold index.lock for a moment.
+                    try await Task.sleep(nanoseconds: 300_000_000)
+                    try await client.run(applyArgs, stdin: Data(patch.utf8))
+                }
+            } catch {
+                self?.showToast(error.localizedDescription)
+            }
         }
     }
 
@@ -5499,27 +5881,42 @@ final class AppModel: ObservableObject {
         return current.contains { !previous.contains($0.path) }
     }
 
-    /// Loads the diff for one file into `selectedChangeDiff`.
-    func loadDiff(for change: GitChange) {
+    /// Loads the diff for one file into `selectedChangeDiff`, plus the parsed
+    /// hunk model that powers per-hunk staging. A truncated diff renders but
+    /// parses to nil — hunk controls must never synthesize from partial text.
+    func loadDiff(for change: GitChange, staged: Bool? = nil) {
+        if let staged {
+            selectedChangeShowsStaged = staged
+        } else if selectedChangePath != change.path {
+            // A fresh selection starts on the side that has content; a mixed
+            // file keeps the scope its picker chose.
+            selectedChangeShowsStaged = change.staged && !change.unstaged
+        }
         selectedChangePath = change.path
         selectedChangeDiff = nil
+        selectedChangeParsedDiff = nil
         diffTask?.cancel()
+        guard !isUITesting else {
+            seedUITestDiffIfNeeded(for: change)
+            return
+        }
+        let wantsStaged = change.staged && (!change.unstaged || selectedChangeShowsStaged)
         diffTask = Task { [weak self] in
             do {
                 let response = try await self?.backend.get(
                     "/api/git/diff",
                     query: [
                         URLQueryItem(name: "path", value: change.path),
-                        URLQueryItem(
-                            name: "staged",
-                            value: change.staged && !change.unstaged ? "true" : "false"
-                        ),
+                        URLQueryItem(name: "staged", value: wantsStaged ? "true" : "false"),
                     ],
                     as: GitDiffResponse.self
                 )
                 guard !Task.isCancelled, let self, let response else { return }
                 guard self.selectedChangePath == change.path else { return }
                 self.selectedChangeDiff = Self.cappedDiff(response)
+                if !response.truncated, !response.binary, let raw = response.raw {
+                    self.selectedChangeParsedDiff = ParsedFileDiff.parse(raw)
+                }
             } catch {
                 guard !Task.isCancelled else { return }
                 self?.selectedChangeDiff = "Could not load the diff: \(error.localizedDescription)"
@@ -5578,6 +5975,7 @@ final class AppModel: ObservableObject {
         diffTask?.cancel()
         selectedChangePath = nil
         selectedChangeDiff = nil
+        selectedChangeParsedDiff = nil
     }
 
     /// Reveals a workspace-relative path in Finder.
@@ -5863,6 +6261,23 @@ final class AppModel: ObservableObject {
         return "\(name) \(status)"
     }
 
+    /// Fetch the usage rollup for the dashboard. A failure leaves the previous
+    /// summary in place; the sheet's spinner covers the initial load.
+    func refreshUsageSummary(since: Double) {
+        Task { [weak self] in
+            guard let self else { return }
+            let query = since > 0
+                ? [URLQueryItem(name: "since", value: String(since))]
+                : []
+            guard let summary = try? await backend.get(
+                "/api/usage/summary",
+                query: query,
+                as: UsageSummary.self
+            ) else { return }
+            usageSummary = summary
+        }
+    }
+
     func runCommand(_ command: CommandAction) {
         commandPalettePresented = false
         switch command {
@@ -5887,6 +6302,10 @@ final class AppModel: ObservableObject {
         case .permissions:
             selectInspectorTab(.plan)
             settingsPresented = true
+        case .searchConversations:
+            if sidebarCollapsed { toggleSidebar() }
+            sidebarSearchFocusToken = UUID()
+        case .showUsage: usageDashboardPresented = true
         case .showShortcuts: shortcutsPresented = true
         case .openSettings: settingsPresented = true
         }
@@ -6196,34 +6615,39 @@ final class AppModel: ObservableObject {
             sections.append("Use this explicitly selected context:\n\(context)")
         }
 
-        if mode == .ask {
-            let suppliedText = chatAttachments.filter {
-                $0.kind == .text && $0.isAvailable
-            }
-            if !suppliedText.isEmpty {
-                let contents = suppliedText.compactMap { attachment -> String? in
-                    guard let content = attachment.textContent else { return nil }
-                    return """
-                    --- Attached file: \(attachment.name) ---
-                    \(content)
-                    """
-                }.joined(separator: "\n\n")
-                sections.append(
-                    "The user explicitly attached the following files to this message. "
+        let suppliedText = chatAttachments.filter {
+            $0.kind == .text && $0.isAvailable
+        }
+        if !suppliedText.isEmpty {
+            let contents = suppliedText.compactMap { attachment -> String? in
+                guard let content = attachment.textContent else { return nil }
+                return """
+                --- Attached file: \(attachment.name) ---
+                \(content)
+                """
+            }.joined(separator: "\n\n")
+            // Just Chat keeps its isolation contract; agentic modes treat the
+            // same files as evidence the agent may relate to the workspace.
+            let guidance = mode == .ask
+                ? "The user explicitly attached the following files to this message. "
                     + "Analyze only the supplied content; do not inspect their paths or access "
-                    + "any other workspace data:\n\(contents)"
-                )
-            }
-            let imageNames = chatAttachments.filter {
-                $0.kind == .image && $0.isAvailable
-            }.map(\.name)
-            if !imageNames.isEmpty {
-                sections.append(
-                    "The user explicitly attached these images to this message: "
-                    + imageNames.joined(separator: ", ")
-                    + ". Analyze the attached image data without accessing their paths."
-                )
-            }
+                    + "any other workspace data:"
+                : "The user explicitly attached the following files as direct evidence "
+                    + "for this request:"
+            sections.append("\(guidance)\n\(contents)")
+        }
+        let imageNames = chatAttachments.filter {
+            $0.kind == .image && $0.isAvailable
+        }.map(\.name)
+        if !imageNames.isEmpty {
+            let guidance = mode == .ask
+                ? ". Analyze the attached image data without accessing their paths."
+                : ". They are direct evidence for this request; analyze the attached image data."
+            sections.append(
+                "The user explicitly attached these images to this message: "
+                + imageNames.joined(separator: ", ")
+                + guidance
+            )
         }
 
         if let restoredTranscriptContext {
@@ -7504,6 +7928,15 @@ final class AppModel: ObservableObject {
         // about them is assertable.
         isGitRepository = true
         gitBranch = "main"
+        gitUpstream = "origin/main"
+        gitAhead = 2
+        gitBehind = 1
+        gitHasCommits = true
+        localBranches = ["main", "ship-test"]
+        // Remote features stay hidden in the seeded run unless a UI test asks
+        // for them, so the suite also covers the sandboxed layout.
+        originIsGitHub =
+            ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_GITHUB_ORIGIN"] == "1"
         gitChanges = [
             GitChange(
                 path: "Locus/AppModel.swift",
@@ -7574,6 +8007,29 @@ final class AppModel: ObservableObject {
             ))
         }
         seedUITestRunFixtureIfNeeded()
+    }
+
+    /// A deterministic two-hunk diff so the seeded Changes tab has assertable
+    /// per-hunk controls without a live agent behind it.
+    func seedUITestDiffIfNeeded(for change: GitChange) {
+        let raw = """
+        diff --git a/\(change.path) b/\(change.path)
+        index 1111111..2222222 100644
+        --- a/\(change.path)
+        +++ b/\(change.path)
+        @@ -1,3 +1,3 @@
+         let first = 1
+        -let second = 2
+        +let second = 22
+         let third = 3
+        @@ -10,3 +10,3 @@
+         let tenth = 10
+        -let eleventh = 11
+        +let eleventh = 111
+         let twelfth = 12
+        """
+        selectedChangeDiff = raw
+        selectedChangeParsedDiff = ParsedFileDiff.parse(raw)
     }
 
     private func seedUITestRunFixtureIfNeeded() {
@@ -8144,21 +8600,23 @@ final class AppModel: ObservableObject {
         return String(content[range.upperBound...])
     }
 
-    private static func blocks(from messages: [HistoryMessage]) -> [ChatBlock] {
-        messages.compactMap { message in
+    static func blocks(from messages: [HistoryMessage]) -> [ChatBlock] {
+        messages.enumerated().compactMap { index, message in
             switch message.role {
             case "user":
                 ChatBlock(
                     kind: .user,
                     text: displayUserText(message.content),
-                    teamRunID: message.teamRunID
+                    teamRunID: message.teamRunID,
+                    historyIndex: index
                 )
             case "assistant" where !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || !(message.reasoning?.isEmpty ?? true):
                 ChatBlock(
                     kind: .assistant,
                     text: message.content,
-                    reasoningText: message.reasoning
+                    reasoningText: message.reasoning,
+                    historyIndex: index
                 )
             case "tool":
                 ChatBlock(
@@ -8170,7 +8628,8 @@ final class AppModel: ObservableObject {
                         detail: "",
                         status: .done,
                         result: message.content
-                    )
+                    ),
+                    historyIndex: index
                 )
             default:
                 nil
@@ -8205,6 +8664,8 @@ enum CommandAction: String, CaseIterable, Identifiable {
     case refreshModels
     case exportSession
     case permissions
+    case searchConversations
+    case showUsage
     case showShortcuts
     case openSettings
 
@@ -8227,6 +8688,8 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .refreshModels: "Refresh installed models"
         case .exportSession: "Export current session as Markdown"
         case .permissions: "Change what the agent may do without asking"
+        case .searchConversations: "Search all conversations"
+        case .showUsage: "Show usage and costs"
         case .showShortcuts: "Show keyboard shortcuts"
         case .openSettings: "Open Settings"
         }
@@ -8249,6 +8712,8 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .refreshModels: "arrow.clockwise"
         case .exportSession: "square.and.arrow.up"
         case .permissions: "shield.lefthalf.filled"
+        case .searchConversations: "text.magnifyingglass"
+        case .showUsage: "dollarsign.circle"
         case .showShortcuts: "keyboard"
         case .openSettings: "gearshape"
         }
@@ -8266,8 +8731,9 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .planMode: "⌥P"
         case .buildMode: "⌥B"
         case .showShortcuts: "⌘/"
+        case .searchConversations: "⇧⌘F"
         case .chooseWorkspace, .newWorkspace, .browseModels, .refreshModels,
-             .exportSession, .permissions, .openSettings: ""
+             .exportSession, .permissions, .showUsage, .openSettings: ""
         }
     }
 }

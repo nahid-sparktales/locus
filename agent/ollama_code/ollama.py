@@ -67,6 +67,19 @@ class OllamaError(Exception):
     """Raised when the Ollama server is unreachable or returns an error."""
 
 
+def looks_like_image_rejection(error_text: str) -> bool:
+    """Whether a provider explicitly rejected an image-bearing request."""
+    lowered = error_text.lower()
+    image_terms = ("image", "vision", "multimodal", "image_url", "input_image")
+    rejection_terms = (
+        "not support", "unsupported", "not allowed", "invalid", "cannot", "can't",
+        "could not", "unable", "does not accept", "unknown content type",
+    )
+    return any(term in lowered for term in image_terms) and any(
+        term in lowered for term in rejection_terms
+    )
+
+
 @dataclass
 class ToolCall:
     name: str
@@ -274,6 +287,17 @@ class OllamaClient:
             return "tools" in caps
         template = str(show.get("template") or "")
         return "tool" in template.lower()
+
+    def vision_capability(self, name: str) -> bool | None:
+        """Whether the model accepts image input; None when Ollama cannot say."""
+        try:
+            show = self.show_model(name)
+        except OllamaError:
+            return None
+        caps = show.get("capabilities")
+        if isinstance(caps, list) and caps:
+            return "vision" in caps
+        return None
 
     def pull(self, name: str) -> Iterator[dict[str, Any]]:
         """Stream `ollama pull` progress chunks for ``name``."""

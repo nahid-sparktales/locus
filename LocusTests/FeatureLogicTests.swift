@@ -805,6 +805,27 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(changes[1].status, .modified, "an unknown state must not drop the file")
     }
 
+    func testGitStatusDecodesTrackingFieldsAndToleratesOldAgents() throws {
+        let full = try JSONDecoder().decode(GitStatusResponse.self, from: Data("""
+        {"ok": true, "is_repo": true, "branch": "ship-test", "ahead": 2,
+         "behind": 1, "upstream": "origin/ship-test", "detached": false,
+         "has_commits": true, "files": []}
+        """.utf8))
+        XCTAssertEqual(full.upstream, "origin/ship-test")
+        XCTAssertFalse(full.detached)
+        XCTAssertTrue(full.hasCommits)
+
+        // An agent from before these fields were read: absent upstream stays
+        // nil, and has_commits defaults to true so push/unstage is not hidden
+        // behind a wrong guess.
+        let older = try JSONDecoder().decode(GitStatusResponse.self, from: Data("""
+        {"ok": true, "is_repo": true, "branch": "main", "files": []}
+        """.utf8))
+        XCTAssertNil(older.upstream)
+        XCTAssertFalse(older.detached)
+        XCTAssertTrue(older.hasCommits)
+    }
+
     // MARK: - Console
 
     @MainActor
@@ -2014,5 +2035,69 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(restored.otlpEndpoint, settings.otlpEndpoint)
         XCTAssertTrue(restored.otlpIncludeContent)
         XCTAssertFalse(encoded.lowercased().contains("authorization"))
+    }
+
+    func testPasteboardClassificationPrefersTextOverIncidentalImages() {
+        let png = PastedImage(data: Data([0x89, 0x50]), mimeType: "image/png")
+
+        // Copied rich text carries an image representation too; it must paste
+        // as text, not attach.
+        XCTAssertEqual(
+            ChatPasteboardClassifier.classify(
+                fileURLs: [], plainText: "some copied prose", images: [png]
+            ),
+            .passthrough
+        )
+        // A macOS clipboard screenshot is image data with no string at all.
+        XCTAssertEqual(
+            ChatPasteboardClassifier.classify(fileURLs: [], plainText: nil, images: [png]),
+            .attachImages([png])
+        )
+        XCTAssertEqual(
+            ChatPasteboardClassifier.classify(fileURLs: [], plainText: "", images: [png]),
+            .attachImages([png])
+        )
+        // A Finder copy carries the filename as a string; files still win.
+        let file = URL(fileURLWithPath: "/tmp/bug.png")
+        XCTAssertEqual(
+            ChatPasteboardClassifier.classify(
+                fileURLs: [file], plainText: "bug.png", images: [png]
+            ),
+            .attachFiles([file])
+        )
+        // Nothing usable pastes normally.
+        XCTAssertEqual(
+            ChatPasteboardClassifier.classify(fileURLs: [], plainText: "plain", images: []),
+            .passthrough
+        )
+    }
+
+    func testPasteboardClassificationRefusesRemoteURLs() {
+        let remote = URL(string: "https://example.com/screenshot.png")!
+        XCTAssertEqual(
+            ChatPasteboardClassifier.classify(
+                fileURLs: [remote], plainText: nil, images: []
+            ),
+            .passthrough
+        )
+        let local = URL(fileURLWithPath: "/tmp/report.pdf")
+        XCTAssertEqual(
+            ChatPasteboardClassifier.classify(
+                fileURLs: [remote, local], plainText: nil, images: []
+            ),
+            .attachFiles([local])
+        )
+    }
+
+    func testPastedImagePayloadKeepsPNGAndDetectsSignature() {
+        let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00])
+        XCTAssertTrue(pngBytes.isPNG)
+        XCTAssertFalse(Data([0xFF, 0xD8, 0xFF]).isPNG)
+        let payload = ChatPasteboardClassifier.imagePayload(pngData: pngBytes, tiffData: nil)
+        XCTAssertEqual(payload, PastedImage(data: pngBytes, mimeType: "image/png"))
+        XCTAssertNil(ChatPasteboardClassifier.imagePayload(pngData: nil, tiffData: nil))
+        XCTAssertNil(
+            ChatPasteboardClassifier.imagePayload(pngData: Data(), tiffData: Data([0x00]))
+        )
     }
 }

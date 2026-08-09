@@ -227,7 +227,87 @@ def test_current_schema_reopens_writable_without_reapplying_migrations(tmp_path)
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT version FROM schema_meta WHERE singleton=1"
-        ).fetchone()[0] == 3
+        ).fetchone()[0] == 4
+
+
+def test_schema_v4_migrates_a_v3_store_and_records_turn_usage(tmp_path) -> None:
+    path = tmp_path / "runs.sqlite3"
+    first = RunStore(path)
+    first.start_run("existing-run")
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP TABLE turn_usage")
+        connection.execute("UPDATE schema_meta SET version=3 WHERE singleton=1")
+        connection.commit()
+
+    migrated = RunStore(path)
+
+    assert migrated.read_only is False
+    migrated.record_turn_usage(
+        session_id="session-1", workspace_root="/tmp/ws",
+        provider="ollama", model="test-model",
+        prompt_tokens=120, completion_tokens=45,
+    )
+    summary = migrated.usage_summary()
+    assert summary["solo"]["turns"] == 1
+    assert summary["solo"]["prompt_tokens"] == 120
+    assert summary["solo"]["completion_tokens"] == 45
+    assert summary["solo"]["recorded_since"] is not None
+    assert migrated.run("existing-run") is not None
+
+
+def test_usage_summary_survives_a_store_stuck_below_schema_v4(tmp_path) -> None:
+    path = tmp_path / "runs.sqlite3"
+    store = RunStore(path)
+    store.start_run("old-run", state="completed")
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP TABLE turn_usage")
+        connection.execute("UPDATE schema_meta SET version=3 WHERE singleton=1")
+        connection.commit()
+    # Simulate the read-only fallback of a store whose migration cannot run:
+    # the table stays missing, and the summary must degrade, not raise.
+    store.read_only = True
+
+    summary = store.usage_summary()
+
+    assert summary["orchestration"]["runs"] == 1
+    assert summary["solo"] == {
+        "turns": 0, "prompt_tokens": 0, "completion_tokens": 0,
+        "recorded_since": None,
+    }
+
+
+def test_turn_usage_recording_is_skipped_on_a_read_only_store(tmp_path) -> None:
+    path = tmp_path / "runs.sqlite3"
+    RunStore(path)  # create a healthy store first
+
+    store = RunStore(path)
+    store.read_only = True
+    store.record_turn_usage(session_id="session-1", prompt_tokens=10)
+
+    assert store.usage_summary()["solo"]["turns"] == 0
+
+
+def test_usage_summary_rolls_up_runs_and_respects_since(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    store.start_run("run-a", workspace_root="/tmp/ws", team_name="Team A")
+    store.append_event("run-a", {
+        "type": "orchestration_completed",
+        "state": "completed",
+        "usage": {"model_calls": 6, "metered_tokens": 4_000, "estimated_cost": 1.25},
+    })
+    store.record_turn_usage(session_id="s1", prompt_tokens=100, completion_tokens=50)
+
+    summary = store.usage_summary()
+    assert summary["orchestration"]["runs"] == 1
+    assert summary["orchestration"]["estimated_cost"] == pytest.approx(1.25)
+    assert summary["by_workspace"][0]["workspace_root"] == "/tmp/ws"
+    assert summary["expensive_runs"][0]["id"] == "run-a"
+    assert summary["expensive_runs"][0]["estimated_cost"] == pytest.approx(1.25)
+    assert summary["solo"]["turns"] == 1
+
+    future = store.usage_summary(since=time.time() + 3_600)
+    assert future["orchestration"]["runs"] == 0
+    assert future["solo"]["turns"] == 0
 
 
 def test_sanitizer_preserves_usage_tokens_but_redacts_credentials() -> None:

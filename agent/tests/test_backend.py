@@ -2641,6 +2641,90 @@ def test_websocket_ask_mode_validates_and_routes_image_attachments(client, monke
         }])
 
 
+def test_websocket_agentic_modes_route_image_attachments(client, monkeypatch):
+    from ollama_code import server as server_mod
+
+    service = client.app.state.service
+    captured = []
+
+    def capture_start(loop, call, *args):
+        captured.append((call, args))
+        return True
+
+    monkeypatch.setattr(service, "start_turn", capture_start)
+    for mode in ("work", "plan", "build"):
+        asyncio.run(server_mod._handle_client_message(service, {
+            "type": "user_message",
+            "text": "Fix the layout shown in this screenshot",
+            "mode": mode,
+            "attachments": [{
+                "name": "bug.png",
+                "mime_type": "image/png",
+                "data": "cG5n",
+            }],
+        }))
+
+    assert len(captured) == 3
+    for call, args in captured:
+        assert call is server_mod._run_user_turn
+        assert args[:3] == (service, "Fix the layout shown in this screenshot", False)
+        assert args[3][0]["data"] == "cG5n"
+
+
+def test_team_turns_route_attachments_to_the_team_runner(client, monkeypatch):
+    from ollama_code import server as server_mod
+
+    service = client.app.state.service
+    captured = []
+
+    def capture_start(loop, call, *args):
+        captured.append((call, args))
+        return True
+
+    monkeypatch.setattr(service, "start_turn", capture_start)
+    asyncio.run(server_mod._handle_client_message(service, {
+        "type": "user_message",
+        "text": "Fix it as a team",
+        "mode": "work",
+        "team": {"run_id": "team-attach-run"},
+        "attachments": [{
+            "name": "bug.png",
+            "mime_type": "image/png",
+            "data": "cG5n",
+        }],
+    }))
+
+    call, args = captured[0]
+    assert call is server_mod._run_team_turn
+    assert args[1] == "Fix it as a team"
+    assert args[2] == {"run_id": "team-attach-run"}
+    assert args[3][0]["data"] == "cG5n"
+
+
+def test_attachment_limits_apply_in_every_mode(client, monkeypatch):
+    from ollama_code import server as server_mod
+
+    service = client.app.state.service
+    errors = []
+    monkeypatch.setattr(
+        service, "start_turn",
+        lambda *_args, **_kwargs: pytest.fail("an invalid message must not start a turn"),
+    )
+    monkeypatch.setattr(
+        server_mod, "_command_error",
+        lambda _svc, _mtype, text: errors.append(text),
+    )
+    eleven = [{"mime_type": "image/png", "data": "cG5n"}] * 11
+    asyncio.run(server_mod._handle_client_message(service, {
+        "type": "user_message",
+        "text": "fix",
+        "mode": "work",
+        "attachments": eleven,
+    }))
+
+    assert errors == ["A chat message can include up to 10 image attachments."]
+
+
 def test_http_request_body_limit_is_enforced(client, monkeypatch):
     from ollama_code import server as server_mod
 
@@ -3200,6 +3284,200 @@ def test_computer_screenshot_retries_only_for_explicit_image_rejection(tmp_path)
 
     assert core.client.calls == 2
     assert core._computer_route_key() in core._ax_only_routes
+
+
+def test_image_rejection_strips_user_attachments_and_retries_once(tmp_path):
+    class ImageRejectingClient(FakeClient):
+        def chat_stream(self, model, messages, tools=None, on_token=None, should_stop=None,
+                        on_thinking=None, think=False, options=None):
+            self.calls += 1
+            self.seen_messages.append(messages)
+            if self.calls == 1:
+                raise OllamaError("this model does not support image input")
+            assert not any(message.get("attachments") for message in messages)
+            if on_token:
+                on_token("text-only answer")
+            return ChatResponse(content_parts=["text-only answer"], done=True)
+
+    core = _core(tmp_path, [])
+    core.client = ImageRejectingClient([])
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn(
+        "Fix the layout shown in this screenshot",
+        attachments=[{"name": "bug.png", "mime_type": "image/png", "data": "aW1hZ2U="}],
+    )
+
+    assert core.client.calls == 2
+    # A user attachment is not a computer observation: the AX-only downgrade
+    # must not trigger, but the history must be clean for later turns.
+    assert core._computer_route_key() not in core._ax_only_routes
+    assert not any(message.get("attachments") for message in core.messages)
+    note = next(event for event in events if event["type"] == "note")
+    assert "removed the attached images" in note["text"]
+
+    core.run_turn("follow-up question")
+
+    assert core.client.calls == 3
+
+
+def test_transcript_search_endpoint_serves_hits_and_respects_capability(
+    client, tmp_path, monkeypatch
+):
+    from ollama_code.sessions import SessionStore
+
+    store = SessionStore(str(tmp_path))
+    store.append({
+        "type": "message",
+        "message": {"role": "user", "content": "the orchid-tariff detail"},
+    })
+
+    response = client.get("/api/sessions/search", params={"query": "orchid-tariff"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["indexing"] is False
+    assert body["results"][0]["session_id"] == store.session_id
+    assert body["results"][0]["highlights"]
+
+    assert client.get("/api/sessions/search").status_code == 422
+    assert client.get(
+        "/api/sessions/search", params={"query": ""},
+    ).status_code == 422
+
+    monkeypatch.setenv("LOCUS_CAPABILITY_TRANSCRIPT_SEARCH", "0")
+    assert client.get(
+        "/api/sessions/search", params={"query": "orchid-tariff"},
+    ).status_code == 404
+
+
+def test_solo_turn_done_records_usage_and_summary_serves_it(client):
+    from ollama_code import server as server_mod
+
+    service = client.app.state.service
+    service.emit({
+        "type": "turn_done",
+        "reason": "complete",
+        "prompt_tokens": 200,
+        "completion_tokens": 80,
+        "provider": "ollama",
+        "model": "test-model",
+        "account_label": "",
+        "workspace_root": "/tmp/ws",
+        "session_id": "usage-session",
+    })
+    # Zero-token terminals (errors, empty turns) must not create rows.
+    service.emit({"type": "turn_done", "reason": "error"})
+
+    response = client.get("/api/usage/summary")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["solo"]["turns"] == 1
+    assert body["solo"]["prompt_tokens"] == 200
+    assert body["solo"]["completion_tokens"] == 80
+    assert body["read_only"] is False
+
+    filtered = client.get(
+        "/api/usage/summary", params={"since": time.time() + 3_600},
+    ).json()
+    assert filtered["solo"]["turns"] == 0
+    assert server_mod is not None
+
+
+def test_evaluation_turns_are_recorded_as_evaluation_not_solo(client):
+    service = client.app.state.service
+    service.active_evaluation_id = "suite-run-1"
+    service.emit({
+        "type": "turn_done",
+        "reason": "complete",
+        "prompt_tokens": 500,
+        "completion_tokens": 200,
+        "provider": "ollama",
+        "model": "test-model",
+        "session_id": "evaluation-session",
+    })
+    service.active_evaluation_id = None
+
+    body = client.get("/api/usage/summary").json()
+
+    # Evaluation spend must never inflate the user's own solo rollup.
+    assert body["solo"]["turns"] == 0
+    rows = service.run_store._connect().execute(
+        "SELECT kind, prompt_tokens FROM turn_usage"
+    ).fetchall()
+    assert [(row["kind"], row["prompt_tokens"]) for row in rows] == [("evaluation", 500)]
+
+
+def test_team_turn_with_attachments_announces_their_scope(tmp_path, monkeypatch):
+    core = _core(tmp_path, [])
+    service = server_mod.ChatService(core)
+    events = []
+    original_emit = service.emit
+
+    def capture_emit(event):
+        events.append(event)
+        original_emit(event)
+
+    monkeypatch.setattr(service, "emit", capture_emit)
+
+    class StopBeforeDispatch(RuntimeError):
+        pass
+
+    def refuse_orchestrator(*_args, **_kwargs):
+        raise StopBeforeDispatch("stop after the scope note")
+
+    monkeypatch.setattr(server_mod, "TeamOrchestrator", refuse_orchestrator)
+    manifest = {
+        "run_id": "attach-scope-run",
+        "team": {
+            "id": "team-1",
+            "name": "Test Team",
+            "dispatcher_id": "dispatcher",
+            "member_ids": ["dispatcher", "writer"],
+            "default_writer_id": "writer",
+            "use_managed_worktree": False,
+            "budget": {
+                "max_jobs": 2,
+                "max_rounds": 1,
+                "max_model_calls": 4,
+                "max_concurrent_calls": 1,
+                "max_metered_tokens": 100_000,
+            },
+        },
+        "profiles": [
+            {
+                "id": "dispatcher", "name": "Dispatcher", "model": "test-model",
+                "role": "dispatcher", "instructions": "dispatch",
+                "capabilities": ["dispatcher"], "access_ceiling": "read_only",
+                "timeout_seconds": 60, "token_limit": 20_000,
+                "metering": "self_hosted",
+                "route": {"provider": "ollama", "host": "http://localhost:11434"},
+            },
+            {
+                "id": "writer", "name": "Writer", "model": "test-model",
+                "role": "implementer", "instructions": "write",
+                "capabilities": ["implementer"], "access_ceiling": "workspace_write",
+                "timeout_seconds": 60, "token_limit": 20_000,
+                "metering": "self_hosted",
+                "route": {"provider": "ollama", "host": "http://localhost:11434"},
+            },
+        ],
+    }
+
+    server_mod._run_team_turn(
+        service,
+        "Fix it as a team",
+        manifest,
+        [{"name": "bug.png", "mime_type": "image/png", "data": "cG5n"}],
+    )
+
+    notes = [event for event in events if event.get("type") == "note"]
+    assert any(
+        "dispatcher and the first coding job" in str(note.get("text"))
+        for note in notes
+    )
 
 
 def test_terminal_event_is_not_sent_until_turn_slot_is_idle(tmp_path):
@@ -4068,6 +4346,62 @@ def test_context_length_prefers_the_text_models_own_key(monkeypatch):
         "qwen35moe.context_length": 262_144,
     }})
     assert client.context_length("m") == 262_144
+
+
+def test_vision_capability_reads_ollamas_capability_list(monkeypatch):
+    from ollama_code import ollama as ollama_mod
+
+    client = ollama_mod.OllamaClient("http://localhost:11434")
+    monkeypatch.setattr(
+        client, "show_model",
+        lambda name: {"capabilities": ["completion", "vision"]},
+    )
+    assert client.vision_capability("seeing") is True
+
+    monkeypatch.setattr(
+        client, "show_model",
+        lambda name: {"capabilities": ["completion", "tools"]},
+    )
+    assert client.vision_capability("blind") is False
+
+    monkeypatch.setattr(client, "show_model", lambda name: {})
+    assert client.vision_capability("silent") is None
+
+    def unreachable(name):
+        raise OllamaError("connection refused")
+
+    monkeypatch.setattr(client, "show_model", unreachable)
+    assert client.vision_capability("offline") is None
+
+
+def test_models_endpoint_reports_ollama_vision_capability(client, monkeypatch):
+    service = client.app.state.service
+    core = service.core
+    monkeypatch.setattr(core.client, "list_models", lambda: [
+        {"name": "seeing:latest"},
+        {"name": "blind:latest"},
+        {"name": "silent:latest"},
+    ])
+    monkeypatch.setattr(core.client, "running_models", lambda: [])
+
+    def show(name):
+        if name.startswith("seeing"):
+            return {"capabilities": ["completion", "vision"]}
+        if name.startswith("blind"):
+            return {"capabilities": ["completion", "tools"]}
+        return {}
+
+    monkeypatch.setattr(core.client, "show_model", show)
+
+    response = client.get("/api/models")
+
+    assert response.status_code == 200
+    vision = {m["name"]: m["vision"] for m in response.json()["models"]}
+    assert vision == {
+        "seeing:latest": True,
+        "blind:latest": False,
+        "silent:latest": None,
+    }
 
 
 def test_chat_stream_sends_num_ctx_under_options(monkeypatch):

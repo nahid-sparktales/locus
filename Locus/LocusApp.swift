@@ -64,6 +64,12 @@ struct LocusApp: App {
                 Button("Find in Conversation") { model.openTranscriptSearch() }
                     .keyboardShortcut("f", modifiers: .command)
                     .disabled(model.blocks.isEmpty)
+                Button("Search All Conversations") {
+                    if model.sidebarCollapsed { model.toggleSidebar() }
+                    model.sidebarSearchFocusToken = UUID()
+                }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .accessibilityIdentifier("menu.searchConversations")
                 Button("Keyboard Shortcuts") { model.shortcutsPresented = true }
                     .keyboardShortcut("/", modifiers: .command)
                     .accessibilityIdentifier("menu.shortcuts")
@@ -313,6 +319,10 @@ struct RootView: View {
         }
         .sheet(isPresented: $model.settingsPresented) {
             SettingsView()
+                .environmentObject(model)
+        }
+        .sheet(isPresented: $model.usageDashboardPresented) {
+            UsageDashboardView()
                 .environmentObject(model)
         }
         .sheet(isPresented: $model.modelLibraryPresented) {

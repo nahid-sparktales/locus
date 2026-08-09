@@ -1,5 +1,65 @@
 # Changelog
 
+## 1.13.0 — Unreleased
+
+### Added
+
+- **Screenshot-to-fix: attachments in every mode.** Images and files attach to
+  Work, Plan, and Build messages — not just Just Chat — so "here's a
+  screenshot of the bug, fix it" finally works. Drag files onto the composer
+  or the conversation, or paste an image with ⌘V (a clipboard screenshot
+  attaches; copied text still pastes as text — file URLs win over both).
+  Attachment chips with thumbnails sit under the editor. On a team run the
+  images reach the dispatcher and the first coding job, and a note in the
+  transcript says exactly that; specialists and reviewers stay text-only
+  because their goals are written by the dispatcher, which has seen the
+  evidence. Local models report vision support straight from Ollama's own
+  capability list — the composer warns before sending images to a model known
+  to refuse them, remote listings stay honestly unknown — and a provider that
+  rejects image input triggers one automatic retry with the images stripped
+  and a note saying so. That retry also fixes a latent bug: a rejected image
+  used to stay in history and poison every later turn on the same
+  conversation. Attachments are still never persisted; a restored session
+  shows their names, not their bytes.
+- **Search across all conversations.** The sidebar search now looks inside
+  transcripts, not just titles: an "In conversations" section ranks matching
+  messages with highlighted snippets, and selecting one opens that session
+  scrolled to the exact message. ⇧⌘F focuses it from anywhere. The index is
+  one SQLite full-text database built lazily on first search and kept current
+  by comparing file stats before each query — nothing changes about how
+  sessions are written, so trash, restore, and delete are picked up
+  automatically, and clearing all sessions empties the index at the same
+  moment. A large history builds in the background while partial results
+  flow. Semantic search stayed out deliberately: plain full-text answers
+  "where did we discuss X" without new model dependencies.
+- **A Usage & Costs dashboard.** Sidebar ▸ ••• ▸ Usage & Costs answers "what
+  did I spend, on which provider, in which workspace": totals, by-agent and
+  by-model and by-workspace tables, the most expensive runs (each deep-links
+  into the Runs inspector), and a 7d/30d/90d/All filter — all computed from
+  the run store that already recorded every orchestration. Costs are estimates
+  from the per-agent rates you entered; local Ollama rows say so at $0, and
+  the sheet says plainly that it is not a bill. Solo chat turns start
+  recording token counts from this release — they were never persisted
+  before, so there is nothing to backfill, and with no pricing outside agent
+  profiles solo rows show tokens, never dollars.
+- **Ship a change from the Changes tab.** The header names the current branch
+  and switches or creates branches (no auto-stash — git's own refusal is
+  surfaced verbatim, because nothing that can lose work belongs behind one
+  click). Fetch, fast-forward-only pull, and push — publishing the branch on
+  first push — appear in the direct-download build; the App Store sandbox
+  cannot reach your keychain or SSH keys, so there the buttons stay away and a
+  footnote says why, the same honest carve-out as Computer Control. "Open a
+  pull request" opens GitHub's compare page with the branch prefilled — the
+  human owns the actual Create button, no embedded GitHub login, no `gh`
+  dependency. And review gets hunk-level control: each hunk in a file's diff
+  stages, unstages, or discards independently, with a synthesized minimal
+  patch applied through git itself. A hunk that changed since the diff was
+  read is re-located by content and, failing that, never applied — the diff
+  refreshes instead. Renamed files keep whole-file actions only, truncated
+  diffs disable hunk controls rather than guess, and discarding a hunk always
+  confirms first. Team-run review deliberately stays apply-all/discard-all:
+  partial application of a reviewed plan is a different, riskier feature.
+
 ## 1.12.0 — 2026-08-09
 
 ### Added
