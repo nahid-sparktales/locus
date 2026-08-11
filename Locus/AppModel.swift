@@ -1884,7 +1884,9 @@ final class AppModel: ObservableObject {
             // unreadable state file would present as "no servers" and this
             // would delete live third-party refresh tokens rather than orphans.
             if response.errors.isEmpty {
-                MCPKeychainStore.removeOrphans(keeping: Set(response.mcpServers.map(\.id)))
+                MCPCredentialStore.migrateLegacyKeychainEntries(
+                    keeping: Set(response.mcpServers.map(\.id))
+                )
                 CredentialStore.removeOrphanedMCPCredentials(
                     keeping: Set(response.mcpServers.map(\.id))
                 )
@@ -2056,7 +2058,9 @@ final class AppModel: ObservableObject {
                 "/api/extensions/plugins/\(id)",
                 as: ExtensionOperationResponse.self
             )
-            for serverID in credentialServerIDs { MCPKeychainStore.remove(serverID: serverID) }
+            for serverID in credentialServerIDs {
+                MCPCredentialStore.removeIncludingLegacy(serverID: serverID)
+            }
             await refreshExtensions()
             await refreshExtensionCatalog()
         } catch {
@@ -2206,8 +2210,7 @@ final class AppModel: ObservableObject {
                 "/api/extensions/mcp/\(id)",
                 as: ExtensionOperationResponse.self
             )
-            MCPKeychainStore.remove(serverID: id)
-            CredentialStore.remove(account: CredentialStore.mcpCredentialKey(id))
+            MCPCredentialStore.removeIncludingLegacy(serverID: id)
             await refreshExtensions()
         } catch {
             extensionErrorMessage = error.localizedDescription
@@ -2220,8 +2223,8 @@ final class AppModel: ObservableObject {
             extensionErrorMessage = "The MCP credentials could not be saved."
             return false
         }
-        let previous = MCPKeychainStore.getMigratingLegacy(serverID: serverID)
-        guard MCPKeychainStore.set(values, serverID: serverID) else {
+        let previous = MCPCredentialStore.get(serverID: serverID)
+        guard MCPCredentialStore.set(values, serverID: serverID) else {
             extensionErrorMessage = "The MCP credentials could not be saved."
             return false
         }
@@ -2235,9 +2238,9 @@ final class AppModel: ObservableObject {
             return true
         } catch {
             if let previous {
-                MCPKeychainStore.set(previous, serverID: serverID)
+                MCPCredentialStore.set(previous, serverID: serverID)
             } else {
-                MCPKeychainStore.remove(serverID: serverID)
+                MCPCredentialStore.remove(serverID: serverID)
             }
             extensionErrorMessage = error.localizedDescription
             return false
@@ -2251,8 +2254,7 @@ final class AppModel: ObservableObject {
                 body: ["id": serverID, "credentials": [String: Any]()],
                 as: MCPStatusCredentialResponse.self
             )
-            MCPKeychainStore.remove(serverID: serverID)
-            CredentialStore.remove(account: CredentialStore.mcpCredentialKey(serverID))
+            MCPCredentialStore.removeIncludingLegacy(serverID: serverID)
             await refreshExtensions()
             showToast("MCP credentials removed")
         } catch {
@@ -2281,7 +2283,7 @@ final class AppModel: ObservableObject {
 
     private func restoreExtensionCredentials(for servers: [ExtensionMCPServer]) async {
         for server in servers {
-            guard let storedValues = MCPKeychainStore.getMigratingLegacy(serverID: server.id) else { continue }
+            guard let storedValues = MCPCredentialStore.get(serverID: server.id) else { continue }
             guard Self.mcpCredentials(storedValues, areBoundTo: server) else {
                 extensionErrorMessage = "Saved OAuth credentials no longer match \(server.name). Reconnect it before enabling the server."
                 continue
@@ -2291,7 +2293,7 @@ final class AppModel: ObservableObject {
             let oldData = try? JSONSerialization.data(withJSONObject: storedValues, options: [.sortedKeys])
             let refreshedData = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys])
             let refreshedToken = oldData != refreshedData
-            if refreshedToken { MCPKeychainStore.set(values, serverID: server.id) }
+            if refreshedToken { MCPCredentialStore.set(values, serverID: server.id) }
             guard server.hasCredentials != true || refreshedToken else { continue }
             _ = try? await backend.post(
                 "/api/extensions/mcp/credentials",

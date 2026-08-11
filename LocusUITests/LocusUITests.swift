@@ -684,6 +684,16 @@ final class LocusUITests: XCTestCase {
         firstFile.click()
         let discard = anyElement("changes.file.0.hunk.0.discard")
         XCTAssertTrue(discard.waitForExistence(timeout: 3))
+        let changesScroll = anyElement("changes.scroll")
+        XCTAssertTrue(changesScroll.exists)
+        if !discard.isHittable {
+            // Expanding the inline diff can leave its first hunk action under
+            // a scroll edge on smaller CI windows. Move the containing scroll
+            // view explicitly instead of relying on XCUI's implicit scroll,
+            // which is unreliable for nested SwiftUI buttons on macOS.
+            changesScroll.scroll(byDeltaX: -120, deltaY: 180)
+        }
+        XCTAssertTrue(discard.isHittable)
         discard.click()
 
         XCTAssertTrue(app.buttons["changes.discardHunk.confirm"].waitForExistence(timeout: 3))

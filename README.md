@@ -311,8 +311,9 @@ host, scopes, policy, resource/prompt posture, and data warning; it then creates
 an editable disabled server, authenticates if needed, runs a tool probe, and
 asks again before enabling it. OAuth uses standards discovery, S256 PKCE,
 issuer-bound registrations and rotating refresh tokens. OAuth material and
-manual credentials live in macOS Keychain; only the current access token or
-header is handed to the local agent in memory.
+manual credentials live in Locus's user-only `auth.json`; only the current
+access token or header is handed to the local agent in memory. Existing MCP
+entries from older releases are migrated out of Keychain once on upgrade.
 
 ## Permissions
 
@@ -520,12 +521,14 @@ at 4K here.
 
 ### Credential storage
 
-Each API account keeps its key in `~/.locus/auth.json`, in its own entry, and
-passes it to the local agent process in memory. The file is mode `0600` inside a
-`0700` directory, so no other user account on the Mac can read it; in the
+Each API account and MCP server keeps its credential in `~/.locus/auth.json`,
+in its own section and entry, and passes only the runtime value to the local
+agent process in memory. The file is atomically replaced at mode `0600` inside
+a `0700` directory, so no other user account on the Mac can read it; in the
 sandboxed App Store build it lives in the app container instead. A key is never
 written to the agent's config, never returned by any API, and only ever sent to
-its own provider. Removing an API account deletes its key with it.
+its own provider or MCP endpoint. Removing an account or server deletes its
+credential with it.
 
 ChatGPT-plan OAuth credentials are different. OpenAI's bundled helper owns and
 refreshes them in a separate file-backed `CODEX_HOME` under

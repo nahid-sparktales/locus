@@ -734,11 +734,10 @@ private struct AgentProfileEditor: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            VStack(spacing: 0) {
-                ScrollViewReader { scrollProxy in
-                    ScrollView {
-                        Form {
+        VStack(spacing: 0) {
+            ScrollViewReader { scrollProxy in
+                ScrollView {
+                    Form {
                             TextField("Name", text: $draft.name)
                             Picker("Role", selection: $draft.role) {
                                 ForEach(AgentRole.allCases) { Text($0.title).tag($0) }
@@ -784,25 +783,26 @@ private struct AgentProfileEditor: View {
                                     .fixedSize(horizontal: false, vertical: true)
                                     .accessibilityIdentifier("agent.connectionResult")
                             }
-                        }
-                        .padding(20)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .animation(.easeInOut(duration: 0.2), value: advancedSettings)
                     }
-                    .accessibilityIdentifier("agent.scroll")
-                    .onChange(of: advancedSettings) { _, expanded in
-                        guard expanded else { return }
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            scrollProxy.scrollTo("agent.advancedSettings.section", anchor: .top)
-                        }
+                    .padding(20)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .animation(.easeInOut(duration: 0.2), value: advancedSettings)
+                }
+                .accessibilityIdentifier("agent.scroll")
+                .onChange(of: advancedSettings) { _, expanded in
+                    guard expanded else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        scrollProxy.scrollTo("agent.advancedSettings.section", anchor: .top)
                     }
                 }
-                .frame(height: max(0, geometry.size.height - 57))
-
-                Divider()
-                footer
-                    .frame(height: 56)
             }
+            .frame(maxHeight: .infinity)
+            .clipped()
+
+            Divider()
+            footer
+                .frame(height: 56)
+                .zIndex(1)
         }
         .frame(width: 600, height: 720)
         .task { await refreshModels() }

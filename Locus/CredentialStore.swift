@@ -316,12 +316,84 @@ enum CredentialStore {
     }
 }
 
-/// MCP credentials are isolated in the user's login keychain. OAuth client
-/// registrations and refresh tokens never cross the native/backend boundary.
-enum MCPKeychainStore {
-    private static let service = "io.sparktales.locus.mcp"
+/// MCP credentials use the same file-backed shape as the rest of Locus's
+/// account material: JSON inside the atomic, user-only `auth.json` file.
+///
+/// Codex and Claude keep ordinary MCP definitions in config files and support
+/// environment references for externally managed secrets. Locus's native OAuth
+/// flow also needs durable refresh and client-registration values, so those
+/// values live in the credential section of `auth.json` rather than Keychain.
+/// Only the runtime subset crosses the native/backend boundary.
+enum MCPCredentialStore {
+    private static let legacyMigrationDefaultsKey = "mcpCredentialsMigratedFromKeychainV1"
 
-    static var displayName: String { "macOS Keychain" }
+    static var displayName: String { CredentialStore.displayPath }
+
+    static func get(serverID: String) -> [String: Any]? {
+        guard let encoded = CredentialStore.get(
+            account: CredentialStore.mcpCredentialKey(serverID)
+        ), let data = encoded.data(using: .utf8),
+           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return root
+    }
+
+    @discardableResult
+    static func set(_ values: [String: Any], serverID: String) -> Bool {
+        guard JSONSerialization.isValidJSONObject(values),
+              let data = try? JSONSerialization.data(
+                withJSONObject: values,
+                options: [.sortedKeys]
+              ),
+              let encoded = String(data: data, encoding: .utf8)
+        else { return false }
+        return CredentialStore.set(
+            encoded,
+            account: CredentialStore.mcpCredentialKey(serverID)
+        )
+    }
+
+    @discardableResult
+    static func remove(serverID: String) -> Bool {
+        CredentialStore.remove(account: CredentialStore.mcpCredentialKey(serverID))
+    }
+
+    /// Explicit server deletion also cleans up an unmigrated legacy entry.
+    @discardableResult
+    static func removeIncludingLegacy(serverID: String) -> Bool {
+        let removedCurrent = remove(serverID: serverID)
+        let removedLegacy = LegacyMCPKeychainStore.remove(serverID: serverID)
+        return removedCurrent && removedLegacy
+    }
+
+    /// One upgrade pass copies credentials written by older Locus builds and
+    /// then records completion. Normal MCP reads never consult Keychain.
+    static func migrateLegacyKeychainEntries(keeping serverIDs: Set<String>) {
+        guard !UserDefaults.standard.bool(forKey: legacyMigrationDefaultsKey) else { return }
+        var completed = true
+        for serverID in serverIDs {
+            if get(serverID: serverID) != nil {
+                _ = LegacyMCPKeychainStore.remove(serverID: serverID)
+                continue
+            }
+            guard let legacy = LegacyMCPKeychainStore.get(serverID: serverID) else { continue }
+            if set(legacy, serverID: serverID) {
+                _ = LegacyMCPKeychainStore.remove(serverID: serverID)
+            } else {
+                completed = false
+            }
+        }
+        guard completed else { return }
+        LegacyMCPKeychainStore.removeOrphans(keeping: serverIDs)
+        UserDefaults.standard.set(true, forKey: legacyMigrationDefaultsKey)
+    }
+}
+
+/// Read/delete support for credentials written by older Locus builds. New MCP
+/// credentials are never written here; this can be removed after the migration
+/// window has elapsed.
+private enum LegacyMCPKeychainStore {
+    private static let service = "io.sparktales.locus.mcp"
 
     static func get(serverID: String) -> [String: Any]? {
         var query = baseQuery(serverID: serverID)
@@ -336,39 +408,9 @@ enum MCPKeychainStore {
     }
 
     @discardableResult
-    static func set(_ values: [String: Any], serverID: String) -> Bool {
-        guard JSONSerialization.isValidJSONObject(values),
-              let data = try? JSONSerialization.data(withJSONObject: values)
-        else { return false }
-        let query = baseQuery(serverID: serverID)
-        let attributes = [kSecValueData as String: data]
-        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if status == errSecSuccess { return true }
-        guard status == errSecItemNotFound else { return false }
-        var item = query
-        item[kSecValueData as String] = data
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
-    }
-
-    @discardableResult
     static func remove(serverID: String) -> Bool {
         let status = SecItemDelete(baseQuery(serverID: serverID) as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
-    }
-
-    /// Migrate only after the Keychain write is confirmed. A failed or locked
-    /// keychain therefore leaves the protected legacy entry recoverable.
-    static func getMigratingLegacy(serverID: String) -> [String: Any]? {
-        if let current = get(serverID: serverID) { return current }
-        let legacyAccount = CredentialStore.mcpCredentialKey(serverID)
-        guard let encoded = CredentialStore.get(account: legacyAccount),
-              let data = encoded.data(using: .utf8),
-              let values = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              set(values, serverID: serverID)
-        else { return nil }
-        _ = CredentialStore.remove(account: legacyAccount)
-        return values
     }
 
     static func removeOrphans(keeping serverIDs: Set<String>) {
@@ -738,7 +780,7 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
               challengeMethods.contains("S256")
         else { throw authError("The authorization server does not advertise S256 PKCE.") }
 
-        let stored = MCPKeychainStore.getMigratingLegacy(serverID: server.id) ?? [:]
+        let stored = MCPCredentialStore.get(serverID: server.id) ?? [:]
         let storedIssuer = stored["issuer"] as? String ?? ""
         var clientID = storedIssuer == issuer ? (stored["client_id"] as? String ?? "") : ""
         var clientSecret = storedIssuer == issuer ? stored["client_secret"] as? String : nil
@@ -783,8 +825,8 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
             }
             registration["token_endpoint"] = tokenURL.absoluteString
             registration["resource"] = normalizedResource
-            guard MCPKeychainStore.set(registration, serverID: server.id) else {
-                throw authError("The OAuth registration could not be stored in macOS Keychain.")
+            guard MCPCredentialStore.set(registration, serverID: server.id) else {
+                throw authError("The OAuth registration could not be stored in \(CredentialStore.displayPath).")
             }
         }
         return Context(

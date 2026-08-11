@@ -2211,7 +2211,7 @@ final class FeatureLogicTests: XCTestCase {
     @MainActor
     func testMCPAutomaticOAuthDiscoversChallengeAndRegistersIssuerBoundClient() async throws {
         let serverID = "oauth-test-\(UUID().uuidString)"
-        defer { MCPKeychainStore.remove(serverID: serverID) }
+        defer { MCPCredentialStore.remove(serverID: serverID) }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MCPURLProtocol.self]
         MCPURLProtocol.handler = { request in
@@ -2271,7 +2271,7 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(resolved["client_id"] as? String, "registered-client")
         XCTAssertEqual(resolved["resource"] as? String, "https://mcp.test/mcp")
         XCTAssertEqual(resolved["scopes"] as? [String], ["read"])
-        let registration = try XCTUnwrap(MCPKeychainStore.get(serverID: serverID))
+        let registration = try XCTUnwrap(MCPCredentialStore.get(serverID: serverID))
         XCTAssertEqual(registration["issuer"] as? String, "https://auth.test")
         XCTAssertEqual(registration["client_secret"] as? String, "native-only-secret")
     }
@@ -2279,7 +2279,7 @@ final class FeatureLogicTests: XCTestCase {
     @MainActor
     func testMCPAutomaticOAuthFallsBackToOIDCPathInsertion() async throws {
         let serverID = "oauth-oidc-test-\(UUID().uuidString)"
-        defer { MCPKeychainStore.remove(serverID: serverID) }
+        defer { MCPCredentialStore.remove(serverID: serverID) }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MCPURLProtocol.self]
         MCPURLProtocol.handler = { request in

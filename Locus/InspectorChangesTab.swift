@@ -28,6 +28,7 @@ struct InspectorChangesTab: View {
                     .padding(.horizontal, 10)
                     .padding(.bottom, 12)
                 }
+                .accessibilityIdentifier("changes.scroll")
 
                 commitArea
             }

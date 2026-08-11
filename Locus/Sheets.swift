@@ -999,7 +999,7 @@ private struct MCPCredentialView: View {
                 TextField(server.transport == "stdio" ? "Environment variable" : "Header name", text: $fieldName)
             }
             SecureField(server.auth == "bearer" ? "Bearer token" : "Secret value", text: $secret)
-            Text("The value is stored in \(MCPKeychainStore.displayName). Only the current access token or header is sent to the local agent in memory; OAuth registrations and refresh tokens stay native.")
+            Text("The value is stored in \(MCPCredentialStore.displayName), readable only by your macOS user account. Only the current access token or header is sent to the local agent in memory; OAuth registrations and refresh tokens stay native.")
                 .font(.system(size: 9)).foregroundStyle(LocusTheme.muted)
             HStack {
                 Button("Cancel") { dismiss() }

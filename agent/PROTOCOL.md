@@ -544,8 +544,8 @@ The extension surface shares one error and concurrency contract:
 | POST | `/api/extensions/mcp/test` | Probe a server's connectivity. |
 | POST | `/api/extensions/mcp/reconnect` | Drop and re-establish a server's session. |
 | POST | `/api/extensions/mcp/policy` | Set a server's default tool-approval mode. |
-| POST | `/api/extensions/mcp/credentials` | Hand only the current access token/header/environment credential to the agent. OAuth registrations, client secrets, and refresh tokens remain in macOS Keychain and never enter this endpoint. |
-| DELETE | `/api/extensions/mcp/{server_id:path}` | Remove a server. Clients must also delete the matching Keychain entry. |
+| POST | `/api/extensions/mcp/credentials` | Hand only the current access token/header/environment credential to the agent. OAuth registrations, client secrets, and refresh tokens remain in the native client's user-only credential file and never enter this endpoint. |
+| DELETE | `/api/extensions/mcp/{server_id:path}` | Remove a server. Clients must also delete the matching native credential-file entry. |
 
 `stdio` transport is refused when the agent is sandboxed, so App Store builds
 can only use remote servers.
