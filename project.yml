@@ -43,8 +43,16 @@ settings:
       ARCHS: arm64
       CODE_SIGN_STYLE: Automatic
       DEVELOPMENT_TEAM: 4X4RJA7GMD
+      # Keep local ReleaseMAS verification faithful to a distribution archive:
+      # a development identity must not inject get-task-allow into the sealed
+      # bundle merely because App Store distribution signing is unavailable.
+      CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
       ENABLE_APP_SANDBOX: YES
       ENABLE_HARDENED_RUNTIME: YES
+packages:
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm.git
+    exactVersion: 1.18.0
 targets:
   Locus:
     type: application
@@ -76,6 +84,8 @@ targets:
         ReleaseMAS:
           CODE_SIGN_ENTITLEMENTS: Config/Locus.entitlements
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_APP_STORE"
+    dependencies:
+      - package: SwiftTerm
     scheme:
       testTargets:
         - LocusTests

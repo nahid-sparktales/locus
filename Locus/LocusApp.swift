@@ -90,6 +90,10 @@ struct LocusApp: App {
                 Button("Export Session…") { model.exportCurrentSession() }
                     .accessibilityIdentifier("menu.exportSession")
                 Divider()
+                Button("Open Terminal") { model.openTerminal() }
+                    .keyboardShortcut("`", modifiers: .control)
+                    .disabled(model.justChatEnabled)
+                    .accessibilityIdentifier("menu.terminal")
                 // Declared once, here — a second registration in a view would
                 // silently shadow these (see the ⌘⇧K note in WorkspaceView).
                 ForEach(InspectorTab.allCases) { tab in
@@ -178,8 +182,10 @@ final class LocusApplicationDelegate: NSObject, NSApplicationDelegate {
             return .terminateNow
         }
         let alert = NSAlert()
-        alert.messageText = "Stop running work and quit Locus?"
-        alert.informativeText = "The active team and its private checkout will remain available to resume."
+        alert.messageText = "Stop running processes and quit Locus?"
+        alert.informativeText = model?.terminal.hasForegroundJob == true
+            ? "The terminal has a foreground job. It will be stopped; resumable agent tasks and private checkouts remain available."
+            : "The active team and its private checkout will remain available to resume."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Stop and Quit")
         alert.addButton(withTitle: "Cancel")

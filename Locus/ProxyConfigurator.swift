@@ -137,7 +137,7 @@ enum ProxyConfigurator {
 
     /// The env vars the agent child is launched with in manual mode. The proxy
     /// URLs deliberately carry no credential: the agent's own children — the
-    /// model's shell commands, the console, git — inherit these, and the
+    /// model's shell commands, git, and MCP processes inherit these, and the
     /// password must never reach anything the model can run. The credential
     /// travels out of band, over the child's stdin, so that it never enters
     /// the exec-time environment block that `ps -E` can read for the life of

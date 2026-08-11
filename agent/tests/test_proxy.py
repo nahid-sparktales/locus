@@ -463,28 +463,6 @@ def test_git_tool_child_env_is_credential_stripped(tmp_path, monkeypatch, creden
     assert "s3cret" not in str(env)
 
 
-def test_terminal_child_env_is_credential_stripped(tmp_path, monkeypatch, credentialed_environ):
-    from ollama_code import terminal as terminal_mod
-    from ollama_code.permissions import PermissionManager
-    from ollama_code.terminal import TerminalManager
-
-    wrapper, calls = _recording(subprocess.Popen)
-    monkeypatch.setattr(terminal_mod.subprocess, "Popen", wrapper)
-    manager = TerminalManager(
-        emit=lambda _event: None,
-        perms=PermissionManager(mode="ask"),
-        config={"terminal_login_shell": False},
-    )
-
-    manager.start("true", cwd=str(tmp_path))
-
-    env = calls[0][1]["env"]
-    assert env["HTTP_PROXY"] == CLEAN
-    assert env["GIT_TERMINAL_PROMPT"] == "0", "the console's own overrides survive"
-    assert env["TERM"] == "dumb"
-    assert "s3cret" not in str(env)
-
-
 def test_gitinfo_child_env_is_credential_stripped(tmp_path, monkeypatch, credentialed_environ):
     from ollama_code import gitinfo
 

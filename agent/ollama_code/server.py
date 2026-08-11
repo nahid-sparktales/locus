@@ -85,7 +85,6 @@ from .sessions import (
     update_session_metadata,
 )
 from .telemetry import TelemetryError, send_otlp
-from .terminal import TerminalManager, TerminalRejected
 from .tools import truncate_output
 from .transcript_search import TranscriptIndex, TranscriptSearchError
 from .worktrees import TaskCheckout, TaskCheckoutStore, WorktreeError
@@ -103,7 +102,6 @@ MAX_USER_MESSAGE_CHARS = 1_000_000
 #: own JSON envelope. Only reachable since the WebSocket frame cap was raised
 #: to admit image attachments; the old 2 MiB frame was the accidental bound.
 MAX_USER_MESSAGE_BYTES = MAX_SESSION_LINE_BYTES // 2
-MAX_TERMINAL_COMMAND_CHARS = 65_536
 MAX_CHAT_IMAGE_ATTACHMENTS = 10
 MAX_CHAT_IMAGE_BYTES = 15 * 1024 * 1024
 MAX_CHAT_IMAGE_TOTAL_BYTES = 25 * 1024 * 1024
@@ -196,17 +194,9 @@ class ChatService:
         self._state_guard = RLock()
         self._state_mutating = False
         core.on_event(self.emit)
-        # Deliberately not sharing `turn_future`: a console command must never
-        # occupy the chat's single turn slot.
-        # Dev servers are the terminal's opposite number: several at once,
-        # no deadline, and no Console events — see devserver.py's docstring.
+        # Dev servers run outside the chat's single turn slot and can remain
+        # alive until explicitly stopped — see devserver.py's docstring.
         self.dev_servers = DevServerManager(perms=core.perms, config=core.config)
-        self.terminal = TerminalManager(
-            emit=self.emit,
-            perms=core.perms,
-            record=lambda record: self.core.session.append(record),
-            config=core.config,
-        )
 
     def _on_codex_event(self, event: dict[str, Any]) -> None:
         """Expose only account/limit invalidations, never helper payloads."""
@@ -707,10 +697,8 @@ async def lifespan(app: FastAPI):
     finally:
         if parent_watch is not None:
             parent_watch.cancel()
-        # Never leave a console command orphaned by a clean shutdown.
         svc: ChatService | None = getattr(app.state, "service", None)
         if svc is not None:
-            svc.terminal.cancel_all(force=True)
             # Dev servers deliberately have no deadline; shutdown is the one
             # guaranteed reaper.
             svc.dev_servers.stop_all()
@@ -2705,6 +2693,26 @@ def upsert_extension_mcp(body: dict[str, Any] = Body(default_factory=dict)) -> d
         raise _extension_failure(exc) from exc
 
 
+@app.post("/api/extensions/mcp/presets/materialize")
+def materialize_extension_mcp_preset(
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    svc = service()
+    try:
+        with svc.state_mutation():
+            value = svc.core.extensions.materialize_mcp_preset(
+                str(body.get("id") or ""),
+                project_ref=str(body.get("project_ref") or ""),
+            )
+            svc.core.mcp.refresh(wait=False)
+            _announce_extensions(svc, "mcp_preset_materialized")
+            return value
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
 @app.post("/api/extensions/mcp/enable")
 def enable_extension_mcp(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
@@ -2761,16 +2769,11 @@ def set_extension_mcp_policy(body: dict[str, Any] = Body(default_factory=dict)) 
 @app.post("/api/extensions/mcp/test")
 def test_extension_mcp(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
-    svc.core.mcp.refresh(wait=True)
     server_id = str(body.get("id") or "")
-    svc.core.tool_registry.refresh()
-    return {
-        "status": svc.core.mcp.status(server_id),
-        "tools": [
-            item for item in svc.core.tool_registry.metadata()
-            if item.get("server_id") == server_id
-        ],
-    }
+    try:
+        return svc.core.mcp.probe(server_id)
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
 
 
 @app.post("/api/extensions/mcp/reconnect")
@@ -2842,6 +2845,8 @@ def _config_state(core: AgentCore) -> dict[str, Any]:
         # 0 means "follow the environment"; `session_info.context_limit` is the
         # number that setting actually resolved to.
         "context_window": context_window(core.config.get("context_window")),
+        "terminal_shell": str(core.config.get("terminal_shell") or ""),
+        "terminal_login_shell": bool(core.config.get("terminal_login_shell", True)),
         "session_info": core.session_info(),
     }
 
@@ -2866,6 +2871,18 @@ def post_config(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, 
 
 def _apply_config(svc: ChatService, body: dict[str, Any]) -> dict[str, Any]:
     """Apply config after atomically reserving mutable state."""
+    terminal_shell: str | None = None
+    terminal_login_shell: bool | None = None
+    if "terminal_shell" in body:
+        raw_shell = body.get("terminal_shell")
+        if not isinstance(raw_shell, str) or len(raw_shell) > 4_096:
+            raise HTTPException(422, "terminal_shell must be a string")
+        terminal_shell = raw_shell.strip()
+    if "terminal_login_shell" in body:
+        raw_login_shell = body.get("terminal_login_shell")
+        if not isinstance(raw_login_shell, bool):
+            raise HTTPException(422, "terminal_login_shell must be true or false")
+        terminal_login_shell = raw_login_shell
     model = str(body.get("model") or "").strip()
     cwd = str(body.get("cwd") or "").strip()
     if model:
@@ -2910,6 +2927,15 @@ def _apply_config(svc: ChatService, body: dict[str, Any]) -> dict[str, Any]:
         svc.core.config["max_iterations"] = resolved
         save_config(svc.core.config)
         svc.emit({"type": "session_info", **svc.core.session_info()})
+    terminal_changed = False
+    if terminal_shell is not None:
+        svc.core.config["terminal_shell"] = terminal_shell
+        terminal_changed = True
+    if terminal_login_shell is not None:
+        svc.core.config["terminal_login_shell"] = terminal_login_shell
+        terminal_changed = True
+    if terminal_changed:
+        save_config(svc.core.config)
     return _config_state(svc.core)
 
 
@@ -4122,40 +4148,6 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             return
         if not svc.start_turn(loop, _run_slash, svc, f"/resume {session_id}"):
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
-    elif mtype == "terminal_run":
-        # Outside every `busy` guard: the console and the chat run side by side.
-        command = str(msg.get("command", ""))
-        if len(command) > MAX_TERMINAL_COMMAND_CHARS:
-            svc.queue_event({
-                "type": "terminal_error",
-                "run_id": str(msg.get("run_id") or ""),
-                "code": "too_large",
-                "message": "command is too large to run safely",
-            })
-            return
-        try:
-            svc.terminal.start(
-                command,
-                cwd=str(msg.get("cwd") or core.cwd),
-                run_id=str(msg.get("run_id") or ""),
-                timeout=int(msg.get("timeout") or 0),
-                # The console is independent from chat state, so capture the
-                # session it started in. A later New Session must not move its
-                # completion record into the replacement transcript.
-                record=core.session.append,
-            )
-        except TerminalRejected:
-            pass  # start() already emitted terminal_error
-    elif mtype == "terminal_input":
-        svc.terminal.send_input(
-            str(msg.get("run_id", "")),
-            str(msg.get("text", "")),
-            newline=bool(msg.get("newline", True)),
-        )
-    elif mtype == "terminal_close_stdin":
-        svc.terminal.close_stdin(str(msg.get("run_id", "")))
-    elif mtype == "terminal_cancel":
-        svc.terminal.cancel(str(msg.get("run_id", "")), force=bool(msg.get("force", False)))
     elif mtype == "ping":
         svc.queue_event({"type": "pong"})
     else:
@@ -4342,11 +4334,6 @@ async def ws_chat(ws: WebSocket) -> None:
             "state": "waiting_dispatch_approval",
             "plan": plan,
         })
-    # A console run survives a dropped socket — killing a build because the
-    # laptop slept is worse than the state it costs to replay it.
-    await ws.send_json({"type": "terminal_state", "runs": svc.terminal.snapshot()})
-    for event in svc.terminal.attach():
-        await ws.send_json(event)
     pump = asyncio.create_task(_event_pump(svc, ws))
     svc.event_pump = pump
     try:

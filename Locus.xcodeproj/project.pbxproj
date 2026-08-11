@@ -72,6 +72,7 @@
 		E6B5E9C34E90B735A5A84C22 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E18BD6EB5EBD180B3E69FBD6 /* ComposerView.swift */; };
 		E9F4EF0EA873C28080008298 /* GitWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6D865DBE30EBEB947619172 /* GitWorkflowTests.swift */; };
 		F01F72892D90A52009E99BC3 /* SessionSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A37D5FE4583645B552296C /* SessionSidebarView.swift */; };
+		F100D0F33CAF95DEF9D4CBB2 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 172252A812CB84F95F5EB77F /* SwiftTerm */; };
 		F9405ED899AAD041CF6BAD66 /* BackendService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3793FC69B1D813ED07567A2E /* BackendService.swift */; };
 		FCCDEFB817C5CCEC225278D5 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C24AE13FC7723F12A5F2380 /* Models.swift */; };
 		FED1D1E807720C78D3AAC510 /* InspectorRail.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D508444E398AA3AB5441198 /* InspectorRail.swift */; };
@@ -168,6 +169,17 @@
 		F95947ACE0751337457A57CD /* TerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSession.swift; sourceTree = "<group>"; };
 		FA2F4D55B6CB8B4C966BACBE /* ProviderModelCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderModelCatalog.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		DEBCA3DC4F29E1709B9E6BB8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F100D0F33CAF95DEF9D4CBB2 /* SwiftTerm in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		1034C21D9930A5F35D463962 /* Products */ = {
@@ -297,6 +309,7 @@
 			buildPhases = (
 				3D126E6D0964BF8D319384BC /* Sources */,
 				DD475AF090311C77FAF727EA /* Resources */,
+				DEBCA3DC4F29E1709B9E6BB8 /* Frameworks */,
 				314A6CA35922466E9F0C1B81 /* Bundle local agent runtime */,
 			);
 			buildRules = (
@@ -305,6 +318,7 @@
 			);
 			name = Locus;
 			packageProductDependencies = (
+				172252A812CB84F95F5EB77F /* SwiftTerm */,
 			);
 			productName = Locus;
 			productReference = AEFB9A10F8784355D5344D95 /* Locus.app */;
@@ -369,6 +383,9 @@
 			);
 			mainGroup = 796058090ADB9656F1AC489F;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				F1CD2D12670F3438EF1099CE /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 1034C21D9930A5F35D463962 /* Products */;
 			projectDirPath = "";
@@ -570,6 +587,7 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 16;
@@ -919,6 +937,25 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		F1CD2D12670F3438EF1099CE /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm.git";
+			requirement = {
+				kind = exactVersion;
+				version = 1.18.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		172252A812CB84F95F5EB77F /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F1CD2D12670F3438EF1099CE /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = EB04EC8B4299D1D64DC4EDE5 /* Project object */;
 }

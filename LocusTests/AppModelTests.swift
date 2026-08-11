@@ -2328,24 +2328,6 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(BackendService.encodeQueryValue("plain.swift"), "plain.swift")
     }
 
-    @MainActor
-    func testTerminalRecoversWhenTheConnectionDrops() {
-        let session = TerminalSession()
-        session.handle(["type": "terminal_started", "run_id": "run-1"])
-        XCTAssertTrue(session.isRunning)
-
-        session.connectionLost()
-
-        XCTAssertFalse(session.isRunning, "no exit event is coming after a drop")
-        XCTAssertEqual(session.lines.last?.kind, .status)
-
-        session.connectionLost()
-        XCTAssertEqual(
-            session.lines.filter { $0.kind == .status }.count, 1,
-            "a second drop with nothing running must not repeat the notice"
-        )
-    }
-
     // MARK: - Git quick actions
 
     func testGitClientRoundTripsARealRepository() async throws {
@@ -3026,6 +3008,7 @@ final class AppModelTests: XCTestCase {
             "disabled_workspaces":[],"state":"connected","error":null,"tool_count":2,"has_credentials":true,"approval_mode":"annotations",
             "auth":"oauth","oauth":{"authorization_endpoint":"https://example.com/authorize","token_endpoint":"https://example.com/token","client_id":"client","scopes":["tools"],"redirect_uri":"locus://mcp/oauth"}
           }],
+          "mcp_presets": [],
           "errors":[],"pending_updates":0
         }
         """#.data(using: .utf8)!
@@ -3036,6 +3019,41 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(response.skills.first?.id, "demo:review")
         XCTAssertEqual(response.mcpServers.first?.oauth?.clientID, "client")
         XCTAssertFalse(response.capabilities.stdio)
+    }
+
+    func testIssuerBoundMCPCredentialsAreNotReplayedToAnEditedServer() throws {
+        let server = try JSONDecoder().decode(
+            ExtensionMCPServer.self,
+            from: Data(#"""
+            {"id":"remote","name":"Remote","transport":"streamable_http",
+             "url":"https://mcp.example/mcp","auth":"oauth",
+             "oauth":{"issuer":"https://auth.example",
+                      "authorization_endpoint":"https://auth.example/authorize",
+                      "token_endpoint":"https://auth.example/token",
+                      "client_id":"client","scopes":[],
+                      "redirect_uri":"locus://mcp/oauth"}}
+            """#.utf8)
+        )
+
+        XCTAssertTrue(AppModel.mcpCredentials([
+            "access_token": "token",
+            "resource": "https://mcp.example/mcp",
+            "issuer": "https://auth.example",
+        ], areBoundTo: server))
+        XCTAssertFalse(AppModel.mcpCredentials([
+            "access_token": "token",
+            "resource": "https://other.example/mcp",
+            "issuer": "https://auth.example",
+        ], areBoundTo: server))
+        XCTAssertFalse(AppModel.mcpCredentials([
+            "access_token": "token",
+            "resource": "https://mcp.example/mcp",
+            "issuer": "https://other-auth.example",
+        ], areBoundTo: server))
+        XCTAssertTrue(
+            AppModel.mcpCredentials(["access_token": "legacy-token"], areBoundTo: server),
+            "version-1 credentials without binding metadata must remain migratable"
+        )
     }
 
     @MainActor

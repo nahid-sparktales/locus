@@ -1417,224 +1417,6 @@ def test_provider_endpoint_carries_the_account_identity(client):
     assert client.post("/api/provider", json={"provider": "ollama"}).json()["account_label"] == ""
 
 
-# ------------------------------------------------------------------- terminal
-
-
-def _manager(tmp_path, perms=None, config=None):
-    from ollama_code.terminal import TerminalManager
-
-    events: list[dict] = []
-    manager = TerminalManager(
-        emit=events.append,
-        perms=perms or PermissionManager(mode="ask"),
-        config={"terminal_login_shell": False, **(config or {})},
-    )
-    return manager, events
-
-
-def _wait_for(events, event_type, timeout=15.0):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        for event in list(events):
-            if event.get("type") == event_type:
-                return event
-        time.sleep(0.05)
-    raise AssertionError(f"no {event_type} within {timeout}s: {[e.get('type') for e in events]}")
-
-
-def _output(events):
-    return "".join(e["text"] for e in events if e.get("type") == "terminal_output")
-
-
-def test_terminal_streams_output_and_exits(tmp_path):
-    manager, events = _manager(tmp_path)
-    manager.start("printf 'hello\\nworld\\n'", cwd=str(tmp_path))
-
-    exit_event = _wait_for(events, "terminal_exit")
-    assert exit_event["exit_code"] == 0
-    assert _output(events) == "hello\nworld\n"
-    seqs = [e["seq"] for e in events if e["type"] == "terminal_output"]
-    assert seqs == sorted(seqs)
-
-
-def test_terminal_output_arrives_before_the_process_exits(tmp_path):
-    """The whole point of the console: today's bash tool cannot do this."""
-    manager, events = _manager(tmp_path)
-    manager.start("printf 'first\\n'; sleep 3; printf 'second\\n'", cwd=str(tmp_path))
-
-    deadline = time.monotonic() + 2.0
-    saw_first = False
-    while time.monotonic() < deadline:
-        if "first" in _output(events):
-            saw_first = True
-            break
-        time.sleep(0.05)
-
-    assert saw_first, "output must stream while the command is still running"
-    assert not any(e["type"] == "terminal_exit" for e in events), "it should still be running"
-    manager.cancel(manager._run.run_id, force=True)
-    _wait_for(events, "terminal_exit")
-
-
-def test_terminal_stdin_answers_a_prompt(tmp_path):
-    manager, events = _manager(tmp_path)
-    run_id = manager.start("printf 'ok? '; read answer; printf 'got:%s\\n' \"$answer\"",
-                           cwd=str(tmp_path))
-
-    deadline = time.monotonic() + 5
-    while "ok?" not in _output(events) and time.monotonic() < deadline:
-        time.sleep(0.05)
-    manager.send_input(run_id, "yes")
-
-    exit_event = _wait_for(events, "terminal_exit")
-    assert exit_event["exit_code"] == 0
-    assert "got:yes" in _output(events)
-
-
-def test_terminal_cancel_kills_the_process_tree(tmp_path):
-    marker = tmp_path / "alive.txt"
-    manager, events = _manager(tmp_path)
-    run_id = manager.start(f"(sleep 3; echo alive > {marker}) & sleep 30", cwd=str(tmp_path))
-
-    time.sleep(0.4)
-    manager.cancel(run_id, force=True)
-    exit_event = _wait_for(events, "terminal_exit")
-    assert exit_event["reason"] == "cancelled"
-
-    time.sleep(4)
-    assert not marker.exists(), "a child outlived the cancel"
-
-
-def test_terminal_deny_list_blocks_a_typed_command(tmp_path):
-    from ollama_code.terminal import TerminalRejected
-
-    perms = PermissionManager(deny_commands=["rm -rf /"])
-    manager, events = _manager(tmp_path, perms=perms)
-
-    with pytest.raises(TerminalRejected) as excinfo:
-        manager.start("echo hi && rm -rf /", cwd=str(tmp_path))
-
-    assert excinfo.value.code == "blocked"
-    assert [e["type"] for e in events] == ["terminal_error"]
-    assert not any(e["type"] == "terminal_started" for e in events), "nothing may spawn"
-
-
-def test_terminal_never_touches_permission_state(tmp_path):
-    """Typing a command is its own approval; it must not grant the model
-    anything."""
-    perms = PermissionManager(mode="ask")
-    manager, events = _manager(tmp_path, perms=perms)
-    manager.start("echo hi", cwd=str(tmp_path))
-    _wait_for(events, "terminal_exit")
-
-    assert perms.allowed == set()
-    assert perms.always_allow == set()
-    assert not any(e["type"] == "permission_request" for e in events)
-
-
-def test_terminal_refuses_a_second_concurrent_run(tmp_path):
-    from ollama_code.terminal import TerminalRejected
-
-    manager, events = _manager(tmp_path)
-    run_id = manager.start("sleep 5", cwd=str(tmp_path))
-
-    with pytest.raises(TerminalRejected) as excinfo:
-        manager.start("echo second", cwd=str(tmp_path))
-    assert excinfo.value.code == "busy"
-
-    manager.cancel(run_id, force=True)
-    _wait_for(events, "terminal_exit")
-
-
-def test_terminal_timeout_cancels_the_run(tmp_path):
-    manager, events = _manager(tmp_path)
-    manager.start("sleep 30", cwd=str(tmp_path), timeout=1)
-
-    exit_event = _wait_for(events, "terminal_exit", timeout=20)
-    assert exit_event["reason"] == "timeout"
-
-
-def test_terminal_records_the_run_without_stdin(tmp_path):
-    from ollama_code.terminal import TerminalManager
-
-    events: list[dict] = []
-    records: list[dict] = []
-    manager = TerminalManager(
-        emit=events.append,
-        perms=PermissionManager(),
-        record=records.append,
-        config={"terminal_login_shell": False},
-    )
-    run_id = manager.start("read secret; echo done", cwd=str(tmp_path))
-    time.sleep(0.3)
-    manager.send_input(run_id, "hunter2")
-    _wait_for(events, "terminal_exit")
-
-    assert len(records) == 1
-    record = records[0]
-    assert record["type"] == "terminal"
-    assert record["command"] == "read secret; echo done"
-    assert record["inputs"] == 1
-    assert "hunter2" not in json.dumps(record), "stdin must never reach disk"
-
-
-def test_terminal_run_does_not_block_the_chat(client, tmp_path):
-    svc = client.app.state.service
-    with client.websocket_connect("/ws/chat") as ws:
-        ws.receive_json()  # session_info
-        ws.receive_json()  # terminal_state
-        ws.send_json({"type": "terminal_run", "command": "sleep 5"})
-        time.sleep(0.5)
-
-        assert svc.busy is False, "the console must not occupy the chat turn slot"
-
-        svc.terminal.cancel_all(force=True)
-
-
-def test_terminal_record_stays_with_the_session_where_it_started(client):
-    svc = client.app.state.service
-    original = svc.core.session
-    with client.websocket_connect("/ws/chat") as ws:
-        ws.receive_json()
-        ws.receive_json()
-        ws.send_json({
-            "type": "terminal_run",
-            "run_id": "session-bound",
-            "command": "sleep 0.2; echo finished",
-        })
-        while ws.receive_json().get("type") != "terminal_started":
-            pass
-
-        ws.send_json({"type": "new_session", "reason": "new_session"})
-        assert any(event["type"] == "session_started" for event in drain(ws))
-        replacement = svc.core.session
-        assert replacement.session_id != original.session_id
-
-        time.sleep(0.4)
-        drain(ws)
-
-    assert '"run_id": "session-bound"' in original.path.read_text()
-    assert '"run_id": "session-bound"' not in replacement.path.read_text()
-
-
-def test_terminal_ws_roundtrip_and_unknown_run(client):
-    with client.websocket_connect("/ws/chat") as ws:
-        ws.receive_json()
-        ws.receive_json()  # terminal_state
-        ws.send_json({"type": "terminal_run", "command": "echo streamed"})
-
-        seen: list[str] = []
-        for _ in range(40):
-            event = ws.receive_json()
-            seen.append(event["type"])
-            if event["type"] == "terminal_exit":
-                break
-        assert "terminal_started" in seen and "terminal_exit" in seen
-
-        ws.send_json({"type": "terminal_input", "run_id": "nope", "text": "x"})
-        assert any(e.get("code") == "unknown_run" for e in drain(ws))
-
-
 # ------------------------------------------------------------------------ git
 
 
@@ -1873,7 +1655,6 @@ def test_git_endpoints_work_while_the_agent_is_busy(client):
 def test_mutating_tool_result_announces_a_workspace_change(client):
     with client.websocket_connect("/ws/chat") as ws:
         ws.receive_json()  # session_info
-        ws.receive_json()  # terminal_state
         svc = client.app.state.service
         svc.emit({"type": "tool_result", "tool": "write_file", "ok": True, "denied": False})
         events = drain(ws)
@@ -2175,6 +1956,21 @@ def test_setting_the_context_window_takes_effect_without_a_restart(client):
     assert body["session_info"]["context_limit"] == 16_384
     assert client.app.state.service.core.chat_options() == {"num_ctx": 16_384}
     assert client.get("/api/config").json()["context_window"] == 16_384
+
+
+def test_terminal_preferences_remain_migratable_after_native_terminal_move(client):
+    response = client.post(
+        "/api/config",
+        json={"terminal_shell": "/bin/zsh", "terminal_login_shell": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["terminal_shell"] == "/bin/zsh"
+    assert response.json()["terminal_login_shell"] is False
+    assert client.app.state.service.core.config["terminal_shell"] == "/bin/zsh"
+    assert client.post(
+        "/api/config", json={"terminal_login_shell": "false"}
+    ).status_code == 422
 
 
 def test_project_context_can_be_reloaded_without_restarting(client, tmp_path):
@@ -2493,9 +2289,7 @@ def test_replaced_websocket_does_not_interrupt_the_active_turn(client, monkeypat
 
     with client.websocket_connect("/ws/chat") as first:
         first.receive_json()
-        first.receive_json()
         with client.websocket_connect("/ws/chat") as second:
-            second.receive_json()
             second.receive_json()
             time.sleep(0.05)
             assert interrupts == []
@@ -2505,12 +2299,10 @@ def test_reconnect_replays_events_queued_during_the_socket_gap(client):
     svc = client.app.state.service
     with client.websocket_connect("/ws/chat") as first:
         first.receive_json()
-        first.receive_json()
 
     svc.queue_event({"type": "note", "text": "arrived during reconnect"})
 
     with client.websocket_connect("/ws/chat") as second:
-        second.receive_json()
         second.receive_json()
         assert second.receive_json() == {
             "type": "note",
@@ -2551,7 +2343,6 @@ def test_websocket_state_commands_are_nonterminal_rejections_while_busy(client, 
     target.mkdir()
     with client.websocket_connect("/ws/chat") as ws:
         ws.receive_json()
-        assert ws.receive_json()["type"] == "terminal_state"
         svc.turn_future = Future()
         for message in [
             {"type": "set_cwd", "path": str(target)},
@@ -2574,7 +2365,6 @@ def test_websocket_rejects_malformed_and_oversized_messages(client, monkeypatch)
 
     monkeypatch.setattr(server_mod, "MAX_USER_MESSAGE_CHARS", 5)
     with client.websocket_connect("/ws/chat") as ws:
-        ws.receive_json()
         ws.receive_json()
 
         ws.send_json(["not", "an", "object"])
@@ -3133,7 +2923,7 @@ def test_dev_server_honours_the_shell_deny_list(tmp_path):
 
     perms = PermissionManager(mode="ask", deny_commands=["rm -rf /"])
     manager = DevServerManager(perms=perms)
-    # Chained segments are scanned the way the console scans them: a safe
+    # Chained segments are scanned like every agent-initiated shell command: a safe
     # prefix cannot smuggle a denied command in behind it.
     with pytest.raises(DevServerError, match="deny list"):
         manager.start(command="npm run dev && rm -rf /", cwd=str(tmp_path))

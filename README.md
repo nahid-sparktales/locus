@@ -1,7 +1,7 @@
 # Locus for macOS
 
 Locus is a native workspace for building with local and hosted models. It
-combines conversation, planning, file context, change review, a console, and a
+combines conversation, planning, file context, change review, a terminal, and a
 built-in browser the agent can drive in one calm SwiftUI interface. Local
 Ollama is the default; a ChatGPT plan or an API-backed provider is used only
 after you explicitly add and select that account.
@@ -217,7 +217,7 @@ for setup, examples, permission boundaries, recovery, and troubleshooting.
 ## The inspector
 
 The right-hand panel keeps execution visible beside the conversation: **Plan,
-Changes, Files, Console, Browser, Checkpoints, Runs, and AGENTS.md**, selected
+Changes, Files, Terminal, Browser, Checkpoints, Runs, and AGENTS.md**, selected
 with `⌘1`–`⌘8`. It starts hidden — the conversation gets the room until you
 need it, and `⌘1`–`⌘8` or `⌘⌥I` bring it back; a restore control also sits in
 the workspace header. It
@@ -236,7 +236,7 @@ actions.
 
 **Changes reads git**, not the chat log. It shows the real working tree with
 per-file diffs and staged, modified, and untracked counts — including edits made
-outside Locus, by another tool, or by a console command. The tab badge counts
+outside Locus, by another tool, or by a terminal command. The tab badge counts
 changed files (capped at `99+`) and stays coral until you have looked. Rendered
 diffs are capped at 2,000 lines. Each row stages, unstages, or discards its
 file (discarding always confirms; an untracked file moves to the Trash rather
@@ -263,15 +263,17 @@ like `node_modules`, `.git`, and `.build`.
 
 ![Files tab](Docs/locus-files.jpg)
 
-**Console** runs shell commands in the workspace with live streaming output, a
-cancel button, and a line of input for `y/n` prompts. Commands run outside the
-conversation's turn, so a long build keeps streaming while the model works, and
-a run survives a brief disconnect. It is a command runner, not a full terminal:
-there is no PTY, each command starts fresh in the workspace (so `cd` does not
-carry over), and interactive programs like `vim` and `top` will not work. The
-deny list below applies to what you type, too.
-
-![Console tab](Docs/locus-console.jpg)
+**Terminal** is one persistent, app-owned login shell for the active workspace,
+rendered with SwiftTerm. It has a real PTY, ANSI/true color, Unicode, mouse
+reporting, resize support, password prompts, bracketed paste, and full-screen
+programs such as `vim`, `less`, and `top`. It remains alive when the panel is
+hidden, chat sessions change, or the local agent reconnects; changing
+workspaces restarts it after warning about a foreground job. Use ⌃` to focus it
+or ⌘4 through the inspector. Terminal input is a direct user action and does
+not weaken the separate permission rules applied to model-initiated commands.
+Neither terminal input nor output is written into task history. In the App
+Store build the shell inherits the Locus sandbox and can access only locations
+the user approved.
 
 **Browser** shows the same live pages the agent drives, with compact viewport,
 capture, drawer, external-browser, and expand controls at the top. Directly
@@ -286,6 +288,24 @@ box, arrow, text) whose result attaches straight to the composer for a
 vision model. While a solo run is active and the composer is empty, the send
 button becomes a **stop** button; ⌘↵ or Esc stops the run, and typing
 switches it back to steering.
+
+## Built-in skills and recommended MCP servers
+
+Locus ships five complete, pinned coding skills: Frontend Design, Vercel React
+Best Practices, Systematic Debugging, Test-Driven Development, and Verification
+Before Completion. They are ready on first launch, can be disabled everywhere
+or for one workspace, and cannot be deleted. An imported, plugin, or workspace
+skill with the same name takes precedence over the bundled copy.
+
+**Plugins & MCP** also shows five offline recommendations: Context7, GitHub,
+Sentry, project-scoped read-only Supabase, and OpenAI Docs. They are inert
+templates—startup does not contact those hosts. **Review & connect** shows the
+host, scopes, policy, resource/prompt posture, and data warning; it then creates
+an editable disabled server, authenticates if needed, runs a tool probe, and
+asks again before enabling it. OAuth uses standards discovery, S256 PKCE,
+issuer-bound registrations and rotating refresh tokens. OAuth material and
+manual credentials live in macOS Keychain; only the current access token or
+header is handed to the local agent in memory.
 
 ## Permissions
 
@@ -564,7 +584,7 @@ feature must not have.
 Sign-in, when the proxy requires it, is basic auth. The password is stored in
 `~/.locus/auth.json` (same trade-offs as API keys, above) and used by the app
 and its agent. It is deliberately **not** given to anything the model can run:
-shell commands, the console, git, and stdio MCP servers inherit the proxy
+shell commands, git, and stdio MCP servers inherit the proxy
 *address* with the credential stripped, so behind an authenticated proxy those
 child processes get `407` answers rather than the password. The same applies
 to `ollama serve` when Locus starts it — model pulls through an authenticated
@@ -757,8 +777,8 @@ xcodebuild \
 cd agent && .venv/bin/python -m pytest -q
 ```
 
-The repository currently contains 385 Swift unit tests, 43 UI tests, and 458
-collected backend test cases.
+The repository contains broad Swift unit/UI coverage and a comprehensive
+backend test suite.
 
 The unit suite covers work modes, lightweight context migration, session
 acknowledgements and retry branches, recoverable session clearing, Hugging Face
@@ -769,7 +789,7 @@ local execution, thinking-block and markdown-fragment parsing, diff detection,
 `@`-mention matching, reconnect backoff, a 2,000-token streaming regression,
 inspector width clamping and settings round-trips, agent/team validation,
 orchestration-budget compatibility, managed-run state, MCP callback validation,
-telemetry defaults, console output assembly and its bounded buffer, and the rule
+native PTY behavior and persistence, telemetry defaults, and the rule
 that a run badges a tab instead of switching to it. It also covers legacy
 OpenAI-account decoding, managed ChatGPT provider payloads, the one-account
 rule, and usage/status formatting. The UI suite checks Clear
@@ -777,14 +797,14 @@ Chat, Clear Saved Sessions, the Local Model Library, message actions and rewind,
 session organization, archived filtering,
 recent workspaces, context controls, prompt history, the slash command popup,
 the shortcuts sheet, command-palette keyboard navigation, and the inspector —
-collapse and restore, `⌘1`–`⌘8`, the Changes, Files, Checkpoints, Runs, and
-AGENTS.md tabs, and the console — through accessibility identifiers. It also
+collapse and restore, `⌘1`–`⌘8`, the Changes, Files, Terminal, Checkpoints, Runs,
+and AGENTS.md tabs through accessibility identifiers. It also
 clicks the left and center of every account row, types and pastes exact values,
 and verifies both Settings-to-Hugging-Face presentation paths. The backend suite
 covers the tools,
 permission modes and the deny list, streaming, session metadata and trash
-recovery, most HTTP endpoints, the git status and diff endpoints, the console
-protocol, the WebSocket handshake, durable run storage, capabilities, recovery,
+recovery, most HTTP endpoints, the git status and diff endpoints, extension
+state migration, the WebSocket handshake, durable run storage, capabilities, recovery,
 evaluations, routing telemetry, local knowledge, modern MCP behavior, and the
 agent loop end to end against a scripted model. A deterministic fake App Server
 additionally exercises JSONL correlation, managed authentication, models and
@@ -874,8 +894,8 @@ Ollama streaming, tools, permissions, and session persistence. The native app
 communicates with that service through REST and WebSocket endpoints on
 `127.0.0.1`: REST for session management, metadata, and git status and diffs;
 one WebSocket for the turn — streamed tokens, proposed tool calls, permission
-requests, and plan updates — and for the console, which shares that socket but
-runs outside the turn, so a command keeps streaming while the model works.
+requests, and plan updates. The terminal is a retained native Swift controller
+and never crosses that backend connection.
 
 The managed ChatGPT path adds one lazily started, version-checked Codex App
 Server child process over JSONL/stdio. OAuth state remains in its isolated
@@ -887,9 +907,8 @@ broker instead of starting helpers or receiving OAuth credentials themselves.
 
 Conversations are append-only JSONL under `~/.ollama-code/sessions`. Titles,
 pins, and archive flags live in a sidecar manifest, so renaming a conversation
-never rewrites its transcript. Console runs are recorded as their own record
-type that existing readers skip; what you type into a running command is never
-written to disk. Clearing saved sessions **moves** sessions to
+never rewrites its transcript. Terminal input and output are not transcript
+records. Clearing saved sessions **moves** sessions to
 `~/.ollama-code/session-trash/<timestamp>/` with a manifest of their metadata,
 and they can be moved back.
 

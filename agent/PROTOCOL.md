@@ -510,7 +510,7 @@ The extension surface shares one error and concurrency contract:
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/extensions` | Full snapshot: plugins, skills, MCP servers, marketplaces, and any load `errors`. A non-empty `errors` means the lists may be partial. |
+| GET | `/api/extensions` | Full snapshot: plugins, built-in/imported skills with provenance, MCP servers, inert recommended presets, marketplaces, and any load `errors`. A non-empty `errors` means the lists may be partial. |
 | GET | `/api/extensions/catalog` | Catalog entries; optional `query` and `marketplace_id` filters. |
 | GET | `/api/extensions/catalog/trust` | Trust review of one catalog plugin before installing it. Requires both `marketplace_id` and `plugin` query parameters. |
 | POST | `/api/extensions/marketplaces` | Add a marketplace source. |
@@ -525,12 +525,13 @@ The extension surface shares one error and concurrency contract:
 | POST | `/api/extensions/skills/enable` | Enable or disable a skill. |
 | DELETE | `/api/extensions/skills/{skill_id:path}` | Remove a skill. |
 | POST | `/api/extensions/mcp` | Create or update an MCP server. `transport` is `"streamable_http"` or `"stdio"` — note the underscore. |
+| POST | `/api/extensions/mcp/presets/materialize` | Idempotently copy one reviewed preset into a normal user-editable server that is disabled globally. Supabase also requires `project_ref`. |
 | POST | `/api/extensions/mcp/enable` | Enable or disable a server. |
 | POST | `/api/extensions/mcp/test` | Probe a server's connectivity. |
 | POST | `/api/extensions/mcp/reconnect` | Drop and re-establish a server's session. |
 | POST | `/api/extensions/mcp/policy` | Set a server's default tool-approval mode. |
-| POST | `/api/extensions/mcp/credentials` | Hand transient credentials to the agent. Secrets are held in memory only — the app stores them in its own credential file (`~/.locus/auth.json`, mode 0600, or the equivalent inside the app container in the sandboxed build) and replays them here. |
-| DELETE | `/api/extensions/mcp/{server_id:path}` | Remove a server. Clients must also delete the matching credential-file entry. |
+| POST | `/api/extensions/mcp/credentials` | Hand only the current access token/header/environment credential to the agent. OAuth registrations, client secrets, and refresh tokens remain in macOS Keychain and never enter this endpoint. |
+| DELETE | `/api/extensions/mcp/{server_id:path}` | Remove a server. Clients must also delete the matching Keychain entry. |
 
 `stdio` transport is refused when the agent is sandboxed, so App Store builds
 can only use remote servers.
@@ -553,8 +554,7 @@ Endpoint: `/ws/chat`.
   ("Agent is busy — press Stop first."). This includes `user_message`,
   `new_session`, `retry_last`, `compact`, `resume`, `set_model`, `set_cwd`,
   `set_permission_mode`, and `clear`. Only `interrupt`, permission decisions,
-  `steer`, native computer-action results, heartbeat traffic, and independent
-  console operations remain accepted.
+  `steer`, native computer-action results, and heartbeat traffic remain accepted.
 
 ---
 
@@ -578,10 +578,6 @@ Endpoint: `/ws/chat`.
 | `retry_last` | — | Creates a new branch through the latest user message, preserving the original session, then regenerates the response. Emits `session_started {reason: "retry"}` before streaming. |
 | `compact` | — | Summarizes history to free context (runs as a background slash command). Ends with `slash_result {command: "compact"}`. Rejected when busy. |
 | `resume` | `session_id: string` | Resumes a saved session. Ends with `slash_result {command: "resume", data: {messages: [...]}}`. Rejected when busy. |
-| `terminal_run` | `command`, optional `cwd`, `run_id`, `timeout` | Starts one independent console command. It does not occupy the chat turn slot. |
-| `terminal_input` | `run_id`, `text`, optional `newline` | Sends stdin to the active console command. |
-| `terminal_close_stdin` | `run_id` | Closes that command's stdin. |
-| `terminal_cancel` | `run_id`, optional `force` | Sends a graceful cancel, or a force kill when requested. |
 | `ping` | — | Emits `pong`; used as an ordering sentinel. |
 
 A team budget may include `call_budget_mode: "automatic" | "fixed"`.
@@ -871,17 +867,10 @@ Ends a slash command (`/help`, `/model`, `/clear`, `/compact`, `/init`,
 `todos` for todos, `sessions` for sessions, `summary` for compact, full
 session-info fields for status). `error: true` marks failures.
 
-### Console and heartbeat events
+### Heartbeat event
 
-- `terminal_state {runs: [...]}` is sent on every WebSocket connection.
-- `terminal_started` carries `run_id`, command, cwd, pid, shell, timeout,
-  `started_at`, and `resumed`.
-- `terminal_output` carries `run_id`, monotonically increasing `seq`, `text`,
-  and optionally `gap` on reconnect replay.
-- `terminal_exit` carries `run_id`, nullable `exit_code`, signal, reason,
-  duration, truncation, and byte counts.
-- `terminal_error` carries `run_id`, stable `code`, and `message`.
-- `pong` has no additional fields.
+- `pong` has no additional fields. The native terminal owns its PTY and has no
+  WebSocket messages or persisted task-history records.
 
 ---
 

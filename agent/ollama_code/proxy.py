@@ -17,7 +17,7 @@ readable by anything the model runs, popped or not. A secret that never enters
 that block leaves no such trace.
 
 The reason this is a module and not three lines in server.py: every shell tool,
-console command, git call and MCP plugin runs code this process does not own,
+git call and MCP plugin runs code this process does not own,
 and each of those children inherits an environment. The credential must be
 usable by this process and invisible to all of them, which takes both halves
 below — ``activate_from_env`` embeds it here, ``sanitized_child_environment``

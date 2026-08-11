@@ -1,0 +1,9 @@
+{
+  "catalog_version": 1,
+  "provider": "Anthropic",
+  "repository": "https://github.com/anthropics/skills",
+  "commit": "f17010c9bb483898c1d9c9f42dde2b3a98889434",
+  "upstream_path": "skills/frontend-design",
+  "license": "Apache-2.0",
+  "license_file": "LICENSE.txt"
+}

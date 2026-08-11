@@ -92,6 +92,35 @@ agent turns selected by the user.
 The app bundle also contains `CodexAppServerProvenance.txt`, recording the
 pinned source archive, Cargo lockfile, and helper binary SHA-256 digests.
 
+## SwiftTerm
+
+The native terminal uses SwiftTerm 1.18.0 at commit
+`7691f85b222a67a66b58499e1b2647443cf0dda7`.
+
+- Source: https://github.com/migueldeicaza/SwiftTerm/releases/tag/v1.18.0
+- License: MIT
+- License text: `ThirdPartyLicenses/SwiftTerm-1.18.0/LICENSE`
+
+## Bundled coding skills
+
+Locus includes complete, offline copies of five skill directories. Their
+`SOURCE.json` records pin the source repository, path, and commit; startup
+does not download or update them.
+
+| Skill | Upstream commit | License |
+| --- | --- | --- |
+| Anthropic Frontend Design | `f17010c9bb483898c1d9c9f42dde2b3a98889434` | Apache-2.0 |
+| Vercel React Best Practices | `7c180d9044c9ae2b442b567aad4e42a28dd5ed62` | MIT |
+| Superpowers Systematic Debugging | `44c9b2d6e889982ac18c27d05a19fefe335194e1` | MIT |
+| Superpowers Test-Driven Development | `44c9b2d6e889982ac18c27d05a19fefe335194e1` | MIT |
+| Superpowers Verification Before Completion | `44c9b2d6e889982ac18c27d05a19fefe335194e1` | MIT |
+
+License texts are retained at
+`ThirdPartyLicenses/builtin-skills-anthropic/`,
+`ThirdPartyLicenses/builtin-skills-vercel/`, and
+`ThirdPartyLicenses/builtin-skills-superpowers/`, and alongside each skill
+inside the bundled agent runtime.
+
 Ollama, Hugging Face services, hosted models, and model weights are not
 distributed with Locus. Locus only connects to services configured by the
 user.

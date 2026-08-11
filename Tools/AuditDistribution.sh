@@ -5,6 +5,7 @@ set -euo pipefail
 setopt null_glob
 
 app="${1:?usage: AuditDistribution.sh <Locus.app>}"
+repo_root="${0:A:h:h}"
 resources="${app}/Contents/Resources"
 runtime="${resources}/AgentRuntime"
 codex_helper="${app}/Contents/Helpers/codex"
@@ -25,6 +26,12 @@ licenses="${resources}/ThirdPartyLicenses/python-build-standalone-20260728"
 }
 [[ -f "${resources}/BuildProvenance.txt" ]] || {
     echo "error: BuildProvenance.txt is missing from the app" >&2
+    exit 1
+}
+resolved="${repo_root}/Locus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+[[ -f "${resolved}" ]] \
+    && /usr/bin/grep -Fq -- "7691f85b222a67a66b58499e1b2647443cf0dda7" "${resolved}" || {
+    echo "error: SwiftTerm is not pinned to the audited 1.18.0 revision" >&2
     exit 1
 }
 [[ -x "${codex_helper}" ]] || {
@@ -96,13 +103,64 @@ actual_code_mode_host_archs="$(/usr/bin/lipo -archs "${code_mode_host}" | /usr/b
 }
 
 for notice in \
-    "| websockets | 17.0 |"
+    "| websockets | 17.0 |" \
+    "SwiftTerm 1.18.0" \
+    "Anthropic Frontend Design" \
+    "Vercel React Best Practices" \
+    "Superpowers Systematic Debugging"
 do
     /usr/bin/grep -Fq -- "${notice}" "${resources}/ThirdPartyNotices.md" || {
         echo "error: runtime notice is missing the pinned component: ${notice}" >&2
         exit 1
     }
 done
+
+for required in \
+    "SwiftTerm-1.18.0/LICENSE" \
+    "builtin-skills-anthropic/LICENSE" \
+    "builtin-skills-vercel/LICENSE" \
+    "builtin-skills-superpowers/LICENSE"
+do
+    [[ -f "${resources}/ThirdPartyLicenses/${required}" ]] || {
+        echo "error: missing terminal/skill license ${required}" >&2
+        exit 1
+    }
+done
+
+skills_root="${runtime}/source/ollama_code/builtin_skills"
+for skill in \
+    frontend-design \
+    vercel-react-best-practices \
+    systematic-debugging \
+    test-driven-development \
+    verification-before-completion
+do
+    [[ -f "${skills_root}/${skill}/SKILL.md" \
+        && -f "${skills_root}/${skill}/SOURCE.json" ]] || {
+        echo "error: bundled built-in skill is incomplete: ${skill}" >&2
+        exit 1
+    }
+done
+for pin in \
+    f17010c9bb483898c1d9c9f42dde2b3a98889434 \
+    7c180d9044c9ae2b442b567aad4e42a28dd5ed62 \
+    44c9b2d6e889982ac18c27d05a19fefe335194e1
+do
+    /usr/bin/grep -Rq -- "${pin}" "${skills_root}" || {
+        echo "error: built-in skill provenance is missing commit ${pin}" >&2
+        exit 1
+    }
+done
+
+mcp_catalog="${runtime}/source/ollama_code/catalogs/mcp-presets-v1.json"
+[[ -f "${mcp_catalog}" ]] || {
+    echo "error: missing bundled MCP preset catalog" >&2
+    exit 1
+}
+/usr/bin/grep -Fq -- '"version": 1' "${mcp_catalog}" || {
+    echo "error: bundled MCP preset catalog is not version 1" >&2
+    exit 1
+}
 
 # Read each pinned version from the wheel's own metadata rather than by running
 # the bundled interpreter. In the App Store configuration that interpreter is
