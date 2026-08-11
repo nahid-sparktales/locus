@@ -15,10 +15,11 @@ from typing import Any
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from . import paths, proxy
+from . import paths
 
 VALID_SCOPES = {"personal", "workspace", "agent"}
 VALID_STATUSES = {"candidate", "approved"}
+VALID_KINDS = {"preference", "fact", "decision", "procedure", "relationship"}
 CANDIDATE_TTL_SECONDS = 30 * 24 * 60 * 60
 MAX_MEMORY_CONTENT = 32_000
 
@@ -32,7 +33,7 @@ def memory_database() -> Path:
 
 
 def _fallback_key(path: Path | None = None) -> bytes:
-    """Standalone CLI fallback; the macOS app supplies a Keychain key."""
+    """Load or create the user-only local key used for the encrypted vault."""
     key_path = path or (paths.APP_DIR / "memory" / "master.key")
     key_path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -42,6 +43,10 @@ def _fallback_key(path: Path | None = None) -> bytes:
     try:
         value = key_path.read_bytes()
         if len(value) == 32:
+            try:
+                key_path.chmod(0o600)
+            except OSError:
+                pass
             return value
     except OSError:
         pass
@@ -67,7 +72,7 @@ def _fallback_key(path: Path | None = None) -> bytes:
 
 
 def _master_key(key: bytes | None = None, fallback_path: Path | None = None) -> bytes:
-    value = key or proxy.memory_master_key() or _fallback_key(fallback_path)
+    value = key or _fallback_key(fallback_path)
     if len(value) != 32:
         raise MemoryError("memory encryption requires a 256-bit key")
     return value
@@ -136,6 +141,18 @@ class MemoryVault:
                     ON memories(status, scope, target_hash, pinned, updated_at);
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(memories)").fetchall()
+            }
+            migrations = {
+                "last_used_at": "ALTER TABLE memories ADD COLUMN last_used_at REAL",
+                "use_count": "ALTER TABLE memories ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0",
+                "superseded_by": "ALTER TABLE memories ADD COLUMN superseded_by TEXT",
+            }
+            for name, statement in migrations.items():
+                if name not in columns:
+                    connection.execute(statement)
         try:
             self.path.chmod(0o600)
         except OSError:
@@ -165,7 +182,7 @@ class MemoryVault:
             nonce, plaintext, self._aad(identifier, status, scope, target_hash, revision)
         )
 
-    def _open(self, row: sqlite3.Row) -> dict[str, Any]:
+    def _open_payload(self, row: sqlite3.Row) -> dict[str, Any]:
         try:
             plaintext = self._cipher.decrypt(
                 bytes(row["nonce"]),
@@ -178,6 +195,12 @@ class MemoryVault:
             payload = json.loads(plaintext)
         except Exception as exc:  # authentication failure must stay generic
             raise MemoryError("a memory record could not be decrypted") from exc
+        if not isinstance(payload, dict):
+            raise MemoryError("a memory record is malformed")
+        return payload
+
+    def _open(self, row: sqlite3.Row) -> dict[str, Any]:
+        payload = self._open_payload(row)
         return {
             "id": row["id"], "status": row["status"], "scope": row["scope"],
             "title": str(payload.get("title") or "Memory"),
@@ -187,7 +210,17 @@ class MemoryVault:
             "source_session_id": payload.get("source_session_id"),
             "source_run_id": payload.get("source_run_id"),
             "provenance": payload.get("provenance") or {},
+            "kind": str(payload.get("kind") or "fact"),
+            "confidence": float(payload.get("confidence", 1.0)),
+            "valid_from": payload.get("valid_from"),
+            "valid_until": payload.get("valid_until"),
+            "last_confirmed_at": payload.get("last_confirmed_at"),
+            "supersedes": list(payload.get("supersedes") or []),
+            "embedding_model": str(payload.get("embedding_model") or ""),
             "pinned": bool(row["pinned"]), "stale": bool(row["stale"]),
+            "last_used_at": row["last_used_at"],
+            "use_count": int(row["use_count"] or 0),
+            "superseded_by": row["superseded_by"],
             "revision": int(row["revision"]),
             "created_at": float(row["created_at"]),
             "updated_at": float(row["updated_at"]),
@@ -219,6 +252,32 @@ class MemoryVault:
             str(item).strip().lower()[:40] for item in value.get("tags") or []
             if str(item).strip()
         })[:24]
+        kind = str(value.get("kind") or "fact").strip().lower()
+        if kind not in VALID_KINDS:
+            raise MemoryError("memory type must be preference, fact, decision, procedure, or relationship")
+        try:
+            confidence = min(max(float(value.get("confidence", 1.0)), 0.0), 1.0)
+        except (TypeError, ValueError) as exc:
+            raise MemoryError("memory confidence must be between 0 and 1") from exc
+
+        def timestamp(name: str) -> float | None:
+            raw = value.get(name)
+            if raw in (None, ""):
+                return None
+            try:
+                return float(raw)
+            except (TypeError, ValueError) as exc:
+                raise MemoryError(f"memory {name} must be a Unix timestamp") from exc
+
+        valid_from = timestamp("valid_from")
+        valid_until = timestamp("valid_until")
+        if valid_from is not None and valid_until is not None and valid_until <= valid_from:
+            raise MemoryError("memory valid-until date must be after its valid-from date")
+        existing_embedding = value.get("embedding")
+        embedding = (
+            [float(item) for item in existing_embedding]
+            if isinstance(existing_embedding, list) else []
+        )
         payload = {
             "title": title,
             "content": content,
@@ -228,12 +287,31 @@ class MemoryVault:
             "source_run_id": str(value.get("source_run_id") or "") or None,
             "provenance": value.get("provenance")
             if isinstance(value.get("provenance"), dict) else {},
+            "kind": kind,
+            "confidence": confidence,
+            "valid_from": valid_from,
+            "valid_until": valid_until,
+            "last_confirmed_at": timestamp("last_confirmed_at"),
+            "supersedes": [str(item)[:128] for item in value.get("supersedes") or []][:32],
+            # Embeddings stay inside the authenticated ciphertext. An empty
+            # vector means semantic recall will lazily create one later.
+            "embedding": embedding,
+            "embedding_model": str(value.get("embedding_model") or "")[:256],
         }
         now = time.time()
         with self._lock, self._connect() as connection:
             previous = connection.execute(
                 "SELECT * FROM memories WHERE id=?", (identifier,)
             ).fetchone()
+            if previous is not None:
+                previous_payload = self._open_payload(previous)
+                for key in (
+                    "reason", "source_session_id", "source_run_id", "provenance",
+                    "last_confirmed_at", "supersedes", "embedding", "embedding_model",
+                    "feedback",
+                ):
+                    if key not in value:
+                        payload[key] = previous_payload.get(key)
             revision = int(previous["revision"]) + 1 if previous else 1
             created_at = float(previous["created_at"]) if previous else now
             expires_at = (
@@ -262,10 +340,15 @@ class MemoryVault:
             row = connection.execute(
                 "SELECT * FROM memories WHERE id=?", (identifier,)
             ).fetchone()
-        return self._open(row)
+        result = self._open(row)
+        result["conflicts"] = self.conflicts_for(
+            result, workspace=workspace, agent_id=agent_id
+        )
+        return result
 
     def approve(
-        self, memory_id: str, *, workspace: str = "", agent_id: str = ""
+        self, memory_id: str, *, workspace: str = "", agent_id: str = "",
+        resolution: str = "keep_both",
     ) -> dict[str, Any]:
         with self._connect() as connection:
             row = connection.execute(
@@ -275,10 +358,33 @@ class MemoryVault:
             raise MemoryError("memory candidate not found")
         value = self._open(row)
         value["status"] = "approved"
-        return self.save(
+        value["last_confirmed_at"] = time.time()
+        conflicts = self.conflicts_for(value, workspace=workspace, agent_id=agent_id)
+        if resolution not in {"keep_both", "replace"}:
+            raise MemoryError("memory conflict resolution must be keep_both or replace")
+        result = self.save(
             value, memory_id, workspace=workspace, agent_id=agent_id,
             default_status="approved",
         )
+        if resolution == "replace" and conflicts:
+            conflict_ids = [str(item["id"]) for item in conflicts]
+            result = self.save(
+                {**result, "supersedes": conflict_ids},
+                memory_id,
+                workspace=workspace,
+                agent_id=agent_id,
+                default_status="approved",
+            )
+            with self._connect() as connection:
+                connection.executemany(
+                    "UPDATE memories SET stale=1, superseded_by=? WHERE id=?",
+                    ((memory_id, identifier) for identifier in conflict_ids),
+                )
+            result["supersedes"] = conflict_ids
+            result["conflicts"] = []
+        else:
+            result["conflicts"] = conflicts
+        return result
 
     def expire_candidates(self) -> int:
         with self._connect() as connection:
@@ -320,7 +426,80 @@ class MemoryVault:
                 "ORDER BY pinned DESC, updated_at DESC",
                 parameters,
             ).fetchall()
-        return [self._open(row) for row in rows]
+        values = [self._open(row) for row in rows]
+        if status == "candidate":
+            for value in values:
+                value["conflicts"] = self.conflicts_for(
+                    value, workspace=workspace, agent_id=agent_id
+                )
+        return values
+
+    @staticmethod
+    def _topic_tokens(memory: dict[str, Any]) -> set[str]:
+        text = " ".join((memory.get("title") or "", " ".join(memory.get("tags") or [])))
+        return {
+            token for token in re.findall(r"[a-z0-9_.-]+", text.lower())
+            if len(token) > 2
+        }
+
+    def conflicts_for(
+        self,
+        memory: dict[str, Any],
+        *,
+        workspace: str = "",
+        agent_id: str = "",
+    ) -> list[dict[str, Any]]:
+        """Return current memories about the same topic with different content."""
+        topic = self._topic_tokens(memory)
+        if not topic:
+            return []
+        normalized = re.sub(r"\s+", " ", str(memory.get("content") or "").strip().lower())
+        conflicts: list[dict[str, Any]] = []
+        for candidate in self.list(
+            workspace=workspace,
+            agent_id=agent_id,
+            status="approved",
+            scopes=[str(memory.get("scope") or "workspace")],
+        ):
+            if candidate["id"] == memory.get("id") or candidate.get("stale"):
+                continue
+            candidate_topic = self._topic_tokens(candidate)
+            overlap = len(topic & candidate_topic) / max(min(len(topic), len(candidate_topic)), 1)
+            other = re.sub(r"\s+", " ", candidate["content"].strip().lower())
+            if overlap >= 0.5 and normalized != other:
+                conflicts.append({
+                    "id": candidate["id"],
+                    "title": candidate["title"],
+                    "content": candidate["content"],
+                    "kind": candidate.get("kind", "fact"),
+                    "confidence": candidate.get("confidence", 1.0),
+                })
+        return conflicts[:12]
+
+    def _store_embedding(
+        self, row: sqlite3.Row, payload: dict[str, Any], model: str, vector: list[float]
+    ) -> None:
+        """Reseal a vector without presenting indexing as a user edit."""
+        payload = dict(payload)
+        payload["embedding"] = [float(value) for value in vector]
+        payload["embedding_model"] = model[:256]
+        nonce, ciphertext = self._seal(
+            payload,
+            identifier=row["id"], status=row["status"], scope=row["scope"],
+            target_hash=row["target_hash"], revision=int(row["revision"]),
+        )
+        # Do not let a slow embedding response overwrite a memory edited while
+        # the vector was being calculated. Matching both the revision and the
+        # authenticated ciphertext makes this a compare-and-swap update.
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """UPDATE memories SET nonce=?, ciphertext=?
+                WHERE id=? AND revision=? AND nonce=? AND ciphertext=?""",
+                (
+                    nonce, ciphertext, row["id"], int(row["revision"]),
+                    row["nonce"], row["ciphertext"],
+                ),
+            )
 
     def search(
         self,
@@ -331,6 +510,8 @@ class MemoryVault:
         scopes: list[str] | tuple[str, ...] | None = None,
         limit: int = 8,
         approved_only: bool = True,
+        embedding_model: str = "",
+        ollama_host: str = "http://127.0.0.1:11434",
     ) -> list[dict[str, Any]]:
         value = query.strip().lower()[:2_000]
         if not value:
@@ -340,6 +521,45 @@ class MemoryVault:
             workspace=workspace, agent_id=agent_id,
             status="approved" if approved_only else "", scopes=scopes,
         )
+        semantic: dict[str, float] = {}
+        model = embedding_model.strip()[:256]
+        if model and candidates:
+            try:
+                from .knowledge import cosine_similarity, embed_texts
+
+                with self._connect() as connection:
+                    placeholders = ",".join("?" for _ in candidates)
+                    rows = {
+                        str(row["id"]): row for row in connection.execute(
+                            f"SELECT * FROM memories WHERE id IN ({placeholders})",
+                            [item["id"] for item in candidates],
+                        ).fetchall()
+                    }
+                missing = []
+                payloads: dict[str, dict[str, Any]] = {}
+                for item in candidates:
+                    payload = self._open_payload(rows[item["id"]])
+                    payloads[item["id"]] = payload
+                    if payload.get("embedding_model") != model or not payload.get("embedding"):
+                        missing.append(item)
+                inputs = [value] + [
+                    f"{item['title']}\n{item['content']}\n{' '.join(item['tags'])}"
+                    for item in missing
+                ]
+                vectors = embed_texts(model, ollama_host, inputs)
+                query_vector = vectors[0]
+                for item, vector in zip(missing, vectors[1:], strict=True):
+                    row = rows[item["id"]]
+                    payload = payloads[item["id"]]
+                    self._store_embedding(row, payload, model, vector)
+                    payloads[item["id"]] = {**payload, "embedding": vector, "embedding_model": model}
+                for item in candidates:
+                    vector = payloads[item["id"]].get("embedding") or []
+                    if len(vector) == len(query_vector):
+                        semantic[item["id"]] = max(cosine_similarity(query_vector, vector), 0.0)
+            except Exception:  # semantic recall is optional; lexical recall remains available
+                semantic = {}
+
         ranked: list[tuple[float, dict[str, Any]]] = []
         now = time.time()
         for memory in candidates:
@@ -348,15 +568,44 @@ class MemoryVault:
             )).lower()
             phrase = 4.0 if value in haystack else 0.0
             matches = sum(haystack.count(term) for term in terms)
-            if not phrase and not matches:
+            semantic_score = semantic.get(memory["id"], 0.0)
+            if not phrase and not matches and semantic_score < 0.2:
                 continue
             age_days = max((now - memory["updated_at"]) / 86_400, 0)
-            score = phrase + matches + (2.0 if memory["pinned"] else 0) + 1 / (1 + age_days)
+            confidence = float(memory.get("confidence", 1.0))
+            score = (
+                phrase + min(matches, 8) * 0.8 + semantic_score * 5.0
+                + (2.0 if memory["pinned"] else 0)
+                + confidence + 1 / (1 + age_days / 30)
+            )
+            valid_from = memory.get("valid_from")
+            valid_until = memory.get("valid_until")
+            if valid_from is not None and float(valid_from) > now:
+                continue
+            if valid_until is not None and float(valid_until) < now:
+                score *= 0.15
             if memory["stale"]:
                 score *= 0.4
-            ranked.append((score, memory))
+            reasons: list[str] = []
+            if phrase:
+                reasons.append("exact phrase")
+            elif matches:
+                reasons.append(f"{matches} matching term{'s' if matches != 1 else ''}")
+            if semantic_score:
+                reasons.append(f"semantic similarity {semantic_score:.0%}")
+            if memory["pinned"]:
+                reasons.append("pinned")
+            reasons.append(f"{confidence:.0%} confidence")
+            ranked.append((score, {**memory, "retrieval_reason": ", ".join(reasons)}))
         ranked.sort(key=lambda item: (-item[0], item[1]["id"]))
-        return [{**memory, "score": score} for score, memory in ranked[:min(max(limit, 1), 20)]]
+        selected = [{**memory, "score": score} for score, memory in ranked[:min(max(limit, 1), 20)]]
+        if selected:
+            with self._connect() as connection:
+                connection.executemany(
+                    "UPDATE memories SET last_used_at=?, use_count=use_count+1 WHERE id=?",
+                    ((now, item["id"]) for item in selected),
+                )
+        return selected
 
     def delete(self, memory_id: str) -> bool:
         with self._connect() as connection:
@@ -376,20 +625,95 @@ class MemoryVault:
                 "DELETE FROM memories WHERE id=?", ((item,) for item in identifiers)
             ).rowcount
 
+    def feedback(self, memory_id: str, outcome: str) -> dict[str, Any]:
+        """Record a small user-controlled quality signal inside ciphertext."""
+        if outcome not in {"helpful", "ignored", "incorrect"}:
+            raise MemoryError("memory feedback must be helpful, ignored, or incorrect")
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM memories WHERE id=?", (memory_id,)
+            ).fetchone()
+            if row is None:
+                raise MemoryError("memory not found")
+            payload = self._open_payload(row)
+            feedback = payload.get("feedback")
+            feedback = dict(feedback) if isinstance(feedback, dict) else {}
+            feedback[outcome] = int(feedback.get(outcome) or 0) + 1
+            payload["feedback"] = feedback
+            nonce, ciphertext = self._seal(
+                payload, identifier=row["id"], status=row["status"],
+                scope=row["scope"], target_hash=row["target_hash"],
+                revision=int(row["revision"]),
+            )
+            stale = 1 if outcome == "incorrect" else int(row["stale"])
+            connection.execute(
+                "UPDATE memories SET nonce=?, ciphertext=?, stale=? WHERE id=?",
+                (nonce, ciphertext, stale, memory_id),
+            )
+            updated = connection.execute(
+                "SELECT * FROM memories WHERE id=?", (memory_id,)
+            ).fetchone()
+        return self._open(updated)
+
+    def maintain(self, *, workspace: str = "", agent_id: str = "") -> dict[str, Any]:
+        """Mark expired facts stale and summarize items needing human review."""
+        now = time.time()
+        items = self.list(workspace=workspace, agent_id=agent_id)
+        expired_ids = [
+            item["id"] for item in items
+            if item.get("valid_until") is not None
+            and float(item["valid_until"]) < now
+            and not item["stale"]
+        ]
+        if expired_ids:
+            with self._connect() as connection:
+                connection.executemany(
+                    "UPDATE memories SET stale=1 WHERE id=?",
+                    ((identifier,) for identifier in expired_ids),
+                )
+        conflicts = {
+            item["id"]: self.conflicts_for(
+                item, workspace=workspace, agent_id=agent_id
+            )
+            for item in items if item["status"] == "approved" and not item["stale"]
+        }
+        conflicts = {key: value for key, value in conflicts.items() if value}
+        return {
+            "ok": True,
+            "expired_marked_stale": len(expired_ids),
+            "conflict_count": sum(len(value) for value in conflicts.values()) // 2,
+            "conflicts": conflicts,
+        }
+
     def status(self, *, workspace: str = "", agent_id: str = "") -> dict[str, Any]:
         items = self.list(workspace=workspace, agent_id=agent_id)
+        now = time.time()
+        conflict_ids = {
+            item["id"] for item in items
+            if item["status"] == "approved" and self.conflicts_for(
+                item, workspace=workspace, agent_id=agent_id
+            )
+        }
         return {
             "encrypted": True,
             "cipher": "AES-256-GCM",
             "approved_count": sum(item["status"] == "approved" for item in items),
             "candidate_count": sum(item["status"] == "candidate" for item in items),
             "candidate_ttl_days": 30,
+            "stale_count": sum(bool(item["stale"]) for item in items),
+            "expired_count": sum(
+                item.get("valid_until") is not None
+                and float(item["valid_until"]) < now for item in items
+            ),
+            "conflict_count": len(conflict_ids),
+            "semantic_encrypted": True,
+            "memory_version": 2,
         }
 
     def export(self, *, workspace: str = "", agent_id: str = "") -> dict[str, Any]:
         return {
             "format": "locus-memory-export",
-            "version": 1,
+            "version": 2,
             "exported_at": time.time(),
             "memories": self.list(workspace=workspace, agent_id=agent_id),
         }
@@ -401,7 +725,7 @@ class MemoryVault:
         workspace: str = "",
         agent_id: str = "",
     ) -> int:
-        if document.get("format") != "locus-memory-export" or document.get("version") != 1:
+        if document.get("format") != "locus-memory-export" or document.get("version") not in {1, 2}:
             raise MemoryError("memory import format is not supported")
         values = document.get("memories")
         if not isinstance(values, list) or len(values) > 10_000:
@@ -424,8 +748,10 @@ def format_memory_results(results: list[dict[str, Any]]) -> str:
     lines = ["Approved memory results (local user-controlled context):"]
     for item in results:
         stale = " · stale" if item.get("stale") else ""
+        reason = str(item.get("retrieval_reason") or "matched the request")
         lines.append(
-            f"\n## {item['title']} [{item['scope']}{stale}]\n{item['content']}"
+            f"\n## {item['title']} [{item.get('kind', 'fact')} · {item['scope']}{stale}]"
+            f"\nWhy recalled: {reason}\n{item['content']}"
         )
     return "\n".join(lines)[:30_000]
 

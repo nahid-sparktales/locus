@@ -1141,10 +1141,36 @@ final class AppModelTests: XCTestCase {
         )
     }
 
+    // MARK: - Settings
+
+    @MainActor
+    func testAppearancePreviewIsImmediateButOnlySaveCommitsIt() {
+        let model = AppModel(startImmediately: false)
+        var lightSettings = model.settings
+        lightSettings.appearanceRaw = AppAppearance.light.rawValue
+        model.applySettings(lightSettings)
+
+        model.previewAppearance(AppAppearance.dark.rawValue)
+        XCTAssertEqual(model.effectiveAppearance, .dark)
+        XCTAssertEqual(model.settings.resolvedAppearance, .light)
+
+        model.clearAppearancePreview()
+        XCTAssertEqual(model.effectiveAppearance, .light)
+        XCTAssertNil(model.appearancePreview)
+
+        model.previewAppearance(AppAppearance.dark.rawValue)
+        var darkSettings = model.settings
+        darkSettings.appearanceRaw = AppAppearance.dark.rawValue
+        model.applySettings(darkSettings)
+        XCTAssertEqual(model.settings.resolvedAppearance, .dark)
+        XCTAssertEqual(model.effectiveAppearance, .dark)
+        XCTAssertNil(model.appearancePreview)
+    }
+
     // MARK: - Provider accounts
 
     /// Adds an account through the real save path, with its key, and cleans up
-    /// the keychain entry afterwards.
+    /// the local credential-file entry afterwards.
     @MainActor
     private func seedAccount(
         _ model: AppModel,
@@ -1155,7 +1181,7 @@ final class AppModelTests: XCTestCase {
     ) -> ProviderAccount {
         let account = ProviderAccount(kind: kind, name: name, preferredModel: preferredModel)
         model.saveProviderAccount(account, apiKey: key)
-        addTeardownBlock { CredentialStore.remove(account: account.keychainAccount) }
+        addTeardownBlock { CredentialStore.remove(account: account.credentialAccount) }
         return model.providerAccounts.first { $0.id == account.id } ?? account
     }
 
@@ -1230,7 +1256,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertNil(body["api_key"])
         XCTAssertNil(body["base_url"])
         XCTAssertNil(body["context_window"])
-        XCTAssertFalse(CredentialStore.has(account: account.keychainAccount))
+        XCTAssertFalse(CredentialStore.has(account: account.credentialAccount))
     }
 
     @MainActor
@@ -1317,7 +1343,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.providerAccounts.contains { $0.id == account.id })
         XCTAssertNil(model.settings.activeAccountID)
         XCTAssertEqual(model.settings.provider, .ollama)
-        XCTAssertNil(CredentialStore.get(account: account.keychainAccount), "the key goes with it")
+        XCTAssertNil(CredentialStore.get(account: account.credentialAccount), "the key goes with it")
     }
 
     @MainActor

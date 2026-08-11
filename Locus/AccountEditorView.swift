@@ -371,7 +371,7 @@ struct AccountEditorView: View {
         isTesting = true
         testResult = nil
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? (CredentialStore.get(account: account.keychainAccount) ?? "")
+            ? (CredentialStore.get(account: account.credentialAccount) ?? "")
             : apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let base = resolvedBaseURL
         let probeModel = account.preferredModel.isEmpty ? kind.probeModel : account.preferredModel

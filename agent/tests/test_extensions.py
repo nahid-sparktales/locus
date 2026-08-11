@@ -671,7 +671,7 @@ def test_marketplace_plugin_skill_mcp_and_restart_end_to_end(tmp_path):
 
 
 def test_degraded_state_read_is_reported_in_snapshot_errors(tmp_path):
-    # The app reclaims orphaned MCP Keychain entries against snapshot()["errors"]:
+    # The app reclaims orphaned MCP credential entries against snapshot()["errors"]:
     # an empty list means "this server list is complete, anything missing from it
     # is an orphan". A silently degraded read would therefore delete live OAuth
     # refresh tokens, so a read that loses servers has to say so.

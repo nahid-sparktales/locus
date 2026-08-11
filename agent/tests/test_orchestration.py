@@ -778,6 +778,48 @@ def test_managed_worktree_conflict_leaves_source_untouched(tmp_path, monkeypatch
     assert (source / "tracked.txt").read_text() == "concurrent source edit\n"
 
 
+def test_parallel_worktree_forks_same_snapshot_and_integrates_in_order(tmp_path, monkeypatch):
+    from ollama_code import worktrees
+
+    source = _repository(tmp_path / "source")
+    monkeypatch.setattr(worktrees, "TASKS_DIR", tmp_path / "tasks")
+    parent = TaskCheckoutStore.create(str(source), "parallel-parent")
+    left = TaskCheckoutStore.fork(parent, "parallel-left")
+    right = TaskCheckoutStore.fork(parent, "parallel-right")
+
+    Path(left.execution_path, "left.txt").write_text("left\n")
+    Path(right.execution_path, "right.txt").write_text("right\n")
+    parent.integrate(left)
+    parent.integrate(right)
+
+    assert Path(parent.execution_path, "left.txt").read_text() == "left\n"
+    assert Path(parent.execution_path, "right.txt").read_text() == "right\n"
+    assert Path(source, "left.txt").exists() is False
+
+
+def test_parallel_manifest_allows_independent_writers() -> None:
+    manifest = _manifest(parallel_writers=True)
+    manifest["team"]["member_ids"].append("writer-two")
+    manifest["profiles"].append(
+        _profile("writer-two", "implementer", "workspace_write")
+    )
+    _, team, profiles, _ = parse_manifest(manifest)
+    plan = _valid_plan()
+    plan["jobs"].insert(2, {
+        "id": "write-two",
+        "agent_id": "writer-two",
+        "goal": "Implement an independent area",
+        "dependencies": ["plan"],
+        "kind": "writer",
+    })
+    # The reviewer must depend on both mutation scopes.
+    plan["jobs"][-1]["dependencies"] = ["write", "write-two"]
+    validated = validate_dispatch_plan(plan, team, profiles)
+    assert {job.id for job in validated.jobs if job.kind == "writer"} == {
+        "write", "write-two"
+    }
+
+
 def test_replay_checkout_starts_from_original_immutable_baseline(tmp_path, monkeypatch):
     from ollama_code import worktrees
 

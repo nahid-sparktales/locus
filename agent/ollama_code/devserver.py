@@ -5,7 +5,7 @@ agent can own several named development servers with no fixed deadline and a
 bounded ring of recent output. The agent reads that output through the
 ``status`` action, while the user watches the page itself in the Browser tab.
 
-Servers outlive the conversation that started them and die with the backend:
+Services outlive the conversation that started them and die with the backend:
 ``stop_all`` runs when the backend shuts down. The native Terminal has a
 separate lifetime owned by the app.
 """
@@ -39,6 +39,23 @@ PORT_POLL_SECONDS = 0.25
 TERM_GRACE_SECONDS = 2.0
 #: A runaway loop starting servers is a bug, not a workload.
 MAX_SERVERS = 8
+
+
+def _loopback_port_is_open(port: int) -> bool:
+    """Probe both loopback families without trusting a startup banner.
+
+    macOS commonly resolves ``localhost`` to ``::1`` first. Vite-based servers
+    may therefore listen only on IPv6 even though their banner says
+    ``http://localhost:<port>``. Probing only 127.0.0.1 reports a false timeout
+    while the site is already available in the browser.
+    """
+    for host in ("127.0.0.1", "::1"):
+        try:
+            with socket.create_connection((host, port), timeout=0.1):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 class DevServerError(Exception):
@@ -172,17 +189,19 @@ class DevServerManager:
         deadline = time.monotonic() + PORT_WAIT_SECONDS
         while time.monotonic() < deadline:
             if should_stop and should_stop():
-                # The server was the point of this call; a stop aborts it too
-                # rather than leaving a half-announced orphan running.
-                self.stop(run.name)
-                return {"ready": False, "reason": "stopped by the user"}
+                # The manager, not the chat turn, owns this process. Stopping
+                # the task stops waiting for readiness but deliberately leaves
+                # the service alive for the Terminal panel to inspect or stop.
+                return {
+                    "ready": run.running,
+                    "reason": "detached; readiness check stopped with the task",
+                    "detached": True,
+                }
             if not run.running:
                 return {"ready": False, "reason": "exited"}
-            try:
-                with socket.create_connection(("127.0.0.1", run.port), timeout=0.1):
-                    return {"ready": True, "reason": "port open"}
-            except OSError:
-                time.sleep(PORT_POLL_SECONDS)
+            if _loopback_port_is_open(run.port):
+                return {"ready": True, "reason": "port open"}
+            time.sleep(PORT_POLL_SECONDS)
         return {"ready": False, "reason": f"port {run.port} not open after {int(PORT_WAIT_SECONDS)}s"}
 
     def _pump(self, run: DevServerRun) -> None:
@@ -215,14 +234,15 @@ class DevServerManager:
         return [{**run.snapshot(), "tail": run.tail()} for run in runs]
 
     def stop(self, name: str = "") -> list[str]:
-        """Stop one named server, or every server when unnamed."""
+        """Stop and forget one named service, or every service when unnamed."""
         with self._lock:
-            targets = [
+            matches = [
                 run for run in self._runs.values()
-                if (not name or run.name == name) and run.running
+                if not name or run.name == name
             ]
-        stopped: list[str] = []
-        for run in targets:
+        for run in matches:
+            if not run.running:
+                continue
             proc = run.proc
             if proc is None:
                 continue
@@ -232,11 +252,11 @@ class DevServerManager:
                 time.sleep(0.05)
             if proc.poll() is None:
                 signal_process_group(proc, signal.SIGKILL)
-            stopped.append(run.name)
         with self._lock:
-            for run in targets:
-                self._runs.pop(run.name, None)
-        return stopped
+            for run in matches:
+                if self._runs.get(run.name) is run:
+                    self._runs.pop(run.name, None)
+        return [run.name for run in matches]
 
     def stop_all(self) -> int:
         return len(self.stop())

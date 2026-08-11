@@ -403,6 +403,80 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(AppSettings.clampZoomedChatWidth(.nan), 420, "a corrupt value must not survive")
     }
 
+    func testAppearanceSettingsRoundTripAndResolveColorSchemes() throws {
+        XCTAssertNil(AppAppearance.system.colorScheme)
+        XCTAssertEqual(AppAppearance.light.colorScheme, .light)
+        XCTAssertEqual(AppAppearance.dark.colorScheme, .dark)
+
+        for appearance in AppAppearance.allCases {
+            var settings = AppSettings()
+            settings.appearanceRaw = appearance.rawValue
+            let restored = try JSONDecoder().decode(
+                AppSettings.self,
+                from: JSONEncoder().encode(settings)
+            )
+            XCTAssertEqual(restored.resolvedAppearance, appearance)
+        }
+    }
+
+    func testAppearanceDefaultsLegacyAndUnknownSettingsToSystem() throws {
+        let legacy = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
+        XCTAssertEqual(legacy.resolvedAppearance, .system)
+
+        let future = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data(#"{"appearanceRaw":"midnight-blue"}"#.utf8)
+        )
+        XCTAssertEqual(future.resolvedAppearance, .system)
+    }
+
+    func testThemePaletteResolvesWarmLightAndDarkColors() throws {
+        let light = LocusTheme.palette(for: try XCTUnwrap(NSAppearance(named: .aqua)))
+        let dark = LocusTheme.palette(for: try XCTUnwrap(NSAppearance(named: .darkAqua)))
+
+        assertColor(light.ink, red: 0.086, green: 0.094, blue: 0.078)
+        assertColor(light.paper, red: 0.953, green: 0.945, blue: 0.918)
+        assertColor(dark.ink, hex: 0xF2EEE4)
+        assertColor(dark.paper, hex: 0x171713)
+        assertColor(dark.white, hex: 0x292820)
+        assertColor(dark.signalDeep, hex: 0xB6E33B)
+        assertColor(dark.coral, hex: 0xF18364)
+        assertColor(dark.permissionInk, hex: 0xD7A77E)
+    }
+
+    private func assertColor(
+        _ color: NSColor,
+        hex: UInt32,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        assertColor(
+            color,
+            red: CGFloat((hex >> 16) & 0xFF) / 255,
+            green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255,
+            file: file,
+            line: line
+        )
+    }
+
+    private func assertColor(
+        _ color: NSColor,
+        red: CGFloat,
+        green: CGFloat,
+        blue: CGFloat,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard let resolved = color.usingColorSpace(.sRGB) else {
+            XCTFail("Color did not resolve into sRGB", file: file, line: line)
+            return
+        }
+        XCTAssertEqual(resolved.redComponent, red, accuracy: 0.0001, file: file, line: line)
+        XCTAssertEqual(resolved.greenComponent, green, accuracy: 0.0001, file: file, line: line)
+        XCTAssertEqual(resolved.blueComponent, blue, accuracy: 0.0001, file: file, line: line)
+    }
+
     func testInspectorChromeSurvivesASettingsRoundTrip() throws {
         var settings = AppSettings()
         settings.inspectorWidth = 412
@@ -1126,8 +1200,8 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertFalse(CredentialStore.has(account: account))
     }
 
-    /// File permissions are the only thing protecting these secrets now, so
-    /// they are the app's responsibility rather than the keychain's.
+    /// File permissions are the protection for locally stored secrets, so the
+    /// app must create and maintain restrictive modes itself.
     func testCredentialFileIsNotReadableByOtherUsers() throws {
         let account = "unit-test-\(UUID().uuidString)"
         defer { CredentialStore.remove(account: account) }
@@ -1266,7 +1340,7 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(restored[0].kind, .claude)
         XCTAssertEqual(restored[0].displayName, "Claude — Work")
         XCTAssertEqual(restored[0].resolvedBaseURL, "https://api.anthropic.com/v1")
-        XCTAssertEqual(restored[0].keychainAccount, CredentialStore.providerAccountKey(account.id))
+        XCTAssertEqual(restored[0].credentialAccount, CredentialStore.providerAccountKey(account.id))
         XCTAssertFalse(encoded.contains("apikey"))
         XCTAssertFalse(encoded.contains("sk-"))
     }
@@ -1348,7 +1422,7 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(account?.preferredModel, settings.remoteModel)
         // The key is not copied: the account points at the entry that is
         // already there, so an interrupted migration cannot lose it.
-        XCTAssertEqual(account?.keychainAccount, CredentialStore.remoteAPIKeyAccount)
+        XCTAssertEqual(account?.credentialAccount, CredentialStore.remoteAPIKeyAccount)
     }
 
     func testMigrationSkipsWhenThereIsNothingToMoveOrAccountsExist() {

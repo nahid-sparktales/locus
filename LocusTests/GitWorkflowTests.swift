@@ -239,6 +239,25 @@ final class GitWorkflowTests: XCTestCase {
         )
     }
 
+    func testGitClientNeverInvokesAConfiguredCredentialHelper() async throws {
+        let (root, client) = try makeRepo()
+        try await runGit(client, ["init", "-q", "-b", "main"])
+        let marker = root.appending(path: "credential-helper-was-invoked")
+        let helper = "!touch \(marker.path); echo username=test; echo password=test"
+        try await runGit(client, ["config", "credential.helper", helper])
+
+        do {
+            _ = try await client.run(
+                ["credential", "fill"],
+                stdin: Data("protocol=https\nhost=example.invalid\n\n".utf8)
+            )
+            XCTFail("credential fill should fail when interactive prompts and helpers are disabled")
+        } catch {
+            // Expected: no prompt and no helper fallback are available.
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+    }
+
     // MARK: - Real repository integration
 
     private func makeRepo() throws -> (URL, GitClient) {

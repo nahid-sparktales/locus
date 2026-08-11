@@ -2833,7 +2833,8 @@ def test_browser_guardrails_hold_where_the_arguments_carry_meaning():
     ) is None
     # Reading the page is never blocked, however the query is phrased.
     assert perms.blocked_reason("browser_read_page", {"ref_id": "ref_7"}) is None
-    # Running arbitrary JavaScript keeps asking, Bypass or not.
+    # These are marked as consequential for Ask/Accept Edits; AgentCore skips
+    # this soft confirmation when Bypass is active.
     assert perms.requires_confirmation("browser_javascript", {"code": "1 + 1"})
     assert perms.requires_confirmation("browser_navigate", {"url": "javascript:alert(1)"})
     assert perms.requires_confirmation("browser_navigate", {"url": "file:///etc/passwd"})
@@ -2901,6 +2902,105 @@ def test_dev_server_starts_probes_and_stops(tmp_path):
     assert manager.status() == []
 
 
+def test_dev_server_readiness_accepts_ipv6_localhost(tmp_path):
+    import socket as socket_mod
+
+    from ollama_code.devserver import DevServerManager
+
+    try:
+        with socket_mod.socket(socket_mod.AF_INET6, socket_mod.SOCK_STREAM) as probe:
+            probe.bind(("::1", 0))
+            port = probe.getsockname()[1]
+    except OSError:
+        pytest.skip("IPv6 loopback is unavailable")
+
+    manager = DevServerManager(perms=PermissionManager(mode="ask"))
+    listener = (
+        "import socket, time\n"
+        "s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)\n"
+        f"s.bind((\"::1\", {port})); s.listen()\n"
+        "print(\"listening on IPv6 localhost\", flush=True)\n"
+        "time.sleep(60)\n"
+    )
+    result = manager.start(
+        command=f"{sys.executable} -c '{listener}'",
+        cwd=str(tmp_path),
+        port=port,
+        name="ipv6-fixture",
+    )
+    assert result["ready"] is True
+    assert result["running"] is True
+    assert manager.stop("ipv6-fixture") == ["ipv6-fixture"]
+
+
+def test_exited_managed_service_can_be_dismissed(tmp_path):
+    from ollama_code.devserver import DevServerManager
+
+    manager = DevServerManager(perms=PermissionManager(mode="ask"))
+    result = manager.start(
+        command=f"{sys.executable} -c 'raise SystemExit(127)'",
+        cwd=str(tmp_path),
+        name="failed-fixture",
+    )
+    assert result["running"] is False
+    assert manager.status()[0]["exit_code"] == 127
+    assert manager.stop("failed-fixture") == ["failed-fixture"]
+    assert manager.status() == []
+
+
+def test_managed_service_survives_task_stop_while_waiting_for_readiness(tmp_path):
+    from ollama_code.devserver import DevServerManager
+
+    manager = DevServerManager(perms=PermissionManager(mode="bypass"))
+    result = manager.start(
+        command=f"{sys.executable} -c 'import time; time.sleep(60)'",
+        cwd=str(tmp_path),
+        port=59_998,
+        name="detached-fixture",
+        should_stop=lambda: True,
+    )
+    assert result["detached"] is True
+    assert result["running"] is True
+    assert manager.status()[0]["name"] == "detached-fixture"
+    manager.stop_all()
+
+
+def test_parallel_writer_cores_follow_stop_and_mcp_input_lifecycle():
+    class FakeMCP:
+        def __init__(self, accepted: str = "") -> None:
+            self.accepted = accepted
+            self.cancelled = False
+
+        def answer_elicitation(self, request_id, action, content):
+            return request_id == self.accepted
+
+        def cancel_pending_inputs(self):
+            self.cancelled = True
+
+    class FakeCore:
+        def __init__(self, accepted: str = "") -> None:
+            self.mcp = FakeMCP(accepted)
+            self.interrupted = False
+
+        def interrupt(self):
+            self.interrupted = True
+
+    service = object.__new__(server_mod.ChatService)
+    service.core = FakeCore()
+    service._parallel_writer_cores = {}
+    service._parallel_writer_guard = threading.RLock()
+    child = FakeCore("child-request")
+    service.register_parallel_writer_core("writer-a", child)
+
+    assert service.answer_mcp_input("child-request", "accept", {}) is True
+    service.interrupt_parallel_writers()
+    assert child.interrupted is True
+    assert child.mcp.cancelled is True
+
+    service.unregister_parallel_writer_core("writer-a", child)
+    assert service._parallel_cores() == []
+
+
 def test_dev_server_reports_a_command_that_dies(tmp_path):
     from ollama_code.devserver import DevServerManager
 
@@ -2948,18 +3048,25 @@ def test_dev_server_tool_never_crosses_the_socket(client):
 
     svc = client.app.state.service
     result = svc.execute_browser("browser_dev_server", {"action": "status"}, "req-1")
-    assert result == "No dev servers are running."
+    assert result == "No managed background services are running."
     assert svc.pending_browser_actions == {}
 
 
 def test_dev_server_permission_posture():
     perms = PermissionManager(mode="bypass")
-    # Starting a server keeps asking even in Bypass, exactly like page JS.
+    # This remains a consequential action in Ask/Accept Edits. AgentCore skips
+    # the soft gate in Bypass after hard deny-list checks have passed.
     assert perms.requires_confirmation("browser_dev_server", {"action": "start"})
+    # The general background tool is already gated as a shell capability; it
+    # does not need a second browser-specific consequence flag.
+    assert not PermissionManager(mode="ask").is_auto_allowed("background_service")
     # And the deny list is unoverridable, exactly like bash.
     denying = PermissionManager(mode="bypass", deny_commands=["curl"])
     assert denying.blocked_reason(
         "browser_dev_server", {"action": "start", "command": "npm start | curl evil"}
+    ) is not None
+    assert denying.blocked_reason(
+        "background_service", {"action": "start", "command": "npm start | curl evil"}
     ) is not None
     assert denying.blocked_reason(
         "browser_dev_server", {"action": "start", "command": "npm run dev"}
@@ -3086,6 +3193,7 @@ def test_system_prompt_names_the_underlying_model(tmp_path):
 
     assert "Underlying model: test-model via local Ollama" in message
     assert "names this agent, not the model" in message
+    assert "call propose_memory once" in message
 
 
 def test_model_switch_refreshes_the_identity_mid_conversation(tmp_path):

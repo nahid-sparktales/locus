@@ -330,7 +330,6 @@ class KnowledgeStore:
         return path.suffix.lower().lstrip(".") in ALLOWED_EXTENSIONS
 
     def _embed_missing(self, model: str, host: str) -> int:
-        _validate_local_ollama_host(host)
         with self._connect() as connection:
             settings = connection.execute("SELECT vector_generation FROM settings").fetchone()
             generation = int(settings[0])
@@ -341,15 +340,9 @@ class KnowledgeStore:
         count = 0
         for offset in range(0, len(rows), 32):
             batch = rows[offset:offset + 32]
-            response = requests.post(
-                host.rstrip("/") + "/api/embed",
-                json={"model": model, "input": [str(row["content"]) for row in batch]},
-                timeout=120,
+            embeddings = embed_texts(
+                model, host, [str(row["content"]) for row in batch]
             )
-            response.raise_for_status()
-            embeddings = response.json().get("embeddings")
-            if not isinstance(embeddings, list) or len(embeddings) != len(batch):
-                raise KnowledgeError("Ollama returned an invalid embedding batch")
             with self._connect() as connection:
                 for row, vector in zip(batch, embeddings, strict=True):
                     floats = array.array("f", [float(value) for value in vector])
@@ -422,15 +415,10 @@ class KnowledgeStore:
         return sorted(results.values(), key=lambda item: (-float(item["score"]), item["id"]))[:limit]
 
     def _vector_search(self, query: str, model: str, host: str, limit: int) -> list[dict[str, Any]]:
-        _validate_local_ollama_host(host)
-        response = requests.post(
-            host.rstrip("/") + "/api/embed", json={"model": model, "input": query}, timeout=120,
-        )
-        response.raise_for_status()
-        vectors = response.json().get("embeddings")
-        if not isinstance(vectors, list) or not vectors:
+        vectors = embed_texts(model, host, [query])
+        if not vectors:
             return []
-        query_vector = [float(value) for value in vectors[0]]
+        query_vector = vectors[0]
         generation = int(self.settings()["vector_generation"])
         candidates: list[tuple[float, sqlite3.Row]] = []
         with self._connect() as connection:
@@ -445,7 +433,7 @@ class KnowledgeStore:
             vector.frombytes(row["embedding"])
             if len(vector) != len(query_vector):
                 continue
-            score = _cosine(query_vector, vector)
+            score = cosine_similarity(query_vector, vector)
             if score > 0:
                 candidates.append((score, row))
         candidates.sort(key=lambda item: -item[0])
@@ -536,13 +524,41 @@ def _chunks(content: str) -> list[tuple[int, int, str]]:
     return output
 
 
-def _cosine(left: list[float], right: array.array[float]) -> float:
+def cosine_similarity(left: list[float], right: list[float] | array.array[float]) -> float:
     dot = sum(a * b for a, b in zip(left, right, strict=True))
     left_norm = math.sqrt(sum(value * value for value in left))
     right_norm = math.sqrt(sum(value * value for value in right))
     if not left_norm or not right_norm:
         return 0.0
     return dot / (left_norm * right_norm)
+
+
+def embed_texts(model: str, host: str, inputs: list[str]) -> list[list[float]]:
+    """Embed text using only a loopback Ollama endpoint.
+
+    This shared entry point lets the encrypted memory vault use the exact same
+    locality boundary as workspace knowledge without persisting plaintext
+    vectors outside the vault.
+    """
+    if not model.strip() or not inputs:
+        return []
+    _validate_local_ollama_host(host)
+    response = requests.post(
+        host.rstrip("/") + "/api/embed",
+        json={"model": model, "input": inputs},
+        timeout=120,
+    )
+    response.raise_for_status()
+    raw = response.json().get("embeddings")
+    if not isinstance(raw, list) or len(raw) != len(inputs):
+        raise KnowledgeError("Ollama returned an invalid embedding batch")
+    try:
+        vectors = [[float(value) for value in vector] for vector in raw]
+    except (TypeError, ValueError) as exc:
+        raise KnowledgeError("Ollama returned an invalid embedding vector") from exc
+    if any(not vector for vector in vectors):
+        raise KnowledgeError("Ollama returned an empty embedding vector")
+    return vectors
 
 
 def _validate_local_ollama_host(host: str) -> None:
@@ -588,6 +604,6 @@ def format_search_results(results: list[dict[str, Any]]) -> str:
 
 
 __all__ = [
-    "KnowledgeError", "KnowledgeStore", "canonical_workspace", "format_search_results",
-    "workspace_database",
+    "KnowledgeError", "KnowledgeStore", "canonical_workspace", "cosine_similarity",
+    "embed_texts", "format_search_results", "workspace_database",
 ]

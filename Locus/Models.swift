@@ -1218,6 +1218,9 @@ struct AppSettings: Codable, Hashable {
     var backendRoot = NSString(string: "~/Documents/locus/agent").expandingTildeInPath
     var previewURL = "http://localhost:3000"
     var notifyOnCompletion = true
+    /// Stored as a raw string so a preference written by a future version
+    /// cannot make the rest of the settings payload fail to decode.
+    var appearanceRaw = AppAppearance.system.rawValue
     var provider: ModelProvider = .ollama
     /// Endpoint base URL. The API key is not stored here — see `CredentialStore`.
     ///
@@ -1316,6 +1319,10 @@ struct AppSettings: Codable, Hashable {
     /// One-time bridge from the version-1 backend config, where these two
     /// retained preferences lived before the Terminal became app-owned.
     var terminalSettingsMigrated = false
+    /// Empty means this install has not chosen an app-wide permission mode yet
+    /// and should adopt the backend's existing value. Once chosen, the mode is
+    /// propagated to the main runtime and every task worker.
+    var permissionModeRaw = ""
 
     static let defaultInspectorWidth: Double = 340
     static let minimumInspectorWidth: Double = 280
@@ -1344,6 +1351,10 @@ struct AppSettings: Codable, Hashable {
 
     var resolvedInspectorTab: InspectorTab {
         InspectorTab(rawValue: inspectorLastTab) ?? .plan
+    }
+
+    var resolvedAppearance: AppAppearance {
+        AppAppearance(rawValue: appearanceRaw) ?? .system
     }
 
     var resolvedInspectorWorkspaceTab: InspectorTab {
@@ -1379,6 +1390,10 @@ struct AppSettings: Codable, Hashable {
         ThinkingVisibility(rawValue: thinkingVisibilityRaw) ?? .collapsed
     }
 
+    var preferredPermissionMode: PermissionMode? {
+        PermissionMode(rawValue: permissionModeRaw)
+    }
+
     init() {}
 
     // Tolerant decoding so settings saved by older versions keep their values
@@ -1391,6 +1406,8 @@ struct AppSettings: Codable, Hashable {
         previewURL = try container.decodeIfPresent(String.self, forKey: .previewURL) ?? defaults.previewURL
         notifyOnCompletion = try container.decodeIfPresent(Bool.self, forKey: .notifyOnCompletion)
             ?? defaults.notifyOnCompletion
+        appearanceRaw = try container.decodeIfPresent(String.self, forKey: .appearanceRaw)
+            ?? defaults.appearanceRaw
         provider = try container.decodeIfPresent(ModelProvider.self, forKey: .provider)
             ?? defaults.provider
         remoteBaseURL = try container.decodeIfPresent(String.self, forKey: .remoteBaseURL)
@@ -1488,6 +1505,10 @@ struct AppSettings: Codable, Hashable {
             Bool.self,
             forKey: .terminalSettingsMigrated
         ) ?? defaults.terminalSettingsMigrated
+        permissionModeRaw = try container.decodeIfPresent(
+            String.self,
+            forKey: .permissionModeRaw
+        ) ?? defaults.permissionModeRaw
     }
 }
 
@@ -1500,6 +1521,36 @@ struct PermissionStateResponse: Codable {
         case mode, allowed
         case skipAll = "skip_all"
     }
+}
+
+struct BackgroundServiceRecord: Identifiable, Codable, Hashable {
+    var id: String { name }
+    let name: String
+    let command: String
+    let cwd: String
+    let port: Int?
+    let pid: Int?
+    let running: Bool
+    let exitCode: Int?
+    let startedAt: String
+    let uptimeSeconds: Int
+    let tail: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name, command, cwd, port, pid, running, tail
+        case exitCode = "exit_code"
+        case startedAt = "started_at"
+        case uptimeSeconds = "uptime_seconds"
+    }
+}
+
+struct BackgroundServicesResponse: Codable {
+    let services: [BackgroundServiceRecord]
+}
+
+struct BackgroundServiceStopResponse: Codable {
+    let ok: Bool
+    let stopped: [String]
 }
 
 // MARK: - Extensions

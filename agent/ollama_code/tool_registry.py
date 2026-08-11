@@ -30,7 +30,7 @@ _WORKSPACE_READ_TOOLS = {
     "search_workspace_knowledge", "load_skill", "read_skill_file",
 }
 _WORKSPACE_WRITE_TOOLS = {"write_file", "edit_file", "multi_edit"}
-_SHELL_TOOLS = {"bash"}
+_SHELL_TOOLS = {"bash", "background_service"}
 
 
 def _base_schemas(access_ceiling: str = "workspace_write") -> list[dict[str, Any]]:

@@ -35,8 +35,8 @@ struct InspectorChangesTab: View {
 
             if model.isGitRepository, !GitRemoteFeatures.isAvailable {
                 Text(
-                    "Push and pull need your keychain and SSH keys, which the "
-                    + "App Store sandbox cannot reach — use the direct build or a terminal."
+                    "Push and pull need your SSH agent, which the App Store sandbox "
+                    + "cannot reach — use the direct build or a terminal. Locus never uses Keychain."
                 )
                 .font(.system(size: 8))
                 .foregroundStyle(LocusTheme.muted)

@@ -18,7 +18,6 @@ new disclosure whoever owns the password.
 """
 from __future__ import annotations
 
-import base64
 import io
 import json
 import os
@@ -36,7 +35,6 @@ CLEAN = "http://proxy.example:3128"
 def clean_proxy_state(monkeypatch):
     """Fresh module state, and no proxy noise leaking in from the host env."""
     monkeypatch.setattr(proxy, "credential_applied", False)
-    monkeypatch.setattr(proxy, "_memory_master_key", None)
     for name in (
         *proxy.PROXY_URL_VARS,
         "NO_PROXY",
@@ -98,21 +96,16 @@ def test_activate_reads_the_credential_from_stdin(monkeypatch):
     assert proxy.credential_applied
 
 
-def test_activate_reads_proxy_and_memory_secrets_from_one_json_line(monkeypatch):
-    key = bytes(range(32))
+def test_activate_reads_proxy_secret_from_one_json_line(monkeypatch):
     monkeypatch.setenv("HTTP_PROXY", CLEAN)
     monkeypatch.setenv("LOCUS_BOOTSTRAP_SECRETS_STDIN", "1")
-    payload = json.dumps({
-        "proxy_credential": "alice:s3cret",
-        "memory_key": base64.b64encode(key).decode(),
-    })
+    payload = json.dumps({"proxy_credential": "alice:s3cret"})
     monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO((payload + "\n").encode())))
 
     proxy.activate_from_env()
 
     assert "LOCUS_BOOTSTRAP_SECRETS_STDIN" not in os.environ
     assert os.environ["HTTP_PROXY"] == CREDENTIALED
-    assert proxy.memory_master_key() == key
 
 
 def test_activate_ignores_stdin_without_the_flag(monkeypatch):

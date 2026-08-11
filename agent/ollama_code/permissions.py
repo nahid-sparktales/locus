@@ -69,7 +69,7 @@ class PermissionManager:
             if any(term in text for term in takeover):
                 return "user takeover is required for credentials, contracts, security interstitials, and final financial transactions"
             return None
-        if tool_name == "browser_dev_server":
+        if tool_name in {"browser_dev_server", "background_service"}:
             # A shell command by another name gets the shell command's checks.
             # Handled here rather than in the module-level browser helpers
             # because the deny list lives on the instance.
@@ -95,7 +95,11 @@ class PermissionManager:
         return None
 
     def requires_confirmation(self, tool_name: str, args: dict[str, Any]) -> bool:
-        """Actions that remain permission-gated even in Bypass mode."""
+        """Actions that receive an extra confirmation outside Bypass mode.
+
+        Hard deny-list and takeover checks live in ``blocked_reason``. The
+        caller deliberately skips this softer gate when Bypass is active.
+        """
         if tool_name.startswith("browser_"):
             return _browser_requires_confirmation(tool_name, args)
         if not tool_name.startswith("computer_"):
@@ -363,7 +367,7 @@ def build_preview(
     permission panel title; ``detail`` is the body shown when asking, and is
     rendered as a diff by the GUI when it looks like one.
     """
-    if name == "bash":
+    if name in {"bash", "background_service"}:
         command = str(args.get("command", ""))
         try:
             program = shlex.split(command)[0] if command.strip() else ""
@@ -489,7 +493,7 @@ def build_preview(
     if name == "browser_javascript":
         code = str(args.get("code") or "")
         return f"run JavaScript in the page: {_shorten(code, 70)}", code
-    if name == "browser_dev_server":
+    if name in {"browser_dev_server", "background_service"}:
         action = str(args.get("action") or "status")
         if action == "start":
             command = str(args.get("command") or "")

@@ -166,6 +166,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var workspaceMemories: [WorkspaceMemory] = []
     @Published private(set) var memoryCandidates: [WorkspaceMemory] = []
     @Published private(set) var memoryVaultStatus: MemoryVaultStatus?
+    @Published private(set) var backgroundServices: [BackgroundServiceRecord] = []
+    private var backgroundServicesRefreshGeneration = 0
     @Published var mcpInputRequest: MCPInputRequest?
     private var orchestrationEventIDs: Set<String> = []
     @Published var sessions: [SessionSummary] = []
@@ -302,6 +304,12 @@ final class AppModel: ObservableObject {
             // preview URL — and now the inspector chrome — never persisted.
             scheduleSettingsPersistence()
         }
+    }
+    /// A settings-window-only appearance override. It drives every scene while
+    /// the picker is being edited without writing the draft to disk.
+    @Published private(set) var appearancePreview: AppAppearance?
+    var effectiveAppearance: AppAppearance {
+        appearancePreview ?? settings.resolvedAppearance
     }
     @Published var settingsPresented = false
     @Published private(set) var automaticInspectorPrompt: AutomaticInspectorPrompt?
@@ -594,7 +602,7 @@ final class AppModel: ObservableObject {
                stored == accounts.count
             {
                 CredentialStore.removeOrphanedProviderKeys(
-                    keeping: Set(accounts.map(\.keychainAccount))
+                    keeping: Set(accounts.map(\.credentialAccount))
                 )
             }
             // Written here rather than through `settings`: assignments inside
@@ -701,6 +709,7 @@ final class AppModel: ObservableObject {
                     self.sendComputerControlCapability()
                     self.browser.defaultViewport = self.settings.resolvedBrowserViewport.size
                     self.announceBrowserCapability()
+                    self.syncPreferredPermissionMode(to: self.backend)
                     if let runID = self.orchestrationRunID {
                         Task { @MainActor [weak self] in
                             await self?.backfillOrchestrationEvents(runID)
@@ -1396,8 +1405,7 @@ final class AppModel: ObservableObject {
                 proxyCredential: ProxyConfigurator.childCredential(
                     settings: settings,
                     password: persistenceEnabled ? CredentialStore.proxyPassword() : nil
-                ),
-                memoryKey: persistenceEnabled ? MemoryKeychainStore.loadOrCreate() : nil
+                )
             ) {
             case .running(let endpoint):
                 if endpoint != backend.currentBaseURL {
@@ -1884,9 +1892,6 @@ final class AppModel: ObservableObject {
             // unreadable state file would present as "no servers" and this
             // would delete live third-party refresh tokens rather than orphans.
             if response.errors.isEmpty {
-                MCPCredentialStore.migrateLegacyKeychainEntries(
-                    keeping: Set(response.mcpServers.map(\.id))
-                )
                 CredentialStore.removeOrphanedMCPCredentials(
                     keeping: Set(response.mcpServers.map(\.id))
                 )
@@ -2059,7 +2064,7 @@ final class AppModel: ObservableObject {
                 as: ExtensionOperationResponse.self
             )
             for serverID in credentialServerIDs {
-                MCPCredentialStore.removeIncludingLegacy(serverID: serverID)
+                MCPCredentialStore.remove(serverID: serverID)
             }
             await refreshExtensions()
             await refreshExtensionCatalog()
@@ -2210,7 +2215,7 @@ final class AppModel: ObservableObject {
                 "/api/extensions/mcp/\(id)",
                 as: ExtensionOperationResponse.self
             )
-            MCPCredentialStore.removeIncludingLegacy(serverID: id)
+            MCPCredentialStore.remove(serverID: id)
             await refreshExtensions()
         } catch {
             extensionErrorMessage = error.localizedDescription
@@ -2254,7 +2259,7 @@ final class AppModel: ObservableObject {
                 body: ["id": serverID, "credentials": [String: Any]()],
                 as: MCPStatusCredentialResponse.self
             )
-            MCPCredentialStore.removeIncludingLegacy(serverID: serverID)
+            MCPCredentialStore.remove(serverID: serverID)
             await refreshExtensions()
             showToast("MCP credentials removed")
         } catch {
@@ -3419,7 +3424,7 @@ final class AppModel: ObservableObject {
                     route = [
                         "provider": "remote",
                         "base_url": account.resolvedBaseURL,
-                        "api_key": CredentialStore.get(account: account.keychainAccount) ?? "",
+                        "api_key": CredentialStore.get(account: account.credentialAccount) ?? "",
                         "auth_style": account.kind.authStyle,
                         "lists_models": account.kind.listsModels,
                         "account_label": account.displayName,
@@ -3463,6 +3468,7 @@ final class AppModel: ObservableObject {
             "name": team.name,
             "member_ids": team.memberIDs.map(\.uuidString),
             "use_managed_worktree": team.useManagedWorktree,
+            "parallel_writers": team.resolvedParallelWriters,
             // One approval releases the complete plan. Individual jobs and
             // models do not introduce additional dispatch confirmations.
             "dispatch_approval_mode": DispatchApprovalMode.preview.rawValue,
@@ -4296,6 +4302,49 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func refreshBackgroundServices() {
+        backgroundServicesRefreshGeneration += 1
+        let generation = backgroundServicesRefreshGeneration
+        let transport = conversationBackend
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response = try await transport.get(
+                    "/api/services", as: BackgroundServicesResponse.self
+                )
+                guard generation == backgroundServicesRefreshGeneration else { return }
+                backgroundServices = response.services
+            } catch {
+                guard generation == backgroundServicesRefreshGeneration else { return }
+                backgroundServices = []
+            }
+        }
+    }
+
+    func stopBackgroundService(_ service: BackgroundServiceRecord) {
+        guard let encoded = service.name.addingPercentEncoding(
+            withAllowedCharacters: .urlPathAllowed
+        ) else { return }
+        // Stop is authoritative in the interface. Invalidate older in-flight
+        // list requests so a stale response cannot make the service reappear.
+        backgroundServicesRefreshGeneration += 1
+        backgroundServices.removeAll { $0.name == service.name }
+        let transport = conversationBackend
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await transport.delete(
+                    "/api/services/\(encoded)", as: BackgroundServiceStopResponse.self
+                )
+                showToast(service.running ? "Stopped \(service.name)" : "Dismissed \(service.name)")
+                refreshBackgroundServices()
+            } catch {
+                showToast("Could not stop \(service.name): \(error.localizedDescription)")
+                refreshBackgroundServices()
+            }
+        }
+    }
+
     func configureWorkspaceKnowledge(
         enabled: Bool,
         embeddingModel: String,
@@ -4345,28 +4394,36 @@ final class AppModel: ObservableObject {
         content: String,
         tags: [String],
         scope: AgentMemoryScope = .workspace,
+        kind: MemoryKind = .fact,
+        confidence: Double = 1,
+        validUntil: Double? = nil,
         agentID: String = "primary"
     ) {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
+                var body: [String: Any] = [
+                    "workspace": workspacePath,
+                    "agent_id": agentID,
+                    "scope": scope.rawValue,
+                    "status": "approved",
+                    "title": title,
+                    "content": content,
+                    "tags": tags,
+                    "kind": kind.rawValue,
+                    "confidence": confidence,
+                    "source_session_id": currentSessionID,
+                    "source_run_id": orchestrationRunID ?? "",
+                ]
+                if let validUntil { body["valid_until"] = validUntil }
                 let response: WorkspaceMemoryResponse = try await backend.post(
                     "/api/memory",
-                    body: [
-                        "workspace": workspacePath,
-                        "agent_id": agentID,
-                        "scope": scope.rawValue,
-                        "status": "approved",
-                        "title": title,
-                        "content": content,
-                        "tags": tags,
-                        "source_session_id": currentSessionID,
-                        "source_run_id": orchestrationRunID ?? "",
-                    ],
+                    body: body,
                     as: WorkspaceMemoryResponse.self
                 )
                 workspaceMemories.removeAll { $0.id == response.memory.id }
                 workspaceMemories.insert(response.memory, at: 0)
+                await refreshWorkspaceKnowledge(agentID: agentID)
                 showToast("Remembered in \(scope.title.lowercased()) memory")
             } catch {
                 showToast(error.localizedDescription)
@@ -4374,7 +4431,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func deleteWorkspaceMemory(_ memory: WorkspaceMemory) {
+    func deleteWorkspaceMemory(
+        _ memory: WorkspaceMemory,
+        agentID: String = "primary"
+    ) {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -4384,6 +4444,7 @@ final class AppModel: ObservableObject {
                 )
                 workspaceMemories.removeAll { $0.id == memory.id }
                 memoryCandidates.removeAll { $0.id == memory.id }
+                await refreshWorkspaceKnowledge(agentID: agentID)
             } catch {
                 showToast(error.localizedDescription)
             }
@@ -4395,12 +4456,16 @@ final class AppModel: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
+                var updateBody = [
+                    "workspace": workspacePath,
+                    "agent_id": agentID,
+                ].merging(body) { _, new in new }
+                // An omitted optional field means "leave unchanged" to the
+                // vault. Send explicit null when the editor removes expiry.
+                updateBody["valid_until"] = memory.validUntil ?? NSNull()
                 let response: WorkspaceMemoryResponse = try await backend.put(
                     "/api/memory/\(memory.id)",
-                    body: [
-                        "workspace": workspacePath,
-                        "agent_id": agentID,
-                    ].merging(body) { _, new in new },
+                    body: updateBody,
                     as: WorkspaceMemoryResponse.self
                 )
                 if let index = workspaceMemories.firstIndex(where: { $0.id == memory.id }) {
@@ -4415,13 +4480,21 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func approveMemoryCandidate(_ memory: WorkspaceMemory, agentID: String = "primary") {
+    func approveMemoryCandidate(
+        _ memory: WorkspaceMemory,
+        agentID: String = "primary",
+        replacingConflicts: Bool = false
+    ) {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 let response: WorkspaceMemoryResponse = try await backend.post(
                     "/api/memory/\(memory.id)/approve",
-                    body: ["workspace": workspacePath, "agent_id": agentID],
+                    body: [
+                        "workspace": workspacePath,
+                        "agent_id": agentID,
+                        "resolution": replacingConflicts ? "replace" : "keep_both",
+                    ],
                     as: WorkspaceMemoryResponse.self
                 )
                 memoryCandidates.removeAll { $0.id == memory.id }
@@ -4431,6 +4504,26 @@ final class AppModel: ObservableObject {
                 showToast("Memory approved")
             } catch {
                 showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    func reviewMemoryHealth(agentID: String = "primary") {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response: MemoryMaintenanceResponse = try await backend.post(
+                    "/api/memory/maintenance/run",
+                    body: ["workspace": workspacePath, "agent_id": agentID],
+                    as: MemoryMaintenanceResponse.self
+                )
+                await refreshWorkspaceKnowledge(agentID: agentID)
+                showToast(
+                    "Memory review: \(response.expiredMarkedStale) expired, "
+                        + "\(response.conflictCount) conflicts"
+                )
+            } catch {
+                showToast("Could not review memory: \(error.localizedDescription)")
             }
         }
     }
@@ -4626,7 +4719,7 @@ final class AppModel: ObservableObject {
                 return
             }
         } else {
-            let effectiveKey = apiKey ?? CredentialStore.get(account: account.keychainAccount) ?? ""
+            let effectiveKey = apiKey ?? CredentialStore.get(account: account.credentialAccount) ?? ""
             if let error = RemoteEndpointTester.securityError(
                 baseURL: account.resolvedBaseURL,
                 apiKey: effectiveKey
@@ -4648,7 +4741,7 @@ final class AppModel: ObservableObject {
             providerAccounts.append(updated)
         }
         if let apiKey, updated.kind.requiresAPIKey {
-            CredentialStore.set(apiKey, account: updated.keychainAccount)
+            CredentialStore.set(apiKey, account: updated.credentialAccount)
         }
         persistProviderAccounts()
         forgetAccountCatalog(updated.id)
@@ -4783,7 +4876,7 @@ final class AppModel: ObservableObject {
     /// routing that depended on it.
     func removeProviderAccount(_ account: ProviderAccount) {
         providerAccounts.removeAll { $0.id == account.id }
-        CredentialStore.remove(account: account.keychainAccount)
+        CredentialStore.remove(account: account.credentialAccount)
         persistProviderAccounts()
         forgetAccountCatalog(account.id)
         guard account.id.uuidString == settings.activeAccountID else {
@@ -4803,7 +4896,7 @@ final class AppModel: ObservableObject {
     /// agent is told at once: it holds the key in memory, so leaving it be
     /// would keep spending a credential the user just revoked.
     func removeProviderAccountKey(_ account: ProviderAccount) {
-        CredentialStore.remove(account: account.keychainAccount)
+        CredentialStore.remove(account: account.credentialAccount)
         accountStatus[account.id] = .noKey
         forgetAccountCatalog(account.id)
         guard account.id.uuidString == settings.activeAccountID else { return }
@@ -5697,6 +5790,10 @@ final class AppModel: ObservableObject {
     }
 
     func applySettings(_ newSettings: AppSettings, proxyCredentialChanged: Bool = false) {
+        var newSettings = newSettings
+        // Permissions are live controls, not part of the editable settings
+        // draft. Preserve a choice made while this sheet was open.
+        newSettings.permissionModeRaw = settings.permissionModeRaw
         let backendChanged = settings.backendURL != newSettings.backendURL
             || settings.backendRoot != newSettings.backendRoot
         // Accounts are applied as they are edited, so the only routing change
@@ -5717,6 +5814,7 @@ final class AppModel: ObservableObject {
             || settings.proxyBypass != newSettings.proxyBypass
             || settings.proxyUsername != newSettings.proxyUsername
         settings = newSettings
+        appearancePreview = nil
         persistSettings()
         settingsPresented = false
         browser.defaultViewport = newSettings.resolvedBrowserViewport.size
@@ -5762,6 +5860,16 @@ final class AppModel: ObservableObject {
             Task { await applyTerminalSettings() }
         }
         showToast("Settings saved")
+    }
+
+    /// Preview never mutates `settings`, so Cancel can restore the committed
+    /// appearance without triggering persistence or backend side effects.
+    func previewAppearance(_ rawValue: String) {
+        appearancePreview = AppAppearance(rawValue: rawValue) ?? .system
+    }
+
+    func clearAppearancePreview() {
+        appearancePreview = nil
     }
 
     private func migrateTerminalSettingsIfNeeded() async {
@@ -5846,7 +5954,7 @@ final class AppModel: ObservableObject {
             "provider": "remote",
             "base_url": account.resolvedBaseURL,
             "model": account.preferredModel,
-            "api_key": CredentialStore.get(account: account.keychainAccount) ?? "",
+            "api_key": CredentialStore.get(account: account.credentialAccount) ?? "",
             "auth_style": account.kind.authStyle,
             "account_label": account.displayName,
             // Kimi Code serves no model listing; without this the agent's
@@ -6694,7 +6802,9 @@ final class AppModel: ObservableObject {
     // MARK: - Permission mode
 
     var permissionMode: PermissionMode {
-        sessionInfo?.permissions.effectiveMode ?? .ask
+        settings.preferredPermissionMode
+            ?? sessionInfo?.permissions.effectiveMode
+            ?? .ask
     }
 
     /// Tools the user allowed for the rest of this session.
@@ -6708,33 +6818,64 @@ final class AppModel: ObservableObject {
     }
 
     private func changePermissionMode(_ mode: PermissionMode) async {
-        do {
-            let state = try await conversationBackend.post(
+        settings.permissionModeRaw = mode.rawValue
+        let transports = [backend] + taskWorkers.values.map(\.service)
+        var latest: PermissionStateResponse?
+        var failures = 0
+        for transport in transports {
+            do {
+                latest = try await transport.post(
+                    "/api/permissions",
+                    body: ["mode": mode.rawValue],
+                    as: PermissionStateResponse.self
+                )
+            } catch {
+                failures += 1
+            }
+        }
+        if let latest {
+            applyPermissionState(latest)
+        }
+        if failures == 0 {
+            showToast("Permissions: \(mode.title)")
+        } else {
+            showToast("Permissions saved; \(failures) busy runtime\(failures == 1 ? " will" : "s will") use it after reconnecting")
+        }
+    }
+
+    private func syncPreferredPermissionMode(to transport: BackendService) {
+        guard let mode = settings.preferredPermissionMode else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            if let state = try? await transport.post(
                 "/api/permissions",
                 body: ["mode": mode.rawValue],
                 as: PermissionStateResponse.self
-            )
-            applyPermissionState(state)
-            showToast("Permissions: \(mode.title)")
-        } catch {
-            showToast("Could not change permissions: \(error.localizedDescription)")
+            ), transport === self.conversationBackend {
+                self.applyPermissionState(state)
+            }
         }
     }
 
     /// Clears the tools allowed for this session and returns to asking.
     func resetPermissions() {
+        settings.permissionModeRaw = PermissionMode.ask.rawValue
         Task {
-            do {
-                let state = try await conversationBackend.post(
-                    "/api/permissions",
-                    body: ["reset": true],
-                    as: PermissionStateResponse.self
-                )
-                applyPermissionState(state)
-                showToast("Permissions reset")
-            } catch {
-                showToast("Could not reset permissions: \(error.localizedDescription)")
+            var latest: PermissionStateResponse?
+            var failures = 0
+            for transport in [backend] + taskWorkers.values.map(\.service) {
+                do {
+                    latest = try await transport.post(
+                        "/api/permissions",
+                        body: ["reset": true],
+                        as: PermissionStateResponse.self
+                    )
+                } catch {
+                    failures += 1
+                }
             }
+            if let latest { applyPermissionState(latest) }
+            showToast(failures == 0 ? "Permissions reset" : "Permissions reset; a busy runtime will update after reconnecting")
         }
     }
 
@@ -7015,8 +7156,7 @@ final class AppModel: ObservableObject {
             proxyCredential: ProxyConfigurator.childCredential(
                 settings: settings,
                 password: persistenceEnabled ? CredentialStore.proxyPassword() : nil
-            ),
-            memoryKey: persistenceEnabled ? MemoryKeychainStore.loadOrCreate() : nil
+            )
         )
         guard case .running(let endpoint) = launch else {
             if case .failed(let message) = launch { showToast(message) }
@@ -7092,6 +7232,7 @@ final class AppModel: ObservableObject {
             // which knows nothing about the capability until it is told again.
             guard connected, let self, let runtime else { return }
             self.sendBrowserCapability(to: runtime.service)
+            self.syncPreferredPermissionMode(to: runtime.service)
         }
         runtime.service.onEvent = { [weak self, weak runtime] event in
             guard let self, let runtime else { return }
@@ -7162,6 +7303,7 @@ final class AppModel: ObservableObject {
         }
         sendComputerControlCapability(to: runtime.service)
         sendBrowserCapability(to: runtime.service)
+        syncPreferredPermissionMode(to: runtime.service)
         syncBrowserProtectedSessions()
         return runtime
     }
@@ -7910,6 +8052,9 @@ final class AppModel: ObservableObject {
                 }
             }
 
+        case "background_services_changed":
+            refreshBackgroundServices()
+
         case "turn_done":
             flushPendingTokens()
             finalizeStreamingBlocks()
@@ -7930,6 +8075,7 @@ final class AppModel: ObservableObject {
                 )
             }
             isBusy = false
+            syncPreferredPermissionMode(to: conversationBackend)
             pendingRetry = false
             steeringState = nil
             mcpInputRequest = nil

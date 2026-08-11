@@ -24,7 +24,7 @@ import sys
 import threading
 import time
 import uuid
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FutureTimeout
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -168,6 +168,8 @@ class ChatService:
         self.pending_browser_actions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_dispatch_decisions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_dispatch_plans: dict[str, dict[str, Any]] = {}
+        self._parallel_writer_cores: dict[str, AgentCore] = {}
+        self._parallel_writer_guard = RLock()
         self.turn_future: Any = None
         self._terminal_events = 0
         self.active_orchestrator: TeamOrchestrator | None = None
@@ -200,6 +202,7 @@ class ChatService:
         # Dev servers run outside the chat's single turn slot and can remain
         # alive until explicitly stopped — see devserver.py's docstring.
         self.dev_servers = DevServerManager(perms=core.perms, config=core.config)
+        self.core.tool_ctx.background_service = self._execute_background_service
 
     def _on_codex_event(self, event: dict[str, Any]) -> None:
         """Expose only account/limit invalidations, never helper payloads."""
@@ -360,6 +363,39 @@ class ChatService:
             if not fut.done():
                 fut.set_result("deny")
 
+    def register_parallel_writer_core(self, job_id: str, core: AgentCore) -> None:
+        with self._parallel_writer_guard:
+            self._parallel_writer_cores[job_id] = core
+
+    def unregister_parallel_writer_core(self, job_id: str, core: AgentCore) -> None:
+        with self._parallel_writer_guard:
+            if self._parallel_writer_cores.get(job_id) is core:
+                self._parallel_writer_cores.pop(job_id, None)
+
+    def _parallel_cores(self) -> list[AgentCore]:
+        with self._parallel_writer_guard:
+            return list(self._parallel_writer_cores.values())
+
+    def interrupt_parallel_writers(self) -> None:
+        for core in self._parallel_cores():
+            core.interrupt()
+            core.mcp.cancel_pending_inputs()
+
+    def answer_mcp_input(
+        self, request_id: str, action: str, content: dict[str, Any]
+    ) -> bool:
+        if self.core.mcp.answer_elicitation(request_id, action, content):
+            return True
+        return any(
+            core.mcp.answer_elicitation(request_id, action, content)
+            for core in self._parallel_cores()
+        )
+
+    def cancel_all_mcp_inputs(self) -> None:
+        self.core.mcp.cancel_pending_inputs()
+        for core in self._parallel_cores():
+            core.mcp.cancel_pending_inputs()
+
     def execute_computer(
         self,
         tool: str,
@@ -424,7 +460,7 @@ class ChatService:
         # child processes, not the app — so it never crosses the socket and
         # the budget/future machinery below never applies to it.
         if tool == "browser_dev_server":
-            return self._execute_dev_server(arguments)
+            return self._execute_background_service(arguments)
         budget_ms = BROWSER_TOOL_BUDGET_MS.get(tool, BROWSER_DEFAULT_BUDGET_MS)
         future: Future[dict[str, Any]] = Future()
         self.pending_browser_actions[request_id] = future
@@ -462,7 +498,7 @@ class ChatService:
             return f"{_UNTRUSTED_BROWSER_NOTICE}\n\n{text}"
         return text
 
-    def _execute_dev_server(self, arguments: dict[str, Any]) -> str:
+    def _execute_background_service(self, arguments: dict[str, Any]) -> str:
         action = str(arguments.get("action") or "status").lower()
         try:
             if action == "start":
@@ -474,6 +510,7 @@ class ChatService:
                     name=str(arguments.get("name") or ""),
                     should_stop=self.core.tool_ctx.stopped,
                 )
+                self.emit({"type": "background_services_changed", "action": "start"})
                 tail = str(result.get("tail") or "").strip()
                 suffix = f"\n\nRecent output:\n{tail}" if tail else ""
                 if result.get("ready"):
@@ -492,10 +529,11 @@ class ChatService:
                 stopped = self.dev_servers.stop(str(arguments.get("name") or ""))
                 if not stopped:
                     return "No matching server is running."
+                self.emit({"type": "background_services_changed", "action": "stop"})
                 return f"Stopped {', '.join(stopped)}."
             runs = self.dev_servers.status()
             if not runs:
-                return "No dev servers are running."
+                return "No managed background services are running."
             lines = []
             for run in runs:
                 state = "running" if run["running"] else f"exited ({run['exit_code']})"
@@ -1008,6 +1046,7 @@ def memory_approve(
         memory = _memory_vault(target).approve(
             memory_id, workspace=target,
             agent_id=str(body.get("agent_id") or "primary"),
+            resolution=str(body.get("resolution") or "keep_both"),
         )
         return {"ok": True, "memory": memory}
     except MemoryError as exc:
@@ -1030,8 +1069,11 @@ def memory_search(
 ) -> dict[str, Any]:
     target = _memory_workspace(workspace)
     try:
+        knowledge = _knowledge_store(target).settings()
         return {"results": _memory_vault(target).search(
             query, workspace=target, agent_id=agent_id, limit=limit,
+            embedding_model=str(knowledge.get("embedding_model") or ""),
+            ollama_host=str(knowledge.get("ollama_host") or "http://127.0.0.1:11434"),
         )}
     except MemoryError as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -1059,6 +1101,32 @@ def memory_import(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str
         return {"ok": True, "imported": count}
     except MemoryError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/memory/{memory_id}/feedback")
+def memory_feedback(
+    memory_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    try:
+        return {
+            "ok": True,
+            "memory": _memory_vault().feedback(
+                memory_id, str(body.get("outcome") or "")
+            ),
+        }
+    except MemoryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/memory/maintenance/run")
+def memory_maintenance(
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    target = _memory_workspace(str(body.get("workspace") or ""))
+    return _memory_vault(target).maintain(
+        workspace=target,
+        agent_id=str(body.get("agent_id") or "primary"),
+    )
 
 
 # ------------------------------------------------------------ Durable MCP tasks
@@ -2170,11 +2238,12 @@ def orchestration_pause(run_id: str) -> dict[str, Any]:
         reason="Waiting for the next safe boundary before pausing.",
     )
     svc.core.interrupt()
+    svc.interrupt_parallel_writers()
     svc.deny_all_pending()
     svc.cancel_all_computer_actions()
     svc.cancel_all_browser_actions()
     svc.cancel_dispatch_decisions()
-    svc.core.mcp.cancel_pending_inputs()
+    svc.cancel_all_mcp_inputs()
     svc.emit({
         "type": "orchestration_pause_requested", "run_id": run_id,
         "state": "pausing",
@@ -2200,11 +2269,12 @@ def orchestration_cancel(run_id: str) -> dict[str, Any]:
     svc.pause_requested = False
     svc.cancel_requested_runs.add(run_id)
     svc.core.interrupt()
+    svc.interrupt_parallel_writers()
     svc.deny_all_pending()
     svc.cancel_all_computer_actions()
     svc.cancel_all_browser_actions()
     svc.cancel_dispatch_decisions()
-    svc.core.mcp.cancel_pending_inputs()
+    svc.cancel_all_mcp_inputs()
     svc.run_store.set_state(run_id, "cancelled", recoverable=False)
     return {"ok": True, "run_id": run_id, "state": "cancelled"}
 
@@ -2981,6 +3051,46 @@ def delete_extension_mcp(server_id: str) -> dict[str, Any]:
         raise _extension_failure(exc) from exc
 
 
+# --------------------------------------------------- Managed background work
+
+
+@app.get("/api/services")
+def background_service_list() -> dict[str, Any]:
+    """List task-independent servers, watchers, and workers owned by Locus."""
+    return {"services": service().dev_servers.status()}
+
+
+@app.post("/api/services")
+def background_service_start(
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    svc = service()
+    try:
+        raw_port = body.get("port")
+        port = int(raw_port) if raw_port not in (None, "") else None
+        if port is not None and not 1 <= port <= 65_535:
+            raise DevServerError("port must be between 1 and 65535")
+        result = svc.dev_servers.start(
+            command=str(body.get("command") or ""),
+            cwd=str(body.get("cwd") or "") or svc.core.execution_path,
+            port=port,
+            name=str(body.get("name") or ""),
+            # A direct user action has no chat turn to cancel it.
+            should_stop=None,
+        )
+        return {"ok": True, "service": result}
+    except (DevServerError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.delete("/api/services/{name}")
+def background_service_stop(name: str) -> dict[str, Any]:
+    stopped = service().dev_servers.stop(name)
+    if not stopped:
+        raise HTTPException(404, "background service not found or no longer running")
+    return {"ok": True, "stopped": stopped}
+
+
 @app.get("/api/permissions")
 def get_permissions() -> dict[str, Any]:
     return service().core.perms.state()
@@ -2999,6 +3109,8 @@ def set_permissions(body: dict[str, Any] = Body(default_factory=dict)) -> dict[s
                 svc.core.config["permission_mode"] = mode
             if body.get("reset"):
                 svc.core.perms.reset()
+                svc.core.config["permission_mode"] = "ask"
+            save_config(svc.core.config)
             svc.queue_event({"type": "session_info", **svc.core.session_info()})
             return svc.core.perms.state()
     except AgentBusyError as e:
@@ -3167,12 +3279,15 @@ def _automatic_memory_context(
         return ""
     workspace = core.workspace_root or core.cwd
     try:
+        knowledge = _knowledge_store(workspace).settings()
         results = _memory_vault(workspace).search(
             query,
             workspace=workspace,
             agent_id=agent_id,
             scopes=scopes,
             limit=policy.max_automatic_memories,
+            embedding_model=str(knowledge.get("embedding_model") or ""),
+            ollama_host=str(knowledge.get("ollama_host") or "http://127.0.0.1:11434"),
         )
     except (MemoryError, KnowledgeError):
         return ""
@@ -3741,7 +3856,7 @@ def _run_prepared_writers(
     first_persisted_user_text: str,
     first_attachments: list[dict[str, str]] | None = None,
 ) -> None:
-    """Run pending coding jobs serially and checkpoint each completed mutation scope."""
+    """Run coding jobs, isolating independent writers when the team opts in."""
     emit = getattr(svc, "emit", lambda _event: None)
     pending = [
         job for job in prepared.writer_jobs
@@ -3758,6 +3873,46 @@ def _run_prepared_writers(
         raise OrchestrationError(
             "team model-call budget is too small for the remaining coding jobs, review, "
             "lead revision reserve, and synthesis"
+        )
+
+    writer_ids = {job.id for job in prepared.writer_jobs}
+    ready_parallel = [
+        job for job in pending
+        if all(
+            dependency not in writer_ids
+            or dependency in prepared.completed_writer_job_ids
+            for dependency in getattr(job, "dependencies", ())
+        )
+    ]
+    if (
+        bool(getattr(prepared.team, "parallel_writers", False))
+        and bool(getattr(prepared.team, "use_managed_worktree", False))
+        and svc.current_task is not None
+        and len(ready_parallel) > 1
+    ):
+        _run_parallel_writer_wave(
+            svc,
+            orchestrator,
+            prepared,
+            ready_parallel,
+            first_persisted_user_text=first_persisted_user_text,
+            first_attachments=first_attachments,
+            non_writer_reserve=non_writer_reserve,
+        )
+        pending = [
+            job for job in prepared.writer_jobs
+            if job.id not in prepared.completed_writer_job_ids
+        ]
+        if not pending:
+            return
+        # Re-evaluate the dependency graph after integration so a later wave
+        # of newly-ready siblings can also run in parallel.
+        return _run_prepared_writers(
+            svc,
+            orchestrator,
+            prepared,
+            first_persisted_user_text="[Continuing parallel team coding jobs]",
+            first_attachments=None,
         )
 
     total = len(prepared.writer_jobs)
@@ -3906,6 +4061,209 @@ def _run_prepared_writers(
         )
 
 
+def _parallel_writer_core(
+    svc: ChatService,
+    prepared: TeamPreparation,
+    job: Any,
+    checkout: TaskCheckout,
+) -> AgentCore:
+    """Build an isolated core without changing the process-wide cwd."""
+    core = AgentCore(
+        cwd=checkout.execution_path,
+        config=dict(svc.core.config),
+        model=svc.core.model,
+    )
+    core.workspace_root = checkout.workspace_root
+    core.execution_path = checkout.execution_path
+    core.task_metadata = checkout.as_dict()
+    core.tool_ctx.memory_workspace = checkout.workspace_root
+    core.codex_manager = svc.codex
+    core.mcp.task_store = svc.run_store
+    core.mcp.context_provider = lambda: {
+        "run_id": prepared.run_id,
+        "job_id": job.id,
+        "tool_call_id": core.active_tool_call_id,
+    }
+    core.tool_ctx.background_service = lambda arguments: svc._execute_background_service({
+        **arguments,
+        "cwd": str(arguments.get("cwd") or checkout.execution_path),
+    })
+
+    forwarded = {
+        "tool_call_proposed", "permission_request", "tool_result", "note", "error",
+        "todo_update", "workspace_changed", "mcp_input_request",
+    }
+
+    def emit(event: dict[str, Any]) -> None:
+        if str(event.get("type") or "") not in forwarded:
+            return
+        svc.emit({
+            **event,
+            "run_id": prepared.run_id,
+            "job_id": job.id,
+            "agent_id": job.agent_id,
+            "parallel_worktree": checkout.as_dict(),
+        })
+
+    core.on_event(emit)
+    return core
+
+
+def _run_parallel_writer_wave(
+    svc: ChatService,
+    orchestrator: TeamOrchestrator,
+    prepared: TeamPreparation,
+    jobs: list[Any],
+    *,
+    first_persisted_user_text: str,
+    first_attachments: list[dict[str, str]] | None,
+    non_writer_reserve: int,
+) -> None:
+    """Run one dependency-ready writer wave and integrate in plan order."""
+    parent = svc.current_task
+    if parent is None:
+        raise OrchestrationError("parallel writers require a managed task worktree")
+    total_pending = sum(
+        job.id not in prepared.completed_writer_job_ids for job in prepared.writer_jobs
+    )
+    writer_pool = orchestrator.remaining_model_calls(prepared.team.budget) - non_writer_reserve
+    allowance = max(writer_pool // max(total_pending, 1), 1)
+    plan_position = {job.id: index for index, job in enumerate(prepared.writer_jobs)}
+    children: dict[str, TaskCheckout] = {}
+    cores: dict[str, AgentCore] = {}
+    results: dict[str, AgentResult] = {}
+    failures: dict[str, BaseException] = {}
+
+    for job in jobs:
+        child_id = f"{prepared.run_id[:72]}--{job.id[:48]}"
+        child = TaskCheckoutStore.fork(parent, child_id)
+        children[job.id] = child
+        cores[job.id] = _parallel_writer_core(svc, prepared, job, child)
+        svc.emit({
+            "type": "agent_worktree_started",
+            "run_id": prepared.run_id,
+            "job_id": job.id,
+            "agent_id": job.agent_id,
+            "task": child.as_dict(),
+            "state": "running",
+        })
+
+    def run(job: Any) -> AgentResult:
+        core = cores[job.id]
+        profile = prepared.profiles[job.agent_id]
+        snapshot = _install_writer_route(core, profile)
+        try:
+            result = _run_team_writer(
+                svc,
+                orchestrator,
+                prepared,
+                profile,
+                writer_prompt_for_job(prepared, job),
+                persisted_user_text=(
+                    first_persisted_user_text
+                    if plan_position[job.id] == min(plan_position[item.id] for item in jobs)
+                    else f"[Parallel team coding job {plan_position[job.id] + 1}]"
+                ),
+                attachments=(
+                    first_attachments
+                    if plan_position[job.id] == min(plan_position[item.id] for item in jobs)
+                    else None
+                ),
+                job_id=job.id,
+                goal=job.goal,
+                model_call_limit=allowance,
+                writer_position=plan_position[job.id] + 1,
+                writer_total=len(prepared.writer_jobs),
+                emit_completion=False,
+                core_override=core,
+            )
+            reason = str(core.last_turn_result.get("reason") or "complete")
+            if reason != "complete":
+                raise TeamWriterBudgetPause(
+                    job.id, reason,
+                    f"Parallel coding job {job.id} paused at the {reason} safety boundary.",
+                )
+            return result
+        finally:
+            _restore_writer_route(core, snapshot)
+
+    workers = min(
+        len(jobs),
+        prepared.team.budget.max_concurrent_calls,
+        4,
+    )
+    for job in jobs:
+        svc.register_parallel_writer_core(job.id, cores[job.id])
+    try:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="locus-writer") as pool:
+            futures = {pool.submit(run, job): job for job in jobs}
+            for future in as_completed(futures):
+                job = futures[future]
+                try:
+                    results[job.id] = future.result()
+                except BaseException as exc:  # collect all siblings before deciding integration
+                    failures[job.id] = exc
+    finally:
+        for job in jobs:
+            core = cores[job.id]
+            svc.unregister_parallel_writer_core(job.id, core)
+            core.close()
+
+    if failures:
+        for job_id, exc in failures.items():
+            svc.emit({
+                "type": "agent_job_incomplete",
+                "run_id": prepared.run_id,
+                "job_id": job_id,
+                "state": "paused",
+                "reason": "parallel_writer_failed",
+                "message": str(exc),
+                "task": children[job_id].as_dict(),
+            })
+        first = next(iter(failures.values()))
+        if isinstance(first, TeamWriterBudgetPause):
+            raise first
+        raise OrchestrationError(f"parallel writer failed: {first}") from first
+
+    for job in sorted(jobs, key=lambda item: plan_position[item.id]):
+        child = children[job.id]
+        try:
+            integration = parent.integrate(child)
+        except WorktreeError as exc:
+            svc.emit({
+                "type": "agent_worktree_conflict",
+                "run_id": prepared.run_id,
+                "job_id": job.id,
+                "state": "conflict",
+                "message": str(exc),
+                "task": child.as_dict(),
+            })
+            raise OrchestrationError(str(exc)) from exc
+        result = results[job.id]
+        prepared.writer_results.append(result)
+        prepared.completed_writer_job_ids.add(job.id)
+        svc.emit({
+            "type": "agent_worktree_integrated",
+            "run_id": prepared.run_id,
+            "job_id": job.id,
+            "state": "completed",
+            "paths": integration.get("paths") or [],
+            "result": result.structured(),
+            "usage": orchestrator.usage(),
+        })
+        TaskCheckoutStore.cleanup(child.id)
+        svc.checkpoint(
+            f"writer_complete:{job.id}",
+            _team_checkpoint_state(
+                prepared,
+                "reviewing" if len(prepared.completed_writer_job_ids) == len(prepared.writer_jobs)
+                else "running",
+                svc.current_task,
+                usage=orchestrator.usage(),
+            ),
+        )
+
+
 def _run_team_writer(
     svc: ChatService,
     orchestrator: TeamOrchestrator,
@@ -3922,9 +4280,10 @@ def _run_team_writer(
     writer_total: int | None = None,
     continuation: bool = False,
     emit_completion: bool = True,
+    core_override: AgentCore | None = None,
 ) -> AgentResult:
     """Run one bounded slice of a mutation-capable member's coding job."""
-    core = svc.core
+    core = core_override or svc.core
     remaining = orchestrator.remaining_model_calls(prepared.team.budget)
     if remaining <= 0:
         raise OrchestrationError("team model-call budget exhausted before the coding job ran")
@@ -4341,17 +4700,18 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         if action not in {"accept", "decline", "cancel"}:
             _command_error(svc, "mcp_input_response", "Unknown MCP input decision.")
             return
-        if not core.mcp.answer_elicitation(request_id, action, content):
+        if not svc.answer_mcp_input(request_id, action, content):
             _command_error(svc, "mcp_input_response", "That MCP input request is no longer waiting.")
     elif mtype == "interrupt":
         core.interrupt()
+        svc.interrupt_parallel_writers()
         if svc.active_evaluation_core is not None:
             svc.active_evaluation_core.interrupt()
         svc.deny_all_pending()  # unblock a permission wait so the turn can end
         svc.cancel_all_computer_actions()
         svc.cancel_all_browser_actions()
         svc.cancel_dispatch_decisions()
-        core.mcp.cancel_pending_inputs()
+        svc.cancel_all_mcp_inputs()
     elif mtype == "retry_last":
         if not svc.start_turn(loop, core.retry_last, svc.decide):
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
@@ -4401,6 +4761,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
                 if mode in ("ask", "accept_edits", "bypass"):
                     core.perms.set_mode(mode)
                     core.config["permission_mode"] = mode
+                    save_config(core.config)
                     svc.queue_event({"type": "session_info", **core.session_info()})
         except AgentBusyError:
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
@@ -4631,11 +4992,12 @@ async def ws_chat(ws: WebSocket) -> None:
         if svc.ws is ws:  # a newer connection may already have replaced us
             svc.ws = None
             svc.core.interrupt()
+            svc.interrupt_parallel_writers()
             svc.deny_all_pending()
             svc.cancel_all_computer_actions()
             svc.cancel_all_browser_actions()
             svc.cancel_dispatch_decisions()
-            svc.core.mcp.cancel_pending_inputs()
+            svc.cancel_all_mcp_inputs()
 
 
 def _is_loopback_bind(host: str) -> bool:

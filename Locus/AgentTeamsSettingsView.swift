@@ -534,6 +534,8 @@ private struct AgentBehaviorEditor: View {
                         Button(showAdvanced ? "Hide Mode, Memory & Capability Settings" : "Edit Mode, Memory & Capability Settings") {
                             withAnimation(.easeInOut(duration: 0.2)) { showAdvanced.toggle() }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .buttonStyle(.plain)
                         if showAdvanced { advancedFields }
                     }
 
@@ -776,6 +778,9 @@ private struct AgentProfileEditor: View {
                                 .accessibilityIdentifier("agent.capabilityTags")
                             advancedDisclosure
                                 .id("agent.advancedSettings.section")
+                            if draft.accessCeiling == .readOnly {
+                                standardToolAccess
+                            }
                             if let connectionResult {
                                 Text(connectionResult)
                                     .font(.system(size: 9))
@@ -901,17 +906,18 @@ private struct AgentProfileEditor: View {
                 }
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "slider.horizontal.3")
-                        .foregroundStyle(LocusTheme.signalDeep)
                     Text("Advanced Settings")
                         .font(.system(size: 11, weight: .semibold))
                     Spacer()
+                    Image(systemName: "slider.horizontal.3")
+                        .foregroundStyle(LocusTheme.signalDeep)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(LocusTheme.muted)
                         .rotationEffect(.degrees(advancedSettings ? 90 : 0))
                 }
                 .contentShape(Rectangle())
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
             .accessibilityValue(advancedSettings ? "Expanded" : "Collapsed")
@@ -922,6 +928,102 @@ private struct AgentProfileEditor: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+    }
+
+    private var standardToolAccess: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("STANDARD TOOL ACCESS")
+                .font(.system(size: 8, weight: .bold))
+                .tracking(0.8)
+                .foregroundStyle(LocusTheme.muted)
+            Text("Read-only agents get only the tool groups you check. These choices can remove access; they never override Bypass, workspace boundaries, or the read-only ceiling.")
+                .font(.system(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            toolAccessRow(
+                "Workspace files",
+                "Read, list, search, Git status/diff, and workspace knowledge",
+                capabilityBinding(\.workspaceRead)
+            )
+            toolAccessRow(
+                "Terminal commands",
+                "Finite shell commands and managed background services",
+                capabilityBinding(\.shell)
+            )
+            toolAccessRow(
+                "Network and browser",
+                "Web fetch plus the built-in browser tools",
+                capabilityBinding(\.network)
+            )
+            toolAccessRow(
+                "Skills and MCP",
+                "Enabled skills and the MCP servers checked below",
+                capabilityBinding(\.mcp)
+            )
+            toolAccessRow(
+                "Search approved memory",
+                "Automatic recall and the explicit memory search tool",
+                memorySearchBinding
+            )
+            toolAccessRow(
+                "Suggest memory",
+                "May add a suggestion to the Memory Inbox; cannot approve it",
+                memoryProposalBinding
+            )
+        }
+        .padding(.vertical, 5)
+        .accessibilityIdentifier("agent.standardToolAccess")
+    }
+
+    private func toolAccessRow(
+        _ title: String, _ detail: String, _ binding: Binding<Bool>
+    ) -> some View {
+        Toggle(isOn: binding) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.system(size: 9, weight: .medium))
+                Text(detail).font(.system(size: 8)).foregroundStyle(LocusTheme.muted)
+            }
+        }
+        .toggleStyle(.checkbox)
+    }
+
+    private func capabilityBinding(
+        _ keyPath: WritableKeyPath<AgentCapabilityPolicy, Bool>
+    ) -> Binding<Bool> {
+        Binding(
+            get: { draft.resolvedBehavior.capabilityPolicy[keyPath: keyPath] },
+            set: { enabled in
+                var behavior = draft.resolvedBehavior
+                behavior.capabilityPolicy[keyPath: keyPath] = enabled
+                draft.behavior = behavior
+            }
+        )
+    }
+
+    private var memorySearchBinding: Binding<Bool> {
+        Binding(
+            get: {
+                let policy = draft.resolvedBehavior.memoryPolicy
+                return policy.recallEnabled && policy.searchEnabled
+            },
+            set: { enabled in
+                var behavior = draft.resolvedBehavior
+                behavior.memoryPolicy.recallEnabled = enabled
+                behavior.memoryPolicy.searchEnabled = enabled
+                draft.behavior = behavior
+            }
+        )
+    }
+
+    private var memoryProposalBinding: Binding<Bool> {
+        Binding(
+            get: { draft.resolvedBehavior.memoryPolicy.proposalsEnabled },
+            set: { enabled in
+                var behavior = draft.resolvedBehavior
+                behavior.memoryPolicy.proposalsEnabled = enabled
+                draft.behavior = behavior
+            }
+        )
     }
 
     private var advancedSettingsContent: some View {
@@ -1131,6 +1233,15 @@ private struct AgentTeamEditor: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("teamEditor.multiWriterExplanation")
                     Toggle("Use isolated managed worktree for new Git tasks", isOn: $draft.useManagedWorktree)
+                    Toggle("Run independent coding jobs in parallel worktrees", isOn: Binding(
+                        get: { draft.resolvedParallelWriters },
+                        set: { draft.parallelWriters = $0 }
+                    ))
+                        .disabled(!draft.useManagedWorktree)
+                    Text("Each independent writer gets a private checkout. Locus integrates completed patches in plan order and stops with a visible conflict instead of guessing.")
+                        .font(.system(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                     Section("Dispatch and routing") {
                         Label(
                             "Review each team plan once before any agent begins",
@@ -1502,6 +1613,7 @@ struct WorkspaceKnowledgeSettingsView: View {
     @State private var confirmDeleteAll = false
     @State private var confirmDeleteMemory = false
     @State private var selectedMemoryAgentID = "primary"
+    @State private var showAdvancedMemory = false
 
     var body: some View {
         ScrollView {
@@ -1509,9 +1621,14 @@ struct WorkspaceKnowledgeSettingsView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Memory & Knowledge")
                         .font(.system(size: 16, weight: .bold))
-                    Text("Encrypted personal, workspace, and agent memory plus a local, workspace-isolated project index.")
+                    Text("Memory keeps durable things you want the agent to carry forward. You stay in control: suggestions wait in the Inbox, and only approved memory can be recalled.")
                         .font(.system(size: 10))
                         .foregroundStyle(LocusTheme.muted)
+                }
+                HStack(alignment: .top, spacing: 12) {
+                    memoryStep("1", "Agent suggests", "Clear preferences, decisions, facts, procedures, or relationships go to the Inbox.")
+                    memoryStep("2", "You review", "Approve, replace an older conflict, edit, or reject it.")
+                    memoryStep("3", "Relevant recall", "Locus combines text and optional local semantic matching, then explains why it recalled each item.")
                 }
                 HStack {
                     Text("Memory owner")
@@ -1530,74 +1647,147 @@ struct WorkspaceKnowledgeSettingsView: View {
                         .foregroundStyle(LocusTheme.muted)
                     Spacer()
                 }
-                VStack(alignment: .leading, spacing: 10) {
-                    Toggle("Index this workspace", isOn: $enabled)
-                    TextField(
-                        "Optional local Ollama embedding model",
-                        text: $embeddingModel,
-                        prompt: Text("Leave empty for fast text search only")
-                    )
-                    TextField(
-                        "Additional exclusions (comma separated globs)",
-                        text: $exclusions,
-                        prompt: Text("Generated/**, Fixtures/private-*.json")
-                    )
-                    Text("Embeddings use only the configured local Ollama /api/embed endpoint. Secret-shaped files, ignored files, vendor/build folders, symlink escapes, binary files, and files over 2 MB are excluded.")
-                        .font(.system(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                    HStack {
-                        Button("Save") {
-                            model.configureWorkspaceKnowledge(
-                                enabled: enabled,
-                                embeddingModel: embeddingModel,
-                                exclusions: exclusions.split(separator: ",").map {
-                                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
-                                }.filter { !$0.isEmpty }
-                            )
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(LocusTheme.ink)
-                        Button("Rebuild Index") { model.rebuildWorkspaceKnowledge() }
-                            .disabled(!enabled || model.isBusy)
-                        Spacer()
-                        Button("Delete All Workspace Knowledge…", role: .destructive) {
-                            confirmDeleteAll = true
-                        }
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showAdvancedMemory.toggle()
                     }
-                    if let status = model.knowledgeStatus {
-                        HStack(spacing: 14) {
-                            metric("Files", status.documentCount)
-                            metric("Chunks", status.chunkCount)
-                            metric("Memories", model.memoryVaultStatus?.approvedCount ?? 0)
+                } label: {
+                    HStack(spacing: 8) {
+                        Text("Advanced Memory Settings")
+                            .font(.system(size: 11, weight: .semibold))
+                        Spacer()
+                        Image(systemName: "slider.horizontal.3")
+                            .foregroundStyle(LocusTheme.signalDeep)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(LocusTheme.muted)
+                            .rotationEffect(.degrees(showAdvancedMemory ? 90 : 0))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("memory.advancedSettings")
+
+                if showAdvancedMemory {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("WORKSPACE SEARCH INDEX")
+                            .font(.system(size: 8, weight: .bold))
+                            .tracking(0.8)
+                            .foregroundStyle(LocusTheme.muted)
+                        Text("This is separate from durable memory. It makes project files searchable for the current workspace; leaving the model empty uses fast text matching, while a local Ollama embedding model also finds related meaning and improves approved-memory recall.")
+                            .font(.system(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Toggle("Index this workspace", isOn: $enabled)
+                        TextField(
+                            "Optional local Ollama embedding model",
+                            text: $embeddingModel,
+                            prompt: Text("Leave empty for fast text search only")
+                        )
+                        TextField(
+                            "Additional exclusions (comma separated globs)",
+                            text: $exclusions,
+                            prompt: Text("Generated/**, Fixtures/private-*.json")
+                        )
+                        Text("Embeddings use only the configured local Ollama /api/embed endpoint. Secret-shaped files, ignored files, vendor/build folders, symlink escapes, binary files, and files over 2 MB are excluded.")
+                            .font(.system(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack {
+                            Button("Save") {
+                                model.configureWorkspaceKnowledge(
+                                    enabled: enabled,
+                                    embeddingModel: embeddingModel,
+                                    exclusions: exclusions.split(separator: ",").map {
+                                        $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    }.filter { !$0.isEmpty }
+                                )
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(LocusTheme.ink)
+                            Button("Rebuild Index") { model.rebuildWorkspaceKnowledge() }
+                                .disabled(!enabled || model.isBusy)
                             Spacer()
-                            Text(status.embeddingModel.isEmpty ? "FTS5 text search" : "Text + local vectors")
+                            Button("Delete All Workspace Knowledge…", role: .destructive) {
+                                confirmDeleteAll = true
+                            }
+                        }
+                        HStack {
+                            Text("BACKUP & MAINTENANCE")
+                                .font(.system(size: 8, weight: .bold))
+                                .tracking(0.8)
+                                .foregroundStyle(LocusTheme.muted)
+                            Spacer()
+                            Button("Review Health") {
+                                model.reviewMemoryHealth(agentID: selectedMemoryAgentID)
+                            }
+                            .buttonStyle(.borderless)
+                            Button("Import Memory") {
+                                model.importMemory(agentID: selectedMemoryAgentID)
+                            }
+                            .buttonStyle(.borderless)
+                            Button("Export Memory") {
+                                model.exportMemory(agentID: selectedMemoryAgentID)
+                            }
+                            .buttonStyle(.borderless)
+                            Button("Delete All Memory…", role: .destructive) {
+                                confirmDeleteMemory = true
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                        if let status = model.knowledgeStatus {
+                            HStack(spacing: 14) {
+                                metric("Indexed files", status.documentCount)
+                                metric("Search chunks", status.chunkCount)
+                                metric("Saved memories", model.workspaceMemories.count)
+                                Spacer()
+                                Text(status.embeddingModel.isEmpty ? "FTS5 text search" : "Text + local vectors")
+                                    .font(.system(size: 8, design: .monospaced))
+                                    .foregroundStyle(LocusTheme.muted)
+                            }
+                            Text("Indexed files and search chunks make project content searchable; they do not create saved memories. Use Remember or approve an Inbox suggestion to save one.")
+                                .font(.system(size: 8))
+                                .foregroundStyle(LocusTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let error = status.lastError, !error.isEmpty {
+                                Label(error, systemImage: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(LocusTheme.coral)
+                            }
+                        }
+                        if let vault = model.memoryVaultStatus {
+                            Divider()
+                            Text("LOCAL STORAGE")
+                                .font(.system(size: 8, weight: .bold))
+                                .tracking(0.8)
+                                .foregroundStyle(LocusTheme.muted)
+                            Text("\(vault.cipher) · user-only local key file (0600) · no Keychain access or sign-in prompts · memory text and optional semantic vectors are encrypted together · Inbox suggestions expire after \(vault.candidateTTLDays) days")
                                 .font(.system(size: 8, design: .monospaced))
                                 .foregroundStyle(LocusTheme.muted)
-                        }
-                        if let error = status.lastError, !error.isEmpty {
-                            Label(error, systemImage: "exclamationmark.triangle.fill")
-                                .font(.system(size: 8))
-                                .foregroundStyle(LocusTheme.coral)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
+                    .padding(12)
+                    .locusCard()
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
-                .padding(12)
-                .locusCard()
 
                 if let vault = model.memoryVaultStatus {
                     HStack(spacing: 10) {
                         Image(systemName: vault.encrypted ? "lock.fill" : "lock.open.fill")
                             .foregroundStyle(vault.encrypted ? LocusTheme.signalDeep : LocusTheme.warning)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(vault.encrypted ? "Encrypted local memory" : "Memory encryption unavailable")
+                            Text(vault.encrypted ? "Private memory on this Mac" : "Memory encryption unavailable")
                                 .font(.system(size: 10, weight: .semibold))
-                            Text("\(vault.cipher) · key in macOS Keychain · suggestions expire after \(vault.candidateTTLDays) days")
-                                .font(.system(size: 8, design: .monospaced))
+                            Text("Only approved items can be recalled. Search indexing, local storage, backup, and deletion controls are under Advanced Memory Settings.")
+                                .font(.system(size: 8))
                                 .foregroundStyle(LocusTheme.muted)
                         }
                         Spacer()
                         metric("Inbox", vault.candidateCount)
+                        metric("Conflicts", vault.conflictCount ?? 0)
+                        metric("Stale", vault.staleCount ?? 0)
                     }
                     .padding(12)
                     .locusCard()
@@ -1608,7 +1798,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                         .font(.system(size: 8, weight: .bold))
                         .tracking(0.8)
                         .foregroundStyle(LocusTheme.muted)
-                    Text("The agent may suggest only explicit preferences, repeated constraints, and confirmed decisions or outcomes. Suggestions never affect future answers until you approve them.")
+                    Text("In work modes, the agent may suggest only explicit preferences, repeated constraints, and confirmed decisions or outcomes. Suggestions never affect future answers until you approve them.")
                         .font(.system(size: 8))
                         .foregroundStyle(LocusTheme.muted)
                     if model.memoryCandidates.isEmpty {
@@ -1626,18 +1816,23 @@ struct WorkspaceKnowledgeSettingsView: View {
                                     .foregroundStyle(LocusTheme.signalDeep)
                                 Spacer()
                                 Button("Reject", role: .destructive) {
-                                    model.deleteWorkspaceMemory(memory)
-                                }
-                                .buttonStyle(.borderless)
-                                Button("Approve") {
-                                    model.approveMemoryCandidate(
+                                    model.deleteWorkspaceMemory(
                                         memory,
                                         agentID: selectedMemoryAgentID
                                     )
                                 }
-                                    .buttonStyle(.borderedProminent)
-                                    .controlSize(.small)
-                                    .tint(LocusTheme.ink)
+                                .buttonStyle(.borderless)
+                                if !memory.hasConflicts {
+                                    Button("Approve") {
+                                        model.approveMemoryCandidate(
+                                            memory,
+                                            agentID: selectedMemoryAgentID
+                                        )
+                                    }
+                                        .buttonStyle(.borderedProminent)
+                                        .controlSize(.small)
+                                        .tint(LocusTheme.ink)
+                                }
                             }
                             Text(memory.content)
                                 .font(.system(size: 9))
@@ -1646,6 +1841,27 @@ struct WorkspaceKnowledgeSettingsView: View {
                                 Text("Suggested because: \(reason)")
                                     .font(.system(size: 8))
                                     .foregroundStyle(LocusTheme.muted)
+                            }
+                            if memory.hasConflicts {
+                                Label("This may conflict with \(memory.conflicts?.map(\.title).joined(separator: ", ") ?? "an approved memory").", systemImage: "arrow.triangle.branch")
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(LocusTheme.warning)
+                                HStack {
+                                    Button("Keep Both") {
+                                        model.approveMemoryCandidate(
+                                            memory, agentID: selectedMemoryAgentID
+                                        )
+                                    }
+                                    Button("Replace Older") {
+                                        model.approveMemoryCandidate(
+                                            memory,
+                                            agentID: selectedMemoryAgentID,
+                                            replacingConflicts: true
+                                        )
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(LocusTheme.ink)
+                                }
                             }
                         }
                         .padding(10)
@@ -1660,12 +1876,6 @@ struct WorkspaceKnowledgeSettingsView: View {
                             .tracking(0.8)
                             .foregroundStyle(LocusTheme.muted)
                         Spacer()
-                        Button("Import") { model.importMemory(agentID: selectedMemoryAgentID) }
-                            .buttonStyle(.borderless)
-                        Button("Export") { model.exportMemory(agentID: selectedMemoryAgentID) }
-                            .buttonStyle(.borderless)
-                        Button("Delete All…", role: .destructive) { confirmDeleteMemory = true }
-                            .buttonStyle(.borderless)
                         Button("Remember") { memoryDraft = .new }
                     }
                     Text("Approved memories can be recalled automatically within their scope. Use Remember to add one directly without the Inbox.")
@@ -1692,6 +1902,9 @@ struct WorkspaceKnowledgeSettingsView: View {
                                 if memory.stale {
                                     Text("STALE").font(.system(size: 7, weight: .bold)).foregroundStyle(LocusTheme.warning)
                                 }
+                                Text(memory.resolvedKind.title.uppercased())
+                                    .font(.system(size: 7, weight: .bold))
+                                    .foregroundStyle(LocusTheme.muted)
                                 Spacer()
                                 Menu {
                                     if memory.sourceRunID != nil || memory.sourceSessionID != nil {
@@ -1716,7 +1929,10 @@ struct WorkspaceKnowledgeSettingsView: View {
                                     }
                                     Divider()
                                     Button("Delete", role: .destructive) {
-                                        model.deleteWorkspaceMemory(memory)
+                                        model.deleteWorkspaceMemory(
+                                            memory,
+                                            agentID: selectedMemoryAgentID
+                                        )
                                     }
                                 } label: { Image(systemName: "ellipsis.circle") }
                                     .menuStyle(.borderlessButton)
@@ -1730,6 +1946,14 @@ struct WorkspaceKnowledgeSettingsView: View {
                             if !memory.tags.isEmpty {
                                 Text(memory.tags.map { "#\($0)" }.joined(separator: "  "))
                                     .font(.system(size: 7, design: .monospaced))
+                                    .foregroundStyle(LocusTheme.muted)
+                            }
+                            Text("Confidence \(memory.resolvedConfidence, format: .percent.precision(.fractionLength(0)))\(memory.useCount.map { " · recalled \($0) time\($0 == 1 ? "" : "s")" } ?? "")")
+                                .font(.system(size: 7, design: .monospaced))
+                                .foregroundStyle(LocusTheme.muted)
+                            if let why = memory.retrievalReason, !why.isEmpty {
+                                Text("Why recalled: \(why)")
+                                    .font(.system(size: 8))
                                     .foregroundStyle(LocusTheme.muted)
                             }
                         }
@@ -1753,6 +1977,9 @@ struct WorkspaceKnowledgeSettingsView: View {
                         title: value.title, content: value.content,
                         tags: value.tags.split(separator: ",").map(String.init),
                         scope: value.scope,
+                        kind: value.kind,
+                        confidence: value.confidence,
+                        validUntil: value.expires ? value.validUntil.timeIntervalSince1970 : nil,
                         agentID: selectedMemoryAgentID
                     )
                 case .some(var memory):
@@ -1760,6 +1987,10 @@ struct WorkspaceKnowledgeSettingsView: View {
                     memory.content = value.content
                     memory.tags = value.tags.split(separator: ",").map(String.init)
                     memory.scope = value.scope.rawValue
+                    memory.kind = value.kind.rawValue
+                    memory.confidence = value.confidence
+                    memory.validUntil = value.expires
+                        ? value.validUntil.timeIntervalSince1970 : nil
                     model.updateWorkspaceMemory(
                         memory,
                         agentID: selectedMemoryAgentID
@@ -1807,6 +2038,24 @@ struct WorkspaceKnowledgeSettingsView: View {
             Text(name).font(.system(size: 7)).foregroundStyle(LocusTheme.muted)
         }
     }
+
+    private func memoryStep(_ number: String, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .top, spacing: 7) {
+            Text(number)
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .foregroundStyle(LocusTheme.white)
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(LocusTheme.signalDeep))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 9, weight: .semibold))
+                Text(detail).font(.system(size: 8)).foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .locusCard()
+    }
 }
 
 private struct WorkspaceMemoryDraft: Identifiable {
@@ -1816,14 +2065,26 @@ private struct WorkspaceMemoryDraft: Identifiable {
     var content: String
     var tags: String
     var scope: AgentMemoryScope
+    var kind: MemoryKind
+    var confidence: Double
+    var expires: Bool
+    var validUntil: Date
 
     static var new: Self {
-        .init(original: nil, title: "", content: "", tags: "", scope: .workspace)
+        .init(
+            original: nil, title: "", content: "", tags: "", scope: .workspace,
+            kind: .fact, confidence: 1, expires: false,
+            validUntil: Calendar.current.date(byAdding: .month, value: 6, to: Date()) ?? Date()
+        )
     }
     static func existing(_ memory: WorkspaceMemory) -> Self {
         .init(
             original: memory, title: memory.title, content: memory.content,
-            tags: memory.tags.joined(separator: ", "), scope: memory.resolvedScope
+            tags: memory.tags.joined(separator: ", "), scope: memory.resolvedScope,
+            kind: memory.resolvedKind, confidence: memory.resolvedConfidence,
+            expires: memory.validUntil != nil,
+            validUntil: memory.validUntil.map { Date(timeIntervalSince1970: $0) }
+                ?? (Calendar.current.date(byAdding: .month, value: 6, to: Date()) ?? Date())
         )
     }
 }
@@ -1845,6 +2106,12 @@ private struct WorkspaceMemoryEditor: View {
             Picker("Scope", selection: $value.scope) {
                 ForEach(AgentMemoryScope.allCases) { Text($0.title).tag($0) }
             }
+            Picker("Type", selection: $value.kind) {
+                ForEach(MemoryKind.allCases) { Text($0.title).tag($0) }
+            }
+            Text(value.kind.explanation)
+                .font(.system(size: 8))
+                .foregroundStyle(LocusTheme.muted)
             Text(scopeExplanation)
                 .font(.system(size: 8))
                 .foregroundStyle(LocusTheme.muted)
@@ -1854,6 +2121,17 @@ private struct WorkspaceMemoryEditor: View {
                 .frame(minHeight: 180)
                 .overlay { RoundedRectangle(cornerRadius: 6).stroke(LocusTheme.line) }
             TextField("Tags", text: $value.tags, prompt: Text("decision, convention, fact"))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Confidence · \(value.confidence, format: .percent.precision(.fractionLength(0)))")
+                    .font(.system(size: 9, weight: .semibold))
+                Slider(value: $value.confidence, in: 0...1, step: 0.05)
+                Text("Lower confidence makes this less likely to be recalled automatically.")
+                    .font(.system(size: 8)).foregroundStyle(LocusTheme.muted)
+            }
+            Toggle("This memory expires", isOn: $value.expires)
+            if value.expires {
+                DatePicker("Valid until", selection: $value.validUntil, displayedComponents: .date)
+            }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
@@ -1864,7 +2142,7 @@ private struct WorkspaceMemoryEditor: View {
             }
         }
         .padding(20)
-        .frame(width: 520, height: 410)
+        .frame(width: 540, height: 600)
     }
 
     private var scopeExplanation: String {

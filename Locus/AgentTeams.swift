@@ -106,6 +106,21 @@ enum AgentMemoryScope: String, Codable, CaseIterable, Identifiable {
     var title: String { rawValue.capitalized }
 }
 
+enum MemoryKind: String, Codable, CaseIterable, Identifiable {
+    case preference, fact, decision, procedure, relationship
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+    var explanation: String {
+        switch self {
+        case .preference: "How you prefer the agent to work or respond."
+        case .fact: "A durable truth about you, the project, or its environment."
+        case .decision: "A choice that was made and should guide later work."
+        case .procedure: "A repeatable sequence for doing something correctly."
+        case .relationship: "How people, systems, or project parts relate."
+        }
+    }
+}
+
 struct AgentMemoryPolicy: Codable, Hashable {
     var recallEnabled = true
     var proposalsEnabled = true
@@ -559,6 +574,7 @@ struct AgentTeam: Identifiable, Codable, Hashable {
     var defaultWriterID: UUID?
     var budget = OrchestrationBudget()
     var useManagedWorktree = true
+    var parallelWriters: Bool? = nil
     var dispatchApprovalMode: DispatchApprovalMode? = nil
     var routingMode: AgentRoutingMode? = nil
     var routingWeights: AgentScoreWeights? = nil
@@ -578,6 +594,7 @@ struct AgentTeam: Identifiable, Codable, Hashable {
         memberIDs = memberIDs.filter { seenMemberIDs.insert($0).inserted }
         memberIDs = Array(memberIDs.prefix(32))
         budget.clamp()
+        if !useManagedWorktree { parallelWriters = false }
         if routingMode == .scorecard, routingWeights == nil { routingWeights = .init() }
         routingWeights?.normalize()
         evaluationTags = Array(Set((evaluationTags ?? []).map {
@@ -589,6 +606,7 @@ struct AgentTeam: Identifiable, Codable, Hashable {
     var resolvedDispatchApprovalMode: DispatchApprovalMode { .preview }
     var resolvedRoutingMode: AgentRoutingMode { routingMode ?? .manual }
     var resolvedRoutingWeights: AgentScoreWeights { routingWeights ?? .init() }
+    var resolvedParallelWriters: Bool { parallelWriters ?? useManagedWorktree }
 }
 
 enum AgentTeamValidation {
@@ -1346,6 +1364,17 @@ struct WorkspaceMemory: Identifiable, Codable, Hashable {
     var reason: String?
     var revision: Int?
     var expiresAt: Double?
+    var kind: String?
+    var confidence: Double?
+    var validFrom: Double?
+    var validUntil: Double?
+    var lastConfirmedAt: Double?
+    var lastUsedAt: Double?
+    var useCount: Int?
+    var supersededBy: String?
+    var supersedes: [String]?
+    var retrievalReason: String?
+    var conflicts: [MemoryConflict]?
     let createdAt: Double
     let updatedAt: Double
 
@@ -1356,6 +1385,14 @@ struct WorkspaceMemory: Identifiable, Codable, Hashable {
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case expiresAt = "expires_at"
+        case kind, confidence, conflicts, supersedes
+        case validFrom = "valid_from"
+        case validUntil = "valid_until"
+        case lastConfirmedAt = "last_confirmed_at"
+        case lastUsedAt = "last_used_at"
+        case useCount = "use_count"
+        case supersededBy = "superseded_by"
+        case retrievalReason = "retrieval_reason"
     }
 
     var resolvedScope: AgentMemoryScope {
@@ -1363,6 +1400,17 @@ struct WorkspaceMemory: Identifiable, Codable, Hashable {
     }
 
     var isCandidate: Bool { status == "candidate" }
+    var resolvedKind: MemoryKind { MemoryKind(rawValue: kind ?? "fact") ?? .fact }
+    var resolvedConfidence: Double { min(max(confidence ?? 1, 0), 1) }
+    var hasConflicts: Bool { !(conflicts ?? []).isEmpty }
+}
+
+struct MemoryConflict: Identifiable, Codable, Hashable {
+    let id: String
+    let title: String
+    let content: String
+    let kind: String?
+    let confidence: Double?
 }
 
 struct MemoryVaultStatus: Codable, Hashable {
@@ -1371,12 +1419,34 @@ struct MemoryVaultStatus: Codable, Hashable {
     let approvedCount: Int
     let candidateCount: Int
     let candidateTTLDays: Int
+    let staleCount: Int?
+    let expiredCount: Int?
+    let conflictCount: Int?
+    let semanticEncrypted: Bool?
+    let memoryVersion: Int?
 
     enum CodingKeys: String, CodingKey {
         case encrypted, cipher
         case approvedCount = "approved_count"
         case candidateCount = "candidate_count"
         case candidateTTLDays = "candidate_ttl_days"
+        case staleCount = "stale_count"
+        case expiredCount = "expired_count"
+        case conflictCount = "conflict_count"
+        case semanticEncrypted = "semantic_encrypted"
+        case memoryVersion = "memory_version"
+    }
+}
+
+struct MemoryMaintenanceResponse: Codable, Hashable {
+    let ok: Bool
+    let expiredMarkedStale: Int
+    let conflictCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case expiredMarkedStale = "expired_marked_stale"
+        case conflictCount = "conflict_count"
     }
 }
 
