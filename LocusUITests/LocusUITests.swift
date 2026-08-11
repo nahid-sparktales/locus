@@ -93,10 +93,10 @@ final class LocusUITests: XCTestCase {
     }
 
     func testClearSessionsPreservesTheActiveJob() {
-        anyElement("sidebar.more").click()
+        anyElement("workspace.actions").click()
         // Matched by identifier, not title: the menu bar carries an item with
         // the same title, and an ambiguous query cannot be clicked.
-        app.menuItems["sidebar.clearSessions"].click()
+        app.menuItems["workspace.actions.clearSessions"].click()
 
         XCTAssertTrue(app.buttons["clearSessions.confirm"].waitForExistence(timeout: 3))
         XCTAssertTrue(
@@ -143,7 +143,7 @@ final class LocusUITests: XCTestCase {
 
         XCTAssertTrue(anyElement("sidebar.addWorkspace").exists)
 
-        anyElement("sidebar.more").click()
+        anyElement("workspace.actions").click()
         let archivedToggle = app.menuItems["sidebar.showArchived"]
         XCTAssertTrue(archivedToggle.waitForExistence(timeout: 2))
         archivedToggle.click()
@@ -287,7 +287,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertEqual(modelStatus.value as? String, "Online")
         XCTAssertFalse(anyElement("settings.autoLaunch").exists)
         XCTAssertFalse(anyElement("settings.retryLocalServices").exists)
-        XCTAssertTrue(anyElement("settings.enterSendsMessages").exists)
+        XCTAssertFalse(anyElement("settings.enterSendsMessages").exists)
         XCTAssertTrue(anyElement("settings.soloPlanPresentation").exists)
         XCTAssertTrue(anyElement("settings.teamRunsPresentation").exists)
     }
@@ -317,22 +317,33 @@ final class LocusUITests: XCTestCase {
         app.buttons["settings.cancel"].click()
     }
 
-    func testFirstLaunchAsksWhichShortcutShouldSendMessages() {
-        app.terminate()
-        app.launchEnvironment["LOCUS_UI_TEST_SEND_SHORTCUT_PROMPT"] = "1"
-        app.launch()
+    func testBackgroundChatAndWorktreeControlsAreReachable() {
+        app.typeKey(",", modifierFlags: .command)
 
-        let commandEnter = anyElement("sendShortcut.commandEnter")
-        let enter = anyElement("sendShortcut.enter")
-        XCTAssertTrue(commandEnter.waitForExistence(timeout: 3))
-        XCTAssertTrue(enter.exists)
-        XCTAssertTrue(app.staticTexts["Choose how to send messages"].exists)
+        XCTAssertTrue(anyElement("settings.maximumActiveChats").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("settings.newGitChatsUseWorktree").exists)
+        XCTAssertTrue(anyElement("settings.worktreeRetentionLimit").exists)
+        app.buttons["settings.cancel"].click()
+
+        XCTAssertFalse(anyElement("workspace.environment").exists)
+        let actions = anyElement("workspace.actions")
+        XCTAssertTrue(actions.waitForExistence(timeout: 3))
+        actions.click()
+        XCTAssertTrue(app.menuItems["Start Worktree Chat From"].exists)
+        XCTAssertTrue(app.menuItems["Start New Local Chat"].exists)
+        app.menuItems["Start Worktree Chat From"].hover()
         XCTAssertTrue(
-            staticTextWithValue(containing: "Settings → General → Conversation").exists
+            anyElement("workspace.actions.worktree.head").waitForExistence(timeout: 2)
         )
+        XCTAssertTrue(anyElement("workspace.actions.worktree.branch.main").exists)
+        app.typeKey(.escape, modifierFlags: [])
+    }
 
-        enter.click()
-        XCTAssertFalse(commandEnter.exists)
+    func testLaunchDoesNotAskForAMessageShortcut() {
+        XCTAssertTrue(app.textViews["composer.input"].waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("sendShortcut.commandEnter").exists)
+        XCTAssertFalse(anyElement("sendShortcut.enter").exists)
+        XCTAssertFalse(app.staticTexts["Choose how to send messages"].exists)
     }
 
     func testHuggingFaceModelLibraryIsAvailableFromModelPicker() {
@@ -543,7 +554,8 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(anyElement("plan.contextWindow").exists)
         // Just Chat is not a workspace surface, so the rail goes with the
         // panel — the whole right side disappears.
-        XCTAssertFalse(anyElement("inspector.rail.toggle").exists)
+        XCTAssertFalse(anyElement("inspector.rail.more").exists)
+        XCTAssertFalse(anyElement("inspector.rail.terminal").exists)
 
         XCTAssertTrue(
             anyElement("turnCompletion.00000000-0000-0000-0000-000000000103")
@@ -558,26 +570,20 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("composer.mode.plan").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("composer.mode.build").exists)
         XCTAssertTrue(anyElement("plan.contextWindow").waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("inspector.rail.toggle").exists, "the rail returns with agentic modes")
+        XCTAssertTrue(anyElement("inspector.rail.more").exists, "the rail returns with agentic modes")
     }
 
-    func testInspectorButtonAlwaysOpensTheWorkspacePanelThenTogglesIt() {
-        let toggle = anyElement("inspector.rail.toggle")
-        XCTAssertTrue(toggle.waitForExistence(timeout: 3))
+    func testRailOverflowReplacesSettingsAndSidebarSettingsIsRestored() {
+        let more = anyElement("inspector.rail.more")
+        XCTAssertTrue(more.waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("inspector.rail.settings").exists)
+        XCTAssertFalse(anyElement("inspector.rail.toggle").exists)
 
-        // The seeded panel starts on Plan. The general panel button must not
-        // restore that special-purpose tab; it opens the workspace strip.
-        toggle.click()
-        XCTAssertTrue(anyElement("changes.file.0").waitForExistence(timeout: 3))
-        XCTAssertFalse(anyElement("plan.contextWindow").exists)
-
-        // A second press closes the workspace panel; the rail stays.
-        toggle.click()
-        XCTAssertFalse(anyElement("changes.file.0").exists)
-        XCTAssertTrue(toggle.exists)
-
-        toggle.click()
-        XCTAssertTrue(anyElement("changes.file.0").waitForExistence(timeout: 3))
+        let settings = anyElement("sidebar.settings")
+        XCTAssertTrue(settings.waitForExistence(timeout: 3))
+        settings.click()
+        XCTAssertTrue(anyElement("settings.page.general").waitForExistence(timeout: 3))
+        app.buttons["settings.cancel"].click()
     }
 
     func testRailIconsOpenAndTogglePanels() {
@@ -587,7 +593,15 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(planIcon.waitForExistence(timeout: 3))
         planIcon.click()
         XCTAssertFalse(anyElement("plan.contextWindow").exists)
-        XCTAssertTrue(anyElement("inspector.rail.toggle").exists)
+        XCTAssertTrue(anyElement("inspector.rail.more").exists)
+
+        // Terminal is a direct rail destination and closes on a second click.
+        let terminalIcon = anyElement("inspector.rail.terminal")
+        XCTAssertTrue(terminalIcon.exists)
+        terminalIcon.click()
+        XCTAssertTrue(anyElement("terminal.output").waitForExistence(timeout: 3))
+        terminalIcon.click()
+        XCTAssertFalse(anyElement("terminal.output").exists)
 
         // A different tab's icon opens the panel straight onto that tab.
         let browserIcon = anyElement("inspector.rail.preview")
@@ -601,10 +615,13 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(more.waitForExistence(timeout: 3))
         let zoom = anyElement("inspector.zoom")
         XCTAssertTrue(zoom.exists)
+        let terminal = anyElement("inspector.rail.terminal")
+        XCTAssertLessThan(more.frame.maxY, terminal.frame.minY, "overflow belongs at the rail top")
         XCTAssertGreaterThan(zoom.frame.minY, more.frame.minY, "expand belongs at the rail bottom")
         more.click()
 
         XCTAssertFalse(anyElement("inspector.rail.menu.settings").exists)
+        XCTAssertFalse(anyElement("inspector.rail.menu.terminal").exists)
 
         let changes = app.menuItems.matching(
             NSPredicate(format: "identifier == %@", "inspector.rail.menu.changes")
@@ -612,6 +629,11 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(changes.waitForExistence(timeout: 3))
         changes.click()
         XCTAssertTrue(anyElement("changes.file.0").waitForExistence(timeout: 3))
+
+        // Strip-hosted tabs also close themselves now that the general toggle
+        // is gone.
+        anyElement("inspector.tab.changes").click()
+        XCTAssertFalse(anyElement("changes.file.0").exists)
     }
 
     func testBrowserExpandsInPlaceAndRestores() {
@@ -628,9 +650,51 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(zoom.waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("sidebar.brand").exists)
 
+        let handle = anyElement("inspector.resizeHandle")
+        XCTAssertTrue(handle.waitForExistence(timeout: 3))
+        XCTAssertEqual(handle.label, "Expanded panel resize grip")
+        XCTAssertGreaterThanOrEqual(handle.frame.width, 12)
+
+        let originalDividerX = handle.frame.midX
+        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(
+            forDuration: 0.1,
+            thenDragTo: start.withOffset(CGVector(dx: 60, dy: 0))
+        )
+        let dividerMovedRight = NSPredicate { candidate, _ in
+            guard let element = candidate as? XCUIElement else { return false }
+            return element.frame.midX > originalDividerX + 20
+        }
+        expectation(for: dividerMovedRight, evaluatedWith: handle)
+        waitForExpectations(timeout: 3)
+
+        let rightwardDividerX = handle.frame.midX
+        let secondStart = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        secondStart.press(
+            forDuration: 0.1,
+            thenDragTo: secondStart.withOffset(CGVector(dx: -30, dy: 0))
+        )
+        let dividerMovedLeft = NSPredicate { candidate, _ in
+            guard let element = candidate as? XCUIElement else { return false }
+            return element.frame.midX < rightwardDividerX - 10
+        }
+        expectation(for: dividerMovedLeft, evaluatedWith: handle)
+        waitForExpectations(timeout: 3)
+        let persistedDividerX = handle.frame.midX
+
         zoom.click()
         XCTAssertTrue(anyElement("sidebar.brand").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("browser.url").exists)
+        XCTAssertEqual(handle.label, "Resize inspector divider")
+
+        anyElement("browser.expand").click()
+        XCTAssertEqual(handle.label, "Expanded panel resize grip")
+        let dividerReturned = NSPredicate { candidate, _ in
+            guard let element = candidate as? XCUIElement else { return false }
+            return abs(element.frame.midX - persistedDividerX) <= 4
+        }
+        expectation(for: dividerReturned, evaluatedWith: handle)
+        waitForExpectations(timeout: 3)
     }
 
     func testInspectorTabsSwitchWithCommandNumberShortcuts() {
@@ -773,6 +837,20 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }
 
+    private func relaunchWithLandingFixture() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_LANDING"] = "1"
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+    }
+
+    private func relaunchWithScrollFixture() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_SCROLL"] = "1"
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+    }
+
     private func relaunchWithRunFixture(
         _ fixture: String,
         uncleanRecovery: Bool = false,
@@ -832,6 +910,69 @@ final class LocusUITests: XCTestCase {
             app.wait(for: .notRunning, timeout: 5),
             "a durable completed run must not be mistaken for active work"
         )
+    }
+
+    func testActivityDestinationShowsBackgroundRunAndReturnsToChat() {
+        relaunchWithRunFixture("activity")
+
+        let destination = anyElement("sidebar.activity")
+        XCTAssertTrue(destination.waitForExistence(timeout: 3))
+        XCTAssertTrue("\(destination.value ?? "")".contains("1 needs attention"))
+        destination.click()
+        XCTAssertTrue(anyElement("activity.center").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("activity.run.seed-run").waitForExistence(timeout: 3))
+        XCTAssertTrue("\(destination.value ?? "")".contains("No new activity"))
+
+        anyElement("session.seed-current").click()
+        XCTAssertTrue(app.textViews["composer.input"].waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("activity.center").exists)
+
+        destination.click()
+        let remove = anyElement("activity.remove.seed-run")
+        XCTAssertTrue(remove.waitForExistence(timeout: 3))
+        remove.click()
+        XCTAssertTrue(app.staticTexts["No Activity Yet"].waitForExistence(timeout: 3))
+    }
+
+    func testTranscriptScrollsContinuouslyAcrossToolAndReasoningBlocks() {
+        relaunchWithScrollFixture()
+
+        let transcript = anyElement("conversation.scroll")
+        XCTAssertTrue(transcript.waitForExistence(timeout: 3))
+        let firstTool = anyElement("tool.scroll-tool-0.toggle")
+        XCTAssertTrue(firstTool.waitForExistence(timeout: 3))
+        firstTool.click()
+
+        // Begin the gesture over selectable tool output. It must continue on
+        // the transcript instead of being swallowed by the nested responder.
+        firstTool.scroll(byDeltaX: 0, deltaY: -2_400)
+        let lastTool = anyElement("tool.scroll-tool-11.toggle")
+        XCTAssertTrue(lastTool.waitForExistence(timeout: 3))
+        lastTool.click()
+
+        lastTool.scroll(byDeltaX: 0, deltaY: 2_400)
+        let firstMessage = anyElement("message.00000000-0000-0000-0000-000000000101")
+        XCTAssertTrue(firstMessage.waitForExistence(timeout: 3))
+        XCTAssertTrue(firstMessage.isHittable)
+    }
+
+    func testReviewAndLandShowsDiffChecksAndBothDestinations() {
+        relaunchWithLandingFixture()
+
+        let review = anyElement("workspace.reviewAndLand")
+        XCTAssertTrue(review.waitForExistence(timeout: 3))
+        review.click()
+        XCTAssertTrue(anyElement("landing.diff").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("landing.checkCommands").exists)
+        XCTAssertTrue(anyElement("landing.runChecks").exists)
+        XCTAssertTrue(anyElement("landing.destination").exists)
+
+        let branchDestination = app.radioButtons["Branch, Commit & PR"].firstMatch
+        XCTAssertTrue(branchDestination.exists)
+        branchDestination.click()
+        XCTAssertTrue(anyElement("landing.branch").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("landing.commitMessage").exists)
+        XCTAssertTrue(anyElement("landing.confirm").exists)
     }
 
     func testDispatcherRepairIsVisibleInProgressAndRuns() {

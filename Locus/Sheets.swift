@@ -1375,23 +1375,6 @@ struct SettingsView: View {
             }
 
             Section("Conversation") {
-                Toggle("Press Enter to send messages", isOn: Binding(
-                    get: { draft.enterSendsMessages },
-                    set: { value in
-                        draft.enterSendsMessages = value
-                        draft.sendShortcutPreferenceConfigured = true
-                    }
-                ))
-                    .accessibilityIdentifier("settings.enterSendsMessages")
-
-                Text(
-                    draft.enterSendsMessages
-                        ? "Enter sends. Shift–Enter adds a new line; Command–Enter still works."
-                        : "Command–Enter sends. Enter adds a new line."
-                )
-                .font(.system(size: 9))
-                .foregroundStyle(LocusTheme.muted)
-
                 Picker(
                     "Solo requests — Context & Plan",
                     selection: $draft.soloPlanPresentationRaw
@@ -1415,6 +1398,35 @@ struct SettingsView: View {
                 Text("Solo and team choices are independent. Choosing “Ask the first time” shows the matching explanation when that kind of request is first sent.")
                     .font(.system(size: 9))
                     .foregroundStyle(LocusTheme.muted)
+            }
+
+            Section("Background chats") {
+                Stepper(
+                    "Up to \(draft.maximumActiveChats) active chats",
+                    value: $draft.maximumActiveChats,
+                    in: 1...4
+                )
+                .accessibilityIdentifier("settings.maximumActiveChats")
+
+                Toggle(
+                    "Use a worktree for new Git chats",
+                    isOn: $draft.newGitChatsUseWorktree
+                )
+                .accessibilityIdentifier("settings.newGitChatsUseWorktree")
+
+                Stepper(
+                    draft.worktreeRetentionLimit == 0
+                        ? "Keep all managed worktrees"
+                        : "Keep \(draft.worktreeRetentionLimit) recent worktrees",
+                    value: $draft.worktreeRetentionLimit,
+                    in: 0...100
+                )
+                .accessibilityIdentifier("settings.worktreeRetentionLimit")
+
+                Text("Running chats stay attached to their own worker when you switch conversations. Worktrees isolate concurrent edits in the same Git repository.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("Terminal") {
@@ -1457,6 +1469,11 @@ struct SettingsView: View {
                     isOn: $draft.notifyOnCompletion
                 )
                 .accessibilityIdentifier("settings.notifyOnCompletion")
+                Toggle(
+                    "Notify when a run needs attention",
+                    isOn: $draft.notifyOnNeedsAttention
+                )
+                .accessibilityIdentifier("settings.notifyOnNeedsAttention")
             }
 
             Section("Status") {

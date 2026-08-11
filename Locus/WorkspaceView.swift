@@ -6,6 +6,8 @@ struct WorkspaceView: View {
     @EnvironmentObject private var model: AppModel
     @State private var modelPickerPresented = false
     @State private var teamProgressPresented = false
+    @State private var createBranchPresented = false
+    @State private var branchName = ""
 
     private var sessionTitle: String {
         model.sessions.first(where: { $0.id == model.currentSessionID })?.displayTitle
@@ -16,29 +18,47 @@ struct WorkspaceView: View {
         VStack(spacing: 0) {
             header
 
-            switch model.agentRuntimePhase {
-            case .recovering(let message):
-                runtimeBanner(message, recovering: true)
-            case .unavailable(let message):
-                runtimeBanner(message, recovering: false)
-            case .starting, .online:
-                EmptyView()
-            }
-
-            if model.transcriptSearchPresented {
-                TranscriptSearchBar()
+            if model.activityCenterPresented {
+                ActivityCenterView()
                     .environmentObject(model)
+                    .frame(maxHeight: .infinity)
+            } else {
+                switch model.agentRuntimePhase {
+                case .recovering(let message):
+                    runtimeBanner(message, recovering: true)
+                case .unavailable(let message):
+                    runtimeBanner(message, recovering: false)
+                case .starting, .online:
+                    EmptyView()
+                }
+
+                if model.transcriptSearchPresented {
+                    TranscriptSearchBar()
+                        .environmentObject(model)
+                }
+
+                ConversationView(streamingReply: model.streamingReply)
+                    .frame(maxHeight: .infinity)
+
+                WorkStatusStrip(streamingReply: model.streamingReply)
+                    .environmentObject(model)
+
+                ComposerView()
             }
-
-            ConversationView(streamingReply: model.streamingReply)
-                .frame(maxHeight: .infinity)
-
-            WorkStatusStrip(streamingReply: model.streamingReply)
-                .environmentObject(model)
-
-            ComposerView()
         }
         .background(LocusTheme.panel)
+        .alert("Create Branch in Worktree", isPresented: $createBranchPresented) {
+            TextField("feature/name", text: $branchName)
+                .accessibilityIdentifier("worktree.branchName")
+            Button("Cancel", role: .cancel) { branchName = "" }
+            Button("Create") {
+                model.createBranchForActiveTask(branchName)
+                branchName = ""
+            }
+            .disabled(branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } message: {
+            Text("The worktree is detached until you deliberately create a branch.")
+        }
     }
 
     private var header: some View {
@@ -57,7 +77,9 @@ struct WorkspaceView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 5) {
-                    Text(URL(fileURLWithPath: model.workspacePath).lastPathComponent)
+                    Text(model.activityCenterPresented
+                        ? "ALL WORKSPACES"
+                        : URL(fileURLWithPath: model.workspacePath).lastPathComponent)
                     if let branch = model.gitBranch {
                         HStack(spacing: 3) {
                             Image(systemName: "arrow.triangle.branch")
@@ -74,7 +96,7 @@ struct WorkspaceView: View {
                 .font(.system(size: 8, design: .monospaced))
                 .foregroundStyle(LocusTheme.muted.opacity(0.8))
 
-                Text(sessionTitle)
+                Text(model.activityCenterPresented ? "Activity" : sessionTitle)
                     .font(.system(size: 14, weight: .bold))
                     .lineLimit(1)
             }
@@ -121,6 +143,16 @@ struct WorkspaceView: View {
             ContextUsageChip()
                 .environmentObject(model)
 
+            if model.activeTaskRecord != nil, model.taskHasChanges {
+                Button("Review & Land") { model.prepareReviewAndLand() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .tint(LocusTheme.ink)
+                    .disabled(model.isBusy)
+                    .help("Review this worktree's changes, checks, and landing destination")
+                    .accessibilityIdentifier("workspace.reviewAndLand")
+            }
+
             Button {
                 modelPickerPresented.toggle()
             } label: {
@@ -164,14 +196,49 @@ struct WorkspaceView: View {
             }
 
             Menu {
+                if model.currentExecutionEnvironment == .worktree {
+                    Button("Hand Off to Local") { model.handoffCurrentChat(to: .local) }
+                        .disabled(model.isBusy || model.hasPendingPermission)
+                    if model.activeTaskRecord?.branch == nil {
+                        Button("Create Branch Here…") { createBranchPresented = true }
+                            .disabled(model.isBusy || model.hasPendingPermission)
+                    }
+                    if let task = model.activeTaskRecord,
+                       !FileManager.default.fileExists(atPath: task.executionPath) {
+                        Button("Restore Worktree") { model.restoreActiveTaskCheckout() }
+                    }
+                } else if model.isGitRepository {
+                    Button("Hand Off to Worktree") { model.handoffCurrentChat(to: .worktree) }
+                        .disabled(model.isBusy || model.hasPendingPermission)
+                }
+                if model.activeTaskRecord != nil {
+                    Button("Open Checkout") { model.openActiveTaskCheckout() }
+                    Button("Reveal in Finder") { model.revealActiveTaskCheckout() }
+                }
+                Divider()
                 // ⌘⇧K lives on the app menu's Clear Chat only — declaring it
                 // here as well would register the same shortcut twice.
                 Button("Clear Chat…") { model.requestClearChat() }
                     .disabled(model.isBusy || model.hasPendingPermission)
                     .accessibilityIdentifier("workspace.actions.clearChat")
-                Button("Start New Session") { model.newSession() }
-                    .disabled(model.isBusy || model.hasPendingPermission)
-                    .accessibilityIdentifier("workspace.actions.newSession")
+                Menu("Start Worktree Chat From") {
+                    Button("Current HEAD") {
+                        model.newWorktreeSession(in: model.workspacePath, baseRef: "HEAD")
+                    }
+                    .accessibilityIdentifier("workspace.actions.worktree.head")
+                    ForEach(model.localBranches, id: \.self) { branch in
+                        Button(branch) {
+                            model.newWorktreeSession(in: model.workspacePath, baseRef: branch)
+                        }
+                        .accessibilityIdentifier("workspace.actions.worktree.branch.\(branch)")
+                    }
+                }
+                .disabled(!model.isGitRepository)
+                .accessibilityIdentifier("workspace.actions.newWorktreeSession")
+                Button("Start New Local Chat") {
+                    model.newSession(in: model.workspacePath, environment: .local)
+                }
+                .accessibilityIdentifier("workspace.actions.newLocalSession")
                 Divider()
                 Button("Clear Saved Sessions…") { model.requestClearSavedSessions() }
                     .disabled(model.isClearingSessions)
@@ -182,6 +249,20 @@ struct WorkspaceView: View {
                 }
                 .disabled(!model.sessions.contains(where: { $0.id == model.currentSessionID }))
                 .accessibilityIdentifier("workspace.actions.export")
+                Divider()
+                Button("Usage & Costs…") { model.usageDashboardPresented = true }
+                    .accessibilityIdentifier("sidebar.usage")
+                Button("Session Checkpoints…") { model.checkpointPresented = true }
+                    .accessibilityIdentifier("sidebar.checkpoints")
+                Toggle("Show Archived Sessions", isOn: Binding(
+                    get: { model.showArchivedSessions },
+                    set: { model.setShowArchived($0) }
+                ))
+                .accessibilityIdentifier("sidebar.showArchived")
+                Button("Reconnect Agent") {
+                    Task { await model.bootstrap() }
+                }
+                .accessibilityIdentifier("sidebar.reconnect")
                 Divider()
                 Picker("Thinking", selection: Binding(
                     get: { model.thinkingVisibility },
@@ -265,6 +346,548 @@ struct WorkspaceView: View {
             Rectangle()
                 .fill((recovering ? LocusTheme.warning : LocusTheme.coral).opacity(0.25))
                 .frame(height: 1)
+        }
+    }
+}
+
+struct ReviewAndLandView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var destination = "local"
+    @State private var branchName = ""
+    @State private var commitMessage = ""
+    @State private var commandsText = ""
+    @State private var confirmOverride = false
+
+    private var commands: [String] {
+        Array(commandsText.split(separator: "\n", omittingEmptySubsequences: true).map {
+            String($0).trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }.prefix(8))
+    }
+
+    private var checksAreCurrentAndPassing: Bool {
+        guard let check = model.landingCheckRun, let preflight = model.landingPreflight else {
+            return false
+        }
+        return check.passed && check.tree == preflight.tree
+    }
+
+    private var branchProblem: String? {
+        destination == "branch" ? GitBranchName.validationError(branchName) : nil
+    }
+
+    private var canLand: Bool {
+        guard let preflight = model.landingPreflight, preflight.patchBytes > 0,
+              !model.isLandingOperationRunning else { return false }
+        if destination == "local" { return preflight.canApplyLocal }
+        return branchProblem == nil
+            && !commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Review & Land")
+                        .font(.system(size: 17, weight: .bold))
+                    Text("Review the complete worktree delta, verify it, then choose its destination.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                Spacer()
+                Button("Close") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(18)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    stageHeader("1", "Review changes")
+                    if let preflight = model.landingPreflight {
+                        HStack {
+                            Text("\(preflight.paths.count) file\(preflight.paths.count == 1 ? "" : "s")")
+                            Text(ByteCountFormatter.string(
+                                fromByteCount: Int64(preflight.patchBytes), countStyle: .file
+                            ))
+                            Spacer()
+                            Button("Copy Patch") { model.copyActiveTaskPatch() }
+                            Button("Open Checkout") { model.openActiveTaskCheckout() }
+                        }
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(LocusTheme.muted)
+
+                        ScrollView([.horizontal, .vertical]) {
+                            Text(model.landingPatch.isEmpty ? "No changes." : model.landingPatch)
+                                .font(.system(size: 9, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(10)
+                        }
+                        .frame(height: 210)
+                        .background(LocusTheme.paperDeep)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay { RoundedRectangle(cornerRadius: 8).stroke(LocusTheme.line) }
+                        .accessibilityIdentifier("landing.diff")
+                    }
+
+                    Divider()
+                    stageHeader("2", "Review test evidence")
+                    Text("Enter one explicit check per line. Locus runs up to eight sequentially in this chat’s worktree; each has a ten-minute limit.")
+                        .font(.system(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                    TextEditor(text: $commandsText)
+                        .font(.system(size: 10, design: .monospaced))
+                        .scrollContentBackground(.hidden)
+                        .padding(6)
+                        .frame(height: 78)
+                        .background(LocusTheme.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay { RoundedRectangle(cornerRadius: 8).stroke(LocusTheme.line) }
+                        .accessibilityIdentifier("landing.checkCommands")
+                    HStack {
+                        if model.activeLandingCheckRunID != nil {
+                            ProgressView().controlSize(.small)
+                            Text("Running checks…")
+                                .font(.system(size: 9))
+                            Button("Stop") { model.stopLandingChecks() }
+                                .accessibilityIdentifier("landing.stopChecks")
+                        } else {
+                            Button("Run Checks") { model.runLandingChecks(commands: commands) }
+                                .disabled(commands.isEmpty || model.isLandingOperationRunning)
+                                .accessibilityIdentifier("landing.runChecks")
+                        }
+                        Spacer()
+                        if checksAreCurrentAndPassing {
+                            Label("Checks passed", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(LocusTheme.success)
+                        } else if let check = model.landingCheckRun {
+                            Label(
+                                check.tree == model.landingPreflight?.tree
+                                    ? "Checks did not pass" : "Checks are stale",
+                                systemImage: "exclamationmark.triangle.fill"
+                            )
+                            .foregroundStyle(LocusTheme.warning)
+                        } else {
+                            Text("No current check evidence")
+                                .foregroundStyle(LocusTheme.muted)
+                        }
+                    }
+                    .font(.system(size: 9, weight: .semibold))
+
+                    if let run = model.landingCheckRun {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(run.results) { result in
+                                DisclosureGroup {
+                                    if !result.output.isEmpty {
+                                        Text(result.output)
+                                            .font(.system(size: 8, design: .monospaced))
+                                            .textSelection(.enabled)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                } label: {
+                                    HStack {
+                                        Image(systemName: result.state == "passed"
+                                            ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                        Text(result.command).lineLimit(1)
+                                        Spacer()
+                                        Text(result.state.replacingOccurrences(of: "_", with: " "))
+                                        Text("\(result.durationMilliseconds) ms")
+                                    }
+                                    .font(.system(size: 8, design: .monospaced))
+                                    .foregroundStyle(result.state == "passed"
+                                        ? LocusTheme.success : LocusTheme.warning)
+                                }
+                            }
+                        }
+                        .padding(10)
+                        .background(LocusTheme.white.opacity(0.65))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+
+                    Divider()
+                    stageHeader("3", "Choose destination")
+                    Picker("Destination", selection: $destination) {
+                        Text("Apply to Local").tag("local")
+                        Text("Branch, Commit & PR").tag("branch")
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("landing.destination")
+
+                    if destination == "local" {
+                        if model.landingPreflight?.canApplyLocal == true {
+                            Text("The complete patch will be applied unstaged to Local. This chat remains in its worktree.")
+                                .font(.system(size: 9))
+                                .foregroundStyle(LocusTheme.muted)
+                        } else {
+                            Label(
+                                model.landingPreflight?.conflict.nilIfEmpty
+                                    ?? "The patch conflicts with Local. Both checkouts are unchanged.",
+                                systemImage: "exclamationmark.triangle.fill"
+                            )
+                            .font(.system(size: 9))
+                            .foregroundStyle(LocusTheme.coral)
+                        }
+                    } else if let task = model.activeTaskRecord, task.landingCommit != nil {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("Committed on \(task.branch ?? branchName)", systemImage: "checkmark.seal.fill")
+                                .foregroundStyle(LocusTheme.success)
+                            HStack {
+                                Button("Publish") { model.publishLandedWorktree() }
+                                    .disabled(model.isLandingOperationRunning)
+                                Button("Open Pull Request") { model.openLandedPullRequest() }
+                                Text(task.landingCommit?.prefix(10) ?? "")
+                                    .font(.system(size: 8, design: .monospaced))
+                                    .foregroundStyle(LocusTheme.muted)
+                            }
+                        }
+                    } else {
+                        TextField("Branch name", text: $branchName)
+                            .accessibilityIdentifier("landing.branch")
+                        if let branchProblem {
+                            Text(branchProblem).font(.system(size: 8)).foregroundStyle(LocusTheme.coral)
+                        }
+                        TextField("Commit message", text: $commitMessage, axis: .vertical)
+                            .lineLimit(2...5)
+                            .accessibilityIdentifier("landing.commitMessage")
+                        Text("A failed commit hook leaves the new branch and staged index ready to inspect and retry.")
+                            .font(.system(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                    }
+                }
+                .padding(18)
+            }
+
+            Divider()
+            HStack {
+                Text(checksAreCurrentAndPassing
+                    ? "Current checks passed."
+                    : "Landing without passing current checks requires an explicit confirmation.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(checksAreCurrentAndPassing ? LocusTheme.success : LocusTheme.warning)
+                Spacer()
+                if model.activeTaskRecord?.landingCommit != nil && destination == "branch" {
+                    Button("Done") { dismiss() }
+                        .buttonStyle(.borderedProminent)
+                } else {
+                    Button(checksAreCurrentAndPassing ? "Land Changes" : "Land Anyway…") {
+                        if checksAreCurrentAndPassing { land(override: false) }
+                        else { confirmOverride = true }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canLand)
+                    .accessibilityIdentifier("landing.confirm")
+                }
+            }
+            .padding(14)
+        }
+        .frame(minWidth: 760, idealWidth: 860, minHeight: 650, idealHeight: 760)
+        .background(LocusTheme.panel)
+        .onAppear {
+            commandsText = model.currentLandingCheckCommands.joined(separator: "\n")
+            if let existing = model.activeTaskRecord?.branch { branchName = existing }
+        }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                await model.refreshLandingReview()
+            }
+        }
+        .alert("Land without passing current checks?", isPresented: $confirmOverride) {
+            Button("Cancel", role: .cancel) {}
+            Button("Land Anyway", role: .destructive) { land(override: true) }
+                .accessibilityIdentifier("landing.overrideConfirm")
+        } message: {
+            Text("This confirmation is recorded in the run timeline. Review failures or stale evidence before continuing.")
+        }
+    }
+
+    private func stageHeader(_ number: String, _ title: String) -> some View {
+        HStack(spacing: 8) {
+            Text(number)
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(LocusTheme.brandInk)
+                .frame(width: 22, height: 22)
+                .background(LocusTheme.signal)
+                .clipShape(Circle())
+            Text(title).font(.system(size: 12, weight: .bold))
+        }
+    }
+
+    private func land(override: Bool) {
+        model.landActiveTask(
+            destination: destination,
+            branch: branchName,
+            commitMessage: commitMessage,
+            overrideFailedChecks: override
+        )
+    }
+}
+
+private enum ActivityGroup: String, CaseIterable, Identifiable {
+    case attention = "Needs Attention"
+    case running = "Running"
+    case queued = "Queued"
+    case recent = "Recent"
+
+    var id: String { rawValue }
+}
+
+struct ActivityCenterView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Background Activity")
+                        .font(.system(size: 15, weight: .bold))
+                    Text("Work keeps running when you move between chats.")
+                        .font(.system(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                Spacer()
+                if model.visibleActivityRuns.contains(where: { model.activityIsUnseen($0) }) {
+                    Button("Mark All Seen") { model.markAllActivitySeen() }
+                        .accessibilityIdentifier("activity.markAllSeen")
+                }
+                if model.visibleActivityRuns.contains(where: {
+                    TeamRunState(rawValue: $0.state)?.isTerminal == true
+                }) {
+                    Button("Clear Finished") { model.clearFinishedActivityRuns() }
+                        .accessibilityIdentifier("activity.clearFinished")
+                }
+                Button {
+                    Task { await model.refreshActivityRuns() }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .accessibilityIdentifier("activity.refresh")
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .background(LocusTheme.paperDeep.opacity(0.55))
+
+            if model.visibleActivityRuns.isEmpty {
+                ContentUnavailableView(
+                    "No Activity Yet",
+                    systemImage: "waveform.path.ecg.rectangle",
+                    description: Text("Queued, running, and recent work appears here across all chats.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityIdentifier("activity.empty")
+            } else {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 18) {
+                            ForEach(ActivityGroup.allCases) { group in
+                                let runs = runs(in: group)
+                                if !runs.isEmpty {
+                                    VStack(alignment: .leading, spacing: 7) {
+                                        HStack {
+                                            Text(group.rawValue.uppercased())
+                                                .font(.system(size: 8, weight: .bold))
+                                                .tracking(0.8)
+                                                .foregroundStyle(group == .attention
+                                                    ? LocusTheme.warning : LocusTheme.muted)
+                                            Text("\(runs.count)")
+                                                .font(.system(size: 8, design: .monospaced))
+                                                .foregroundStyle(LocusTheme.muted)
+                                        }
+                                        ForEach(runs) { run in
+                                            activityRow(run, now: context.date)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .padding(20)
+                    }
+                }
+            }
+        }
+        .task {
+            while !Task.isCancelled {
+                await model.refreshActivityRuns()
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+        .accessibilityIdentifier("activity.center")
+    }
+
+    private func runs(in group: ActivityGroup) -> [OrchestrationRun] {
+        let values = model.visibleActivityRuns.filter { activityGroup(for: $0) == group }
+        if group == .queued {
+            return values.sorted {
+                ($0.queuePosition ?? .max, $0.createdAt)
+                    < ($1.queuePosition ?? .max, $1.createdAt)
+            }
+        }
+        return values.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func activityGroup(for run: OrchestrationRun) -> ActivityGroup {
+        switch run.state {
+        case "waiting_permission", "waiting_computer", "waiting_dispatch_approval",
+             "paused", "interrupted", "failed":
+            .attention
+        case "running", "dispatching", "reviewing":
+            .running
+        case "queued":
+            .queued
+        default:
+            .recent
+        }
+    }
+
+    private func activityRow(_ run: OrchestrationRun, now: Date) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: symbol(for: run))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(color(for: run))
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 7) {
+                        Text(chatTitle(for: run))
+                            .font(.system(size: 11, weight: .bold))
+                            .lineLimit(1)
+                        Text(run.state.replacingOccurrences(of: "_", with: " ").uppercased())
+                            .font(.system(size: 7, weight: .bold, design: .monospaced))
+                            .foregroundStyle(color(for: run))
+                        if model.activityIsUnseen(run) {
+                            Text("NEW")
+                                .font(.system(size: 7, weight: .bold, design: .monospaced))
+                                .foregroundStyle(LocusTheme.brandInk)
+                                .padding(.horizontal, 5)
+                                .frame(height: 16)
+                                .background(LocusTheme.signal)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    HStack(spacing: 6) {
+                        Text(workspaceTitle(for: run))
+                        Text("·")
+                        Text((run.runKind ?? "solo").replacingOccurrences(of: "_", with: " "))
+                        Text("·")
+                        Text(run.executionEnvironment == "worktree" ? "Worktree" : "Local")
+                        if let position = run.queuePosition {
+                            Text("· queue #\(position)")
+                        }
+                        Text("· \(elapsed(run, now: now))")
+                    }
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundStyle(LocusTheme.muted)
+                    Text(run.recoveryReason?.nilIfEmpty ?? meaningfulStatus(for: run))
+                        .font(.system(size: 9))
+                        .foregroundStyle(LocusTheme.inkSoft)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 8) {
+                Button("Open Chat") { model.openActivityRun(run) }
+                Button("Timeline") {
+                    model.openActivityRun(run)
+                    model.selectInspectorTab(.runs)
+                }
+                if run.state == "queued" {
+                    Button("Top") { model.updateQueuedRun(run, action: "move_top") }
+                    Button("Up") { model.updateQueuedRun(run, action: "move_up") }
+                    Button("Down") { model.updateQueuedRun(run, action: "move_down") }
+                    Button("Remove", role: .destructive) {
+                        model.updateQueuedRun(run, action: "cancel")
+                    }
+                } else if ["running", "dispatching", "reviewing"].contains(run.state) {
+                    if run.runKind == "team" {
+                        Button("Pause") { model.pauseOrchestration(run.id) }
+                    }
+                    Button("Stop", role: .destructive) { model.stopActivityRun(run) }
+                } else if ["paused", "interrupted"].contains(run.state), run.runKind == "team" {
+                    Button("Resume") { model.resumeOrchestration(run) }
+                } else if ["failed", "interrupted", "cancelled", "paused"].contains(run.state) {
+                    Button("Retry") { model.retryRun(run) }
+                }
+                if TeamRunState(rawValue: run.state)?.isTerminal == true {
+                    Button("Remove") { model.dismissActivityRun(run) }
+                        .help("Remove from Activity; the run timeline is preserved")
+                        .accessibilityIdentifier("activity.remove.\(run.id)")
+                }
+                if run.state == "waiting_permission" {
+                    Button("Allow Once") { model.answerActivityPermission(run, decision: "once") }
+                    Button("Always Allow") { model.answerActivityPermission(run, decision: "always") }
+                    Button("Deny", role: .destructive) {
+                        model.answerActivityPermission(run, decision: "deny")
+                    }
+                }
+                if ["waiting_computer", "waiting_dispatch_approval"].contains(run.state) {
+                    Button(run.state == "waiting_computer" ? "Open Chat to Continue" : "Open Chat to Review") {
+                        model.openActivityRun(run)
+                    }
+                }
+                Spacer()
+            }
+            .font(.system(size: 8, weight: .semibold))
+            .buttonStyle(.borderless)
+        }
+        .padding(12)
+        .background(LocusTheme.white.opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay { RoundedRectangle(cornerRadius: 10).stroke(LocusTheme.line) }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("activity.run.\(run.id)")
+    }
+
+    private func chatTitle(for run: OrchestrationRun) -> String {
+        guard let sessionID = run.sessionID else { return "Unknown chat" }
+        return model.sessions.first(where: { $0.id == sessionID })?.displayTitle ?? "Saved chat"
+    }
+
+    private func workspaceTitle(for run: OrchestrationRun) -> String {
+        guard let path = run.workspaceRoot, !path.isEmpty else { return "Unknown workspace" }
+        return URL(fileURLWithPath: path).lastPathComponent
+    }
+
+    private func elapsed(_ run: OrchestrationRun, now: Date) -> String {
+        let end = run.completedAt.map(Date.init(timeIntervalSince1970:)) ?? now
+        let seconds = max(Int(end.timeIntervalSince1970 - run.createdAt), 0)
+        if seconds >= 3_600 { return "\(seconds / 3_600)h \((seconds % 3_600) / 60)m" }
+        if seconds >= 60 { return "\(seconds / 60)m \(seconds % 60)s" }
+        return "\(seconds)s"
+    }
+
+    private func meaningfulStatus(for run: OrchestrationRun) -> String {
+        switch run.state {
+        case "queued": "Waiting for an execution slot"
+        case "waiting_permission": "A permission answer is required"
+        case "waiting_computer": "Computer Control requires this chat in the foreground"
+        case "waiting_dispatch_approval": "The team plan is ready for review"
+        case "paused": "Paused and ready to resume"
+        case "interrupted": "The worker stopped; this run can be recovered"
+        case "failed": "The run failed; inspect its timeline or retry"
+        case "completed": "Completed successfully"
+        case "cancelled": "Stopped"
+        default: "The worker is processing this run"
+        }
+    }
+
+    private func symbol(for run: OrchestrationRun) -> String {
+        switch activityGroup(for: run) {
+        case .attention: "exclamationmark.triangle.fill"
+        case .running: "waveform.path.ecg"
+        case .queued: "clock.fill"
+        case .recent: run.state == "completed" ? "checkmark.circle.fill" : "circle.fill"
+        }
+    }
+
+    private func color(for run: OrchestrationRun) -> Color {
+        switch activityGroup(for: run) {
+        case .attention: LocusTheme.warning
+        case .running: LocusTheme.signalDeep
+        case .queued: LocusTheme.blue
+        case .recent: run.state == "completed" ? LocusTheme.success : LocusTheme.muted
         }
     }
 }
@@ -530,7 +1153,7 @@ private struct TeamActivityPanel: View {
             .font(.system(size: 8, design: .monospaced))
             .foregroundStyle(LocusTheme.muted)
             Spacer()
-            Button("Apply to Workspace") { model.applyActiveTaskToWorkspace() }
+            Button("Review & Land") { model.prepareReviewAndLand() }
                 .disabled(model.isBusy || !model.taskHasChanges)
             Button("Copy Patch") { model.copyActiveTaskPatch() }
                 .disabled(model.isBusy || !model.taskHasChanges)
@@ -872,6 +1495,7 @@ private struct ConversationView: View {
                 .padding(.bottom, 40)
                 .frame(maxWidth: .infinity)
             }
+            .accessibilityIdentifier("conversation.scroll")
             .background {
                 TranscriptScrollBridge(coordinator: scrollCoordinator)
             }
@@ -957,6 +1581,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     private var pinPending = false
     private var isProgrammaticScroll = false
     private var isUserLiveScrolling = false
+    private var isRoutingVerticalWheel = false
     private var lastOriginY: CGFloat = 0
 
     func attach(from anchor: NSView) {
@@ -1012,9 +1637,31 @@ final class TranscriptScrollCoordinator: ObservableObject {
                   let window = candidate.window, event.window === window
             else { return event }
             let point = candidate.convert(event.locationInWindow, from: nil)
-            guard candidate.bounds.contains(point), event.scrollingDeltaY != 0 else { return event }
-            self.wheelMoved(deltaY: event.scrollingDeltaY)
-            return event
+            guard candidate.bounds.contains(point) else { return event }
+
+            let vertical = abs(event.scrollingDeltaY)
+            let horizontal = abs(event.scrollingDeltaX)
+            if vertical > 0, vertical >= horizontal {
+                self.isRoutingVerticalWheel = true
+                self.wheelMoved(deltaY: event.scrollingDeltaY)
+            }
+            guard self.isRoutingVerticalWheel else { return event }
+
+            // SwiftUI can place selectable text and horizontal code views in
+            // their own scroll responders. Letting those receive a vertical
+            // trackpad gesture makes the transcript appear to stop at every
+            // reasoning/tool block. Route the complete vertical gesture to
+            // the transcript's one native scroll view; horizontal-dominant
+            // gestures still reach code blocks normally.
+            candidate.scrollWheel(with: event)
+            let phaseEnded = event.phase.contains(.ended) || event.phase.contains(.cancelled)
+            let momentumEnded = event.momentumPhase.contains(.ended)
+                || event.momentumPhase.contains(.cancelled)
+            if phaseEnded || momentumEnded
+                || (event.phase.isEmpty && event.momentumPhase.isEmpty) {
+                self.isRoutingVerticalWheel = false
+            }
+            return nil
         }
         updateNearBottom()
         contentMayHaveChanged()
@@ -1045,6 +1692,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     func detachAll() {
+        isRoutingVerticalWheel = false
         detachObservers()
         scrollView = nil
         documentView = nil
@@ -1190,6 +1838,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
         displayLink?.invalidate()
         displayLink = nil
         pinPending = false
+        isRoutingVerticalWheel = false
     }
 
     deinit {
@@ -1524,11 +2173,7 @@ private struct MessageBlockView: View, Equatable {
             }
         }
         .onHover { isHovering = $0 }
-        .accessibilityIdentifier(
-            block.completion == nil
-                ? "message.\(block.id.uuidString)"
-                : "turnCompletion.\(block.id.uuidString)"
-        )
+        .accessibilityIdentifier(blockAccessibilityIdentifier)
         .contextMenu {
             if block.kind == .user || block.kind == .assistant {
                 Button("Copy Message", action: onCopy)
@@ -1544,6 +2189,15 @@ private struct MessageBlockView: View, Equatable {
                 Button("Regenerate Response", action: onRegenerate)
             }
         }
+    }
+
+    private var blockAccessibilityIdentifier: String {
+        if block.kind == .tool, let tool = block.tool {
+            return "tool.\(tool.toolID).toggle"
+        }
+        return block.completion == nil
+            ? "message.\(block.id.uuidString)"
+            : "turnCompletion.\(block.id.uuidString)"
     }
 
     private var userAvatar: AnyView {

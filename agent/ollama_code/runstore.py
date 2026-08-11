@@ -21,7 +21,7 @@ from typing import Any
 
 from . import paths
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 6
 DEFAULT_RETENTION_DAYS = 90
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EVENT_JSON_BYTES = 512 * 1024
@@ -311,6 +311,50 @@ class RunStore:
                 )
                 connection.execute("UPDATE schema_meta SET version=4 WHERE singleton=1")
                 connection.commit()
+            if version < 5:
+                connection.execute("BEGIN IMMEDIATE")
+                columns = {
+                    str(row[1]) for row in connection.execute("PRAGMA table_info(runs)")
+                }
+                for statement in (
+                    "ALTER TABLE runs ADD COLUMN run_kind TEXT NOT NULL DEFAULT 'team'",
+                    "ALTER TABLE runs ADD COLUMN trace_id TEXT NOT NULL DEFAULT ''",
+                    "ALTER TABLE runs ADD COLUMN root_span_id TEXT NOT NULL DEFAULT ''",
+                    "ALTER TABLE runs ADD COLUMN content_policy TEXT NOT NULL DEFAULT 'metadata'",
+                    "ALTER TABLE runs ADD COLUMN execution_environment TEXT NOT NULL DEFAULT 'local'",
+                    "ALTER TABLE runs ADD COLUMN export_state TEXT NOT NULL DEFAULT 'pending'",
+                    "ALTER TABLE runs ADD COLUMN export_attempts INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE runs ADD COLUMN exported_at REAL",
+                ):
+                    column = statement.split("ADD COLUMN ", 1)[1].split(" ", 1)[0]
+                    if column not in columns:
+                        connection.execute(statement)
+                connection.execute("UPDATE runs SET trace_id=lower(hex(randomblob(16))) WHERE trace_id='' ")
+                connection.execute(
+                    "UPDATE runs SET root_span_id=lower(hex(randomblob(8))) WHERE root_span_id=''"
+                )
+                connection.execute("UPDATE schema_meta SET version=5 WHERE singleton=1")
+                connection.commit()
+            if version < 6:
+                connection.execute("BEGIN IMMEDIATE")
+                columns = {
+                    str(row[1]) for row in connection.execute("PRAGMA table_info(runs)")
+                }
+                for statement in (
+                    "ALTER TABLE runs ADD COLUMN queue_position INTEGER",
+                    "ALTER TABLE runs ADD COLUMN queued_message_id TEXT",
+                    "ALTER TABLE runs ADD COLUMN retry_parent_id TEXT",
+                    "ALTER TABLE runs ADD COLUMN admitted_at REAL",
+                ):
+                    column = statement.split("ADD COLUMN ", 1)[1].split(" ", 1)[0]
+                    if column not in columns:
+                        connection.execute(statement)
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS runs_queue_idx"
+                    " ON runs(state, queue_position, created_at)"
+                )
+                connection.execute("UPDATE schema_meta SET version=6 WHERE singleton=1")
+                connection.commit()
 
     def upsert_mcp_task(
         self,
@@ -393,10 +437,27 @@ class RunStore:
         request: str = "",
         manifest: dict[str, Any] | None = None,
         state: str = "queued",
+        run_kind: str = "team",
+        trace_id: str = "",
+        root_span_id: str = "",
+        content_policy: str = "metadata",
+        execution_environment: str = "local",
     ) -> None:
         if self.read_only:
             return
         now = time.time()
+        trace_id = trace_id if re.fullmatch(r"[0-9a-f]{32}", trace_id) else uuid.uuid4().hex
+        root_span_id = (
+            root_span_id if re.fullmatch(r"[0-9a-f]{16}", root_span_id)
+            else uuid.uuid4().hex[:16]
+        )
+        run_kind = run_kind if run_kind in {
+            "solo", "team", "evaluation", "verification", "memory_review",
+        } else "solo"
+        content_policy = "content" if content_policy == "content" else "metadata"
+        execution_environment = (
+            "worktree" if execution_environment == "worktree" else "local"
+        )
         safe_manifest = sanitize_event(manifest or {})
         with self._lock, self._connect() as connection:
             connection.execute(
@@ -404,8 +465,9 @@ class RunStore:
                 INSERT INTO runs(
                     id, session_id, team_id, team_name, worker_id, owner_pid,
                     workspace_root, execution_path, task_id, state, request,
-                    manifest_json, created_at, updated_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    manifest_json, created_at, updated_at, run_kind, trace_id,
+                    root_span_id, content_policy, execution_environment
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     session_id=COALESCE(NULLIF(excluded.session_id, ''), runs.session_id),
                     team_id=COALESCE(NULLIF(excluded.team_id, ''), runs.team_id),
@@ -419,12 +481,42 @@ class RunStore:
                     manifest_json=CASE WHEN excluded.manifest_json='{}'
                         THEN runs.manifest_json ELSE excluded.manifest_json END,
                     state=excluded.state, updated_at=excluded.updated_at,
+                    run_kind=excluded.run_kind,
+                    trace_id=CASE WHEN runs.trace_id='' THEN excluded.trace_id ELSE runs.trace_id END,
+                    root_span_id=CASE WHEN runs.root_span_id='' THEN excluded.root_span_id
+                        ELSE runs.root_span_id END,
+                    content_policy=excluded.content_policy,
+                    execution_environment=excluded.execution_environment,
                     recoverable=0, recovery_reason=NULL
                 """,
                 (
                     run_id, session_id, team_id, team_name, worker_id, os.getpid(),
                     workspace_root, execution_path, task_id, state, request[:240_000],
-                    _json(safe_manifest), now, now,
+                    _json(safe_manifest), now, now, run_kind, trace_id, root_span_id,
+                    content_policy, execution_environment,
+                ),
+            )
+
+    def mark_export(
+        self, run_id: str, state: str, *, attempts: int = 0,
+        content_policy: str | None = None,
+    ) -> None:
+        """Record export progress without ever persisting collector errors."""
+        if self.read_only:
+            return
+        state = state if state in {"pending", "exporting", "exported", "failed"} else "failed"
+        with self._connect() as connection:
+            connection.execute(
+                """UPDATE runs SET export_state=?, export_attempts=?, exported_at=?, updated_at=?,
+                          content_policy=COALESCE(?, content_policy)
+                   WHERE id=?""",
+                (
+                    state, max(int(attempts), 0),
+                    time.time() if state == "exported" else None,
+                    time.time(),
+                    ("content" if content_policy == "content" else "metadata")
+                    if content_policy is not None else None,
+                    run_id,
                 ),
             )
 
@@ -503,9 +595,13 @@ class RunStore:
             if row is None:
                 connection.execute(
                     """INSERT INTO runs(
-                        id, owner_pid, state, created_at, updated_at
-                    ) VALUES(?, ?, ?, ?, ?)""",
-                    (run_id, os.getpid(), str(safe.get("state") or "running"), now, now),
+                        id, owner_pid, state, created_at, updated_at, trace_id,
+                        root_span_id
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        run_id, os.getpid(), str(safe.get("state") or "running"), now, now,
+                        uuid.uuid4().hex, uuid.uuid4().hex[:16],
+                    ),
                 )
                 row = connection.execute("SELECT last_seq FROM runs WHERE id = ?", (run_id,)).fetchone()
             seq = int(row[0]) + 1
@@ -698,7 +794,10 @@ class RunStore:
             value["events"] = self.events(run_id, limit=MAX_EXPORT_EVENTS)
         return value
 
-    def list_runs(self, *, session_id: str = "", limit: int = 100) -> list[dict[str, Any]]:
+    def list_runs(
+        self, *, session_id: str = "", states: list[str] | None = None,
+        workspace: str = "", cursor: float = 0, limit: int = 100,
+    ) -> list[dict[str, Any]]:
         limit = min(max(int(limit), 1), 500)
         summary_query = """
             SELECT runs.*,
@@ -717,16 +816,26 @@ class RunStore:
                   )) AS completed_job_count
               FROM runs
         """
+        clauses: list[str] = []
+        values: list[Any] = []
+        if session_id:
+            clauses.append("session_id=?")
+            values.append(session_id)
+        if workspace:
+            clauses.append("workspace_root=?")
+            values.append(workspace)
+        if cursor > 0:
+            clauses.append("updated_at<?")
+            values.append(float(cursor))
+        clean_states = [value for value in (states or []) if value][:20]
+        if clean_states:
+            clauses.append(f"state IN ({','.join('?' for _ in clean_states)})")
+            values.extend(clean_states)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect(readonly=True) as connection:
-            if session_id:
-                rows = connection.execute(
-                    summary_query + " WHERE session_id=? ORDER BY updated_at DESC LIMIT ?",
-                    (session_id, limit),
-                ).fetchall()
-            else:
-                rows = connection.execute(
-                    summary_query + " ORDER BY updated_at DESC LIMIT ?", (limit,)
-                ).fetchall()
+            rows = connection.execute(
+                summary_query + where + " ORDER BY updated_at DESC LIMIT ?", (*values, limit)
+            ).fetchall()
         return [{
             **self._run_row(row),
             "job_count": int(row["job_count"] or 0),
@@ -762,7 +871,109 @@ class RunStore:
             "last_seq": row["last_seq"], "pinned": bool(row["pinned"]),
             "legacy": bool(row["legacy"]), "recoverable": bool(row["recoverable"]),
             "recovery_reason": row["recovery_reason"],
+            "run_kind": row["run_kind"], "trace_id": row["trace_id"],
+            "root_span_id": row["root_span_id"],
+            "content_policy": row["content_policy"],
+            "execution_environment": row["execution_environment"],
+            "export_state": row["export_state"],
+            "export_attempts": int(row["export_attempts"] or 0),
+            "exported_at": row["exported_at"],
+            "queue_position": row["queue_position"],
+            "queued_message_id": row["queued_message_id"],
+            "retry_parent_id": row["retry_parent_id"],
+            "admitted_at": row["admitted_at"],
         }
+
+    def queue_run(
+        self, run_id: str, *, session_id: str, message_id: str = "",
+        team_id: str = "", team_name: str = "",
+        workspace_root: str = "", execution_path: str = "", request: str = "",
+        run_kind: str = "solo", execution_environment: str = "local",
+        retry_parent_id: str = "",
+    ) -> dict[str, Any]:
+        """Reserve one durable FIFO slot before a chat worker is admitted."""
+        with self._lock:
+            with self._connect(readonly=self.read_only) as connection:
+                position = int(connection.execute(
+                    "SELECT COALESCE(MAX(queue_position), 0) + 1"
+                    " FROM runs WHERE state='queued'"
+                ).fetchone()[0])
+            # The re-entrant store lock keeps the position calculation and
+            # reservation ordered even when two app windows queue together.
+            self.start_run(
+                run_id, session_id=session_id, team_id=team_id, team_name=team_name,
+                workspace_root=workspace_root,
+                execution_path=execution_path, request=request, state="queued",
+                run_kind=run_kind, execution_environment=execution_environment,
+            )
+            if not self.read_only:
+                with self._connect() as connection:
+                    connection.execute(
+                        "UPDATE runs SET queue_position=?, queued_message_id=?,"
+                        " retry_parent_id=? WHERE id=?",
+                        (position, message_id[:160], retry_parent_id[:160] or None, run_id),
+                    )
+        return self.run(run_id) or {}
+
+    def reorder_queue(self, run_id: str, action: str) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT id, session_id FROM runs WHERE state='queued'"
+                " ORDER BY queue_position, created_at"
+            ).fetchall()
+            identifiers = [str(row[0]) for row in rows]
+            sessions = {str(row[0]): str(row[1] or "") for row in rows}
+            if run_id not in identifiers:
+                raise RunStoreError("queued run not found")
+            index = identifiers.index(run_id)
+            if action == "move_top":
+                session_id = sessions[run_id]
+                earlier_same_session = [
+                    position for position, identifier in enumerate(identifiers[:index])
+                    if session_id and sessions[identifier] == session_id
+                ]
+                destination = earlier_same_session[-1] + 1 if earlier_same_session else 0
+                identifiers.insert(destination, identifiers.pop(index))
+            elif action == "move_up" and index > 0:
+                previous = identifiers[index - 1]
+                if not sessions[run_id] or sessions[previous] != sessions[run_id]:
+                    identifiers[index - 1], identifiers[index] = (
+                        identifiers[index], identifiers[index - 1]
+                    )
+            elif action == "move_down" and index + 1 < len(identifiers):
+                following = identifiers[index + 1]
+                if not sessions[run_id] or sessions[following] != sessions[run_id]:
+                    identifiers[index + 1], identifiers[index] = (
+                        identifiers[index], identifiers[index + 1]
+                    )
+            elif action == "cancel":
+                connection.execute(
+                    "UPDATE runs SET state='cancelled', completed_at=?, queue_position=NULL,"
+                    " updated_at=? WHERE id=?", (time.time(), time.time(), run_id),
+                )
+                identifiers.remove(run_id)
+            elif action not in {"move_top", "move_up", "move_down", "cancel"}:
+                raise RunStoreError("unknown queue action")
+            connection.executemany(
+                "UPDATE runs SET queue_position=?, updated_at=? WHERE id=?",
+                ((position, time.time(), identifier)
+                 for position, identifier in enumerate(identifiers, 1)),
+            )
+        return self.run(run_id) or {}
+
+    def admit(self, run_id: str) -> None:
+        if self.read_only:
+            return
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE runs SET state='dispatching', admitted_at=?, queue_position=NULL,"
+                " updated_at=? WHERE id=? AND state='queued'",
+                (time.time(), time.time(), run_id),
+            )
+            if cursor.rowcount != 1:
+                raise RunStoreError("queued run not found")
 
     def mark_abandoned(
         self, lease_active: Callable[[str], bool] | None = None
@@ -776,6 +987,11 @@ class RunStore:
                 "SELECT id, owner_pid, state FROM runs WHERE state NOT IN ('completed','failed','interrupted','cancelled','discarded')"
             ).fetchall()
             for row in rows:
+                # A run that never acquired an execution slot is still a
+                # durable queue reservation. Preserve its state and position
+                # so the next app process can admit it in the same order.
+                if str(row["state"]) == "queued":
+                    continue
                 if _alive(int(row["owner_pid"] or 0)):
                     continue
                 if lease_active is not None and lease_active(str(row["id"])):

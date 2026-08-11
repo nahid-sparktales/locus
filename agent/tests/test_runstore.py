@@ -113,6 +113,38 @@ def test_live_owner_is_not_marked_abandoned(tmp_path) -> None:
     assert store.mark_abandoned() == []
 
 
+def test_queued_runs_keep_fifo_order_across_abandonment_and_reordering(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    first = store.queue_run("first", session_id="chat-a", message_id="message-a")
+    second = store.queue_run("second", session_id="chat-b", message_id="message-b")
+    third = store.queue_run("third", session_id="chat-c", message_id="message-c")
+    fourth = store.queue_run("fourth", session_id="chat-c", message_id="message-d")
+
+    assert [
+        first["queue_position"], second["queue_position"],
+        third["queue_position"], fourth["queue_position"],
+    ] == [1, 2, 3, 4]
+    with sqlite3.connect(store.path) as connection:
+        connection.execute("UPDATE runs SET owner_pid=?", (999_999_999,))
+    assert store.mark_abandoned() == []
+    assert store.run("first")["state"] == "queued"
+
+    store.reorder_queue("fourth", "move_top")
+    queued = sorted(
+        store.list_runs(states=["queued"]), key=lambda item: item["queue_position"]
+    )
+    assert [item["id"] for item in queued] == ["first", "second", "third", "fourth"]
+
+    store.reorder_queue("third", "move_top")
+    queued = sorted(
+        store.list_runs(states=["queued"]), key=lambda item: item["queue_position"]
+    )
+    assert [item["id"] for item in queued] == ["third", "first", "second", "fourth"]
+    store.reorder_queue("first", "cancel")
+    assert store.run("first")["state"] == "cancelled"
+    assert store.run("second")["queue_position"] == 2
+
+
 def test_live_state_event_clears_stale_recovery_metadata(tmp_path) -> None:
     store = RunStore(tmp_path / "runs.sqlite3")
     store.start_run("run-1", state="waiting_dispatch_approval")
@@ -227,7 +259,7 @@ def test_current_schema_reopens_writable_without_reapplying_migrations(tmp_path)
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT version FROM schema_meta WHERE singleton=1"
-        ).fetchone()[0] == 4
+        ).fetchone()[0] == 6
 
 
 def test_schema_v4_migrates_a_v3_store_and_records_turn_usage(tmp_path) -> None:

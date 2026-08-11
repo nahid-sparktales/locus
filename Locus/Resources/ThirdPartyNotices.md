@@ -41,6 +41,7 @@ Each package's complete license text is retained in its installed
 | click | 8.4.2 | BSD-3-Clause |
 | cryptography | 50.0.0 | Apache-2.0 OR BSD-3-Clause |
 | fastapi | 0.141.1 | MIT |
+| googleapis-common-protos | 1.75.1 | Apache-2.0 |
 | h11 | 0.16.0 | MIT |
 | httpcore2 | 2.9.1 | BSD-3-Clause |
 | httpx2 | 2.9.1 | BSD-3-Clause |
@@ -52,7 +53,13 @@ Each package's complete license text is retained in its installed
 | mcp-types | 2.0.0 | MIT |
 | mdurl | 0.1.2 | MIT |
 | opentelemetry-api | 1.44.0 | Apache-2.0 |
+| opentelemetry-exporter-otlp-proto-common | 1.44.0 | Apache-2.0 |
+| opentelemetry-exporter-otlp-proto-http | 1.44.0 | Apache-2.0 |
+| opentelemetry-proto | 1.44.0 | Apache-2.0 |
+| opentelemetry-sdk | 1.44.0 | Apache-2.0 |
+| opentelemetry-semantic-conventions | 0.65b0 | Apache-2.0 |
 | prompt-toolkit | 3.0.53 | BSD-3-Clause |
+| protobuf | 7.35.1 | BSD-3-Clause |
 | pycparser | 3.0 | BSD-3-Clause |
 | pydantic | 2.13.4 | MIT |
 | pydantic-core | 2.46.4 | MIT |

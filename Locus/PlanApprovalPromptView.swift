@@ -248,7 +248,7 @@ struct TeamRunBoardView: View {
                 }
             }
             if state == .completed, model.taskHasChanges, isActive {
-                Button("Apply to Workspace") { model.applyActiveTaskToWorkspace() }
+                Button("Review & Land") { model.prepareReviewAndLand() }
                     .buttonStyle(.borderedProminent)
                     .tint(LocusTheme.ink)
             }
@@ -656,38 +656,35 @@ struct TeamDispatchApprovalPromptView: View {
                     .lineLimit(3)
             }
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 7) {
-                    ForEach(Array(executionOrderedJobs.enumerated()), id: \.element.id) { index, job in
-                        HStack(alignment: .top, spacing: 8) {
-                            Text("\(index + 1).")
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(LocusTheme.muted)
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 5) {
-                                    Text(agentName(for: job))
-                                        .font(.system(size: 9, weight: .semibold))
-                                    Text("· \(jobLabel(job))")
-                                        .font(.system(size: 8))
-                                        .foregroundStyle(LocusTheme.muted)
-                                }
-                                Text(job.goal)
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(LocusTheme.inkSoft)
-                                    .lineLimit(2)
-                                if !job.dependencies.isEmpty {
-                                    Text("After: \(job.dependencies.joined(separator: ", "))")
-                                        .font(.system(size: 7, design: .monospaced))
-                                        .foregroundStyle(LocusTheme.muted)
-                                }
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(Array(executionOrderedJobs.enumerated()), id: \.element.id) { index, job in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("\(index + 1).")
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(LocusTheme.muted)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 5) {
+                                Text(agentName(for: job))
+                                    .font(.system(size: 9, weight: .semibold))
+                                Text("· \(jobLabel(job))")
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(LocusTheme.muted)
                             }
-                            Spacer(minLength: 0)
+                            Text(job.goal)
+                                .font(.system(size: 9))
+                                .foregroundStyle(LocusTheme.inkSoft)
+                                .lineLimit(2)
+                            if !job.dependencies.isEmpty {
+                                Text("After: \(job.dependencies.joined(separator: ", "))")
+                                    .font(.system(size: 7, design: .monospaced))
+                                    .foregroundStyle(LocusTheme.muted)
+                            }
                         }
+                        Spacer(minLength: 0)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: 150)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("teamDispatch.jobs")
 
             if let budget = plan.budget ?? model.activeOrchestrationTeam?.budget {
@@ -956,23 +953,20 @@ struct PlanApprovalPromptView: View {
 
     @ViewBuilder
     private var steps: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 5) {
-                ForEach(Array(planSteps.enumerated()), id: \.offset) { index, step in
-                    HStack(alignment: .top, spacing: 7) {
-                        Text("\(index + 1).")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(LocusTheme.muted)
-                        Text(step)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(LocusTheme.ink)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(Array(planSteps.enumerated()), id: \.offset) { index, step in
+                HStack(alignment: .top, spacing: 7) {
+                    Text("\(index + 1).")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                    Text(step)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(LocusTheme.ink)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxHeight: 132)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
         .background(LocusTheme.paperDeep.opacity(0.65))
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))

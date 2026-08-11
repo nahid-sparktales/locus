@@ -288,16 +288,33 @@ struct ComposerView: View {
     private func handleReturn(_ press: KeyPress) -> KeyPress.Result {
         switch ComposerReturnAction.current(
             hasPopup: activePopup != nil,
-            enterSendsMessages: model.settings.enterSendsMessages,
+            isBusy: model.isBusy,
             canSubmit: canSubmit,
+            canSteer: !isWaitingForTeamApproval && !isStopping,
             modifiers: press.modifiers
         ) {
         case .completePopup:
             guard let popup = activePopup else { return .ignored }
             applyPopupSelection(popup)
             return .handled
-        case .submit:
-            submit()
+        case .send:
+            guard canSubmit else { return .handled }
+            model.submitDraft()
+            focused = true
+            return .handled
+        case .queue:
+            guard canSubmit else { return .handled }
+            model.queueDraft()
+            focused = true
+            return .handled
+        case .steer:
+            guard canSubmit else { return .handled }
+            model.steerDraft()
+            focused = true
+            return .handled
+        case .stop:
+            guard !isStopping else { return .handled }
+            model.stop()
             return .handled
         case .newline:
             return .ignored
@@ -683,11 +700,12 @@ struct ComposerView: View {
                 .foregroundStyle(LocusTheme.muted.opacity(0.62))
 
             if model.isBusy {
-                if primaryAction != .stop, !isWaitingForTeamApproval {
+                if primaryAction != .stop, !isWaitingForTeamApproval, !isStopping {
                     Menu {
-                        Button("Queue for Next Turn", systemImage: "tray.and.arrow.down") {
-                            model.queueDraft()
+                        Button("Steer Active Turn", systemImage: "arrow.turn.up.right") {
+                            model.steerDraft()
                         }
+                        .accessibilityIdentifier("composer.steer")
                         Button("Stop & Send as New Turn", systemImage: "stop.circle") {
                             model.stopAndSendDraft()
                         }
@@ -711,7 +729,7 @@ struct ComposerView: View {
                     // Empty composer during a run: this slot used to hold a
                     // disabled steer arrow — dead space exactly where every
                     // coding agent puts its stop control. Typing switches it
-                    // back to steering, which is the deliberate 1.11 design.
+                    // back to the next-turn queue action.
                     Button {
                         submit()
                     } label: {
@@ -738,8 +756,7 @@ struct ComposerView: View {
                     Button {
                         submit()
                     } label: {
-                        Image(systemName: isWaitingForTeamApproval
-                            ? "tray.and.arrow.down.fill" : "arrow.turn.up.right")
+                        Image(systemName: "tray.and.arrow.down.fill")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(canSubmit ? LocusTheme.brandInk : LocusTheme.muted)
                             .frame(width: 30, height: 30)
@@ -748,21 +765,10 @@ struct ComposerView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(!canSubmit)
-                    .help(isWaitingForTeamApproval
-                        ? "Queue for the next turn (\(sendKeyHint))"
-                        : "Steer the active turn (\(sendKeyHint))")
-                    .accessibilityLabel(isWaitingForTeamApproval ? "Queue for next turn" : "Steer now")
-                    .accessibilityIdentifier(isWaitingForTeamApproval ? "composer.queue" : "composer.steer")
+                    .help("Queue for the next turn (↵)")
+                    .accessibilityLabel("Queue for next turn")
+                    .accessibilityIdentifier("composer.queueButton")
                 }
-
-                // The visible menu cannot own the shortcut, so this zero-size
-                // target makes the primary busy action deterministic.
-                Button("") { submit() }
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .buttonStyle(.plain)
-                    .frame(width: 0, height: 0)
-                    .opacity(0)
-                    .accessibilityHidden(true)
             } else {
                 Button {
                     submit()
@@ -776,11 +782,10 @@ struct ComposerView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSubmit || model.hasPendingPermission)
-                .keyboardShortcut(.return, modifiers: .command)
                 .help(
                     model.hasPendingPermission
                         ? "Answer the pending permission request first"
-                        : (model.settings.enterSendsMessages ? "Send (↵)" : "Send (⌘↵)")
+                        : "Send (↵)"
                 )
                 .accessibilityLabel("Send message")
                 .accessibilityIdentifier("composer.send")
@@ -928,12 +933,10 @@ struct ComposerView: View {
         // including this hint — is replaced by the permission panel.
         model.isBusy
             ? (isWaitingForTeamApproval
-                ? "\(sendKeyHint) Queue for Next Turn"
-                : "\(sendKeyHint) Steer Now")
-            : "\(sendKeyHint) Send"
+                ? "↵ Queue for Next Turn"
+                : "↵ Queue · ⌘↵ Steer")
+            : "↵ Send"
     }
-
-    private var sendKeyHint: String { model.settings.enterSendsMessages ? "↵" : "⌘↵" }
 
     private var placeholder: String {
         if isWaitingForTeamApproval {
@@ -967,7 +970,6 @@ struct ComposerView: View {
 /// decision table is unit-testable away from the view.
 enum ComposerPrimaryAction: Equatable {
     case send
-    case steer
     case queue
     case stop
 
@@ -978,30 +980,38 @@ enum ComposerPrimaryAction: Equatable {
     ) -> ComposerPrimaryAction {
         guard isBusy else { return .send }
         if isWaitingForTeamApproval { return .queue }
-        return canSubmit ? .steer : .stop
+        return canSubmit ? .queue : .stop
     }
 }
 
 enum ComposerReturnAction: Equatable {
     case completePopup
-    case submit
+    case send
+    case queue
+    case steer
+    case stop
     case newline
 
     static func current(
         hasPopup: Bool,
-        enterSendsMessages: Bool,
+        isBusy: Bool,
         canSubmit: Bool,
+        canSteer: Bool,
         modifiers: EventModifiers
     ) -> ComposerReturnAction {
         if hasPopup { return .completePopup }
         let textModifiers: EventModifiers = [.command, .control, .option, .shift]
-        if enterSendsMessages,
-           canSubmit,
-           modifiers.intersection(textModifiers).isEmpty
-        {
-            return .submit
+        let commandOnly = modifiers.contains(.command)
+            && modifiers.intersection([.control, .option, .shift]).isEmpty
+        if commandOnly {
+            guard canSubmit else { return isBusy ? .stop : .newline }
+            guard isBusy else { return .send }
+            return canSteer ? .steer : .queue
         }
-        return .newline
+        guard modifiers.intersection(textModifiers).isEmpty else { return .newline }
+        guard canSubmit else { return .newline }
+        if isBusy { return .queue }
+        return .send
     }
 }
 

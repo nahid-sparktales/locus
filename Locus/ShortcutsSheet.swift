@@ -24,7 +24,9 @@ private let shortcutReferenceGroups: [ShortcutReferenceGroup] = [
         ShortcutReference(keys: "⌘R", title: "Review changes"),
     ]),
     ShortcutReferenceGroup(name: "Composer", shortcuts: [
+        ShortcutReference(keys: "↵", title: "Send · queue for next turn while busy"),
         ShortcutReference(keys: "⌘↵", title: "Send · steer while busy · stop when empty"),
+        ShortcutReference(keys: "⇧↵", title: "Add a new line"),
         ShortcutReference(keys: "Esc", title: "Stop the current run / close popups"),
         ShortcutReference(keys: "↑ ↓", title: "Browse prompt history (empty composer)"),
         ShortcutReference(keys: "/", title: "Slash commands"),

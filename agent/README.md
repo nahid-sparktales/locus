@@ -82,12 +82,14 @@ allocation or the separate 100-iteration writer guard checkpoints the active
 job as incomplete and pauses the run; it is never reported as a successful
 coding job.
 
-Each running team chat owns a separate local worker process and WebSocket, so
-other chats and workspaces remain usable. Model calls obtain crash-recoverable,
-round-robin leases shared across workers (three by default). Git team chats use
-a detached managed worktree whose private baseline includes the source
-checkout's working state. Applying a result is explicit, dry-run checked, and
-leaves source changes unstaged and uncommitted.
+Each chat owns a separate local worker process and WebSocket, so other chats
+and workspaces remain usable while Solo or team turns run. A FIFO admission
+queue permits two active chats by default (configurable from one to four).
+Model calls obtain crash-recoverable, round-robin leases shared across workers.
+New Git chats default to a detached, chat-lifetime managed worktree whose
+private baseline includes the source checkout's working state. Applying a
+result is explicit, dry-run checked, and leaves source changes unstaged and
+uncommitted.
 
 ## Model providers
 

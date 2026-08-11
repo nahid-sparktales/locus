@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UserNotifications
 
 private let locusIsUITesting = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1"
 private let locusIsUnitTesting =
@@ -136,7 +137,8 @@ struct LocusApp: App {
 }
 
 @MainActor
-final class LocusApplicationDelegate: NSObject, NSApplicationDelegate {
+final class LocusApplicationDelegate: NSObject, NSApplicationDelegate,
+    UNUserNotificationCenterDelegate {
     static let mainWindowIdentifier = NSUserInterfaceItemIdentifier("locus.main")
     weak var model: AppModel?
     private var terminationPending = false
@@ -146,12 +148,28 @@ final class LocusApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UNUserNotificationCenter.current().delegate = self
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(windowWillClose(_:)),
             name: NSWindow.willCloseNotification,
             object: nil
         )
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let info = response.notification.request.content.userInfo
+        let sessionID = info["session_id"] as? String ?? ""
+        let runID = info["run_id"] as? String ?? ""
+        Task { @MainActor [weak self] in
+            self?.model?.openNotification(sessionID: sessionID, runID: runID)
+            NSApp.activate(ignoringOtherApps: true)
+            completionHandler()
+        }
     }
 
     func applicationShouldHandleReopen(
@@ -339,6 +357,19 @@ struct RootView: View {
             CheckpointSheet()
                 .environmentObject(model)
         }
+        .sheet(isPresented: $model.reviewAndLandPresented) {
+            ReviewAndLandView()
+                .environmentObject(model)
+        }
+        .sheet(isPresented: Binding(
+            get: { model.rememberConfirmationText != nil },
+            set: { if !$0 { model.rememberConfirmationText = nil } }
+        )) {
+            if let text = model.rememberConfirmationText {
+                RememberConfirmationView(initialText: text)
+                    .environmentObject(model)
+            }
+        }
         .sheet(isPresented: $model.settingsPresented, onDismiss: {
             model.completeSettingsDismissal()
         }) {
@@ -367,25 +398,6 @@ struct RootView: View {
             MCPInputRequestView(request: request)
                 .environmentObject(model)
                 .interactiveDismissDisabled()
-        }
-        .alert("Choose how to send messages", isPresented: Binding(
-            get: { model.shouldAskMessageSendShortcutPreference },
-            set: { presented in
-                if !presented, model.shouldAskMessageSendShortcutPreference {
-                    model.chooseMessageSendShortcut(enterSends: false)
-                }
-            }
-        )) {
-            Button("Use Command–Enter", role: .cancel) {
-                model.chooseMessageSendShortcut(enterSends: false)
-            }
-            .accessibilityIdentifier("sendShortcut.commandEnter")
-            Button("Use Enter") {
-                model.chooseMessageSendShortcut(enterSends: true)
-            }
-            .accessibilityIdentifier("sendShortcut.enter")
-        } message: {
-            Text("Choose whether Command–Enter or plain Enter sends a message. You can change this anytime in Settings → General → Conversation.")
         }
         .alert(model.automaticInspectorPrompt?.title ?? "Open request details automatically?", isPresented: Binding(
             get: { model.automaticInspectorPrompt != nil },
@@ -422,6 +434,74 @@ struct RootView: View {
         } message: {
             Text("Previous sessions will move to a recovery folder. The active session, current chat, connection, and any running job will remain untouched.")
         }
+    }
+}
+
+private struct RememberConfirmationView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var title: String
+    @State private var content: String
+    @State private var tags = ""
+    @State private var scope = AgentMemoryScope.workspace
+
+    init(initialText: String) {
+        _title = State(initialValue: String(initialText.prefix(80)))
+        _content = State(initialValue: initialText)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Remember This")
+                .font(.system(size: 16, weight: .bold))
+            Text("Review or edit the memory before saving. Saving is explicit approval, so it can be recalled in future chats within its scope.")
+                .font(.system(size: 9))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("Title", text: $title)
+                .accessibilityIdentifier("remember.title")
+            TextEditor(text: $content)
+                .font(.system(size: 10))
+                .scrollContentBackground(.hidden)
+                .padding(6)
+                .frame(height: 120)
+                .background(LocusTheme.white)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay { RoundedRectangle(cornerRadius: 8).stroke(LocusTheme.line) }
+                .accessibilityIdentifier("remember.content")
+            Picker("Scope", selection: $scope) {
+                ForEach(AgentMemoryScope.allCases) { value in
+                    Text(value.title).tag(value)
+                }
+            }
+            TextField("Tags, comma separated", text: $tags)
+                .accessibilityIdentifier("remember.tags")
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Save Memory") {
+                    model.rememberWorkspaceFact(
+                        title: title,
+                        content: content,
+                        tags: tags.split(separator: ",").map {
+                            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                        }.filter { !$0.isEmpty },
+                        scope: scope
+                    )
+                    model.rememberConfirmationText = nil
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(
+                    title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
+                .accessibilityIdentifier("remember.save")
+            }
+        }
+        .padding(20)
+        .frame(width: 520)
+        .background(LocusTheme.panel)
     }
 }
 

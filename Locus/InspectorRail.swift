@@ -1,26 +1,23 @@
 import SwiftUI
 
 /// The always-visible right rail. Collapsing the inspector no longer empties
-/// the window edge: the panel's everyday tabs shrink to a few icons — Plan,
-/// Browser, and an ellipsis holding the rest — and the panel opens to the
-/// rail's left. Attention badges live on the icons, so a run can ask for eyes
-/// without the panel being open. The top panel button always returns to the
-/// workspace tab strip; Plan and Browser are special-purpose destinations.
+/// the window edge: Terminal, Plan, Browser, and an ellipsis holding the rest
+/// stay within reach, and the panel opens to the rail's left. Attention badges
+/// live on the icons, so a run can ask for eyes without the panel being open.
 struct InspectorRail: View {
     @EnvironmentObject private var model: AppModel
 
     /// Tabs that live behind the ellipsis rather than on the rail itself.
-    /// Plan and Browser earn rail icons because they are the two surfaces a
-    /// person reaches for mid-conversation; the rest are workspace plumbing.
-    static let overflowTabs = InspectorTab.workspaceTabs
+    /// Terminal joins Plan and Browser as a direct destination.
+    static let overflowTabs = InspectorTab.workspaceTabs.filter { $0 != .terminal }
 
     var body: some View {
         VStack(spacing: 6) {
-            toggleButton
+            moreMenu
+            railTab(.terminal)
             railTab(.plan)
             railTab(.preview)
             Spacer(minLength: 0)
-            moreMenu
             zoomButton
         }
         .padding(.vertical, 8)
@@ -30,24 +27,6 @@ struct InspectorRail: View {
         .overlay(alignment: .leading) {
             Rectangle().fill(LocusTheme.line).frame(width: 1)
         }
-    }
-
-    private var toggleButton: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                model.toggleInspector()
-            }
-        } label: {
-            Image(systemName: "sidebar.right")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(LocusTheme.muted)
-                .frame(width: 32, height: 30)
-                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .help(model.inspectorCollapsed ? "Show panel" : "Hide panel")
-        .accessibilityLabel(model.inspectorCollapsed ? "Show panel" : "Hide panel")
-        .accessibilityIdentifier("inspector.rail.toggle")
     }
 
     private var zoomButton: some View {

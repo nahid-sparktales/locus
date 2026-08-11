@@ -3,9 +3,9 @@ import SwiftUI
 
 /// The right-hand inspector: a tab shell around workspace run state, files,
 /// instructions, terminal and checkpoints, with a drag handle on its leading
-/// edge. Plan and Browser have first-class rail icons instead of strip tabs,
-/// so when either is selected the strip stands down and the panel gets the
-/// entire height.
+/// edge. Terminal, Plan and Browser have first-class rail icons instead of
+/// strip tabs, so when one is selected the strip stands down and the panel
+/// gets the entire height.
 struct InspectorView: View {
     @EnvironmentObject private var model: AppModel
 
@@ -68,7 +68,9 @@ private struct InspectorTabStrip: View {
     private func tabButton(_ tab: InspectorTab) -> some View {
         let selected = model.inspectorTab == tab
         return Button {
-            model.selectInspectorTab(tab)
+            withAnimation(.easeInOut(duration: 0.18)) {
+                model.toggleInspectorTab(tab)
+            }
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: tab.symbol)
@@ -170,17 +172,29 @@ struct InspectorTabBadge: View {
 private struct InspectorResizeHandle: View {
     @EnvironmentObject private var model: AppModel
     @State private var startWidth: CGFloat?
+    @State private var isHovering = false
 
     var body: some View {
         Rectangle()
             .fill(LocusTheme.line)
             .frame(width: 1)
             .overlay {
-                Rectangle()
-                    .fill(Color.white.opacity(0.001))
-                    .frame(width: 6)
+                ZStack {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.001))
+
+                    if model.inspectorZoomed {
+                        Capsule()
+                            .fill(
+                                LocusTheme.ink.opacity(isHovering ? 0.52 : 0.28)
+                            )
+                            .frame(width: 3, height: 44)
+                    }
+                }
+                    .frame(width: 14)
                     .contentShape(Rectangle())
                     .onHover { inside in
+                        isHovering = inside
                         // `.set()` rather than push/pop: an unbalanced pair is
                         // the classic way to leave the cursor stuck.
                         if inside { NSCursor.resizeLeftRight.set() } else { NSCursor.arrow.set() }
@@ -221,7 +235,12 @@ private struct InspectorResizeHandle: View {
                             model.commitInspectorWidth()
                         }
                     }
-                    .accessibilityLabel("Resize inspector")
+                    .accessibilityElement()
+                    .accessibilityLabel(
+                        model.inspectorZoomed
+                            ? "Expanded panel resize grip"
+                            : "Resize inspector divider"
+                    )
                     .accessibilityIdentifier("inspector.resizeHandle")
             }
     }
@@ -233,6 +252,7 @@ struct InspectorRunsTab: View {
     @State private var filter = ""
     @State private var draftPlan: DispatchPlan?
     @State private var showTechnicalLog = false
+    @State private var telemetryContentRunID: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -244,8 +264,8 @@ struct InspectorRunsTab: View {
             } else {
                 InspectorPlaceholder(
                     symbol: "point.3.connected.trianglepath.dotted",
-                    title: "No team run selected",
-                    message: "Team Runs shows each plan, model assignment, live progress, result, and any available recovery action.",
+                    title: "No run selected",
+                    message: "Runs shows each chat or team execution, its live timeline, result, and any available recovery action.",
                     identifier: "runs.empty"
                 )
             }
@@ -257,6 +277,32 @@ struct InspectorRunsTab: View {
         }
         .onChange(of: model.pendingDispatchPlan) { _, value in draftPlan = value }
         .onAppear { draftPlan = model.pendingDispatchPlan }
+        .confirmationDialog(
+            "Include visible content in this trace?",
+            isPresented: Binding(
+                get: { telemetryContentRunID != nil },
+                set: { if !$0 { sendMetadataInsteadOfContent() } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let runID = telemetryContentRunID {
+                Button("Send Content Trace") {
+                    telemetryContentRunID = nil
+                    Task { await model.exportRunToOTLP(runID, includeContent: true) }
+                }
+            }
+            Button("Send Metadata Only", role: .cancel) {
+                sendMetadataInsteadOfContent()
+            }
+        } message: {
+            Text("This one export may contain prompts, visible responses, and tool content. Credentials and authorization values remain excluded. Dismissing sends metadata only.")
+        }
+    }
+
+    private func sendMetadataInsteadOfContent() {
+        guard let runID = telemetryContentRunID else { return }
+        telemetryContentRunID = nil
+        Task { await model.exportRunToOTLP(runID) }
     }
 
     private var header: some View {
@@ -264,7 +310,7 @@ struct InspectorRunsTab: View {
             HStack(spacing: 8) {
                 Image(systemName: "point.3.connected.trianglepath.dotted")
                     .foregroundStyle(LocusTheme.signalDeep)
-                Text("TEAM RUNS")
+                Text("RUNS")
                     .font(.system(size: 8, weight: .bold))
                     .tracking(0.7)
                 Spacer()
@@ -282,10 +328,10 @@ struct InspectorRunsTab: View {
                         Task { await model.loadOrchestrationRun(id) }
                     }
                 )) {
-                    Text(model.isLoadingOrchestrationRuns ? "Loading team runs…" : "Select a run")
+                    Text(model.isLoadingOrchestrationRuns ? "Loading runs…" : "Select a run")
                         .tag(nil as String?)
                     ForEach(runPickerRuns) { run in
-                        Text("\(run.teamName ?? "Team") · \(run.state.replacingOccurrences(of: "_", with: " "))")
+                        Text("\(run.teamName ?? (run.runKind == "solo" ? "Chat" : "Team")) · \(run.state.replacingOccurrences(of: "_", with: " "))")
                             .tag(Optional(run.id))
                     }
                 }
@@ -326,7 +372,8 @@ struct InspectorRunsTab: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(run.teamName ?? "Team run").font(.system(size: 11, weight: .bold))
+                    Text(run.teamName ?? (run.runKind == "solo" ? "Chat run" : "Team run"))
+                        .font(.system(size: 11, weight: .bold))
                     Text(runStateTitle(run))
                         .font(.system(size: 8, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
@@ -344,7 +391,7 @@ struct InspectorRunsTab: View {
             }
             if let task = model.activeTaskRecord, task.id == run.taskID {
                 HStack(spacing: 7) {
-                    Button("Apply to Workspace") { model.applyActiveTaskToWorkspace() }
+                    Button("Review & Land") { model.prepareReviewAndLand() }
                         .disabled(model.isBusy || !model.taskHasChanges)
                     Button("Copy Patch") { model.copyActiveTaskPatch() }
                         .disabled(model.isBusy || !model.taskHasChanges)
@@ -370,7 +417,7 @@ struct InspectorRunsTab: View {
             Button(run.pinned ? "Unpin Run" : "Pin Run") {
                 model.setOrchestrationPinned(run, pinned: !run.pinned)
             }
-            if presentation.canRecover {
+            if presentation.canRecover, run.runKind != "solo" {
                 Button("Resume") { model.resumeOrchestration(run) }
             }
             if run.taskID != nil && !run.legacy {
@@ -391,6 +438,22 @@ struct InspectorRunsTab: View {
                 }
                 Button("Include Visible Content…") {
                     Task { await model.exportOrchestration(run.id, includeContent: true) }
+                }
+                if model.settings.otlpExportEnabled,
+                   !model.settings.otlpEndpoint.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                   ).isEmpty
+                {
+                    Divider()
+                    Button(
+                        run.exportState == "failed"
+                            ? "Retry Metadata Trace" : "Send Metadata Trace"
+                    ) {
+                        Task { await model.exportRunToOTLP(run.id) }
+                    }
+                    Button("Send Content Trace…") {
+                        telemetryContentRunID = run.id
+                    }
                 }
             }
             Divider()

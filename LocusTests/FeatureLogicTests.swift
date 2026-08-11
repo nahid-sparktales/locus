@@ -486,8 +486,6 @@ final class FeatureLogicTests: XCTestCase {
         settings.inspectorLastWorkspaceTab = InspectorTab.files.rawValue
         settings.soloPlanPresentationRaw = AutomaticInspectorPresentation.always.rawValue
         settings.teamRunsPresentationRaw = AutomaticInspectorPresentation.never.rawValue
-        settings.enterSendsMessages = true
-        settings.sendShortcutPreferenceConfigured = true
 
         let restored = try JSONDecoder().decode(
             AppSettings.self,
@@ -500,8 +498,6 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(restored.resolvedInspectorWorkspaceTab, .files)
         XCTAssertEqual(restored.resolvedSoloPlanPresentation, .always)
         XCTAssertEqual(restored.resolvedTeamRunsPresentation, .never)
-        XCTAssertTrue(restored.enterSendsMessages)
-        XCTAssertTrue(restored.sendShortcutPreferenceConfigured)
     }
 
     func testStoredInspectorWidthIsClampedOnDecode() throws {
@@ -531,9 +527,17 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(restored.resolvedInspectorWorkspaceTab, .changes)
         XCTAssertEqual(restored.resolvedSoloPlanPresentation, .ask)
         XCTAssertEqual(restored.resolvedTeamRunsPresentation, .ask)
-        XCTAssertFalse(restored.enterSendsMessages)
-        XCTAssertFalse(restored.sendShortcutPreferenceConfigured)
         XCTAssertFalse(restored.sidebarCollapsed, "the session sidebar starts open")
+    }
+
+    func testLegacyMessageShortcutSettingsAreIgnoredAndDropped() throws {
+        let legacy = #"{"enterSendsMessages":false,"sendShortcutPreferenceConfigured":true,"previewURL":"http://legacy.example"}"#
+        let restored = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
+        XCTAssertEqual(restored.previewURL, "http://legacy.example")
+
+        let rewritten = String(decoding: try JSONEncoder().encode(restored), as: UTF8.self)
+        XCTAssertFalse(rewritten.contains("enterSendsMessages"))
+        XCTAssertFalse(rewritten.contains("sendShortcutPreferenceConfigured"))
     }
 
     func testTerminalSettingsSurviveRoundTripAndOlderSettingsRequestMigration() throws {
@@ -1174,6 +1178,14 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(restored.provider, .ollama)
         XCTAssertTrue(restored.remoteBaseURL.isEmpty)
         XCTAssertTrue(restored.notifyOnCompletion)
+        XCTAssertTrue(restored.notifyOnNeedsAttention)
+
+        let migrated = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data(#"{"notifyOnCompletion":false}"#.utf8)
+        )
+        XCTAssertFalse(migrated.notifyOnCompletion)
+        XCTAssertFalse(migrated.notifyOnNeedsAttention)
     }
 
     func testProviderTitlesAreDistinct() {
@@ -1778,6 +1790,38 @@ final class FeatureLogicTests: XCTestCase {
         let current = #"{"model":"m","host":"h","context_limit":8192,"context_source":"reported"}"#
         let newer = try JSONDecoder().decode(SessionInfo.self, from: Data(current.utf8))
         XCTAssertEqual(newer.contextSource, "reported")
+    }
+
+    func testSessionExecutionEnvironmentDefaultsLegacyAndUnknownValuesToLocal() throws {
+        let legacy = SessionSummary(
+            id: "old", name: "old", preview: "", mtime: 0, size: 0
+        )
+        XCTAssertEqual(legacy.executionEnvironment, .local)
+
+        let future = SessionSummary(
+            id: "future", name: "future", preview: "", mtime: 0, size: 0,
+            environment: ["type": "future_isolation"]
+        )
+        XCTAssertEqual(future.executionEnvironment, .local)
+
+        let worktree = SessionSummary(
+            id: "worktree", name: "worktree", preview: "", mtime: 0, size: 0,
+            environment: ["type": "worktree", "worktree_id": "worktree"]
+        )
+        XCTAssertEqual(worktree.executionEnvironment, .worktree)
+    }
+
+    func testSessionInfoCopiesPreserveExecutionEnvironment() {
+        let info = SessionInfo(
+            model: "m", host: "h", cwd: "/tmp/private", session: "s", sessionID: "s",
+            messages: 0, approxTokens: 0, promptTokens: 0, completionTokens: 0,
+            maxIterations: 40, hasProjectContext: false,
+            environment: ["type": "worktree", "worktree_id": "s"],
+            permissions: SessionPermissions(skipAll: false, allowed: [])
+        )
+
+        XCTAssertEqual(info.replacingPermissions(info.permissions).environment?["type"], "worktree")
+        XCTAssertEqual(info.replacingTask(nil).environment?["worktree_id"], "s")
     }
 
     func testAPublishedWindowIsTheOnlyOneMarkedAssumed() {
@@ -2523,20 +2567,71 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertNil(runtime["issuer"])
     }
 
-    func testTelemetryDefaultsOffAndRoundTripsWithoutAuthorization() throws {
+    func testTelemetryDefaultsOffAndRoundTripsPlaintextAuthorization() throws {
         XCTAssertFalse(AppSettings().otlpExportEnabled)
         var settings = AppSettings()
         settings.otlpExportEnabled = true
-        settings.otlpEndpoint = "https://collector.example/v1/traces"
-        settings.otlpIncludeContent = true
+        settings.otlpEndpoint = "https://collector.example"
+        settings.otlpAuthorization = "Bearer local-setting"
+        settings.otlpSamplingRate = 0.35
 
         let data = try JSONEncoder().encode(settings)
         let restored = try JSONDecoder().decode(AppSettings.self, from: data)
         let encoded = String(decoding: data, as: UTF8.self)
         XCTAssertTrue(restored.otlpExportEnabled)
         XCTAssertEqual(restored.otlpEndpoint, settings.otlpEndpoint)
-        XCTAssertTrue(restored.otlpIncludeContent)
-        XCTAssertFalse(encoded.lowercased().contains("authorization"))
+        XCTAssertEqual(restored.otlpAuthorization, "Bearer local-setting")
+        XCTAssertEqual(restored.otlpSamplingRate, 0.35)
+        XCTAssertTrue(encoded.contains("Bearer local-setting"))
+    }
+
+    func testBackgroundChatAndWorktreeSettingsDefaultClampAndRoundTrip() throws {
+        let defaults = AppSettings()
+        XCTAssertEqual(defaults.maximumActiveChats, 2)
+        XCTAssertEqual(defaults.worktreeRetentionLimit, 15)
+        XCTAssertTrue(defaults.newGitChatsUseWorktree)
+
+        let tooLarge = Data(#"{"maximumActiveChats":99,"worktreeRetentionLimit":999,"otlpSamplingRate":4}"#.utf8)
+        let high = try JSONDecoder().decode(AppSettings.self, from: tooLarge)
+        XCTAssertEqual(high.maximumActiveChats, 4)
+        XCTAssertEqual(high.worktreeRetentionLimit, 100)
+        XCTAssertEqual(high.otlpSamplingRate, 1)
+
+        let tooSmall = Data(#"{"maximumActiveChats":0,"worktreeRetentionLimit":-9,"otlpSamplingRate":-1}"#.utf8)
+        let low = try JSONDecoder().decode(AppSettings.self, from: tooSmall)
+        XCTAssertEqual(low.maximumActiveChats, 1)
+        XCTAssertEqual(low.worktreeRetentionLimit, 0)
+        XCTAssertEqual(low.otlpSamplingRate, 0)
+
+        var chosen = defaults
+        chosen.maximumActiveChats = 3
+        chosen.worktreeRetentionLimit = 24
+        chosen.newGitChatsUseWorktree = false
+        let restored = try JSONDecoder().decode(
+            AppSettings.self, from: JSONEncoder().encode(chosen)
+        )
+        XCTAssertEqual(restored.maximumActiveChats, 3)
+        XCTAssertEqual(restored.worktreeRetentionLimit, 24)
+        XCTAssertFalse(restored.newGitChatsUseWorktree)
+    }
+
+    func testBackgroundChatAdmissionQueueIsFIFOAndDeduplicated() {
+        var queue = ChatAdmissionQueue()
+        queue.enqueue("first")
+        queue.enqueue("second")
+        queue.enqueue("first")
+
+        XCTAssertEqual(queue.sessionIDs, ["first", "second"])
+        XCTAssertTrue(queue.isFirst("first"))
+        XCTAssertFalse(queue.isFirst("second"))
+
+        queue.move("second", action: "move_top")
+        XCTAssertEqual(queue.sessionIDs, ["second", "first"])
+        queue.move("second", action: "move_down")
+        XCTAssertEqual(queue.sessionIDs, ["first", "second"])
+
+        queue.remove("first")
+        XCTAssertTrue(queue.isFirst("second"))
     }
 
     func testFaviconCandidateURLDecisionTable() {
@@ -2601,11 +2696,11 @@ final class FeatureLogicTests: XCTestCase {
                 isBusy: false, canSubmit: false, isWaitingForTeamApproval: false
             ), .send
         )
-        // Busy with text typed: steering stays primary — typing is intent.
+        // Enter and the visible send button queue while a run is active.
         XCTAssertEqual(
             ComposerPrimaryAction.current(
                 isBusy: true, canSubmit: true, isWaitingForTeamApproval: false
-            ), .steer
+            ), .queue
         )
         // Busy with an empty composer: the slot that used to be a disabled
         // arrow is the stop control.
@@ -2628,12 +2723,86 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
-    func testPlainReturnOnlySendsWhenThePreferenceAllowsIt() {
+    func testComposerReturnActionCoversSendQueueSteerAndNewlineStates() {
         XCTAssertEqual(
             ComposerReturnAction.current(
                 hasPopup: false,
-                enterSendsMessages: false,
+                isBusy: false,
                 canSubmit: true,
+                canSteer: true,
+                modifiers: []
+            ),
+            .send
+        )
+        XCTAssertEqual(
+            ComposerReturnAction.current(
+                hasPopup: false,
+                isBusy: false,
+                canSubmit: true,
+                canSteer: true,
+                modifiers: .command
+            ),
+            .send
+        )
+        XCTAssertEqual(
+            ComposerReturnAction.current(
+                hasPopup: false,
+                isBusy: true,
+                canSubmit: true,
+                canSteer: true,
+                modifiers: []
+            ),
+            .queue
+        )
+        XCTAssertEqual(
+            ComposerReturnAction.current(
+                hasPopup: false,
+                isBusy: true,
+                canSubmit: true,
+                canSteer: true,
+                modifiers: .command
+            ),
+            .steer
+        )
+        XCTAssertEqual(
+            ComposerReturnAction.current(
+                hasPopup: false,
+                isBusy: true,
+                canSubmit: true,
+                canSteer: false,
+                modifiers: .command
+            ),
+            .queue
+        )
+        for modifiers: EventModifiers in [.shift, .option, .control, [.command, .shift]] {
+            XCTAssertEqual(
+                ComposerReturnAction.current(
+                    hasPopup: false,
+                    isBusy: false,
+                    canSubmit: true,
+                    canSteer: true,
+                    modifiers: modifiers
+                ),
+                .newline,
+                "text modifiers keep Return available for new lines"
+            )
+        }
+        XCTAssertEqual(
+            ComposerReturnAction.current(
+                hasPopup: true,
+                isBusy: true,
+                canSubmit: true,
+                canSteer: true,
+                modifiers: .command
+            ),
+            .completePopup
+        )
+        XCTAssertEqual(
+            ComposerReturnAction.current(
+                hasPopup: false,
+                isBusy: false,
+                canSubmit: false,
+                canSteer: true,
                 modifiers: []
             ),
             .newline
@@ -2641,32 +2810,12 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(
             ComposerReturnAction.current(
                 hasPopup: false,
-                enterSendsMessages: true,
-                canSubmit: true,
-                modifiers: []
+                isBusy: true,
+                canSubmit: false,
+                canSteer: true,
+                modifiers: .command
             ),
-            .submit
-        )
-        for modifiers: EventModifiers in [.shift, .option, .control, .command] {
-            XCTAssertEqual(
-                ComposerReturnAction.current(
-                    hasPopup: false,
-                    enterSendsMessages: true,
-                    canSubmit: true,
-                    modifiers: modifiers
-                ),
-                .newline,
-                "modified Return stays available for new lines or its existing shortcut"
-            )
-        }
-        XCTAssertEqual(
-            ComposerReturnAction.current(
-                hasPopup: true,
-                enterSendsMessages: true,
-                canSubmit: true,
-                modifiers: []
-            ),
-            .completePopup
+            .stop
         )
     }
 

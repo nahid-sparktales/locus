@@ -1,10 +1,41 @@
 import Foundation
 
-/// One isolated local agent service for a team-backed chat. The main backend
-/// remains the lightweight control service; these runtimes own turn execution
-/// and survive sidebar navigation until Locus quits.
+struct ChatAdmissionQueue {
+    private(set) var sessionIDs: [String] = []
+
+    mutating func enqueue(_ sessionID: String) {
+        guard !sessionIDs.contains(sessionID) else { return }
+        sessionIDs.append(sessionID)
+    }
+
+    mutating func remove(_ sessionID: String) {
+        sessionIDs.removeAll { $0 == sessionID }
+    }
+
+    mutating func move(_ sessionID: String, action: String) {
+        guard let index = sessionIDs.firstIndex(of: sessionID) else { return }
+        switch action {
+        case "move_top":
+            sessionIDs.insert(sessionIDs.remove(at: index), at: 0)
+        case "move_up" where index > 0:
+            sessionIDs.swapAt(index, index - 1)
+        case "move_down" where index + 1 < sessionIDs.count:
+            sessionIDs.swapAt(index, index + 1)
+        default:
+            break
+        }
+    }
+
+    func isFirst(_ sessionID: String) -> Bool {
+        sessionIDs.first == sessionID
+    }
+}
+
+/// One isolated local agent service for any chat. The main backend remains the
+/// lightweight control service; runtimes own turn execution and survive
+/// sidebar navigation until Locus quits.
 @MainActor
-final class TaskWorkerRuntime {
+final class ChatWorkerRuntime {
     let requestedSessionID: String
     var sessionID: String
     let process: BackendProcess
@@ -13,6 +44,27 @@ final class TaskWorkerRuntime {
     var isAttaching = true
     var sessionInfo: SessionInfo?
     var pendingForegroundEvent: [String: Any]?
+    var executionState: TeamRunState = .queued
+    var startedAt: Date?
+    var lastError: String?
+    var dispatchedMode: WorkMode?
+    var dispatchedTeamRunID: String?
+    var reservedRunID: String?
+    var dispatchedInPlanMode = false
+    var queuedMessages: [String] = []
+    var streamingBlockID: UUID?
+    var streamingText = ""
+    var streamingReasoning = ""
+
+    var occupiesExecutionSlot: Bool {
+        switch executionState {
+        case .running, .dispatching, .waitingPermission, .waitingComputer,
+             .waitingDispatchApproval, .reviewing:
+            true
+        default:
+            false
+        }
+    }
 
     init(requestedSessionID: String, process: BackendProcess, endpoint: URL) {
         self.requestedSessionID = requestedSessionID
@@ -26,3 +78,7 @@ final class TaskWorkerRuntime {
         process.stop()
     }
 }
+
+/// Source compatibility for tests and extensions compiled against the first
+/// team-only implementation.
+typealias TaskWorkerRuntime = ChatWorkerRuntime

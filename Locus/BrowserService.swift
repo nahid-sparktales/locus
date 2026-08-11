@@ -84,7 +84,7 @@ final class BrowserService: NSObject, ObservableObject {
     final class Tab: NSObject {
         let id: String
         let host: OffscreenWebHost
-        /// The agent session that opened this tab. Concurrent team workers each
+        /// The agent session that opened this tab. Concurrent chat workers each
         /// drive their own so one cannot navigate another's out from under it.
         let ownerSessionID: String
         let log = BrowserCaptureLog()
@@ -305,7 +305,7 @@ final class BrowserService: NSObject, ObservableObject {
 
     /// Note which conversation is in front. Deliberately *not* the computer
     /// broker's scorched-earth reset: tabs belong to the agent session that
-    /// opened them, background team workers keep browsing while the user reads
+    /// opened them, background chat workers keep browsing while the user reads
     /// another chat, and coming back to a conversation finds its pages as they
     /// were.
     func beginSession(_ sessionID: String) {
@@ -906,7 +906,7 @@ final class BrowserService: NSObject, ObservableObject {
             userCloseTab(id, sessionID: sessionID)
             return ["text": "Closed \(id)."]
         default:
-            // Only this session's tabs are listed, so concurrent team workers
+            // Only this session's tabs are listed, so concurrent chat workers
             // cannot navigate each other's out from under them.
             let mine = openTabs.filter { $0.ownerSessionID == sessionID }
             guard !mine.isEmpty else { return ["text": "No tabs are open."] }

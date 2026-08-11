@@ -79,6 +79,8 @@ class ToolContext:
     memory_scopes: tuple[str, ...] = ("personal", "workspace", "agent")
     memory_search_enabled: bool = True
     memory_proposals_enabled: bool = True
+    memory_session_id: str = ""
+    memory_run_id: str = ""
     #: App-owned process broker. Work submitted here is detached from the
     #: current turn and therefore survives Stop.
     background_service: Callable[[dict[str, Any]], str] | None = None
@@ -925,18 +927,34 @@ def _impl_search_memory(args: dict[str, Any], ctx: ToolContext) -> str:
 
 
 def _impl_propose_memory(args: dict[str, Any], ctx: ToolContext) -> str:
+    from .memory import MemoryError, MemoryVault
+
+    vault = MemoryVault()
+    event_context = {
+        "workspace": ctx.memory_workspace or ctx.cwd,
+        "agent_id": ctx.memory_agent_id,
+        "session_id": ctx.memory_session_id,
+        "run_id": ctx.memory_run_id,
+    }
+    vault.record_event(
+        "policy", "evaluated",
+        reason_code="enabled" if ctx.memory_proposals_enabled else "disabled",
+        **event_context,
+    )
     if not ctx.memory_proposals_enabled:
+        vault.record_event("proposal", "rejected", reason_code="policy_disabled", **event_context)
         return "Error: memory suggestions are disabled for this agent."
     content = str(args.get("content") or "").strip()
     if not content:
+        vault.record_event("proposal", "rejected", reason_code="empty_content", **event_context)
         return "Error: 'content' is required."
     scope = str(args.get("scope") or "workspace")
     if scope not in ctx.memory_scopes:
+        vault.record_event("proposal", "rejected", reason_code="scope_disabled", **event_context)
         return "Error: that memory scope is disabled for this agent."
-    from .memory import MemoryError, MemoryVault
 
     try:
-        candidate = MemoryVault().save(
+        candidate = vault.save(
             {
                 "title": str(args.get("title") or "Suggested memory"),
                 "content": content,
@@ -947,13 +965,22 @@ def _impl_propose_memory(args: dict[str, Any], ctx: ToolContext) -> str:
                 "kind": str(args.get("kind") or "fact"),
                 "confidence": args.get("confidence", 1.0),
                 "valid_until": args.get("valid_until"),
+                "source_session_id": ctx.memory_session_id or None,
+                "source_run_id": ctx.memory_run_id or None,
             },
             workspace=ctx.memory_workspace or ctx.cwd,
             agent_id=ctx.memory_agent_id,
             default_status="candidate",
         )
     except MemoryError as exc:
+        vault.record_event("proposal", "rejected", reason_code="validation_error", **event_context)
         return f"Error: {exc}"
+    vault.record_event(
+        "proposal", "accepted", memory_id=candidate["id"], **event_context
+    )
+    vault.record_event(
+        "candidate", "created", memory_id=candidate["id"], **event_context
+    )
     return (
         f"Memory suggestion {candidate['id']} was added to the Memory Inbox. "
         "It will not affect future answers unless the user approves it."

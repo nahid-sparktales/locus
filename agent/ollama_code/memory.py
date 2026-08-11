@@ -139,6 +139,20 @@ class MemoryVault:
                 );
                 CREATE INDEX IF NOT EXISTS memories_lookup_idx
                     ON memories(status, scope, target_hash, pinned, updated_at);
+                CREATE TABLE IF NOT EXISTS memory_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    workspace_hash TEXT NOT NULL,
+                    agent_hash TEXT NOT NULL,
+                    session_id TEXT,
+                    run_id TEXT,
+                    stage TEXT NOT NULL,
+                    outcome TEXT NOT NULL,
+                    reason_code TEXT NOT NULL DEFAULT '',
+                    memory_id TEXT,
+                    occurred_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS memory_events_target_idx
+                    ON memory_events(workspace_hash, agent_hash, occurred_at DESC);
                 """
             )
             columns = {
@@ -386,12 +400,23 @@ class MemoryVault:
             result["conflicts"] = conflicts
         return result
 
-    def expire_candidates(self) -> int:
+    def expire_candidates(self, *, workspace: str = "", agent_id: str = "") -> int:
+        now = time.time()
         with self._connect() as connection:
-            return connection.execute(
+            identifiers = [str(row[0]) for row in connection.execute(
+                "SELECT id FROM memories WHERE status='candidate' AND expires_at < ?",
+                (now,),
+            ).fetchall()]
+            count = connection.execute(
                 "DELETE FROM memories WHERE status='candidate' AND expires_at < ?",
-                (time.time(),),
+                (now,),
             ).rowcount
+        for identifier in identifiers:
+            self.record_event(
+                "expiration", "expired", workspace=workspace, agent_id=agent_id,
+                memory_id=identifier,
+            )
+        return count
 
     def list(
         self,
@@ -401,7 +426,7 @@ class MemoryVault:
         status: str = "",
         scopes: list[str] | tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
-        self.expire_candidates()
+        self.expire_candidates(workspace=workspace, agent_id=agent_id)
         selected_scopes = tuple(
             scope for scope in (scopes or ("personal", "workspace", "agent"))
             if scope in VALID_SCOPES
@@ -655,6 +680,69 @@ class MemoryVault:
             ).fetchone()
         return self._open(updated)
 
+    def record_event(
+        self, stage: str, outcome: str, *, workspace: str = "", agent_id: str = "",
+        session_id: str = "", run_id: str = "", reason_code: str = "",
+        memory_id: str = "",
+    ) -> None:
+        """Persist bounded, content-free memory pipeline diagnostics."""
+        workspace_hash = hashlib.sha256(workspace.encode()).hexdigest() if workspace else ""
+        agent_hash = hashlib.sha256(agent_id.encode()).hexdigest() if agent_id else ""
+        now = time.time()
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO memory_events(
+                    workspace_hash, agent_hash, session_id, run_id, stage, outcome,
+                    reason_code, memory_id, occurred_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    workspace_hash, agent_hash, session_id[:160] or None, run_id[:160] or None,
+                    stage[:64], outcome[:64], reason_code[:128], memory_id[:128] or None, now,
+                ),
+            )
+            cutoff = now - 90 * 24 * 60 * 60
+            connection.execute("DELETE FROM memory_events WHERE occurred_at < ?", (cutoff,))
+            connection.execute(
+                """DELETE FROM memory_events WHERE id IN (
+                    SELECT id FROM memory_events
+                    WHERE workspace_hash=? AND agent_hash=?
+                    ORDER BY occurred_at DESC LIMIT -1 OFFSET 5000
+                )""",
+                (workspace_hash, agent_hash),
+            )
+
+    def diagnostics(self, *, workspace: str = "", agent_id: str = "") -> dict[str, Any]:
+        workspace_hash = hashlib.sha256(workspace.encode()).hexdigest() if workspace else ""
+        agent_hash = hashlib.sha256(agent_id.encode()).hexdigest() if agent_id else ""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT session_id, run_id, stage, outcome, reason_code, memory_id, occurred_at
+                   FROM memory_events WHERE workspace_hash=? AND agent_hash=?
+                   ORDER BY occurred_at DESC LIMIT 100""",
+                (workspace_hash, agent_hash),
+            ).fetchall()
+        events = [dict(row) for row in rows]
+        counts: dict[str, int] = {}
+        for event in events:
+            key = f"{event['stage']}:{event['outcome']}"
+            counts[key] = counts.get(key, 0) + 1
+        status = self.status(workspace=workspace, agent_id=agent_id)
+        last_proposal = next(
+            (event for event in events if event["stage"] == "proposal"), None
+        )
+        last_approval = next(
+            (event for event in events if event["stage"] == "approval"
+             and event["outcome"] == "accepted"), None
+        )
+        return {
+            **status,
+            "events": events,
+            "counts": counts,
+            "last_proposal": last_proposal,
+            "last_approval": last_approval,
+            "history_available": bool(events),
+        }
+
     def maintain(self, *, workspace: str = "", agent_id: str = "") -> dict[str, Any]:
         """Mark expired facts stale and summarize items needing human review."""
         now = time.time()
@@ -670,6 +758,11 @@ class MemoryVault:
                 connection.executemany(
                     "UPDATE memories SET stale=1 WHERE id=?",
                     ((identifier,) for identifier in expired_ids),
+                )
+            for identifier in expired_ids:
+                self.record_event(
+                    "expiration", "expired", workspace=workspace, agent_id=agent_id,
+                    memory_id=identifier,
                 )
         conflicts = {
             item["id"]: self.conflicts_for(

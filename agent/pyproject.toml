@@ -22,6 +22,8 @@ dependencies = [
     "websockets>=12.0",
     "cryptography>=50.0",
     "mcp==2.0.0",
+    "opentelemetry-sdk==1.44.0",
+    "opentelemetry-exporter-otlp-proto-http==1.44.0",
     # SOCKS proxy support, for requests and httpx respectively — kept in both
     # this file and requirements-runtime.in so a dev install proxies the same
     # way the bundled runtime does.

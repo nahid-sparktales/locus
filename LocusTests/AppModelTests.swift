@@ -2005,15 +2005,15 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testMessageSendShortcutChoiceIsAskedOnceAndPersisted() {
+    func testDefaultBusySubmissionQueuesForTheNextTurn() {
         let model = AppModel(startImmediately: false)
-        XCTAssertTrue(model.shouldAskMessageSendShortcutPreference)
+        model.isBusy = true
+        model.draftText = "Run this after the current task"
 
-        model.chooseMessageSendShortcut(enterSends: true)
+        model.submitDraft()
 
-        XCTAssertTrue(model.settings.enterSendsMessages)
-        XCTAssertTrue(model.settings.sendShortcutPreferenceConfigured)
-        XCTAssertFalse(model.shouldAskMessageSendShortcutPreference)
+        XCTAssertEqual(model.queuedMessages, ["Run this after the current task"])
+        XCTAssertTrue(model.draftText.isEmpty)
     }
 
     @MainActor
