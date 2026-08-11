@@ -389,6 +389,26 @@ enum MCPCredentialStore {
     }
 }
 
+/// Binary compatibility for incremental Xcode builds that still contain test
+/// objects compiled against the old type name. Despite the legacy name, every
+/// operation delegates to the file-backed store and never reads Keychain.
+@available(*, deprecated, renamed: "MCPCredentialStore")
+enum MCPKeychainStore {
+    static func get(serverID: String) -> [String: Any]? {
+        MCPCredentialStore.get(serverID: serverID)
+    }
+
+    @discardableResult
+    static func set(_ values: [String: Any], serverID: String) -> Bool {
+        MCPCredentialStore.set(values, serverID: serverID)
+    }
+
+    @discardableResult
+    static func remove(serverID: String) -> Bool {
+        MCPCredentialStore.remove(serverID: serverID)
+    }
+}
+
 /// Read/delete support for credentials written by older Locus builds. New MCP
 /// credentials are never written here; this can be removed after the migration
 /// window has elapsed.

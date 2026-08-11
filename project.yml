@@ -68,6 +68,11 @@ targets:
       - path: Locus/Resources/ThirdPartyLicenses
         type: folder
         buildPhase: resources
+    preBuildScripts:
+      - name: Clean stale embedded test bundle
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/Tools/CleanStaleBuildProducts.sh"
     postBuildScripts:
       - name: Bundle local agent runtime
         basedOnDependencyAnalysis: false

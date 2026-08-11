@@ -750,10 +750,11 @@ LOCUS_BUNDLE_CODEX=skip xcodebuild -project Locus.xcodeproj -scheme Locus
 ```
 
 Debug builds use Xcode's portable ad-hoc “Sign to Run Locally” identity and do
-not require an Apple Developer certificate. The bundling phase also strips
-quarantine, Finder, and resource-fork metadata from copied runtime files before
-Xcode seals the app, so a downloaded cache cannot cause `Command CodeSign
-failed`. Release and App Store builds retain their distribution signing rules.
+not require an Apple Developer certificate. Before Xcode seals the app, its
+build phases remove an unsigned `LocusTests.xctest` left in the host app by an
+earlier test build and strip quarantine, Finder, and resource-fork metadata
+from copied runtime files. Release and App Store builds retain their
+distribution signing rules.
 
 Working on the agent itself needs a venv (any Python 3.10 or newer):
 

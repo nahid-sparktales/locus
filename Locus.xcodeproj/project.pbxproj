@@ -307,6 +307,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 499F5785D4491853643B4C0D /* Build configuration list for PBXNativeTarget "Locus" */;
 			buildPhases = (
+				A737202B7CAA447C21F18391 /* Clean stale embedded test bundle */,
 				3D126E6D0964BF8D319384BC /* Sources */,
 				DD475AF090311C77FAF727EA /* Resources */,
 				DEBCA3DC4F29E1709B9E6BB8 /* Frameworks */,
@@ -431,6 +432,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"$SRCROOT/Tools/BundleBackend.sh\"\n";
+		};
+		A737202B7CAA447C21F18391 /* Clean stale embedded test bundle */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Clean stale embedded test bundle";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/Tools/CleanStaleBuildProducts.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
