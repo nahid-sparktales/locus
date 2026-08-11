@@ -75,10 +75,14 @@ struct GitClient: Sendable {
         // pipe's 64 KB of output would otherwise block and never terminate.
         let collector = PipeCollector()
         stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            guard collector.beginRead() else { return }
+            defer { collector.endRead() }
             let data = handle.availableData
             if data.isEmpty { handle.readabilityHandler = nil } else { collector.append(data, to: \.stdout) }
         }
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            guard collector.beginRead() else { return }
+            defer { collector.endRead() }
             let data = handle.availableData
             if data.isEmpty { handle.readabilityHandler = nil } else { collector.append(data, to: \.stderr) }
         }
@@ -99,6 +103,11 @@ struct GitClient: Sendable {
                 watchdog.cancel()
                 stdoutPipe.fileHandleForReading.readabilityHandler = nil
                 stderrPipe.fileHandleForReading.readabilityHandler = nil
+                // A readability callback may already have consumed bytes but
+                // not appended them yet. Wait for those callbacks before the
+                // final synchronous drain and snapshot, so command completion
+                // cannot publish a partial stdout/stderr result.
+                collector.stopAndWaitForReaders()
                 if let remainder = try? stdoutPipe.fileHandleForReading.readToEnd() {
                     collector.append(remainder, to: \.stdout)
                 }
@@ -134,6 +143,9 @@ struct GitClient: Sendable {
             } catch {
                 watchdog.cancel()
                 process.terminationHandler = nil
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
+                collector.stopAndWaitForReaders()
                 continuation.resume(throwing: GitClientError.launchFailed(error.localizedDescription))
             }
         }
@@ -148,25 +160,49 @@ private final class PipeCollector: @unchecked Sendable {
         var stderr = Data()
     }
 
-    private let lock = NSLock()
+    private let condition = NSCondition()
     private var buffers = Buffers()
     private var timedOut = false
+    private var acceptsReads = true
+    private var activeReaders = 0
+
+    func beginRead() -> Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        guard acceptsReads else { return false }
+        activeReaders += 1
+        return true
+    }
+
+    func endRead() {
+        condition.lock()
+        activeReaders -= 1
+        if activeReaders == 0 { condition.broadcast() }
+        condition.unlock()
+    }
+
+    func stopAndWaitForReaders() {
+        condition.lock()
+        acceptsReads = false
+        while activeReaders > 0 { condition.wait() }
+        condition.unlock()
+    }
 
     func append(_ data: Data, to keyPath: WritableKeyPath<Buffers, Data>) {
-        lock.lock()
-        defer { lock.unlock() }
+        condition.lock()
+        defer { condition.unlock() }
         buffers[keyPath: keyPath].append(data)
     }
 
     func markTimedOut() {
-        lock.lock()
-        defer { lock.unlock() }
+        condition.lock()
+        defer { condition.unlock() }
         timedOut = true
     }
 
     func snapshot() -> (stdout: String, stderr: String, timedOut: Bool) {
-        lock.lock()
-        defer { lock.unlock() }
+        condition.lock()
+        defer { condition.unlock() }
         return (
             String(decoding: buffers.stdout, as: UTF8.self),
             String(decoding: buffers.stderr, as: UTF8.self),

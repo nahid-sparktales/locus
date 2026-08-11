@@ -1,8 +1,38 @@
 import AppKit
 import Darwin
+import SwiftTerm
 import SwiftUI
 import XCTest
 @testable import Locus
+
+private final class MCPURLProtocol: URLProtocol {
+    static var handler: ((URLRequest) throws -> (Int, [String: String], Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        do {
+            guard let handler = Self.handler else {
+                throw NSError(domain: "MCPURLProtocol", code: 1)
+            }
+            let (status, headers, data) = try handler(request)
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: status,
+                httpVersion: "HTTP/1.1",
+                headerFields: headers
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
 
 final class FeatureLogicTests: XCTestCase {
     // MARK: - Application lifecycle
@@ -430,6 +460,23 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertFalse(restored.enterSendsMessages)
         XCTAssertFalse(restored.sendShortcutPreferenceConfigured)
         XCTAssertFalse(restored.sidebarCollapsed, "the session sidebar starts open")
+    }
+
+    func testTerminalSettingsSurviveRoundTripAndOlderSettingsRequestMigration() throws {
+        let older = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
+        XCTAssertFalse(older.terminalSettingsMigrated)
+
+        var settings = AppSettings()
+        settings.terminalShell = "/bin/zsh"
+        settings.terminalLoginShell = false
+        settings.terminalSettingsMigrated = true
+        let restored = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONEncoder().encode(settings)
+        )
+        XCTAssertEqual(restored.terminalShell, "/bin/zsh")
+        XCTAssertFalse(restored.terminalLoginShell)
+        XCTAssertTrue(restored.terminalSettingsMigrated)
     }
 
     func testCombinedInspectorPreferenceMigratesToSoloAndTeamChoices() throws {
@@ -863,78 +910,102 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertTrue(older.hasCommits)
     }
 
-    // MARK: - Console
+    // MARK: - Terminal
 
     @MainActor
-    func testConsoleAssemblesStreamedChunksIntoLines() {
-        let terminal = TerminalSession()
-        terminal.handle(["type": "terminal_output", "text": "hel"])
-        terminal.handle(["type": "terminal_output", "text": "lo\nwor"])
-        terminal.handle(["type": "terminal_output", "text": "ld\n"])
-
-        // A chunk boundary is not a line boundary; "hel" + "lo" is one line.
-        XCTAssertEqual(terminal.lines.map(\.text), ["hello", "world"])
-    }
-
-    @MainActor
-    func testConsoleTracksRunningStateAndExit() {
-        let terminal = TerminalSession()
-        terminal.handle(["type": "terminal_started", "run_id": "abc"])
-        XCTAssertTrue(terminal.isRunning)
-
-        terminal.handle(["type": "terminal_exit", "exit_code": 0, "reason": "exited"])
-        XCTAssertFalse(terminal.isRunning)
-        XCTAssertEqual(terminal.lastExitCode, 0)
-        XCTAssertEqual(terminal.lines.last?.text, "Finished.")
-    }
-
-    @MainActor
-    func testConsoleExitSummariesReadPlainly() {
-        XCTAssertEqual(
-            TerminalSession.exitSummary(["reason": "exited", "exit_code": 0]), "Finished."
+    func testNativeTerminalOwnsAPersistentPTY() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("locus-terminal-\(UUID().uuidString)", isDirectory: true)
+        let child = root.appendingPathComponent("child", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: child, withIntermediateDirectories: true
         )
-        XCTAssertEqual(
-            TerminalSession.exitSummary(["reason": "exited", "exit_code": 2]),
-            "Exited with code 2."
-        )
-        XCTAssertEqual(TerminalSession.exitSummary(["reason": "cancelled"]), "Cancelled.")
-        XCTAssertEqual(
-            TerminalSession.exitSummary(["reason": "timeout"]), "Timed out and was stopped."
-        )
-        XCTAssertEqual(
-            TerminalSession.exitSummary(["reason": "cancelled", "signal": "SIGKILL"]),
-            "Stopped by SIGKILL."
-        )
-    }
+        defer { try? FileManager.default.removeItem(at: root) }
 
-    @MainActor
-    func testConsoleOutputIsBounded() {
-        let terminal = TerminalSession()
-        for index in 0..<(TerminalSession.maximumLines + 500) {
-            terminal.handle(["type": "terminal_output", "text": "line \(index)\n"])
+        let session = TerminalSession()
+        session.configure(workspacePath: root.path, shell: "/bin/zsh", loginShell: false)
+        let view = try XCTUnwrap(session.hostView as? LocusLocalProcessTerminalView)
+        view.frame = NSRect(x: 0, y: 0, width: 900, height: 420)
+        session.ensureStarted()
+        defer { session.terminate() }
+        XCTAssertTrue(session.isRunning)
+        XCTAssertGreaterThan(view.process.shellPid, 0)
+
+        func send(_ text: String) {
+            let bytes = Array(text.utf8)
+            view.send(data: bytes[...])
         }
-        XCTAssertEqual(terminal.lines.count, TerminalSession.maximumLines)
-        XCTAssertTrue(terminal.lines.last?.text.contains("5499") == true, "newest is kept")
-    }
+        func waitForFile(_ url: URL) async -> String? {
+            for _ in 0..<100 {
+                if let value = try? String(contentsOf: url, encoding: .utf8) {
+                    return value
+                }
+                try? await Task.sleep(for: .milliseconds(25))
+            }
+            return nil
+        }
 
-    @MainActor
-    func testConsoleReportsABlockedCommand() {
-        let terminal = TerminalSession()
-        terminal.handle([
-            "type": "terminal_error",
-            "code": "blocked",
-            "message": "blocked by the deny list: commands matching 'rm -rf /'",
-        ])
-        XCTAssertFalse(terminal.isRunning)
-        XCTAssertTrue(terminal.lines.last?.text.contains("deny list") == true)
-    }
+        let environment = root.appendingPathComponent("environment.txt")
+        let environmentPending = root.appendingPathComponent("environment.pending")
+        send("printf '%s|%s|' \"$TERM\" \"$COLORTERM\" > '\(environmentPending.path)'; tty >> '\(environmentPending.path)'; mv '\(environmentPending.path)' '\(environment.path)'\n")
+        let environmentResult = await waitForFile(environment)
+        let environmentValue = try XCTUnwrap(environmentResult)
+        XCTAssertTrue(environmentValue.hasPrefix("xterm-256color|truecolor|"))
+        XCTAssertTrue(environmentValue.contains("/dev/"))
 
-    @MainActor
-    func testConsoleWithoutATransportDoesNotClaimToBeRunning() {
-        let terminal = TerminalSession()
-        terminal.run("echo hi")
-        XCTAssertFalse(terminal.isRunning, "a dropped send must not look like a live run")
-        XCTAssertTrue(terminal.lines.last?.text.contains("Reconnect") == true)
+        send("cd child\n")
+        let location = root.appendingPathComponent("location.txt")
+        send("pwd > '\(location.path)'\n")
+        let locationResult = await waitForFile(location)
+        let reportedLocation = URL(
+            fileURLWithPath: try XCTUnwrap(locationResult)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        ).resolvingSymlinksInPath().path
+        XCTAssertEqual(
+            reportedLocation,
+            child.resolvingSymlinksInPath().path
+        )
+        for _ in 0..<100 where URL(fileURLWithPath: session.currentDirectory)
+            .resolvingSymlinksInPath().path != reportedLocation {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertEqual(
+            URL(fileURLWithPath: session.currentDirectory).resolvingSymlinksInPath().path,
+            reportedLocation
+        )
+
+        let size = root.appendingPathComponent("size.txt")
+        let sizePending = root.appendingPathComponent("size.pending")
+        send("stty size > '\(sizePending.path)' && mv '\(sizePending.path)' '\(size.path)'\n")
+        let sizeResult = await waitForFile(size)
+        let dimensions = try XCTUnwrap(sizeResult)
+            .split(whereSeparator: \.isWhitespace)
+            .compactMap { Int($0) }
+        XCTAssertEqual(dimensions.count, 2)
+        XCTAssertGreaterThan(dimensions[0], 0)
+        XCTAssertGreaterThan(dimensions[1], 0)
+
+        send("printf '\u{1B}[38;2;1;2;3mLOCUS-UNICODE-λ-界\u{1B}[0m\\n'\n")
+        var rendered = ""
+        for _ in 0..<100 {
+            rendered = (0..<view.terminal.rows)
+                .compactMap {
+                    view.terminal.getLine(row: $0)?.translateToString(trimRight: true)
+                }
+                .joined(separator: "\n")
+            if rendered.contains("LOCUS-UNICODE-λ-界") { break }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertTrue(rendered.contains("LOCUS-UNICODE-λ-界"))
+
+        let interrupted = root.appendingPathComponent("interrupted.txt")
+        send("sleep 30\n")
+        try? await Task.sleep(for: .milliseconds(150))
+        let controlC: [UInt8] = [3]
+        view.send(data: controlC[...])
+        send("printf interrupted > '\(interrupted.path)'\n")
+        let interruptedResult = await waitForFile(interrupted)
+        XCTAssertEqual(try XCTUnwrap(interruptedResult), "interrupted")
     }
 
     // MARK: - Permission modes
@@ -1786,6 +1857,47 @@ final class FeatureLogicTests: XCTestCase {
 
     // MARK: - Agent teams
 
+    func testAgentBehaviorRoundTripsAndClampsEditableLimits() throws {
+        var behavior = AgentBehavior.primaryDefault()
+        behavior.displayName = "  Research Builder  "
+        behavior.selfDescription = "Finds evidence before making changes."
+        behavior.responseStyle.tone = .analytical
+        behavior.responseStyle.verbosity = .detailed
+        behavior.customInstructions = "Prefer focused patches."
+        behavior.modeInstructions.build = "Run the smallest relevant tests."
+        behavior.capabilityPolicy.network = false
+        behavior.memoryPolicy.scopes = [.personal, .agent, .personal]
+        behavior.memoryPolicy.maxAutomaticMemories = 500
+        behavior.runtimePolicy.maxToolIterations = 0
+        behavior.clamp()
+
+        let restored = try JSONDecoder().decode(
+            AgentBehavior.self,
+            from: JSONEncoder().encode(behavior)
+        )
+
+        XCTAssertEqual(restored.displayName, "Research Builder")
+        XCTAssertEqual(restored.responseStyle.tone, .analytical)
+        XCTAssertEqual(restored.modeInstructions.build, "Run the smallest relevant tests.")
+        XCTAssertFalse(restored.capabilityPolicy.network)
+        XCTAssertEqual(restored.memoryPolicy.scopes, [.personal, .agent])
+        XCTAssertEqual(restored.memoryPolicy.maxAutomaticMemories, 20)
+        XCTAssertEqual(restored.runtimePolicy.maxToolIterations, 1)
+    }
+
+    func testPartialAgentBehaviorMigratesMissingFieldsToSafeDefaults() throws {
+        let restored = try JSONDecoder().decode(
+            AgentBehavior.self,
+            from: Data(#"{"version":0,"display_name":"Legacy Agent","custom_instructions":"Keep this."}"#.utf8)
+        )
+
+        XCTAssertEqual(restored.version, AgentBehavior.currentVersion)
+        XCTAssertEqual(restored.displayName, "Legacy Agent")
+        XCTAssertEqual(restored.customInstructions, "Keep this.")
+        XCTAssertEqual(restored.responseStyle, AgentResponseStyle())
+        XCTAssertEqual(restored.memoryPolicy.scopes, [.personal, .workspace, .agent])
+    }
+
     func testAgentTeamRequiresAReadOnlyDispatcherAndWriteCapableLead() {
         let dispatcher = AgentProfile(
             name: "Dispatch",
@@ -2082,6 +2194,259 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertFalse(MCPAuthCoordinator.callbackMatches(wrongHost, expected: expected))
         XCTAssertFalse(MCPAuthCoordinator.callbackMatches(wrongPath, expected: expected))
         XCTAssertFalse(MCPAuthCoordinator.callbackMatches(fragment, expected: expected))
+        XCTAssertTrue(MCPAuthCoordinator.authorizationResponseIssuerIsValid(
+            "https://auth.example/", expected: "https://auth.example/", required: true
+        ))
+        XCTAssertFalse(MCPAuthCoordinator.authorizationResponseIssuerIsValid(
+            "https://auth.example", expected: "https://auth.example/", required: true
+        ))
+        XCTAssertFalse(MCPAuthCoordinator.authorizationResponseIssuerIsValid(
+            nil, expected: "https://auth.example", required: true
+        ))
+        XCTAssertTrue(MCPAuthCoordinator.authorizationResponseIssuerIsValid(
+            nil, expected: "https://auth.example", required: false
+        ))
+    }
+
+    @MainActor
+    func testMCPAutomaticOAuthDiscoversChallengeAndRegistersIssuerBoundClient() async throws {
+        let serverID = "oauth-test-\(UUID().uuidString)"
+        defer { MCPCredentialStore.remove(serverID: serverID) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MCPURLProtocol.self]
+        MCPURLProtocol.handler = { request in
+            let url = request.url!
+            func json(_ value: [String: Any]) throws -> Data {
+                try JSONSerialization.data(withJSONObject: value)
+            }
+            switch (url.host, url.path, request.httpMethod ?? "GET") {
+            case ("mcp.test", let path, "GET")
+                where path.hasPrefix("/.well-known/oauth-protected-resource"):
+                return (404, [:], Data())
+            case ("mcp.test", "/mcp", "POST"):
+                return (
+                    401,
+                    ["WWW-Authenticate": #"Bearer resource_metadata="https://mcp.test/oauth-resource", scope="read""#],
+                    Data()
+                )
+            case ("mcp.test", "/oauth-resource", "GET"):
+                return (200, ["Content-Type": "application/json"], try json([
+                    "resource": "https://mcp.test/mcp",
+                    "authorization_servers": ["https://auth.test"],
+                    "scopes_supported": ["read"],
+                ]))
+            case ("auth.test", "/.well-known/oauth-authorization-server", "GET"):
+                return (200, ["Content-Type": "application/json"], try json([
+                    "issuer": "https://auth.test",
+                    "authorization_endpoint": "https://auth.test/authorize",
+                    "token_endpoint": "https://auth.test/token",
+                    "registration_endpoint": "https://auth.test/register",
+                    "code_challenge_methods_supported": ["S256"],
+                    "authorization_response_iss_parameter_supported": true,
+                ]))
+            case ("auth.test", "/register", "POST"):
+                return (201, ["Content-Type": "application/json"], try json([
+                    "client_id": "registered-client",
+                    "client_secret": "native-only-secret",
+                ]))
+            default:
+                throw NSError(
+                    domain: "MCPURLProtocol",
+                    code: 404,
+                    userInfo: [NSLocalizedDescriptionKey: "Unexpected request \(request)"]
+                )
+            }
+        }
+        let server = try JSONDecoder().decode(
+            ExtensionMCPServer.self,
+            from: Data(#"""
+            {"id":"\#(serverID)","name":"mock","transport":"streamable_http",
+             "url":"https://mcp.test/mcp","auth":"auto"}
+            """#.utf8)
+        )
+        let coordinator = MCPAuthCoordinator(configurationForTesting: configuration)
+        let resolved = try await coordinator.resolvedConfigurationForTesting(server: server)
+
+        XCTAssertEqual(resolved["issuer"] as? String, "https://auth.test")
+        XCTAssertEqual(resolved["client_id"] as? String, "registered-client")
+        XCTAssertEqual(resolved["resource"] as? String, "https://mcp.test/mcp")
+        XCTAssertEqual(resolved["scopes"] as? [String], ["read"])
+        let registration = try XCTUnwrap(MCPCredentialStore.get(serverID: serverID))
+        XCTAssertEqual(registration["issuer"] as? String, "https://auth.test")
+        XCTAssertEqual(registration["client_secret"] as? String, "native-only-secret")
+    }
+
+    @MainActor
+    func testMCPAutomaticOAuthFallsBackToOIDCPathInsertion() async throws {
+        let serverID = "oauth-oidc-test-\(UUID().uuidString)"
+        defer { MCPCredentialStore.remove(serverID: serverID) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MCPURLProtocol.self]
+        MCPURLProtocol.handler = { request in
+            let url = request.url!
+            func json(_ value: [String: Any]) throws -> Data {
+                try JSONSerialization.data(withJSONObject: value)
+            }
+            switch (url.host, url.path, request.httpMethod ?? "GET") {
+            case ("mcp.test", "/mcp", "POST"):
+                return (
+                    401,
+                    ["WWW-Authenticate": #"Bearer resource_metadata="https://mcp.test/oauth-resource""#],
+                    Data()
+                )
+            case ("mcp.test", "/oauth-resource", "GET"):
+                return (200, ["Content-Type": "application/json"], try json([
+                    "resource": "https://mcp.test/mcp",
+                    "authorization_servers": ["https://auth.test/tenant"],
+                ]))
+            case ("auth.test", "/.well-known/oauth-authorization-server/tenant", "GET"):
+                return (404, [:], Data())
+            case ("auth.test", "/.well-known/openid-configuration/tenant", "GET"):
+                return (200, ["Content-Type": "application/json"], try json([
+                    "issuer": "https://auth.test/tenant",
+                    "authorization_endpoint": "https://auth.test/tenant/authorize",
+                    "token_endpoint": "https://auth.test/tenant/token",
+                    "registration_endpoint": "https://auth.test/tenant/register",
+                    "code_challenge_methods_supported": ["S256"],
+                ]))
+            case ("auth.test", "/tenant/register", "POST"):
+                return (201, ["Content-Type": "application/json"], try json([
+                    "client_id": "oidc-client",
+                ]))
+            default:
+                throw NSError(
+                    domain: "MCPURLProtocol",
+                    code: 404,
+                    userInfo: [NSLocalizedDescriptionKey: "Unexpected request \(request)"]
+                )
+            }
+        }
+        let server = try JSONDecoder().decode(
+            ExtensionMCPServer.self,
+            from: Data(#"""
+            {"id":"\#(serverID)","name":"mock","transport":"streamable_http",
+             "url":"https://mcp.test/mcp","auth":"auto"}
+            """#.utf8)
+        )
+
+        let resolved = try await MCPAuthCoordinator(
+            configurationForTesting: configuration
+        ).resolvedConfigurationForTesting(server: server)
+
+        XCTAssertEqual(resolved["issuer"] as? String, "https://auth.test/tenant")
+        XCTAssertEqual(resolved["client_id"] as? String, "oidc-client")
+    }
+
+    @MainActor
+    func testMCPAutomaticOAuthValidatesClientIDMetadataDocument() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MCPURLProtocol.self]
+        MCPURLProtocol.handler = { request in
+            let url = request.url!
+            func json(_ value: [String: Any]) throws -> Data {
+                try JSONSerialization.data(withJSONObject: value)
+            }
+            switch (url.host, url.path, request.httpMethod ?? "GET") {
+            case ("mcp.test", "/mcp", "POST"):
+                return (
+                    401,
+                    ["WWW-Authenticate": #"Bearer resource_metadata="https://mcp.test/oauth-resource""#],
+                    Data()
+                )
+            case ("mcp.test", "/oauth-resource", "GET"):
+                return (200, ["Content-Type": "application/json"], try json([
+                    "resource": "https://mcp.test/mcp",
+                    "authorization_servers": ["https://auth.test"],
+                ]))
+            case ("auth.test", "/.well-known/oauth-authorization-server", "GET"):
+                return (200, ["Content-Type": "application/json"], try json([
+                    "issuer": "https://auth.test",
+                    "authorization_endpoint": "https://auth.test/authorize",
+                    "token_endpoint": "https://auth.test/token",
+                    "code_challenge_methods_supported": ["S256"],
+                    "client_id_metadata_document_supported": true,
+                ]))
+            case ("client.test", "/locus.json", "GET"):
+                return (200, ["Content-Type": "application/json"], try json([
+                    "client_id": "https://client.test/locus.json",
+                    "client_name": "Locus",
+                    "redirect_uris": ["locus://mcp/oauth"],
+                ]))
+            default:
+                throw NSError(
+                    domain: "MCPURLProtocol",
+                    code: 404,
+                    userInfo: [NSLocalizedDescriptionKey: "Unexpected request \(request)"]
+                )
+            }
+        }
+        let server = try JSONDecoder().decode(
+            ExtensionMCPServer.self,
+            from: Data(#"""
+            {"id":"client-metadata","name":"mock","transport":"streamable_http",
+             "url":"https://mcp.test/mcp","auth":"auto",
+             "oauth":{"authorization_endpoint":"","token_endpoint":"",
+                      "client_id":"https://client.test/locus.json","scopes":[],
+                      "redirect_uri":"locus://mcp/oauth"}}
+            """#.utf8)
+        )
+
+        let resolved = try await MCPAuthCoordinator(
+            configurationForTesting: configuration
+        ).resolvedConfigurationForTesting(server: server)
+
+        XCTAssertEqual(resolved["client_id"] as? String, "https://client.test/locus.json")
+        XCTAssertEqual(resolved["issuer"] as? String, "https://auth.test")
+    }
+
+    @MainActor
+    func testMCPRefreshRotatesTokenAndRuntimePayloadExcludesNativeSecrets() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MCPURLProtocol.self]
+        MCPURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.absoluteString, "https://auth.test/token")
+            var bodyData = request.httpBody ?? Data()
+            if bodyData.isEmpty, let stream = request.httpBodyStream {
+                stream.open()
+                defer { stream.close() }
+                var buffer = [UInt8](repeating: 0, count: 4_096)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    if count <= 0 { break }
+                    bodyData.append(contentsOf: buffer.prefix(count))
+                }
+            }
+            let body = String(data: bodyData, encoding: .utf8) ?? ""
+            XCTAssertTrue(body.contains("refresh_token=old-refresh"))
+            XCTAssertTrue(body.contains("client_secret=native-secret"))
+            let data = try JSONSerialization.data(withJSONObject: [
+                "access_token": "new-access",
+                "refresh_token": "new-refresh",
+                "expires_in": 3600,
+            ])
+            return (200, ["Content-Type": "application/json"], data)
+        }
+        let coordinator = MCPAuthCoordinator(configurationForTesting: configuration)
+        let refreshed = try await coordinator.refreshedCredentialsIfNeeded([
+            "access_token": "old-access",
+            "refresh_token": "old-refresh",
+            "expires_at": 0,
+            "token_endpoint": "https://auth.test/token",
+            "client_id": "client",
+            "client_secret": "native-secret",
+            "issuer": "https://auth.test",
+            "resource": "https://mcp.test/mcp",
+            "headers": ["Sentry-Bearer": "manual"],
+        ])
+        XCTAssertEqual(refreshed["access_token"] as? String, "new-access")
+        XCTAssertEqual(refreshed["refresh_token"] as? String, "new-refresh")
+
+        let runtime = AppModel.runtimeMCPCredentials(refreshed)
+        XCTAssertEqual(runtime["access_token"] as? String, "new-access")
+        XCTAssertNotNil(runtime["headers"])
+        XCTAssertNil(runtime["refresh_token"])
+        XCTAssertNil(runtime["client_secret"])
+        XCTAssertNil(runtime["issuer"])
     }
 
     func testTelemetryDefaultsOffAndRoundTripsWithoutAuthorization() throws {

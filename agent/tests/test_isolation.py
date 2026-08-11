@@ -21,6 +21,9 @@ _MODULES = (
     paths_mod, config_mod, sessions_mod, extensions_mod, app_mod,
     transcript_search_mod,
 )
+_IMMUTABLE_BUNDLE_PATHS = {
+    (extensions_mod.__name__, "BUILTIN_SKILLS_ROOT"),
+}
 
 
 def test_every_app_dir_constant_points_inside_this_tests_home(
@@ -28,18 +31,19 @@ def test_every_app_dir_constant_points_inside_this_tests_home(
 ):
     """Catches an import-time constant nobody added to the fixture's list.
 
-    Every ``Path`` constant in these modules is derived from ``APP_DIR``, so all
-    of them must sit under *this test's* directory. Asserting only "not the real
-    home" would not be enough: layer 1 already relocates a forgotten constant to
-    the session-wide temp home, so a missing entry in the fixture's list leaks
-    state between tests while still passing that weaker check. Rediscovering the
-    constants by reflection means a newly added one fails here instead of
-    quietly sharing a directory with every other test.
+    Every writable ``Path`` constant in these modules is derived from ``APP_DIR``,
+    so all of them must sit under *this test's* directory. Immutable paths into
+    bundled application resources are explicitly exempt. Asserting only "not the
+    real home" would not be enough: layer 1 already relocates a forgotten
+    constant to the session-wide temp home, so a missing entry in the fixture's
+    list leaks state between tests while still passing that weaker check.
     """
     stale, escaped = [], []
     for module in _MODULES:
         for name, value in vars(module).items():
             if not isinstance(value, Path):
+                continue
+            if (module.__name__, name) in _IMMUTABLE_BUNDLE_PATHS:
                 continue
             where = f"{module.__name__}.{name} = {value}"
             if value == real_app_dir or real_app_dir in value.parents:

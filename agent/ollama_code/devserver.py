@@ -1,15 +1,13 @@
 """Long-lived development servers the agent starts and owns.
 
-Deliberately not ``TerminalManager``: that class runs one console command at a
-time, kills anything past an hour, and breaks its pump two seconds after the
-shell exits — three behaviours that exist to protect the user's Console and
-each of which would kill a dev server. This manager is the inverse shape:
-several named runs, no deadline, a bounded ring of recent output, and nothing
-emitted to the Console's event stream — the agent reads output through the
-``status`` action, and the user watches the page itself in the Browser tab.
+This is deliberately separate from the app-owned interactive Terminal. The
+agent can own several named development servers with no fixed deadline and a
+bounded ring of recent output. The agent reads that output through the
+``status`` action, while the user watches the page itself in the Browser tab.
 
 Servers outlive the conversation that started them and die with the backend:
-``stop_all`` runs at shutdown beside the terminal's own cleanup.
+``stop_all`` runs when the backend shuts down. The native Terminal has a
+separate lifetime owned by the app.
 """
 from __future__ import annotations
 
@@ -106,7 +104,7 @@ class DevServerManager:
         command = command.strip()
         if not command:
             raise DevServerError("a command is required")
-        # The same deny list the console applies, checked the same way.
+        # The same deny list used for every agent-initiated shell command.
         blocked = self._perms.blocked_reason("bash", {"command": command})
         if blocked:
             raise DevServerError(f"refused: {blocked}")

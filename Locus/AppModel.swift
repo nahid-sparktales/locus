@@ -120,6 +120,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var chatGPTAccount: ChatGPTAccountResponse?
     @Published private(set) var chatGPTUsage: ChatGPTUsageResponse?
     @Published private(set) var chatGPTLoginID: String?
+    @Published private(set) var primaryAgentBehavior = AgentBehavior.primaryDefault()
     @Published private(set) var agentProfiles: [AgentProfile] = []
     @Published private(set) var agentTeams: [AgentTeam] = []
     @Published private(set) var teamRoutingConsentAccountIDs: Set<UUID> = []
@@ -163,11 +164,25 @@ final class AppModel: ObservableObject {
     @Published private(set) var evaluationStatus: String?
     @Published private(set) var knowledgeStatus: WorkspaceKnowledgeStatus?
     @Published private(set) var workspaceMemories: [WorkspaceMemory] = []
+    @Published private(set) var memoryCandidates: [WorkspaceMemory] = []
+    @Published private(set) var memoryVaultStatus: MemoryVaultStatus?
     @Published var mcpInputRequest: MCPInputRequest?
     private var orchestrationEventIDs: Set<String> = []
     @Published var sessions: [SessionSummary] = []
     @Published var currentSessionID = ""
-    @Published var sessionInfo: SessionInfo?
+    @Published var sessionInfo: SessionInfo? {
+        didSet {
+            // Session changes must retarget the app-owned PTY even when its
+            // inspector tab is hidden. Ignore a transient nil while the local
+            // backend reconnects so the shell survives agent restarts.
+            guard let cwd = sessionInfo?.cwd, !cwd.isEmpty else { return }
+            terminal.configure(
+                workspacePath: cwd,
+                shell: settings.terminalShell,
+                loginShell: settings.terminalLoginShell
+            )
+        }
+    }
     @Published var blocks: [ChatBlock] = []
     @Published var todos: [TodoItem] = []
     @Published var isBusy = false
@@ -328,12 +343,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var extensionTools: [ExtensionToolMetadata] = []
     @Published var extensionErrorMessage: String?
     @Published private(set) var isLoadingExtensions = false
-    /// Console state. A `let` on its own ObservableObject, not @Published
-    /// here: republishing AppModel on every output chunk would redraw the
-    /// sidebar, conversation and composer at the command's output rate.
+    /// App-owned PTY state. A `let` on its own ObservableObject keeps terminal
+    /// title/lifecycle publications from redrawing the conversation.
     let terminal = TerminalSession()
     let computerControl = ComputerControlService()
-    /// The browser, for the same reason as the console: its tab list and load
+    /// The browser, for the same reason as the terminal: its tab list and load
     /// progress change far too often to republish AppModel over.
     let browser = BrowserService()
     let streamingReply = StreamingReplyState()
@@ -594,6 +608,7 @@ final class AppModel: ObservableObject {
             }
         }
         if !isUITesting, persistenceEnabled {
+            primaryAgentBehavior = AgentTeamStore.loadPrimaryBehavior(from: defaults)
             let loadedProfiles = AgentTeamStore.loadProfiles(from: defaults)
             let storedTeams = AgentTeamStore.loadTeams(from: defaults)
             let approvalMigration = AgentTeamStore.migrateToOneTimeApproval(storedTeams)
@@ -704,7 +719,6 @@ final class AppModel: ObservableObject {
             }
         }
 
-        terminal.transport = self
         browser.onUserNotice = { [weak self] notice in
             self?.showToast(notice)
         }
@@ -1382,7 +1396,8 @@ final class AppModel: ObservableObject {
                 proxyCredential: ProxyConfigurator.childCredential(
                     settings: settings,
                     password: persistenceEnabled ? CredentialStore.proxyPassword() : nil
-                )
+                ),
+                memoryKey: persistenceEnabled ? MemoryKeychainStore.loadOrCreate() : nil
             ) {
             case .running(let endpoint):
                 if endpoint != backend.currentBaseURL {
@@ -1496,6 +1511,7 @@ final class AppModel: ObservableObject {
 
     func shutdown() {
         isShuttingDown = true
+        terminal.terminate()
         lifecycleJournal?.markCleanExit()
         // Zoom is transient and relaunch never restores it, so hand back the
         // room it borrowed before the layout is flushed to disk.
@@ -1820,6 +1836,7 @@ final class AppModel: ObservableObject {
         }
         if activeAccount != nil { await refreshLocalModels() }
         await refreshAccountCatalogs()
+        await migrateTerminalSettingsIfNeeded()
 
         do {
             let suffix = showArchivedSessions
@@ -1867,6 +1884,9 @@ final class AppModel: ObservableObject {
             // unreadable state file would present as "no servers" and this
             // would delete live third-party refresh tokens rather than orphans.
             if response.errors.isEmpty {
+                MCPCredentialStore.migrateLegacyKeychainEntries(
+                    keeping: Set(response.mcpServers.map(\.id))
+                )
                 CredentialStore.removeOrphanedMCPCredentials(
                     keeping: Set(response.mcpServers.map(\.id))
                 )
@@ -2030,15 +2050,17 @@ final class AppModel: ObservableObject {
     }
 
     func uninstallPlugin(_ id: String) async {
-        let credentialAccounts = extensions.mcpServers
+        let credentialServerIDs = extensions.mcpServers
             .filter { $0.pluginID == id }
-            .map { CredentialStore.mcpCredentialKey($0.id) }
+            .map(\.id)
         do {
             _ = try await backend.delete(
                 "/api/extensions/plugins/\(id)",
                 as: ExtensionOperationResponse.self
             )
-            for account in credentialAccounts { CredentialStore.remove(account: account) }
+            for serverID in credentialServerIDs {
+                MCPCredentialStore.removeIncludingLegacy(serverID: serverID)
+            }
             await refreshExtensions()
             await refreshExtensionCatalog()
         } catch {
@@ -2100,6 +2122,24 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func materializeMCPPreset(
+        _ preset: ExtensionMCPPreset,
+        projectRef: String = ""
+    ) async -> ExtensionMCPServer? {
+        do {
+            let server = try await backend.post(
+                "/api/extensions/mcp/presets/materialize",
+                body: ["id": preset.id, "project_ref": projectRef],
+                as: ExtensionMCPServer.self
+            )
+            await refreshExtensions()
+            return server
+        } catch {
+            extensionErrorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
     func setMCPServer(_ id: String, enabled: Bool, scope: String) async {
         do {
             _ = try await backend.post(
@@ -2116,7 +2156,8 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func testMCPServer(_ id: String) async {
+    @discardableResult
+    func testMCPServer(_ id: String) async -> Bool {
         do {
             let response = try await backend.post(
                 "/api/extensions/mcp/test",
@@ -2126,8 +2167,10 @@ final class AppModel: ObservableObject {
             )
             await refreshExtensions()
             showToast(response.status?.state == "connected" ? "MCP server connected" : "MCP test finished")
+            return response.status?.state == "connected"
         } catch {
             extensionErrorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -2167,41 +2210,40 @@ final class AppModel: ObservableObject {
                 "/api/extensions/mcp/\(id)",
                 as: ExtensionOperationResponse.self
             )
-            CredentialStore.remove(account: CredentialStore.mcpCredentialKey(id))
+            MCPCredentialStore.removeIncludingLegacy(serverID: id)
             await refreshExtensions()
         } catch {
             extensionErrorMessage = error.localizedDescription
         }
     }
 
-    func setMCPCredentials(serverID: String, values: [String: Any]) async {
-        guard JSONSerialization.isValidJSONObject(values),
-              let data = try? JSONSerialization.data(withJSONObject: values),
-              let encoded = String(data: data, encoding: .utf8)
-        else {
+    @discardableResult
+    func setMCPCredentials(serverID: String, values: [String: Any]) async -> Bool {
+        guard JSONSerialization.isValidJSONObject(values) else {
             extensionErrorMessage = "The MCP credentials could not be saved."
-            return
+            return false
         }
-        let account = CredentialStore.mcpCredentialKey(serverID)
-        let previous = CredentialStore.get(account: account)
-        guard CredentialStore.set(encoded, account: account) else {
+        let previous = MCPCredentialStore.get(serverID: serverID)
+        guard MCPCredentialStore.set(values, serverID: serverID) else {
             extensionErrorMessage = "The MCP credentials could not be saved."
-            return
+            return false
         }
         do {
             _ = try await backend.post(
                 "/api/extensions/mcp/credentials",
-                body: ["id": serverID, "credentials": values],
+                body: ["id": serverID, "credentials": Self.runtimeMCPCredentials(values)],
                 as: MCPStatusCredentialResponse.self
             )
             await refreshExtensions()
+            return true
         } catch {
             if let previous {
-                CredentialStore.set(previous, account: account)
+                MCPCredentialStore.set(previous, serverID: serverID)
             } else {
-                CredentialStore.remove(account: account)
+                MCPCredentialStore.remove(serverID: serverID)
             }
             extensionErrorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -2212,7 +2254,7 @@ final class AppModel: ObservableObject {
                 body: ["id": serverID, "credentials": [String: Any]()],
                 as: MCPStatusCredentialResponse.self
             )
-            CredentialStore.remove(account: CredentialStore.mcpCredentialKey(serverID))
+            MCPCredentialStore.removeIncludingLegacy(serverID: serverID)
             await refreshExtensions()
             showToast("MCP credentials removed")
         } catch {
@@ -2220,41 +2262,79 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func authenticateMCPServer(_ server: ExtensionMCPServer) {
+    func authenticateMCPServer(
+        _ server: ExtensionMCPServer,
+        completion: ((Bool) -> Void)? = nil
+    ) {
         mcpAuthCoordinator.authorize(server: server) { [weak self] result in
             guard let self else { return }
             switch result {
             case .success(let values):
-                Task { await self.setMCPCredentials(serverID: server.id, values: values) }
+                Task {
+                    let saved = await self.setMCPCredentials(serverID: server.id, values: values)
+                    completion?(saved)
+                }
             case .failure(let error):
                 self.extensionErrorMessage = error.localizedDescription
+                completion?(false)
             }
         }
     }
 
     private func restoreExtensionCredentials(for servers: [ExtensionMCPServer]) async {
         for server in servers {
-            guard let encoded = CredentialStore.get(account: CredentialStore.mcpCredentialKey(server.id)),
-                  let data = encoded.data(using: .utf8),
-                  let storedValues = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            else { continue }
+            guard let storedValues = MCPCredentialStore.get(serverID: server.id) else { continue }
+            guard Self.mcpCredentials(storedValues, areBoundTo: server) else {
+                extensionErrorMessage = "Saved OAuth credentials no longer match \(server.name). Reconnect it before enabling the server."
+                continue
+            }
             let values = (try? await mcpAuthCoordinator.refreshedCredentialsIfNeeded(storedValues))
                 ?? storedValues
-            var refreshedToken = false
-            if JSONSerialization.isValidJSONObject(values),
-               let refreshedData = try? JSONSerialization.data(withJSONObject: values),
-               let refreshed = String(data: refreshedData, encoding: .utf8),
-               refreshed != encoded {
-                CredentialStore.set(refreshed, account: CredentialStore.mcpCredentialKey(server.id))
-                refreshedToken = true
-            }
+            let oldData = try? JSONSerialization.data(withJSONObject: storedValues, options: [.sortedKeys])
+            let refreshedData = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys])
+            let refreshedToken = oldData != refreshedData
+            if refreshedToken { MCPCredentialStore.set(values, serverID: server.id) }
             guard server.hasCredentials != true || refreshedToken else { continue }
             _ = try? await backend.post(
                 "/api/extensions/mcp/credentials",
-                body: ["id": server.id, "credentials": values],
+                body: ["id": server.id, "credentials": Self.runtimeMCPCredentials(values)],
                 as: MCPStatusCredentialResponse.self
             )
         }
+    }
+
+    /// Never replay an issuer-bound access token after its user-editable MCP
+    /// server has been pointed at a different resource or explicit issuer.
+    /// Credentials written before issuer binding have neither field and remain
+    /// available for the promised version-1 migration path.
+    nonisolated static func mcpCredentials(
+        _ values: [String: Any],
+        areBoundTo server: ExtensionMCPServer
+    ) -> Bool {
+        if let resource = values["resource"] as? String {
+            guard let rawURL = server.url,
+                  var components = URLComponents(string: rawURL)
+            else { return false }
+            components.fragment = nil
+            guard components.url?.absoluteString == resource else { return false }
+        }
+        if let issuer = values["issuer"] as? String,
+           let configuredIssuer = server.oauth?.issuer,
+           !configuredIssuer.isEmpty,
+           issuer != configuredIssuer {
+            return false
+        }
+        return true
+    }
+
+    /// Keep native-only registration and refresh material out of the Python
+    /// runtime. It receives only what the active transport needs right now.
+    nonisolated static func runtimeMCPCredentials(_ values: [String: Any]) -> [String: Any] {
+        var runtime: [String: Any] = [:]
+        for key in ["access_token", "headers", "env"] {
+            if let value = values[key] { runtime[key] = value }
+        }
+        return runtime
     }
 
     /// Reads the local runtime directly. With an account active the agent has
@@ -2473,6 +2553,9 @@ final class AppModel: ObservableObject {
                 "text": payload,
                 "mode": dispatchedMode.rawValue,
             ]
+            if let agentConfig = encodedJSONObject(primaryAgentBehavior) {
+                request["agent_config"] = agentConfig
+            }
             if let dispatchedTeam { request["team"] = dispatchedTeam }
             let imageAttachments: [[String: Any]] = dispatchedAttachments.compactMap { attachment in
                 guard attachment.kind == .image,
@@ -2744,7 +2827,7 @@ final class AppModel: ObservableObject {
     }
 
     var hasRunningWorkForQuit: Bool {
-        Self.shouldWarnBeforeQuit(
+        terminal.hasForegroundJob || Self.shouldWarnBeforeQuit(
             isBusy: isBusy,
             hasPendingPermission: hasPendingPermission,
             currentSessionID: currentSessionID,
@@ -2791,6 +2874,7 @@ final class AppModel: ObservableObject {
     }
 
     func stopRunningWorkForQuit(completion: @escaping @MainActor () -> Void) {
+        terminal.terminate()
         for runtime in taskWorkers.values {
             _ = runtime.service.send(["type": "interrupt"])
         }
@@ -3121,6 +3205,16 @@ final class AppModel: ObservableObject {
         showToast(id == nil ? "Solo mode" : "Team mode")
     }
 
+    func savePrimaryAgentBehavior(_ behavior: AgentBehavior) {
+        var updated = behavior
+        updated.clamp()
+        primaryAgentBehavior = updated
+        if persistenceEnabled {
+            AgentTeamStore.savePrimaryBehavior(updated)
+        }
+        showToast("Primary agent settings saved — they apply on the next turn")
+    }
+
     func saveAgentProfile(_ profile: AgentProfile) {
         var updated = profile
         updated.clamp()
@@ -3347,6 +3441,9 @@ final class AppModel: ObservableObject {
                     : profile.metering.rawValue,
                 "route": route,
             ]
+            if let behavior = encodedJSONObject(profile.resolvedBehavior) {
+                entry["behavior"] = behavior
+            }
             if let rate = profile.inputCostPerMillion { entry["input_cost_per_million"] = rate }
             if let rate = profile.outputCostPerMillion { entry["output_cost_per_million"] = rate }
             if let policy = profile.mcpPolicy,
@@ -4166,20 +4263,34 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func refreshWorkspaceKnowledge() async {
+    func refreshWorkspaceKnowledge(agentID: String = "primary") async {
         do {
+            let memoryQuery = [
+                URLQueryItem(name: "workspace", value: workspacePath),
+                URLQueryItem(name: "agent_id", value: agentID),
+            ]
             async let status: WorkspaceKnowledgeStatus = backend.get(
                 "/api/knowledge/status",
                 query: [URLQueryItem(name: "workspace", value: workspacePath)],
                 as: WorkspaceKnowledgeStatus.self
             )
             async let memories: WorkspaceMemoriesResponse = backend.get(
-                "/api/knowledge/memories",
-                query: [URLQueryItem(name: "workspace", value: workspacePath)],
+                "/api/memory",
+                query: memoryQuery + [URLQueryItem(name: "status", value: "approved")],
                 as: WorkspaceMemoriesResponse.self
+            )
+            async let candidates: WorkspaceMemoriesResponse = backend.get(
+                "/api/memory",
+                query: memoryQuery + [URLQueryItem(name: "status", value: "candidate")],
+                as: WorkspaceMemoriesResponse.self
+            )
+            async let vaultStatus: MemoryVaultStatus = backend.get(
+                "/api/memory/status", query: memoryQuery, as: MemoryVaultStatus.self
             )
             knowledgeStatus = try await status
             workspaceMemories = try await memories.memories
+            memoryCandidates = try await candidates.memories
+            memoryVaultStatus = try await vaultStatus
         } catch {
             showToast("Could not load workspace knowledge: \(error.localizedDescription)")
         }
@@ -4229,14 +4340,23 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func rememberWorkspaceFact(title: String, content: String, tags: [String]) {
+    func rememberWorkspaceFact(
+        title: String,
+        content: String,
+        tags: [String],
+        scope: AgentMemoryScope = .workspace,
+        agentID: String = "primary"
+    ) {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 let response: WorkspaceMemoryResponse = try await backend.post(
-                    "/api/knowledge/memories",
+                    "/api/memory",
                     body: [
                         "workspace": workspacePath,
+                        "agent_id": agentID,
+                        "scope": scope.rawValue,
+                        "status": "approved",
                         "title": title,
                         "content": content,
                         "tags": tags,
@@ -4247,7 +4367,7 @@ final class AppModel: ObservableObject {
                 )
                 workspaceMemories.removeAll { $0.id == response.memory.id }
                 workspaceMemories.insert(response.memory, at: 0)
-                showToast("Remembered for this workspace")
+                showToast("Remembered in \(scope.title.lowercased()) memory")
             } catch {
                 showToast(error.localizedDescription)
             }
@@ -4259,32 +4379,115 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             do {
                 let _: SimpleActionResponse = try await backend.delete(
-                    "/api/knowledge/memories/\(memory.id)",
-                    query: [URLQueryItem(name: "workspace", value: workspacePath)],
+                    "/api/memory/\(memory.id)",
                     as: SimpleActionResponse.self
                 )
                 workspaceMemories.removeAll { $0.id == memory.id }
+                memoryCandidates.removeAll { $0.id == memory.id }
             } catch {
                 showToast(error.localizedDescription)
             }
         }
     }
 
-    func updateWorkspaceMemory(_ memory: WorkspaceMemory) {
+    func updateWorkspaceMemory(_ memory: WorkspaceMemory, agentID: String = "primary") {
         guard let body = encodedJSONObject(memory) else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 let response: WorkspaceMemoryResponse = try await backend.put(
-                    "/api/knowledge/memories/\(memory.id)",
-                    body: ["workspace": workspacePath].merging(body) { _, new in new },
+                    "/api/memory/\(memory.id)",
+                    body: [
+                        "workspace": workspacePath,
+                        "agent_id": agentID,
+                    ].merging(body) { _, new in new },
                     as: WorkspaceMemoryResponse.self
                 )
                 if let index = workspaceMemories.firstIndex(where: { $0.id == memory.id }) {
                     workspaceMemories[index] = response.memory
                 }
+                if let index = memoryCandidates.firstIndex(where: { $0.id == memory.id }) {
+                    memoryCandidates[index] = response.memory
+                }
             } catch {
                 showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    func approveMemoryCandidate(_ memory: WorkspaceMemory, agentID: String = "primary") {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response: WorkspaceMemoryResponse = try await backend.post(
+                    "/api/memory/\(memory.id)/approve",
+                    body: ["workspace": workspacePath, "agent_id": agentID],
+                    as: WorkspaceMemoryResponse.self
+                )
+                memoryCandidates.removeAll { $0.id == memory.id }
+                workspaceMemories.removeAll { $0.id == memory.id }
+                workspaceMemories.insert(response.memory, at: 0)
+                await refreshWorkspaceKnowledge(agentID: agentID)
+                showToast("Memory approved")
+            } catch {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    func exportMemory(agentID: String = "primary") {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let document: MemoryExportDocument = try await backend.get(
+                    "/api/memory/export",
+                    query: [
+                        URLQueryItem(name: "workspace", value: workspacePath),
+                        URLQueryItem(name: "agent_id", value: agentID),
+                    ],
+                    as: MemoryExportDocument.self
+                )
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                let data = try encoder.encode(document)
+                let panel = NSSavePanel()
+                panel.allowedContentTypes = [.json]
+                panel.nameFieldStringValue = "Locus Memory.json"
+                guard panel.runModal() == .OK, let url = panel.url else { return }
+                try data.write(to: url, options: .atomic)
+                showToast("Memory exported — the chosen JSON file is readable text")
+            } catch {
+                showToast("Could not export memory: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func importMemory(agentID: String = "primary") {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let data = try Data(contentsOf: url)
+                let document = try JSONDecoder().decode(MemoryExportDocument.self, from: data)
+                guard let value = encodedJSONObject(document) else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                let response: MemoryImportResponse = try await backend.post(
+                    "/api/memory/import",
+                    body: [
+                        "workspace": workspacePath,
+                        "agent_id": agentID,
+                        "document": value,
+                    ],
+                    as: MemoryImportResponse.self
+                )
+                await refreshWorkspaceKnowledge(agentID: agentID)
+                showToast("Imported \(response.imported) memories")
+            } catch {
+                showToast("Could not import memory: \(error.localizedDescription)")
             }
         }
     }
@@ -4305,7 +4508,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func deleteAllWorkspaceKnowledge() {
+    func deleteAllWorkspaceKnowledge(agentID: String = "primary") {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -4316,8 +4519,30 @@ final class AppModel: ObservableObject {
                 )
                 knowledgeStatus = nil
                 workspaceMemories = []
-                await refreshWorkspaceKnowledge()
+                await refreshWorkspaceKnowledge(agentID: agentID)
                 showToast("Deleted workspace knowledge")
+            } catch {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    func deleteAllMemory(agentID: String = "primary") {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let _: SimpleActionResponse = try await backend.delete(
+                    "/api/memory",
+                    query: [
+                        URLQueryItem(name: "workspace", value: workspacePath),
+                        URLQueryItem(name: "agent_id", value: agentID),
+                    ],
+                    as: SimpleActionResponse.self
+                )
+                workspaceMemories = []
+                memoryCandidates = []
+                await refreshWorkspaceKnowledge(agentID: agentID)
+                showToast("Deleted personal, workspace, and primary-agent memory")
             } catch {
                 showToast(error.localizedDescription)
             }
@@ -5482,6 +5707,8 @@ final class AppModel: ObservableObject {
             // still has to be pushed or it never reaches the agent.
             || settings.localContextWindow != newSettings.localContextWindow
         let iterationLimitChanged = settings.maxIterations != newSettings.maxIterations
+        let terminalChanged = settings.terminalShell != newSettings.terminalShell
+            || settings.terminalLoginShell != newSettings.terminalLoginShell
         let proxyChanged = proxyCredentialChanged
             || settings.proxyModeRaw != newSettings.proxyModeRaw
             || settings.proxyTypeRaw != newSettings.proxyTypeRaw
@@ -5526,7 +5753,51 @@ final class AppModel: ObservableObject {
         if iterationLimitChanged {
             Task { await applyIterationLimit() }
         }
+        if terminalChanged {
+            terminal.configure(
+                workspacePath: workspacePath,
+                shell: newSettings.terminalShell,
+                loginShell: newSettings.terminalLoginShell
+            )
+            Task { await applyTerminalSettings() }
+        }
         showToast("Settings saved")
+    }
+
+    private func migrateTerminalSettingsIfNeeded() async {
+        guard !settings.terminalSettingsMigrated else { return }
+        do {
+            let state = try await backend.get("/api/config", as: ConfigStateResponse.self)
+            var updated = settings
+            updated.terminalShell = state.terminalShell ?? updated.terminalShell
+            updated.terminalLoginShell = state.terminalLoginShell ?? updated.terminalLoginShell
+            updated.terminalSettingsMigrated = true
+            settings = updated
+            persistSettings()
+            terminal.configure(
+                workspacePath: workspacePath,
+                shell: updated.terminalShell,
+                loginShell: updated.terminalLoginShell
+            )
+        } catch {
+            // Retry on the next successful metadata refresh; no preference is
+            // marked migrated until the version-1 source was actually read.
+        }
+    }
+
+    private func applyTerminalSettings() async {
+        do {
+            _ = try await backend.post(
+                "/api/config",
+                body: [
+                    "terminal_shell": settings.terminalShell,
+                    "terminal_login_shell": settings.terminalLoginShell,
+                ],
+                as: ConfigStateResponse.self
+            )
+        } catch {
+            showToast("Could not update the Terminal settings: \(error.localizedDescription)")
+        }
     }
 
     /// Pushes the tool-step cap to the agent. Not part of the provider payload:
@@ -6248,6 +6519,17 @@ final class AppModel: ObservableObject {
             refreshGitStatus()
         }
         if tab == .files { refreshWorkspaceIndex() }
+        if tab == .terminal {
+            terminal.configure(
+                workspacePath: workspacePath,
+                shell: settings.terminalShell,
+                loginShell: settings.terminalLoginShell
+            )
+            DispatchQueue.main.async { [weak terminal] in
+                terminal?.ensureStarted()
+                terminal?.focus()
+            }
+        }
         if tab == .runs {
             Task { @MainActor [weak self] in
                 await self?.refreshOrchestrationRuns(select: runID)
@@ -6258,6 +6540,12 @@ final class AppModel: ObservableObject {
         if tab.isWorkspaceTab {
             settings.inspectorLastWorkspaceTab = tab.rawValue
         }
+    }
+
+    /// Ctrl-` mirrors the familiar integrated-terminal gesture: reveal the
+    /// terminal if needed, otherwise return keyboard focus to its PTY.
+    func openTerminal() {
+        selectInspectorTab(.terminal)
     }
 
     func openTeamRun(_ runID: String) {
@@ -6727,7 +7015,8 @@ final class AppModel: ObservableObject {
             proxyCredential: ProxyConfigurator.childCredential(
                 settings: settings,
                 password: persistenceEnabled ? CredentialStore.proxyPassword() : nil
-            )
+            ),
+            memoryKey: persistenceEnabled ? MemoryKeychainStore.loadOrCreate() : nil
         )
         guard case .running(let endpoint) = launch else {
             if case .failed(let message) = launch { showToast(message) }
@@ -7212,11 +7501,6 @@ final class AppModel: ObservableObject {
                 orchestrationState = .running
                 updateTaskConversation(state: .running, event: event)
             }
-
-        case "terminal_started", "terminal_output", "terminal_exit",
-             "terminal_error", "terminal_state":
-            terminal.handle(event)
-            if type == "terminal_exit" { refreshGitStatus() }
 
         case "workspace_changed":
             // The agent touched the tree; the Changes panel is now stale.
@@ -7956,7 +8240,6 @@ final class AppModel: ObservableObject {
             blocks[index].tool?.status = .error
             blocks[index].tool?.result = "The connection to the local agent was lost before this finished."
         }
-        terminal.connectionLost()
     }
 
     private func enqueueToken(_ token: String) {
@@ -8342,7 +8625,7 @@ final class AppModel: ObservableObject {
                 deletions: 120
             ),
             GitChange(
-                path: "docs/console.md",
+                path: "docs/terminal.md",
                 status: .untracked,
                 staged: false,
                 unstaged: true
@@ -8354,16 +8637,11 @@ final class AppModel: ObservableObject {
             "Locus/AppModel.swift",
             "Locus/InspectorView.swift",
             "Locus/TerminalSession.swift",
-            "docs/console.md",
+            "docs/terminal.md",
         ].map { URL(fileURLWithPath: workspace).appending(path: $0) }
         agentInstructionsExists = true
         savedAgentInstructions = "# Workspace instructions\n\n- Keep changes focused.\n"
         agentInstructionsDraft = savedAgentInstructions
-        terminal.handle([
-            "type": "terminal_output",
-            "text": "On branch main\nnothing to commit, working tree clean\n",
-        ])
-
         workspaceProfiles = [
             WorkspaceProfile(
                 path: workspace,
@@ -9026,15 +9304,6 @@ final class AppModel: ObservableObject {
 
 }
 
-extension AppModel: TerminalTransport {
-    /// The console speaks over the same socket as the chat. The Bool is
-    /// checked by callers so a dropped command is reported, never silent.
-    @discardableResult
-    func sendTerminal(_ payload: [String: Any]) -> Bool {
-        backend.send(payload)
-    }
-}
-
 enum CommandAction: String, CaseIterable, Identifiable {
     case newSession
     case clearChat
@@ -9268,6 +9537,23 @@ private struct WorkspaceMemoriesResponse: Codable {
 private struct WorkspaceMemoryResponse: Codable {
     let ok: Bool
     let memory: WorkspaceMemory
+}
+
+private struct MemoryExportDocument: Codable {
+    let format: String
+    let version: Int
+    let exportedAt: Double
+    let memories: [WorkspaceMemory]
+
+    enum CodingKeys: String, CodingKey {
+        case format, version, memories
+        case exportedAt = "exported_at"
+    }
+}
+
+private struct MemoryImportResponse: Codable {
+    let ok: Bool
+    let imported: Int
 }
 
 private struct NewSessionResponse: Codable {

@@ -174,12 +174,94 @@ def test_credentials_are_memory_only(tmp_path):
         "http_headers": {"X-Secret": "do-not-persist"},
         "env": {"TOKEN": "also-secret"},
     })
-    manager.set_credentials(server["id"], {"access_token": "bearer-secret"})
+    manager.set_credentials(server["id"], {
+        "access_token": "bearer-secret",
+        "refresh_token": "must-stay-native",
+        "client_secret": "must-also-stay-native",
+    })
     persisted = (tmp_path / "state/state.json").read_text()
     assert "do-not-persist" not in persisted
     assert "also-secret" not in persisted
     assert "bearer-secret" not in persisted
     assert manager.credentials(server["id"])["access_token"] == "bearer-secret"
+    assert "refresh_token" not in manager.credentials(server["id"])
+    assert "client_secret" not in manager.credentials(server["id"])
+
+
+def test_version_one_state_migrates_with_builtins_and_preserves_user_entries(tmp_path):
+    state = tmp_path / "state"
+    state.mkdir()
+    imported = _skill(tmp_path / "user-skills", name="frontend-design")
+    (state / "state.json").write_text(json.dumps({
+        "version": 1,
+        "marketplaces": [],
+        "plugins": [],
+        "standalone_skills": [{
+            "id": "frontend-design",
+            "name": "frontend-design",
+            "root": str(imported),
+            "enabled_global": True,
+            "enabled_workspaces": [],
+            "disabled_workspaces": [],
+        }],
+        "mcp_servers": [{
+            "id": "user:existing:1",
+            "name": "existing",
+            "url": "https://example.com/mcp",
+            "command": "",
+            "transport": "streamable_http",
+            "enabled": True,
+            "enabled_global": True,
+        }],
+        "mcp_policies": {"user:existing:1": {"default": "ask", "tools": {}}},
+    }))
+
+    manager = ExtensionManager(str(tmp_path), root=state)
+    skills = manager.skills()
+    builtin = next(item for item in skills if item["id"] == "builtin:frontend-design")
+    assert builtin["shadowed"] is True
+    assert builtin["enabled"] is False
+    assert next(item for item in skills if item["id"] == "frontend-design")["enabled"] is True
+    assert len([item for item in skills if item.get("builtin")]) == 5
+    assert manager.mcp_servers()[0]["id"] == "user:existing:1"
+    assert manager.mcp_servers()[0]["approval_mode"] == "ask"
+
+    manager.set_skill_enabled(
+        "builtin:systematic-debugging", False, scope="workspace", workspace=str(tmp_path)
+    )
+    current = next(
+        item for item in manager.skills() if item["id"] == "builtin:systematic-debugging"
+    )
+    assert current["enabled"] is False
+    with pytest.raises(ExtensionError, match="only imported"):
+        manager.remove_skill("builtin:systematic-debugging")
+    persisted = json.loads((state / "state.json").read_text())
+    assert persisted["version"] == 2
+    assert persisted["builtin_skill_overrides"]
+
+
+def test_recommended_mcp_presets_are_inert_scoped_and_idempotent(tmp_path, monkeypatch):
+    def network_forbidden(*_args, **_kwargs):
+        raise AssertionError("listing and materializing presets must not use the network")
+
+    monkeypatch.setattr("ollama_code.extensions.requests.get", network_forbidden)
+    manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
+    presets = manager.snapshot()["mcp_presets"]
+    assert [item["id"] for item in presets] == [
+        "context7", "github", "sentry", "supabase", "openai-docs"
+    ]
+    assert all(item["installed"] is False for item in presets)
+
+    with pytest.raises(ExtensionError, match="project reference"):
+        manager.materialize_mcp_preset("supabase")
+    server = manager.materialize_mcp_preset("supabase", project_ref="abcd1234")
+    assert server["enabled_global"] is False
+    assert "project_ref=abcd1234" in server["url"]
+    assert "read_only=true" in server["url"]
+    assert manager.materialize_mcp_preset(
+        "supabase", project_ref="different"
+    )["id"] == server["id"]
+    assert manager.mcp_presets()[3]["installed"] is True
 
 
 def test_oauth_metadata_discovery_validates_issuer_and_does_not_follow_redirects(monkeypatch):

@@ -39,6 +39,19 @@ if [[ -z "${resources}" || "${resources}" != *".app/Contents/Resources" ]]; then
     exit 1
 fi
 
+# Build inputs can inherit quarantine, FinderInfo, or resource-fork metadata
+# from a downloaded runtime or a developer's checkout. Those attributes are
+# not part of Locus and make Xcode's final app seal fail with the otherwise
+# opaque "Command CodeSign failed" error. Do not copy them into the product,
+# then defensively clear any attributes created while preparing the bundle.
+copy_without_extended_metadata() {
+    /usr/bin/ditto --norsrc --noextattr --noqtn "$1" "$2"
+}
+
+clear_extended_metadata() {
+    [[ ! -e "$1" ]] || /usr/bin/xattr -cr "$1"
+}
+
 write_provenance() {
     local revision dirty suffix
     revision="$(/usr/bin/git -C "${repo_root}" rev-parse HEAD)"
@@ -65,15 +78,16 @@ bundle_codex_helper() {
     local helper="${helpers}/codex"
     local code_mode_host_helper="${helpers}/codex-code-mode-host"
     /bin/mkdir -p "${helpers}"
-    /usr/bin/ditto "${codex_cache}/bin/codex" "${helper}"
-    /usr/bin/ditto "${codex_cache}/bin/codex-code-mode-host" "${code_mode_host_helper}"
-    /usr/bin/ditto "${codex_cache}/PROVENANCE" "${resources}/CodexAppServerProvenance.txt"
+    copy_without_extended_metadata "${codex_cache}/bin/codex" "${helper}"
+    copy_without_extended_metadata "${codex_cache}/bin/codex-code-mode-host" "${code_mode_host_helper}"
+    copy_without_extended_metadata "${codex_cache}/PROVENANCE" "${resources}/CodexAppServerProvenance.txt"
     /bin/mkdir -p "${resources}/ThirdPartyLicenses/openai-codex-0.147.0"
-    /usr/bin/ditto "${codex_cache}/source-rust-v0.147.0/LICENSE" \
+    copy_without_extended_metadata "${codex_cache}/source-rust-v0.147.0/LICENSE" \
         "${resources}/ThirdPartyLicenses/openai-codex-0.147.0/LICENSE"
-    /usr/bin/ditto "${codex_cache}/source-rust-v0.147.0/NOTICE" \
+    copy_without_extended_metadata "${codex_cache}/source-rust-v0.147.0/NOTICE" \
         "${resources}/ThirdPartyLicenses/openai-codex-0.147.0/NOTICE"
     /bin/chmod 755 "${helper}" "${code_mode_host_helper}"
+    clear_extended_metadata "${helpers}"
 
     local identity="${EXPANDED_CODE_SIGN_IDENTITY:-}"
     if [[ "${CODE_SIGNING_ALLOWED:-NO}" == "YES" && -n "${identity}" ]]; then
@@ -116,7 +130,7 @@ bundle_codex_helper() {
 bundle_source() {
     /bin/rm -rf "${runtime}"
     /bin/mkdir -p "${runtime}/source"
-    /usr/bin/ditto "${source_package}" "${runtime}/source/ollama_code"
+    copy_without_extended_metadata "${source_package}" "${runtime}/source/ollama_code"
     for junk in "${runtime}/source/ollama_code"/**/__pycache__(N/); do
         /bin/rm -rf "${junk}"
     done
@@ -141,8 +155,8 @@ bundle_standalone() {
     [[ -x "${cache}/cpython/bin/python3" && -d "${cache}/site-packages" ]] || return 1
 
     bundle_source
-    /usr/bin/ditto "${cache}/cpython" "${runtime}/python"
-    /usr/bin/ditto "${cache}/site-packages" "${runtime}/site-packages"
+    copy_without_extended_metadata "${cache}/cpython" "${runtime}/python"
+    copy_without_extended_metadata "${cache}/site-packages" "${runtime}/site-packages"
 
     # Trim what the agent never uses. The cache stays complete (pip lives
     # there); only the app copy is slimmed.
@@ -171,6 +185,7 @@ bundle_standalone() {
 
     # Pre-compile so imports from the read-only bundle skip source compiling.
     "${runtime}/python/bin/python3" -m compileall -q "${runtime}/source" || true
+    clear_extended_metadata "${runtime}"
     sign_runtime_if_needed
     echo "Bundled self-contained agent runtime ($("${runtime}/python/bin/python3" -V))."
 }
@@ -235,9 +250,10 @@ bundle_venv() {
     [[ -n "${python_home}" && -n "${python_bin}" ]] || return 1
 
     bundle_source
-    /usr/bin/ditto "${site_packages}" "${runtime}/site-packages"
-    /usr/bin/ditto "${python_home%/bin}" "${runtime}/python"
+    copy_without_extended_metadata "${site_packages}" "${runtime}/site-packages"
+    copy_without_extended_metadata "${python_home%/bin}" "${runtime}/python"
     prune_disallowed_runtime_components
+    clear_extended_metadata "${runtime}"
     sign_runtime_if_needed
     echo "warning: Bundled the developer venv's Python ($(basename "${python_bin}"))." \
         "This build runs only on Macs where that Python is installed;" \

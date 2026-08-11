@@ -180,6 +180,8 @@ private struct ExtensionsSettingsView: View {
     @State private var editorPresented = false
     @State private var editingServer: ExtensionMCPServer?
     @State private var credentialServer: ExtensionMCPServer?
+    @State private var presetReview: ExtensionMCPPreset?
+    @State private var enableAfterProbe: ExtensionMCPServer?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -235,6 +237,18 @@ private struct ExtensionsSettingsView: View {
         .sheet(item: $credentialServer) { server in
             MCPCredentialView(server: server)
                 .environmentObject(model)
+        }
+        .sheet(item: $presetReview) { preset in
+            MCPPresetReviewView(preset: preset) { projectRef in
+                presetReview = nil
+                connectPreset(preset, projectRef: projectRef)
+            }
+        }
+        .sheet(item: $enableAfterProbe) { server in
+            MCPEnableReviewView(server: server) { scope in
+                enableAfterProbe = nil
+                Task { await model.setMCPServer(server.id, enabled: true, scope: scope) }
+            }
         }
     }
 
@@ -430,6 +444,52 @@ private struct ExtensionsSettingsView: View {
             }
             ScrollView {
                 LazyVStack(spacing: 9) {
+                    if !model.extensions.mcpPresets.isEmpty {
+                        HStack {
+                            Text("Recommended")
+                                .font(.system(size: 11, weight: .semibold))
+                            Spacer()
+                            Text("Bundled templates · no startup network access")
+                                .font(.system(size: 8))
+                                .foregroundStyle(LocusTheme.muted)
+                        }
+                        ForEach(model.extensions.mcpPresets) { preset in
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "network.badge.shield.half.filled")
+                                    .foregroundStyle(LocusTheme.muted)
+                                    .frame(width: 20)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(preset.displayName)
+                                        .font(.system(size: 10, weight: .semibold))
+                                    Text(preset.description)
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(LocusTheme.muted)
+                                        .lineLimit(2)
+                                    Text(preset.url)
+                                        .font(.system(size: 8, design: .monospaced))
+                                        .foregroundStyle(LocusTheme.muted)
+                                        .textSelection(.enabled)
+                                }
+                                Spacer()
+                                if preset.installed {
+                                    Label("Added", systemImage: "checkmark.circle.fill")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(LocusTheme.success)
+                                } else {
+                                    Button("Review & connect") { presetReview = preset }
+                                        .disabled(model.isBusy)
+                                }
+                            }
+                            .padding(10)
+                            .locusCard(radius: 9)
+                        }
+                        Divider().padding(.vertical, 4)
+                        HStack {
+                            Text("Configured servers")
+                                .font(.system(size: 11, weight: .semibold))
+                            Spacer()
+                        }
+                    }
                     ForEach(model.extensions.mcpServers) { server in
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
@@ -461,12 +521,17 @@ private struct ExtensionsSettingsView: View {
                                 Menu("Default: \(policyTitle(server.approvalMode))") {
                                     policyButtons(serverID: server.id, tool: nil)
                                 }
-                                if server.auth == "oauth" {
+                                if server.auth == "oauth" || server.auth == "auto" {
                                     Button(server.hasCredentials == true ? "Reconnect account" : "Connect account") {
                                         model.authenticateMCPServer(server)
                                     }
                                 } else if server.auth != "none" {
                                     Button(server.hasCredentials == true ? "Update credentials" : "Add credentials") {
+                                        credentialServer = server
+                                    }
+                                }
+                                if server.authFallback != nil || server.optionalHeader != nil {
+                                    Button(server.hasCredentials == true ? "Update token" : "Use token instead") {
                                         credentialServer = server
                                     }
                                 }
@@ -540,18 +605,25 @@ private struct ExtensionsSettingsView: View {
                         HStack(spacing: 10) {
                             Image(systemName: "sparkles").foregroundStyle(LocusTheme.muted)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("$\(skill.id)").font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                Text("$\(skill.builtin == true ? skill.name : skill.id)")
+                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
                                 Text(skill.description).font(.system(size: 9)).foregroundStyle(LocusTheme.muted).lineLimit(2)
-                                Text("\(skill.source) · \(skill.allowImplicitInvocation == false ? "explicit only" : "automatic or explicit")")
+                                Text([
+                                    skill.provenance?.provider ?? skill.source,
+                                    skill.shadowed == true ? "superseded by your copy" : nil,
+                                    skill.allowImplicitInvocation == false ? "explicit only" : "automatic or explicit",
+                                ].compactMap { $0 }.joined(separator: " · "))
                                     .font(.system(size: 8)).foregroundStyle(LocusTheme.muted)
                             }
                             Spacer()
-                            if skill.source == "imported" {
+                            if skill.source == "imported" || skill.builtin == true {
                                 Button(skill.enabled ? "Disable" : "Enable") {
                                     Task { await model.setSkill(skill.id, enabled: !skill.enabled, scope: "global") }
                                 }
-                                Button("Remove", role: .destructive) {
-                                    Task { await model.removeSkill(skill.id) }
+                                if skill.source == "imported" {
+                                    Button("Remove", role: .destructive) {
+                                        Task { await model.removeSkill(skill.id) }
+                                    }
                                 }
                             } else {
                                 Text(skill.enabled ? "Enabled" : "Managed by plugin")
@@ -589,6 +661,26 @@ private struct ExtensionsSettingsView: View {
         case "connected": LocusTheme.success
         case "connecting": LocusTheme.warning
         default: LocusTheme.coral
+        }
+    }
+
+    private func connectPreset(_ preset: ExtensionMCPPreset, projectRef: String) {
+        Task {
+            guard let server = await model.materializeMCPPreset(preset, projectRef: projectRef) else {
+                return
+            }
+            let probe: @MainActor () async -> Void = {
+                if await model.testMCPServer(server.id) {
+                    enableAfterProbe = server
+                }
+            }
+            if server.auth == "auto" || server.auth == "oauth" {
+                model.authenticateMCPServer(server) { success in
+                    if success { Task { await probe() } }
+                }
+            } else {
+                await probe()
+            }
         }
     }
 
@@ -681,6 +773,97 @@ private struct PluginTrustReviewView: View {
     }
 }
 
+private struct MCPPresetReviewView: View {
+    @Environment(\.dismiss) private var dismiss
+    let preset: ExtensionMCPPreset
+    let connect: (String) -> Void
+    @State private var projectRef = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            Text("Review \(preset.displayName) connection")
+                .font(.system(size: 16, weight: .bold))
+            Text(preset.description)
+                .font(.system(size: 10))
+                .foregroundStyle(LocusTheme.muted)
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 7) {
+                GridRow { Text("Host"); Text(URL(string: preset.url)?.host ?? preset.url) }
+                if let source = preset.sourceURL, let sourceURL = URL(string: source) {
+                    GridRow { Text("Source"); Link("Publisher documentation", destination: sourceURL) }
+                }
+                GridRow {
+                    Text("Sign-in")
+                    Text(preset.auth == "auto" ? "OAuth discovery with PKCE" : "Not required")
+                }
+                GridRow {
+                    Text("Scopes")
+                    Text(preset.scopes.isEmpty ? "Chosen by the provider during sign-in" : preset.scopes.joined(separator: ", "))
+                }
+                GridRow { Text("Tools"); Text("Use safety annotations") }
+                GridRow { Text("Resources"); Text(preset.resourcesDiscoverable ? "Discoverable" : "Disabled") }
+                GridRow { Text("Prompts"); Text(preset.promptsEnabled ? "Allowed" : "Disabled") }
+            }
+            .font(.system(size: 9))
+            if preset.requiresProjectRef == true {
+                TextField("Supabase project reference", text: $projectRef)
+                    .textFieldStyle(.roundedBorder)
+                Text("The initial URL is project-scoped and read-only. Write access requires an explicit later edit.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            Label(preset.warning, systemImage: "hand.raised.fill")
+                .font(.system(size: 9))
+                .foregroundStyle(LocusTheme.warning)
+            Text("Continue copies this versioned template into your settings while it is disabled. Locus then signs in if needed, probes the server, and asks once more before enabling it.")
+                .font(.system(size: 9))
+                .foregroundStyle(LocusTheme.muted)
+            Spacer()
+            HStack {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                Button("Continue") { connect(projectRef) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(LocusTheme.ink)
+                    .disabled(preset.requiresProjectRef == true && projectRef.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(18)
+        .frame(width: 500, height: 430)
+        .background(LocusTheme.panel)
+    }
+}
+
+private struct MCPEnableReviewView: View {
+    @Environment(\.dismiss) private var dismiss
+    let server: ExtensionMCPServer
+    let enable: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            Label("Connection verified", systemImage: "checkmark.shield.fill")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(LocusTheme.success)
+            Text("\(server.name) completed its tool probe. Enable it now, or keep the reviewed server disabled in Settings.")
+                .font(.system(size: 10))
+            Text("The default policy uses MCP safety annotations. Resources are discoverable; server prompts remain disabled until you explicitly allow them.")
+                .font(.system(size: 9))
+                .foregroundStyle(LocusTheme.muted)
+            Spacer()
+            HStack {
+                Button("Keep disabled") { dismiss() }
+                Spacer()
+                Button("Enable for this workspace") { enable("workspace") }
+                Button("Enable everywhere") { enable("global") }
+                    .buttonStyle(.borderedProminent)
+                    .tint(LocusTheme.ink)
+            }
+        }
+        .padding(18)
+        .frame(width: 480, height: 240)
+        .background(LocusTheme.panel)
+    }
+}
+
 private struct MCPServerEditorView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -729,7 +912,8 @@ private struct MCPServerEditorView: View {
                     Text("None").tag("none")
                     Text("Bearer token").tag("bearer")
                     Text("Custom header").tag("headers")
-                    Text("OAuth 2.0 (PKCE)").tag("oauth")
+                    Text("OAuth (automatic discovery + PKCE)").tag("auto")
+                    Text("OAuth (manual endpoints + PKCE)").tag("oauth")
                 }
                 if auth == "oauth" {
                     TextField("Issuer (optional; discovers endpoints)", text: $issuer)
@@ -737,6 +921,9 @@ private struct MCPServerEditorView: View {
                     TextField("Token endpoint", text: $tokenEndpoint)
                     TextField("Client ID", text: $clientID)
                     TextField("Scopes, separated by spaces", text: $scopes)
+                } else if auth == "auto" {
+                    TextField("Client ID or metadata document URL (optional)", text: $clientID)
+                    TextField("Requested scopes, separated by spaces (optional)", text: $scopes)
                 }
                 Picker("Default tool policy", selection: $approval) {
                     Text("Use safety annotations").tag("annotations")
@@ -759,7 +946,7 @@ private struct MCPServerEditorView: View {
                         "default_tools_approval_mode": approval,
                     ]
                     if let server { body["id"] = server.id }
-                    if auth == "oauth" {
+                    if auth == "oauth" || auth == "auto" {
                         body["oauth"] = [
                             "issuer": issuer,
                             "authorization_endpoint": authorizationEndpoint,
@@ -812,14 +999,14 @@ private struct MCPCredentialView: View {
                 TextField(server.transport == "stdio" ? "Environment variable" : "Header name", text: $fieldName)
             }
             SecureField(server.auth == "bearer" ? "Bearer token" : "Secret value", text: $secret)
-            Text("The value is written to \(CredentialStore.displayPath), readable only by your macOS user account, and sent to the local agent only in memory.")
+            Text("The value is stored in \(MCPCredentialStore.displayName), readable only by your macOS user account. Only the current access token or header is sent to the local agent in memory; OAuth registrations and refresh tokens stay native.")
                 .font(.system(size: 9)).foregroundStyle(LocusTheme.muted)
             HStack {
                 Button("Cancel") { dismiss() }
                 Spacer()
                 Button("Save") {
                     let values: [String: Any]
-                    if server.auth == "bearer" {
+                    if server.auth == "bearer" || server.authFallback == "bearer" {
                         values = ["access_token": secret]
                     } else if server.transport == "stdio" {
                         values = ["env": [fieldName: secret]]
@@ -836,6 +1023,9 @@ private struct MCPCredentialView: View {
         .padding(18)
         .frame(width: 420, height: 210)
         .background(LocusTheme.panel)
+        .onAppear {
+            fieldName = server.optionalHeader ?? server.fallbackHeader ?? "Authorization"
+        }
     }
 }
 
@@ -1200,6 +1390,17 @@ struct SettingsView: View {
                 Text("Solo and team choices are independent. Choosing “Ask the first time” shows the matching explanation when that kind of request is first sent.")
                     .font(.system(size: 9))
                     .foregroundStyle(LocusTheme.muted)
+            }
+
+            Section("Terminal") {
+                TextField("Shell executable (optional)", text: $draft.terminalShell)
+                    .accessibilityIdentifier("settings.terminalShell")
+                Toggle("Start as a login shell", isOn: $draft.terminalLoginShell)
+                    .accessibilityIdentifier("settings.terminalLoginShell")
+                Text("Leave the executable empty to use $SHELL and then /bin/zsh. The terminal runs with your direct input and is separate from agent command permissions.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("Local agent") {

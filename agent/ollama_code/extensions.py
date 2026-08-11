@@ -18,7 +18,7 @@ import threading
 import uuid
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import requests
 
@@ -33,6 +33,19 @@ MAX_SKILL_RESOURCE_BYTES = 8 * 1024 * 1024
 MAX_MARKETPLACE_BYTES = 4 * 1024 * 1024
 MAX_GIT_OUTPUT = 16_000
 MAX_OAUTH_METADATA_BYTES = 1024 * 1024
+BUILTIN_SKILLS_ROOT = Path(__file__).resolve().parent / "builtin_skills"
+
+def _load_mcp_catalog() -> tuple[int, tuple[dict[str, Any], ...]]:
+    """Load the immutable catalog bundled with this exact app/backend build."""
+    path = Path(__file__).resolve().parent / "catalogs/mcp-presets-v1.json"
+    value = _read_json(path, 256 * 1024)
+    version = value.get("version")
+    presets = value.get("presets")
+    if version != 1 or not isinstance(presets, list) or len(presets) != 5 \
+            or any(not isinstance(item, dict) for item in presets):
+        raise RuntimeError("the bundled MCP preset catalog is invalid")
+    return version, tuple(dict(item) for item in presets)
+
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,79}$")
 _GITHUB_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:@[^/]+)?$")
@@ -69,6 +82,11 @@ def _read_json(path: Path, limit: int) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ExtensionError(f"{path} must contain a JSON object")
     return value
+
+
+# Merely loading this local catalog performs no network I/O. A user must review
+# and materialize a preset before the MCP runtime can see it.
+MCP_CATALOG_VERSION, MCP_PRESETS = _load_mcp_catalog()
 
 
 def _inside(root: Path, candidate: Path) -> bool:
@@ -330,8 +348,8 @@ def _normalize_mcp_config(raw: dict[str, Any]) -> dict[str, Any]:
         "redirect_uri": str(oauth_raw.get("redirect_uri") or "locus://mcp/oauth"),
     }
     auth = str(raw.get("auth") or ("bearer" if raw.get("bearer_token_env_var") else "none")).lower()
-    if auth not in {"none", "bearer", "headers", "oauth"}:
-        raise ExtensionError("MCP auth must be none, bearer, headers, or oauth")
+    if auth not in {"none", "bearer", "headers", "oauth", "auto"}:
+        raise ExtensionError("MCP auth must be none, bearer, headers, oauth, or auto")
     if auth == "oauth":
         if oauth["issuer"]:
             issuer = urlparse(oauth["issuer"])
@@ -382,7 +400,7 @@ def _normalize_mcp_config(raw: dict[str, Any]) -> dict[str, Any]:
         "tools": [],
         "requires_auth": auth != "none" or bool(raw.get("bearer_token_env_var")),
         "auth": auth,
-        "oauth": oauth if auth == "oauth" else None,
+        "oauth": oauth if auth in {"oauth", "auto"} else None,
     }
 
 
@@ -460,10 +478,11 @@ class ExtensionManager:
     @staticmethod
     def _defaults() -> dict[str, Any]:
         return {
-            "version": 1,
+            "version": 2,
             "marketplaces": [],
             "plugins": [],
             "standalone_skills": [],
+            "builtin_skill_overrides": [],
             "mcp_servers": [],
             "mcp_policies": {},
         }
@@ -489,7 +508,10 @@ class ExtensionManager:
                 "Installed extensions are not listed."
             )
             return defaults
-        for key in ("marketplaces", "plugins", "standalone_skills", "mcp_servers"):
+        for key in (
+            "marketplaces", "plugins", "standalone_skills",
+            "builtin_skill_overrides", "mcp_servers",
+        ):
             if isinstance(value.get(key), list):
                 defaults[key] = value[key]
             elif key in value:
@@ -584,6 +606,7 @@ class ExtensionManager:
                 "plugins": [self._plugin_view(item) for item in self._state["plugins"]],
                 "skills": skills,
                 "mcp_servers": [self._public_server(server) for server in servers],
+                "mcp_presets": self.mcp_presets(),
                 "errors": list(self._errors),
             }
 
@@ -1118,6 +1141,39 @@ class ExtensionManager:
             except ExtensionError as exc:
                 errors.append(self._skill_error(str(plugin.get("name") or "plugin"), "plugin", str(exc)))
         records.extend(self._repo_skills(workspace))
+        # A user-controlled copy always wins by name. The built-in remains in
+        # Settings for provenance and toggling, but is suppressed from the
+        # agent index so an unqualified invocation cannot become ambiguous.
+        user_names = {str(item.get("name")) for item in records if not item.get("error")}
+        for skill_file in sorted(BUILTIN_SKILLS_ROOT.glob("*/SKILL.md")):
+            try:
+                parsed = parse_skill(skill_file, source="builtin")
+                parsed["id"] = f"builtin:{parsed['name']}"
+                override = next(
+                    (
+                        item for item in self._state["builtin_skill_overrides"]
+                        if item.get("id") == parsed["id"]
+                    ),
+                    None,
+                ) or {
+                    "id": parsed["id"],
+                    "enabled_global": True,
+                    "enabled_workspaces": [],
+                    "disabled_workspaces": [],
+                }
+                parsed["enabled"] = self._active(override, workspace) \
+                    and parsed["name"] not in user_names
+                parsed["enabled_global"] = bool(override.get("enabled_global", True))
+                parsed["enabled_workspaces"] = list(override.get("enabled_workspaces") or [])
+                parsed["disabled_workspaces"] = list(override.get("disabled_workspaces") or [])
+                parsed["builtin"] = True
+                parsed["shadowed"] = parsed["name"] in user_names
+                metadata_path = skill_file.parent / "SOURCE.json"
+                parsed["provenance"] = _read_json(metadata_path, 64_000) \
+                    if metadata_path.is_file() else {}
+                records.append(parsed)
+            except ExtensionError as exc:
+                errors.append(self._skill_error(skill_file.parent.name, "builtin", str(exc)))
         # Namespaced ids remain unique. Unnamespaced duplicates are retained
         # in the UI, but explicit lookup requires the source-qualified id.
         seen: set[str] = set()
@@ -1180,7 +1236,8 @@ class ExtensionManager:
             policy = " [explicit invocation only]" if not skill.get("allow_implicit_invocation", True) else ""
             path = str(skill.get("path") or "")
             location = f" ({path})" if path else ""
-            line = f"- ${skill['id']}{policy}{location}: {skill['description']}"
+            invocation = skill["name"] if skill.get("builtin") else skill["id"]
+            line = f"- ${invocation}{policy}{location}: {skill['description']}"
             if len("\n".join([*lines, line])) > limit:
                 lines.append("- … additional skills omitted to protect the context window")
                 break
@@ -1188,7 +1245,14 @@ class ExtensionManager:
         return "\n".join(lines) if len(lines) > 1 else ""
 
     def explicit_skill_ids(self, text: str, workspace: str = "") -> list[str]:
-        available = {str(item["id"]).lower(): str(item["id"]) for item in self.skills(workspace) if item.get("enabled")}
+        enabled = [item for item in self.skills(workspace) if item.get("enabled")]
+        available = {str(item["id"]).lower(): str(item["id"]) for item in enabled}
+        by_name: dict[str, list[str]] = {}
+        for item in enabled:
+            by_name.setdefault(str(item["name"]).lower(), []).append(str(item["id"]))
+        for name, identifiers in by_name.items():
+            if len(identifiers) == 1:
+                available[name] = identifiers[0]
         return [available[name.lower()] for name in _SKILL_MENTION_RE.findall(text) if name.lower() in available]
 
     def load_skill(self, identifier: str, workspace: str = "") -> str:
@@ -1246,12 +1310,95 @@ class ExtensionManager:
                 None,
             )
             if not record:
-                raise ExtensionError("only imported standalone skills can be enabled directly")
+                builtin_name = identifier.removeprefix("builtin:")
+                builtin_id = f"builtin:{builtin_name}"
+                builtin = BUILTIN_SKILLS_ROOT / builtin_name / "SKILL.md"
+                if not builtin.is_file():
+                    raise ExtensionError("only imported or built-in skills can be enabled directly")
+                record = next(
+                    (
+                        item for item in self._state["builtin_skill_overrides"]
+                        if item.get("id") == builtin_id
+                    ),
+                    None,
+                )
+                if record is None:
+                    record = {
+                        "id": builtin_id,
+                        "enabled_global": True,
+                        "enabled_workspaces": [],
+                        "disabled_workspaces": [],
+                    }
+                    self._state["builtin_skill_overrides"].append(record)
             self._set_scope(record, enabled, scope, workspace)
             self._save()
-        return next(item for item in self.skills(workspace) if item["id"] == identifier)
+        resolved = identifier if identifier.startswith("builtin:") else f"builtin:{identifier}"
+        return next(item for item in self.skills(workspace) if item["id"] in {identifier, resolved})
 
     # ----------------------------------------------------------- MCP configs
+
+    def mcp_presets(self) -> list[dict[str, Any]]:
+        """Return the inert bundled catalog with materialization provenance."""
+        installed = {
+            str(item.get("preset_id")): str(item.get("id"))
+            for item in self._state["mcp_servers"]
+            if item.get("preset_id")
+        }
+        return [
+            {
+                **preset,
+                "catalog_version": MCP_CATALOG_VERSION,
+                "installed": preset["id"] in installed,
+                "server_id": installed.get(str(preset["id"])),
+                "default_tools_approval_mode": "annotations",
+                "resources_discoverable": True,
+                "prompts_enabled": False,
+            }
+            for preset in MCP_PRESETS
+        ]
+
+    def materialize_mcp_preset(
+        self,
+        preset_id: str,
+        *,
+        project_ref: str = "",
+    ) -> dict[str, Any]:
+        """Copy a reviewed preset into editable, disabled user state once."""
+        preset = next((item for item in MCP_PRESETS if item["id"] == preset_id), None)
+        if not preset:
+            raise ExtensionError("recommended MCP preset not found")
+        existing = next(
+            (item for item in self._state["mcp_servers"] if item.get("preset_id") == preset_id),
+            None,
+        )
+        if existing:
+            return self._public_server(existing)
+
+        url = str(preset["url"])
+        if preset.get("requires_project_ref"):
+            scoped = project_ref.strip()
+            if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{3,79}", scoped):
+                raise ExtensionError("Supabase setup requires a valid project reference")
+            url = f"{url}?{urlencode({'project_ref': scoped, 'read_only': 'true'})}"
+        identifier = f"user:{preset_id}:preset"
+        return self.upsert_mcp_server({
+            "name": preset["name"],
+            "url": url,
+            "auth": preset["auth"],
+            "enabled": True,
+            "enabled_global": False,
+            "default_tools_approval_mode": "annotations",
+            "enabled_prompts": [],
+            "preset_id": preset_id,
+            "auth_fallback": preset.get("fallback"),
+            "fallback_header": preset.get("fallback_header"),
+            "optional_header": preset.get("optional_header"),
+            "preset_provenance": {
+                "catalog_version": MCP_CATALOG_VERSION,
+                "template_url": preset["url"],
+                "source_url": preset.get("source_url"),
+            },
+        }, server_id=identifier)
 
     def mcp_servers(self, workspace: str = "") -> list[dict[str, Any]]:
         workspace = self._workspace(workspace)
@@ -1302,6 +1449,12 @@ class ExtensionManager:
             if isinstance(raw.get("enabled_workspaces"), list) else [],
             "disabled_workspaces": [str(value) for value in raw.get("disabled_workspaces", [])]
             if isinstance(raw.get("disabled_workspaces"), list) else [],
+            "preset_id": str(raw.get("preset_id") or "") or None,
+            "auth_fallback": str(raw.get("auth_fallback") or "") or None,
+            "fallback_header": str(raw.get("fallback_header") or "") or None,
+            "optional_header": str(raw.get("optional_header") or "") or None,
+            "preset_provenance": dict(raw.get("preset_provenance") or {})
+            if isinstance(raw.get("preset_provenance"), dict) else {},
         }
         with self._guard:
             self._state["mcp_servers"] = [
@@ -1379,10 +1532,10 @@ class ExtensionManager:
             server.get("id") == server_id for server in self.mcp_servers()
         ):
             raise ExtensionError("MCP server not found")
-        allowed = {
-            "access_token", "refresh_token", "expires_at", "token_endpoint", "client_id",
-            "client_secret", "headers", "env",
-        }
+        # Registration records, client secrets, and refresh tokens are native
+        # Keychain-only material. Reject them at this boundary as defense in
+        # depth even if a future client accidentally includes them.
+        allowed = {"access_token", "headers", "env"}
         self._credential_values[server_id] = {
             key: value for key, value in values.items() if key in allowed
         }

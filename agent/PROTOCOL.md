@@ -125,10 +125,10 @@ still gate it. Results report pass rate, rubric score, median/p95 latency,
 calls, tokens, estimated cost, and retry/failure evidence through the existing
 global scheduler.
 
-### Workspace knowledge
+### Memory and workspace knowledge
 
-`/api/knowledge` exposes status/settings, bounded search, reindex/full or
-changed-path updates, and approved-memory CRUD. Each canonical workspace owns
+`/api/knowledge` exposes status/settings, bounded search, and reindex/full or
+changed-path updates. Each canonical workspace owns
 a separate SQLite FTS5 database. Indexing follows Git ignores, refuses
 symlinks, hidden/build/vendor paths, binary or over-2-MB files, and common
 credential/key/certificate/environment-secret names. Content hashes make
@@ -138,10 +138,24 @@ Selecting a local Ollama embedding model creates a new vector generation and
 uses only a loopback Ollama `/api/embed`; text search remains available if
 embedding fails. Settings may add exclusion globs without weakening the hard
 secret and symlink exclusions. `search_workspace_knowledge` returns bounded snippets with canonical
-relative path, line range, freshness, and text/vector/approved-memory source.
+relative path, line range, freshness, and text/vector source.
 Every result is labelled untrusted and cannot alter instructions, permissions,
-or team membership. Memory is written only by explicit Remember, `/remember`,
-or the memory editor. `DELETE /api/knowledge` removes index and memories only.
+or team membership.
+
+`/api/memory` is the separate local memory vault. Payloads are authenticated
+with AES-256-GCM; the native app keeps the master key in the macOS Keychain and
+passes it over the one-shot startup pipe, never in arguments or the environment.
+Records are `personal`, `workspace`, or `agent` scoped and either `candidate`
+or `approved`. Candidate suggestions expire after 30 days and are never used
+for recall until `POST /api/memory/{id}/approve`. Manual Remember creates an
+approved record. List/search/update/delete, delete-all, and versioned JSON
+export/import are explicit REST operations. Exports are intentionally readable
+JSON; the on-disk vault remains ciphertext. Existing plaintext workspace notes
+are encrypted and removed from the legacy table only after a successful
+migration. Just Chat may receive relevant personal and agent memory but never
+workspace memory. Automatic recall is bounded by each agent's memory policy;
+`search_memory` provides explicit approved-memory lookup and `propose_memory`
+can add only an Inbox candidate.
 
 ### Modern MCP catalogs, tasks, and input
 
@@ -510,7 +524,7 @@ The extension surface shares one error and concurrency contract:
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/extensions` | Full snapshot: plugins, skills, MCP servers, marketplaces, and any load `errors`. A non-empty `errors` means the lists may be partial. |
+| GET | `/api/extensions` | Full snapshot: plugins, built-in/imported skills with provenance, MCP servers, inert recommended presets, marketplaces, and any load `errors`. A non-empty `errors` means the lists may be partial. |
 | GET | `/api/extensions/catalog` | Catalog entries; optional `query` and `marketplace_id` filters. |
 | GET | `/api/extensions/catalog/trust` | Trust review of one catalog plugin before installing it. Requires both `marketplace_id` and `plugin` query parameters. |
 | POST | `/api/extensions/marketplaces` | Add a marketplace source. |
@@ -525,12 +539,13 @@ The extension surface shares one error and concurrency contract:
 | POST | `/api/extensions/skills/enable` | Enable or disable a skill. |
 | DELETE | `/api/extensions/skills/{skill_id:path}` | Remove a skill. |
 | POST | `/api/extensions/mcp` | Create or update an MCP server. `transport` is `"streamable_http"` or `"stdio"` — note the underscore. |
+| POST | `/api/extensions/mcp/presets/materialize` | Idempotently copy one reviewed preset into a normal user-editable server that is disabled globally. Supabase also requires `project_ref`. |
 | POST | `/api/extensions/mcp/enable` | Enable or disable a server. |
 | POST | `/api/extensions/mcp/test` | Probe a server's connectivity. |
 | POST | `/api/extensions/mcp/reconnect` | Drop and re-establish a server's session. |
 | POST | `/api/extensions/mcp/policy` | Set a server's default tool-approval mode. |
-| POST | `/api/extensions/mcp/credentials` | Hand transient credentials to the agent. Secrets are held in memory only — the app stores them in its own credential file (`~/.locus/auth.json`, mode 0600, or the equivalent inside the app container in the sandboxed build) and replays them here. |
-| DELETE | `/api/extensions/mcp/{server_id:path}` | Remove a server. Clients must also delete the matching credential-file entry. |
+| POST | `/api/extensions/mcp/credentials` | Hand only the current access token/header/environment credential to the agent. OAuth registrations, client secrets, and refresh tokens remain in the native client's user-only credential file and never enter this endpoint. |
+| DELETE | `/api/extensions/mcp/{server_id:path}` | Remove a server. Clients must also delete the matching native credential-file entry. |
 
 `stdio` transport is refused when the agent is sandboxed, so App Store builds
 can only use remote servers.
@@ -553,8 +568,7 @@ Endpoint: `/ws/chat`.
   ("Agent is busy — press Stop first."). This includes `user_message`,
   `new_session`, `retry_last`, `compact`, `resume`, `set_model`, `set_cwd`,
   `set_permission_mode`, and `clear`. Only `interrupt`, permission decisions,
-  `steer`, native computer-action results, heartbeat traffic, and independent
-  console operations remain accepted.
+  `steer`, native computer-action results, and heartbeat traffic remain accepted.
 
 ---
 
@@ -562,7 +576,7 @@ Endpoint: `/ws/chat`.
 
 | `type` | Extra fields | Effect |
 |---|---|---|
-| `user_message` | `text: string`, optional `mode: "ask" \| "work" \| "plan" \| "build"`, optional `attachments`, optional `team` manifest | Runs one solo or dispatcher-led team turn. Existing modes remain compatible. A team manifest contains one explicit team, its enabled profiles and ephemeral routes, optional forced member, and bounded budgets. Credentials are accepted only in memory and are never echoed or persisted. Slash commands and Chat mode reject team routing. Image `attachments` are valid in **every** mode: PNG/JPEG/GIF/WebP, at most 10 per message, 15 MB per image, 25 MB in total, base64 `data` with a `mime_type` and optional `name`. They ride the turn in memory only — the persisted session record keeps the text and attachment names, never image bytes, so a restored or resumed conversation carries no images. On a team turn the images reach the dispatcher and the first coding job's first slice; specialists, reviewers, and synthesis receive text evidence only, and the server emits a `note` event saying so before dispatch. A provider that explicitly rejects image input triggers one automatic retry with the images stripped from history, announced by a `note`. |
+| `user_message` | `text: string`, optional `mode: "ask" \| "work" \| "plan" \| "build"`, optional versioned `agent_config`, optional `attachments`, optional `team` manifest | Runs one solo or dispatcher-led team turn. `agent_config` controls editable display identity, description, response style, custom/per-mode guidance, narrowing capability switches, memory policy, and runtime limits. It is snapshotted for the complete turn; factual provider/model identity, safety rules, permission policy, and mode boundaries remain locked runtime layers. Existing clients may omit it. A team manifest contains one explicit team, its enabled profiles and ephemeral routes, optional forced member, and bounded budgets; each profile may carry the same additive `behavior` object. Credentials are accepted only in memory and are never echoed or persisted. Slash commands and Chat mode reject team routing. Image `attachments` are valid in **every** mode: PNG/JPEG/GIF/WebP, at most 10 per message, 15 MB per image, 25 MB in total, base64 `data` with a `mime_type` and optional `name`. They ride the turn in memory only — the persisted session record keeps the text and attachment names, never image bytes, so a restored or resumed conversation carries no images. On a team turn the images reach the dispatcher and the first coding job's first slice; specialists, reviewers, and synthesis receive text evidence only, and the server emits a `note` event saying so before dispatch. A provider that explicitly rejects image input triggers one automatic retry with the images stripped from history, announced by a `note`. |
 | `permission_decision` | `request_id: string`, `decision: "once" \| "always" \| "deny"` | Answers a `permission_request`. Unknown/invalid values are treated as `deny`. Late answers are ignored. |
 | `interrupt` | — | Soft-interrupts the current turn: streaming stops after the current chunk, pending permission waits are denied, turn ends with `turn_done {reason: "interrupted"}`. Safe to send when idle. |
 | `steer` | `text: string` | Adds direction to the active turn. It interrupts only the current provider generation, waits for an already-running tool/native action to reach a safe boundary, and continues the same turn without an intermediate `turn_done`. |
@@ -578,10 +592,6 @@ Endpoint: `/ws/chat`.
 | `retry_last` | — | Creates a new branch through the latest user message, preserving the original session, then regenerates the response. Emits `session_started {reason: "retry"}` before streaming. |
 | `compact` | — | Summarizes history to free context (runs as a background slash command). Ends with `slash_result {command: "compact"}`. Rejected when busy. |
 | `resume` | `session_id: string` | Resumes a saved session. Ends with `slash_result {command: "resume", data: {messages: [...]}}`. Rejected when busy. |
-| `terminal_run` | `command`, optional `cwd`, `run_id`, `timeout` | Starts one independent console command. It does not occupy the chat turn slot. |
-| `terminal_input` | `run_id`, `text`, optional `newline` | Sends stdin to the active console command. |
-| `terminal_close_stdin` | `run_id` | Closes that command's stdin. |
-| `terminal_cancel` | `run_id`, optional `force` | Sends a graceful cancel, or a force kill when requested. |
 | `ping` | — | Emits `pong`; used as an ordering sentinel. |
 
 A team budget may include `call_budget_mode: "automatic" | "fixed"`.
@@ -871,17 +881,10 @@ Ends a slash command (`/help`, `/model`, `/clear`, `/compact`, `/init`,
 `todos` for todos, `sessions` for sessions, `summary` for compact, full
 session-info fields for status). `error: true` marks failures.
 
-### Console and heartbeat events
+### Heartbeat event
 
-- `terminal_state {runs: [...]}` is sent on every WebSocket connection.
-- `terminal_started` carries `run_id`, command, cwd, pid, shell, timeout,
-  `started_at`, and `resumed`.
-- `terminal_output` carries `run_id`, monotonically increasing `seq`, `text`,
-  and optionally `gap` on reconnect replay.
-- `terminal_exit` carries `run_id`, nullable `exit_code`, signal, reason,
-  duration, truncation, and byte counts.
-- `terminal_error` carries `run_id`, stable `code`, and `message`.
-- `pong` has no additional fields.
+- `pong` has no additional fields. The native terminal owns its PTY and has no
+  WebSocket messages or persisted task-history records.
 
 ---
 

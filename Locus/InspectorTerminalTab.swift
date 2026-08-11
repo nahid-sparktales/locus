@@ -1,168 +1,134 @@
 import SwiftUI
 
-/// A command console for the workspace. Output streams live; a command can be
-/// cancelled and can be answered when it asks a question.
+/// A persistent, app-owned terminal for the active workspace.
 struct InspectorTerminalTab: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        // The session is observed here rather than on AppModel so streaming
-        // output redraws only this panel.
-        TerminalPanel(terminal: model.terminal, workspacePath: model.workspacePath)
+        TerminalPanel(terminal: model.terminal)
+            .environmentObject(model)
     }
 }
 
 private struct TerminalPanel: View {
+    @EnvironmentObject private var model: AppModel
     @ObservedObject var terminal: TerminalSession
-    let workspacePath: String
-    @FocusState private var commandFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
-            if terminal.isEmpty {
-                InspectorPlaceholder(
-                    symbol: "terminal",
-                    title: "Console",
-                    message: "Run a command in \(URL(fileURLWithPath: workspacePath).lastPathComponent). Output streams here as it happens.\n\nThis is not a full terminal: interactive apps like vim and top will not work.",
-                    identifier: "terminal.empty"
-                )
-            } else {
-                output
-            }
-
-            if terminal.isRunning {
-                stdinBar
-            }
-            commandBar
-        }
-    }
-
-    private var output: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    ForEach(terminal.lines) { line in
-                        Text(line.text.isEmpty ? " " : line.text)
-                            .font(.system(size: 9, design: .monospaced))
-                            .foregroundStyle(color(for: line))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .id(line.id)
+            header
+            TerminalHostView(terminal: terminal)
+                .accessibilityIdentifier("terminal.output")
+                .overlay {
+                    if let message = terminal.errorMessage {
+                        ContentUnavailableView(
+                            "Terminal unavailable",
+                            systemImage: "terminal",
+                            description: Text(message)
+                        )
+                        .background(LocusTheme.paperDeep)
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-            }
-            .accessibilityIdentifier("terminal.output")
-            .onChange(of: terminal.lines.count) {
-                if let last = terminal.lines.last {
-                    proxy.scrollTo(last.id, anchor: .bottom)
-                }
-            }
-        }
-    }
-
-    private var stdinBar: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "chevron.right")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(LocusTheme.muted)
-            TextField("Answer a prompt…", text: $terminal.stdinDraft)
-                .textFieldStyle(.plain)
-                .font(.system(size: 9, design: .monospaced))
-                .onSubmit { terminal.sendInput(terminal.stdinDraft) }
-                .accessibilityIdentifier("terminal.stdin")
-            Button("Send") { terminal.sendInput(terminal.stdinDraft) }
-                .buttonStyle(.plain)
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(LocusTheme.muted)
-                .disabled(terminal.stdinDraft.isEmpty)
-                .accessibilityIdentifier("terminal.stdin.send")
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 30)
-        .background(LocusTheme.white.opacity(0.6))
-        .overlay(alignment: .top) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
-        }
-    }
-
-    private var commandBar: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 7) {
-                Text("$")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
-
-                TextField("git status", text: $terminal.draft)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 10, design: .monospaced))
-                    .focused($commandFocused)
-                    .disabled(terminal.isRunning)
-                    .onSubmit { terminal.run(terminal.draft) }
-                    .accessibilityIdentifier("terminal.command")
-
-                if terminal.isRunning {
-                    ProgressView().controlSize(.small)
-                    Button {
-                        terminal.cancel()
-                    } label: {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 9))
-                            .foregroundStyle(Color.white)
-                            .frame(width: 22, height: 22)
-                            .background(LocusTheme.coral)
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Stop the command")
-                    .accessibilityLabel("Stop command")
-                    .accessibilityIdentifier("terminal.cancel")
-                } else {
-                    Button {
-                        terminal.run(terminal.draft)
-                    } label: {
-                        Image(systemName: "return")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(
-                                terminal.draft.isEmpty ? LocusTheme.muted : LocusTheme.ink
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(terminal.draft.isEmpty)
-                    .help("Run")
-                    .accessibilityLabel("Run command")
-                    .accessibilityIdentifier("terminal.run")
-                }
-
-                if !terminal.isEmpty {
-                    Button {
-                        terminal.clear()
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 9))
-                            .foregroundStyle(LocusTheme.muted)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Clear the console")
-                    .accessibilityLabel("Clear console")
-                    .accessibilityIdentifier("terminal.clear")
-                }
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 40)
         }
         .background(LocusTheme.paperDeep)
-        .overlay(alignment: .top) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+        .onAppear {
+            configure()
+            terminal.ensureStarted()
+            terminal.focus()
+        }
+        .onChange(of: model.workspacePath) { configure() }
+        .onChange(of: model.settings.terminalShell) { configure() }
+        .onChange(of: model.settings.terminalLoginShell) { configure() }
+        .confirmationDialog(
+            "A program is still running",
+            isPresented: Binding(
+                get: { terminal.needsWorkspaceSwitchConfirmation },
+                set: { if !$0 { terminal.keepCurrentShell() } }
+            )
+        ) {
+            Button("Restart in the new workspace", role: .destructive) {
+                terminal.confirmWorkspaceSwitch()
+            }
+            Button("Keep the current shell", role: .cancel) {
+                terminal.keepCurrentShell()
+            }
+        } message: {
+            Text("Switching the terminal now will stop its foreground process. You can keep it running and restart the terminal later.")
         }
     }
 
-    private func color(for line: TerminalLine) -> Color {
-        switch line.kind {
-        case .command: LocusTheme.ink
-        case .output: LocusTheme.inkSoft
-        case .status: LocusTheme.muted
+    private var header: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(terminal.isRunning ? Color.green : LocusTheme.muted)
+                .frame(width: 6, height: 6)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(terminal.title)
+                    .font(.system(size: 9, weight: .semibold))
+                    .lineLimit(1)
+                Text(terminal.currentDirectory.isEmpty ? model.workspacePath : terminal.currentDirectory)
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundStyle(LocusTheme.muted)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 4)
+            if TerminalSession.isSandboxedBuild {
+                Label("Sandboxed", systemImage: "lock.fill")
+                    .font(.system(size: 7, weight: .semibold))
+                    .foregroundStyle(LocusTheme.warning)
+                    .help("This terminal inherits the App Store sandbox and can access only approved locations.")
+            }
+            terminalButton("magnifyingglass", help: "Find") { terminal.showFind() }
+            terminalButton("clear", help: "Clear scrollback") { terminal.clear() }
+            terminalButton("arrow.clockwise", help: "Restart shell") { terminal.restart() }
+            if terminal.isRunning {
+                terminalButton("stop.fill", help: "Terminate shell", destructive: true) {
+                    terminal.terminate()
+                }
+            }
         }
+        .padding(.horizontal, 10)
+        .frame(height: 38)
+        .background(LocusTheme.paperDeep)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LocusTheme.line).frame(height: 1)
+        }
+        .accessibilityIdentifier("terminal.header")
     }
+
+    private func terminalButton(
+        _ symbol: String,
+        help: String,
+        destructive: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(destructive ? LocusTheme.coral : LocusTheme.muted)
+                .frame(width: 22, height: 22)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+
+    private func configure() {
+        terminal.configure(
+            workspacePath: model.workspacePath,
+            shell: model.settings.terminalShell,
+            loginShell: model.settings.terminalLoginShell
+        )
+    }
+}
+
+private struct TerminalHostView: NSViewRepresentable {
+    @ObservedObject var terminal: TerminalSession
+
+    func makeNSView(context: Context) -> NSView {
+        terminal.hostView
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }

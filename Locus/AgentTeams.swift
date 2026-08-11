@@ -49,6 +49,222 @@ enum AgentAccessCeiling: String, Codable, CaseIterable, Identifiable {
     var canWrite: Bool { self != .readOnly }
 }
 
+enum AgentResponseTone: String, Codable, CaseIterable, Identifiable {
+    case balanced
+    case direct
+    case warm
+    case analytical
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+enum AgentResponseVerbosity: String, Codable, CaseIterable, Identifiable {
+    case concise
+    case balanced
+    case detailed
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+struct AgentResponseStyle: Codable, Hashable {
+    var tone: AgentResponseTone = .balanced
+    var verbosity: AgentResponseVerbosity = .balanced
+    var useMarkdown = true
+    var citeEvidence = true
+
+    private enum CodingKeys: String, CodingKey {
+        case tone, verbosity
+        case useMarkdown = "use_markdown"
+        case citeEvidence = "cite_evidence"
+    }
+}
+
+struct AgentModeOverlays: Codable, Hashable {
+    var ask = ""
+    var work = ""
+    var plan = ""
+    var build = ""
+
+    func instruction(for mode: WorkMode) -> String {
+        switch mode {
+        case .ask: ask
+        case .work: work
+        case .plan: plan
+        case .build: build
+        }
+    }
+}
+
+enum AgentMemoryScope: String, Codable, CaseIterable, Identifiable {
+    case personal
+    case workspace
+    case agent
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+struct AgentMemoryPolicy: Codable, Hashable {
+    var recallEnabled = true
+    var proposalsEnabled = true
+    var searchEnabled = true
+    var scopes: [AgentMemoryScope] = [.personal, .workspace, .agent]
+    var maxAutomaticMemories = 8
+    var maxAutomaticTokens = 1_200
+
+    private enum CodingKeys: String, CodingKey {
+        case scopes
+        case recallEnabled = "recall_enabled"
+        case proposalsEnabled = "proposals_enabled"
+        case searchEnabled = "search_enabled"
+        case maxAutomaticMemories = "max_automatic_memories"
+        case maxAutomaticTokens = "max_automatic_tokens"
+    }
+
+    mutating func clamp() {
+        var seen: Set<AgentMemoryScope> = []
+        scopes = scopes.filter { seen.insert($0).inserted }
+        maxAutomaticMemories = min(max(maxAutomaticMemories, 0), 20)
+        maxAutomaticTokens = min(max(maxAutomaticTokens, 0), 4_000)
+    }
+}
+
+/// User-selectable capabilities only narrow the runtime's locked permissions.
+/// Turning a switch on never grants access beyond the active mode, permission
+/// policy, team role, or profile access ceiling.
+struct AgentCapabilityPolicy: Codable, Hashable {
+    var workspaceRead = true
+    var workspaceWrite = true
+    var shell = true
+    var network = true
+    var mcp = true
+    var computerControl = true
+
+    private enum CodingKeys: String, CodingKey {
+        case shell, network, mcp
+        case workspaceRead = "workspace_read"
+        case workspaceWrite = "workspace_write"
+        case computerControl = "computer_control"
+    }
+}
+
+struct AgentRuntimePolicy: Codable, Hashable {
+    var maxToolIterations: Int? = nil
+    var timeoutSeconds: Int? = nil
+    var maxOutputTokens: Int? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case maxToolIterations = "max_tool_iterations"
+        case timeoutSeconds = "timeout_seconds"
+        case maxOutputTokens = "max_output_tokens"
+    }
+
+    mutating func clamp() {
+        if let value = maxToolIterations { maxToolIterations = min(max(value, 1), 100) }
+        if let value = timeoutSeconds { timeoutSeconds = min(max(value, 30), 3_600) }
+        if let value = maxOutputTokens { maxOutputTokens = min(max(value, 256), 128_000) }
+    }
+}
+
+/// Versioned behavior shared by the primary agent and every team profile.
+/// Provider/model identity is deliberately absent: the runtime supplies that
+/// factual, read-only layer when it composes the final system prompt.
+struct AgentBehavior: Codable, Hashable {
+    static let currentVersion = 1
+
+    var version = currentVersion
+    var displayName = "Locus"
+    var selfDescription = "A practical software engineering assistant."
+    var responseStyle = AgentResponseStyle()
+    var customInstructions = ""
+    var modeInstructions = AgentModeOverlays()
+    var capabilityPolicy = AgentCapabilityPolicy()
+    var memoryPolicy = AgentMemoryPolicy()
+    var runtimePolicy = AgentRuntimePolicy()
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case displayName = "display_name"
+        case selfDescription = "self_description"
+        case responseStyle = "response_style"
+        case customInstructions = "custom_instructions"
+        case modeInstructions = "mode_instructions"
+        case capabilityPolicy = "capability_policy"
+        case memoryPolicy = "memory_policy"
+        case runtimePolicy = "runtime_policy"
+    }
+
+    init(
+        version: Int = currentVersion,
+        displayName: String = "Locus",
+        selfDescription: String = "A practical software engineering assistant.",
+        responseStyle: AgentResponseStyle = .init(),
+        customInstructions: String = "",
+        modeInstructions: AgentModeOverlays = .init(),
+        capabilityPolicy: AgentCapabilityPolicy = .init(),
+        memoryPolicy: AgentMemoryPolicy = .init(),
+        runtimePolicy: AgentRuntimePolicy = .init()
+    ) {
+        self.version = version
+        self.displayName = displayName
+        self.selfDescription = selfDescription
+        self.responseStyle = responseStyle
+        self.customInstructions = customInstructions
+        self.modeInstructions = modeInstructions
+        self.capabilityPolicy = capabilityPolicy
+        self.memoryPolicy = memoryPolicy
+        self.runtimePolicy = runtimePolicy
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            version: (try? container.decode(Int.self, forKey: .version)) ?? Self.currentVersion,
+            displayName: (try? container.decode(String.self, forKey: .displayName)) ?? "Locus",
+            selfDescription: (try? container.decode(String.self, forKey: .selfDescription))
+                ?? "A practical software engineering assistant.",
+            responseStyle: (try? container.decode(AgentResponseStyle.self, forKey: .responseStyle))
+                ?? .init(),
+            customInstructions: (try? container.decode(String.self, forKey: .customInstructions)) ?? "",
+            modeInstructions: (try? container.decode(AgentModeOverlays.self, forKey: .modeInstructions))
+                ?? .init(),
+            capabilityPolicy: (try? container.decode(AgentCapabilityPolicy.self, forKey: .capabilityPolicy))
+                ?? .init(),
+            memoryPolicy: (try? container.decode(AgentMemoryPolicy.self, forKey: .memoryPolicy))
+                ?? .init(),
+            runtimePolicy: (try? container.decode(AgentRuntimePolicy.self, forKey: .runtimePolicy))
+                ?? .init()
+        )
+        clamp()
+    }
+
+    static func primaryDefault() -> AgentBehavior { .init() }
+
+    static func migrated(name: String, instructions: String) -> AgentBehavior {
+        AgentBehavior(
+            displayName: name,
+            selfDescription: "A specialized \(name) agent.",
+            customInstructions: instructions
+        )
+    }
+
+    mutating func clamp() {
+        version = Self.currentVersion
+        displayName = String(displayName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(64))
+        if displayName.isEmpty { displayName = "Locus" }
+        selfDescription = String(selfDescription.prefix(1_000))
+        customInstructions = String(customInstructions.prefix(16_000))
+        modeInstructions.ask = String(modeInstructions.ask.prefix(4_000))
+        modeInstructions.work = String(modeInstructions.work.prefix(4_000))
+        modeInstructions.plan = String(modeInstructions.plan.prefix(4_000))
+        modeInstructions.build = String(modeInstructions.build.prefix(4_000))
+        memoryPolicy.clamp()
+        runtimePolicy.clamp()
+    }
+}
+
 enum AgentMetering: String, Codable, CaseIterable, Identifiable {
     case selfHosted = "self_hosted"
     case metered
@@ -172,6 +388,7 @@ struct AgentProfile: Identifiable, Codable, Hashable {
     var inputCostPerMillion: Double?
     var outputCostPerMillion: Double?
     var mcpPolicy: MCPAgentPolicy? = nil
+    var behavior: AgentBehavior? = nil
 
     init(
         id: UUID = UUID(),
@@ -187,7 +404,8 @@ struct AgentProfile: Identifiable, Codable, Hashable {
         metering: AgentMetering = .selfHosted,
         inputCostPerMillion: Double? = nil,
         outputCostPerMillion: Double? = nil,
-        mcpPolicy: MCPAgentPolicy? = nil
+        mcpPolicy: MCPAgentPolicy? = nil,
+        behavior: AgentBehavior? = nil
     ) {
         self.id = id
         self.name = name
@@ -203,6 +421,7 @@ struct AgentProfile: Identifiable, Codable, Hashable {
         self.inputCostPerMillion = inputCostPerMillion
         self.outputCostPerMillion = outputCostPerMillion
         self.mcpPolicy = mcpPolicy
+        self.behavior = behavior ?? .migrated(name: name, instructions: instructions ?? role.defaultInstructions)
         clamp()
     }
 
@@ -220,9 +439,28 @@ struct AgentProfile: Identifiable, Codable, Hashable {
             outputCostPerMillion = nil
         }
         mcpPolicy?.clamp()
+        var resolved = behavior ?? .migrated(name: name, instructions: instructions)
+        resolved.displayName = name
+        // Legacy callers still edit `instructions`; a saved behavior remains
+        // authoritative once its richer editor has supplied a value.
+        if resolved.customInstructions.isEmpty, !instructions.isEmpty {
+            resolved.customInstructions = instructions
+        } else {
+            instructions = resolved.customInstructions
+        }
+        resolved.clamp()
+        behavior = resolved
     }
 
     var isConfigured: Bool { !name.isEmpty && !model.isEmpty }
+
+    var resolvedBehavior: AgentBehavior {
+        var value = behavior ?? .migrated(name: name, instructions: instructions)
+        value.displayName = name
+        if value.customInstructions.isEmpty { value.customInstructions = instructions }
+        value.clamp()
+        return value
+    }
 }
 
 struct OrchestrationBudget: Codable, Hashable {
@@ -436,6 +674,26 @@ enum AgentTeamStore {
     static let consentKey = "Locus.teamRoutingConsentAccounts"
     static let selectionKey = "Locus.selectedAgentTeam"
     static let globalConcurrencyKey = "Locus.globalAgentConcurrency"
+    static let primaryBehaviorKey = "Locus.primaryAgentBehavior"
+
+    static func loadPrimaryBehavior(from defaults: UserDefaults = .standard) -> AgentBehavior {
+        guard let data = defaults.data(forKey: primaryBehaviorKey),
+              var behavior = try? JSONDecoder().decode(AgentBehavior.self, from: data)
+        else { return .primaryDefault() }
+        behavior.clamp()
+        return behavior
+    }
+
+    static func savePrimaryBehavior(
+        _ behavior: AgentBehavior,
+        to defaults: UserDefaults = .standard
+    ) {
+        var value = behavior
+        value.clamp()
+        if let data = try? JSONEncoder().encode(value) {
+            defaults.set(data, forKey: primaryBehaviorKey)
+        }
+    }
 
     static func loadProfiles(from defaults: UserDefaults = .standard) -> [AgentProfile] {
         decodeElements(AgentProfile.self, data: defaults.data(forKey: profilesKey))
@@ -1076,6 +1334,8 @@ struct WorkspaceKnowledgeStatus: Codable, Hashable {
 
 struct WorkspaceMemory: Identifiable, Codable, Hashable {
     let id: String
+    var status: String?
+    var scope: String?
     var title: String
     var content: String
     var tags: [String]
@@ -1083,15 +1343,40 @@ struct WorkspaceMemory: Identifiable, Codable, Hashable {
     var sourceRunID: String?
     var pinned: Bool
     var stale: Bool
+    var reason: String?
+    var revision: Int?
+    var expiresAt: Double?
     let createdAt: Double
     let updatedAt: Double
 
     enum CodingKeys: String, CodingKey {
-        case id, title, content, tags, pinned, stale
+        case id, status, scope, title, content, tags, pinned, stale, reason, revision
         case sourceSessionID = "source_session_id"
         case sourceRunID = "source_run_id"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+        case expiresAt = "expires_at"
+    }
+
+    var resolvedScope: AgentMemoryScope {
+        AgentMemoryScope(rawValue: scope ?? "workspace") ?? .workspace
+    }
+
+    var isCandidate: Bool { status == "candidate" }
+}
+
+struct MemoryVaultStatus: Codable, Hashable {
+    let encrypted: Bool
+    let cipher: String
+    let approvedCount: Int
+    let candidateCount: Int
+    let candidateTTLDays: Int
+
+    enum CodingKeys: String, CodingKey {
+        case encrypted, cipher
+        case approvedCount = "approved_count"
+        case candidateCount = "candidate_count"
+        case candidateTTLDays = "candidate_ttl_days"
     }
 }
 

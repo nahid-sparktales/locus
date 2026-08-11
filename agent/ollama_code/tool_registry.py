@@ -25,6 +25,12 @@ _MODERN_MCP_TOOLS = {
     "search_extension_prompts", "load_extension_prompt",
 }
 _KNOWLEDGE_TOOLS = {"search_workspace_knowledge"}
+_WORKSPACE_READ_TOOLS = {
+    "read_file", "glob", "grep", "list_dir", "git_status", "git_diff",
+    "search_workspace_knowledge", "load_skill", "read_skill_file",
+}
+_WORKSPACE_WRITE_TOOLS = {"write_file", "edit_file", "multi_edit"}
+_SHELL_TOOLS = {"bash"}
 
 
 def _base_schemas(access_ceiling: str = "workspace_write") -> list[dict[str, Any]]:
@@ -374,6 +380,7 @@ class ToolRegistry:
         self._mcp_agent_policy: dict[str, Any] | None = None
         self._agent_access_ceiling = "workspace_write"
         self._agent_role = ""
+        self._user_capability_policy: dict[str, bool] = {}
         self.computer_enabled = False
         #: Off until the app announces a live native broker, exactly like
         #: ``computer_enabled``. The browser is on by default *in the app's
@@ -454,6 +461,36 @@ class ToolRegistry:
         policy = dict(self._mcp_agent_policy) if self._mcp_agent_policy is not None else None
         return policy, self._agent_access_ceiling, self._agent_role
 
+    def set_user_capability_policy(self, policy: dict[str, Any] | None) -> None:
+        raw = policy if isinstance(policy, dict) else {}
+        self._user_capability_policy = {
+            key: bool(raw.get(key, True))
+            for key in (
+                "workspace_read", "workspace_write", "shell", "network", "mcp",
+                "computer_control",
+            )
+        }
+
+    def _user_allows(self, name: str) -> bool:
+        policy = self._user_capability_policy
+        if name in _WORKSPACE_READ_TOOLS and not policy.get("workspace_read", True):
+            return False
+        if name in _WORKSPACE_WRITE_TOOLS and not policy.get("workspace_write", True):
+            return False
+        if name in _SHELL_TOOLS and not policy.get("shell", True):
+            return False
+        if name == "web_fetch" and not policy.get("network", True):
+            return False
+        if name in _COMPUTER_TOOL_NAMES and not policy.get("computer_control", True):
+            return False
+        if name in _BROWSER_TOOL_NAMES and not policy.get("network", True):
+            return False
+        if (
+            name in _SAFE_EXTENSION_TOOLS or name in self._mcp_by_qualified
+        ) and not policy.get("mcp", True):
+            return False
+        return True
+
     def end_turn(self) -> None:
         self._active_mcp.clear()
         self._explicit_skill_context = ""
@@ -474,15 +511,26 @@ class ToolRegistry:
         return self.extensions.skill_index(context_window, self._workspace)
 
     def schemas(self) -> list[dict[str, Any]]:
-        schemas = _base_schemas(self._agent_access_ceiling)
+        schemas = [
+            schema for schema in _base_schemas(self._agent_access_ceiling)
+            if self._user_allows(schema["function"]["name"])
+        ]
         if self.computer_enabled and self._agent_access_ceiling != "read_only":
-            schemas.extend(COMPUTER_TOOL_SCHEMAS)
-        schemas.extend(self.browser_schemas())
+            schemas.extend(
+                schema for schema in COMPUTER_TOOL_SCHEMAS
+                if self._user_allows(schema["function"]["name"])
+            )
+        schemas.extend(
+            schema for schema in self.browser_schemas()
+            if self._user_allows(schema["function"]["name"])
+        )
         for name in sorted(self._active_mcp):
             tool = self._mcp_by_qualified.get(name)
             if not tool or not self._allows_mcp_item(tool, "tools", qualified=name):
                 continue
             if self._agent_access_ceiling == "read_only" and not self.is_safe(name):
+                continue
+            if not self._user_allows(name):
                 continue
             input_schema = tool.get("input_schema")
             if not isinstance(input_schema, dict):
@@ -529,6 +577,8 @@ class ToolRegistry:
         return len(json.dumps(self.schemas(), separators=(",", ":"))) // 4
 
     def execute(self, name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
+        if not self._user_allows(name):
+            return "Error: this tool is disabled by the agent's capability settings."
         if name in _MODERN_MCP_TOOLS and not capability_enabled("modern_mcp"):
             return "Error: modern MCP resources and prompts are disabled."
         if name in _KNOWLEDGE_TOOLS and not capability_enabled("workspace_knowledge"):

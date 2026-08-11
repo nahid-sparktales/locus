@@ -18,7 +18,9 @@ new disclosure whoever owns the password.
 """
 from __future__ import annotations
 
+import base64
 import io
+import json
 import os
 import subprocess
 
@@ -34,12 +36,14 @@ CLEAN = "http://proxy.example:3128"
 def clean_proxy_state(monkeypatch):
     """Fresh module state, and no proxy noise leaking in from the host env."""
     monkeypatch.setattr(proxy, "credential_applied", False)
+    monkeypatch.setattr(proxy, "_memory_master_key", None)
     for name in (
         *proxy.PROXY_URL_VARS,
         "NO_PROXY",
         "no_proxy",
         "LOCUS_PROXY_CREDENTIAL",
         "LOCUS_PROXY_CREDENTIAL_STDIN",
+        "LOCUS_BOOTSTRAP_SECRETS_STDIN",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -92,6 +96,23 @@ def test_activate_reads_the_credential_from_stdin(monkeypatch):
     assert os.environ["http_proxy"] == CREDENTIALED
     assert "HTTPS_PROXY" not in os.environ, "absent vars stay absent"
     assert proxy.credential_applied
+
+
+def test_activate_reads_proxy_and_memory_secrets_from_one_json_line(monkeypatch):
+    key = bytes(range(32))
+    monkeypatch.setenv("HTTP_PROXY", CLEAN)
+    monkeypatch.setenv("LOCUS_BOOTSTRAP_SECRETS_STDIN", "1")
+    payload = json.dumps({
+        "proxy_credential": "alice:s3cret",
+        "memory_key": base64.b64encode(key).decode(),
+    })
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO((payload + "\n").encode())))
+
+    proxy.activate_from_env()
+
+    assert "LOCUS_BOOTSTRAP_SECRETS_STDIN" not in os.environ
+    assert os.environ["HTTP_PROXY"] == CREDENTIALED
+    assert proxy.memory_master_key() == key
 
 
 def test_activate_ignores_stdin_without_the_flag(monkeypatch):
@@ -460,28 +481,6 @@ def test_git_tool_child_env_is_credential_stripped(tmp_path, monkeypatch, creden
 
     env = calls[0][1]["env"]
     assert env["HTTP_PROXY"] == CLEAN
-    assert "s3cret" not in str(env)
-
-
-def test_terminal_child_env_is_credential_stripped(tmp_path, monkeypatch, credentialed_environ):
-    from ollama_code import terminal as terminal_mod
-    from ollama_code.permissions import PermissionManager
-    from ollama_code.terminal import TerminalManager
-
-    wrapper, calls = _recording(subprocess.Popen)
-    monkeypatch.setattr(terminal_mod.subprocess, "Popen", wrapper)
-    manager = TerminalManager(
-        emit=lambda _event: None,
-        perms=PermissionManager(mode="ask"),
-        config={"terminal_login_shell": False},
-    )
-
-    manager.start("true", cwd=str(tmp_path))
-
-    env = calls[0][1]["env"]
-    assert env["HTTP_PROXY"] == CLEAN
-    assert env["GIT_TERMINAL_PROMPT"] == "0", "the console's own overrides survive"
-    assert env["TERM"] == "dumb"
     assert "s3cret" not in str(env)
 
 

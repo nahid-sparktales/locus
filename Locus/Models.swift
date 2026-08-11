@@ -214,7 +214,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .plan: "Plan"
         case .changes: "Changes"
         case .files: "Files"
-        case .terminal: "Console"
+        case .terminal: "Terminal"
         case .preview: "Browser"
         case .checkpoints: "Checkpoints"
         case .runs: "Runs"
@@ -255,7 +255,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case network = "Network"
     case accounts = "Accounts"
     case agents = "Agents & Teams"
-    case knowledge = "Knowledge"
+    case knowledge = "Memory & Knowledge"
     case permissions = "Permissions"
     case extensions = "Extensions"
     case shortcuts = "Keyboard Shortcuts"
@@ -1308,6 +1308,14 @@ struct AppSettings: Codable, Hashable {
     /// Non-empty means the proxy requires sign-in. The password is not stored
     /// in settings — see `CredentialStore.proxyPassword`.
     var proxyUsername = ""
+    /// Empty follows the user's SHELL and then falls back to /bin/zsh.
+    var terminalShell = ""
+    /// Login shells load the user's normal profile and PATH, matching
+    /// Terminal.app rather than the old one-shot command runner.
+    var terminalLoginShell = true
+    /// One-time bridge from the version-1 backend config, where these two
+    /// retained preferences lived before the Terminal became app-owned.
+    var terminalSettingsMigrated = false
 
     static let defaultInspectorWidth: Double = 340
     static let minimumInspectorWidth: Double = 280
@@ -1472,6 +1480,14 @@ struct AppSettings: Codable, Hashable {
             ?? defaults.proxyBypass
         proxyUsername = try container.decodeIfPresent(String.self, forKey: .proxyUsername)
             ?? defaults.proxyUsername
+        terminalShell = try container.decodeIfPresent(String.self, forKey: .terminalShell)
+            ?? defaults.terminalShell
+        terminalLoginShell = try container.decodeIfPresent(Bool.self, forKey: .terminalLoginShell)
+            ?? defaults.terminalLoginShell
+        terminalSettingsMigrated = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .terminalSettingsMigrated
+        ) ?? defaults.terminalSettingsMigrated
     }
 }
 
@@ -1537,12 +1553,28 @@ struct ExtensionSkill: Codable, Identifiable, Hashable {
     let allowImplicitInvocation: Bool?
     let enabled: Bool
     let error: String?
+    let builtin: Bool?
+    let shadowed: Bool?
+    let provenance: ExtensionSkillProvenance?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, description, source, enabled, error
+        case id, name, description, source, enabled, error, builtin, shadowed, provenance
         case displayName = "display_name"
         case pluginID = "plugin_id"
         case allowImplicitInvocation = "allow_implicit_invocation"
+    }
+}
+
+struct ExtensionSkillProvenance: Codable, Hashable {
+    let provider: String?
+    let repository: String?
+    let commit: String?
+    let upstreamPath: String?
+    let license: String?
+
+    enum CodingKeys: String, CodingKey {
+        case provider, repository, commit, license
+        case upstreamPath = "upstream_path"
     }
 }
 
@@ -1599,6 +1631,10 @@ struct ExtensionMCPServer: Codable, Identifiable, Hashable {
     let approvalMode: String?
     let auth: String?
     let oauth: MCPOAuthConfiguration?
+    let presetID: String?
+    let authFallback: String?
+    let fallbackHeader: String?
+    let optionalHeader: String?
 
     enum CodingKeys: String, CodingKey {
         case id, name, transport, url, command, args, cwd, origin, active, enabled, state, error, auth, oauth
@@ -1609,6 +1645,46 @@ struct ExtensionMCPServer: Codable, Identifiable, Hashable {
         case toolCount = "tool_count"
         case hasCredentials = "has_credentials"
         case approvalMode = "approval_mode"
+        case presetID = "preset_id"
+        case authFallback = "auth_fallback"
+        case fallbackHeader = "fallback_header"
+        case optionalHeader = "optional_header"
+    }
+}
+
+struct ExtensionMCPPreset: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let displayName: String
+    let description: String
+    let url: String
+    let sourceURL: String?
+    let auth: String
+    let fallback: String?
+    let fallbackHeader: String?
+    let optionalHeader: String?
+    let scopes: [String]
+    let warning: String
+    let requiresProjectRef: Bool?
+    let installed: Bool
+    let serverID: String?
+    let defaultToolsApprovalMode: String
+    let resourcesDiscoverable: Bool
+    let promptsEnabled: Bool
+    let catalogVersion: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, description, url, auth, fallback, scopes, warning, installed
+        case displayName = "display_name"
+        case sourceURL = "source_url"
+        case fallbackHeader = "fallback_header"
+        case optionalHeader = "optional_header"
+        case requiresProjectRef = "requires_project_ref"
+        case serverID = "server_id"
+        case defaultToolsApprovalMode = "default_tools_approval_mode"
+        case resourcesDiscoverable = "resources_discoverable"
+        case promptsEnabled = "prompts_enabled"
+        case catalogVersion = "catalog_version"
     }
 }
 
@@ -1635,12 +1711,14 @@ struct ExtensionsResponse: Codable, Hashable {
     let plugins: [ExtensionPlugin]
     let skills: [ExtensionSkill]
     let mcpServers: [ExtensionMCPServer]
+    let mcpPresets: [ExtensionMCPPreset]
     let errors: [String]
     let pendingUpdates: Int?
 
     enum CodingKeys: String, CodingKey {
         case capabilities, marketplaces, plugins, skills, errors
         case mcpServers = "mcp_servers"
+        case mcpPresets = "mcp_presets"
         case pendingUpdates = "pending_updates"
     }
 
@@ -1650,6 +1728,7 @@ struct ExtensionsResponse: Codable, Hashable {
         plugins: [],
         skills: [],
         mcpServers: [],
+        mcpPresets: [],
         errors: [],
         pendingUpdates: 0
     )
@@ -1763,11 +1842,15 @@ struct ProjectContextReloadResponse: Codable {
 struct ConfigStateResponse: Codable {
     let contextWindow: Int?
     let maxIterations: Int?
+    let terminalShell: String?
+    let terminalLoginShell: Bool?
     let sessionInfo: SessionInfo?
 
     enum CodingKeys: String, CodingKey {
         case contextWindow = "context_window"
         case maxIterations = "max_iterations"
+        case terminalShell = "terminal_shell"
+        case terminalLoginShell = "terminal_login_shell"
         case sessionInfo = "session_info"
     }
 }

@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "presets": [
+    {
+      "id": "context7",
+      "name": "context7",
+      "display_name": "Context7",
+      "description": "Current, version-specific library documentation for coding tasks.",
+      "url": "https://mcp.context7.com/mcp",
+      "source_url": "https://github.com/upstash/context7",
+      "auth": "none",
+      "optional_header": "CONTEXT7_API_KEY",
+      "scopes": [],
+      "warning": "An optional Context7 API key increases limits and can access private sources configured in that account."
+    },
+    {
+      "id": "github",
+      "name": "github",
+      "display_name": "GitHub",
+      "description": "Repositories, issues, pull requests, reviews, and Actions context.",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "source_url": "https://docs.github.com/en/copilot/how-tos/provide-context/use-mcp-in-your-ide/set-up-the-github-mcp-server",
+      "auth": "auto",
+      "fallback": "bearer",
+      "scopes": [],
+      "warning": "GitHub access follows the account and repositories approved during sign-in."
+    },
+    {
+      "id": "sentry",
+      "name": "sentry",
+      "display_name": "Sentry",
+      "description": "Investigate application errors, traces, releases, and project health.",
+      "url": "https://mcp.sentry.dev/mcp",
+      "source_url": "https://github.com/getsentry/sentry-mcp",
+      "auth": "auto",
+      "fallback": "headers",
+      "fallback_header": "Sentry-Bearer",
+      "scopes": [],
+      "warning": "Sentry can expose production error data. Scope the connection to only the organizations and projects needed."
+    },
+    {
+      "id": "supabase",
+      "name": "supabase",
+      "display_name": "Supabase",
+      "description": "Read-only database, schema, logs, and project development context.",
+      "url": "https://mcp.supabase.com/mcp",
+      "source_url": "https://supabase.com/docs/guides/ai-tools/mcp",
+      "auth": "auto",
+      "fallback": "bearer",
+      "requires_project_ref": true,
+      "scopes": [],
+      "warning": "The preset is project-scoped and read-only. Supabase recommends development or test projects rather than production data."
+    },
+    {
+      "id": "openai-docs",
+      "name": "openai-docs",
+      "display_name": "OpenAI Docs",
+      "description": "Official OpenAI developer documentation and API references.",
+      "url": "https://developers.openai.com/mcp",
+      "source_url": "https://developers.openai.com/mcp",
+      "auth": "none",
+      "scopes": [],
+      "warning": "This read-only server retrieves public OpenAI documentation."
+    }
+  ]
+}

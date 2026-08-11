@@ -31,7 +31,8 @@ final class BackendProcess {
         port preferredPort: Int,
         cwd: String,
         environmentOverlay: [String: String] = [:],
-        proxyCredential: String? = nil
+        proxyCredential: String? = nil,
+        memoryKey: Data? = nil
     ) -> BackendLaunchResult {
         if isRunning, let runningPort,
            let url = URL(string: "http://127.0.0.1:\(runningPort)")
@@ -132,13 +133,19 @@ final class BackendProcess {
         // keeps the exec-time block for the life of the process, so anything
         // the model runs could read a secret passed this way. It goes over
         // stdin below instead, which leaves no such trace.
-        if proxyCredential != nil {
-            environment["LOCUS_PROXY_CREDENTIAL_STDIN"] = "1"
+        var bootstrapSecrets: [String: String] = [:]
+        if let proxyCredential { bootstrapSecrets["proxy_credential"] = proxyCredential }
+        if let memoryKey, memoryKey.count == MemoryKeychainStore.keyLength {
+            bootstrapSecrets["memory_key"] = memoryKey.base64EncodedString()
         }
+        let bootstrapData = bootstrapSecrets.isEmpty
+            ? nil
+            : try? JSONSerialization.data(withJSONObject: bootstrapSecrets)
+        if bootstrapData != nil { environment["LOCUS_BOOTSTRAP_SECRETS_STDIN"] = "1" }
         process.environment = environment
-        let credentialPipe = proxyCredential.map { _ in Pipe() }
-        if let credentialPipe {
-            process.standardInput = credentialPipe
+        let bootstrapPipe = bootstrapData.map { _ in Pipe() }
+        if let bootstrapPipe {
+            process.standardInput = bootstrapPipe
         }
         process.terminationHandler = { [weak self, weak process] terminated in
             guard let self, let process, process === terminated else { return }
@@ -159,18 +166,19 @@ final class BackendProcess {
 
         do {
             try process.run()
-            if let credentialPipe, let proxyCredential {
+            if let bootstrapPipe, var bootstrapData {
                 // One line, then EOF: the agent reads it once at startup. Far
                 // smaller than the pipe buffer, so this cannot block, and the
                 // close is what lets the agent stop waiting.
-                let handle = credentialPipe.fileHandleForWriting
+                let handle = bootstrapPipe.fileHandleForWriting
                 // Foundation closed this side's copy of the read end at spawn,
                 // so a child that already exec-failed leaves the pipe with no
                 // reader — and write(2) then raises SIGPIPE, which is a signal
                 // rather than an error and would take the whole app down past
                 // `try?`. This demotes it to the EPIPE `try?` can swallow.
                 _ = fcntl(handle.fileDescriptor, F_SETNOSIGPIPE, 1)
-                try? handle.write(contentsOf: Data((proxyCredential + "\n").utf8))
+                bootstrapData.append(0x0a)
+                try? handle.write(contentsOf: bootstrapData)
                 try? handle.close()
             }
             stopping = false

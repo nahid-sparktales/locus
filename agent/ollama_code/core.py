@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from . import proxy
+from .agent_config import AgentConfiguration, compose_system_prompt
 from .config import (
     DEFAULTS,
     MINIMUM_CONTEXT_WINDOW,
@@ -229,7 +230,7 @@ you are, answer with the underlying model named above.
 
 JUST_CHAT_SYSTEM_PROMPT = """You are Locus in Just Chat mode.
 
-Answer the user's question conversationally using only the conversation shown to you. This mode has no workspace access: do not inspect, read, search, create, edit, or delete files; do not run commands; and do not use skills, plugins, MCP servers, or other tools. If the answer requires workspace or external information, explain that the user must turn off Just Chat first. Be concise and directly helpful.
+Answer the user's question conversationally using only the conversation shown to you and the approved personal or agent memory supplied by the runtime. This mode has no workspace access: do not inspect, read, search, create, edit, or delete files; do not run commands; and do not use skills, plugins, MCP servers, or other tools. If the answer requires workspace or external information, explain that the user must turn off Just Chat first. Be concise and directly helpful.
 
 "Locus" names this app, not the model. Your underlying model: {model_identity}. When asked which model or LLM you are, answer with that.
 """
@@ -335,6 +336,12 @@ class AgentCore:
         self.tool_registry = ToolRegistry(self.extensions, self.mcp)
         self.project_context: tuple[str, str] | None = None
         self.reload_context()
+        self.agent_configuration = AgentConfiguration.parse(None)
+        self.agent_id = "primary"
+        self.agent_mode = "work"
+        self.agent_role_contract = ""
+        self.memory_context = ""
+        self.prompt_layers: list[dict[str, str]] = []
         self.messages: list[dict[str, Any]] = []
         self.session = self._new_session_store()
         self.total_prompt_tokens = 0
@@ -486,16 +493,69 @@ class AgentCore:
             provider_label = "local Ollama"
         return f"{self.model or 'not yet selected'} via {provider_label}"
 
-    def system_message(self) -> dict[str, str]:
-        text = BASE_SYSTEM_PROMPT.format(
-            os_name=f"{platform.system()} {platform.release()}",
-            cwd=self.cwd,
-            date=datetime.now().strftime("%Y-%m-%d"),
-            model_identity=self.model_identity_label(),
+    def configure_agent(
+        self,
+        value: Any,
+        *,
+        mode: str = "work",
+        memory_context: str = "",
+        fallback_name: str = "Locus",
+        fallback_instructions: str = "",
+        role_contract: str = "",
+        agent_id: str = "primary",
+    ) -> None:
+        """Adopt a validated behavior snapshot for the next complete turn."""
+        self.agent_configuration = AgentConfiguration.parse(
+            value,
+            fallback_name=fallback_name,
+            fallback_instructions=fallback_instructions,
         )
-        if self.project_context:
-            name, content = self.project_context
-            text += f"\nProject context from {name} (follow its instructions):\n```\n{content}\n```\n"
+        self.agent_id = str(agent_id or "primary")[:128]
+        self.agent_mode = mode if mode in {"ask", "work", "plan", "build"} else "work"
+        self.agent_role_contract = str(role_contract or "")[:8_000]
+        self.memory_context = str(memory_context or "")[:24_000]
+        memory_policy = self.agent_configuration.memory_policy
+        scopes = tuple(memory_policy.scopes)
+        if self.agent_mode == "ask":
+            scopes = tuple(scope for scope in scopes if scope != "workspace")
+        self.tool_ctx.memory_workspace = self.workspace_root
+        self.tool_ctx.memory_agent_id = self.agent_id
+        self.tool_ctx.memory_scopes = scopes
+        self.tool_ctx.memory_search_enabled = memory_policy.search_enabled
+        self.tool_ctx.memory_proposals_enabled = memory_policy.proposals_enabled
+        self.tool_registry.set_user_capability_policy(
+            self.agent_configuration.capability_policy.__dict__
+        )
+        configured_iterations = self.agent_configuration.runtime_policy.max_tool_iterations
+        self.max_iterations = configured_iterations or iteration_limit(
+            self.config.get("max_iterations")
+        )
+        self.reset_system_message()
+
+    def system_message(self, mode: str | None = None) -> dict[str, str]:
+        resolved_mode = mode or self.agent_mode
+        if resolved_mode == "ask":
+            locked = JUST_CHAT_SYSTEM_PROMPT.format(
+                model_identity=self.model_identity_label()
+            )
+            project_context = None
+        else:
+            locked = BASE_SYSTEM_PROMPT.format(
+                os_name=f"{platform.system()} {platform.release()}",
+                cwd=self.cwd,
+                date=datetime.now().strftime("%Y-%m-%d"),
+                model_identity=self.model_identity_label(),
+            )
+            project_context = self.project_context
+        text, layers = compose_system_prompt(
+            locked,
+            self.agent_configuration,
+            mode=resolved_mode,
+            role_contract=self.agent_role_contract,
+            project_context=project_context,
+            memory_context=self.memory_context,
+        )
+        self.prompt_layers = layers
         return {"role": "system", "content": text}
 
     def reset_system_message(self) -> None:
@@ -817,20 +877,27 @@ class AgentCore:
         be a way to accidentally evict a runner that is serving fine.
 
         `RemoteClient` merges the dict into the top level of the payload, where
-        `num_ctx` is meaningless and some servers reject unknown fields outright
-        — so the only option sent remotely is Anthropic's required output cap,
-        and only once there is a window to derive it from. Nothing is sent on the
-        OpenAI path: newer reasoning models reject `max_tokens` in favour of
-        `max_completion_tokens`, and gateways default to the window anyway.
+        `num_ctx` is meaningless. Anthropic gets its required `max_tokens`; an
+        explicit user output limit uses `max_completion_tokens` for OpenAI-style
+        endpoints. With no explicit limit, the existing provider defaults stay
+        untouched. Ollama receives the equivalent `num_predict` only when set.
         """
+        output_cap = self.agent_configuration.runtime_policy.max_output_tokens
         if self.provider == "remote":
             room = self._reply_room()
+            if output_cap is not None:
+                room = min(room, output_cap) if room > 0 else output_cap
             if getattr(self.client, "auth_style", "") == AUTH_ANTHROPIC and room > 0:
                 return {"max_tokens": room}
+            if output_cap is not None:
+                return {"max_completion_tokens": output_cap}
             return None
-        if self._context_requested <= 0:
-            return None
-        return {"num_ctx": self._context_requested}
+        options: dict[str, Any] = {}
+        if self._context_requested > 0:
+            options["num_ctx"] = self._context_requested
+        if output_cap is not None:
+            options["num_predict"] = output_cap
+        return options or None
 
     # ------------------------------------------------------------- provider
 
@@ -2129,9 +2196,7 @@ class AgentCore:
             for message in self.messages
         ]
         if not self._turn_allows_tools:
-            chat_prompt = JUST_CHAT_SYSTEM_PROMPT.format(
-                model_identity=self.model_identity_label()
-            )
+            chat_prompt = self.system_message(mode="ask")["content"]
             if messages and messages[0].get("role") == "system":
                 messages[0]["content"] = chat_prompt
             else:
@@ -2186,6 +2251,10 @@ class AgentCore:
 
         try:
             self._streaming_response = True
+            configured_timeout = self.agent_configuration.runtime_policy.timeout_seconds
+            previous_timeout = getattr(self.client, "timeout", None)
+            if configured_timeout is not None and previous_timeout is not None:
+                self.client.timeout = configured_timeout
             try:
                 resp = self.client.chat_stream(
                     model=self.model,
@@ -2197,6 +2266,8 @@ class AgentCore:
                     options=self.chat_options(),
                 )
             finally:
+                if configured_timeout is not None and previous_timeout is not None:
+                    self.client.timeout = previous_timeout
                 self._streaming_response = False
         except KeyboardInterrupt:  # CLI Ctrl+C on the main thread
             self._interrupt.set()

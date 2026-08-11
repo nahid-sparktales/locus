@@ -527,6 +527,36 @@ class MCPManager:
                 future.cancel()
                 raise ExtensionError("MCP reconnect timed out") from exc
 
+    def probe(self, server_id: str) -> dict[str, Any]:
+        """Connect and list tools without requiring or changing activation."""
+        server = next(
+            (item for item in self.extensions.mcp_servers() if item.get("id") == server_id),
+            None,
+        )
+        if server is None:
+            raise ExtensionError("MCP server not found")
+        if not self._ensure_started():
+            raise ExtensionError("MCP runtime is closed")
+        future = asyncio.run_coroutine_threadsafe(self._probe(server), self._loop)
+        try:
+            return future.result(timeout=float(server.get("startup_timeout_sec") or 10) + 5)
+        except TimeoutError as exc:
+            future.cancel()
+            raise ExtensionError("MCP probe timed out") from exc
+
+    async def _probe(self, server: dict[str, Any]) -> dict[str, Any]:
+        server_id = str(server["id"])
+        was_connected = server_id in self._clients
+        if not was_connected:
+            await self._connect(server)
+        status = self.status(server_id)
+        record = self._clients.get(server_id) or {}
+        tools = [dict(item) for item in record.get("tools") or []]
+        if not was_connected:
+            await self._disconnect(server_id)
+            self._publish_tools()
+        return {"status": status, "tools": tools}
+
     async def _reconnect(self, server: dict[str, Any]) -> None:
         await self._disconnect(str(server["id"]))
         await self._connect(server)

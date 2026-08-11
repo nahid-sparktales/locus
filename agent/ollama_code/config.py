@@ -76,11 +76,10 @@ DEFAULTS: dict[str, Any] = {
     # own default. Raising it costs memory for the KV cache; it is clamped to
     # what the model was trained for.
     "context_window": 0,
-    # Console settings. terminal_shell "" means $SHELL, then /bin/sh.
+    # Retained as migration/configuration inputs for the app-owned Terminal.
+    # The backend never starts that shell itself.
     "terminal_shell": "",
     "terminal_login_shell": True,
-    "terminal_timeout": 600,
-    "terminal_record_output": True,
 }
 
 PERMISSION_MODES = ("ask", "accept_edits", "bypass")
@@ -228,7 +227,7 @@ def load_config() -> dict[str, Any]:
     )
     if not cfg.get("remote_api_key"):
         # Keep provider credentials in process memory, but do not let shell
-        # tools or console children inherit them through os.environ.
+        # tools or other agent-owned children inherit them through os.environ.
         cfg["remote_api_key"] = remote_api_key_from_env(consume=True)
     return cfg
 

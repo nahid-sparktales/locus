@@ -1,0 +1,9 @@
+{
+  "catalog_version": 1,
+  "provider": "Vercel",
+  "repository": "https://github.com/vercel-labs/agent-skills",
+  "commit": "7c180d9044c9ae2b442b567aad4e42a28dd5ed62",
+  "upstream_path": "skills/react-best-practices",
+  "license": "MIT",
+  "license_file": "LICENSE"
+}

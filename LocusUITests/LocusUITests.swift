@@ -612,7 +612,7 @@ final class LocusUITests: XCTestCase {
         app.typeKey("3", modifierFlags: .command)
         XCTAssertTrue(anyElement("files.row.0").waitForExistence(timeout: 3))
 
-        // ⌘4 — Console, which has seeded output rather than its empty state.
+        // ⌘4 — the native PTY terminal.
         app.typeKey("4", modifierFlags: .command)
         XCTAssertTrue(anyElement("terminal.output").waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("terminal.empty").exists)
@@ -684,6 +684,16 @@ final class LocusUITests: XCTestCase {
         firstFile.click()
         let discard = anyElement("changes.file.0.hunk.0.discard")
         XCTAssertTrue(discard.waitForExistence(timeout: 3))
+        let changesScroll = anyElement("changes.scroll")
+        XCTAssertTrue(changesScroll.exists)
+        if !discard.isHittable {
+            // Expanding the inline diff can leave its first hunk action under
+            // a scroll edge on smaller CI windows. Move the containing scroll
+            // view explicitly instead of relying on XCUI's implicit scroll,
+            // which is unreliable for nested SwiftUI buttons on macOS.
+            changesScroll.scroll(byDeltaX: -120, deltaY: 180)
+        }
+        XCTAssertTrue(discard.isHittable)
         discard.click()
 
         XCTAssertTrue(app.buttons["changes.discardHunk.confirm"].waitForExistence(timeout: 3))
@@ -714,24 +724,11 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(anyElement("files.row.1").exists)
     }
 
-    func testConsoleReportsThatItCannotReachTheAgent() {
+    func testTerminalIsAvailableWithoutTheAgent() {
         app.typeKey("4", modifierFlags: .command)
-
-        let command = app.textFields["terminal.command"]
-        XCTAssertTrue(command.waitForExistence(timeout: 3))
-        command.click()
-        command.typeText("git status")
-        app.typeKey(.return, modifierFlags: [])
-
-        // No agent is running under test, so the console must say so rather
-        // than sit there claiming to run.
-        XCTAssertTrue(
-            staticTextWithValue(containing: "Reconnect the local agent")
-                .waitForExistence(timeout: 3)
-                || app.staticTexts["Reconnect the local agent to run commands."]
-                    .waitForExistence(timeout: 1)
-        )
-        XCTAssertTrue(app.buttons["terminal.run"].exists)
+        XCTAssertTrue(anyElement("terminal.header").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("terminal.output").exists)
+        XCTAssertFalse(app.textFields["terminal.command"].exists)
     }
 
     // MARK: - Permission prompt
