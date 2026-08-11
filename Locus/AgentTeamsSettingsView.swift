@@ -804,7 +804,9 @@ private struct AgentProfileEditor: View {
                 .frame(height: 56)
                 .zIndex(1)
         }
-        .frame(width: 600, height: 720)
+        // Keep the fixed action footer inside the visible frame on the
+        // shortest supported displays. The form above remains scrollable.
+        .frame(width: 600, height: 640)
         .task { await refreshModels() }
         .onChange(of: draft.route) { _, _ in
             draft.model = ""
