@@ -873,6 +873,21 @@ struct TaskRecord: Identifiable, Codable, Hashable {
     let baselineTree: String
     var appliedTree: String?
     var state: TeamRunState?
+    var sessionID: String?
+    var startingRef: String?
+    var snapshotOID: String?
+    var branch: String?
+    var pinned: Bool?
+    var permanent: Bool?
+    var updatedAt: Double?
+    var landingDestination: String? = nil
+    var landingTree: String? = nil
+    var landingCommit: String? = nil
+    var landingSourceTree: String? = nil
+    var landingCheckRunID: String? = nil
+    var landingChecksPassed: Bool? = nil
+    var landingOverride: Bool? = nil
+    var landedAt: Double? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, state
@@ -880,7 +895,47 @@ struct TaskRecord: Identifiable, Codable, Hashable {
         case executionPath = "execution_path"
         case baselineTree = "baseline_tree"
         case appliedTree = "applied_tree"
+        case sessionID = "session_id"
+        case startingRef = "starting_ref"
+        case snapshotOID = "snapshot_oid"
+        case branch, pinned, permanent
+        case updatedAt = "updated_at"
+        case landingDestination = "landing_destination"
+        case landingTree = "landing_tree"
+        case landingCommit = "landing_commit"
+        case landingSourceTree = "landing_source_tree"
+        case landingCheckRunID = "landing_check_run_id"
+        case landingChecksPassed = "landing_checks_passed"
+        case landingOverride = "landing_override"
+        case landedAt = "landed_at"
     }
+
+    var landingRecord: LandingRecord? {
+        guard let destination = landingDestination,
+              let sourceTree = landingSourceTree,
+              let landedAt else { return nil }
+        return LandingRecord(
+            destination: destination,
+            sourceTree: sourceTree,
+            landedTree: landingTree,
+            checkRunID: landingCheckRunID,
+            checksPassed: landingChecksPassed ?? false,
+            overrideFailedChecks: landingOverride ?? false,
+            commitSHA: landingCommit,
+            timestamp: landedAt
+        )
+    }
+}
+
+struct LandingRecord: Codable, Hashable {
+    let destination: String
+    let sourceTree: String
+    let landedTree: String?
+    let checkRunID: String?
+    let checksPassed: Bool
+    let overrideFailedChecks: Bool
+    let commitSHA: String?
+    let timestamp: Double
 }
 
 struct SessionTeamReference: Codable, Hashable {
@@ -899,6 +954,7 @@ struct TaskConversationState: Codable, Hashable {
     var runID: String?
     var state: TeamRunState
     var updatedAt: Date
+    var errorMessage: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case state
@@ -908,6 +964,7 @@ struct TaskConversationState: Codable, Hashable {
         case workerID = "worker_id"
         case runID = "run_id"
         case updatedAt = "updated_at"
+        case errorMessage = "error_message"
     }
 }
 
@@ -1111,6 +1168,16 @@ struct OrchestrationRun: Identifiable, Codable, Hashable {
     let usage: [String: JSONValue]?
     let jobCount: Int?
     let completedJobCount: Int?
+    let runKind: String?
+    let traceID: String?
+    let contentPolicy: String?
+    let executionEnvironment: String?
+    let exportState: String?
+    let exportAttempts: Int?
+    var queuePosition: Int? = nil
+    var queuedMessageID: String? = nil
+    var retryParentID: String? = nil
+    var admittedAt: Double? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, state, request, pinned, legacy, recoverable, checkpoint, attempts, plan, usage
@@ -1128,7 +1195,68 @@ struct OrchestrationRun: Identifiable, Codable, Hashable {
         case recoveryReason = "recovery_reason"
         case jobCount = "job_count"
         case completedJobCount = "completed_job_count"
+        case runKind = "run_kind"
+        case traceID = "trace_id"
+        case contentPolicy = "content_policy"
+        case executionEnvironment = "execution_environment"
+        case exportState = "export_state"
+        case exportAttempts = "export_attempts"
+        case queuePosition = "queue_position"
+        case queuedMessageID = "queued_message_id"
+        case retryParentID = "retry_parent_id"
+        case admittedAt = "admitted_at"
     }
+
+    var queuedRun: QueuedRun? {
+        guard state == "queued", let queuePosition else { return nil }
+        return QueuedRun(
+            id: id,
+            sessionID: sessionID,
+            queuePosition: queuePosition,
+            queuedMessageID: queuedMessageID,
+            retryParentID: retryParentID,
+            createdAt: createdAt,
+            admittedAt: admittedAt
+        )
+    }
+
+    var activityItem: ActivityItem {
+        ActivityItem(
+            id: id,
+            sessionID: sessionID,
+            workspaceRoot: workspaceRoot,
+            runKind: runKind ?? "solo",
+            executionEnvironment: executionEnvironment ?? "local",
+            state: state,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            queuePosition: queuePosition,
+            latestMeaningfulEvent: recoveryReason
+        )
+    }
+}
+
+struct QueuedRun: Identifiable, Codable, Hashable {
+    let id: String
+    let sessionID: String?
+    let queuePosition: Int
+    let queuedMessageID: String?
+    let retryParentID: String?
+    let createdAt: Double
+    let admittedAt: Double?
+}
+
+struct ActivityItem: Identifiable, Codable, Hashable {
+    let id: String
+    let sessionID: String?
+    let workspaceRoot: String?
+    let runKind: String
+    let executionEnvironment: String
+    let state: String
+    let createdAt: Double
+    let updatedAt: Double
+    let queuePosition: Int?
+    let latestMeaningfulEvent: String?
 }
 
 struct DispatchJob: Identifiable, Codable, Hashable {
@@ -1435,6 +1563,126 @@ struct MemoryVaultStatus: Codable, Hashable {
         case conflictCount = "conflict_count"
         case semanticEncrypted = "semantic_encrypted"
         case memoryVersion = "memory_version"
+    }
+}
+
+struct MemoryPipelineEvent: Codable, Hashable, Identifiable {
+    var id: String { "\(occurredAt)-\(stage)-\(memoryID ?? "")" }
+    let sessionID: String?
+    let runID: String?
+    let stage: String
+    let outcome: String
+    let reasonCode: String
+    let memoryID: String?
+    let occurredAt: Double
+
+    enum CodingKeys: String, CodingKey {
+        case stage, outcome
+        case sessionID = "session_id"
+        case runID = "run_id"
+        case reasonCode = "reason_code"
+        case memoryID = "memory_id"
+        case occurredAt = "occurred_at"
+    }
+}
+
+struct MemoryDiagnosticReport: Codable, Hashable {
+    let approvedCount: Int
+    let candidateCount: Int
+    let staleCount: Int?
+    let expiredCount: Int?
+    let indexedFiles: Int
+    let searchChunks: Int
+    let embeddingModel: String
+    let embeddingError: String
+    let historyAvailable: Bool
+    let proposalPolicy: String?
+    let enabledScopes: [String]?
+    let proposeMemoryAvailable: Bool?
+    let lastProposal: MemoryPipelineEvent?
+    let lastApproval: MemoryPipelineEvent?
+    let events: [MemoryPipelineEvent]
+    let counts: [String: Int]
+
+    enum CodingKeys: String, CodingKey {
+        case events, counts
+        case approvedCount = "approved_count"
+        case candidateCount = "candidate_count"
+        case staleCount = "stale_count"
+        case expiredCount = "expired_count"
+        case indexedFiles = "indexed_files"
+        case searchChunks = "search_chunks"
+        case embeddingModel = "embedding_model"
+        case embeddingError = "embedding_error"
+        case historyAvailable = "history_available"
+        case proposalPolicy = "proposal_policy"
+        case enabledScopes = "enabled_scopes"
+        case proposeMemoryAvailable = "propose_memory_available"
+        case lastProposal = "last_proposal"
+        case lastApproval = "last_approval"
+    }
+}
+
+struct MemoryReprocessResponse: Codable, Hashable {
+    let ok: Bool
+    let runID: String
+    let state: String
+    let candidateCount: Int
+    let memories: [WorkspaceMemory]
+
+    enum CodingKeys: String, CodingKey {
+        case ok, state, memories
+        case runID = "run_id"
+        case candidateCount = "candidate_count"
+    }
+}
+
+struct LandingPreflight: Codable, Hashable {
+    let ok: Bool
+    let tree: String
+    let baseTree: String
+    let paths: [String]
+    let patchBytes: Int
+    let canApplyLocal: Bool
+    let conflict: String
+    let branch: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, tree, paths, conflict, branch
+        case baseTree = "base_tree"
+        case patchBytes = "patch_bytes"
+        case canApplyLocal = "can_apply_local"
+    }
+}
+
+struct LandingCheckResult: Codable, Hashable, Identifiable {
+    var id: Int { index }
+    let index: Int
+    let command: String
+    let exitCode: Int?
+    let output: String
+    let truncated: Bool
+    let durationMilliseconds: Int
+    let state: String
+
+    enum CodingKeys: String, CodingKey {
+        case index, command, output, truncated, state
+        case exitCode = "exit_code"
+        case durationMilliseconds = "duration_ms"
+    }
+}
+
+struct LandingCheckRun: Codable, Hashable {
+    let ok: Bool
+    let runID: String
+    let state: String
+    let tree: String
+    let passed: Bool
+    let results: [LandingCheckResult]
+
+    enum CodingKeys: String, CodingKey {
+        case ok, state, tree, passed, results
+        case runID = "run_id"
     }
 }
 

@@ -142,6 +142,45 @@ struct SessionSidebarView: View {
                 }
             }
 
+            Button {
+                model.openActivityCenter()
+            } label: {
+                HStack(spacing: SidebarMetrics.iconGap) {
+                    Image(systemName: "waveform.path.ecg.rectangle")
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: SidebarMetrics.iconColumn)
+                    Text("Activity")
+                        .font(.system(size: 10, weight: .semibold))
+                    Spacer(minLength: 4)
+                    if model.activityNeedsAttentionCount > 0 {
+                        Text("\(model.activityNeedsAttentionCount)")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundStyle(LocusTheme.brandInk)
+                            .padding(.horizontal, 6)
+                            .frame(height: 18)
+                            .background(LocusTheme.signal)
+                            .clipShape(Capsule())
+                            .accessibilityIdentifier("sidebar.activity.badge")
+                    }
+                }
+                .foregroundStyle(model.activityCenterPresented
+                    ? LocusTheme.ink : LocusTheme.inkSoft)
+                .padding(.horizontal, SidebarMetrics.rowInset)
+                .frame(height: 30)
+                .background(model.activityCenterPresented
+                    ? LocusTheme.white.opacity(0.72) : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Monitor and control work across chats")
+            .accessibilityIdentifier("sidebar.activity")
+            .accessibilityValue(
+                model.activityNeedsAttentionCount > 0
+                    ? "\(model.activityNeedsAttentionCount) needs attention"
+                    : "No new activity"
+            )
+
             navigationRow(
                 symbol: "puzzlepiece.extension",
                 title: "Plugins & MCP",
@@ -305,8 +344,8 @@ struct SessionSidebarView: View {
             session: session,
             isActive: session.id == model.currentSessionID,
             teamState: model.teamRunState(for: session),
-            isRunning: session.id == model.currentSessionID && model.isBusy,
-            startedAt: session.id == model.currentSessionID ? model.activeWorkStartedAt : nil
+            isRunning: model.chatIsRunning(session),
+            startedAt: model.chatStartedAt(session)
         ) {
             model.resume(session)
         }
@@ -328,13 +367,22 @@ struct SessionSidebarView: View {
             Button(session.isArchived ? "Restore from Archive" : "Archive") {
                 model.archive(session)
             }
-            .disabled(session.id == model.currentSessionID)
+            .disabled(
+                session.id == model.currentSessionID || model.chatHasActiveRun(session)
+            )
             .accessibilityIdentifier("session.\(session.id).archive")
+            if let task = session.task,
+               !FileManager.default.fileExists(atPath: task.executionPath) {
+                Button("Restore Worktree") { model.restoreWorktree(for: session) }
+                    .accessibilityIdentifier("session.\(session.id).restoreWorktree")
+            }
             Divider()
             Button("Delete Chat", role: .destructive) {
                 model.deleteChat(session)
             }
-            .disabled(model.isBusy || model.hasPendingPermission)
+            .disabled(
+                model.isBusy || model.hasPendingPermission || model.chatHasActiveRun(session)
+            )
             .accessibilityIdentifier("session.\(session.id).delete")
         }
     }
@@ -449,9 +497,8 @@ struct SessionSidebarView: View {
 
     // MARK: - Footer
 
-    /// Two quiet rows: the workspace selector, then status with everything
-    /// else tucked into an overflow menu — the rest of the sidebar stays about
-    /// the conversation list.
+    /// Two quiet rows: the workspace selector, then runtime status and the
+    /// restored Settings gear. The sidebar remains focused on conversations.
     private var footer: some View {
         VStack(spacing: 8) {
             workspaceMenu
@@ -459,7 +506,7 @@ struct SessionSidebarView: View {
             HStack(spacing: 8) {
                 status
                 Spacer(minLength: 4)
-                moreMenu
+                settingsButton
             }
         }
         .padding(.horizontal, SidebarMetrics.gutter)
@@ -470,43 +517,21 @@ struct SessionSidebarView: View {
         }
     }
 
-    private var moreMenu: some View {
-        Menu {
-            Button("Settings…") { model.settingsPresented = true }
-                .accessibilityIdentifier("sidebar.settings")
-            Button("Usage & Costs…") { model.usageDashboardPresented = true }
-                .accessibilityIdentifier("sidebar.usage")
-            Button("Session Checkpoints…") { model.checkpointPresented = true }
-                .accessibilityIdentifier("sidebar.checkpoints")
-            Divider()
-            Toggle("Show Archived Sessions", isOn: Binding(
-                get: { model.showArchivedSessions },
-                set: { model.setShowArchived($0) }
-            ))
-            .accessibilityIdentifier("sidebar.showArchived")
-            Button(model.isClearingSessions ? "Clearing Saved Sessions…" : "Clear Saved Sessions…") {
-                model.requestClearSavedSessions()
-            }
-            .disabled(model.isClearingSessions)
-            .accessibilityIdentifier("sidebar.clearSessions")
-            Divider()
-            Button("Reconnect Agent") {
-                Task { await model.bootstrap() }
-            }
-            .accessibilityIdentifier("sidebar.reconnect")
+    private var settingsButton: some View {
+        Button {
+            model.settingsPresented = true
         } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 11, weight: .semibold))
+            Image(systemName: "gearshape")
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(LocusTheme.muted)
                 .frame(width: 24, height: 22)
                 .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
         .frame(width: 24)
-        .help("More sidebar actions")
-        .accessibilityLabel("More sidebar actions")
-        .accessibilityIdentifier("sidebar.more")
+        .help("Settings… (⌘,)")
+        .accessibilityLabel("Open Settings")
+        .accessibilityIdentifier("sidebar.settings")
     }
 
     private var workspaceMenu: some View {
@@ -540,8 +565,6 @@ struct SessionSidebarView: View {
                     .accessibilityIdentifier("workspace.removeMissingProfiles")
                 }
             }
-            Divider()
-            Button("Settings…") { model.settingsPresented = true }
         } label: {
             HStack(spacing: SidebarMetrics.iconGap) {
                 Image(systemName: "folder")
@@ -1084,7 +1107,7 @@ private struct SessionRow: View {
                                 Circle()
                                     .fill(statusColor(teamState))
                                     .frame(width: 5, height: 5)
-                                Text(teamState.title)
+                                Text(sidebarStatusTitle(teamState))
                             }
                         }
                         .font(.system(size: 8))
@@ -1140,6 +1163,15 @@ private struct SessionRow: View {
         case .interrupted: LocusTheme.warning
         case .waitingPermission, .waitingComputer: LocusTheme.warning
         default: LocusTheme.signalDeep
+        }
+    }
+
+    private func sidebarStatusTitle(_ state: TeamRunState) -> String {
+        switch state {
+        case .waitingPermission, .waitingComputer, .waitingDispatchApproval:
+            "Needs Attention"
+        default:
+            state.title
         }
     }
 }

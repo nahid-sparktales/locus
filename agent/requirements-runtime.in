@@ -8,3 +8,5 @@ uvicorn==0.52.0
 websockets==17.0
 cryptography==50.0.0
 mcp==2.0.0
+opentelemetry-sdk==1.44.0
+opentelemetry-exporter-otlp-proto-http==1.44.0

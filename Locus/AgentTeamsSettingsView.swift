@@ -8,9 +8,6 @@ struct AgentTeamsSettingsView: View {
     @State private var editingSuite: EvaluationSuite?
     @State private var evaluationReport: EvaluationReport?
     @State private var consentAccount: ProviderAccount?
-    @State private var otlpAuthorization = CredentialStore.get(
-        account: CredentialStore.otlpAuthorizationKey
-    ) ?? ""
 
     var body: some View {
         ScrollView {
@@ -265,23 +262,24 @@ struct AgentTeamsSettingsView: View {
                 .font(.system(size: 8, weight: .bold))
                 .tracking(0.8)
                 .foregroundStyle(LocusTheme.muted)
-            Toggle("Export completed team runs with OTLP/HTTP", isOn: $model.settings.otlpExportEnabled)
-            TextField("https://collector.example/v1/traces", text: $model.settings.otlpEndpoint)
+            Toggle("Export completed runs with OTLP/HTTP", isOn: $model.settings.otlpExportEnabled)
+            TextField("https://collector.example", text: $model.settings.otlpEndpoint)
                 .textFieldStyle(.roundedBorder)
-            SecureField("Authorization header (optional)", text: $otlpAuthorization)
+            SecureField(
+                "Authorization header (optional)",
+                text: $model.settings.otlpAuthorization
+            )
                 .textFieldStyle(.roundedBorder)
-            Toggle("Include visible conversation and tool content", isOn: $model.settings.otlpIncludeContent)
-            Text("Metadata export is off by default. Content has a separate opt-in; credentials remain in Locus’s local credential store.")
+            HStack {
+                Text("Metadata sampling")
+                Slider(value: $model.settings.otlpSamplingRate, in: 0...1, step: 0.05)
+                Text("\(Int(model.settings.otlpSamplingRate * 100))%")
+                    .monospacedDigit()
+                    .frame(width: 34, alignment: .trailing)
+            }
+            Text("Metadata export is off by default. The authorization value is stored unencrypted in local app settings and is never written to logs or traces. Visible content requires a separate confirmation for each run.")
                 .font(.system(size: 8))
                 .foregroundStyle(LocusTheme.muted)
-            HStack {
-                Spacer()
-                Button("Save Authorization") {
-                    model.saveOTLPAuthorization(otlpAuthorization)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
         }
         .padding(12)
         .locusCard()
@@ -1793,6 +1791,118 @@ struct WorkspaceKnowledgeSettingsView: View {
                     .locusCard()
                 }
 
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("MEMORY HEALTH")
+                                .font(.system(size: 8, weight: .bold))
+                                .tracking(0.8)
+                                .foregroundStyle(LocusTheme.muted)
+                            Text("Indexing and saved memory are separate pipelines.")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        Spacer()
+                        Button("Analyze Selected Chat") {
+                            model.reprocessCurrentChatMemory(agentID: selectedMemoryAgentID)
+                        }
+                        .disabled(model.currentSessionID.isEmpty || model.isBusy)
+                        .accessibilityIdentifier("memory.analyzeSelectedChat")
+                    }
+
+                    if let report = model.memoryDiagnosticReport {
+                        HStack(spacing: 18) {
+                            metric("Indexed files", report.indexedFiles)
+                            metric("Search chunks", report.searchChunks)
+                            metric("Inbox items", report.candidateCount)
+                            metric("Saved memories", report.approvedCount)
+                            Spacer()
+                        }
+                        Text("\(report.indexedFiles.formatted()) files and \(report.searchChunks.formatted()) chunks mean workspace knowledge is searchable. Zero saved memories is healthy until you approve an Inbox item or explicitly use Remember.")
+                            .font(.system(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Divider()
+                        HStack(spacing: 14) {
+                            diagnosticLabel(
+                                "Policy",
+                                report.proposalPolicy?.capitalized ?? "Unknown",
+                                healthy: report.proposalPolicy == "enabled"
+                            )
+                            diagnosticLabel(
+                                "Suggestion tool",
+                                report.proposeMemoryAvailable == true ? "Available" : "Unavailable",
+                                healthy: report.proposeMemoryAvailable == true
+                            )
+                            diagnosticLabel(
+                                "Scopes",
+                                (report.enabledScopes ?? []).map(\.capitalized).joined(separator: ", ").nilIfEmpty
+                                    ?? "None",
+                                healthy: !(report.enabledScopes ?? []).isEmpty
+                            )
+                            diagnosticLabel(
+                                "Recall",
+                                "\(report.counts["recall:matched", default: 0]) matched · \(report.counts["recall:empty", default: 0]) empty",
+                                healthy: true
+                            )
+                            Spacer()
+                        }
+                        HStack(spacing: 14) {
+                            diagnosticLabel(
+                                "Accepted",
+                                "\(report.counts["proposal:accepted", default: 0])",
+                                healthy: true
+                            )
+                            diagnosticLabel(
+                                "Rejected",
+                                "\(report.counts["proposal:rejected", default: 0] + report.counts["rejection:recorded", default: 0])",
+                                healthy: report.counts["proposal:rejected", default: 0]
+                                    + report.counts["rejection:recorded", default: 0] == 0
+                            )
+                            diagnosticLabel(
+                                "Expired",
+                                "\(report.expiredCount ?? 0)",
+                                healthy: (report.expiredCount ?? 0) == 0
+                            )
+                            diagnosticLabel(
+                                "Embedding",
+                                report.embeddingError.nilIfEmpty == nil
+                                    ? (report.embeddingModel.isEmpty ? "Text search" : report.embeddingModel)
+                                    : "Needs attention",
+                                healthy: report.embeddingError.isEmpty
+                            )
+                            Spacer()
+                        }
+                        HStack(spacing: 14) {
+                            Text("Last proposal: \(diagnosticTime(report.lastProposal?.occurredAt))")
+                            Text("Last approval: \(diagnosticTime(report.lastApproval?.occurredAt))")
+                            Spacer()
+                        }
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                        if !report.historyAvailable {
+                            Text("No proposal history recorded since diagnostics were added.")
+                                .font(.system(size: 8))
+                                .foregroundStyle(LocusTheme.muted)
+                        } else if let latest = report.events.first {
+                            Text("Latest pipeline event: \(latest.stage.replacingOccurrences(of: "_", with: " ")) · \(latest.outcome.replacingOccurrences(of: "_", with: " "))\(latest.reasonCode.isEmpty ? "" : " · \(latest.reasonCode.replacingOccurrences(of: "_", with: " "))")")
+                                .font(.system(size: 8, design: .monospaced))
+                                .foregroundStyle(LocusTheme.muted)
+                        }
+                        if !report.embeddingError.isEmpty {
+                            Label(report.embeddingError, systemImage: "exclamationmark.triangle.fill")
+                                .font(.system(size: 8))
+                                .foregroundStyle(LocusTheme.warning)
+                        }
+                    } else {
+                        ProgressView("Loading memory diagnostics…")
+                            .controlSize(.small)
+                    }
+                }
+                .padding(12)
+                .locusCard()
+                .accessibilityIdentifier("memory.health")
+
                 VStack(alignment: .leading, spacing: 8) {
                     Text("MEMORY INBOX")
                         .font(.system(size: 8, weight: .bold))
@@ -2037,6 +2147,29 @@ struct WorkspaceKnowledgeSettingsView: View {
             Text(value.formatted()).font(.system(size: 11, weight: .bold, design: .monospaced))
             Text(name).font(.system(size: 7)).foregroundStyle(LocusTheme.muted)
         }
+    }
+
+    private func diagnosticLabel(_ name: String, _ value: String, healthy: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(name.uppercased())
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(LocusTheme.muted)
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(healthy ? LocusTheme.success : LocusTheme.warning)
+                    .frame(width: 6, height: 6)
+                Text(value)
+                    .font(.system(size: 8, design: .monospaced))
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    private func diagnosticTime(_ timestamp: Double?) -> String {
+        guard let timestamp else { return "none recorded" }
+        return Date(timeIntervalSince1970: timestamp).formatted(
+            date: .abbreviated, time: .shortened
+        )
     }
 
     private func memoryStep(_ number: String, _ title: String, _ detail: String) -> some View {

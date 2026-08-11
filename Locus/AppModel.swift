@@ -166,12 +166,35 @@ final class AppModel: ObservableObject {
     @Published private(set) var workspaceMemories: [WorkspaceMemory] = []
     @Published private(set) var memoryCandidates: [WorkspaceMemory] = []
     @Published private(set) var memoryVaultStatus: MemoryVaultStatus?
+    @Published private(set) var memoryDiagnosticReport: MemoryDiagnosticReport?
+    @Published private(set) var landingPreflight: LandingPreflight?
+    @Published private(set) var landingCheckRun: LandingCheckRun?
+    @Published private(set) var landingPatch = ""
+    @Published private(set) var activeLandingCheckRunID: String?
+    @Published private(set) var isLandingOperationRunning = false
+    @Published var reviewAndLandPresented = false
+    @Published var activityCenterPresented = false
+    @Published private(set) var activityRuns: [OrchestrationRun] = []
+    @Published private(set) var activitySeenUpdates: [String: Double] = [:]
+    @Published private(set) var dismissedActivityRunIDs: Set<String> = []
     @Published private(set) var backgroundServices: [BackgroundServiceRecord] = []
     private var backgroundServicesRefreshGeneration = 0
     @Published var mcpInputRequest: MCPInputRequest?
     private var orchestrationEventIDs: Set<String> = []
     @Published var sessions: [SessionSummary] = []
     @Published var currentSessionID = ""
+
+    var activityNeedsAttentionCount: Int {
+        let states = Set(["waiting_permission", "waiting_computer",
+                          "waiting_dispatch_approval", "paused", "interrupted", "failed"])
+        return visibleActivityRuns.filter {
+            states.contains($0.state) && activityIsUnseen($0)
+        }.count
+    }
+
+    var visibleActivityRuns: [OrchestrationRun] {
+        activityRuns.filter { !dismissedActivityRunIDs.contains($0.id) }
+    }
     @Published var sessionInfo: SessionInfo? {
         didSet {
             // Session changes must retarget the app-owned PTY even when its
@@ -320,6 +343,7 @@ final class AppModel: ObservableObject {
     private var modelLibraryPendingSettingsDismissal = false
     @Published var commandPalettePresented = false
     @Published var checkpointPresented = false
+    @Published var rememberConfirmationText: String?
     @Published var clearChatConfirmationPresented = false
     @Published var clearSessionsConfirmationPresented = false
     @Published var isClearingSessions = false
@@ -362,7 +386,10 @@ final class AppModel: ObservableObject {
 
     private let backend: BackendService
     private let backendProcess = BackendProcess()
-    private var taskWorkers: [String: TaskWorkerRuntime] = [:]
+    private var taskWorkers: [String: ChatWorkerRuntime] = [:]
+    private var chatAdmissionQueue = ChatAdmissionQueue()
+    private var pendingChatTurns: [String: Task<Void, Never>] = [:]
+    private var pendingChatTurnTokens: [String: UUID] = [:]
     /// Backends that refused the browser handshake because a turn was running.
     private var pendingBrowserCapabilityTransports: [BackendService] = []
     private var conversationBackend: BackendService {
@@ -509,6 +536,7 @@ final class AppModel: ObservableObject {
     private var requestedOrchestrationRunID: String?
     private var requestedOrchestrationLoadKey: String?
     private var terminalRefreshRunIDs: Set<String> = []
+    private var restoredQueuedRunIDs: Set<String> = []
     private let lifecycleJournal: AppLifecycleJournal?
     private var pendingLifecycleRecovery: AppLifecycleRecovery?
     private var indexedWorkspacePath: String?
@@ -533,6 +561,15 @@ final class AppModel: ObservableObject {
         self.lifecycleJournal = persistenceEnabled ? launchJournal : nil
         pendingLifecycleRecovery = persistenceEnabled ? launchJournal.beginLaunch() : nil
         let defaults = UserDefaults.standard
+        if !isUITesting, persistenceEnabled {
+            if let data = defaults.data(forKey: "Locus.activitySeenUpdates"),
+               let saved = try? JSONDecoder().decode([String: Double].self, from: data) {
+                activitySeenUpdates = saved
+            }
+            dismissedActivityRunIDs = Set(
+                defaults.stringArray(forKey: "Locus.dismissedActivityRunIDs") ?? []
+            )
+        }
         var loadedSettings: AppSettings
         // Gated on `persistenceEnabled` for the same reason the accounts below
         // are: a model that will never write must not read either. Without it a
@@ -895,7 +932,7 @@ final class AppModel: ObservableObject {
     }
 
     var chatNavigationDisabled: Bool {
-        (isBusy || hasPendingPermission) && taskWorkers[currentSessionID] == nil
+        false
     }
 
     /// Folder-backed workspace sections plus a compatibility bucket for old
@@ -969,6 +1006,20 @@ final class AppModel: ObservableObject {
         if let state = taskConversationStates[session.id]?.state { return state }
         if session.id == currentSessionID, let orchestrationState { return orchestrationState }
         return session.task?.state
+    }
+
+    func chatIsRunning(_ session: SessionSummary) -> Bool {
+        guard let state = taskWorkers[session.id]?.executionState else { return false }
+        return [.running, .dispatching, .reviewing].contains(state)
+    }
+
+    func chatStartedAt(_ session: SessionSummary) -> Date? {
+        taskWorkers[session.id]?.startedAt
+    }
+
+    func chatHasActiveRun(_ session: SessionSummary) -> Bool {
+        pendingChatTurns[session.id] != nil
+            || taskWorkers[session.id]?.occupiesExecutionSlot == true
     }
 
     func isWorkspaceExpanded(_ id: String) -> Bool {
@@ -1276,6 +1327,8 @@ final class AppModel: ObservableObject {
         )
         await recovery?.value
         await restoreAfterUncleanExitIfNeeded()
+        await refreshActivityRuns()
+        restorePersistedQueuedRuns()
         requestNotificationAuthorization()
         startRuntimeMonitor()
     }
@@ -1786,26 +1839,58 @@ final class AppModel: ObservableObject {
     // MARK: - Notifications
 
     private func requestNotificationAuthorization() {
-        guard persistenceEnabled, settings.notifyOnCompletion else { return }
+        guard persistenceEnabled,
+              settings.notifyOnCompletion || settings.notifyOnNeedsAttention else { return }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    private func notifyTurnCompleteIfInactive() {
+    private func notifyTurnCompleteIfInactive(
+        sessionID: String? = nil,
+        runID: String? = nil,
+        workspace: String? = nil
+    ) {
+        let resolvedWorkspace = workspace ?? workspacePath
         deliverNotification(
-            body: "Finished responding in \(URL(fileURLWithPath: workspacePath).lastPathComponent)."
+            body: "Finished responding in \(URL(fileURLWithPath: resolvedWorkspace).lastPathComponent).",
+            enabled: settings.notifyOnCompletion,
+            sessionID: sessionID,
+            runID: runID
         )
     }
 
-    private func notifyPermissionRequestIfInactive() {
-        deliverNotification(body: "Locus needs permission to continue.")
+    private func notifyNeedsAttentionIfInactive(
+        body: String = "Locus needs permission to continue.",
+        sessionID: String? = nil,
+        runID: String? = nil
+    ) {
+        deliverNotification(
+            body: body,
+            enabled: settings.notifyOnNeedsAttention,
+            sessionID: sessionID,
+            runID: runID
+        )
     }
 
-    private func deliverNotification(body: String) {
-        guard persistenceEnabled, settings.notifyOnCompletion, !NSApp.isActive else { return }
+    private func deliverNotification(
+        body: String,
+        enabled: Bool,
+        sessionID: String? = nil,
+        runID: String? = nil
+    ) {
+        guard persistenceEnabled, enabled, !NSApp.isActive else { return }
+        let resolvedSessionID = sessionID ?? currentSessionID
+        let resolvedRunID = runID
+            ?? orchestrationRunID
+            ?? taskConversationStates[resolvedSessionID]?.runID
+            ?? ""
         let content = UNMutableNotificationContent()
         content.title = "Locus"
         content.body = body
         content.sound = .default
+        content.userInfo = [
+            "session_id": resolvedSessionID,
+            "run_id": resolvedRunID,
+        ]
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(
                 identifier: UUID().uuidString,
@@ -2476,6 +2561,7 @@ final class AppModel: ObservableObject {
                 return
             }
             queuedMessages.append(text)
+            taskWorkers[currentSessionID]?.queuedMessages = queuedMessages
             if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
                 draftText = ""
             }
@@ -2512,6 +2598,14 @@ final class AppModel: ObservableObject {
         let dispatchedAttachments = isSlashPassthrough && dispatchedMode != .ask
             ? [] : availableAttachments
         let messageText = text.isEmpty ? "Please analyze the attached files." : text
+        let dispatchedSessionID = currentSessionID
+        let dispatchedWorkspaceRoot = workspacePath
+        let dispatchedExecutionPath = activeTaskRecord?.executionPath ?? dispatchedWorkspaceRoot
+        let dispatchedEnvironment = currentExecutionEnvironment
+        let dispatchedContextFiles = contextFiles
+        let dispatchedRestoredContext = isSlashPassthrough ? nil : restoredTranscriptContext
+        if !isSlashPassthrough { restoredTranscriptContext = nil }
+
         isBusy = true
         turnStartedAt = Date()
         planApprovalPending = false
@@ -2522,11 +2616,72 @@ final class AppModel: ObservableObject {
         turnDispatchedInPlanMode = dispatchedMode == .plan && !isSlashPassthrough
         turnDispatchedMode = isSlashPassthrough ? nil : dispatchedMode
         turnDispatchedTeamRunID = dispatchedTeam?["run_id"] as? String
-        Task { [weak self] in
+        if !dispatchedAttachments.isEmpty {
+            let sentIDs = Set(dispatchedAttachments.map(\.id))
+            chatAttachments.removeAll { sentIDs.contains($0.id) }
+            chatAttachmentNotice = nil
+        }
+        let attachmentLine = dispatchedAttachments.isEmpty
+            ? nil
+            : "Attached: \(dispatchedAttachments.map(\.name).joined(separator: ", "))"
+        let visibleText = [text.nilIfEmpty, attachmentLine]
+            .compactMap { $0 }
+            .joined(separator: "\n\n")
+        let teamRunID = (dispatchedTeam?["run_id"] as? String)?.nilIfEmpty
+        let visibleBlock = ChatBlock(kind: .user, text: visibleText, teamRunID: teamRunID)
+        blocks.append(visibleBlock)
+        if !text.isEmpty { recordPrompt(text) }
+        if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
+            draftText = ""
+        }
+        presentInspectorForSentRequest(isTeam: dispatchedTeam != nil, runID: teamRunID)
+        let reservedRunID = teamRunID ?? UUID().uuidString
+        let previousRuntimeState = taskConversationStates[dispatchedSessionID]
+        taskConversationStates[dispatchedSessionID] = TaskConversationState(
+            sessionID: dispatchedSessionID,
+            taskID: activeTaskRecord?.id ?? previousRuntimeState?.taskID,
+            teamID: previousRuntimeState?.teamID,
+            workerID: previousRuntimeState?.workerID,
+            runID: reservedRunID,
+            state: .queued,
+            updatedAt: Date()
+        )
+
+        let pendingTurnToken = UUID()
+        let pendingTurn = Task { [weak self] in
             guard let self else { return }
-            var transport = self.conversationBackend
-            if dispatchedTeam != nil {
-                guard let worker = await self.ensureTeamWorker(for: self.currentSessionID) else {
+            defer {
+                if self.pendingChatTurnTokens[dispatchedSessionID] == pendingTurnToken {
+                    self.pendingChatTurns.removeValue(forKey: dispatchedSessionID)
+                    self.pendingChatTurnTokens.removeValue(forKey: dispatchedSessionID)
+                }
+            }
+            guard !Task.isCancelled else { return }
+            do {
+                let queuedTeam = dispatchedTeam?["team"] as? [String: Any]
+                let _: OrchestrationRun = try await self.backend.post(
+                    "/api/runs/queue",
+                    body: [
+                        "run_id": reservedRunID,
+                        "session_id": dispatchedSessionID,
+                        "message_id": visibleBlock.id.uuidString,
+                        "workspace_root": dispatchedWorkspaceRoot,
+                        "execution_path": dispatchedExecutionPath,
+                        "request": messageText,
+                        "run_kind": dispatchedTeam == nil ? "solo" : "team",
+                        "team_id": queuedTeam?["id"] as? String ?? "",
+                        "team_name": queuedTeam?["name"] as? String ?? "",
+                        "execution_environment": dispatchedEnvironment.rawValue,
+                    ],
+                    as: OrchestrationRun.self
+                )
+            } catch {
+                if let previousRuntimeState {
+                    self.taskConversationStates[dispatchedSessionID] = previousRuntimeState
+                } else {
+                    self.taskConversationStates.removeValue(forKey: dispatchedSessionID)
+                }
+                if self.currentSessionID == dispatchedSessionID {
                     self.isBusy = false
                     self.turnStartedAt = nil
                     self.turnDispatchedMode = nil
@@ -2537,32 +2692,40 @@ final class AppModel: ObservableObject {
                         requeue: requeueingOnFailure,
                         preserveDraft: preservingDraftOnFailure
                     )
-                    return
+                } else if requeueingOnFailure,
+                          let runtime = self.taskWorkers[dispatchedSessionID] {
+                    runtime.queuedMessages.insert(text, at: 0)
                 }
-                transport = worker.service
+                self.showToast("Could not queue this chat: \(error.localizedDescription)")
+                return
             }
-            // Just Chat never reaches into the workspace, including through a
-            // context pack selected during an earlier agentic turn.
-            if dispatchedMode != .ask {
-                await refreshContextFiles()
-            }
+            let refreshedContextFiles = dispatchedMode == .ask || dispatchedContextFiles.isEmpty
+                ? dispatchedContextFiles
+                : await Task.detached(priority: .utility) {
+                    dispatchedContextFiles.map(Self.reloadContextReference)
+                }.value
+            guard !Task.isCancelled else { return }
             let payload = isSlashPassthrough
                 ? text
-                : decoratedPrompt(
+                : Self.decoratedPrompt(
                     messageText,
                     mode: dispatchedMode,
-                    chatAttachments: dispatchedAttachments
+                    chatAttachments: dispatchedAttachments,
+                    contextFiles: refreshedContextFiles,
+                    restoredTranscriptContext: dispatchedRestoredContext
                 )
             var request: [String: Any] = [
                 "type": "user_message",
                 "text": payload,
                 "mode": dispatchedMode.rawValue,
             ]
-            if let agentConfig = encodedJSONObject(primaryAgentBehavior) {
+            if let agentConfig = self.encodedJSONObject(self.primaryAgentBehavior) {
                 request["agent_config"] = agentConfig
             }
             if let dispatchedTeam { request["team"] = dispatchedTeam }
-            let imageAttachments: [[String: Any]] = dispatchedAttachments.compactMap { attachment in
+            if dispatchedTeam == nil { request["run_id"] = reservedRunID }
+            let imageAttachments: [[String: Any]] = dispatchedAttachments.compactMap {
+                attachment in
                 guard attachment.kind == .image,
                       let data = attachment.imageData,
                       let mimeType = attachment.mimeType
@@ -2573,37 +2736,146 @@ final class AppModel: ObservableObject {
                     "data": data.base64EncodedString(),
                 ]
             }
-            if !imageAttachments.isEmpty {
-                request["attachments"] = imageAttachments
-            }
-            guard transport.send(request) else {
-                isBusy = false
-                turnStartedAt = nil
-                turnDispatchedMode = nil
-                turnDispatchedTeamRunID = nil
-                turnDispatchedInPlanMode = false
-                stashUnsent(text, requeue: requeueingOnFailure, preserveDraft: preservingDraftOnFailure)
+            if !imageAttachments.isEmpty { request["attachments"] = imageAttachments }
+            guard let worker = await self.ensureChatWorker(
+                for: dispatchedSessionID,
+                workspaceRoot: dispatchedWorkspaceRoot
+            ) else {
+                if Task.isCancelled { return }
+                if self.currentSessionID == dispatchedSessionID {
+                    self.isBusy = false
+                    self.turnStartedAt = nil
+                    self.turnDispatchedMode = nil
+                    self.turnDispatchedTeamRunID = nil
+                    self.turnDispatchedInPlanMode = false
+                    self.stashUnsent(
+                        text,
+                        requeue: requeueingOnFailure,
+                        preserveDraft: preservingDraftOnFailure
+                    )
+                }
                 return
             }
-            if !dispatchedAttachments.isEmpty {
-                let sentIDs = Set(dispatchedAttachments.map(\.id))
-                chatAttachments.removeAll { sentIDs.contains($0.id) }
-                chatAttachmentNotice = nil
+            guard !Task.isCancelled else {
+                self.finishChatRuntime(worker, state: .cancelled)
+                return
             }
-            let attachmentLine = dispatchedAttachments.isEmpty
-                ? nil
-                : "Attached: \(dispatchedAttachments.map(\.name).joined(separator: ", "))"
-            let visibleText = [text.nilIfEmpty, attachmentLine]
-                .compactMap { $0 }
-                .joined(separator: "\n\n")
-            let teamRunID = (dispatchedTeam?["run_id"] as? String)?.nilIfEmpty
-            blocks.append(ChatBlock(kind: .user, text: visibleText, teamRunID: teamRunID))
-            if !text.isEmpty { recordPrompt(text) }
-            if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
-                draftText = ""
+            worker.dispatchedMode = isSlashPassthrough ? nil : dispatchedMode
+            worker.dispatchedTeamRunID = teamRunID
+            worker.reservedRunID = reservedRunID
+            worker.dispatchedInPlanMode = dispatchedMode == .plan && !isSlashPassthrough
+            guard await self.waitForChatExecutionSlot(worker) else { return }
+            do {
+                let _: OrchestrationRun = try await self.backend.patch(
+                    "/api/runs/\(reservedRunID)/queue",
+                    body: ["action": "admit"],
+                    as: OrchestrationRun.self
+                )
+            } catch {
+                self.finishChatRuntime(worker, state: .failed, error: "The queued run could not start")
+                return
             }
-            presentInspectorForSentRequest(isTeam: dispatchedTeam != nil, runID: teamRunID)
+            guard worker.service.send(request) else {
+                self.finishChatRuntime(worker, state: .failed, error: "The turn could not be delivered")
+                if self.currentSessionID == dispatchedSessionID {
+                    self.isBusy = false
+                    self.turnStartedAt = nil
+                    self.turnDispatchedMode = nil
+                    self.turnDispatchedTeamRunID = nil
+                    self.turnDispatchedInPlanMode = false
+                    self.stashUnsent(
+                        text,
+                        requeue: requeueingOnFailure,
+                        preserveDraft: preservingDraftOnFailure
+                    )
+                }
+                return
+            }
+            worker.executionState = dispatchedTeam == nil ? .running : .dispatching
+            worker.startedAt = Date()
+            self.updateBackgroundChatState(worker)
         }
+        pendingChatTurnTokens[dispatchedSessionID] = pendingTurnToken
+        pendingChatTurns[dispatchedSessionID] = pendingTurn
+    }
+
+    private func waitForChatExecutionSlot(_ runtime: ChatWorkerRuntime) async -> Bool {
+        runtime.executionState = .queued
+        runtime.startedAt = nil
+        updateBackgroundChatState(runtime)
+        chatAdmissionQueue.enqueue(runtime.sessionID)
+        while runtime.process.isRunning {
+            if Task.isCancelled {
+                chatAdmissionQueue.remove(runtime.sessionID)
+                return false
+            }
+            let occupied = taskWorkers.values.filter {
+                $0 !== runtime && $0.occupiesExecutionSlot
+            }.count
+            if chatAdmissionQueue.isFirst(runtime.sessionID),
+               occupied < AppSettings.clampMaximumActiveChats(settings.maximumActiveChats),
+               !hasLocalWriterCollision(for: runtime) {
+                chatAdmissionQueue.remove(runtime.sessionID)
+                runtime.executionState = .running
+                runtime.startedAt = Date()
+                updateBackgroundChatState(runtime)
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(200))
+            if Task.isCancelled {
+                chatAdmissionQueue.remove(runtime.sessionID)
+                return false
+            }
+        }
+        chatAdmissionQueue.remove(runtime.sessionID)
+        return false
+    }
+
+    private func hasLocalWriterCollision(for runtime: ChatWorkerRuntime) -> Bool {
+        guard runtime.dispatchedMode == .work || runtime.dispatchedMode == .build,
+              runtime.sessionInfo?.environment?["type"] != ChatExecutionEnvironment.worktree.rawValue,
+              let root = runtime.sessionInfo?.environment?["canonical_repository"]
+                ?? runtime.sessionInfo?.workspaceRoot ?? runtime.sessionInfo?.cwd
+        else { return false }
+        let canonical = URL(fileURLWithPath: root).standardizedFileURL.path
+        return taskWorkers.values.contains { other in
+            guard other !== runtime, other.occupiesExecutionSlot,
+                  other.dispatchedMode == .work || other.dispatchedMode == .build,
+                  other.sessionInfo?.environment?["type"]
+                    != ChatExecutionEnvironment.worktree.rawValue,
+                  let otherRoot = other.sessionInfo?.environment?["canonical_repository"]
+                    ?? other.sessionInfo?.workspaceRoot ?? other.sessionInfo?.cwd
+            else { return false }
+            return URL(fileURLWithPath: otherRoot).standardizedFileURL.path == canonical
+        }
+    }
+
+    private func updateBackgroundChatState(_ runtime: ChatWorkerRuntime) {
+        let previous = taskConversationStates[runtime.sessionID]
+        taskConversationStates[runtime.sessionID] = TaskConversationState(
+            sessionID: runtime.sessionID,
+            taskID: runtime.sessionInfo?.task?.id ?? previous?.taskID,
+            teamID: previous?.teamID,
+            workerID: previous?.workerID,
+            runID: previous?.runID,
+            state: runtime.executionState,
+            updatedAt: Date(),
+            errorMessage: runtime.lastError ?? previous?.errorMessage
+        )
+    }
+
+    private func finishChatRuntime(
+        _ runtime: ChatWorkerRuntime,
+        state: TeamRunState,
+        error: String? = nil
+    ) {
+        runtime.executionState = state
+        runtime.startedAt = nil
+        runtime.lastError = error
+        runtime.dispatchedMode = nil
+        runtime.dispatchedTeamRunID = nil
+        runtime.dispatchedInPlanMode = false
+        updateBackgroundChatState(runtime)
     }
 
     /// Where a message goes when it could not be delivered. A drained queue
@@ -2648,13 +2920,7 @@ final class AppModel: ObservableObject {
 
     func submitDraft() {
         if isBusy {
-            if orchestrationState == .waitingDispatchApproval
-                || steeringState?.hasPrefix("Stopping") == true
-            {
-                queueDraft()
-            } else {
-                steerDraft()
-            }
+            queueDraft()
         } else {
             send(draftText)
         }
@@ -2719,6 +2985,7 @@ final class AppModel: ObservableObject {
     func removeQueuedMessage(at index: Int) {
         guard queuedMessages.indices.contains(index) else { return }
         queuedMessages.remove(at: index)
+        taskWorkers[currentSessionID]?.queuedMessages = queuedMessages
     }
 
     private func drainQueuedMessages() {
@@ -2728,8 +2995,10 @@ final class AppModel: ObservableObject {
         guard isAgentOnline else { return }
         // A queued message was composed before any attachments added while it
         // waited; those belong to the user's next explicit send.
+        let message = queuedMessages.removeFirst()
+        taskWorkers[currentSessionID]?.queuedMessages = queuedMessages
         send(
-            queuedMessages.removeFirst(),
+            message,
             preservingDraftOnFailure: false,
             requeueingOnFailure: true,
             includeAttachments: false
@@ -2817,6 +3086,42 @@ final class AppModel: ObservableObject {
     }
 
     func stop() {
+        if let pendingTurn = pendingChatTurns[currentSessionID] {
+            let queuedRunID = taskConversationStates[currentSessionID]?.runID
+            pendingTurn.cancel()
+            pendingChatTurns.removeValue(forKey: currentSessionID)
+            pendingChatTurnTokens.removeValue(forKey: currentSessionID)
+            chatAdmissionQueue.remove(currentSessionID)
+            if let runtime = taskWorkers[currentSessionID] {
+                finishChatRuntime(runtime, state: .cancelled)
+            } else {
+                let previous = taskConversationStates[currentSessionID]
+                taskConversationStates[currentSessionID] = TaskConversationState(
+                    sessionID: currentSessionID,
+                    taskID: previous?.taskID,
+                    teamID: previous?.teamID,
+                    workerID: previous?.workerID,
+                    runID: previous?.runID,
+                    state: .cancelled,
+                    updatedAt: Date()
+                )
+            }
+            isBusy = false
+            turnStartedAt = nil
+            turnDispatchedMode = nil
+            turnDispatchedTeamRunID = nil
+            turnDispatchedInPlanMode = false
+            showToast("Removed the queued run")
+            if let queuedRunID {
+                Task { [weak self] in
+                    try? await self?.backend.patch(
+                        "/api/runs/\(queuedRunID)/queue", body: ["action": "cancel"],
+                        as: OrchestrationRun.self
+                    )
+                }
+            }
+            return
+        }
         // If the interrupt cannot be delivered the run is still live on the
         // agent; leave the busy state to recoverFromLostConnection(), the one
         // place that reconciles cards and spinners after a drop.
@@ -2832,7 +3137,7 @@ final class AppModel: ObservableObject {
     }
 
     var hasRunningWorkForQuit: Bool {
-        terminal.hasForegroundJob || Self.shouldWarnBeforeQuit(
+        !pendingChatTurns.isEmpty || terminal.hasForegroundJob || Self.shouldWarnBeforeQuit(
             isBusy: isBusy,
             hasPendingPermission: hasPendingPermission,
             currentSessionID: currentSessionID,
@@ -2880,6 +3185,10 @@ final class AppModel: ObservableObject {
 
     func stopRunningWorkForQuit(completion: @escaping @MainActor () -> Void) {
         terminal.terminate()
+        for pendingTurn in pendingChatTurns.values { pendingTurn.cancel() }
+        pendingChatTurns.removeAll()
+        pendingChatTurnTokens.removeAll()
+        chatAdmissionQueue = ChatAdmissionQueue()
         for runtime in taskWorkers.values {
             _ = runtime.service.send(["type": "interrupt"])
         }
@@ -2961,9 +3270,7 @@ final class AppModel: ObservableObject {
                 settingsPage = .knowledge
                 settingsPresented = true
             } else {
-                rememberWorkspaceFact(
-                    title: String(argument.prefix(80)), content: argument, tags: []
-                )
+                rememberConfirmationText = argument
             }
         case .setThinkingVisibility:
             setThinkingVisibility(argument)
@@ -3057,6 +3364,10 @@ final class AppModel: ObservableObject {
         }
         if let index = blocks.lastIndex(where: { $0.tool?.requestID == requestID }) {
             blocks[index].tool?.status = decision == "deny" ? .denied : .running
+        }
+        if let runtime = taskWorkers[currentSessionID] {
+            runtime.executionState = .running
+            updateBackgroundChatState(runtime)
         }
         if orchestrationRunID != nil {
             orchestrationState = .running
@@ -3560,7 +3871,7 @@ final class AppModel: ObservableObject {
             }
             guard !Task.isCancelled, request.generation == orchestrationRunsGeneration else { return }
             isLoadingOrchestrationRuns = false
-            showToast("Could not load team runs: \(error.localizedDescription)")
+            showToast("Could not load runs: \(error.localizedDescription)")
         }
     }
 
@@ -3730,33 +4041,31 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func exportOrchestrationToOTLP(_ runID: String) async {
+    func exportRunToOTLP(_ runID: String, includeContent: Bool = false) async {
         guard settings.otlpExportEnabled,
               !settings.otlpEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return }
         do {
             let _: SimpleActionResponse = try await backend.post(
-                "/api/orchestrations/\(runID)/otlp",
+                "/api/runs/\(runID)/otlp",
                 body: [
                     "endpoint": settings.otlpEndpoint,
-                    "authorization": CredentialStore.get(
-                        account: CredentialStore.otlpAuthorizationKey
-                    ) ?? "",
-                    "include_content": settings.otlpIncludeContent,
+                    "authorization": settings.otlpAuthorization,
+                    "include_content": includeContent,
                 ],
                 as: SimpleActionResponse.self
             )
+            await refreshOrchestrationRuns(select: runID)
         } catch {
+            await refreshOrchestrationRuns(select: runID)
             showToast("Telemetry export failed: \(error.localizedDescription)")
         }
     }
 
-    func saveOTLPAuthorization(_ value: String) {
-        showToast(
-            CredentialStore.set(value, account: CredentialStore.otlpAuthorizationKey)
-                ? "Telemetry authorization saved"
-                : "Could not save telemetry authorization"
-        )
+    private func exportOrchestrationToOTLP(_ runID: String) async {
+        let sample = AppSettings.clampOTLPSamplingRate(settings.otlpSamplingRate)
+        guard sample >= 1 || (sample > 0 && Double.random(in: 0..<1) < sample) else { return }
+        await exportRunToOTLP(runID, includeContent: false)
     }
 
     func pauseOrchestration(_ runID: String) {
@@ -3800,14 +4109,14 @@ final class AppModel: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let _: SimpleActionResponse = try await backend.delete(
-                    "/api/tasks/\(taskID)", as: SimpleActionResponse.self
+                let response: TaskMutationResponse = try await backend.delete(
+                    "/api/tasks/\(taskID)", as: TaskMutationResponse.self
                 )
                 if activeTaskRecord?.id == taskID {
-                    activeTaskRecord = nil
+                    activeTaskRecord = response.task
                     taskHasChanges = false
                 }
-                showToast("Managed checkout removed; workspace files were not changed")
+                showToast("Managed checkout archived with a restorable snapshot")
                 await refreshOrchestrationRuns(select: run.id)
             } catch {
                 showToast(error.localizedDescription)
@@ -3976,6 +4285,10 @@ final class AppModel: ObservableObject {
             return
         }
         pendingDispatchPlan = nil
+        if let runtime = taskWorkers[currentSessionID] {
+            runtime.executionState = action == "redispatch" ? .dispatching : .running
+            updateBackgroundChatState(runtime)
+        }
         if action == "redispatch" {
             orchestrationState = .dispatching
             dispatcherValidationReason = nil
@@ -4293,10 +4606,15 @@ final class AppModel: ObservableObject {
             async let vaultStatus: MemoryVaultStatus = backend.get(
                 "/api/memory/status", query: memoryQuery, as: MemoryVaultStatus.self
             )
+            async let diagnostics: MemoryDiagnosticReport = backend.get(
+                "/api/memory/diagnostics", query: memoryQuery,
+                as: MemoryDiagnosticReport.self
+            )
             knowledgeStatus = try await status
             workspaceMemories = try await memories.memories
             memoryCandidates = try await candidates.memories
             memoryVaultStatus = try await vaultStatus
+            memoryDiagnosticReport = try await diagnostics
         } catch {
             showToast("Could not load workspace knowledge: \(error.localizedDescription)")
         }
@@ -4440,6 +4758,14 @@ final class AppModel: ObservableObject {
             do {
                 let _: SimpleActionResponse = try await backend.delete(
                     "/api/memory/\(memory.id)",
+                    query: [
+                        URLQueryItem(name: "workspace", value: workspacePath),
+                        URLQueryItem(name: "agent_id", value: agentID),
+                        URLQueryItem(
+                            name: "outcome",
+                            value: memory.status == "candidate" ? "reject" : "delete"
+                        ),
+                    ],
                     as: SimpleActionResponse.self
                 )
                 workspaceMemories.removeAll { $0.id == memory.id }
@@ -4524,6 +4850,38 @@ final class AppModel: ObservableObject {
                 )
             } catch {
                 showToast("Could not review memory: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func reprocessCurrentChatMemory(agentID: String = "primary") {
+        guard !currentSessionID.isEmpty else {
+            showToast("Open a saved chat before analyzing it")
+            return
+        }
+        let sessionID = currentSessionID
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response: MemoryReprocessResponse = try await backend.post(
+                    "/api/memory/reprocess",
+                    body: [
+                        "workspace": workspacePath,
+                        "agent_id": agentID,
+                        "session_id": sessionID,
+                    ],
+                    timeout: 120,
+                    as: MemoryReprocessResponse.self
+                )
+                await refreshWorkspaceKnowledge(agentID: agentID)
+                if response.candidateCount == 0 {
+                    showToast("Analysis completed — no durable memories found")
+                } else {
+                    let suffix = response.candidateCount == 1 ? "" : "s"
+                    showToast("Added \(response.candidateCount) suggestion\(suffix) to the Inbox")
+                }
+            } catch {
+                showToast("Could not analyze this chat: \(error.localizedDescription)")
             }
         }
     }
@@ -4676,6 +5034,602 @@ final class AppModel: ObservableObject {
                 showToast(response.applied ? "Applied task changes to the workspace" : "No new task changes to apply")
             } catch {
                 showToast("Workspace left untouched: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    var currentLandingCheckCommands: [String] {
+        workspaceProfiles.first(where: {
+            SessionSummary.canonicalWorkspacePath($0.path)
+                == SessionSummary.canonicalWorkspacePath(workspacePath)
+        })?.resolvedLandingCheckCommands ?? []
+    }
+
+    func saveLandingCheckCommands(_ commands: [String]) {
+        let clean = Array(commands.map {
+            String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(500))
+        }.filter { !$0.isEmpty }.prefix(8))
+        touchWorkspaceProfile(workspacePath)
+        if let index = workspaceProfiles.firstIndex(where: {
+            SessionSummary.canonicalWorkspacePath($0.path)
+                == SessionSummary.canonicalWorkspacePath(workspacePath)
+        }) {
+            workspaceProfiles[index].landingCheckCommands = clean
+            persistWorkspaceProfiles()
+        }
+    }
+
+    func prepareReviewAndLand() {
+        guard let task = activeTaskRecord, !isBusy else { return }
+        if isUITesting, landingPreflight != nil {
+            reviewAndLandPresented = true
+            return
+        }
+        isLandingOperationRunning = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { isLandingOperationRunning = false }
+            do {
+                async let preflight: LandingPreflight = backend.get(
+                    "/api/tasks/\(task.id)/landing/preflight", as: LandingPreflight.self
+                )
+                async let detail: TaskDetailResponse = backend.get(
+                    "/api/tasks/\(task.id)", as: TaskDetailResponse.self
+                )
+                landingPreflight = try await preflight
+                let loadedDetail = try await detail
+                landingPatch = loadedDetail.patch
+                landingCheckRun = nil
+                reviewAndLandPresented = true
+            } catch {
+                showToast("Could not review the worktree: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func refreshLandingReview() async {
+        guard reviewAndLandPresented, !isLandingOperationRunning,
+              let task = activeTaskRecord else { return }
+        do {
+            async let preflight: LandingPreflight = backend.get(
+                "/api/tasks/\(task.id)/landing/preflight", as: LandingPreflight.self
+            )
+            async let detail: TaskDetailResponse = backend.get(
+                "/api/tasks/\(task.id)", as: TaskDetailResponse.self
+            )
+            let refreshedPreflight = try await preflight
+            let refreshedDetail = try await detail
+            guard reviewAndLandPresented, activeTaskRecord?.id == task.id else { return }
+            landingPreflight = refreshedPreflight
+            landingPatch = refreshedDetail.patch
+        } catch {
+            // The next poll retries. Landing still performs its own atomic,
+            // current-tree validation before making any change.
+        }
+    }
+
+    func runLandingChecks(commands: [String]) {
+        guard let task = activeTaskRecord, !commands.isEmpty else { return }
+        saveLandingCheckCommands(commands)
+        isLandingOperationRunning = true
+        let runID = UUID().uuidString
+        activeLandingCheckRunID = runID
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                isLandingOperationRunning = false
+                activeLandingCheckRunID = nil
+            }
+            do {
+                landingCheckRun = try await backend.post(
+                    "/api/tasks/\(task.id)/checks",
+                    body: ["commands": commands, "run_id": runID],
+                    timeout: 4_900, as: LandingCheckRun.self
+                )
+                landingPreflight = try await backend.get(
+                    "/api/tasks/\(task.id)/landing/preflight", as: LandingPreflight.self
+                )
+            } catch {
+                showToast("Checks stopped: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func stopLandingChecks() {
+        guard let runID = activeLandingCheckRunID else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let _: SimpleActionResponse = try await backend.post(
+                    "/api/runs/\(runID)/cancel", body: [:],
+                    as: SimpleActionResponse.self
+                )
+                showToast("Stopping checks")
+            } catch {
+                showToast("Could not stop checks: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func landActiveTask(
+        destination: String, branch: String, commitMessage: String,
+        overrideFailedChecks: Bool
+    ) {
+        guard let task = activeTaskRecord, let preflight = landingPreflight else { return }
+        isLandingOperationRunning = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { isLandingOperationRunning = false }
+            do {
+                let response: TaskLandingResponse = try await backend.post(
+                    "/api/tasks/\(task.id)/landing",
+                    body: [
+                        "destination": destination,
+                        "expected_tree": preflight.tree,
+                        "check_tree": landingCheckRun?.tree ?? "",
+                        "check_run_id": landingCheckRun?.runID ?? "",
+                        "checks_passed": landingCheckRun?.passed ?? false,
+                        "override_failed_checks": overrideFailedChecks,
+                        "branch": branch,
+                        "commit_message": commitMessage,
+                        "source_run_id": orchestrationRunID
+                            ?? taskConversationStates[currentSessionID]?.runID ?? "",
+                    ],
+                    timeout: 120,
+                    as: TaskLandingResponse.self
+                )
+                activeTaskRecord = response.task
+                sessionInfo = sessionInfo?.replacingTask(response.task)
+                if destination == "local" { reviewAndLandPresented = false }
+                refreshGitStatus()
+                if let detail = try? await backend.get(
+                    "/api/tasks/\(task.id)", as: TaskDetailResponse.self
+                ) {
+                    taskHasChanges = detail.patchBytes > 0
+                    taskPatchBytes = detail.patchBytes
+                }
+                showToast(destination == "local" ? "Applied changes to Local" : "Created worktree commit")
+            } catch {
+                showToast("Landing stopped safely: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func refreshActivityRuns() async {
+        do {
+            let response: OrchestrationRunsResponse = try await backend.get(
+                "/api/runs", query: [URLQueryItem(name: "limit", value: "200")],
+                as: OrchestrationRunsResponse.self
+            )
+            activityRuns = response.runs
+            if activityCenterPresented { markAllActivitySeen() }
+        } catch {
+            showToast("Could not load activity: \(error.localizedDescription)")
+        }
+    }
+
+    func openActivityCenter() {
+        activityCenterPresented = true
+        markAllActivitySeen()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await refreshActivityRuns()
+            markAllActivitySeen()
+        }
+    }
+
+    func activityIsUnseen(_ run: OrchestrationRun) -> Bool {
+        guard !dismissedActivityRunIDs.contains(run.id) else { return false }
+        return (activitySeenUpdates[run.id] ?? -Double.greatestFiniteMagnitude) < run.updatedAt
+    }
+
+    func markActivitySeen(_ run: OrchestrationRun) {
+        guard activityIsUnseen(run) else { return }
+        activitySeenUpdates[run.id] = run.updatedAt
+        persistActivityPresentationState()
+    }
+
+    func markAllActivitySeen() {
+        var changed = false
+        for run in visibleActivityRuns where activityIsUnseen(run) {
+            activitySeenUpdates[run.id] = run.updatedAt
+            changed = true
+        }
+        if changed { persistActivityPresentationState() }
+    }
+
+    func dismissActivityRun(_ run: OrchestrationRun) {
+        guard TeamRunState(rawValue: run.state)?.isTerminal == true else { return }
+        dismissedActivityRunIDs.insert(run.id)
+        persistActivityPresentationState()
+    }
+
+    func clearFinishedActivityRuns() {
+        let finished = visibleActivityRuns.compactMap { run in
+            TeamRunState(rawValue: run.state)?.isTerminal == true ? run.id : nil
+        }
+        guard !finished.isEmpty else { return }
+        dismissedActivityRunIDs.formUnion(finished)
+        persistActivityPresentationState()
+        showToast("Cleared finished activity")
+    }
+
+    func updateQueuedRun(_ run: OrchestrationRun, action: String) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let _: OrchestrationRun = try await backend.patch(
+                    "/api/runs/\(run.id)/queue", body: ["action": action],
+                    as: OrchestrationRun.self
+                )
+                if let sessionID = run.sessionID {
+                    if action == "cancel" {
+                        pendingChatTurns[sessionID]?.cancel()
+                        pendingChatTurns.removeValue(forKey: sessionID)
+                        pendingChatTurnTokens.removeValue(forKey: sessionID)
+                        chatAdmissionQueue.remove(sessionID)
+                        if let runtime = taskWorkers[sessionID] {
+                            finishChatRuntime(runtime, state: .cancelled)
+                        }
+                    } else {
+                        chatAdmissionQueue.move(sessionID, action: action)
+                    }
+                }
+                await refreshActivityRuns()
+            } catch { showToast(error.localizedDescription) }
+        }
+    }
+
+    func retryRun(_ run: OrchestrationRun) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let retry: OrchestrationRun = try await backend.post(
+                    "/api/runs/\(run.id)/retry", body: [:], as: OrchestrationRun.self
+                )
+                guard let sessionID = retry.sessionID,
+                      let session = sessions.first(where: { $0.id == sessionID }),
+                      let workspace = retry.workspaceRoot ?? session.workspacePath
+                else {
+                    showToast("The original chat or workspace is unavailable")
+                    return
+                }
+                guard let worker = await ensureChatWorker(
+                    for: sessionID, workspaceRoot: workspace
+                ) else {
+                    showToast("The original chat worker could not be started")
+                    return
+                }
+                worker.reservedRunID = retry.id
+                worker.dispatchedMode = .work
+                worker.executionState = .queued
+                taskConversationStates[sessionID] = TaskConversationState(
+                    sessionID: sessionID,
+                    taskID: retry.taskID,
+                    teamID: retry.teamID,
+                    workerID: retry.workerID,
+                    runID: retry.id,
+                    state: .queued,
+                    updatedAt: Date()
+                )
+                guard await waitForChatExecutionSlot(worker) else { return }
+                let _: OrchestrationRun = try await backend.patch(
+                    "/api/runs/\(retry.id)/queue", body: ["action": "admit"],
+                    as: OrchestrationRun.self
+                )
+                var request: [String: Any] = [
+                    "type": "user_message",
+                    "text": Self.decoratedPrompt(
+                        retry.request,
+                        mode: .work,
+                        chatAttachments: [],
+                        contextFiles: [],
+                        restoredTranscriptContext: nil
+                    ),
+                    "mode": WorkMode.work.rawValue,
+                    "run_id": retry.id,
+                ]
+                if let config = encodedJSONObject(primaryAgentBehavior) {
+                    request["agent_config"] = config
+                }
+                if retry.runKind == "team",
+                   let teamID = retry.teamID.flatMap(UUID.init(uuidString:)),
+                   var manifest = teamManifest(for: retry.request, teamID: teamID) {
+                    manifest["run_id"] = retry.id
+                    request["team"] = manifest
+                    worker.dispatchedTeamRunID = retry.id
+                    worker.executionState = .dispatching
+                } else {
+                    worker.executionState = .running
+                }
+                guard worker.service.send(request) else {
+                    finishChatRuntime(worker, state: .failed, error: "The retry could not be delivered")
+                    return
+                }
+                worker.startedAt = Date()
+                updateBackgroundChatState(worker)
+                showToast("Retry queued in \(session.displayTitle)")
+                await refreshActivityRuns()
+            } catch { showToast(error.localizedDescription) }
+        }
+    }
+
+    private func restorePersistedQueuedRuns() {
+        let queued = activityRuns.filter { $0.state == "queued" }.sorted {
+            ($0.queuePosition ?? .max) < ($1.queuePosition ?? .max)
+        }
+        for run in queued where restoredQueuedRunIDs.insert(run.id).inserted {
+            Task { @MainActor [weak self] in
+                await self?.dispatchPersistedQueuedRun(run)
+            }
+        }
+    }
+
+    private func dispatchPersistedQueuedRun(_ run: OrchestrationRun) async {
+        guard let sessionID = run.sessionID,
+              let session = sessions.first(where: { $0.id == sessionID }),
+              let workspace = run.workspaceRoot ?? session.workspacePath,
+              let worker = await ensureChatWorker(for: sessionID, workspaceRoot: workspace)
+        else {
+            showToast("A saved queued run needs its original chat and workspace")
+            return
+        }
+        worker.reservedRunID = run.id
+        worker.dispatchedMode = .work
+        worker.executionState = .queued
+        taskConversationStates[sessionID] = TaskConversationState(
+            sessionID: sessionID,
+            taskID: run.taskID,
+            teamID: run.teamID,
+            workerID: run.workerID,
+            runID: run.id,
+            state: .queued,
+            updatedAt: Date()
+        )
+        guard await waitForChatExecutionSlot(worker) else { return }
+        do {
+            let _: OrchestrationRun = try await backend.patch(
+                "/api/runs/\(run.id)/queue", body: ["action": "admit"],
+                as: OrchestrationRun.self
+            )
+            var request: [String: Any] = [
+                "type": "user_message",
+                "text": Self.decoratedPrompt(
+                    run.request, mode: .work, chatAttachments: [], contextFiles: [],
+                    restoredTranscriptContext: nil
+                ),
+                "mode": WorkMode.work.rawValue,
+                "run_id": run.id,
+            ]
+            if let config = encodedJSONObject(primaryAgentBehavior) {
+                request["agent_config"] = config
+            }
+            if run.runKind == "team" {
+                guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
+                      var manifest = teamManifest(for: run.request, teamID: teamID) else {
+                    finishChatRuntime(
+                        worker, state: .interrupted,
+                        error: "The saved team configuration needs attention before resuming"
+                    )
+                    return
+                }
+                manifest["run_id"] = run.id
+                request["team"] = manifest
+                worker.dispatchedTeamRunID = run.id
+                worker.executionState = .dispatching
+            } else {
+                worker.executionState = .running
+            }
+            guard worker.service.send(request) else {
+                finishChatRuntime(worker, state: .interrupted, error: "The saved run could not be delivered")
+                return
+            }
+            worker.startedAt = Date()
+            updateBackgroundChatState(worker)
+        } catch {
+            finishChatRuntime(worker, state: .interrupted, error: error.localizedDescription)
+        }
+    }
+
+    func openActivityRun(_ run: OrchestrationRun) {
+        guard let sessionID = run.sessionID,
+              let session = sessions.first(where: { $0.id == sessionID })
+        else { showToast("That chat is no longer available"); return }
+        markActivitySeen(run)
+        activityCenterPresented = false
+        resume(session)
+        Task { await loadOrchestrationRun(run.id) }
+    }
+
+    func openNotification(sessionID: String, runID: String) {
+        activityCenterPresented = false
+        if let session = sessions.first(where: { $0.id == sessionID }) {
+            resume(session)
+        }
+        if !runID.isEmpty {
+            Task { await loadOrchestrationRun(runID) }
+        }
+    }
+
+    func stopActivityRun(_ run: OrchestrationRun) {
+        if run.state == "queued" {
+            updateQueuedRun(run, action: "cancel")
+            return
+        }
+        if let sessionID = run.sessionID, let runtime = taskWorkers[sessionID] {
+            guard runtime.service.send(["type": "interrupt"]) else {
+                showToast("That chat worker could not be reached")
+                return
+            }
+            runtime.executionState = .cancelled
+            updateBackgroundChatState(runtime)
+            showToast("Stopping the selected run")
+            return
+        }
+        cancelOrchestration(run.id)
+    }
+
+    func answerActivityPermission(_ run: OrchestrationRun, decision: String) {
+        guard let sessionID = run.sessionID,
+              let runtime = taskWorkers[sessionID],
+              let event = runtime.pendingForegroundEvent,
+              event["type"] as? String == "permission_request",
+              let requestID = event["request_id"] as? String,
+              runtime.service.send([
+                "type": "permission_decision",
+                "request_id": requestID,
+                "decision": decision,
+              ])
+        else {
+            showToast("Open the chat to review this permission request")
+            return
+        }
+        runtime.pendingForegroundEvent = nil
+        runtime.executionState = .running
+        updateBackgroundChatState(runtime)
+        showToast(decision == "deny" ? "Permission denied" : "Permission granted")
+        Task { await refreshActivityRuns() }
+    }
+
+    func publishLandedWorktree() {
+        guard let task = activeTaskRecord, let branch = task.branch,
+              GitRemoteFeatures.isAvailable else { return }
+        let client = GitClient(workspaceRoot: task.executionPath)
+        isLandingOperationRunning = true
+        Task { @MainActor [weak self] in
+            defer { self?.isLandingOperationRunning = false }
+            do {
+                let upstream = try? await client.run([
+                    "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}",
+                ])
+                try await client.run(
+                    GitPushPlan.arguments(
+                        branch: branch,
+                        upstream: upstream?.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                    ),
+                    timeout: 120
+                )
+                self?.showToast("Published \(branch)")
+            } catch {
+                self?.showToast("Publish failed; the branch and commit are safe: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func openLandedPullRequest() {
+        guard let task = activeTaskRecord, let branch = task.branch else { return }
+        let client = GitClient(workspaceRoot: task.executionPath)
+        Task { @MainActor [weak self] in
+            guard let remote = try? await client.run(["remote", "get-url", "origin"]),
+                  let url = GitRemoteURL.githubCompareURL(
+                    remote: remote.stdout.trimmingCharacters(in: .whitespacesAndNewlines),
+                    branch: branch
+                  ) else {
+                self?.showToast("The origin remote is not a GitHub repository")
+                return
+            }
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    var currentExecutionEnvironment: ChatExecutionEnvironment {
+        if let raw = sessionInfo?.environment?["type"],
+           let environment = ChatExecutionEnvironment(rawValue: raw) {
+            return environment
+        }
+        return activeTaskRecord == nil ? .local : .worktree
+    }
+
+    func handoffCurrentChat(to environment: ChatExecutionEnvironment) {
+        guard !isBusy, !hasPendingPermission, !currentSessionID.isEmpty else {
+            showToast("Wait for the current turn before handing off")
+            return
+        }
+        guard environment != currentExecutionEnvironment else { return }
+        let sessionID = currentSessionID
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response: SessionHandoffResponse = try await conversationBackend.post(
+                    "/api/sessions/\(sessionID)/handoff",
+                    body: ["environment": environment.rawValue, "base_ref": "HEAD"],
+                    timeout: 120,
+                    as: SessionHandoffResponse.self
+                )
+                sessionInfo = response.sessionInfo
+                activeTaskRecord = response.task
+                if let runtime = taskWorkers[sessionID] {
+                    runtime.sessionInfo = response.sessionInfo
+                }
+                refreshGitStatus()
+                await refreshMetadata()
+                showToast(
+                    environment == .worktree
+                        ? "Chat moved to its worktree"
+                        : "Chat and changes moved to Local"
+                )
+            } catch {
+                showToast("Handoff left both checkouts unchanged: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func createBranchForActiveTask(_ rawName: String) {
+        guard let task = activeTaskRecord, !isBusy, !hasPendingPermission else { return }
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response: TaskMutationResponse = try await conversationBackend.post(
+                    "/api/tasks/\(task.id)/branch",
+                    body: ["branch": name],
+                    as: TaskMutationResponse.self
+                )
+                activeTaskRecord = response.task
+                sessionInfo = sessionInfo?.replacingTask(response.task)
+                refreshGitBranch()
+                showToast("Created branch \(name) in the worktree")
+            } catch {
+                showToast("Could not create branch: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func restoreActiveTaskCheckout() {
+        guard let task = activeTaskRecord, !isBusy else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response: TaskMutationResponse = try await conversationBackend.post(
+                    "/api/tasks/\(task.id)/restore",
+                    body: [:],
+                    timeout: 120,
+                    as: TaskMutationResponse.self
+                )
+                activeTaskRecord = response.task
+                showToast("Worktree restored")
+            } catch {
+                showToast("Could not restore the worktree: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func restoreWorktree(for session: SessionSummary) {
+        guard let task = session.task else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let _: TaskMutationResponse = try await backend.post(
+                    "/api/tasks/\(task.id)/restore",
+                    body: [:],
+                    timeout: 120,
+                    as: TaskMutationResponse.self
+                )
+                await refreshMetadata()
+                showToast("Worktree restored")
+            } catch {
+                showToast("Could not restore worktree: \(error.localizedDescription)")
             }
         }
     }
@@ -5019,30 +5973,38 @@ final class AppModel: ObservableObject {
     }
 
     func newSession() {
-        requestClearChat()
+        startNewChat(in: workspacePath, environment: nil)
     }
 
     func newSession(in workspacePath: String) {
-        startNewChat(in: workspacePath)
+        startNewChat(in: workspacePath, environment: nil)
+    }
+
+    func newSession(in workspacePath: String, environment: ChatExecutionEnvironment) {
+        startNewChat(in: workspacePath, environment: environment, baseRef: "HEAD")
+    }
+
+    func newWorktreeSession(in workspacePath: String, baseRef: String) {
+        startNewChat(in: workspacePath, environment: .worktree, baseRef: baseRef)
     }
 
     func openWorkspace(_ group: WorkspaceChatGroup) {
-        guard (!isBusy && !hasPendingPermission) || taskWorkers[currentSessionID] != nil else {
-            showToast("Finish the active run before switching workspaces")
-            return
-        }
         setWorkspaceExpanded(group.id, expanded: true)
         if let latest = group.chats.max(by: { $0.mtime < $1.mtime }) {
             resume(latest)
         } else if let path = group.path {
-            startNewChat(in: path)
+            startNewChat(in: path, environment: nil)
         }
     }
 
-    private func startNewChat(in rawPath: String) {
-        guard (!isBusy && !hasPendingPermission) || taskWorkers[currentSessionID] != nil,
-              !pendingSessionReset else {
-            showToast("Finish the active run before starting another chat")
+    private func startNewChat(
+        in rawPath: String,
+        environment requestedEnvironment: ChatExecutionEnvironment?,
+        baseRef: String = "HEAD"
+    ) {
+        activityCenterPresented = false
+        guard !pendingSessionReset else {
+            showToast("Wait for the current chat change to finish")
             return
         }
         detachForegroundWorkerUIIfNeeded()
@@ -5065,9 +6027,20 @@ final class AppModel: ObservableObject {
         showToast("Starting a new chat in \(URL(fileURLWithPath: path).lastPathComponent)…")
         Task {
             do {
+                let isGit = (try? await GitClient(workspaceRoot: path).run(
+                    ["rev-parse", "--show-toplevel"]
+                )) != nil
+                let environment = requestedEnvironment
+                    ?? (settings.newGitChatsUseWorktree && isGit ? .worktree : .local)
                 let response = try await backend.post(
                     "/api/sessions/new",
-                    body: ["reason": "workspace_chat", "cwd": path],
+                    body: [
+                        "reason": "workspace_chat",
+                        "cwd": path,
+                        "environment": environment.rawValue,
+                        "base_ref": baseRef,
+                        "worktree_retention_limit": settings.worktreeRetentionLimit,
+                    ],
                     as: NewSessionResponse.self
                 )
                 applySessionStarted(response.sessionInfo, reason: response.reason)
@@ -5120,11 +6093,8 @@ final class AppModel: ObservableObject {
     }
 
     func resume(_ session: SessionSummary) {
+        activityCenterPresented = false
         let currentIsBackgroundCapable = taskWorkers[currentSessionID] != nil
-        guard (!isBusy && !hasPendingPermission) || currentIsBackgroundCapable else {
-            showToast("Finish the active run before switching sessions")
-            return
-        }
         if let path = session.workspacePath {
             guard FileManager.default.fileExists(atPath: path) else {
                 showToast("That chat's workspace is no longer available")
@@ -5165,6 +6135,11 @@ final class AppModel: ObservableObject {
                 appliedWorkspacePath = response.sessionInfo.cwd
                 pendingWorkspacePath = nil
                 blocks = Self.blocks(from: response.messages)
+                if let error = taskConversationStates[response.sessionInfo.sessionID]?
+                    .errorMessage?.nilIfEmpty,
+                   blocks.last?.text != error {
+                    blocks.append(ChatBlock(kind: .error, text: error))
+                }
                 refreshAnchoredTeamRunsIfNeeded()
                 applyPendingSearchHitIfNeeded()
                 sessionInfo = response.sessionInfo
@@ -5183,7 +6158,10 @@ final class AppModel: ObservableObject {
                         workerID: response.workerID,
                         runID: response.orchestrationRunID,
                         state: state,
-                        updatedAt: Date()
+                        updatedAt: Date(),
+                        errorMessage: taskConversationStates[
+                            response.sessionInfo.sessionID
+                        ]?.errorMessage
                     )
                     if let runID = response.orchestrationRunID {
                         lifecycleJournal?.record(
@@ -5202,7 +6180,8 @@ final class AppModel: ObservableObject {
     }
 
     private func detachForegroundWorkerUIIfNeeded() {
-        guard taskWorkers[currentSessionID] != nil else { return }
+        guard let runtime = taskWorkers[currentSessionID] else { return }
+        runtime.queuedMessages = queuedMessages
         computerControl.cancelPendingActions()
         // No browser cancellation here, at any scope: the worker keeps running
         // in the background and its browser actions are served on its own
@@ -5210,6 +6189,12 @@ final class AppModel: ObservableObject {
         // would kill an action that is still going to be answered.
         flushPendingTokens()
         finalizeStreamingBlocks()
+        runtime.streamingBlockID = streamingAssistantID
+        if let streamingAssistantID,
+           let block = blocks.first(where: { $0.id == streamingAssistantID }) {
+            runtime.streamingText = block.text
+            runtime.streamingReasoning = block.reasoningText ?? ""
+        }
         streamingAssistantID = nil
         streamingReply.resetTurn()
         isBusy = false
@@ -5222,12 +6207,13 @@ final class AppModel: ObservableObject {
         taskPatchBytes = 0
     }
 
-    private func activateWorkerSession(_ session: SessionSummary, runtime: TaskWorkerRuntime) {
+    private func activateWorkerSession(_ session: SessionSummary, runtime: ChatWorkerRuntime) {
         flushPendingTokens()
         finalizeStreamingBlocks()
         streamingAssistantID = nil
         streamingReply.resetTurn()
         currentSessionID = runtime.sessionID
+        queuedMessages = runtime.queuedMessages
         sessionInfo = runtime.sessionInfo
         if let info = runtime.sessionInfo { computerControl.beginSession(info.sessionID) }
         if let info = runtime.sessionInfo { browser.beginSession(info.sessionID) }
@@ -5239,22 +6225,42 @@ final class AppModel: ObservableObject {
                     as: SessionDetailResponse.self
                 )
                 blocks = Self.blocks(from: detail.messages)
+                if let streamingID = runtime.streamingBlockID {
+                    blocks.append(ChatBlock(
+                        id: streamingID,
+                        kind: .assistant,
+                        text: runtime.streamingText,
+                        reasoningText: runtime.streamingReasoning.nilIfEmpty,
+                        isStreaming: true
+                    ))
+                    streamingAssistantID = streamingID
+                }
                 refreshAnchoredTeamRunsIfNeeded()
                 agentActivities = detail.agentActivities ?? []
                 orchestrationState = detail.orchestrationState
                     ?? taskConversationStates[runtime.sessionID]?.state
                     ?? detail.task?.state
                 orchestrationRunID = detail.orchestrationRunID
+                    ?? taskConversationStates[runtime.sessionID]?.runID
                 activeWorkerID = detail.workerID
                 activeTaskRecord = detail.task ?? runtime.sessionInfo?.task
                 let activeStates: Set<TeamRunState> = [
                     .queued, .dispatching, .running, .waitingPermission,
-                    .waitingComputer, .reviewing,
+                    .waitingComputer, .waitingDispatchApproval, .reviewing,
                 ]
-                isBusy = orchestrationState.map(activeStates.contains) ?? false
+                isBusy = orchestrationState.map(activeStates.contains)
+                    ?? runtime.occupiesExecutionSlot
+                turnStartedAt = runtime.startedAt
+                turnDispatchedMode = runtime.dispatchedMode
+                turnDispatchedTeamRunID = runtime.dispatchedTeamRunID
+                turnDispatchedInPlanMode = runtime.dispatchedInPlanMode
                 if let pending = runtime.pendingForegroundEvent {
                     runtime.pendingForegroundEvent = nil
                     handle(pending)
+                }
+                if let error = runtime.lastError?.nilIfEmpty,
+                   blocks.last?.text != error {
+                    blocks.append(ChatBlock(kind: .error, text: error))
                 }
                 if let task = activeTaskRecord,
                    let taskDetail = try? await backend.get(
@@ -5287,10 +6293,18 @@ final class AppModel: ObservableObject {
             showToast("Start a new chat before archiving the active session")
             return
         }
+        guard !chatHasActiveRun(session) else {
+            showToast("Wait for this chat to stop before archiving it")
+            return
+        }
         updateSession(session, body: ["archived": !session.isArchived], success: session.isArchived ? "Session restored" : "Session archived")
     }
 
     func deleteChat(_ session: SessionSummary) {
+        guard !chatHasActiveRun(session) else {
+            showToast("Wait for this chat to stop before deleting it")
+            return
+        }
         guard !isBusy, !hasPendingPermission, !pendingSessionReset else {
             showToast("Finish the active run before deleting a chat")
             return
@@ -5508,7 +6522,7 @@ final class AppModel: ObservableObject {
         {
             resume(latest)
         } else {
-            startNewChat(in: path)
+            startNewChat(in: path, environment: nil)
         }
         showToast("Switching to \(URL(fileURLWithPath: path).lastPathComponent)")
     }
@@ -5791,6 +6805,15 @@ final class AppModel: ObservableObject {
 
     func applySettings(_ newSettings: AppSettings, proxyCredentialChanged: Bool = false) {
         var newSettings = newSettings
+        newSettings.maximumActiveChats = AppSettings.clampMaximumActiveChats(
+            newSettings.maximumActiveChats
+        )
+        newSettings.worktreeRetentionLimit = AppSettings.clampWorktreeRetentionLimit(
+            newSettings.worktreeRetentionLimit
+        )
+        newSettings.otlpSamplingRate = AppSettings.clampOTLPSamplingRate(
+            newSettings.otlpSamplingRate
+        )
         // Permissions are live controls, not part of the editable settings
         // draft. Preserve a choice made while this sheet was open.
         newSettings.permissionModeRaw = settings.permissionModeRaw
@@ -6669,7 +7692,7 @@ final class AppModel: ObservableObject {
 
     func toggleInspector() {
         guard !justChatEnabled else { return }
-        // The general panel button owns the workspace inspector, never a
+        // The general inspector command owns the workspace inspector, never a
         // special-purpose Plan or Browser surface. From either of those it
         // returns to the last workspace tab; a second press there collapses it.
         if !inspectorCollapsed, inspectorTab.isWorkspaceTab {
@@ -6711,17 +7734,6 @@ final class AppModel: ObservableObject {
         if showEveryTime {
             openAutomaticInspector(prompt)
         }
-    }
-
-    var shouldAskMessageSendShortcutPreference: Bool {
-        !settings.sendShortcutPreferenceConfigured
-    }
-
-    func chooseMessageSendShortcut(enterSends: Bool) {
-        var updated = settings
-        updated.enterSendsMessages = enterSends
-        updated.sendShortcutPreferenceConfigured = true
-        settings = updated
     }
 
     private func openAutomaticInspector(_ prompt: AutomaticInspectorPrompt) {
@@ -6904,7 +7916,7 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             // A browser surface appears only because the person selected it or
             // because the foreground agent is actively using it. Background
-            // team workers keep running without pulling the current chat away.
+            // Chat workers keep running without pulling the current chat away.
             if sessionID == self.currentSessionID {
                 self.selectInspectorTab(.preview)
             }
@@ -7130,8 +8142,21 @@ final class AppModel: ObservableObject {
         return (try? await backend.get("/api/health", as: HealthResponse.self)) != nil
     }
 
-    private func ensureTeamWorker(for requestedSessionID: String) async -> TaskWorkerRuntime? {
-        if let existing = taskWorkers[requestedSessionID] { return existing }
+    private func ensureChatWorker(
+        for requestedSessionID: String,
+        workspaceRoot: String
+    ) async -> ChatWorkerRuntime? {
+        if let existing = taskWorkers[requestedSessionID] {
+            for _ in 0..<60 where existing.isAttaching && existing.process.isRunning {
+                try? await Task.sleep(for: .milliseconds(100))
+                if Task.isCancelled { return nil }
+            }
+            return existing.process.isRunning && existing.isConnected && !existing.isAttaching
+                ? existing : nil
+        }
+        // Tests construct an offline model. Do not launch an unowned helper
+        // process for a synthetic session; nil exercises recoverable sending.
+        guard persistenceEnabled else { return nil }
         let process = BackendProcess()
         var workerEnvironment = ProxyConfigurator.agentEnvironmentOverlay(
             settings: settings,
@@ -7151,7 +8176,7 @@ final class AppModel: ObservableObject {
         let launch = process.start(
             root: settings.backendRoot,
             port: 0,
-            cwd: workspacePath,
+            cwd: workspaceRoot,
             environmentOverlay: workerEnvironment,
             proxyCredential: ProxyConfigurator.childCredential(
                 settings: settings,
@@ -7162,7 +8187,7 @@ final class AppModel: ObservableObject {
             if case .failed(let message) = launch { showToast(message) }
             return nil
         }
-        let runtime = TaskWorkerRuntime(
+        let runtime = ChatWorkerRuntime(
             requestedSessionID: requestedSessionID,
             process: process,
             endpoint: endpoint
@@ -7198,6 +8223,10 @@ final class AppModel: ObservableObject {
                 let interruptedState = durableRun.flatMap {
                     TeamRunState(rawValue: $0.state)
                 } ?? .interrupted
+                let detail = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                let workerError = detail.isEmpty
+                    ? "The chat worker stopped unexpectedly."
+                    : String(detail.suffix(1_000))
                 let state = TaskConversationState(
                     sessionID: runtime.sessionID,
                     taskID: runtime.sessionInfo?.task?.id,
@@ -7205,7 +8234,8 @@ final class AppModel: ObservableObject {
                     workerID: previous?.workerID,
                     runID: runID,
                     state: interruptedState,
-                    updatedAt: Date()
+                    updatedAt: Date(),
+                    errorMessage: workerError
                 )
                 self.taskConversationStates[runtime.sessionID] = state
                 if let runID {
@@ -7218,10 +8248,9 @@ final class AppModel: ObservableObject {
                 if self.currentSessionID == runtime.sessionID {
                     self.isBusy = false
                     self.orchestrationState = interruptedState
-                    let detail = output.trimmingCharacters(in: .whitespacesAndNewlines)
                     self.blocks.append(ChatBlock(
                         kind: .error,
-                        text: detail.isEmpty ? "The task worker stopped unexpectedly." : String(detail.suffix(1_000))
+                        text: workerError
                     ))
                 }
             }
@@ -7241,6 +8270,7 @@ final class AppModel: ObservableObject {
 
         var healthy = false
         for _ in 0..<60 {
+            if Task.isCancelled { break }
             if BackendProcess.loopbackPortIsListening(at: endpoint),
                (try? await runtime.service.get("/api/health", as: HealthResponse.self)) != nil
             {
@@ -7252,43 +8282,38 @@ final class AppModel: ObservableObject {
         guard healthy else {
             taskWorkers.removeValue(forKey: requestedSessionID)
             runtime.stop()
-            showToast("The task worker did not become ready")
+            if !Task.isCancelled { showToast("The chat worker did not become ready") }
             return nil
         }
         runtime.service.connect()
         for _ in 0..<40 where !runtime.isConnected {
+            if Task.isCancelled { break }
             try? await Task.sleep(for: .milliseconds(100))
         }
         guard runtime.isConnected else {
             taskWorkers.removeValue(forKey: requestedSessionID)
             runtime.stop()
-            showToast("The task worker could not connect")
+            if !Task.isCancelled { showToast("The chat worker could not connect") }
+            return nil
+        }
+        guard !Task.isCancelled else {
+            taskWorkers.removeValue(forKey: requestedSessionID)
+            runtime.stop()
             return nil
         }
 
-        let detail = try? await backend.get(
-            "/api/sessions/\(requestedSessionID)",
-            as: SessionDetailResponse.self
-        )
-        if let detail, !detail.messages.isEmpty,
-           let response = try? await runtime.service.post(
-               "/api/sessions/\(requestedSessionID)/resume",
-               body: [:],
-               as: ResumeResponse.self
-           )
-        {
-            runtime.sessionID = response.sessionInfo.sessionID
-            runtime.sessionInfo = response.sessionInfo
-        } else if let info = runtime.sessionInfo {
-            // A brand-new chat has no message record to resume. Its dedicated
-            // worker's blank session becomes the chat before the first send.
-            runtime.sessionID = info.sessionID
-        } else {
+        guard let response = try? await runtime.service.post(
+            "/api/sessions/\(requestedSessionID)/resume",
+            body: [:],
+            as: ResumeResponse.self
+        ) else {
             taskWorkers.removeValue(forKey: requestedSessionID)
             runtime.stop()
-            showToast("The task worker did not publish its session")
+            showToast("The chat worker could not attach to this conversation")
             return nil
         }
+        runtime.sessionID = response.sessionInfo.sessionID
+        runtime.sessionInfo = response.sessionInfo
         runtime.isAttaching = false
         if runtime.sessionID != requestedSessionID {
             taskWorkers.removeValue(forKey: requestedSessionID)
@@ -7322,7 +8347,7 @@ final class AppModel: ObservableObject {
         )
     }
 
-    private func handleWorkerEvent(_ event: [String: Any], runtime: TaskWorkerRuntime) {
+    private func handleWorkerEvent(_ event: [String: Any], runtime: ChatWorkerRuntime) {
         if let rawType = event["type"] as? String, rawType == "session_info",
            let info = decode(SessionInfo.self, from: event)
         {
@@ -7338,15 +8363,39 @@ final class AppModel: ObservableObject {
 
     private func recordBackgroundWorkerEvent(
         _ event: [String: Any],
-        runtime: TaskWorkerRuntime
+        runtime: ChatWorkerRuntime
     ) {
         guard let type = event["type"] as? String else { return }
         let previous = taskConversationStates[runtime.sessionID]
-        var state = previous?.state ?? .running
+        var state = previous?.state ?? runtime.executionState
+        if type == "message_start" {
+            state = .running
+            runtime.streamingBlockID = UUID()
+            runtime.streamingText = ""
+            runtime.streamingReasoning = ""
+        }
+        if type == "token" {
+            if runtime.streamingBlockID == nil { runtime.streamingBlockID = UUID() }
+            runtime.streamingText += event["text"] as? String ?? ""
+        }
+        if type == "thinking" {
+            if runtime.streamingBlockID == nil { runtime.streamingBlockID = UUID() }
+            runtime.streamingReasoning += event["text"] as? String ?? ""
+        }
+        if type == "message_end" {
+            runtime.streamingBlockID = nil
+            runtime.streamingText = ""
+            runtime.streamingReasoning = ""
+        }
         if type == "orchestration_started" { state = .dispatching }
+        if type == "dispatch_plan_ready" {
+            state = .waitingDispatchApproval
+            runtime.pendingForegroundEvent = event
+        }
         if type == "orchestration_state",
            let raw = event["state"] as? String,
            let updated = TeamRunState(rawValue: raw) { state = updated }
+        if type == "orchestration_paused" { state = .paused }
         if type == "orchestration_completed",
            let raw = event["state"] as? String,
            let updated = TeamRunState(rawValue: raw) { state = updated }
@@ -7362,9 +8411,23 @@ final class AppModel: ObservableObject {
             // Served straight away on this worker's own socket. Parking it the
             // way a computer action is parked would leave the worker blocked
             // until somebody opened its conversation.
-            state = .waitingComputer
             runBrowserAction(event, on: runtime.service)
         }
+        if type == "error" {
+            state = .failed
+            runtime.lastError = event["message"] as? String
+        }
+        if type == "turn_done" {
+            let reason = event["reason"] as? String ?? "complete"
+            if runtime.dispatchedTeamRunID == nil {
+                state = reason == "complete" ? .completed : .failed
+            }
+            runtime.startedAt = nil
+            runtime.dispatchedMode = nil
+            runtime.dispatchedTeamRunID = nil
+            runtime.dispatchedInPlanMode = false
+        }
+        runtime.executionState = state
         var taskID = runtime.sessionInfo?.task?.id ?? previous?.taskID
         if let raw = event["task"] as? [String: Any],
            let record = decode(TaskRecord.self, from: raw)
@@ -7380,7 +8443,8 @@ final class AppModel: ObservableObject {
             workerID: (event["worker_id"] as? String) ?? previous?.workerID,
             runID: (event["run_id"] as? String) ?? previous?.runID,
             state: state,
-            updatedAt: Date()
+            updatedAt: Date(),
+            errorMessage: runtime.lastError ?? previous?.errorMessage
         )
         taskConversationStates[runtime.sessionID] = updated
         if let runID = updated.runID {
@@ -7390,8 +8454,40 @@ final class AppModel: ObservableObject {
                 state: state
             )
         }
-        if (type == "orchestration_started" || type == "turn_done"), persistenceEnabled {
+        if (type == "message_start" || type == "orchestration_started" || type == "turn_done"),
+           persistenceEnabled {
             Task { await refreshMetadata() }
+        }
+        let notificationRunID = updated.runID ?? runtime.reservedRunID
+        if ["permission_request", "computer_action_request", "dispatch_plan_ready"].contains(type) {
+            let body = type == "computer_action_request"
+                ? "Open the chat to continue Computer Control."
+                : "A background chat needs your attention."
+            notifyNeedsAttentionIfInactive(
+                body: body,
+                sessionID: runtime.sessionID,
+                runID: notificationRunID
+            )
+        } else if type == "error" {
+            notifyNeedsAttentionIfInactive(
+                body: "A background chat stopped and needs attention.",
+                sessionID: runtime.sessionID,
+                runID: notificationRunID
+            )
+        } else if type == "turn_done" {
+            if state == .completed {
+                notifyTurnCompleteIfInactive(
+                    sessionID: runtime.sessionID,
+                    runID: notificationRunID,
+                    workspace: runtime.sessionInfo?.workspaceRoot ?? runtime.sessionInfo?.cwd
+                )
+            } else if state == .failed || state == .interrupted {
+                notifyNeedsAttentionIfInactive(
+                    body: "A background chat stopped and needs attention.",
+                    sessionID: runtime.sessionID,
+                    runID: notificationRunID
+                )
+            }
         }
     }
 
@@ -7399,6 +8495,24 @@ final class AppModel: ObservableObject {
         _ text: String,
         mode: WorkMode,
         chatAttachments: [ChatAttachment] = []
+    ) -> String {
+        let restoredContext = restoredTranscriptContext
+        restoredTranscriptContext = nil
+        return Self.decoratedPrompt(
+            text,
+            mode: mode,
+            chatAttachments: chatAttachments,
+            contextFiles: contextFiles,
+            restoredTranscriptContext: restoredContext
+        )
+    }
+
+    private static func decoratedPrompt(
+        _ text: String,
+        mode: WorkMode,
+        chatAttachments: [ChatAttachment],
+        contextFiles: [ContextFile],
+        restoredTranscriptContext: String?
     ) -> String {
         var sections = [
             "[Locus mode: \(mode.rawValue.capitalized)]",
@@ -7453,7 +8567,6 @@ final class AppModel: ObservableObject {
 
         if let restoredTranscriptContext {
             sections.append("Restored session context:\n\(restoredTranscriptContext)")
-            self.restoredTranscriptContext = nil
         }
 
         sections.append("User request:\n\(text)")
@@ -7548,7 +8661,16 @@ final class AppModel: ObservableObject {
             applySessionStarted(info, reason: event["reason"] as? String)
 
         case "message_start":
+            if let runtime = taskWorkers[currentSessionID] {
+                runtime.executionState = .running
+                runtime.startedAt = runtime.startedAt ?? Date()
+                runtime.streamingBlockID = nil
+                runtime.streamingText = ""
+                runtime.streamingReasoning = ""
+                updateBackgroundChatState(runtime)
+            }
             startAssistantStream()
+            taskWorkers[currentSessionID]?.streamingBlockID = streamingAssistantID
 
         case "token":
             // A token without a preceding message_start (e.g. after a
@@ -7562,6 +8684,11 @@ final class AppModel: ObservableObject {
             flushPendingTokens()
             if let id = streamingAssistantID { commitStreamingReply(id, finished: true) }
             streamingAssistantID = nil
+            if let runtime = taskWorkers[currentSessionID] {
+                runtime.streamingBlockID = nil
+                runtime.streamingText = ""
+                runtime.streamingReasoning = ""
+            }
             streamRevision += 1
 
         case "tool_call_proposed":
@@ -7614,7 +8741,11 @@ final class AppModel: ObservableObject {
                     requestID: requestID
                 )))
             }
-            notifyPermissionRequestIfInactive()
+            notifyNeedsAttentionIfInactive()
+            if let runtime = taskWorkers[currentSessionID] {
+                runtime.executionState = .waitingPermission
+                updateBackgroundChatState(runtime)
+            }
             if orchestrationRunID != nil {
                 orchestrationState = .waitingPermission
                 updateTaskConversation(state: .waitingPermission, event: event)
@@ -7639,9 +8770,18 @@ final class AppModel: ObservableObject {
                     result: event["result"] as? String
                 )))
             }
+            if let runtime = taskWorkers[currentSessionID],
+               runtime.executionState == .waitingPermission {
+                runtime.executionState = .running
+                updateBackgroundChatState(runtime)
+            }
             if orchestrationRunID != nil {
                 orchestrationState = .running
                 updateTaskConversation(state: .running, event: event)
+            }
+            if let runtime = taskWorkers[currentSessionID] {
+                runtime.executionState = .running
+                updateBackgroundChatState(runtime)
             }
 
         case "workspace_changed":
@@ -7701,6 +8841,20 @@ final class AppModel: ObservableObject {
                 blocks.append(ChatBlock(kind: .user, text: text))
             }
             steeringState = nil
+
+        case "run_started":
+            orchestrationRunID = event["run_id"] as? String
+            orchestrationState = .running
+            activeWorkerID = event["worker_id"] as? String ?? activeWorkerID
+            if let runID = orchestrationRunID {
+                selectedOrchestrationRun = nil
+                orchestrationEvents = []
+                orchestrationEventIDs = []
+                updateTaskConversation(state: .running, event: event)
+                Task { @MainActor [weak self] in
+                    await self?.loadOrchestrationRun(runID)
+                }
+            }
 
         case "orchestration_started":
             orchestrationRunID = event["run_id"] as? String
@@ -7983,6 +9137,10 @@ final class AppModel: ObservableObject {
                   let tool = event["tool"] as? String,
                   let arguments = event["arguments"] as? [String: Any]
             else { return }
+            if let runtime = taskWorkers[currentSessionID] {
+                runtime.executionState = .waitingComputer
+                updateBackgroundChatState(runtime)
+            }
             if orchestrationRunID != nil {
                 orchestrationState = .waitingComputer
                 updateTaskConversation(state: .waitingComputer, event: event)
@@ -8003,6 +9161,10 @@ final class AppModel: ObservableObject {
                 if self.orchestrationRunID != nil {
                     self.orchestrationState = .running
                     self.updateTaskConversation(state: .running, event: event)
+                }
+                if let runtime = self.taskWorkers[self.currentSessionID] {
+                    runtime.executionState = .running
+                    self.updateBackgroundChatState(runtime)
                 }
             }
 
@@ -8061,6 +9223,7 @@ final class AppModel: ObservableObject {
             resolveDanglingPermissions()
             flushPendingBrowserCapability()
             let reason = event["reason"] as? String ?? "complete"
+            let completedRunID = event["run_id"] as? String
             let dispatchedMode = turnDispatchedMode
                 ?? (turnDispatchedInPlanMode ? .plan : nil)
             if reason == "complete", dispatchedMode == .build {
@@ -8075,6 +9238,15 @@ final class AppModel: ObservableObject {
                 )
             }
             isBusy = false
+            if let runtime = taskWorkers[currentSessionID] {
+                let finalState = runtime.dispatchedTeamRunID == nil
+                    ? (reason == "complete" ? TeamRunState.completed : .failed)
+                    : (orchestrationState ?? runtime.executionState)
+                finishChatRuntime(
+                    runtime,
+                    state: finalState
+                )
+            }
             syncPreferredPermissionMode(to: conversationBackend)
             pendingRetry = false
             steeringState = nil
@@ -8106,6 +9278,14 @@ final class AppModel: ObservableObject {
             notifyTurnCompleteIfInactive()
             if persistenceEnabled {
                 Task { await refreshMetadata() }
+            }
+            if let completedRunID, terminalRefreshRunIDs.insert(completedRunID).inserted {
+                Task { @MainActor [weak self] in
+                    await self?.refreshOrchestrationRuns(
+                        select: completedRunID, terminal: true
+                    )
+                    await self?.exportOrchestrationToOTLP(completedRunID)
+                }
             }
             // Before the queue drains: a model chosen mid-turn is meant for
             // the messages waiting behind it.
@@ -8142,6 +9322,11 @@ final class AppModel: ObservableObject {
                     text: annotatingRejectedKey(event["message"] as? String ?? "Unknown agent error")
                 )
             )
+            if let runtime = taskWorkers[currentSessionID] {
+                runtime.lastError = event["message"] as? String
+                runtime.executionState = .failed
+                updateBackgroundChatState(runtime)
+            }
             // `error` describes the failed operation; the backend still emits
             // `turn_done` after it has finished unwinding. Stay busy until that
             // terminal event so queued messages and state changes cannot race
@@ -8550,7 +9735,10 @@ final class AppModel: ObservableObject {
             mode: selectedMode,
             previewURL: settings.previewURL,
             contextFiles: contextFiles,
-            draft: draftText
+            draft: draftText,
+            landingCheckCommands: workspaceProfiles.first(where: {
+                SessionSummary.canonicalWorkspacePath($0.path) == path
+            })?.landingCheckCommands
         )
         if let index = workspaceProfiles.firstIndex(where: {
             SessionSummary.canonicalWorkspacePath($0.path) == path
@@ -8643,13 +9831,9 @@ final class AppModel: ObservableObject {
         let workspace = "/tmp"
         agentRuntimePhase = .online
         modelRuntimePhase = .online
-        // Most UI tests exercise unrelated controls and should not be covered
-        // by the first-run choice. Preference behavior has focused model tests.
         settings.automaticInspectorPresentationRaw = AutomaticInspectorPresentation.never.rawValue
         settings.soloPlanPresentationRaw = AutomaticInspectorPresentation.never.rawValue
         settings.teamRunsPresentationRaw = AutomaticInspectorPresentation.never.rawValue
-        settings.sendShortcutPreferenceConfigured =
-            ProcessInfo.processInfo.environment["LOCUS_UI_TEST_SEND_SHORTCUT_PROMPT"] != "1"
         // The suite's inspector tests assume the panel starts open; the
         // collapsed default is covered by a settings unit test instead.
         inspectorTab = .plan
@@ -8737,6 +9921,27 @@ final class AppModel: ObservableObject {
                 )
             ),
         ]
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_SCROLL"] == "1" {
+            blocks = [blocks[0]]
+            for index in 0..<12 {
+                blocks.append(ChatBlock(
+                    kind: .assistant,
+                    text: "Result \(index): The transcript should move continuously across selectable text, reasoning, and tool activity without snapping or stopping.",
+                    reasoningText: "Reviewed section \(index) and verified the surrounding output before continuing to the next tool call."
+                ))
+                blocks.append(ChatBlock(
+                    kind: .tool,
+                    tool: ToolPayload(
+                        toolID: "scroll-tool-\(index)",
+                        tool: "read_file",
+                        summary: "Reviewed section \(index)",
+                        detail: String(repeating: "Selectable tool output for section \(index). ", count: 12),
+                        status: .done,
+                        result: "Completed section \(index)"
+                    )
+                ))
+            }
+        }
         promptHistory = ["Audit the current changes", "Review the workspace"]
 
         // The three newest inspector tabs read from state the agent normally
@@ -8800,6 +10005,38 @@ final class AppModel: ObservableObject {
                 draft: ""
             ),
         ]
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_LANDING"] == "1" {
+            activeTaskRecord = TaskRecord(
+                id: "seed-task",
+                workspaceRoot: workspace,
+                executionPath: "/tmp/locus-seed-worktree",
+                baselineTree: "1111111111111111111111111111111111111111",
+                state: .completed,
+                sessionID: currentSessionID,
+                startingRef: "main"
+            )
+            taskHasChanges = true
+            taskPatchBytes = 184
+            landingPreflight = LandingPreflight(
+                ok: true,
+                tree: "2222222222222222222222222222222222222222",
+                baseTree: "1111111111111111111111111111111111111111",
+                paths: ["Locus/AppModel.swift"],
+                patchBytes: 184,
+                canApplyLocal: true,
+                conflict: "",
+                branch: nil
+            )
+            landingPatch = """
+            diff --git a/Locus/AppModel.swift b/Locus/AppModel.swift
+            --- a/Locus/AppModel.swift
+            +++ b/Locus/AppModel.swift
+            @@ -1 +1 @@
+            -let status = "old"
+            +let status = "reviewed"
+            """
+            workspaceProfiles[0].landingCheckCommands = ["swift test"]
+        }
 
         // Opt-in, not part of the base fixture: a pending permission disables
         // send and clear-chat globally, which would break every other UI test.
@@ -8845,12 +10082,13 @@ final class AppModel: ObservableObject {
 
     private func seedUITestRunFixtureIfNeeded() {
         guard let fixture = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_RUN_FIXTURE"],
-              ["completed", "recoverable", "dispatcher-repair", "dispatch-plan"].contains(fixture)
+              ["completed", "recoverable", "dispatcher-repair", "dispatch-plan", "activity"].contains(fixture)
         else { return }
         let state: TeamRunState = switch fixture {
         case "completed": .completed
         case "recoverable": .interrupted
         case "dispatch-plan": .waitingDispatchApproval
+        case "activity": .failed
         default: .dispatching
         }
         let lastSequence = ["dispatcher-repair", "dispatch-plan"].contains(fixture) ? 1 : 1_200
@@ -8878,7 +10116,13 @@ final class AppModel: ObservableObject {
             plan: nil,
             usage: ["model_calls": .number(12)],
             jobCount: 4,
-            completedJobCount: fixture == "completed" ? 4 : 2
+            completedJobCount: fixture == "completed" ? 4 : 2,
+            runKind: "team",
+            traceID: nil,
+            contentPolicy: "metadata",
+            executionEnvironment: "local",
+            exportState: "pending",
+            exportAttempts: 0
         )
         if let requestIndex = blocks.firstIndex(where: { $0.kind == .user }) {
             blocks[requestIndex].text = run.request
@@ -8888,6 +10132,10 @@ final class AppModel: ObservableObject {
         selectedOrchestrationRun = run
         orchestrationRunID = run.id
         orchestrationState = state
+        if fixture == "activity" {
+            activityRuns = [run]
+            return
+        }
         let rawEvents: [[String: Any]]
         if ["dispatcher-repair", "dispatch-plan"].contains(fixture) {
             let dispatcherID = UUID(uuidString: "00000000-0000-0000-0000-000000000501")!
@@ -9071,6 +10319,25 @@ final class AppModel: ObservableObject {
         UserDefaults.standard.set(
             expandedWorkspaceIDs.sorted(),
             forKey: "Locus.expandedWorkspaces"
+        )
+    }
+
+    private func persistActivityPresentationState() {
+        guard persistenceEnabled else { return }
+        if activitySeenUpdates.count > 1_000 {
+            activitySeenUpdates = Dictionary(
+                uniqueKeysWithValues: activitySeenUpdates
+                    .sorted { $0.value > $1.value }
+                    .prefix(1_000)
+                    .map { ($0.key, $0.value) }
+            )
+        }
+        if let data = try? JSONEncoder().encode(activitySeenUpdates) {
+            UserDefaults.standard.set(data, forKey: "Locus.activitySeenUpdates")
+        }
+        UserDefaults.standard.set(
+            Array(dismissedActivityRunIDs.prefix(1_000)),
+            forKey: "Locus.dismissedActivityRunIDs"
         )
     }
 
@@ -9620,6 +10887,14 @@ private struct TaskApplyResponse: Codable {
     let paths: [String]
 }
 
+private struct TaskLandingResponse: Codable {
+    let task: TaskRecord
+    let destination: String
+    let tree: String
+    let branch: String?
+    let commit: String?
+}
+
 private struct SimpleActionResponse: Codable {
     let ok: Bool
 }
@@ -9827,6 +11102,25 @@ private struct SessionDetailResponse: Codable {
         case workspaceRoot = "workspace_root"
         case executionPath = "execution_path"
     }
+}
+
+private struct SessionHandoffResponse: Codable {
+    let ok: Bool
+    let environment: String
+    let sessionInfo: SessionInfo
+    let task: TaskRecord?
+    let applied: Bool
+    let paths: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case ok, environment, task, applied, paths
+        case sessionInfo = "session_info"
+    }
+}
+
+private struct TaskMutationResponse: Codable {
+    let ok: Bool
+    let task: TaskRecord
 }
 
 private struct ContextLoadResult: Sendable {

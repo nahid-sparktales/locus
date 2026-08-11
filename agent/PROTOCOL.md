@@ -50,11 +50,15 @@ Each additive orchestration stage has an independent
 and disabled model tools are omitted from their schemas; stored data is not
 removed.
 
-### Durable orchestrations
+### Durable runs and orchestration aliases
 
-`GET /api/orchestrations` lists authoritative SQLite run records. `GET
-/api/orchestrations/{run_id}` adds attempts and the latest stable checkpoint;
+`GET /api/runs` lists authoritative SQLite records for Solo, team, and
+evaluation runs. `GET /api/runs/{run_id}` adds attempts and the latest stable checkpoint;
 `GET /events?after_seq=N` returns the ordered suffix for reconnect backfill.
+The existing `/api/orchestrations` routes are compatible aliases for team-run
+clients. Records include `run_kind`, stable W3C `trace_id`/`root_span_id`,
+execution environment, content policy, and export status. Worker events carry
+`run_id`, `session_id`, `worker_id`, execution environment, and `traceparent`.
 Every persisted event has immutable `event_id`, per-run monotonic `seq`,
 `occurred_at`, `schema_version`, and optional job/attempt identity. Clients
 deduplicate by `event_id`. The database uses WAL, foreign keys, transactional
@@ -62,18 +66,30 @@ additive migrations, and reopens read-only if a migration cannot complete.
 Persisted user messages may carry an optional bounded `team_run_id`, allowing
 clients to restore the durable run surface beside the request that originated
 it. Older clients ignore the field.
+
+`POST /api/runs/queue` creates the durable FIFO reservation before worker
+admission. `PATCH /api/runs/{run_id}/queue` accepts `move_top`, `move_up`,
+`move_down`, `admit`, or `cancel`; moves never reverse two turns from the same
+chat. `POST /api/runs/{run_id}/retry` creates a new linked queued attempt.
+`GET /api/runs` accepts additive `states`, `workspace`, `cursor`, and `limit`
+filters. Queue positions, queued-message identity, retry parent, and admission
+time are persisted with the run.
+
 `dispatcher_plan_rejected` is an additive diagnostic event with `stage`
 (`initial` or `repair`), a bounded validation `reason`, `response_source`, and
 `will_retry`. It never contains the raw model response or provider credentials.
 
-`GET /api/orchestrations/{run_id}/export?include_content=false` produces the
+`GET /api/runs/{run_id}/export?include_content=false` produces the
 redacted `locusrun` version-1 document. Conversation, goal, output, reasoning,
 tool arguments/results, and previews are omitted unless content is explicitly
 requested; credentials and provider signatures are always redacted.
-`POST /api/orchestrations/{run_id}/otlp` accepts `{endpoint, authorization?,
-include_content?}` and sends an OTLP/HTTP JSON trace without following
-redirects. Remote endpoints require HTTPS. Authorization is transient and is
-never written by the backend.
+`POST /api/runs/{run_id}/otlp` accepts `{endpoint, authorization?,
+include_content?}` and uses the official OTLP/HTTP protobuf exporter without
+following redirects. A base endpoint has `/v1/traces` appended; a legacy full
+traces URL remains valid. Remote endpoints require HTTPS. The backend records
+pending/exporting/exported/failed state and makes three bounded attempts.
+Authorization is transient and never enters logs, durable events, exports, or
+error text.
 
 `GET /api/usage/summary?since=<unix seconds, optional>` rolls up recorded
 spend and tokens on a read-only connection: orchestration totals and by-day /
@@ -91,7 +107,8 @@ Recovery controls are `POST /pause`, `/resume`, `/cancel`, `/discard`,
 `/jobs/{job_id}/retry`, `/jobs/{job_id}/reassign`, `/replay`, and `/duplicate`.
 `POST /recovery-assessment` returns the current repair checklist without
 starting work. `DELETE /api/tasks/{task_id}` is the separate, explicit managed
-checkout cleanup action; discarding a run does not delete its checkout.
+checkout archival action: it snapshots first and can be restored later.
+Discarding a run does not delete its checkout.
 Resume/retry/reassign reuse a stable checkpoint only when the team/profile
 fingerprint and managed baseline still match. Active jobs become new attempts;
 completed independent specialist results may be reused. Writer mutations and
@@ -157,6 +174,14 @@ migration. Just Chat may receive relevant personal and agent memory but never
 workspace memory. Automatic recall is bounded by each agent's memory policy;
 `search_memory` provides explicit approved-memory lookup and `propose_memory`
 can add only an Inbox candidate.
+
+`GET /api/memory/diagnostics` reports content-free policy, proposal, approval,
+expiration, recall, indexing, and embedding health. Events retain only bounded
+identifiers, stage/outcome/reason codes, and timestamps for 90 days or 5,000
+rows per workspace, whichever is smaller. `POST /api/memory/reprocess` reviews
+one retained session's original user statements and confirmed outcomes,
+excluding prompt wrappers, attachments, reasoning, and tool payloads. It
+creates deduplicated Inbox candidates only; finding none is a successful run.
 
 ### Modern MCP catalogs, tasks, and input
 
@@ -395,8 +420,8 @@ Loads the session into the live conversation. Body: empty (`{}`).
   "session_info": { "...": "..." } }
 ```
 
-Errors: 404 unknown id · 409 agent busy · 413 session safety limit exceeded ·
-422 session file has no messages.
+Errors: 404 unknown id · 409 agent busy or archived worktree · 413 session safety limit exceeded.
+An empty newly-created session may be attached before its first message.
 Also emits a `session_info` WS event to the connected client.
 
 ### `POST /api/sessions/new`
@@ -406,7 +431,10 @@ Creates a genuinely separate saved session and returns a direct acknowledgement:
 ```json
 {
   "reason": "clear_chat",
-  "cwd": "/Users/me/project"
+  "cwd": "/Users/me/project",
+  "environment": "worktree",
+  "base_ref": "main",
+  "worktree_retention_limit": 15
 }
 ```
 
@@ -422,7 +450,9 @@ Creates a genuinely separate saved session and returns a direct acknowledgement:
 
 `reason` may be `clear_chat`, `new_session`, or a client-specific session reason.
 The optional `cwd` must be an existing directory and makes the new session's
-workspace explicit. The previous session remains available. Memory, todos,
+workspace explicit. `environment` is `local` or `worktree`; worktree requires
+Git and creates one detached managed checkout tied to the session. `base_ref`
+selects its starting commit. The previous session remains available. Memory, todos,
 session permissions, interrupts, and token counters are reset. A matching
 `session_started` WebSocket event is also emitted when a client is connected.
 
@@ -434,7 +464,7 @@ newest recovery batch. Returns
 Traversal-like batch names are refused and existing session files are never
 overwritten. Returns 409 while a turn is active.
 
-### Managed team tasks
+### Managed chat tasks and handoff
 
 `GET /api/tasks/{task_id}` returns the task record, current tree, and complete
 baseline-relative binary patch. `POST /api/tasks/{task_id}/apply` first runs a
@@ -442,6 +472,25 @@ complete `git apply --check`; only a clean check is applied to the source
 workspace, unstaged and uncommitted. A conflict leaves the source untouched.
 Successful application records the applied tree, so later rounds expose only
 their new delta. Task IDs are bounded identifiers and traversal is refused.
+
+The guided landing API adds `GET /api/tasks/{task_id}/landing/preflight`,
+`POST /api/tasks/{task_id}/checks`, and `POST /api/tasks/{task_id}/landing`.
+Preflight is non-mutating. Checks accept one to eight explicit commands, run
+sequentially in the managed checkout with bounded output and a ten-minute
+per-command limit, and persist verification events. Landing validates that the
+reviewed tree and recorded check run still match before atomically applying to
+Local or creating/staging/committing an explicit branch. Failed hooks leave the
+branch and index intact; landing without current passing evidence requires a
+recorded override.
+
+`POST /api/sessions/{session_id}/handoff` accepts `{ "environment": "local" }`
+or `worktree` while idle. Worktree → Local applies the entire checked binary
+patch before changing environments. Local → Worktree captures the current
+Local state as the same chat's new private baseline. `POST /api/tasks/{id}/branch`
+creates a named branch deliberately; `/snapshot` and `/restore` preserve an
+archived checkout. `.worktreeinclude` uses Git ignore-pattern syntax to copy
+selected ignored files without overwriting destinations or following source
+symlinks.
 
 Session summaries and details may include `task`, `team`, `workspace_root`,
 `execution_path`, and `environment`. Details and resume responses additionally

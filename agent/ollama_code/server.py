@@ -17,10 +17,12 @@ import hashlib
 import ipaddress
 import logging
 import os
+import re
 import signal
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -79,15 +81,16 @@ from .orchestration import (
     parse_manifest,
     writer_prompt_for_job,
 )
-from .runstore import RunStore, RunStoreError
+from .runstore import ACTIVE_NONRECOVERABLE_STATES, RunStore, RunStoreError
 from .sessions import (
     MAX_SESSION_LINE_BYTES,
     SessionMeta,
     SessionStore,
     SessionTooLargeError,
+    strip_prompt_decoration,
     update_session_metadata,
 )
-from .telemetry import TelemetryError, send_otlp
+from .telemetry import TelemetryError, send_otlp, traceparent_for_run
 from .tools import truncate_output
 from .transcript_search import TranscriptIndex, TranscriptSearchError
 from .worktrees import TaskCheckout, TaskCheckoutStore, WorktreeError
@@ -266,11 +269,23 @@ class ChatService:
             event = dict(event)
             event.setdefault("worker_id", self.worker_id)
         run_id = str(event.get("run_id") or self.active_run_id or "")
+        if run_id:
+            event = dict(event)
+            event.setdefault("run_id", run_id)
+            event.setdefault("session_id", self.core.session.session_id)
+            event.setdefault("worker_id", self.worker_id)
+            event.setdefault(
+                "execution_environment", "worktree" if self.current_task else "local",
+            )
+            record = self.run_store.run(run_id)
+            if record is not None and record.get("trace_id") and record.get("root_span_id"):
+                event.setdefault("traceparent", traceparent_for_run(record))
         persisted_types = {
             "message_start", "message_end", "tool_call_proposed", "permission_request",
             "tool_result", "steer_ack", "steer_applied", "computer_action_request",
             "browser_action_request",
-            "workspace_changed", "note", "error", "dispatch_plan",
+            "workspace_changed", "note", "error", "dispatch_plan", "run_started",
+            "turn_done", "session_handoff", "task_ready", "task_applied",
             "orchestration_checkpoint", "dispatch_plan_ready", "dispatcher_plan_rejected",
         }
         durable_agent_event = (
@@ -290,6 +305,22 @@ class ChatService:
                 # damaged or temporarily locked history store must never stop
                 # an otherwise healthy agent turn.
                 event = {**event, "persistence_error": str(exc)}
+        if run_id and event_type == "turn_done":
+            reason = str(event.get("reason") or "complete")
+            terminal_state = {
+                "complete": "completed",
+                "cancelled": "cancelled",
+                "interrupted": "interrupted",
+            }.get(reason, "failed")
+            try:
+                terminal_record = self.run_store.run(run_id) or {}
+                if terminal_record.get("run_kind") == "solo" or (
+                    terminal_record.get("run_kind") == "evaluation"
+                    and terminal_record.get("state") in ACTIVE_NONRECOVERABLE_STATES
+                ):
+                    self.run_store.set_state(run_id, terminal_state, recoverable=False)
+            except (RunStoreError, sqlite3.DatabaseError, OSError):
+                pass
         if event_type in {"agent_job_started", "agent_job_continuing",
                           "agent_job_incomplete", "agent_job_completed", "dispatch_plan",
                           "dispatcher_plan_rejected"} \
@@ -740,6 +771,27 @@ async def lifespan(app: FastAPI):
             parent_watch.cancel()
         svc: ChatService | None = getattr(app.state, "service", None)
         if svc is not None:
+            if svc.active_run_id:
+                try:
+                    svc.run_store.set_state(
+                        svc.active_run_id,
+                        "interrupted",
+                        recoverable=True,
+                        reason="Locus closed before the run reached a terminal boundary.",
+                    )
+                    svc.run_store.append_event(svc.active_run_id, {
+                        "type": "run_interrupted",
+                        "run_id": svc.active_run_id,
+                        "session_id": svc.core.session.session_id,
+                        "worker_id": svc.worker_id,
+                        "execution_environment": (
+                            "worktree" if svc.current_task else "local"
+                        ),
+                        "state": "interrupted",
+                        "reason": "app_shutdown",
+                    })
+                except (RunStoreError, sqlite3.DatabaseError, OSError):
+                    pass
             # Dev servers deliberately have no deadline; shutdown is the one
             # guaranteed reaper.
             svc.dev_servers.stop_all()
@@ -1008,6 +1060,13 @@ def memory_create(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str
             agent_id=str(body.get("agent_id") or "primary"),
             default_status="approved",
         )
+        _memory_vault(target).record_event(
+            "approval" if memory["status"] == "approved" else "proposal",
+            "accepted", workspace=target,
+            agent_id=str(body.get("agent_id") or "primary"),
+            session_id=str(body.get("source_session_id") or ""),
+            run_id=str(body.get("source_run_id") or ""), memory_id=memory["id"],
+        )
         return {"ok": True, "memory": memory}
     except MemoryError as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -1048,15 +1107,30 @@ def memory_approve(
             agent_id=str(body.get("agent_id") or "primary"),
             resolution=str(body.get("resolution") or "keep_both"),
         )
+        _memory_vault(target).record_event(
+            "approval", "accepted", workspace=target,
+            agent_id=str(body.get("agent_id") or "primary"), memory_id=memory_id,
+        )
         return {"ok": True, "memory": memory}
     except MemoryError as exc:
         raise HTTPException(422, str(exc)) from exc
 
 
 @app.delete("/api/memory/{memory_id}")
-def memory_delete(memory_id: str) -> dict[str, Any]:
-    if not _memory_vault().delete(memory_id):
+def memory_delete(
+    memory_id: str,
+    workspace: str = Query(default=""),
+    agent_id: str = Query(default="primary"),
+    outcome: str = Query(default="delete"),
+) -> dict[str, Any]:
+    target = _memory_workspace(workspace)
+    vault = _memory_vault(target)
+    if not vault.delete(memory_id):
         raise HTTPException(404, "memory not found")
+    vault.record_event(
+        "rejection" if outcome == "reject" else "deletion", "recorded",
+        workspace=target, agent_id=agent_id, memory_id=memory_id,
+    )
     return {"ok": True, "id": memory_id}
 
 
@@ -1070,11 +1144,17 @@ def memory_search(
     target = _memory_workspace(workspace)
     try:
         knowledge = _knowledge_store(target).settings()
-        return {"results": _memory_vault(target).search(
+        vault = _memory_vault(target)
+        results = vault.search(
             query, workspace=target, agent_id=agent_id, limit=limit,
             embedding_model=str(knowledge.get("embedding_model") or ""),
             ollama_host=str(knowledge.get("ollama_host") or "http://127.0.0.1:11434"),
-        )}
+        )
+        vault.record_event(
+            "recall", "matched" if results else "empty",
+            workspace=target, agent_id=agent_id, reason_code="approved_only",
+        )
+        return {"results": results}
     except MemoryError as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -1108,12 +1188,13 @@ def memory_feedback(
     memory_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
     try:
-        return {
-            "ok": True,
-            "memory": _memory_vault().feedback(
-                memory_id, str(body.get("outcome") or "")
-            ),
-        }
+        vault = _memory_vault()
+        memory = vault.feedback(memory_id, str(body.get("outcome") or ""))
+        vault.record_event(
+            "feedback", "recorded", memory_id=memory_id,
+            reason_code=str(body.get("outcome") or "")[:128],
+        )
+        return {"ok": True, "memory": memory}
     except MemoryError as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -1127,6 +1208,128 @@ def memory_maintenance(
         workspace=target,
         agent_id=str(body.get("agent_id") or "primary"),
     )
+
+
+@app.get("/api/memory/diagnostics")
+def memory_diagnostics(
+    workspace: str = Query(default=""), agent_id: str = Query(default="primary")
+) -> dict[str, Any]:
+    target = _memory_workspace(workspace)
+    report = _memory_vault(target).diagnostics(workspace=target, agent_id=agent_id)
+    try:
+        knowledge = _knowledge_store(target).settings()
+    except (KnowledgeError, OSError):
+        knowledge = {}
+    tool_context = service().core.tool_ctx
+    scopes = list(tool_context.memory_scopes)
+    service().core.tool_registry.refresh()
+    proposal_tool_available = any(
+        str(item.get("name") or "") == "propose_memory"
+        for item in service().core.tool_registry.metadata()
+    )
+    return {
+        **report,
+        "proposal_policy": "enabled" if tool_context.memory_proposals_enabled else "disabled",
+        "enabled_scopes": scopes,
+        "propose_memory_available": bool(
+            proposal_tool_available and tool_context.memory_proposals_enabled and scopes
+        ),
+        "indexed_files": int(knowledge.get("document_count") or 0),
+        "search_chunks": int(knowledge.get("chunk_count") or 0),
+        "embedding_model": str(knowledge.get("embedding_model") or ""),
+        "embedding_error": str(knowledge.get("last_error") or ""),
+    }
+
+
+@app.post("/api/memory/reprocess")
+def memory_reprocess(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    """Analyze one retained chat into review-only candidates without tool payloads."""
+    session_id = str(body.get("session_id") or "")
+    path = SessionStore.path_for(session_id)
+    if path is None:
+        raise HTTPException(404, "session not found")
+    target = _memory_workspace(str(body.get("workspace") or ""))
+    agent_id = str(body.get("agent_id") or "primary")
+    try:
+        messages = SessionStore.load(path)
+    except SessionTooLargeError as exc:
+        raise HTTPException(413, str(exc)) from exc
+    run_id = uuid.uuid4().hex
+    store = service().run_store
+    provenance = SessionStore.provenance(path)
+    store.start_run(
+        run_id, session_id=session_id, workspace_root=target,
+        execution_path=target, request="Analyze selected chat for memory",
+        state="running", run_kind="memory_review", execution_environment="local",
+        manifest={
+            "provider": str(provenance.get("provider") or ""),
+            "model": str(provenance.get("model") or ""),
+        },
+    )
+    store.append_event(run_id, {"type": "memory_review_started", "state": "running"})
+    cues = re.compile(
+        r"\b(?:remember|always|never|prefer|preference|decided|decision|"
+        r"do not|don't|must|should use|confirmed|that worked|fixed|resolved)\b",
+        re.IGNORECASE,
+    )
+    secret = re.compile(
+        r"(?i)(?:api[_-]?key|authorization|password|secret|bearer\s+[A-Za-z0-9])"
+    )
+    candidates: list[dict[str, Any]] = []
+    vault = _memory_vault(target)
+    existing_content = {
+        re.sub(r"\s+", " ", str(item.get("content") or "").strip()).casefold()
+        for item in vault.list(workspace=target, agent_id=agent_id)
+    }
+    for message in messages:
+        if str(message.get("role") or "") != "user":
+            continue
+        # Stored work turns may contain the app's mode/context wrapper. Keep
+        # only the original request so selected files and attachment text can
+        # never become a candidate through reprocessing.
+        text = strip_prompt_decoration(str(message.get("content") or "")).strip()
+        if not text or len(text) > 4_000 or not cues.search(text) or secret.search(text):
+            continue
+        content = re.sub(r"\s+", " ", text)[:2_000]
+        normalized = content.casefold()
+        if normalized in existing_content:
+            vault.record_event(
+                "proposal", "deduplicated", workspace=target, agent_id=agent_id,
+                session_id=session_id, run_id=run_id, reason_code="existing_memory",
+            )
+            continue
+        try:
+            candidate = vault.save(
+                {
+                    "title": "From selected chat",
+                    "content": content,
+                    "reason": "Explicit durable wording found during selected-chat review.",
+                    "scope": "workspace", "status": "candidate", "kind": "preference",
+                    "confidence": 0.8, "source_session_id": session_id,
+                    "source_run_id": run_id,
+                },
+                workspace=target, agent_id=agent_id, default_status="candidate",
+            )
+        except MemoryError:
+            continue
+        vault.record_event(
+            "proposal", "accepted", workspace=target, agent_id=agent_id,
+            session_id=session_id, run_id=run_id, memory_id=candidate["id"],
+        )
+        candidates.append(candidate)
+        existing_content.add(normalized)
+        if len(candidates) >= 20:
+            break
+    store.append_event(run_id, {
+        "type": "memory_review_completed", "state": "completed",
+        "candidate_count": len(candidates),
+        "outcome": "candidates_created" if candidates else "no_durable_memories",
+    })
+    store.set_state(run_id, "completed", recoverable=False)
+    return {
+        "ok": True, "run_id": run_id, "state": "completed",
+        "candidate_count": len(candidates), "memories": candidates,
+    }
 
 
 # ------------------------------------------------------------ Durable MCP tasks
@@ -1442,6 +1645,8 @@ def _run_evaluation_suite(
                         task_id=task.id,
                         request=str(case["prompt"]),
                         state="running",
+                        run_kind="evaluation",
+                        execution_environment="worktree",
                     )
                     evaluation_service.active_run_id = run_id
                     evaluation_core.client = parent.core.client
@@ -1978,6 +2183,19 @@ _TRANSCRIPT_INDEX: TranscriptIndex | None = None
 _TRANSCRIPT_INDEX_LOCK = threading.Lock()
 
 
+def _session_has_active_run(session_id: str) -> bool:
+    active_states = ACTIVE_NONRECOVERABLE_STATES | {"waiting_dispatch_approval"}
+    return any(
+        str(run.get("state") or "") in active_states
+        for run in service().run_store.list_runs(session_id=session_id, limit=20)
+    )
+
+
+def _require_task_idle(task: TaskCheckout) -> None:
+    if task.session_id and _session_has_active_run(task.session_id):
+        raise HTTPException(409, "wait for this chat to stop before changing its checkout")
+
+
 def _transcript_index() -> TranscriptIndex:
     """Process-wide index instance, rebuilt if the data home moved (tests).
 
@@ -2020,18 +2238,79 @@ def session_new(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, 
             cwd_value = body.get("cwd")
             if cwd_value is not None and not isinstance(cwd_value, str):
                 raise HTTPException(422, "cwd must be a string")
+            raw_environment = body.get("environment")
+            if raw_environment is not None and raw_environment not in {"local", "worktree"}:
+                raise HTTPException(422, "environment must be local or worktree")
+            environment = str(raw_environment or "local")
+            base_ref = body.get("base_ref", "HEAD")
+            if not isinstance(base_ref, str) or len(base_ref) > 240:
+                raise HTTPException(422, "base_ref must be a Git ref")
+            retention_limit = body.get("worktree_retention_limit", 15)
+            if not isinstance(retention_limit, int) or not 0 <= retention_limit <= 100:
+                raise HTTPException(422, "worktree_retention_limit must be between 0 and 100")
+            if svc.current_task is not None:
+                try:
+                    svc.core.leave_task_checkout(svc.current_task.workspace_root)
+                except ValueError:
+                    pass
+                svc.current_task = None
             info = svc.core.new_session(reason=reason, cwd=str(cwd_value or "") or None)
+            session_id = str(info.get("session_id") or "")
+            workspace_root = svc.core.workspace_root
+            if environment == "worktree":
+                if not _is_git_workspace(workspace_root):
+                    raise HTTPException(422, "worktree chats require a Git repository")
+                task = TaskCheckoutStore.create(
+                    workspace_root,
+                    session_id,
+                    base_ref=base_ref,
+                    session_id=session_id,
+                )
+                svc.current_task = task
+                svc.core.enter_task_checkout(
+                    task.execution_path, task.workspace_root, task.as_dict()
+                )
+                SessionMeta.update(
+                    session_id,
+                    task=task.as_dict(),
+                    workspace_root=task.workspace_root,
+                    execution_path=task.execution_path,
+                    environment={
+                        "type": "worktree",
+                        "isolation": "managed_worktree",
+                        "worktree_id": task.id,
+                        "starting_ref": task.starting_ref,
+                    },
+                )
+                if retention_limit > 0:
+                    TaskCheckoutStore.prune(limit=retention_limit, protected_ids={task.id})
+                info = svc.core.session_info()
+            else:
+                SessionMeta.update(
+                    session_id,
+                    workspace_root=workspace_root,
+                    execution_path=workspace_root,
+                    environment={"type": "local", "isolation": "local"},
+                )
             return {"ok": True, "reason": reason, "session_info": info}
     except AgentBusyError as e:
         raise _busy_http() from e
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
+    except WorktreeError as e:
+        raise HTTPException(409, str(e)) from e
 
 
 @app.delete("/api/sessions")
 def sessions_clear() -> dict[str, Any]:
     """Move every saved session except the active one to the recovery folder."""
     svc = service()
+    active_session = svc.core.session.session_id
+    if any(
+        path.stem != active_session and _session_has_active_run(path.stem)
+        for path in SessionStore.list_sessions()
+    ):
+        raise HTTPException(409, "wait for background chats to stop before clearing sessions")
     try:
         with svc.state_mutation():
             result = svc.core.clear_saved_sessions()
@@ -2052,6 +2331,8 @@ def session_delete(session_id: str) -> dict[str, Any]:
     svc = service()
     if SessionStore.path_for(session_id) is None:
         raise HTTPException(404, f"session not found: {session_id}")
+    if _session_has_active_run(session_id):
+        raise HTTPException(409, "wait for this chat to stop before deleting it")
     try:
         with svc.state_mutation():
             deleted_active = session_id == svc.core.session.session_id
@@ -2133,9 +2414,13 @@ def usage_summary(since: float = Query(default=0.0, ge=0.0)) -> dict[str, Any]:
     return service().run_store.usage_summary(since=since)
 
 
+@app.get("/api/runs")
 @app.get("/api/orchestrations")
 def orchestration_list(
     session_id: str = Query(default="", max_length=160),
+    states: str = Query(default="", max_length=500),
+    workspace: str = Query(default="", max_length=4_000),
+    cursor: float = Query(default=0.0, ge=0.0),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> dict[str, Any]:
     _require_capability("durable_runs")
@@ -2149,11 +2434,77 @@ def orchestration_list(
                 session_id, snapshot, workspace_root=str(header.get("cwd") or ""),
             )
     return {
-        "runs": store.list_runs(session_id=session_id, limit=limit),
+        "runs": store.list_runs(
+            session_id=session_id,
+            states=[item.strip() for item in states.split(",") if item.strip()],
+            workspace=workspace,
+            cursor=cursor,
+            limit=limit,
+        ),
         "read_only": store.read_only,
     }
 
 
+@app.post("/api/runs/queue")
+def run_queue(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    _require_capability("durable_runs")
+    session_id = str(body.get("session_id") or "")
+    if not session_id:
+        raise HTTPException(422, "session_id is required")
+    run_id = str(body.get("run_id") or uuid.uuid4().hex)
+    return service().run_store.queue_run(
+        run_id,
+        session_id=session_id,
+        message_id=str(body.get("message_id") or ""),
+        team_id=str(body.get("team_id") or ""),
+        team_name=str(body.get("team_name") or ""),
+        workspace_root=str(body.get("workspace_root") or ""),
+        execution_path=str(body.get("execution_path") or ""),
+        request=str(body.get("request") or ""),
+        run_kind=str(body.get("run_kind") or "solo"),
+        execution_environment=str(body.get("execution_environment") or "local"),
+        retry_parent_id=str(body.get("retry_parent_id") or ""),
+    )
+
+
+@app.patch("/api/runs/{run_id}/queue")
+def run_queue_update(
+    run_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    try:
+        action = str(body.get("action") or "")
+        if action == "admit":
+            service().run_store.admit(run_id)
+            return service().run_store.run(run_id) or {}
+        return service().run_store.reorder_queue(run_id, action)
+    except RunStoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/runs/{run_id}/retry")
+def run_retry(run_id: str) -> dict[str, Any]:
+    store = service().run_store
+    original = store.run(run_id)
+    if original is None:
+        raise HTTPException(404, f"run not found: {run_id}")
+    if original["state"] not in {"failed", "interrupted", "cancelled", "paused"}:
+        raise HTTPException(409, "only stopped runs can be retried")
+    retry_id = uuid.uuid4().hex
+    return store.queue_run(
+        retry_id,
+        session_id=str(original.get("session_id") or ""),
+        team_id=str(original.get("team_id") or ""),
+        team_name=str(original.get("team_name") or ""),
+        workspace_root=str(original.get("workspace_root") or ""),
+        execution_path=str(original.get("execution_path") or ""),
+        request=str(original.get("request") or ""),
+        run_kind=str(original.get("run_kind") or "solo"),
+        execution_environment=str(original.get("execution_environment") or "local"),
+        retry_parent_id=run_id,
+    )
+
+
+@app.get("/api/runs/{run_id}")
 @app.get("/api/orchestrations/{run_id}")
 def orchestration_detail(run_id: str) -> dict[str, Any]:
     _require_capability("durable_runs")
@@ -2163,6 +2514,7 @@ def orchestration_detail(run_id: str) -> dict[str, Any]:
     return value
 
 
+@app.patch("/api/runs/{run_id}")
 @app.patch("/api/orchestrations/{run_id}")
 def orchestration_update(
     run_id: str, body: dict[str, Any] = Body(default_factory=dict)
@@ -2176,6 +2528,7 @@ def orchestration_update(
         raise HTTPException(404, str(exc)) from exc
 
 
+@app.get("/api/runs/{run_id}/events")
 @app.get("/api/orchestrations/{run_id}/events")
 def orchestration_events(
     run_id: str,
@@ -2195,6 +2548,7 @@ def orchestration_events(
     }
 
 
+@app.get("/api/runs/{run_id}/export")
 @app.get("/api/orchestrations/{run_id}/export")
 def orchestration_export(
     run_id: str,
@@ -2207,6 +2561,7 @@ def orchestration_export(
         raise HTTPException(404, str(exc)) from exc
 
 
+@app.post("/api/runs/{run_id}/otlp")
 @app.post("/api/orchestrations/{run_id}/otlp")
 def orchestration_otlp(
     run_id: str, body: dict[str, Any] = Body(default_factory=dict)
@@ -2530,6 +2885,230 @@ def task_detail(task_id: str) -> dict[str, Any]:
     }
 
 
+@app.get("/api/tasks/{task_id}/landing/preflight")
+def task_landing_preflight(task_id: str) -> dict[str, Any]:
+    task = TaskCheckoutStore.load(task_id)
+    if task is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    try:
+        _require_task_idle(task)
+        return task.landing_preflight()
+    except WorktreeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+_LANDING_CHECK_LOCK = threading.Lock()
+_LANDING_CHECK_PROCESSES: dict[str, subprocess.Popen[bytes]] = {}
+_LANDING_CHECK_CANCELLED: set[str] = set()
+
+
+@app.post("/api/tasks/{task_id}/checks")
+def task_landing_checks(
+    task_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    """Run only explicit commands in the managed checkout and persist bounded evidence."""
+    task = TaskCheckoutStore.load(task_id)
+    if task is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    raw = body.get("commands")
+    if not isinstance(raw, list) or not 1 <= len(raw) <= 8:
+        raise HTTPException(422, "commands must contain between one and eight entries")
+    commands = [str(item).strip() for item in raw]
+    if any(not item or len(item) > 500 for item in commands):
+        raise HTTPException(422, "each check command must contain 1 to 500 characters")
+    try:
+        _require_task_idle(task)
+        preflight = task.landing_preflight()
+    except WorktreeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    requested_run_id = str(body.get("run_id") or "")
+    run_id = requested_run_id if re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", requested_run_id) \
+        else uuid.uuid4().hex
+    store = service().run_store
+    store.start_run(
+        run_id, session_id=task.session_id or "", workspace_root=task.workspace_root,
+        execution_path=task.execution_path, task_id=task.id, request="Landing checks",
+        state="running", run_kind="verification", execution_environment="worktree",
+    )
+    store.append_event(run_id, {
+        "type": "landing_checks_started", "state": "running",
+        "tree": preflight["tree"], "command_count": len(commands),
+    })
+    results: list[dict[str, Any]] = []
+    passed = True
+    for index, command in enumerate(commands):
+        started = time.monotonic()
+        with _LANDING_CHECK_LOCK:
+            cancelled = run_id in _LANDING_CHECK_CANCELLED
+        if cancelled:
+            results.append({
+                "index": index, "command": command, "exit_code": None,
+                "output": "", "truncated": False, "duration_ms": 0,
+                "state": "cancelled",
+            })
+            passed = False
+            break
+        try:
+            with tempfile.TemporaryFile() as output_file:
+                process = subprocess.Popen(
+                    ["/bin/zsh", "-lc", command], cwd=task.execution_path,
+                    stdout=output_file, stderr=subprocess.STDOUT,
+                    env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                    start_new_session=True,
+                )
+                with _LANDING_CHECK_LOCK:
+                    _LANDING_CHECK_PROCESSES[run_id] = process
+                try:
+                    exit_code = process.wait(timeout=600)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+                    raise
+                finally:
+                    with _LANDING_CHECK_LOCK:
+                        _LANDING_CHECK_PROCESSES.pop(run_id, None)
+                output_file.seek(0, os.SEEK_END)
+                output_size = output_file.tell()
+                output_file.seek(0)
+                output_bytes = output_file.read(1_000_001)
+            output = output_bytes.decode("utf-8", errors="replace")
+            truncated = output_size > 1_000_000
+            output = truncate_output(output, 1_000_000)
+            with _LANDING_CHECK_LOCK:
+                cancelled = run_id in _LANDING_CHECK_CANCELLED
+            item = {
+                "index": index, "command": command, "exit_code": exit_code,
+                "output": output, "truncated": truncated,
+                "duration_ms": int((time.monotonic() - started) * 1_000),
+                "state": "cancelled" if cancelled else (
+                    "passed" if exit_code == 0 else "failed"
+                ),
+            }
+        except subprocess.TimeoutExpired:
+            item = {
+                "index": index, "command": command, "exit_code": None,
+                "output": "", "truncated": False,
+                "duration_ms": int((time.monotonic() - started) * 1_000),
+                "state": "timed_out",
+            }
+        except OSError:
+            item = {
+                "index": index, "command": command, "exit_code": None,
+                "output": "The check process could not be started.", "truncated": False,
+                "duration_ms": int((time.monotonic() - started) * 1_000),
+                "state": "failed",
+            }
+        results.append(item)
+        store.append_event(run_id, {"type": "landing_check_completed", **item})
+        if item["state"] != "passed":
+            passed = False
+            break
+    cancelled_run = any(item["state"] == "cancelled" for item in results)
+    final_state = "cancelled" if cancelled_run else ("completed" if passed else "failed")
+    store.append_event(run_id, {
+        "type": "orchestration_completed", "state": final_state,
+        "tree": preflight["tree"], "passed": passed,
+    })
+    store.set_state(run_id, final_state, recoverable=False)
+    with _LANDING_CHECK_LOCK:
+        _LANDING_CHECK_PROCESSES.pop(run_id, None)
+        _LANDING_CHECK_CANCELLED.discard(run_id)
+    return {
+        "ok": passed, "run_id": run_id, "state": final_state,
+        "tree": preflight["tree"], "passed": passed, "results": results,
+    }
+
+
+@app.post("/api/runs/{run_id}/cancel")
+def run_cancel(run_id: str) -> dict[str, Any]:
+    """Cancel a queued run or an executing landing check without guessing its owner."""
+    with _LANDING_CHECK_LOCK:
+        process = _LANDING_CHECK_PROCESSES.get(run_id)
+        if process is not None:
+            _LANDING_CHECK_CANCELLED.add(run_id)
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            return {"ok": True}
+    run = service().run_store.run(run_id)
+    if run is None:
+        raise HTTPException(404, f"run not found: {run_id}")
+    if run["state"] == "queued":
+        service().run_store.reorder_queue(run_id, "cancel")
+    elif run["state"] not in {"completed", "failed", "cancelled", "discarded"}:
+        service().run_store.set_state(run_id, "cancelled", recoverable=False)
+    return {"ok": True}
+
+
+@app.post("/api/tasks/{task_id}/landing")
+def task_land(
+    task_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    task = TaskCheckoutStore.load(task_id)
+    if task is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    destination = str(body.get("destination") or "")
+    expected_tree = str(body.get("expected_tree") or "")
+    check_run_id = str(body.get("check_run_id") or "")
+    check_tree = ""
+    checks_passed = False
+    override = bool(body.get("override_failed_checks"))
+    try:
+        _require_task_idle(task)
+        preflight = task.landing_preflight()
+        if not expected_tree or expected_tree != preflight["tree"]:
+            raise WorktreeError("the worktree changed; review the refreshed diff before landing")
+        if check_run_id:
+            store = service().run_store
+            check_run = store.run(check_run_id)
+            if check_run is None or check_run.get("run_kind") != "verification" \
+                    or check_run.get("task_id") != task.id:
+                raise WorktreeError("the supplied check evidence does not belong to this worktree")
+            completion = next((
+                event for event in reversed(store.events(check_run_id))
+                if event.get("type") == "orchestration_completed"
+                    and "tree" in event and "passed" in event
+            ), None)
+            if completion is None:
+                raise WorktreeError("the supplied check evidence is incomplete")
+            check_tree = str(completion.get("tree") or "")
+            checks_passed = bool(completion.get("passed"))
+        if check_tree and check_tree != expected_tree:
+            raise WorktreeError("the check result is stale for the current worktree")
+        if not checks_passed and not override:
+            raise WorktreeError("checks have not passed; confirm Land Anyway to continue")
+        if destination == "local":
+            result = task.apply()
+            result.update({"destination": "local", "override_failed_checks": override})
+        elif destination == "branch":
+            result = task.land_branch(
+                str(body.get("branch") or ""), str(body.get("commit_message") or "")
+            )
+            result["override_failed_checks"] = override
+        else:
+            raise HTTPException(422, "destination must be local or branch")
+        task.landing_source_tree = preflight["base_tree"]
+        task.landing_check_run_id = check_run_id or None
+        task.landing_checks_passed = checks_passed
+        task.landing_override = override
+        task.save()
+        if task.session_id:
+            SessionMeta.update(task.session_id, task=task.as_dict())
+        run_id = str(body.get("source_run_id") or "")
+        if run_id and service().run_store.run(run_id) is not None:
+            service().run_store.append_event(run_id, {
+                "type": "worktree_landed", "destination": destination,
+                "tree": expected_tree, "commit": result.get("commit"),
+                "check_run_id": check_run_id or None,
+                "checks_passed": checks_passed,
+                "override_failed_checks": override,
+            })
+        return {"task": task.as_dict(), **result}
+    except WorktreeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @app.post("/api/tasks/{task_id}/apply")
 def task_apply(task_id: str) -> dict[str, Any]:
     """Apply only after a complete dry run; leave source changes unstaged."""
@@ -2537,6 +3116,7 @@ def task_apply(task_id: str) -> dict[str, Any]:
     task = TaskCheckoutStore.load(task_id)
     if task is None:
         raise HTTPException(404, f"task not found: {task_id}")
+    _require_task_idle(task)
     try:
         with svc.state_mutation():
             result = task.apply()
@@ -2555,13 +3135,67 @@ def task_apply(task_id: str) -> dict[str, Any]:
         raise HTTPException(409, str(exc)) from exc
 
 
+@app.post("/api/tasks/{task_id}/branch")
+def task_create_branch(
+    task_id: str,
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Turn a detached managed worktree into an explicitly named branch."""
+    branch = body.get("branch")
+    if not isinstance(branch, str):
+        raise HTTPException(422, "branch must be a string")
+    try:
+        existing = TaskCheckoutStore.load(task_id)
+        if existing is None:
+            raise HTTPException(404, f"task not found: {task_id}")
+        _require_task_idle(existing)
+        task = TaskCheckoutStore.create_branch(task_id, branch)
+        if task.session_id:
+            SessionMeta.update(task.session_id, task=task.as_dict())
+        return {"ok": True, "task": task.as_dict()}
+    except WorktreeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/tasks/{task_id}/snapshot")
+def task_snapshot(task_id: str) -> dict[str, Any]:
+    try:
+        existing = TaskCheckoutStore.load(task_id)
+        if existing is None:
+            raise HTTPException(404, f"task not found: {task_id}")
+        _require_task_idle(existing)
+        result = TaskCheckoutStore.snapshot_and_remove(task_id)
+        task = TaskCheckoutStore.load(task_id)
+        if task is not None and task.session_id:
+            SessionMeta.update(task.session_id, task=task.as_dict())
+        return result
+    except WorktreeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/tasks/{task_id}/restore")
+def task_restore(task_id: str) -> dict[str, Any]:
+    try:
+        existing = TaskCheckoutStore.load(task_id)
+        if existing is None:
+            raise HTTPException(404, f"task not found: {task_id}")
+        _require_task_idle(existing)
+        task = TaskCheckoutStore.restore(task_id)
+        if task.session_id:
+            SessionMeta.update(task.session_id, task=task.as_dict())
+        return {"ok": True, "task": task.as_dict()}
+    except WorktreeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @app.delete("/api/tasks/{task_id}")
 def task_cleanup(task_id: str) -> dict[str, Any]:
-    """Explicitly remove a managed task checkout without touching its workspace."""
+    """Archive a managed checkout behind a restorable Git snapshot."""
     svc = service()
     task = TaskCheckoutStore.load(task_id)
     if task is None:
         raise HTTPException(404, f"task not found: {task_id}")
+    _require_task_idle(task)
     if svc.busy:
         raise _busy_http()
     try:
@@ -2569,7 +3203,10 @@ def task_cleanup(task_id: str) -> dict[str, Any]:
             if svc.current_task and svc.current_task.id == task_id:
                 svc.core.leave_task_checkout(task.workspace_root)
                 svc.current_task = None
-            return TaskCheckoutStore.cleanup(task_id)
+            result = TaskCheckoutStore.snapshot_and_remove(task_id)
+            if task.session_id:
+                SessionMeta.update(task.session_id, task=result["task"])
+            return result
     except AgentBusyError as exc:
         raise _busy_http() from exc
     except WorktreeError as exc:
@@ -2601,6 +3238,8 @@ def session_metadata_update(
         # Archiving the conversation you are in would hide it from the very
         # list it is active in.
         raise HTTPException(409, "start a new session before archiving the active one")
+    if archived and _session_has_active_run(session_id):
+        raise HTTPException(409, "wait for this chat to stop before archiving it")
 
     state = update_session_metadata(
         session_id,
@@ -2608,6 +3247,20 @@ def session_metadata_update(
         pinned=body.get("pinned"),
         archived=archived,
     )
+    meta = SessionMeta.get(session_id)
+    task_value = meta.get("task")
+    task_id = str(task_value.get("id") or "") if isinstance(task_value, dict) else ""
+    task = TaskCheckoutStore.load(task_id) if task_id else None
+    if task is not None and isinstance(body.get("pinned"), bool):
+        task.pinned = bool(body["pinned"])
+        task.save()
+        SessionMeta.update(session_id, task=task.as_dict())
+    if task is not None and archived and Path(task.execution_path).is_dir():
+        try:
+            snapshot = TaskCheckoutStore.snapshot_and_remove(task.id)
+            SessionMeta.update(session_id, task=snapshot["task"])
+        except WorktreeError as exc:
+            raise HTTPException(409, str(exc)) from exc
     return {"ok": True, "id": session_id, **state}
 
 
@@ -2625,8 +3278,15 @@ def session_resume(session_id: str) -> dict[str, Any]:
             task_value = meta.get("task")
             task_id = str(task_value.get("id") or "") if isinstance(task_value, dict) else ""
             task = TaskCheckoutStore.load(task_id) if task_id else None
-            svc.current_task = task
-            if task is not None:
+            environment = meta.get("environment")
+            is_worktree = isinstance(environment, dict) and (
+                environment.get("type") == "worktree"
+                or environment.get("isolation") == "managed_worktree"
+            )
+            svc.current_task = task if is_worktree else None
+            if task is not None and is_worktree:
+                if not Path(task.execution_path).is_dir():
+                    raise HTTPException(409, "the chat worktree is archived and must be restored")
                 svc.core.enter_task_checkout(
                     task.execution_path,
                     task.workspace_root,
@@ -2652,6 +3312,91 @@ def session_resume(session_id: str) -> dict[str, Any]:
         "orchestration_run_id": activity.get("run_id"),
         "worker_id": activity.get("worker_id"),
     }
+
+
+@app.post("/api/sessions/{session_id}/handoff")
+def session_handoff(
+    session_id: str,
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Move an idle chat and its code between Local and its managed worktree."""
+    target = body.get("environment")
+    if target not in {"local", "worktree"}:
+        raise HTTPException(422, "environment must be local or worktree")
+    svc = service()
+    try:
+        with svc.state_mutation():
+            if svc.core.session.session_id != session_id:
+                svc.core.resume_session(session_id)
+            meta = SessionMeta.get(session_id)
+            workspace_root = str(
+                meta.get("workspace_root") or SessionStore.header(
+                    SessionStore.path_for(session_id)  # type: ignore[arg-type]
+                ).get("cwd") or ""
+            )
+            if not workspace_root or not Path(workspace_root).is_dir():
+                raise HTTPException(409, "the chat's local workspace is unavailable")
+            task_value = meta.get("task")
+            task_id = str(task_value.get("id") or "") if isinstance(task_value, dict) else ""
+            task = TaskCheckoutStore.load(task_id) if task_id else None
+            result: dict[str, Any] = {"applied": False, "paths": []}
+            if target == "local":
+                if task is not None and Path(task.execution_path).is_dir():
+                    result = task.apply()
+                svc.core.leave_task_checkout(workspace_root)
+                svc.current_task = None
+                SessionMeta.update(
+                    session_id,
+                    task=task.as_dict() if task else task_value,
+                    workspace_root=workspace_root,
+                    execution_path=workspace_root,
+                    environment={
+                        "type": "local",
+                        "isolation": "local",
+                        "worktree_id": task.id if task else "",
+                    },
+                )
+            else:
+                if not _is_git_workspace(workspace_root):
+                    raise HTTPException(422, "worktree chats require a Git repository")
+                if task is None:
+                    task = TaskCheckoutStore.create(
+                        workspace_root,
+                        session_id,
+                        base_ref=str(body.get("base_ref") or "HEAD"),
+                        session_id=session_id,
+                    )
+                else:
+                    task = TaskCheckoutStore.refresh_from_workspace(task.id)
+                svc.current_task = task
+                svc.core.enter_task_checkout(
+                    task.execution_path, task.workspace_root, task.as_dict()
+                )
+                SessionMeta.update(
+                    session_id,
+                    task=task.as_dict(),
+                    workspace_root=task.workspace_root,
+                    execution_path=task.execution_path,
+                    environment={
+                        "type": "worktree",
+                        "isolation": "managed_worktree",
+                        "worktree_id": task.id,
+                        "starting_ref": task.starting_ref,
+                    },
+                )
+            return {
+                "ok": True,
+                "environment": target,
+                "session_info": svc.core.session_info(),
+                "task": task.as_dict() if task else None,
+                **result,
+            }
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except WorktreeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.get("/api/git/status")
@@ -3302,8 +4047,32 @@ def _run_user_turn(
     attachments: list[dict[str, str]] | None = None,
     agent_config: dict[str, Any] | None = None,
     mode: str = "work",
+    reserved_run_id: str = "",
 ) -> None:
     """Worker entry that makes the UI's chat-only boundary explicit."""
+    run_id = reserved_run_id if re.fullmatch(r"[A-Za-z0-9_-]{1,160}", reserved_run_id) else uuid.uuid4().hex
+    environment = "worktree" if svc.current_task is not None else "local"
+    svc.run_store.start_run(
+        run_id,
+        session_id=svc.core.session.session_id,
+        worker_id=svc.worker_id,
+        workspace_root=svc.core.workspace_root,
+        execution_path=svc.core.cwd,
+        task_id=svc.current_task.id if svc.current_task else "",
+        request=text,
+        state="running",
+        run_kind="solo",
+        content_policy="metadata",
+        execution_environment=environment,
+    )
+    svc.active_run_id = run_id
+    svc.core.tool_ctx.memory_session_id = svc.core.session.session_id
+    svc.core.tool_ctx.memory_run_id = run_id
+    run = svc.run_store.run(run_id) or {}
+    svc.emit({
+        "type": "run_started", "run_id": run_id, "run_kind": "solo",
+        "state": "running", "traceparent": traceparent_for_run(run),
+    })
     configuration = AgentConfiguration.parse(agent_config)
     memory_context = _automatic_memory_context(
         svc.core, text, configuration, just_chat=just_chat,
@@ -3313,12 +4082,27 @@ def _run_user_turn(
         mode="ask" if just_chat else mode,
         memory_context=memory_context,
     )
-    svc.core.run_turn(
-        text,
-        svc.decide,
-        allow_tools=not just_chat,
-        attachments=attachments,
-    )
+    try:
+        svc.core.run_turn(
+            text,
+            svc.decide,
+            allow_tools=not just_chat,
+            attachments=attachments,
+        )
+    except Exception:
+        # Preserve a durable terminal boundary while the run identity is still
+        # attached. The executor completion guard sees it and does not repeat it.
+        svc.emit({
+            "type": "error",
+            "message": "The run stopped because of an internal error.",
+        })
+        svc.emit({"type": "turn_done", "reason": "error", "duration_ms": 0})
+        raise
+    finally:
+        # ``turn_done`` persists the terminal boundary before this identity is
+        # released. A process crash leaves the running record recoverable.
+        svc.active_run_id = None
+        svc.core.tool_ctx.memory_run_id = ""
 
 
 def _run_team_turn(
@@ -3337,6 +4121,8 @@ def _run_team_turn(
     core._suppress_turn_done = True
     run_id = str(manifest.get("run_id") or uuid.uuid4().hex)
     svc.active_run_id = run_id
+    core.tool_ctx.memory_session_id = core.session.session_id
+    core.tool_ctx.memory_run_id = run_id
     svc.pause_requested = False
     stage = "validating the team setup"
     try:
@@ -3353,7 +4139,15 @@ def _run_team_turn(
             request=text,
             manifest=manifest,
             state="dispatching",
+            run_kind="evaluation" if svc.active_evaluation_id else "team",
+            content_policy=(
+                "content" if manifest.get("telemetry_include_content") is True
+                else "metadata"
+            ),
+            execution_environment=("worktree" if svc.current_task else "local"),
         )
+        record = svc.run_store.run(run_id) or {}
+        manifest["traceparent"] = traceparent_for_run(record)
         # Persist the visible request before dispatch can spend minutes on
         # specialists. This makes a brand-new background task immediately
         # addressable in the sidebar. Internal writer prompts stay in memory.
@@ -3793,6 +4587,7 @@ def _run_team_turn(
         svc.emit(terminal_event)
         core._emit_info()
         svc.active_run_id = None
+        core.tool_ctx.memory_run_id = ""
         svc.cancel_requested_runs.discard(run_id)
         svc.pause_requested = False
 
@@ -4623,9 +5418,11 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         elif team_manifest is not None:
             call, args = _run_team_turn, (svc, text, team_manifest, attachments)
         else:
-            call, args = _run_user_turn, (
-                svc, text, just_chat, attachments, agent_config, mode or "work",
-            )
+            reserved_run_id = str(msg.get("run_id") or "")
+            args = (svc, text, just_chat, attachments, agent_config, mode or "work")
+            if reserved_run_id:
+                args = (*args, reserved_run_id)
+            call = _run_user_turn
         if not svc.start_turn(loop, call, *args):
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
     elif mtype == "permission_decision":

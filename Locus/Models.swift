@@ -32,6 +32,14 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+enum ChatExecutionEnvironment: String, CaseIterable, Codable, Identifiable {
+    case local
+    case worktree
+
+    var id: String { rawValue }
+    var title: String { self == .worktree ? "Worktree" : "Local" }
+}
+
 /// The answer to the "implement this plan?" prompt that follows a completed
 /// Plan-mode turn.
 enum PlanApprovalDecision {
@@ -197,7 +205,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// The general workspace panels reached from the right-panel button. Plan
+    /// The general workspace panels reached from the inspector command. Plan
     /// and Browser have dedicated rail buttons and open only when explicitly
     /// requested (or when an active request needs them).
     static let workspaceTabs: [InspectorTab] = [
@@ -491,6 +499,7 @@ struct SessionInfo: Codable, Hashable {
     let task: TaskRecord?
     let workspaceRoot: String?
     let executionPath: String?
+    let environment: [String: String]?
     let permissions: SessionPermissions
 
     init(
@@ -512,6 +521,7 @@ struct SessionInfo: Codable, Hashable {
         task: TaskRecord? = nil,
         workspaceRoot: String? = nil,
         executionPath: String? = nil,
+        environment: [String: String]? = nil,
         permissions: SessionPermissions
     ) {
         self.model = model
@@ -532,6 +542,7 @@ struct SessionInfo: Codable, Hashable {
         self.task = task
         self.workspaceRoot = workspaceRoot
         self.executionPath = executionPath
+        self.environment = environment
         self.permissions = permissions
     }
 
@@ -561,6 +572,7 @@ struct SessionInfo: Codable, Hashable {
             task: task,
             workspaceRoot: workspaceRoot,
             executionPath: executionPath,
+            environment: environment,
             permissions: permissions
         )
     }
@@ -585,12 +597,13 @@ struct SessionInfo: Codable, Hashable {
             task: task,
             workspaceRoot: task?.workspaceRoot ?? workspaceRoot,
             executionPath: task?.executionPath ?? executionPath,
+            environment: environment,
             permissions: permissions
         )
     }
 
     enum CodingKeys: String, CodingKey {
-        case model, host, cwd, session, messages, provider, permissions, task
+        case model, host, cwd, session, messages, provider, permissions, task, environment
         case sessionID = "session_id"
         case approxTokens = "approx_tokens"
         case promptTokens = "prompt_tokens"
@@ -627,6 +640,7 @@ struct SessionInfo: Codable, Hashable {
         task = try? container.decodeIfPresent(TaskRecord.self, forKey: .task)
         workspaceRoot = try? container.decodeIfPresent(String.self, forKey: .workspaceRoot)
         executionPath = try? container.decodeIfPresent(String.self, forKey: .executionPath)
+        environment = try? container.decodeIfPresent([String: String].self, forKey: .environment)
         permissions = (try? container.decodeIfPresent(SessionPermissions.self, forKey: .permissions))
             ?? SessionPermissions(skipAll: false, allowed: [])
     }
@@ -747,6 +761,14 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         }
         let trimmed = Self.cleanPreview(preview)
         return trimmed.isEmpty ? "Untitled session" : trimmed
+    }
+
+    var executionEnvironment: ChatExecutionEnvironment {
+        if environment?["type"] == ChatExecutionEnvironment.worktree.rawValue
+            || environment?["isolation"] == "managed_worktree" {
+            return .worktree
+        }
+        return .local
     }
 
     /// Session previews come from the stored first message, which Locus wraps
@@ -1218,6 +1240,7 @@ struct AppSettings: Codable, Hashable {
     var backendRoot = NSString(string: "~/Documents/locus/agent").expandingTildeInPath
     var previewURL = "http://localhost:3000"
     var notifyOnCompletion = true
+    var notifyOnNeedsAttention = true
     /// Stored as a raw string so a preference written by a future version
     /// cannot make the rest of the settings payload fail to decode.
     var appearanceRaw = AppAppearance.system.rawValue
@@ -1256,7 +1279,7 @@ struct AppSettings: Codable, Hashable {
     /// version would otherwise fail the whole settings decode and reset
     /// everything else with it.
     var inspectorLastTab = InspectorTab.plan.rawValue
-    /// The last non-Plan, non-Browser panel. The right-panel button restores
+    /// The last non-Plan, non-Browser panel. The inspector command restores
     /// this value so it never opens a special-purpose surface by accident.
     var inspectorLastWorkspaceTab = InspectorTab.changes.rawValue
     /// Legacy combined preference from the first implementation. It remains
@@ -1267,13 +1290,6 @@ struct AppSettings: Codable, Hashable {
     var soloPlanPresentationRaw = AutomaticInspectorPresentation.ask.rawValue
     /// Whether a team request should reveal Team Runs.
     var teamRunsPresentationRaw = AutomaticInspectorPresentation.ask.rawValue
-    /// The multi-line composer keeps Command-Return as its default send
-    /// gesture; people who prefer chat-style input can opt into plain Return.
-    var enterSendsMessages = false
-    /// False until the one-time launch choice has been answered. Keeping this
-    /// separate from `enterSendsMessages` distinguishes the default from an
-    /// intentional Command-Return choice.
-    var sendShortcutPreferenceConfigured = false
     /// Raw string for the same forward-compatibility reason as the tab.
     var thinkingVisibilityRaw = ThinkingVisibility.collapsed.rawValue
     /// One-time compatibility marker: releases before adaptive Work persisted
@@ -1291,11 +1307,18 @@ struct AppSettings: Codable, Hashable {
     /// default forgets everything when the app quits, because an agent that
     /// can browse anywhere should not quietly accumulate a signed-in profile.
     var browserPersistProfile = false
-    /// OpenTelemetry export is explicit and disabled by default. Endpoint
-    /// authorization lives in CredentialStore, never in these settings.
+    /// Every executing chat owns a worker. This bounds active turns, not idle
+    /// worker processes, and intentionally differs from per-team model calls.
+    var maximumActiveChats = 2
+    var worktreeRetentionLimit = 15
+    var newGitChatsUseWorktree = true
+    /// OpenTelemetry export is explicit and disabled by default. The user has
+    /// chosen a plain local setting over Keychain prompts; the settings UI
+    /// labels this authorization value as unencrypted.
     var otlpExportEnabled = false
     var otlpEndpoint = ""
-    var otlpIncludeContent = false
+    var otlpAuthorization = ""
+    var otlpSamplingRate = 1.0
     /// Raw strings, like the tab: an unknown mode or type saved by a future
     /// version must not fail the whole settings decode.
     var proxyModeRaw = ProxyMode.off.rawValue
@@ -1321,7 +1344,7 @@ struct AppSettings: Codable, Hashable {
     var terminalSettingsMigrated = false
     /// Empty means this install has not chosen an app-wide permission mode yet
     /// and should adopt the backend's existing value. Once chosen, the mode is
-    /// propagated to the main runtime and every task worker.
+    /// propagated to the main runtime and every chat worker.
     var permissionModeRaw = ""
 
     static let defaultInspectorWidth: Double = 340
@@ -1347,6 +1370,19 @@ struct AppSettings: Codable, Hashable {
     static func clampProxyPort(_ port: Int?) -> Int? {
         guard let port, (1...65535).contains(port) else { return nil }
         return port
+    }
+
+    static func clampMaximumActiveChats(_ value: Int) -> Int {
+        min(max(value, 1), 4)
+    }
+
+    static func clampWorktreeRetentionLimit(_ value: Int) -> Int {
+        min(max(value, 0), 100)
+    }
+
+    static func clampOTLPSamplingRate(_ value: Double) -> Double {
+        guard value.isFinite else { return 1 }
+        return min(max(value, 0), 1)
     }
 
     var resolvedInspectorTab: InspectorTab {
@@ -1406,6 +1442,9 @@ struct AppSettings: Codable, Hashable {
         previewURL = try container.decodeIfPresent(String.self, forKey: .previewURL) ?? defaults.previewURL
         notifyOnCompletion = try container.decodeIfPresent(Bool.self, forKey: .notifyOnCompletion)
             ?? defaults.notifyOnCompletion
+        notifyOnNeedsAttention = try container.decodeIfPresent(
+            Bool.self, forKey: .notifyOnNeedsAttention
+        ) ?? notifyOnCompletion
         appearanceRaw = try container.decodeIfPresent(String.self, forKey: .appearanceRaw)
             ?? defaults.appearanceRaw
         provider = try container.decodeIfPresent(ModelProvider.self, forKey: .provider)
@@ -1452,12 +1491,6 @@ struct AppSettings: Codable, Hashable {
             String.self,
             forKey: .teamRunsPresentationRaw
         ) ?? automaticInspectorPresentationRaw
-        enterSendsMessages = try container.decodeIfPresent(Bool.self, forKey: .enterSendsMessages)
-            ?? defaults.enterSendsMessages
-        sendShortcutPreferenceConfigured = try container.decodeIfPresent(
-            Bool.self,
-            forKey: .sendShortcutPreferenceConfigured
-        ) ?? defaults.sendShortcutPreferenceConfigured
         thinkingVisibilityRaw = try container.decodeIfPresent(String.self, forKey: .thinkingVisibilityRaw)
             ?? defaults.thinkingVisibilityRaw
         adaptiveWorkMigrationCompleted = try container.decodeIfPresent(
@@ -1476,12 +1509,28 @@ struct AppSettings: Codable, Hashable {
             Bool.self,
             forKey: .browserPersistProfile
         ) ?? defaults.browserPersistProfile
+        maximumActiveChats = Self.clampMaximumActiveChats(
+            try container.decodeIfPresent(Int.self, forKey: .maximumActiveChats)
+                ?? defaults.maximumActiveChats
+        )
+        worktreeRetentionLimit = Self.clampWorktreeRetentionLimit(
+            try container.decodeIfPresent(Int.self, forKey: .worktreeRetentionLimit)
+                ?? defaults.worktreeRetentionLimit
+        )
+        newGitChatsUseWorktree = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .newGitChatsUseWorktree
+        ) ?? defaults.newGitChatsUseWorktree
         otlpExportEnabled = try container.decodeIfPresent(Bool.self, forKey: .otlpExportEnabled)
             ?? defaults.otlpExportEnabled
         otlpEndpoint = try container.decodeIfPresent(String.self, forKey: .otlpEndpoint)
             ?? defaults.otlpEndpoint
-        otlpIncludeContent = try container.decodeIfPresent(Bool.self, forKey: .otlpIncludeContent)
-            ?? defaults.otlpIncludeContent
+        otlpAuthorization = try container.decodeIfPresent(String.self, forKey: .otlpAuthorization)
+            ?? defaults.otlpAuthorization
+        otlpSamplingRate = Self.clampOTLPSamplingRate(
+            try container.decodeIfPresent(Double.self, forKey: .otlpSamplingRate)
+                ?? defaults.otlpSamplingRate
+        )
         proxyModeRaw = try container.decodeIfPresent(String.self, forKey: .proxyModeRaw)
             ?? defaults.proxyModeRaw
         proxyTypeRaw = try container.decodeIfPresent(String.self, forKey: .proxyTypeRaw)
@@ -2076,6 +2125,11 @@ struct WorkspaceProfile: Identifiable, Codable, Hashable {
     var previewURL: String
     var contextFiles: [ContextFile]
     var draft: String
+    var landingCheckCommands: [String]? = nil
+
+    var resolvedLandingCheckCommands: [String] {
+        Array((landingCheckCommands ?? []).filter { !$0.isEmpty }.prefix(8))
+    }
     var displayName: String {
         URL(fileURLWithPath: path).lastPathComponent
     }

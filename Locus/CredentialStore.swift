@@ -41,7 +41,6 @@ enum CredentialStore {
     /// one — the same accepted downgrade behavior the file already has, and the
     /// cost is re-entering one password.
     static let proxyCredentialKey = "network-proxy"
-    static let otlpAuthorizationKey = "telemetry-otlp-authorization"
 
     static var fileURL: URL {
         URL(fileURLWithPath: NSHomeDirectory())
@@ -148,7 +147,7 @@ enum CredentialStore {
         for (key, value) in entries {
             if key.hasPrefix(mcpCredentialPrefix) {
                 mcp[key] = value
-            } else if key == proxyCredentialKey || key == otlpAuthorizationKey {
+            } else if key == proxyCredentialKey {
                 // Its own section, not the provider fallback: the orphan sweep
                 // walks provider keys, and a proxy password that landed there
                 // would be collected as an account nothing owns.

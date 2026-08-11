@@ -325,11 +325,11 @@ Example: export a redacted run when reporting a scheduling bug. The file contain
 
 ### Optional OpenTelemetry export
 
-Under **Settings → Agents & Teams → Optional Telemetry**, Locus can send completed-run traces to an OTLP/HTTP endpoint.
+Under **Settings → Agents & Teams → Optional Telemetry**, Locus can send completed Solo and team traces through the official OpenTelemetry SDK and OTLP/HTTP exporter.
 
-Metadata export and visible-content export have separate switches. Endpoint authorization is stored in the local credential store rather than team settings.
+The configured value may be an OTLP base URL or a legacy full `/v1/traces` URL. Automatic export is sampled metadata only. Sending visible content is an explicit, per-run confirmation in the Runs inspector. The optional Authorization header is stored unencrypted in ordinary local app settings; it is never placed in logs, local events, trace attributes, or error text.
 
-Example: point Locus at an internal OpenTelemetry collector to compare dispatcher latency across machines while leaving **Include visible conversation and tool content** disabled.
+Example: point Locus at an internal OpenTelemetry collector to compare dispatcher latency across machines. A failed collector does not fail the chat; the export is marked failed after three bounded attempts and can be retried manually.
 
 ## 7. Recovery and job controls
 
@@ -402,9 +402,9 @@ Example: replay the same baseline with different routing weights for a fair comp
 
 - **Stop Run** cancels all jobs in the active orchestration.
 - **Discard Run** discards orchestration state but never deletes workspace files.
-- **Clean Up Managed Checkout** is a separate explicit action for removing an unused private checkout.
+- **Clean Up Managed Checkout** snapshots and removes an unused private checkout; Restore Worktree recreates it later.
 
-Example: discard a failed experiment but leave its checkout available for inspection. Clean it up later after copying any needed patch.
+Example: discard a failed experiment but leave its checkout available for inspection. Clean it up later to reclaim disk space without losing the restorable snapshot.
 
 ## 8. Evaluation Lab
 

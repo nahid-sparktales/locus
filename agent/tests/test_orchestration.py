@@ -773,9 +773,27 @@ def test_managed_worktree_conflict_leaves_source_untouched(tmp_path, monkeypatch
     (Path(task.execution_path) / "tracked.txt").write_text("task edit\n")
     (source / "tracked.txt").write_text("concurrent source edit\n")
 
-    with pytest.raises(WorktreeError, match="conflict"):
+    with pytest.raises(WorktreeError, match=r"conflict[\s\S]*Affected paths: tracked.txt"):
         task.apply()
     assert (source / "tracked.txt").read_text() == "concurrent source edit\n"
+
+
+def test_two_chat_worktrees_edit_same_repository_without_cross_talk(tmp_path, monkeypatch):
+    from ollama_code import worktrees
+
+    source = _repository(tmp_path / "source")
+    monkeypatch.setattr(worktrees, "TASKS_DIR", tmp_path / "tasks")
+    first = TaskCheckoutStore.create(str(source), "chat-first", session_id="session-first")
+    second = TaskCheckoutStore.create(str(source), "chat-second", session_id="session-second")
+
+    Path(first.execution_path, "first.txt").write_text("first chat\n")
+    Path(second.execution_path, "second.txt").write_text("second chat\n")
+
+    assert not Path(first.execution_path, "second.txt").exists()
+    assert not Path(second.execution_path, "first.txt").exists()
+    assert not Path(source, "first.txt").exists()
+    assert "first.txt" in first.patch()[0]
+    assert "second.txt" in second.patch()[0]
 
 
 def test_parallel_worktree_forks_same_snapshot_and_integrates_in_order(tmp_path, monkeypatch):
@@ -851,6 +869,95 @@ def test_cleanup_removes_only_managed_checkout(tmp_path, monkeypatch):
     assert result["removed"] is True
     assert TaskCheckoutStore.load(task.id) is None
     assert workspace_file.read_text(encoding="utf-8") == before
+
+
+def test_chat_worktree_uses_selected_ref_and_copies_only_included_ignored_files(
+    tmp_path, monkeypatch
+):
+    from ollama_code import worktrees
+
+    source = _repository(tmp_path / "source")
+    (source / ".gitignore").write_text(".env\nignored.txt\nlinked.env\n")
+    (source / ".worktreeinclude").write_text(".env\nlinked.env\n")
+    _git(source, "add", ".gitignore", ".worktreeinclude")
+    _git(source, "commit", "-m", "worktree includes")
+    _git(source, "branch", "starting-point")
+    (source / ".env").write_text("LOCAL_ONLY=1\n")
+    (source / "ignored.txt").write_text("do not copy\n")
+    (source / "target.env").write_text("target\n")
+    (source / "linked.env").symlink_to("target.env")
+    monkeypatch.setattr(worktrees, "TASKS_DIR", tmp_path / "tasks")
+
+    task = TaskCheckoutStore.create(
+        str(source), "chat-worktree", base_ref="starting-point", session_id="chat-1"
+    )
+    checkout = Path(task.execution_path)
+
+    assert task.session_id == "chat-1"
+    assert task.starting_ref == "starting-point"
+    assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == "HEAD"
+    assert (checkout / ".env").read_text() == "LOCAL_ONLY=1\n"
+    assert not (checkout / "ignored.txt").exists()
+    assert not (checkout / "linked.env").exists(), "include copying skips symlinks"
+
+
+def test_snapshotted_worktree_restores_the_same_chat_state(tmp_path, monkeypatch):
+    from ollama_code import worktrees
+
+    source = _repository(tmp_path / "source")
+    monkeypatch.setattr(worktrees, "TASKS_DIR", tmp_path / "tasks")
+    task = TaskCheckoutStore.create(str(source), "archive-chat", session_id="chat-1")
+    checkout = Path(task.execution_path)
+    (checkout / "result.txt").write_text("preserved\n")
+
+    result = TaskCheckoutStore.snapshot_and_remove(task.id)
+
+    assert result["removed"] is True
+    assert not checkout.exists()
+    restored = TaskCheckoutStore.restore(task.id)
+    assert restored.id == task.id
+    assert (checkout / "result.txt").read_text() == "preserved\n"
+    assert "result.txt" in restored.patch()[0]
+
+
+def test_retention_never_removes_unresolved_chat_changes(tmp_path, monkeypatch):
+    from ollama_code import worktrees
+
+    source = _repository(tmp_path / "source")
+    monkeypatch.setattr(worktrees, "TASKS_DIR", tmp_path / "tasks")
+    changed = TaskCheckoutStore.create(str(source), "changed", session_id="changed")
+    clean = TaskCheckoutStore.create(str(source), "clean", session_id="clean")
+    Path(changed.execution_path, "unresolved.txt").write_text("keep me\n")
+    changed.updated_at = 1
+    changed.save()
+    clean.updated_at = 2
+    clean.save()
+
+    removed = TaskCheckoutStore.prune(limit=0)
+
+    assert "changed" not in removed
+    assert Path(changed.execution_path).exists()
+
+
+def test_returning_handoff_reuses_worktree_with_local_state_as_new_baseline(
+    tmp_path, monkeypatch
+):
+    from ollama_code import worktrees
+
+    source = _repository(tmp_path / "source")
+    monkeypatch.setattr(worktrees, "TASKS_DIR", tmp_path / "tasks")
+    task = TaskCheckoutStore.create(str(source), "handoff-chat", session_id="chat-1")
+    checkout = Path(task.execution_path)
+    (checkout / "tracked.txt").write_text("from worktree\n")
+    task.apply()
+    (source / "local-only.txt").write_text("local continuation\n")
+
+    refreshed = TaskCheckoutStore.refresh_from_workspace(task.id)
+
+    assert refreshed.id == task.id
+    assert (checkout / "tracked.txt").read_text() == "from worktree\n"
+    assert (checkout / "local-only.txt").read_text() == "local continuation\n"
+    assert refreshed.patch()[0] == ""
 
 
 def test_agent_job_is_a_plain_non_recursive_record():

@@ -2059,6 +2059,73 @@ def test_new_session_can_target_a_workspace(client, tmp_path):
     assert client.app.state.service.core.cwd == str(workspace)
 
 
+def test_worktree_chat_session_handoff_branch_and_restore(client, tmp_path, monkeypatch):
+    from ollama_code import worktrees
+
+    workspace = tmp_path / "worktree-workspace"
+    workspace.mkdir()
+    subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.name", "Test"], cwd=workspace, check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"], cwd=workspace, check=True
+    )
+    (workspace / "tracked.txt").write_text("base\n")
+    subprocess.run(["git", "add", "."], cwd=workspace, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=workspace, check=True)
+    monkeypatch.setattr(worktrees, "TASKS_DIR", tmp_path / "managed-worktrees")
+
+    created = client.post(
+        "/api/sessions/new",
+        json={
+            "reason": "workspace_chat",
+            "cwd": str(workspace),
+            "environment": "worktree",
+            "base_ref": "HEAD",
+        },
+    )
+    assert created.status_code == 200
+    info = created.json()["session_info"]
+    session_id = info["session_id"]
+    task_id = info["task"]["id"]
+    checkout = Path(info["execution_path"])
+    assert info["environment"]["type"] == "worktree"
+    assert checkout != workspace and checkout.is_dir()
+
+    (checkout / "tracked.txt").write_text("worktree result\n")
+    handed_local = client.post(
+        f"/api/sessions/{session_id}/handoff", json={"environment": "local"}
+    )
+    assert handed_local.status_code == 200
+    assert handed_local.json()["environment"] == "local"
+    assert (workspace / "tracked.txt").read_text() == "worktree result\n"
+
+    handed_back = client.post(
+        f"/api/sessions/{session_id}/handoff", json={"environment": "worktree"}
+    )
+    assert handed_back.status_code == 200
+    assert handed_back.json()["task"]["id"] == task_id
+    assert Path(handed_back.json()["task"]["execution_path"]) == checkout
+
+    branch = client.post(
+        f"/api/tasks/{task_id}/branch", json={"branch": "feature/background-chat"}
+    )
+    assert branch.status_code == 200
+    assert branch.json()["task"]["branch"] == "feature/background-chat"
+
+    snapshot = client.post(f"/api/tasks/{task_id}/snapshot")
+    assert snapshot.status_code == 200 and not checkout.exists()
+    restored = client.post(f"/api/tasks/{task_id}/restore")
+    assert restored.status_code == 200 and checkout.is_dir()
+
+    cleaned = client.delete(f"/api/tasks/{task_id}")
+    assert cleaned.status_code == 200 and not checkout.exists()
+    assert cleaned.json()["task"]["snapshot_oid"]
+    restored_cleanup = client.post(f"/api/tasks/{task_id}/restore")
+    assert restored_cleanup.status_code == 200 and checkout.is_dir()
+
+
 def test_session_summary_includes_workspace_from_header(client):
     _record_message(client, "workspace-aware summary")
 
@@ -2123,6 +2190,28 @@ def test_delete_one_inactive_chat_and_restore_it(client):
     ).json()
     assert restored["restored"] == 1
     assert restored["session_ids"] == [old]
+
+
+def test_background_run_protects_chat_from_archive_delete_and_bulk_clear(client):
+    old = client.get("/api/sessions").json()["current"]
+    _record_message(client, "background work")
+    client.post("/api/sessions/new", json={"reason": "foreground"})
+    store = client.app.state.service.run_store
+    store.start_run(
+        "background-protection",
+        session_id=old,
+        state="running",
+        run_kind="solo",
+    )
+
+    archived = client.patch(f"/api/sessions/{old}", json={"archived": True})
+    deleted = client.delete(f"/api/sessions/{old}")
+    cleared = client.delete("/api/sessions")
+
+    assert archived.status_code == 409
+    assert deleted.status_code == 409
+    assert cleared.status_code == 409
+    assert SessionStore.path_for(old) is not None
 
 
 def test_delete_active_chat_creates_same_workspace_replacement(client):
@@ -3312,6 +3401,204 @@ def test_solo_turn_done_records_usage_and_summary_serves_it(client):
     ).json()
     assert filtered["solo"]["turns"] == 0
     assert server_mod is not None
+
+
+def test_generic_run_routes_include_solo_trace_identity_and_events(client):
+    service = client.app.state.service
+    service.run_store.start_run(
+        "solo-generic", session_id="chat-1", worker_id="worker-1",
+        run_kind="solo", execution_environment="worktree", state="running",
+    )
+    service.run_store.append_event("solo-generic", {
+        "type": "message_start", "run_id": "solo-generic",
+        "session_id": "chat-1", "worker_id": "worker-1",
+        "execution_environment": "worktree",
+    })
+    service.run_store.set_state("solo-generic", "completed")
+
+    listing = client.get("/api/runs", params={"session_id": "chat-1"})
+    detail = client.get("/api/runs/solo-generic")
+    events = client.get("/api/runs/solo-generic/events")
+
+    assert listing.status_code == detail.status_code == events.status_code == 200
+    run = detail.json()
+    assert run["run_kind"] == "solo"
+    assert run["execution_environment"] == "worktree"
+    assert len(run["trace_id"]) == 32
+    assert events.json()["events"][0]["session_id"] == "chat-1"
+
+
+def test_durable_run_queue_reorder_filter_cancel_and_retry(client):
+    queued = []
+    for index in range(3):
+        response = client.post("/api/runs/queue", json={
+            "run_id": f"queued-{index}",
+            "session_id": f"chat-{index}",
+            "message_id": f"message-{index}",
+            "workspace_root": "/tmp/workspace-a" if index < 2 else "/tmp/workspace-b",
+            "request": f"request {index}",
+            "run_kind": "solo",
+            "execution_environment": "worktree",
+        })
+        assert response.status_code == 200
+        queued.append(response.json())
+    assert [item["queue_position"] for item in queued] == [1, 2, 3]
+
+    moved = client.patch("/api/runs/queued-2/queue", json={"action": "move_top"})
+    assert moved.status_code == 200 and moved.json()["queue_position"] == 1
+    filtered = client.get("/api/runs", params={
+        "states": "queued", "workspace": "/tmp/workspace-a",
+    }).json()["runs"]
+    assert {item["id"] for item in filtered} == {"queued-0", "queued-1"}
+
+    cancelled = client.patch("/api/runs/queued-1/queue", json={"action": "cancel"})
+    assert cancelled.status_code == 200 and cancelled.json()["state"] == "cancelled"
+    retried = client.post("/api/runs/queued-1/retry")
+    assert retried.status_code == 200
+    assert retried.json()["retry_parent_id"] == "queued-1"
+    assert retried.json()["session_id"] == "chat-1"
+
+
+def test_memory_diagnostics_and_selected_chat_reprocessing_are_content_free(client, tmp_path):
+    session_id = client.get("/api/sessions").json()["current"]
+    _record_message(client, "Please remember that I prefer compact progress updates.")
+
+    first = client.post("/api/memory/reprocess", json={
+        "session_id": session_id,
+        "workspace": str(tmp_path),
+        "agent_id": "primary",
+    })
+    assert first.status_code == 200
+    assert first.json()["candidate_count"] == 1
+    assert first.json()["memories"][0]["status"] == "candidate"
+    assert first.json()["memories"][0]["source_session_id"] == session_id
+
+    second = client.post("/api/memory/reprocess", json={
+        "session_id": session_id,
+        "workspace": str(tmp_path),
+        "agent_id": "primary",
+    })
+    assert second.status_code == 200
+    assert second.json()["candidate_count"] == 0
+
+    _record_message(
+        client,
+        "[Locus mode: Work]\nUse this explicitly selected context:\n"
+        "Remember the attachment text forever.\n\nUser request:\nSummarize this file.",
+    )
+    attachment_excluded = client.post("/api/memory/reprocess", json={
+        "session_id": session_id,
+        "workspace": str(tmp_path),
+        "agent_id": "primary",
+    })
+    assert attachment_excluded.status_code == 200
+    assert attachment_excluded.json()["candidate_count"] == 0
+
+    diagnostics = client.get("/api/memory/diagnostics", params={
+        "workspace": str(tmp_path), "agent_id": "primary",
+    })
+    assert diagnostics.status_code == 200
+    body = diagnostics.json()
+    assert body["candidate_count"] == 1 and body["approved_count"] == 0
+    assert body["propose_memory_available"] is True
+    assert body["counts"]["proposal:accepted"] == 1
+    assert body["counts"]["proposal:deduplicated"] == 2
+    encoded_events = json.dumps(body["events"])
+    assert "compact progress" not in encoded_events
+    assert str(tmp_path) not in encoded_events
+
+
+def test_review_checks_and_landing_preserve_atomic_incremental_state(
+    client, tmp_path, monkeypatch
+):
+    from ollama_code import worktrees
+
+    workspace = tmp_path / "landing-workspace"
+    workspace.mkdir()
+    subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=workspace, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=workspace, check=True,
+    )
+    (workspace / "tracked.txt").write_text("base\n")
+    subprocess.run(["git", "add", "."], cwd=workspace, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=workspace, check=True)
+    monkeypatch.setattr(worktrees, "TASKS_DIR", tmp_path / "landing-worktrees")
+
+    created = client.post("/api/sessions/new", json={
+        "reason": "workspace_chat", "cwd": str(workspace),
+        "environment": "worktree", "base_ref": "HEAD",
+    }).json()
+    task_id = created["session_info"]["task"]["id"]
+    checkout = Path(created["session_info"]["execution_path"])
+    (checkout / "tracked.txt").write_text("first result\n")
+
+    preflight = client.get(f"/api/tasks/{task_id}/landing/preflight")
+    assert preflight.status_code == 200
+    assert preflight.json()["can_apply_local"] is True
+    assert (workspace / "tracked.txt").read_text() == "base\n"
+    checks = client.post(f"/api/tasks/{task_id}/checks", json={
+        "run_id": "landing-check-one", "commands": ["printf verified"],
+    })
+    assert checks.status_code == 200 and checks.json()["passed"] is True
+    landed = client.post(f"/api/tasks/{task_id}/landing", json={
+        "destination": "local", "expected_tree": preflight.json()["tree"],
+        "check_tree": checks.json()["tree"], "check_run_id": checks.json()["run_id"],
+        "checks_passed": True, "override_failed_checks": False,
+    })
+    assert landed.status_code == 200
+    assert (workspace / "tracked.txt").read_text() == "first result\n"
+    assert checkout.is_dir()
+    assert landed.json()["task"]["landing_check_run_id"] == "landing-check-one"
+
+    (checkout / "tracked.txt").write_text("second result\n")
+    incremental = client.get(f"/api/tasks/{task_id}/landing/preflight").json()
+    assert incremental["patch_bytes"] > 0
+    spoofed = client.post(f"/api/tasks/{task_id}/landing", json={
+        "destination": "branch", "expected_tree": incremental["tree"],
+        "check_tree": incremental["tree"], "check_run_id": "not-a-real-check",
+        "checks_passed": True, "override_failed_checks": False,
+        "branch": "codex/spoofed-land", "commit_message": "Should not land",
+    })
+    assert spoofed.status_code == 409
+    failed_checks = client.post(f"/api/tasks/{task_id}/checks", json={
+        "run_id": "landing-check-failed", "commands": ["false"],
+    }).json()
+    assert failed_checks["passed"] is False
+    blocked = client.post(f"/api/tasks/{task_id}/landing", json={
+        "destination": "branch", "expected_tree": incremental["tree"],
+        "check_tree": failed_checks["tree"],
+        "check_run_id": failed_checks["run_id"],
+        "checks_passed": False, "override_failed_checks": False,
+        "branch": "codex/blocked-land", "commit_message": "Should not land",
+    })
+    assert blocked.status_code == 409
+
+    (checkout / "tracked.txt").write_text("stale result\n")
+    stale = client.post(f"/api/tasks/{task_id}/landing", json={
+        "destination": "branch", "expected_tree": incremental["tree"],
+        "check_tree": failed_checks["tree"],
+        "check_run_id": failed_checks["run_id"],
+        "checks_passed": False, "override_failed_checks": True,
+        "branch": "codex/stale-land", "commit_message": "Should not land",
+    })
+    assert stale.status_code == 409
+
+    (checkout / "tracked.txt").write_text("second result\n")
+    second_checks = client.post(f"/api/tasks/{task_id}/checks", json={
+        "run_id": "landing-check-two", "commands": ["test -f tracked.txt"],
+    }).json()
+    branch = client.post(f"/api/tasks/{task_id}/landing", json={
+        "destination": "branch", "expected_tree": incremental["tree"],
+        "check_tree": second_checks["tree"], "check_run_id": second_checks["run_id"],
+        "checks_passed": True, "override_failed_checks": False,
+        "branch": "codex/review-land", "commit_message": "Land reviewed changes",
+    })
+    assert branch.status_code == 200
+    assert branch.json()["branch"] == "codex/review-land"
+    assert len(branch.json()["commit"]) == 40
+    assert branch.json()["task"]["landing_source_tree"] == incremental["base_tree"]
 
 
 def test_evaluation_turns_are_recorded_as_evaluation_not_solo(client):

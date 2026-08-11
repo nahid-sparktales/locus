@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import platform
+import subprocess
 import threading
 import time
 import uuid
@@ -1298,6 +1299,16 @@ class AgentCore:
 
     def session_info(self) -> dict[str, Any]:
         approx = self.approx_tokens()
+        environment = {
+            "type": "worktree" if self.task_metadata is not None else "local",
+            "isolation": "managed_worktree" if self.task_metadata is not None else "local",
+            "canonical_repository": self._canonical_repository(),
+        }
+        if self.task_metadata is not None:
+            environment.update({
+                "worktree_id": str(self.task_metadata.get("id") or ""),
+                "starting_ref": str(self.task_metadata.get("starting_ref") or "HEAD"),
+            })
         return {
             "model": self.model,
             "host": self.host,
@@ -1305,6 +1316,7 @@ class AgentCore:
             "workspace_root": self.workspace_root,
             "execution_path": self.execution_path,
             "task": self.task_metadata,
+            "environment": environment,
             "session": str(self.session.path),
             "session_id": self.session.session_id,
             "messages": len(self.messages),
@@ -1325,6 +1337,23 @@ class AgentCore:
             "provider": self.provider,
             "account_label": self.account_label,
         }
+
+    def _canonical_repository(self) -> str:
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=self.workspace_root,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return str(Path(self.workspace_root).resolve())
+        if result.returncode == 0 and result.stdout.strip():
+            return str(Path(result.stdout.strip()).resolve())
+        return str(Path(self.workspace_root).resolve())
 
     def _emit_info(self) -> None:
         self._emit({"type": "session_info", **self.session_info()})
@@ -2809,8 +2838,6 @@ class AgentCore:
         if path is None:
             raise FileNotFoundError(f"session not found: {session_id}")
         messages = SessionStore.load(path)
-        if not messages:
-            raise ValueError(f"no messages found in {path.name}")
         header = SessionStore.header(path)
         cwd = str(header.get("cwd") or "")
         if cwd and Path(cwd).is_dir() and cwd != self.cwd:
