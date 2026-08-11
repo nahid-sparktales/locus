@@ -2393,7 +2393,10 @@ def test_websocket_ask_mode_routes_through_the_tool_free_turn_boundary(client, m
         "mode": "ask",
     }))
 
-    assert captured == [(server_mod._run_user_turn, (service, "/init", True, []))]
+    assert captured == [(
+        server_mod._run_user_turn,
+        (service, "/init", True, [], None, "ask"),
+    )]
 
 
 def test_websocket_ask_mode_validates_and_routes_image_attachments(client, monkeypatch):

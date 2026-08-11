@@ -128,7 +128,7 @@ final class TerminalSession: NSObject, ObservableObject {
         guard let terminalView else { return }
         terminalView.clearScrollback()
         let formFeed: [UInt8] = [0x0c]
-        terminalView.process.send(data: formFeed[...])
+        terminalView.send(data: formFeed[...])
         focus()
     }
 
@@ -321,11 +321,57 @@ extension TerminalSession: @preconcurrency LocalProcessTerminalViewDelegate {
 
 /// SwiftTerm's local-process view with a strict external-link allowlist.
 final class LocusLocalProcessTerminalView: LocalProcessTerminalView {
+    private let inputWriter = AtomicTerminalWriter()
+
+    /// SwiftTerm dispatches every input chunk through a separate asynchronous
+    /// write. Rapid key events and bracketed-paste markers can therefore race
+    /// each other. Keep each logical input chunk ordered and indivisible from
+    /// the next chunk all the way to the PTY.
+    override func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        inputWriter.write(Data(data), to: process.childfd)
+    }
+
     override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
         guard let url = URL(string: link),
               let scheme = url.scheme?.lowercased(),
               ["https", "http", "mailto"].contains(scheme)
         else { return }
         NSWorkspace.shared.open(url)
+    }
+}
+
+/// Serializes complete terminal input chunks. A POSIX write can be short, so
+/// one queued operation owns the descriptor until its entire chunk is sent;
+/// later key and paste events cannot interleave with it.
+final class AtomicTerminalWriter: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "io.sparktales.locus.terminal-input")
+
+    func write(_ data: Data, to descriptor: Int32) {
+        guard descriptor >= 0, !data.isEmpty else { return }
+        queue.async {
+            data.withUnsafeBytes { rawBuffer in
+                guard var pointer = rawBuffer.baseAddress else { return }
+                var remaining = rawBuffer.count
+                while remaining > 0 {
+                    let count = Darwin.write(descriptor, pointer, remaining)
+                    if count > 0 {
+                        remaining -= count
+                        pointer = pointer.advanced(by: count)
+                    } else if count < 0, errno == EINTR {
+                        continue
+                    } else if count < 0, errno == EAGAIN || errno == EWOULDBLOCK {
+                        var writable = pollfd(
+                            fd: descriptor,
+                            events: Int16(POLLOUT),
+                            revents: 0
+                        )
+                        while Darwin.poll(&writable, 1, 1_000) < 0, errno == EINTR {}
+                        guard writable.revents & Int16(POLLOUT) != 0 else { return }
+                    } else {
+                        return
+                    }
+                }
+            }
+        }
     }
 }

@@ -2367,8 +2367,11 @@ final class AppModelTests: XCTestCase {
         do {
             try await client.run(["status"])  // not a repository
             XCTFail("expected a failure outside a repository")
+        } catch let GitClientError.failed(command, stderr) {
+            XCTAssertEqual(command, "status")
+            XCTAssertFalse(stderr.isEmpty)
         } catch {
-            XCTAssertTrue(error.localizedDescription.lowercased().contains("not a git repository"))
+            XCTFail("expected a structured command failure, got \(error)")
         }
     }
 

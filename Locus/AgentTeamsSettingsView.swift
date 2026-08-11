@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AgentTeamsSettingsView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var editingPrimaryAgent = false
     @State private var editingProfile: AgentProfile?
     @State private var editingTeam: AgentTeam?
     @State private var editingSuite: EvaluationSuite?
@@ -15,6 +16,7 @@ struct AgentTeamsSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 settingsHeader
+                primaryAgentSection
                 runtimeSection
                 profilesSection
                 teamsSection
@@ -30,6 +32,16 @@ struct AgentTeamsSettingsView: View {
                 editingProfile = nil
             }
             .environmentObject(model)
+        }
+        .sheet(isPresented: $editingPrimaryAgent) {
+            AgentBehaviorEditor(
+                title: "Primary Agent",
+                behavior: model.primaryAgentBehavior,
+                modelName: model.selectedModel
+            ) {
+                model.savePrimaryAgentBehavior($0)
+                editingPrimaryAgent = false
+            }
         }
         .sheet(item: $editingTeam) { team in
             AgentTeamEditor(team: team) {
@@ -83,6 +95,34 @@ struct AgentTeamsSettingsView: View {
             Text("Shared fairly across running chats. Expired worker leases are reclaimed after a crash.")
                 .font(.system(size: 9))
                 .foregroundStyle(LocusTheme.muted)
+        }
+        .padding(12)
+        .locusCard()
+    }
+
+    private var primaryAgentSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("PRIMARY AGENT")
+                        .font(.system(size: 8, weight: .bold))
+                        .tracking(0.8)
+                        .foregroundStyle(LocusTheme.muted)
+                    Text(model.primaryAgentBehavior.displayName)
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Uses the selected conversation model · \(model.selectedModel)")
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                Spacer()
+                Button("Edit Behavior") { editingPrimaryAgent = true }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+            Text("Edit its name, description, response style, mode-specific guidance, capability ceilings, memory behavior, and runtime limits. The real model identity and safety rules stay factual and locked.")
+                .font(.system(size: 9))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(12)
         .locusCard()
@@ -441,6 +481,233 @@ private struct EvaluationReportView: View {
     }
 }
 
+private struct AgentBehaviorEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: AgentBehavior
+    @State private var showAdvanced = false
+    @State private var showPreview = false
+    let title: String
+    let modelName: String
+    let onSave: (AgentBehavior) -> Void
+
+    init(
+        title: String,
+        behavior: AgentBehavior,
+        modelName: String,
+        onSave: @escaping (AgentBehavior) -> Void
+    ) {
+        _draft = State(initialValue: behavior)
+        self.title = title
+        self.modelName = modelName
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                Form {
+                    Section("Identity and response") {
+                        TextField("Display name", text: $draft.displayName)
+                        TextField("What this agent is", text: $draft.selfDescription, axis: .vertical)
+                            .lineLimit(2...5)
+                        Picker("Tone", selection: $draft.responseStyle.tone) {
+                            ForEach(AgentResponseTone.allCases) { Text($0.title).tag($0) }
+                        }
+                        Picker("Detail level", selection: $draft.responseStyle.verbosity) {
+                            ForEach(AgentResponseVerbosity.allCases) { Text($0.title).tag($0) }
+                        }
+                        Toggle("Use Markdown when helpful", isOn: $draft.responseStyle.useMarkdown)
+                        Toggle("Cite files and outputs for factual claims", isOn: $draft.responseStyle.citeEvidence)
+                    }
+
+                    Section("Custom instructions") {
+                        TextEditor(text: $draft.customInstructions)
+                            .font(.system(size: 10))
+                            .frame(minHeight: 130)
+                            .overlay { RoundedRectangle(cornerRadius: 6).stroke(LocusTheme.line) }
+                        Text("These are added below locked safety, tool, permission, and factual model-identity rules.")
+                            .font(.system(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                    }
+
+                    Section {
+                        Button(showAdvanced ? "Hide Mode, Memory & Capability Settings" : "Edit Mode, Memory & Capability Settings") {
+                            withAnimation(.easeInOut(duration: 0.2)) { showAdvanced.toggle() }
+                        }
+                        if showAdvanced { advancedFields }
+                    }
+
+                    Section("Prompt preview") {
+                        Button(showPreview ? "Hide Preview" : "Show Prompt Layers") {
+                            showPreview.toggle()
+                        }
+                        if showPreview {
+                            Text(promptPreview)
+                                .font(.system(size: 9, design: .monospaced))
+                                .textSelection(.enabled)
+                                .padding(10)
+                                .background(LocusTheme.white.opacity(0.8))
+                                .clipShape(RoundedRectangle(cornerRadius: 7))
+                        }
+                    }
+                }
+                .padding(20)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Divider()
+            HStack {
+                Text("Changes apply to the next turn; running work keeps its starting snapshot.")
+                    .font(.system(size: 8))
+                    .foregroundStyle(LocusTheme.muted)
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Save") {
+                    draft.clamp()
+                    onSave(draft)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(LocusTheme.ink)
+            }
+            .padding(14)
+            .background(LocusTheme.paper)
+        }
+        .frame(width: 650, height: 760)
+    }
+
+    private var advancedFields: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Group {
+                Text("MODE-SPECIFIC GUIDANCE")
+                    .font(.system(size: 8, weight: .bold)).foregroundStyle(LocusTheme.muted)
+                TextField("Just Chat", text: $draft.modeInstructions.ask, axis: .vertical)
+                TextField("Adaptive Work", text: $draft.modeInstructions.work, axis: .vertical)
+                TextField("Plan", text: $draft.modeInstructions.plan, axis: .vertical)
+                TextField("Build", text: $draft.modeInstructions.build, axis: .vertical)
+            }
+            Divider()
+            Group {
+                Text("CAPABILITY CEILINGS")
+                    .font(.system(size: 8, weight: .bold)).foregroundStyle(LocusTheme.muted)
+                Toggle("Workspace reading", isOn: $draft.capabilityPolicy.workspaceRead)
+                Toggle("Workspace editing", isOn: $draft.capabilityPolicy.workspaceWrite)
+                Toggle("Shell commands", isOn: $draft.capabilityPolicy.shell)
+                Toggle("Network and browser", isOn: $draft.capabilityPolicy.network)
+                Toggle("Skills and MCP integrations", isOn: $draft.capabilityPolicy.mcp)
+                Toggle("Computer control", isOn: $draft.capabilityPolicy.computerControl)
+                Text("These switches can only remove access. The selected mode, permission policy, and team role can narrow it further.")
+                    .font(.system(size: 8)).foregroundStyle(LocusTheme.muted)
+            }
+            Divider()
+            Group {
+                Text("MEMORY")
+                    .font(.system(size: 8, weight: .bold)).foregroundStyle(LocusTheme.muted)
+                Toggle("Automatically recall relevant approved memory", isOn: $draft.memoryPolicy.recallEnabled)
+                Toggle("Allow conservative Memory Inbox suggestions", isOn: $draft.memoryPolicy.proposalsEnabled)
+                Toggle("Allow explicit memory search", isOn: $draft.memoryPolicy.searchEnabled)
+                ForEach(AgentMemoryScope.allCases) { scope in
+                    Toggle(scope.title, isOn: memoryScopeBinding(scope))
+                }
+                Stepper(
+                    "Recall up to \(draft.memoryPolicy.maxAutomaticMemories) memories",
+                    value: $draft.memoryPolicy.maxAutomaticMemories,
+                    in: 0...20
+                )
+                Stepper(
+                    "Memory context: \(draft.memoryPolicy.maxAutomaticTokens) tokens",
+                    value: $draft.memoryPolicy.maxAutomaticTokens,
+                    in: 0...4_000,
+                    step: 100
+                )
+                Text("Just Chat never receives workspace-scoped memory. Suggested memories expire after 30 days unless approved.")
+                    .font(.system(size: 8)).foregroundStyle(LocusTheme.muted)
+            }
+            Divider()
+            Toggle("Custom tool-step limit", isOn: Binding(
+                get: { draft.runtimePolicy.maxToolIterations != nil },
+                set: { draft.runtimePolicy.maxToolIterations = $0 ? 40 : nil }
+            ))
+            if draft.runtimePolicy.maxToolIterations != nil {
+                Stepper(
+                    "Up to \(draft.runtimePolicy.maxToolIterations ?? 40) tool steps",
+                    value: Binding(
+                        get: { draft.runtimePolicy.maxToolIterations ?? 40 },
+                        set: { draft.runtimePolicy.maxToolIterations = $0 }
+                    ),
+                    in: 1...100
+                )
+            }
+            Toggle("Custom response timeout", isOn: Binding(
+                get: { draft.runtimePolicy.timeoutSeconds != nil },
+                set: { draft.runtimePolicy.timeoutSeconds = $0 ? 600 : nil }
+            ))
+            if draft.runtimePolicy.timeoutSeconds != nil {
+                Stepper(
+                    "Up to \(draft.runtimePolicy.timeoutSeconds ?? 600) seconds per response",
+                    value: Binding(
+                        get: { draft.runtimePolicy.timeoutSeconds ?? 600 },
+                        set: { draft.runtimePolicy.timeoutSeconds = $0 }
+                    ),
+                    in: 30...3_600,
+                    step: 30
+                )
+            }
+            Toggle("Custom output limit", isOn: Binding(
+                get: { draft.runtimePolicy.maxOutputTokens != nil },
+                set: { draft.runtimePolicy.maxOutputTokens = $0 ? 4_096 : nil }
+            ))
+            if draft.runtimePolicy.maxOutputTokens != nil {
+                Stepper(
+                    "Up to \(draft.runtimePolicy.maxOutputTokens ?? 4_096) output tokens",
+                    value: Binding(
+                        get: { draft.runtimePolicy.maxOutputTokens ?? 4_096 },
+                        set: { draft.runtimePolicy.maxOutputTokens = $0 }
+                    ),
+                    in: 256...128_000,
+                    step: 256
+                )
+            }
+            Text("Local and compatible provider APIs use these limits; managed providers may keep their own limits.")
+                .font(.system(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func memoryScopeBinding(_ scope: AgentMemoryScope) -> Binding<Bool> {
+        Binding(
+            get: { draft.memoryPolicy.scopes.contains(scope) },
+            set: { enabled in
+                if enabled { draft.memoryPolicy.scopes.append(scope) }
+                else { draft.memoryPolicy.scopes.removeAll { $0 == scope } }
+            }
+        )
+    }
+
+    private var promptPreview: String {
+        let overlay = [
+            ("Just Chat", draft.modeInstructions.ask),
+            ("Work", draft.modeInstructions.work),
+            ("Plan", draft.modeInstructions.plan),
+            ("Build", draft.modeInstructions.build),
+        ].filter { !$0.1.isEmpty }.map { "\($0.0): \($0.1)" }.joined(separator: "\n")
+        return """
+        [LOCKED · factual]
+        Model: \(modelName.isEmpty ? "selected conversation model" : modelName)
+        Safety, permissions, mode boundaries, and tool access are supplied by Locus.
+
+        [EDITABLE · behavior]
+        Name: \(draft.displayName)
+        Description: \(draft.selfDescription)
+        Style: \(draft.responseStyle.tone.title), \(draft.responseStyle.verbosity.title)
+        \(draft.customInstructions)
+        \(overlay)
+
+        [RUNTIME · per turn]
+        Relevant approved memory and workspace instructions are added only when their scope and mode allow them.
+        """
+    }
+}
+
 private struct AgentProfileEditor: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -452,10 +719,13 @@ private struct AgentProfileEditor: View {
     @State private var mcpResources: String
     @State private var mcpPrompts: String
     @State private var advancedSettings = false
+    @State private var editingBehavior = false
     let onSave: (AgentProfile) -> Void
 
     init(profile: AgentProfile, onSave: @escaping (AgentProfile) -> Void) {
-        _draft = State(initialValue: profile)
+        var value = profile
+        value.behavior = profile.resolvedBehavior
+        _draft = State(initialValue: value)
         _tags = State(initialValue: profile.capabilityTags.joined(separator: ", "))
         _mcpTools = State(initialValue: (profile.mcpPolicy?.tools ?? []).joined(separator: ", "))
         _mcpResources = State(initialValue: (profile.mcpPolicy?.resources ?? []).joined(separator: ", "))
@@ -541,6 +811,18 @@ private struct AgentProfileEditor: View {
             connectionResult = nil
             Task { await refreshModels() }
         }
+        .sheet(isPresented: $editingBehavior) {
+            AgentBehaviorEditor(
+                title: "\(draft.name) Behavior",
+                behavior: draft.resolvedBehavior,
+                modelName: draft.model
+            ) { behavior in
+                draft.behavior = behavior
+                draft.name = behavior.displayName
+                draft.instructions = behavior.customInstructions
+                editingBehavior = false
+            }
+        }
     }
 
     private var modelPicker: some View {
@@ -597,9 +879,15 @@ private struct AgentProfileEditor: View {
                 .accessibilityIdentifier("agent.instructions")
             Button("Use \(draft.role.title) Template") {
                 draft.instructions = draft.role.defaultInstructions
+                if draft.behavior == nil { draft.behavior = draft.resolvedBehavior }
+                draft.behavior?.customInstructions = draft.role.defaultInstructions
             }
             .buttonStyle(.borderless)
             .accessibilityIdentifier("agent.useRoleTemplate")
+            Button("Edit Full Behavior & Memory Policy…") {
+                editingBehavior = true
+            }
+            .buttonStyle(.borderless)
         }
     }
 
@@ -710,6 +998,9 @@ private struct AgentProfileEditor: View {
                 policy.resources = csv(mcpResources)
                 policy.prompts = csv(mcpPrompts)
                 draft.mcpPolicy = policy
+                if draft.behavior == nil { draft.behavior = draft.resolvedBehavior }
+                draft.behavior?.displayName = draft.name
+                draft.behavior?.customInstructions = draft.instructions
                 draft.clamp()
                 onSave(draft)
             }
@@ -1207,16 +1498,35 @@ struct WorkspaceKnowledgeSettingsView: View {
     @State private var exclusions = ""
     @State private var memoryDraft: WorkspaceMemoryDraft?
     @State private var confirmDeleteAll = false
+    @State private var confirmDeleteMemory = false
+    @State private var selectedMemoryAgentID = "primary"
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Workspace Knowledge")
+                    Text("Memory & Knowledge")
                         .font(.system(size: 16, weight: .bold))
-                    Text("A local, workspace-isolated index of project text and memories you explicitly approve.")
+                    Text("Encrypted personal, workspace, and agent memory plus a local, workspace-isolated project index.")
                         .font(.system(size: 10))
                         .foregroundStyle(LocusTheme.muted)
+                }
+                HStack {
+                    Text("Memory owner")
+                        .font(.system(size: 9, weight: .semibold))
+                    Picker("Memory owner", selection: $selectedMemoryAgentID) {
+                        Text("Primary · \(model.primaryAgentBehavior.displayName)")
+                            .tag("primary")
+                        ForEach(model.agentProfiles) { profile in
+                            Text(profile.name).tag(profile.id.uuidString)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 280)
+                    Text("Personal and workspace memory are shared; agent memory follows this selection.")
+                        .font(.system(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                    Spacer()
                 }
                 VStack(alignment: .leading, spacing: 10) {
                     Toggle("Index this workspace", isOn: $enabled)
@@ -1257,7 +1567,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                         HStack(spacing: 14) {
                             metric("Files", status.documentCount)
                             metric("Chunks", status.chunkCount)
-                            metric("Memories", status.memoryCount)
+                            metric("Memories", model.memoryVaultStatus?.approvedCount ?? 0)
                             Spacer()
                             Text(status.embeddingModel.isEmpty ? "FTS5 text search" : "Text + local vectors")
                                 .font(.system(size: 8, design: .monospaced))
@@ -1273,6 +1583,74 @@ struct WorkspaceKnowledgeSettingsView: View {
                 .padding(12)
                 .locusCard()
 
+                if let vault = model.memoryVaultStatus {
+                    HStack(spacing: 10) {
+                        Image(systemName: vault.encrypted ? "lock.fill" : "lock.open.fill")
+                            .foregroundStyle(vault.encrypted ? LocusTheme.signalDeep : LocusTheme.warning)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(vault.encrypted ? "Encrypted local memory" : "Memory encryption unavailable")
+                                .font(.system(size: 10, weight: .semibold))
+                            Text("\(vault.cipher) · key in macOS Keychain · suggestions expire after \(vault.candidateTTLDays) days")
+                                .font(.system(size: 8, design: .monospaced))
+                                .foregroundStyle(LocusTheme.muted)
+                        }
+                        Spacer()
+                        metric("Inbox", vault.candidateCount)
+                    }
+                    .padding(12)
+                    .locusCard()
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("MEMORY INBOX")
+                        .font(.system(size: 8, weight: .bold))
+                        .tracking(0.8)
+                        .foregroundStyle(LocusTheme.muted)
+                    Text("The agent may suggest only explicit preferences, repeated constraints, and confirmed decisions or outcomes. Suggestions never affect future answers until you approve them.")
+                        .font(.system(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                    if model.memoryCandidates.isEmpty {
+                        Text("No suggestions waiting for review.")
+                            .font(.system(size: 9))
+                            .foregroundStyle(LocusTheme.muted)
+                            .padding(.vertical, 8)
+                    }
+                    ForEach(model.memoryCandidates) { memory in
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack {
+                                Text(memory.title).font(.system(size: 10, weight: .semibold))
+                                Text(memory.resolvedScope.title.uppercased())
+                                    .font(.system(size: 7, weight: .bold))
+                                    .foregroundStyle(LocusTheme.signalDeep)
+                                Spacer()
+                                Button("Reject", role: .destructive) {
+                                    model.deleteWorkspaceMemory(memory)
+                                }
+                                .buttonStyle(.borderless)
+                                Button("Approve") {
+                                    model.approveMemoryCandidate(
+                                        memory,
+                                        agentID: selectedMemoryAgentID
+                                    )
+                                }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                                    .tint(LocusTheme.ink)
+                            }
+                            Text(memory.content)
+                                .font(.system(size: 9))
+                                .foregroundStyle(LocusTheme.inkSoft)
+                            if let reason = memory.reason, !reason.isEmpty {
+                                Text("Suggested because: \(reason)")
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(LocusTheme.muted)
+                            }
+                        }
+                        .padding(10)
+                        .locusCard()
+                    }
+                }
+
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("APPROVED MEMORY")
@@ -1280,9 +1658,18 @@ struct WorkspaceKnowledgeSettingsView: View {
                             .tracking(0.8)
                             .foregroundStyle(LocusTheme.muted)
                         Spacer()
+                        Button("Import") { model.importMemory(agentID: selectedMemoryAgentID) }
+                            .buttonStyle(.borderless)
+                        Button("Export") { model.exportMemory(agentID: selectedMemoryAgentID) }
+                            .buttonStyle(.borderless)
+                        Button("Delete All…", role: .destructive) { confirmDeleteMemory = true }
+                            .buttonStyle(.borderless)
                         Button("Remember") { memoryDraft = .new }
                     }
-                    Text("Conversation suggestions are never saved automatically. Remember is the explicit approval boundary.")
+                    Text("Approved memories can be recalled automatically within their scope. Use Remember to add one directly without the Inbox.")
+                        .font(.system(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                    Text("The vault stays encrypted on disk. An exported JSON file is intentionally readable so you can inspect or move it.")
                         .font(.system(size: 8))
                         .foregroundStyle(LocusTheme.muted)
                     if model.workspaceMemories.isEmpty {
@@ -1297,6 +1684,9 @@ struct WorkspaceKnowledgeSettingsView: View {
                                 Image(systemName: memory.pinned ? "pin.fill" : "bookmark")
                                     .foregroundStyle(memory.stale ? LocusTheme.warning : LocusTheme.signalDeep)
                                 Text(memory.title).font(.system(size: 10, weight: .semibold))
+                                Text(memory.resolvedScope.title.uppercased())
+                                    .font(.system(size: 7, weight: .bold))
+                                    .foregroundStyle(LocusTheme.signalDeep)
                                 if memory.stale {
                                     Text("STALE").font(.system(size: 7, weight: .bold)).foregroundStyle(LocusTheme.warning)
                                 }
@@ -1310,11 +1700,17 @@ struct WorkspaceKnowledgeSettingsView: View {
                                     Button("Edit") { memoryDraft = .existing(memory) }
                                     Button(memory.pinned ? "Unpin" : "Pin") {
                                         var value = memory; value.pinned.toggle()
-                                        model.updateWorkspaceMemory(value)
+                                        model.updateWorkspaceMemory(
+                                            value,
+                                            agentID: selectedMemoryAgentID
+                                        )
                                     }
                                     Button(memory.stale ? "Mark Current" : "Mark Stale") {
                                         var value = memory; value.stale.toggle()
-                                        model.updateWorkspaceMemory(value)
+                                        model.updateWorkspaceMemory(
+                                            value,
+                                            agentID: selectedMemoryAgentID
+                                        )
                                     }
                                     Divider()
                                     Button("Delete", role: .destructive) {
@@ -1342,7 +1738,10 @@ struct WorkspaceKnowledgeSettingsView: View {
             }
             .padding(20)
         }
-        .task { await model.refreshWorkspaceKnowledge(); syncDraft() }
+        .task(id: selectedMemoryAgentID) {
+            await model.refreshWorkspaceKnowledge(agentID: selectedMemoryAgentID)
+            syncDraft()
+        }
         .onChange(of: model.knowledgeStatus) { _, _ in syncDraft() }
         .sheet(item: $memoryDraft) { draft in
             WorkspaceMemoryEditor(draft: draft) { value in
@@ -1350,13 +1749,19 @@ struct WorkspaceKnowledgeSettingsView: View {
                 case .none:
                     model.rememberWorkspaceFact(
                         title: value.title, content: value.content,
-                        tags: value.tags.split(separator: ",").map(String.init)
+                        tags: value.tags.split(separator: ",").map(String.init),
+                        scope: value.scope,
+                        agentID: selectedMemoryAgentID
                     )
                 case .some(var memory):
                     memory.title = value.title
                     memory.content = value.content
                     memory.tags = value.tags.split(separator: ",").map(String.init)
-                    model.updateWorkspaceMemory(memory)
+                    memory.scope = value.scope.rawValue
+                    model.updateWorkspaceMemory(
+                        memory,
+                        agentID: selectedMemoryAgentID
+                    )
                 }
                 memoryDraft = nil
             }
@@ -1367,11 +1772,23 @@ struct WorkspaceKnowledgeSettingsView: View {
             titleVisibility: .visible
         ) {
             Button("Delete Index and Memories", role: .destructive) {
-                model.deleteAllWorkspaceKnowledge()
+                model.deleteAllWorkspaceKnowledge(agentID: selectedMemoryAgentID)
             }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Chat transcripts and workspace files are not removed.")
+        }
+        .confirmationDialog(
+            "Delete all visible memory?",
+            isPresented: $confirmDeleteMemory,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Personal, Workspace & Agent Memory", role: .destructive) {
+                model.deleteAllMemory(agentID: selectedMemoryAgentID)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The project index, chats, and files stay intact. This cannot be undone unless you exported memory first.")
         }
     }
 
@@ -1396,12 +1813,15 @@ private struct WorkspaceMemoryDraft: Identifiable {
     var title: String
     var content: String
     var tags: String
+    var scope: AgentMemoryScope
 
-    static var new: Self { .init(original: nil, title: "", content: "", tags: "") }
+    static var new: Self {
+        .init(original: nil, title: "", content: "", tags: "", scope: .workspace)
+    }
     static func existing(_ memory: WorkspaceMemory) -> Self {
         .init(
             original: memory, title: memory.title, content: memory.content,
-            tags: memory.tags.joined(separator: ", ")
+            tags: memory.tags.joined(separator: ", "), scope: memory.resolvedScope
         )
     }
 }
@@ -1418,8 +1838,14 @@ private struct WorkspaceMemoryEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(value.original == nil ? "Remember for this workspace" : "Edit workspace memory")
+            Text(value.original == nil ? "Remember something" : "Edit memory")
                 .font(.system(size: 14, weight: .bold))
+            Picker("Scope", selection: $value.scope) {
+                ForEach(AgentMemoryScope.allCases) { Text($0.title).tag($0) }
+            }
+            Text(scopeExplanation)
+                .font(.system(size: 8))
+                .foregroundStyle(LocusTheme.muted)
             TextField("Title", text: $value.title)
             TextEditor(text: $value.content)
                 .font(.system(size: 10))
@@ -1436,6 +1862,14 @@ private struct WorkspaceMemoryEditor: View {
             }
         }
         .padding(20)
-        .frame(width: 520, height: 360)
+        .frame(width: 520, height: 410)
+    }
+
+    private var scopeExplanation: String {
+        switch value.scope {
+        case .personal: "Available to the primary agent across workspaces, including Just Chat."
+        case .workspace: "Available only while this workspace is active; hidden from Just Chat."
+        case .agent: "Available only to this agent profile."
+        }
     }
 }

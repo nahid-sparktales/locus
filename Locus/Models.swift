@@ -255,7 +255,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case network = "Network"
     case accounts = "Accounts"
     case agents = "Agents & Teams"
-    case knowledge = "Knowledge"
+    case knowledge = "Memory & Knowledge"
     case permissions = "Permissions"
     case extensions = "Extensions"
     case shortcuts = "Keyboard Shortcuts"

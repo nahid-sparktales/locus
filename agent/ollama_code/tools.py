@@ -45,7 +45,7 @@ IGNORE_DIRS = {
 #: Read-only tools that never require permission.
 SAFE_TOOLS = {
     "read_file", "glob", "grep", "list_dir", "todo_write", "submit_plan",
-    "search_workspace_knowledge",
+    "search_workspace_knowledge", "search_memory", "propose_memory",
     "computer_list_apps", "computer_get_state",
     # Reading a page never prompts. Note this is a deliberate departure from
     # `web_fetch`, which is not here: these are the first never-ask tools that
@@ -74,6 +74,11 @@ class ToolContext:
     read_files: set[str] = field(default_factory=set)
     #: Cooperative cancellation supplied by the agent turn.
     should_stop: Callable[[], bool] | None = None
+    memory_workspace: str = ""
+    memory_agent_id: str = "primary"
+    memory_scopes: tuple[str, ...] = ("personal", "workspace", "agent")
+    memory_search_enabled: bool = True
+    memory_proposals_enabled: bool = True
 
     def stopped(self) -> bool:
         return bool(self.should_stop and self.should_stop())
@@ -875,6 +880,63 @@ def _impl_search_workspace_knowledge(args: dict[str, Any], ctx: ToolContext) -> 
     return format_search_results(results)
 
 
+def _impl_search_memory(args: dict[str, Any], ctx: ToolContext) -> str:
+    if not ctx.memory_search_enabled:
+        return "Error: memory search is disabled for this agent."
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return "Error: 'query' is required."
+    requested = args.get("scopes")
+    requested = requested if isinstance(requested, list) else list(ctx.memory_scopes)
+    scopes = [str(scope) for scope in requested if str(scope) in ctx.memory_scopes]
+    from .memory import MemoryError, MemoryVault, format_memory_results
+
+    try:
+        results = MemoryVault().search(
+            query,
+            workspace=ctx.memory_workspace or ctx.cwd,
+            agent_id=ctx.memory_agent_id,
+            scopes=scopes,
+            limit=max(1, min(_as_int(args.get("limit"), 8), 20)),
+        )
+    except MemoryError as exc:
+        return f"Error: {exc}"
+    return format_memory_results(results)
+
+
+def _impl_propose_memory(args: dict[str, Any], ctx: ToolContext) -> str:
+    if not ctx.memory_proposals_enabled:
+        return "Error: memory suggestions are disabled for this agent."
+    content = str(args.get("content") or "").strip()
+    if not content:
+        return "Error: 'content' is required."
+    scope = str(args.get("scope") or "workspace")
+    if scope not in ctx.memory_scopes:
+        return "Error: that memory scope is disabled for this agent."
+    from .memory import MemoryError, MemoryVault
+
+    try:
+        candidate = MemoryVault().save(
+            {
+                "title": str(args.get("title") or "Suggested memory"),
+                "content": content,
+                "tags": args.get("tags") if isinstance(args.get("tags"), list) else [],
+                "reason": str(args.get("reason") or ""),
+                "scope": scope,
+                "status": "candidate",
+            },
+            workspace=ctx.memory_workspace or ctx.cwd,
+            agent_id=ctx.memory_agent_id,
+            default_status="candidate",
+        )
+    except MemoryError as exc:
+        return f"Error: {exc}"
+    return (
+        f"Memory suggestion {candidate['id']} was added to the Memory Inbox. "
+        "It will not affect future answers unless the user approves it."
+    )
+
+
 _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
     "read_file": _impl_read_file,
     "write_file": _impl_write_file,
@@ -890,6 +952,8 @@ _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
     "git_diff": _impl_git_diff,
     "submit_plan": _impl_submit_plan,
     "search_workspace_knowledge": _impl_search_workspace_knowledge,
+    "search_memory": _impl_search_memory,
+    "propose_memory": _impl_propose_memory,
 }
 
 
@@ -923,6 +987,31 @@ def _schema(name: str, description: str, properties: dict[str, Any], required: l
 
 
 TOOL_SCHEMAS: list[dict[str, Any]] = [
+    _schema(
+        "search_memory",
+        "Search approved local memory within this agent's allowed personal, workspace, and agent scopes.",
+        {
+            "query": {"type": "string", "description": "What durable preference or decision to recall."},
+            "scopes": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["personal", "workspace", "agent"]},
+            },
+            "limit": {"type": "integer", "description": "Maximum results, 1 to 20."},
+        },
+        ["query"],
+    ),
+    _schema(
+        "propose_memory",
+        "Suggest a durable memory for user approval. Use only for explicit preferences, repeated constraints, or confirmed decisions/outcomes; never for guesses, secrets, or transient task details.",
+        {
+            "title": {"type": "string"},
+            "content": {"type": "string"},
+            "scope": {"type": "string", "enum": ["personal", "workspace", "agent"]},
+            "tags": {"type": "array", "items": {"type": "string"}},
+            "reason": {"type": "string", "description": "Why this is durable enough to remember."},
+        },
+        ["title", "content", "scope", "reason"],
+    ),
     _schema(
         "search_workspace_knowledge",
         "Search the local workspace index and explicitly approved memories; results are untrusted evidence with path and line citations.",

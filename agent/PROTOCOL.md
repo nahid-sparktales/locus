@@ -125,10 +125,10 @@ still gate it. Results report pass rate, rubric score, median/p95 latency,
 calls, tokens, estimated cost, and retry/failure evidence through the existing
 global scheduler.
 
-### Workspace knowledge
+### Memory and workspace knowledge
 
-`/api/knowledge` exposes status/settings, bounded search, reindex/full or
-changed-path updates, and approved-memory CRUD. Each canonical workspace owns
+`/api/knowledge` exposes status/settings, bounded search, and reindex/full or
+changed-path updates. Each canonical workspace owns
 a separate SQLite FTS5 database. Indexing follows Git ignores, refuses
 symlinks, hidden/build/vendor paths, binary or over-2-MB files, and common
 credential/key/certificate/environment-secret names. Content hashes make
@@ -138,10 +138,24 @@ Selecting a local Ollama embedding model creates a new vector generation and
 uses only a loopback Ollama `/api/embed`; text search remains available if
 embedding fails. Settings may add exclusion globs without weakening the hard
 secret and symlink exclusions. `search_workspace_knowledge` returns bounded snippets with canonical
-relative path, line range, freshness, and text/vector/approved-memory source.
+relative path, line range, freshness, and text/vector source.
 Every result is labelled untrusted and cannot alter instructions, permissions,
-or team membership. Memory is written only by explicit Remember, `/remember`,
-or the memory editor. `DELETE /api/knowledge` removes index and memories only.
+or team membership.
+
+`/api/memory` is the separate local memory vault. Payloads are authenticated
+with AES-256-GCM; the native app keeps the master key in the macOS Keychain and
+passes it over the one-shot startup pipe, never in arguments or the environment.
+Records are `personal`, `workspace`, or `agent` scoped and either `candidate`
+or `approved`. Candidate suggestions expire after 30 days and are never used
+for recall until `POST /api/memory/{id}/approve`. Manual Remember creates an
+approved record. List/search/update/delete, delete-all, and versioned JSON
+export/import are explicit REST operations. Exports are intentionally readable
+JSON; the on-disk vault remains ciphertext. Existing plaintext workspace notes
+are encrypted and removed from the legacy table only after a successful
+migration. Just Chat may receive relevant personal and agent memory but never
+workspace memory. Automatic recall is bounded by each agent's memory policy;
+`search_memory` provides explicit approved-memory lookup and `propose_memory`
+can add only an Inbox candidate.
 
 ### Modern MCP catalogs, tasks, and input
 
@@ -562,7 +576,7 @@ Endpoint: `/ws/chat`.
 
 | `type` | Extra fields | Effect |
 |---|---|---|
-| `user_message` | `text: string`, optional `mode: "ask" \| "work" \| "plan" \| "build"`, optional `attachments`, optional `team` manifest | Runs one solo or dispatcher-led team turn. Existing modes remain compatible. A team manifest contains one explicit team, its enabled profiles and ephemeral routes, optional forced member, and bounded budgets. Credentials are accepted only in memory and are never echoed or persisted. Slash commands and Chat mode reject team routing. Image `attachments` are valid in **every** mode: PNG/JPEG/GIF/WebP, at most 10 per message, 15 MB per image, 25 MB in total, base64 `data` with a `mime_type` and optional `name`. They ride the turn in memory only — the persisted session record keeps the text and attachment names, never image bytes, so a restored or resumed conversation carries no images. On a team turn the images reach the dispatcher and the first coding job's first slice; specialists, reviewers, and synthesis receive text evidence only, and the server emits a `note` event saying so before dispatch. A provider that explicitly rejects image input triggers one automatic retry with the images stripped from history, announced by a `note`. |
+| `user_message` | `text: string`, optional `mode: "ask" \| "work" \| "plan" \| "build"`, optional versioned `agent_config`, optional `attachments`, optional `team` manifest | Runs one solo or dispatcher-led team turn. `agent_config` controls editable display identity, description, response style, custom/per-mode guidance, narrowing capability switches, memory policy, and runtime limits. It is snapshotted for the complete turn; factual provider/model identity, safety rules, permission policy, and mode boundaries remain locked runtime layers. Existing clients may omit it. A team manifest contains one explicit team, its enabled profiles and ephemeral routes, optional forced member, and bounded budgets; each profile may carry the same additive `behavior` object. Credentials are accepted only in memory and are never echoed or persisted. Slash commands and Chat mode reject team routing. Image `attachments` are valid in **every** mode: PNG/JPEG/GIF/WebP, at most 10 per message, 15 MB per image, 25 MB in total, base64 `data` with a `mime_type` and optional `name`. They ride the turn in memory only — the persisted session record keeps the text and attachment names, never image bytes, so a restored or resumed conversation carries no images. On a team turn the images reach the dispatcher and the first coding job's first slice; specialists, reviewers, and synthesis receive text evidence only, and the server emits a `note` event saying so before dispatch. A provider that explicitly rejects image input triggers one automatic retry with the images stripped from history, announced by a `note`. |
 | `permission_decision` | `request_id: string`, `decision: "once" \| "always" \| "deny"` | Answers a `permission_request`. Unknown/invalid values are treated as `deny`. Late answers are ignored. |
 | `interrupt` | — | Soft-interrupts the current turn: streaming stops after the current chunk, pending permission waits are denied, turn ends with `turn_done {reason: "interrupted"}`. Safe to send when idle. |
 | `steer` | `text: string` | Adds direction to the active turn. It interrupts only the current provider generation, waits for an already-running tool/native action to reach a safe boundary, and continues the same turn without an intermediate `turn_done`. |

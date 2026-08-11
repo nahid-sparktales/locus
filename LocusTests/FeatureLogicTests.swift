@@ -933,7 +933,7 @@ final class FeatureLogicTests: XCTestCase {
 
         func send(_ text: String) {
             let bytes = Array(text.utf8)
-            view.process.send(data: bytes[...])
+            view.send(data: bytes[...])
         }
         func waitForFile(_ url: URL) async -> String? {
             for _ in 0..<100 {
@@ -946,7 +946,8 @@ final class FeatureLogicTests: XCTestCase {
         }
 
         let environment = root.appendingPathComponent("environment.txt")
-        send("printf '%s|%s|' \"$TERM\" \"$COLORTERM\" > '\(environment.path)'; tty >> '\(environment.path)'\n")
+        let environmentPending = root.appendingPathComponent("environment.pending")
+        send("printf '%s|%s|' \"$TERM\" \"$COLORTERM\" > '\(environmentPending.path)'; tty >> '\(environmentPending.path)'; mv '\(environmentPending.path)' '\(environment.path)'\n")
         let environmentResult = await waitForFile(environment)
         let environmentValue = try XCTUnwrap(environmentResult)
         XCTAssertTrue(environmentValue.hasPrefix("xterm-256color|truecolor|"))
@@ -1001,7 +1002,7 @@ final class FeatureLogicTests: XCTestCase {
         send("sleep 30\n")
         try? await Task.sleep(for: .milliseconds(150))
         let controlC: [UInt8] = [3]
-        view.process.send(data: controlC[...])
+        view.send(data: controlC[...])
         send("printf interrupted > '\(interrupted.path)'\n")
         let interruptedResult = await waitForFile(interrupted)
         XCTAssertEqual(try XCTUnwrap(interruptedResult), "interrupted")
@@ -1855,6 +1856,47 @@ final class FeatureLogicTests: XCTestCase {
     }
 
     // MARK: - Agent teams
+
+    func testAgentBehaviorRoundTripsAndClampsEditableLimits() throws {
+        var behavior = AgentBehavior.primaryDefault()
+        behavior.displayName = "  Research Builder  "
+        behavior.selfDescription = "Finds evidence before making changes."
+        behavior.responseStyle.tone = .analytical
+        behavior.responseStyle.verbosity = .detailed
+        behavior.customInstructions = "Prefer focused patches."
+        behavior.modeInstructions.build = "Run the smallest relevant tests."
+        behavior.capabilityPolicy.network = false
+        behavior.memoryPolicy.scopes = [.personal, .agent, .personal]
+        behavior.memoryPolicy.maxAutomaticMemories = 500
+        behavior.runtimePolicy.maxToolIterations = 0
+        behavior.clamp()
+
+        let restored = try JSONDecoder().decode(
+            AgentBehavior.self,
+            from: JSONEncoder().encode(behavior)
+        )
+
+        XCTAssertEqual(restored.displayName, "Research Builder")
+        XCTAssertEqual(restored.responseStyle.tone, .analytical)
+        XCTAssertEqual(restored.modeInstructions.build, "Run the smallest relevant tests.")
+        XCTAssertFalse(restored.capabilityPolicy.network)
+        XCTAssertEqual(restored.memoryPolicy.scopes, [.personal, .agent])
+        XCTAssertEqual(restored.memoryPolicy.maxAutomaticMemories, 20)
+        XCTAssertEqual(restored.runtimePolicy.maxToolIterations, 1)
+    }
+
+    func testPartialAgentBehaviorMigratesMissingFieldsToSafeDefaults() throws {
+        let restored = try JSONDecoder().decode(
+            AgentBehavior.self,
+            from: Data(#"{"version":0,"display_name":"Legacy Agent","custom_instructions":"Keep this."}"#.utf8)
+        )
+
+        XCTAssertEqual(restored.version, AgentBehavior.currentVersion)
+        XCTAssertEqual(restored.displayName, "Legacy Agent")
+        XCTAssertEqual(restored.customInstructions, "Keep this.")
+        XCTAssertEqual(restored.responseStyle, AgentResponseStyle())
+        XCTAssertEqual(restored.memoryPolicy.scopes, [.personal, .workspace, .agent])
+    }
 
     func testAgentTeamRequiresAReadOnlyDispatcherAndWriteCapableLead() {
         let dispatcher = AgentProfile(

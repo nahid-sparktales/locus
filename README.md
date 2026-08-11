@@ -80,9 +80,16 @@ like; macOS remembers the size you choose for later launches.
 - **Evaluation suites and transparent scorecard routing** compare Solo and team
   configurations against immutable fixtures, then explain why an eligible agent
   was selected.
-- **Workspace chats, local knowledge, and approved memory** organize conversation
-  history per project and let eligible agents retrieve bounded, untrusted project
-  context without exposing it to Just Chat.
+- **Editable agents and encrypted scoped memory.** Settings can change the
+  primary agent and every team profile: display identity, self-description,
+  response style, custom and per-mode guidance, capability ceilings, memory
+  policy, and runtime limits. Provider/model identity and safety rules remain
+  factual locked layers. The local AES-256-GCM memory vault separates personal,
+  workspace, and agent notes; its key stays in macOS Keychain. Agents may place
+  conservative suggestions in a 30-day Memory Inbox, but only approved memory
+  is recalled. Just Chat can receive personal or agent memory, never workspace
+  memory. Memory & Knowledge also supports explicit search, pin/stale controls,
+  delete-all, and readable JSON export/import.
 - **Modern MCP support** adds allowlisted resources and prompts, long-running
   tasks, progress, safe input requests, and per-agent access policies.
 - **Native Computer Control** gives the active foreground coding agent guarded Mac

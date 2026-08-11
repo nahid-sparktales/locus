@@ -398,6 +398,58 @@ enum MCPKeychainStore {
     }
 }
 
+/// The memory database is ciphertext; its 256-bit master key stays in the
+/// login keychain and is handed to the local agent only through its startup
+/// pipe. It is never written to UserDefaults, arguments, or the environment.
+enum MemoryKeychainStore {
+    private static let service = "io.sparktales.locus.memory"
+    private static let account = "master-key-v1"
+    static let keyLength = 32
+
+    static func loadOrCreate() -> Data? {
+        if let existing = get() { return existing }
+        var bytes = [UInt8](repeating: 0, count: keyLength)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            return nil
+        }
+        let key = Data(bytes)
+        return set(key) ? key : nil
+    }
+
+    static func get() -> Data? {
+        var query = baseQuery
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data,
+              data.count == keyLength
+        else { return nil }
+        return data
+    }
+
+    @discardableResult
+    private static func set(_ data: Data) -> Bool {
+        guard data.count == keyLength else { return false }
+        let attributes = [kSecValueData as String: data]
+        let status = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
+        if status == errSecSuccess { return true }
+        guard status == errSecItemNotFound else { return false }
+        var item = baseQuery
+        item[kSecValueData as String] = data
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
+    }
+
+    private static var baseQuery: [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+    }
+}
+
 private final class MCPNoRedirectDelegate: NSObject, URLSessionTaskDelegate {
     func urlSession(
         _ session: URLSession,

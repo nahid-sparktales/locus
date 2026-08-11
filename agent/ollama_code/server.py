@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import base64
 import binascii
+import hashlib
 import ipaddress
 import logging
 import os
@@ -35,6 +36,7 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request, WebSocket, Web
 from fastapi.responses import JSONResponse
 
 from . import __version__, gitinfo, proxy
+from .agent_config import AgentConfiguration
 from .capabilities import enabled as capability_enabled
 from .capabilities import snapshot as capability_snapshot
 from .codex_app_server import (
@@ -62,6 +64,7 @@ from .evaluations import (
 )
 from .extensions import ExtensionError
 from .knowledge import KnowledgeError, KnowledgeStore
+from .memory import MemoryError, MemoryVault, format_memory_results
 from .ollama import OllamaError, effective_context_length
 from .orchestration import (
     GLOBAL_MODEL_SCHEDULER,
@@ -802,6 +805,34 @@ def _knowledge_store(workspace: str = "") -> KnowledgeStore:
         raise HTTPException(422, str(exc)) from exc
 
 
+def _memory_vault(workspace: str = "") -> MemoryVault:
+    """Open the encrypted vault and migrate legacy plaintext workspace notes."""
+    vault = MemoryVault()
+    target = workspace.strip()
+    if target:
+        try:
+            legacy = KnowledgeStore(target)
+            for memory in legacy.list_memories():
+                identifier = "legacy-" + hashlib.sha256(
+                    f"{Path(target).resolve()}|{memory['id']}".encode()
+                ).hexdigest()[:40]
+                vault.save(
+                    {**memory, "scope": "workspace", "status": "approved"},
+                    identifier,
+                    workspace=target,
+                )
+                legacy.delete_memory(memory["id"])
+        except (KnowledgeError, MemoryError, OSError):
+            # A failed migration leaves the legacy record intact and visible
+            # through a later retry; it is never deleted before encryption.
+            pass
+    return vault
+
+
+def _memory_workspace(workspace: str = "") -> str:
+    return workspace.strip() or service().core.workspace_root or service().core.cwd
+
+
 @app.get("/api/knowledge/status")
 def knowledge_status(workspace: str = Query(default="")) -> dict[str, Any]:
     return _knowledge_store(workspace).settings()
@@ -856,15 +887,21 @@ def knowledge_search(
 
 @app.get("/api/knowledge/memories")
 def knowledge_memories(workspace: str = Query(default="")) -> dict[str, Any]:
-    return {"memories": _knowledge_store(workspace).list_memories()}
+    target = _memory_workspace(workspace)
+    return {"memories": _memory_vault(target).list(
+        workspace=target, status="approved", scopes=["workspace"]
+    )}
 
 
 @app.post("/api/knowledge/memories")
 def knowledge_memory_create(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     try:
-        memory = _knowledge_store(str(body.get("workspace") or "")).save_memory(body)
+        target = _memory_workspace(str(body.get("workspace") or ""))
+        memory = _memory_vault(target).save(
+            {**body, "scope": "workspace", "status": "approved"}, workspace=target
+        )
         return {"ok": True, "memory": memory}
-    except KnowledgeError as exc:
+    except (KnowledgeError, MemoryError) as exc:
         raise HTTPException(422, str(exc)) from exc
 
 
@@ -873,23 +910,155 @@ def knowledge_memory_update(
     memory_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
     try:
-        memory = _knowledge_store(str(body.get("workspace") or "")).save_memory(body, memory_id)
+        target = _memory_workspace(str(body.get("workspace") or ""))
+        memory = _memory_vault(target).save(
+            {**body, "scope": "workspace", "status": "approved"},
+            memory_id,
+            workspace=target,
+        )
         return {"ok": True, "memory": memory}
-    except KnowledgeError as exc:
+    except (KnowledgeError, MemoryError) as exc:
         raise HTTPException(422, str(exc)) from exc
 
 
 @app.delete("/api/knowledge/memories/{memory_id}")
 def knowledge_memory_delete(memory_id: str, workspace: str = Query(default="")) -> dict[str, Any]:
-    if not _knowledge_store(workspace).delete_memory(memory_id):
+    target = _memory_workspace(workspace)
+    if not _memory_vault(target).delete(memory_id):
         raise HTTPException(404, "workspace memory not found")
     return {"ok": True, "id": memory_id}
 
 
 @app.delete("/api/knowledge")
 def knowledge_delete_all(workspace: str = Query(default="")) -> dict[str, Any]:
-    _knowledge_store(workspace).delete_all()
+    target = _memory_workspace(workspace)
+    _knowledge_store(target).delete_all()
+    _memory_vault(target).delete_all(workspace=target, scopes=["workspace"])
     return {"ok": True}
+
+
+# --------------------------------------------------------------- Agent memory
+
+
+@app.get("/api/memory/status")
+def memory_status(
+    workspace: str = Query(default=""), agent_id: str = Query(default="primary")
+) -> dict[str, Any]:
+    target = _memory_workspace(workspace)
+    return _memory_vault(target).status(workspace=target, agent_id=agent_id)
+
+
+@app.get("/api/memory")
+def memory_list(
+    workspace: str = Query(default=""),
+    agent_id: str = Query(default="primary"),
+    status: str = Query(default=""),
+) -> dict[str, Any]:
+    target = _memory_workspace(workspace)
+    return {"memories": _memory_vault(target).list(
+        workspace=target, agent_id=agent_id, status=status,
+    )}
+
+
+@app.post("/api/memory")
+def memory_create(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    target = _memory_workspace(str(body.get("workspace") or ""))
+    try:
+        memory = _memory_vault(target).save(
+            body,
+            workspace=target,
+            agent_id=str(body.get("agent_id") or "primary"),
+            default_status="approved",
+        )
+        return {"ok": True, "memory": memory}
+    except MemoryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.delete("/api/memory")
+def memory_delete_all(
+    workspace: str = Query(default=""), agent_id: str = Query(default="primary")
+) -> dict[str, Any]:
+    target = _memory_workspace(workspace)
+    count = _memory_vault(target).delete_all(workspace=target, agent_id=agent_id)
+    return {"ok": True, "deleted": count}
+
+
+@app.put("/api/memory/{memory_id}")
+def memory_update(
+    memory_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    target = _memory_workspace(str(body.get("workspace") or ""))
+    try:
+        memory = _memory_vault(target).save(
+            body, memory_id, workspace=target,
+            agent_id=str(body.get("agent_id") or "primary"),
+        )
+        return {"ok": True, "memory": memory}
+    except MemoryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/memory/{memory_id}/approve")
+def memory_approve(
+    memory_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    target = _memory_workspace(str(body.get("workspace") or ""))
+    try:
+        memory = _memory_vault(target).approve(
+            memory_id, workspace=target,
+            agent_id=str(body.get("agent_id") or "primary"),
+        )
+        return {"ok": True, "memory": memory}
+    except MemoryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.delete("/api/memory/{memory_id}")
+def memory_delete(memory_id: str) -> dict[str, Any]:
+    if not _memory_vault().delete(memory_id):
+        raise HTTPException(404, "memory not found")
+    return {"ok": True, "id": memory_id}
+
+
+@app.get("/api/memory/search")
+def memory_search(
+    query: str = Query(min_length=1, max_length=2_000),
+    workspace: str = Query(default=""),
+    agent_id: str = Query(default="primary"),
+    limit: int = Query(default=8, ge=1, le=20),
+) -> dict[str, Any]:
+    target = _memory_workspace(workspace)
+    try:
+        return {"results": _memory_vault(target).search(
+            query, workspace=target, agent_id=agent_id, limit=limit,
+        )}
+    except MemoryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/memory/export")
+def memory_export(
+    workspace: str = Query(default=""), agent_id: str = Query(default="primary")
+) -> dict[str, Any]:
+    target = _memory_workspace(workspace)
+    return _memory_vault(target).export(workspace=target, agent_id=agent_id)
+
+
+@app.post("/api/memory/import")
+def memory_import(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    target = _memory_workspace(str(body.get("workspace") or ""))
+    document = body.get("document")
+    if not isinstance(document, dict):
+        raise HTTPException(422, "memory import requires a document")
+    try:
+        count = _memory_vault(target).import_values(
+            document, workspace=target,
+            agent_id=str(body.get("agent_id") or "primary"),
+        )
+        return {"ok": True, "imported": count}
+    except MemoryError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 # ------------------------------------------------------------ Durable MCP tasks
@@ -2982,13 +3151,53 @@ def _run_slash(svc: ChatService, text: str) -> None:
     svc._on_core_event({"type": "slash_result", **result})
 
 
+def _automatic_memory_context(
+    core: AgentCore,
+    query: str,
+    configuration: AgentConfiguration,
+    *,
+    just_chat: bool,
+    agent_id: str = "primary",
+) -> str:
+    policy = configuration.memory_policy
+    if not policy.recall_enabled or not policy.max_automatic_memories:
+        return ""
+    scopes = [scope for scope in policy.scopes if not (just_chat and scope == "workspace")]
+    if not scopes:
+        return ""
+    workspace = core.workspace_root or core.cwd
+    try:
+        results = _memory_vault(workspace).search(
+            query,
+            workspace=workspace,
+            agent_id=agent_id,
+            scopes=scopes,
+            limit=policy.max_automatic_memories,
+        )
+    except (MemoryError, KnowledgeError):
+        return ""
+    context = format_memory_results(results)
+    return context[:policy.max_automatic_tokens * 4]
+
+
 def _run_user_turn(
     svc: ChatService,
     text: str,
     just_chat: bool,
     attachments: list[dict[str, str]] | None = None,
+    agent_config: dict[str, Any] | None = None,
+    mode: str = "work",
 ) -> None:
     """Worker entry that makes the UI's chat-only boundary explicit."""
+    configuration = AgentConfiguration.parse(agent_config)
+    memory_context = _automatic_memory_context(
+        svc.core, text, configuration, just_chat=just_chat,
+    )
+    svc.core.configure_agent(
+        agent_config,
+        mode="ask" if just_chat else mode,
+        memory_context=memory_context,
+    )
     svc.core.run_turn(
         text,
         svc.decide,
@@ -3016,7 +3225,7 @@ def _run_team_turn(
     svc.pause_requested = False
     stage = "validating the team setup"
     try:
-        run_id, team, _, _ = parse_manifest(manifest)
+        run_id, team, parsed_profiles, _ = parse_manifest(manifest)
         svc.run_store.start_run(
             run_id,
             session_id=core.session.session_id,
@@ -3055,6 +3264,23 @@ def _run_team_turn(
                 environment={"isolation": "managed_worktree"},
             )
             svc.emit({"type": "task_ready", "task": task.as_dict(), "state": "running"})
+
+        # Each team member gets independently scoped, policy-bounded recall.
+        # The generated context is injected only into this in-memory turn copy;
+        # it is neither accepted from the client nor persisted in the run manifest.
+        for raw_profile in manifest.get("profiles") or []:
+            if not isinstance(raw_profile, dict):
+                continue
+            profile = parsed_profiles.get(str(raw_profile.get("id") or ""))
+            if profile is None:
+                continue
+            raw_profile["_memory_context"] = _automatic_memory_context(
+                core,
+                text,
+                profile.behavior,
+                just_chat=False,
+                agent_id=profile.id,
+            )
 
         stage = "preparing the dispatch plan"
         if attachments:
@@ -3731,6 +3957,20 @@ def _run_team_writer(
         core.max_iterations = TEAM_WRITER_ITERATION_LIMIT
     try:
         with orchestrator.writer_slot(prepared.run_id, writer):
+            # Lightweight unit-test doubles exercise allocation independently
+            # of prompt composition; production cores always provide both.
+            if hasattr(core, "configure_agent") and hasattr(writer, "behavior"):
+                core.configure_agent(
+                    writer.behavior.structured(),
+                    mode="build",
+                    memory_context=_automatic_memory_context(
+                        core, prompt, writer.behavior, just_chat=False, agent_id=writer.id,
+                    ),
+                    fallback_name=writer.name,
+                    fallback_instructions=writer.instructions,
+                    role_contract=core.agent_role_contract,
+                    agent_id=writer.id,
+                )
             core.run_turn(
                 prompt,
                 svc.decide,
@@ -3831,6 +4071,14 @@ def _install_writer_route(core: AgentCore, writer: AgentProfile) -> dict[str, An
         "chatgpt_thread_id": getattr(core, "_chatgpt_thread_id", ""),
         "chatgpt_thread_fingerprint": getattr(core, "_chatgpt_thread_fingerprint", ""),
         "mcp_policy": core.tool_registry.mcp_agent_policy_snapshot(),
+        "agent_configuration": getattr(
+            core, "agent_configuration", AgentConfiguration.parse({})
+        ),
+        "agent_id": getattr(core, "agent_id", "primary"),
+        "agent_mode": getattr(core, "agent_mode", "work"),
+        "agent_role_contract": getattr(core, "agent_role_contract", ""),
+        "memory_context": getattr(core, "memory_context", ""),
+        "max_iterations": getattr(core, "max_iterations", 50),
     }
     core.model = writer.model
     if writer.route.get("provider") == "chatgpt":
@@ -3864,6 +4112,20 @@ def _install_writer_route(core: AgentCore, writer: AgentProfile) -> dict[str, An
         access_ceiling=access_ceiling,
         role=writer.role,
     )
+    if callable(getattr(core, "configure_agent", None)):
+        behavior = getattr(writer, "behavior", AgentConfiguration.parse({}))
+        core.configure_agent(
+            behavior.structured(),
+            mode="build",
+            fallback_name=writer.name,
+            fallback_instructions=getattr(writer, "instructions", ""),
+            agent_id=getattr(writer, "id", writer.name),
+            role_contract=(
+                "You are an ordered coding agent in a dispatcher-led team. Work only in the "
+                "assigned scope, preserve earlier team changes, do not delegate, and remain "
+                f"within the {access_ceiling} access ceiling."
+            ),
+        )
     core._emit_info()
     return snapshot
 
@@ -3884,6 +4146,15 @@ def _restore_writer_route(core: AgentCore, snapshot: dict[str, Any]) -> None:
     core.tool_registry.set_mcp_agent_policy(
         policy, access_ceiling=access_ceiling, role=role,
     )
+    if callable(getattr(core, "configure_agent", None)):
+        core.configure_agent(
+            snapshot["agent_configuration"].structured(),
+            mode=snapshot["agent_mode"],
+            role_contract=snapshot["agent_role_contract"],
+            memory_context=snapshot["memory_context"],
+            agent_id=snapshot["agent_id"],
+        )
+        core.max_iterations = snapshot["max_iterations"]
     core._emit_info()
 
 
@@ -3972,6 +4243,10 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             _command_error(svc, str(mtype), "Unknown conversation mode.")
             return
         just_chat = mode == "ask"
+        agent_config = msg.get("agent_config")
+        if agent_config is not None and not isinstance(agent_config, dict):
+            _command_error(svc, str(mtype), "The agent configuration is malformed.")
+            return
         try:
             attachments = _validated_chat_attachments(msg.get("attachments"))
         except ValueError as exc:
@@ -3989,7 +4264,9 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         elif team_manifest is not None:
             call, args = _run_team_turn, (svc, text, team_manifest, attachments)
         else:
-            call, args = _run_user_turn, (svc, text, just_chat, attachments)
+            call, args = _run_user_turn, (
+                svc, text, just_chat, attachments, agent_config, mode or "work",
+            )
         if not svc.start_turn(loop, call, *args):
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
     elif mtype == "permission_decision":
