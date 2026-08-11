@@ -31,8 +31,7 @@ final class BackendProcess {
         port preferredPort: Int,
         cwd: String,
         environmentOverlay: [String: String] = [:],
-        proxyCredential: String? = nil,
-        memoryKey: Data? = nil
+        proxyCredential: String? = nil
     ) -> BackendLaunchResult {
         if isRunning, let runningPort,
            let url = URL(string: "http://127.0.0.1:\(runningPort)")
@@ -135,9 +134,6 @@ final class BackendProcess {
         // stdin below instead, which leaves no such trace.
         var bootstrapSecrets: [String: String] = [:]
         if let proxyCredential { bootstrapSecrets["proxy_credential"] = proxyCredential }
-        if let memoryKey, memoryKey.count == MemoryKeychainStore.keyLength {
-            bootstrapSecrets["memory_key"] = memoryKey.base64EncodedString()
-        }
         let bootstrapData = bootstrapSecrets.isEmpty
             ? nil
             : try? JSONSerialization.data(withJSONObject: bootstrapSecrets)

@@ -17,6 +17,7 @@ private struct TerminalPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            services
             TerminalHostView(terminal: terminal)
                 .accessibilityIdentifier("terminal.output")
                 .overlay {
@@ -35,6 +36,7 @@ private struct TerminalPanel: View {
             configure()
             terminal.ensureStarted()
             terminal.focus()
+            model.refreshBackgroundServices()
         }
         .onChange(of: model.workspacePath) { configure() }
         .onChange(of: model.settings.terminalShell) { configure() }
@@ -55,6 +57,67 @@ private struct TerminalPanel: View {
         } message: {
             Text("Switching the terminal now will stop its foreground process. You can keep it running and restart the terminal later.")
         }
+    }
+
+    private var services: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label("Managed services", systemImage: "server.rack")
+                    .font(.system(size: 8, weight: .semibold))
+                Spacer()
+                Button { model.refreshBackgroundServices() } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .help("Refresh managed services")
+            }
+            ForEach(model.backgroundServices) { service in
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(service.running ? Color.green : LocusTheme.warning)
+                        .frame(width: 6, height: 6)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(service.name)
+                            .font(.system(size: 8, weight: .semibold))
+                        Text(service.port.map { "localhost:\($0) · pid \(service.pid ?? 0)" }
+                            ?? "pid \(service.pid ?? 0)")
+                            .font(.system(size: 7, design: .monospaced))
+                            .foregroundStyle(LocusTheme.muted)
+                    }
+                    Spacer()
+                    if service.running {
+                        Button("Stop", role: .destructive) {
+                            model.stopBackgroundService(service)
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 8))
+                    } else {
+                        HStack(spacing: 6) {
+                            Text("Exited \(service.exitCode ?? 0)")
+                                .font(.system(size: 7, design: .monospaced))
+                                .foregroundStyle(LocusTheme.warning)
+                            Button("Dismiss") {
+                                model.stopBackgroundService(service)
+                            }
+                            .buttonStyle(.borderless)
+                            .font(.system(size: 8))
+                        }
+                    }
+                }
+            }
+            if model.backgroundServices.isEmpty {
+                Text("No managed services. Agents use these for servers and watchers that should survive Stop.")
+                    .font(.system(size: 7))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(LocusTheme.paperDeep)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LocusTheme.line).frame(height: 1)
+        }
+        .accessibilityIdentifier("terminal.managedServices")
     }
 
     private var header: some View {

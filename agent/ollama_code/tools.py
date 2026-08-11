@@ -79,6 +79,9 @@ class ToolContext:
     memory_scopes: tuple[str, ...] = ("personal", "workspace", "agent")
     memory_search_enabled: bool = True
     memory_proposals_enabled: bool = True
+    #: App-owned process broker. Work submitted here is detached from the
+    #: current turn and therefore survives Stop.
+    background_service: Callable[[dict[str, Any]], str] | None = None
 
     def stopped(self) -> bool:
         return bool(self.should_stop and self.should_stop())
@@ -479,6 +482,12 @@ def _impl_bash(args: dict[str, Any], ctx: ToolContext) -> str:
         out += f"\n[exit code {proc.returncode}]"
     out = out.strip()
     return _truncate(out or f"(no output, exit code {proc.returncode})")
+
+
+def _impl_background_service(args: dict[str, Any], ctx: ToolContext) -> str:
+    if ctx.background_service is None:
+        return "Error: managed background services are unavailable in this client."
+    return ctx.background_service(args)
 
 
 def _read_capped(handle: Any, limit: int = MAX_OUTPUT) -> str:
@@ -892,12 +901,23 @@ def _impl_search_memory(args: dict[str, Any], ctx: ToolContext) -> str:
     from .memory import MemoryError, MemoryVault, format_memory_results
 
     try:
+        embedding_model = ""
+        ollama_host = "http://127.0.0.1:11434"
+        try:
+            from .knowledge import KnowledgeStore
+            knowledge = KnowledgeStore(ctx.memory_workspace or ctx.cwd).settings()
+            embedding_model = str(knowledge.get("embedding_model") or "")
+            ollama_host = str(knowledge.get("ollama_host") or ollama_host)
+        except Exception:
+            pass
         results = MemoryVault().search(
             query,
             workspace=ctx.memory_workspace or ctx.cwd,
             agent_id=ctx.memory_agent_id,
             scopes=scopes,
             limit=max(1, min(_as_int(args.get("limit"), 8), 20)),
+            embedding_model=embedding_model,
+            ollama_host=ollama_host,
         )
     except MemoryError as exc:
         return f"Error: {exc}"
@@ -924,6 +944,9 @@ def _impl_propose_memory(args: dict[str, Any], ctx: ToolContext) -> str:
                 "reason": str(args.get("reason") or ""),
                 "scope": scope,
                 "status": "candidate",
+                "kind": str(args.get("kind") or "fact"),
+                "confidence": args.get("confidence", 1.0),
+                "valid_until": args.get("valid_until"),
             },
             workspace=ctx.memory_workspace or ctx.cwd,
             agent_id=ctx.memory_agent_id,
@@ -943,6 +966,7 @@ _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
     "edit_file": _impl_edit_file,
     "multi_edit": _impl_multi_edit,
     "bash": _impl_bash,
+    "background_service": _impl_background_service,
     "glob": _impl_glob,
     "grep": _impl_grep,
     "list_dir": _impl_list_dir,
@@ -1009,6 +1033,13 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "scope": {"type": "string", "enum": ["personal", "workspace", "agent"]},
             "tags": {"type": "array", "items": {"type": "string"}},
             "reason": {"type": "string", "description": "Why this is durable enough to remember."},
+            "kind": {
+                "type": "string",
+                "enum": ["preference", "fact", "decision", "procedure", "relationship"],
+                "description": "What kind of durable memory this is. Optional; defaults to fact."
+            },
+            "confidence": {"type": "number", "description": "Confidence from 0 to 1."},
+            "valid_until": {"type": "number", "description": "Optional Unix timestamp after which this should be treated as outdated."},
         },
         ["title", "content", "scope", "reason"],
     ),
@@ -1074,12 +1105,24 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     ),
     _schema(
         "bash",
-        "Run a shell command in the working directory and return its output.",
+        "Run a finite shell command in the working directory and return its output. For a server, watcher, queue worker, or other command intended to keep running, use background_service instead.",
         {
             "command": {"type": "string", "description": "The shell command to run."},
             "timeout": {"type": "integer", "description": "Seconds before the command is killed. Optional, default 120."},
         },
         ["command"],
+    ),
+    _schema(
+        "background_service",
+        "Start, inspect, or stop a named long-running process. It is owned outside the current task, so Stop does not kill it; it remains available until explicitly stopped or Locus quits.",
+        {
+            "action": {"type": "string", "enum": ["start", "status", "stop"]},
+            "name": {"type": "string", "description": "Stable service name. Optional for status."},
+            "command": {"type": "string", "description": "Command to launch. Required for start; do not append '&'."},
+            "cwd": {"type": "string", "description": "Working directory. Optional; defaults to the active workspace."},
+            "port": {"type": "integer", "description": "Optional localhost port to probe for readiness."},
+        },
+        ["action"],
     ),
     _schema(
         "glob",

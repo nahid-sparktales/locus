@@ -278,7 +278,7 @@ struct PermissionGuardCard: View {
     private var mode: PermissionMode { model.permissionMode }
 
     private var ink: Color {
-        mode.isRisky ? LocusTheme.coral : Color(red: 0.42, green: 0.31, blue: 0.25)
+        mode.isRisky ? LocusTheme.coral : LocusTheme.permissionInk
     }
 
     var body: some View {
@@ -309,14 +309,14 @@ struct PermissionGuardCard: View {
 
             Text(mode.detail)
                 .font(.system(size: 8))
-                .foregroundStyle(Color(red: 0.52, green: 0.42, blue: 0.36))
+                .foregroundStyle(LocusTheme.permissionMuted)
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
 
             if !model.allowedTools.isEmpty {
                 Text("Always allowed this session: \(model.allowedTools.joined(separator: ", "))")
                     .font(.system(size: 8))
-                    .foregroundStyle(Color(red: 0.52, green: 0.42, blue: 0.36))
+                    .foregroundStyle(LocusTheme.permissionMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -508,7 +508,7 @@ struct PlanRow: View {
     }
 
     private var symbolBackground: Color {
-        todo.status == .inProgress ? LocusTheme.ink : Color(red: 0.906, green: 0.949, blue: 0.792)
+        todo.status == .inProgress ? LocusTheme.ink : LocusTheme.successSoft
     }
 
     private var symbolBorder: Color {

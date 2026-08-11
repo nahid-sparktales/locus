@@ -172,7 +172,7 @@ Example: send `@Mac App Team investigate the scrolling regression, update the ba
 
 Locus permits three simultaneous model calls by default and schedules leases fairly across chats. Leases expire after a crash or lost heartbeat. Team job, round, call, concurrency, token, and cost budgets keep orchestration bounded.
 
-Each running chat has its own worker state, allowing other chats and workspaces to remain usable while work continues. Background permission requests pause only their originating job and navigate back to the correct chat when attention is needed.
+Each running chat has its own worker state, allowing other chats and workspaces to remain usable while work continues. Background permission requests pause only their originating job and navigate back to the correct chat when attention is needed. Servers, watchers, and queue workers should use the `background_service` tool: Locus owns them outside the task, shows them above the Terminal, and keeps them running when the task is stopped. They end only when explicitly stopped or the owning backend quits.
 
 Example: start a team refactor in one workspace, switch to another chat for a question, and return later to inspect the first run's progress.
 
@@ -180,7 +180,7 @@ Example: start a team refactor in one workspace, switch to another chat for a qu
 
 New Git team tasks use a detached private worktree by default. Locus reproduces tracked, staged, unstaged, and untracked non-ignored source state in a private baseline without changing the source checkout.
 
-Only the currently active coding job can mutate this checkout. Coding jobs run serially and later writers see the files and combined diff left by earlier writers. Specialists and reviewers see read-only state. **Use Current Folder** remains available when isolation is unsuitable; dirty submodules require an explicit choice rather than being flattened or copied unsafely.
+When **Run independent coding jobs in parallel worktrees** is enabled, every dependency-ready writer receives a child checkout at the same immutable snapshot. Locus runs a bounded wave, integrates patches in plan order, and emits a structured conflict while preserving the child checkout if two patches collide. Dependent writers run after the changes they need have been integrated. Specialists and reviewers see read-only state. **Use Current Folder** remains available when isolation is unsuitable; dirty submodules require an explicit choice rather than being flattened or copied unsafely.
 
 Example: begin a team task with local uncommitted edits. The team receives a private baseline containing those edits, while your original branch, index, and working files remain untouched until you explicitly apply the patch.
 
@@ -198,8 +198,9 @@ An agent profile describes one model and the job it is allowed to perform. A pro
 - Custom role instructions, with a role template as a starting point
 - Capability tags, such as `swift`, `research`, or `tests`
 - An access ceiling: read-only, workspace write, or computer control
-- An **Advanced Settings** checkbox containing timeout, token limits, optional
-  metered cost rates, and explicit MCP allowlists
+- A visible checkbox list of standard tool groups for read-only agents
+- A left-aligned **Advanced Settings** disclosure containing timeout, token
+  limits, optional metered cost rates, and explicit MCP allowlists
 
 Use **Test Connection** before adding a profile to a team.
 
@@ -589,9 +590,19 @@ Teams can define a maximum estimated cost per run using the cost rates entered o
 
 Example: set a hosted team to a maximum estimated cost of `$5`. Even if model-call and token budgets remain, Locus will not continue routing paid calls after the estimated total crosses that limit.
 
-## 11. Local workspace knowledge
+## 11. Memory 2.0 and local workspace knowledge
 
 Open **Settings → Knowledge**.
+
+The main page follows a three-step model: the agent suggests a durable memory,
+you review it, and later turns recall it only when relevant. A record has a
+scope (personal, workspace, or one agent), a type (preference, fact, decision,
+procedure, or relationship), confidence, optional expiry, and source
+provenance. Conflicts are never silently overwritten: choose **Keep Both** or
+**Replace Older**. The UI explains why recalled items matched. Index model,
+exclusions, rebuild, import/export, and destructive maintenance live under
+**Advanced Memory Settings**. **Review Health** marks expired records stale and
+reports conflicts without silently rewriting them.
 
 ### Workspace-isolated text index
 
@@ -633,9 +644,12 @@ Retrieved content is marked as untrusted data. It cannot change system instructi
 
 Example: a researcher searches `scheduler lease cleanup`, cites the matching files and lines, and passes that evidence to the writer. A malicious instruction found in a source comment is treated as project text, not as an instruction to the agent.
 
-### Approved workspace memory
+### Approved encrypted memory
 
-Workspace memory stores decisions, conventions, and facts only after explicit approval.
+Memory stores preferences, facts, decisions, procedures, and relationships only
+after explicit approval. Text ranking and optional local semantic vectors are
+combined with confidence, recency, pin, stale, and validity signals. Memory
+content and semantic vectors remain AES-256-GCM encrypted at rest.
 
 Create memory with:
 

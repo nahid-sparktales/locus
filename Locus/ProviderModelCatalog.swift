@@ -19,7 +19,7 @@ enum ProviderModelCatalog {
     )
 
     static func fetch(for account: ProviderAccount) async -> Result {
-        let key = CredentialStore.get(account: account.keychainAccount) ?? ""
+        let key = CredentialStore.get(account: account.credentialAccount) ?? ""
         guard !key.isEmpty else {
             return Result(models: account.kind.curatedModels, status: .noKey)
         }

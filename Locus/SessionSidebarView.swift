@@ -223,7 +223,7 @@ struct SessionSidebarView: View {
                         Spacer(minLength: 4)
                         Text("⌘N")
                             .font(.system(size: 8, design: .monospaced))
-                            .foregroundStyle(Color.white.opacity(0.45))
+                            .foregroundStyle(LocusTheme.paper.opacity(0.45))
                     }
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(LocusTheme.paper)

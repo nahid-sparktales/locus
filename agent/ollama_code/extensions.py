@@ -1532,9 +1532,9 @@ class ExtensionManager:
             server.get("id") == server_id for server in self.mcp_servers()
         ):
             raise ExtensionError("MCP server not found")
-        # Registration records, client secrets, and refresh tokens are native
-        # Keychain-only material. Reject them at this boundary as defense in
-        # depth even if a future client accidentally includes them.
+        # Registration records, client secrets, and refresh tokens stay in the
+        # native app's user-only credential file. Reject them at this boundary
+        # as defense in depth even if a future client accidentally includes them.
         allowed = {"access_token", "headers", "env"}
         self._credential_values[server_id] = {
             key: value for key, value in values.items() if key in allowed

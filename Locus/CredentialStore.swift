@@ -2,7 +2,6 @@ import Foundation
 import AuthenticationServices
 import AppKit
 import CryptoKit
-import Security
 
 /// Credential storage for provider API keys and MCP server tokens.
 ///
@@ -325,8 +324,6 @@ enum CredentialStore {
 /// values live in the credential section of `auth.json` rather than Keychain.
 /// Only the runtime subset crosses the native/backend boundary.
 enum MCPCredentialStore {
-    private static let legacyMigrationDefaultsKey = "mcpCredentialsMigratedFromKeychainV1"
-
     static var displayName: String { CredentialStore.displayPath }
 
     static func get(serverID: String) -> [String: Any]? {
@@ -356,159 +353,6 @@ enum MCPCredentialStore {
     @discardableResult
     static func remove(serverID: String) -> Bool {
         CredentialStore.remove(account: CredentialStore.mcpCredentialKey(serverID))
-    }
-
-    /// Explicit server deletion also cleans up an unmigrated legacy entry.
-    @discardableResult
-    static func removeIncludingLegacy(serverID: String) -> Bool {
-        let removedCurrent = remove(serverID: serverID)
-        let removedLegacy = LegacyMCPKeychainStore.remove(serverID: serverID)
-        return removedCurrent && removedLegacy
-    }
-
-    /// One upgrade pass copies credentials written by older Locus builds and
-    /// then records completion. Normal MCP reads never consult Keychain.
-    static func migrateLegacyKeychainEntries(keeping serverIDs: Set<String>) {
-        guard !UserDefaults.standard.bool(forKey: legacyMigrationDefaultsKey) else { return }
-        var completed = true
-        for serverID in serverIDs {
-            if get(serverID: serverID) != nil {
-                _ = LegacyMCPKeychainStore.remove(serverID: serverID)
-                continue
-            }
-            guard let legacy = LegacyMCPKeychainStore.get(serverID: serverID) else { continue }
-            if set(legacy, serverID: serverID) {
-                _ = LegacyMCPKeychainStore.remove(serverID: serverID)
-            } else {
-                completed = false
-            }
-        }
-        guard completed else { return }
-        LegacyMCPKeychainStore.removeOrphans(keeping: serverIDs)
-        UserDefaults.standard.set(true, forKey: legacyMigrationDefaultsKey)
-    }
-}
-
-/// Binary compatibility for incremental Xcode builds that still contain test
-/// objects compiled against the old type name. Despite the legacy name, every
-/// operation delegates to the file-backed store and never reads Keychain.
-@available(*, deprecated, renamed: "MCPCredentialStore")
-enum MCPKeychainStore {
-    static func get(serverID: String) -> [String: Any]? {
-        MCPCredentialStore.get(serverID: serverID)
-    }
-
-    @discardableResult
-    static func set(_ values: [String: Any], serverID: String) -> Bool {
-        MCPCredentialStore.set(values, serverID: serverID)
-    }
-
-    @discardableResult
-    static func remove(serverID: String) -> Bool {
-        MCPCredentialStore.remove(serverID: serverID)
-    }
-}
-
-/// Read/delete support for credentials written by older Locus builds. New MCP
-/// credentials are never written here; this can be removed after the migration
-/// window has elapsed.
-private enum LegacyMCPKeychainStore {
-    private static let service = "io.sparktales.locus.mcp"
-
-    static func get(serverID: String) -> [String: Any]? {
-        var query = baseQuery(serverID: serverID)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return nil }
-        return root
-    }
-
-    @discardableResult
-    static func remove(serverID: String) -> Bool {
-        let status = SecItemDelete(baseQuery(serverID: serverID) as CFDictionary)
-        return status == errSecSuccess || status == errSecItemNotFound
-    }
-
-    static func removeOrphans(keeping serverIDs: Set<String>) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecReturnAttributes as String: true,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-        ]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let rows = result as? [[String: Any]] else { return }
-        for row in rows {
-            guard let serverID = row[kSecAttrAccount as String] as? String,
-                  !serverIDs.contains(serverID)
-            else { continue }
-            _ = remove(serverID: serverID)
-        }
-    }
-
-    private static func baseQuery(serverID: String) -> [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: serverID,
-        ]
-    }
-}
-
-/// The memory database is ciphertext; its 256-bit master key stays in the
-/// login keychain and is handed to the local agent only through its startup
-/// pipe. It is never written to UserDefaults, arguments, or the environment.
-enum MemoryKeychainStore {
-    private static let service = "io.sparktales.locus.memory"
-    private static let account = "master-key-v1"
-    static let keyLength = 32
-
-    static func loadOrCreate() -> Data? {
-        if let existing = get() { return existing }
-        var bytes = [UInt8](repeating: 0, count: keyLength)
-        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
-            return nil
-        }
-        let key = Data(bytes)
-        return set(key) ? key : nil
-    }
-
-    static func get() -> Data? {
-        var query = baseQuery
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              data.count == keyLength
-        else { return nil }
-        return data
-    }
-
-    @discardableResult
-    private static func set(_ data: Data) -> Bool {
-        guard data.count == keyLength else { return false }
-        let attributes = [kSecValueData as String: data]
-        let status = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
-        if status == errSecSuccess { return true }
-        guard status == errSecItemNotFound else { return false }
-        var item = baseQuery
-        item[kSecValueData as String] = data
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
-    }
-
-    private static var baseQuery: [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
     }
 }
 
@@ -1171,8 +1015,10 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
     }
 
     private nonisolated static func randomURLSafeString(byteCount: Int) -> String {
-        var bytes = [UInt8](repeating: 0, count: byteCount)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        var generator = SystemRandomNumberGenerator()
+        let bytes = (0..<byteCount).map { _ in
+            UInt8.random(in: .min ... .max, using: &generator)
+        }
         return base64URL(Data(bytes))
     }
 

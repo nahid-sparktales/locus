@@ -311,7 +311,14 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
     /// Set only by the migration, for the account made from the single remote
     /// endpoint that existed before accounts: it keeps pointing at the old
     /// credential entry so the key never has to be re-entered.
-    var legacyKeychainAccount: String?
+    var legacyCredentialAccount: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kindRaw, name, baseURLOverride, preferredModel, contextWindow, createdAt
+        // Preserve the stored field name written by earlier versions without
+        // carrying Keychain terminology into new code or behavior.
+        case legacyCredentialAccount = "legacyKeychainAccount"
+    }
 
     init(
         id: UUID = UUID(),
@@ -353,13 +360,13 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
         return trimmed.isEmpty ? kind.marketingName : trimmed
     }
 
-    var keychainAccount: String {
-        legacyKeychainAccount ?? CredentialStore.providerAccountKey(id)
+    var credentialAccount: String {
+        legacyCredentialAccount ?? CredentialStore.providerAccountKey(id)
     }
 
     var hasKey: Bool {
         kind.usesManagedChatGPTAuthentication
-            || CredentialStore.has(account: keychainAccount)
+            || CredentialStore.has(account: credentialAccount)
     }
 
     /// The window to budget this account against: what the user set, else
@@ -461,7 +468,7 @@ enum ProviderAccountStore {
             baseURLOverride: base,
             preferredModel: settings.remoteModel.trimmingCharacters(in: .whitespacesAndNewlines)
         )
-        account.legacyKeychainAccount = CredentialStore.remoteAPIKeyAccount
+        account.legacyCredentialAccount = CredentialStore.remoteAPIKeyAccount
         return account
     }
 }

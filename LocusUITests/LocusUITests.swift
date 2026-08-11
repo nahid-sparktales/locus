@@ -45,10 +45,15 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(search.waitForExistence(timeout: 3))
         search.typeText("keep this state")
 
+        // Select the most recently launched Locus copy so this also works when
+        // the suite uses an isolated bundle identifier alongside a developer
+        // build that is already running.
         let running = try XCTUnwrap(
-            NSRunningApplication.runningApplications(
-                withBundleIdentifier: "io.sparktales.locus"
-            ).first
+            NSWorkspace.shared.runningApplications
+                .filter { $0.bundleURL?.lastPathComponent == "Locus.app" }
+                .max {
+                    ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast)
+                }
         )
         let appURL = try XCTUnwrap(running.bundleURL)
         let reopened = expectation(description: "Launch Services reopened Locus")
@@ -285,6 +290,31 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("settings.enterSendsMessages").exists)
         XCTAssertTrue(anyElement("settings.soloPlanPresentation").exists)
         XCTAssertTrue(anyElement("settings.teamRunsPresentation").exists)
+    }
+
+    func testAppearanceSettingsExposeAndApplySystemLightDarkChoices() {
+        app.typeKey(",", modifierFlags: .command)
+
+        let picker = anyElement("settings.appearance")
+        XCTAssertTrue(picker.waitForExistence(timeout: 3))
+        for value in ["system", "light", "dark"] {
+            let choice = anyElement("settings.appearance.\(value)")
+            XCTAssertTrue(choice.exists, "Missing \(value) appearance choice")
+            XCTAssertTrue(choice.isHittable, "\(value) appearance choice is not selectable")
+            choice.click()
+            XCTAssertEqual(picker.value as? String, value)
+        }
+
+        app.buttons["settings.save"].click()
+        XCTAssertFalse(picker.exists)
+
+        // UI-test models do not persist to disk, but the saved in-memory
+        // preference must still drive both scenes for the rest of the launch.
+        app.typeKey(",", modifierFlags: .command)
+        let dark = anyElement("settings.appearance.dark")
+        XCTAssertTrue(dark.waitForExistence(timeout: 3))
+        XCTAssertEqual(anyElement("settings.appearance").value as? String, "dark")
+        app.buttons["settings.cancel"].click()
     }
 
     func testFirstLaunchAsksWhichShortcutShouldSendMessages() {

@@ -57,7 +57,15 @@ struct GitClient: Sendable {
         // `env` for the same reason BackendProcess uses it; --literal-pathspecs
         // and quotepath keep filenames byte-exact both directions.
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["git", "--literal-pathspecs", "-c", "core.quotepath=false"] + args
+        // Explicitly clear configured credential helpers. In particular, this
+        // prevents git from invoking macOS Keychain and producing an account
+        // prompt. SSH remotes can still use the user's already-running agent;
+        // authenticated HTTPS operations can be completed in a terminal.
+        process.arguments = [
+            "git", "--literal-pathspecs",
+            "-c", "core.quotepath=false",
+            "-c", "credential.helper=",
+        ] + args
         process.currentDirectoryURL = URL(fileURLWithPath: workspaceRoot)
         var environment = ProcessInfo.processInfo.environment
         environment["GIT_TERMINAL_PROMPT"] = "0"

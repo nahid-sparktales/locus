@@ -741,7 +741,7 @@ struct ComposerView: View {
                         Image(systemName: isWaitingForTeamApproval
                             ? "tray.and.arrow.down.fill" : "arrow.turn.up.right")
                             .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(canSubmit ? Color.white : LocusTheme.muted)
+                            .foregroundStyle(canSubmit ? LocusTheme.brandInk : LocusTheme.muted)
                             .frame(width: 30, height: 30)
                             .background(canSubmit ? LocusTheme.signal : LocusTheme.paperDeep)
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))

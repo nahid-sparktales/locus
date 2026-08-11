@@ -37,7 +37,7 @@ struct LocusApp: App {
             RootView()
                 .environmentObject(model)
                 .onAppear { appDelegate.model = model }
-                .preferredColorScheme(.light)
+                .preferredColorScheme(model.effectiveAppearance.colorScheme)
                 .frame(
                     // Sidebar 260 + workspace 520 + panel 280 + rail 44.
                     minWidth: locusIsUITesting ? 980 : 1_120,
@@ -130,6 +130,7 @@ struct LocusApp: App {
         Settings {
             SettingsView(presentationContext: .settingsWindow)
                 .environmentObject(model)
+                .preferredColorScheme(model.effectiveAppearance.colorScheme)
         }
     }
 }

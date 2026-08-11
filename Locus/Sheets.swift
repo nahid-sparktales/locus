@@ -1172,6 +1172,7 @@ struct SettingsView: View {
                 }
                 Spacer()
                 Button {
+                    model.clearAppearancePreview()
                     dismiss()
                     model.settingsPresented = false
                 } label: {
@@ -1222,6 +1223,7 @@ struct SettingsView: View {
             if model.settingsPage == .general || model.settingsPage == .network {
                 HStack {
                     Button("Cancel") {
+                        model.clearAppearancePreview()
                         dismiss()
                         model.settingsPresented = false
                     }
@@ -1280,11 +1282,16 @@ struct SettingsView: View {
         // A result describes the values it was run against; the moment any of
         // them changes it is a claim about a proxy that no longer exists.
         .onChange(of: proxyDraftSignature) { proxyTestOutcome = nil }
+        .onChange(of: draft.appearanceRaw) { _, rawValue in
+            model.previewAppearance(rawValue)
+        }
         .onExitCommand {
+            model.clearAppearancePreview()
             dismiss()
             model.settingsPresented = false
         }
         .onDisappear {
+            model.clearAppearancePreview()
             if presentationContext == .settingsWindow {
                 model.completeSettingsDismissal()
             }
@@ -1322,6 +1329,24 @@ struct SettingsView: View {
     /// nothing to do with Cancel/Save.
     private var generalPage: some View {
         Form {
+            Section("Appearance") {
+                Picker("Appearance", selection: $draft.appearanceRaw) {
+                    ForEach(AppAppearance.allCases) { appearance in
+                        Text(appearance.title)
+                            .accessibilityIdentifier("settings.appearance.\(appearance.rawValue)")
+                            .tag(appearance.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("settings.appearance")
+                .accessibilityValue(Text(draft.appearanceRaw))
+
+                Text("Selections preview immediately. Save keeps the choice; Cancel restores the saved appearance. System follows your Mac automatically.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Section("Local model") {
                 Label(
                     "Local Ollama — models installed on this Mac appear in the picker automatically.",
@@ -1773,7 +1798,14 @@ struct SettingsView: View {
                     .disabled(model.allowedTools.isEmpty && model.permissionMode == .ask)
                     .accessibilityIdentifier("settings.resetPermissions")
 
-                Text("Reading, searching and listing inside the workspace never ask. Anything outside it always does, in every mode.")
+                Text("Ask and Accept File Edits confirm access outside the workspace. Bypass skips those confirmations, while the deny list and credential/transaction takeover rules still apply.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Label("macOS folder access is separate", systemImage: "folder.badge.questionmark")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("Bypass controls agent tool approvals. macOS may still ask Locus itself for Documents, Desktop, Accessibility, or Screen Recording access. A stable signed app normally remembers that system choice; rebuilding or launching a differently signed copy can make macOS ask again.")
                     .font(.system(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1785,7 +1817,7 @@ struct SettingsView: View {
                     set: { model.setBrowserEnabled($0) }
                 ))
                 .accessibilityIdentifier("settings.browser.enabled")
-                Text("The agent can open pages, read them, and act on them in the Browser tab. Reading never asks; running page JavaScript always does. Turning this off also removes the browser tools from the model.")
+                Text("The agent can open pages, read them, and act on them in the Browser tab. Reading never asks. Page JavaScript asks in Ask and Accept File Edits, and runs without another prompt in Bypass. Turning this off removes browser tools from the model.")
                     .font(.system(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)

@@ -80,14 +80,20 @@ like; macOS remembers the size you choose for later launches.
 - **Evaluation suites and transparent scorecard routing** compare Solo and team
   configurations against immutable fixtures, then explain why an eligible agent
   was selected.
-- **Editable agents and encrypted scoped memory.** Settings can change the
+- **Editable agents and Memory 2.0.** Settings can change the
   primary agent and every team profile: display identity, self-description,
   response style, custom and per-mode guidance, capability ceilings, memory
   policy, and runtime limits. Provider/model identity and safety rules remain
   factual locked layers. The local AES-256-GCM memory vault separates personal,
-  workspace, and agent notes; its key stays in macOS Keychain. Agents may place
+  workspace, and agent records; its key stays in macOS Keychain. Each memory is
+  typed as a preference, fact, decision, procedure, or relationship, with
+  confidence, optional validity dates, provenance, conflict/supersession state,
+  and an explanation when it is recalled. Optional local-Ollama vectors remain
+  inside the encrypted vault and combine with text, recency, pin, and confidence
+  ranking. Agents may place
   conservative suggestions in a 30-day Memory Inbox, but only approved memory
-  is recalled. Just Chat can receive personal or agent memory, never workspace
+  is recalled; conflicting suggestions require **Keep Both** or **Replace
+  Older**. Just Chat can receive personal or agent memory, never workspace
   memory. Memory & Knowledge also supports explicit search, pin/stale controls,
   delete-all, and readable JSON export/import.
 - **Modern MCP support** adds allowlisted resources and prompts, long-running
@@ -99,7 +105,7 @@ like; macOS remembers the size you choose for later launches.
   addressable elements, click and type, capture screenshots, and inspect the
   console and network — in the same Browser tab the user sees. It is on by
   default, works in every build including the App Store one, and keeps reading
-  permission-free while page JavaScript always asks.
+  permission-free while page JavaScript follows the selected permission mode.
 
 See the [Agent Teams feature and usage guide](Docs/AGENT_TEAMS_FEATURE_GUIDE.md)
 for setup, examples, permission boundaries, recovery, and troubleshooting.
@@ -332,8 +338,9 @@ Plan tab:
 | **Accept file edits** | Edits inside the open workspace apply without asking; commands and anything outside it still ask. |
 | **Bypass all** | Nothing asks. The deny list still applies. |
 
-Reading, searching, and listing are automatic inside the open workspace and ask
-every time outside it. Answering **don't ask again** grants that tool for the
+Reading, searching, and listing are automatic inside the open workspace. Ask
+and Accept File Edits confirm access outside it; Bypass does not. Answering
+**don't ask again** grants that tool for the
 rest of the session everywhere on disk, not only inside the workspace — "Reset
 session allowances" takes it back.
 
@@ -342,6 +349,12 @@ catastrophic command prefixes outright — `rm -rf /`, `mkfs`, `dd if=`, and for
 bombs — checked against every chained segment of a command, so a harmless prefix
 cannot smuggle one in. It is a guard rail against an obvious accident, not a
 sandbox: the agent runs with your privileges by design.
+
+macOS privacy prompts are separate from this setting. Bypass controls Locus's
+agent-tool confirmations; macOS can still ask the app for Documents, Desktop,
+Accessibility, or Screen Recording access. A stable installed/signed copy is
+normally remembered, while rebuilt or differently signed copies can look like a
+new app to macOS and prompt again.
 
 ## Requirements
 
@@ -462,9 +475,12 @@ pauses at a checkpoint and offers recovery instead of starting later jobs or
 synthesizing a false completion. Choose a Fixed limit only when a smaller hard
 ceiling is intentional; Solo keeps its 40-step safety limit.
 
-A team may include several write-capable coding profiles. The dispatcher must
-order every coding job through dependencies; Locus then runs them one at a time
-in the same checkout. The **Lead Writer** remains responsible for safe fallback
+A team may include several write-capable coding profiles. With **Parallel
+worktrees** enabled, independent coding jobs run concurrently in private child
+worktrees up to the team's concurrency limit. Jobs declare dependencies only
+when they need another writer's changes. Locus integrates completed patches in
+plan order and pauses with a structured conflict plus the preserved child
+checkout instead of guessing. The **Lead Writer** remains responsible for safe fallback
 and any combined fix requested after review. Each coding profile keeps its own
 provider, model, MCP policy, and access ceiling, while the global Ask / Accept
 Edits / Bypass permission choice remains in force.
@@ -747,6 +763,10 @@ LOCUS_BACKEND_ROOT=/path/to/agent xcodebuild -project Locus.xcodeproj -scheme Lo
 
 # Skip only the managed ChatGPT helper for a quick UI-only development build:
 LOCUS_BUNDLE_CODEX=skip xcodebuild -project Locus.xcodeproj -scheme Locus
+
+# Compile and test local source changes without invoking code signing:
+LOCUS_BUNDLE_MODE=skip LOCUS_BUNDLE_CODEX=skip \
+  xcodebuild -project Locus.xcodeproj -scheme Locus CODE_SIGNING_ALLOWED=NO build
 ```
 
 Debug builds use Xcode's portable ad-hoc “Sign to Run Locally” identity and do
@@ -755,6 +775,11 @@ build phases remove an unsigned `LocusTests.xctest` left in the host app by an
 earlier test build and strip quarantine, Finder, and resource-fork metadata
 from copied runtime files. Release and App Store builds retain their
 distribution signing rules.
+
+If Xcode reports `Command CodeSign failed`, use the unsigned command above to
+separate a compile failure from a local signing/keychain problem. The unsigned
+app is for build verification; launching Computer Control still requires a
+stable signed direct build.
 
 Working on the agent itself needs a venv (any Python 3.10 or newer):
 

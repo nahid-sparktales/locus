@@ -217,6 +217,7 @@ Rules:
 4. Paths are relative to the working directory unless they start with /.
 5. Keep going: after a tool result comes back, continue with the next step until the task is fully done, then stop calling tools and give your final answer.
 6. Be concise. Final answers: 1-3 short sentences saying what you did and which files changed.
+7. When the user states an explicit durable preference, repeats a lasting constraint, or confirms a decision or outcome, call propose_memory once so it appears in the review-only Memory Inbox. Never propose guesses, secrets, or transient task details.
 
 Environment:
 - OS: {os_name}
@@ -2445,12 +2446,21 @@ class AgentCore:
                 **event_info,
             })
             return result
-        force_confirmation = self.perms.requires_confirmation(tc.name, tc.arguments)
-        auto = not force_confirmation and (
+        # Bypass is literal after hard deny-list/takeover checks have passed.
+        # Consequence confirmations are a softer Ask/Accept Edits boundary.
+        force_confirmation = (
+            not self.perms.skip_all
+            and self.perms.requires_confirmation(tc.name, tc.arguments)
+        )
+        status_only = (
+            tc.name == "background_service"
+            and str(tc.arguments.get("action") or "status").lower() == "status"
+        )
+        auto = status_only or (not force_confirmation and (
             self.tool_registry.is_safe(tc.name) or self.perms.is_auto_allowed(
                 permission_key, inside_workspace=self._targets_workspace(tc)
             )
-        )
+        ))
         self._emit({
             "type": "tool_call_proposed",
             "id": call_id,

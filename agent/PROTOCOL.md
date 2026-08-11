@@ -143,8 +143,9 @@ Every result is labelled untrusted and cannot alter instructions, permissions,
 or team membership.
 
 `/api/memory` is the separate local memory vault. Payloads are authenticated
-with AES-256-GCM; the native app keeps the master key in the macOS Keychain and
-passes it over the one-shot startup pipe, never in arguments or the environment.
+with AES-256-GCM; the agent keeps the master key in a user-only local file at
+`$OLLAMA_CODE_HOME/memory/master.key` (mode `0600`, inside a `0700` directory).
+Memory never accesses the macOS Keychain and needs no sign-in prompt.
 Records are `personal`, `workspace`, or `agent` scoped and either `candidate`
 or `approved`. Candidate suggestions expire after 30 days and are never used
 for recall until `POST /api/memory/{id}/approve`. Manual Remember creates an

@@ -4,8 +4,8 @@ The app injects credential-free proxy URLs at agent spawn — ``HTTP_PROXY``/
 ``HTTPS_PROXY`` for a manual HTTP proxy, ``ALL_PROXY=socks5h://…`` for SOCKS —
 plus ``NO_PROXY``. Startup secrets never travel in the environment: the app
 sets a non-secret stdin flag, writes one bounded JSON line containing an
-optional percent-encoded proxy credential and the Keychain-backed memory key,
-then closes the pipe. The legacy proxy-only stdin form remains accepted.
+optional percent-encoded proxy credential, then closes the pipe. The legacy
+proxy-only stdin form remains accepted.
 requests and httpx read proxies straight from ``os.environ``, so folding that
 credential into the URL variables is all this process needs to authenticate.
 
@@ -25,7 +25,6 @@ strips it back out of everything spawned.
 """
 from __future__ import annotations
 
-import base64
 import json
 import os
 import sys
@@ -61,12 +60,6 @@ _CREDENTIAL_VARS = (
 #: into a child that inherits the whole environment is not Locus's to remove.
 #: It deliberately does *not* gate ``child_proxy_env`` — see that docstring.
 credential_applied = False
-_memory_master_key: bytes | None = None
-
-
-def memory_master_key() -> bytes | None:
-    """Return the in-memory memory-vault key received during secure startup."""
-    return _memory_master_key
 
 
 def activate_from_env() -> None:
@@ -91,7 +84,7 @@ def activate_from_env() -> None:
     at all, and idempotent: a second call finds nothing to consume and changes
     nothing.
     """
-    global credential_applied, _memory_master_key
+    global credential_applied
     bootstrap_stdin = os.environ.pop("LOCUS_BOOTSTRAP_SECRETS_STDIN", None) == "1"
     from_stdin = os.environ.pop("LOCUS_PROXY_CREDENTIAL_STDIN", None) == "1"
     # Popped and dropped on the floor: whatever put a value here, it is not the
@@ -107,10 +100,6 @@ def activate_from_env() -> None:
             payload = json.loads(raw.decode("utf-8")) if raw else {}
             if isinstance(payload, dict):
                 credential = str(payload.get("proxy_credential") or "").strip()
-                encoded_key = str(payload.get("memory_key") or "")
-                key = base64.b64decode(encoded_key, validate=True) if encoded_key else b""
-                if len(key) == 32:
-                    _memory_master_key = key
         except (AttributeError, OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
             credential = ""
     elif from_stdin:

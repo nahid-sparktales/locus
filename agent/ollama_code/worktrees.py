@@ -88,6 +88,52 @@ class TaskCheckout:
             raise WorktreeError("task patch exceeds the 128 MB safety limit")
         return patch.decode("utf-8", errors="surrogateescape"), current_tree
 
+    def snapshot_commit(self) -> tuple[str, str]:
+        """Create an immutable private commit for child worktrees.
+
+        ``git commit-tree`` writes only an object: it never moves this
+        checkout's HEAD, branch, index, or files.
+        """
+        current_tree = self.capture_tree()
+        commit = _git(
+            Path(self.execution_path),
+            "-c", "user.name=Locus Parallel Baseline",
+            "-c", "user.email=locus@localhost",
+            "commit-tree", current_tree,
+            "-p", self.baseline_commit,
+            "-m", "Locus parallel writer baseline",
+        ).strip()
+        return commit, current_tree
+
+    def integrate(self, child: TaskCheckout) -> dict[str, Any]:
+        """Apply one child delta into this managed checkout atomically."""
+        if Path(child.workspace_root).resolve() != Path(self.workspace_root).resolve():
+            raise WorktreeError("parallel writer belongs to another workspace")
+        patch_text, current_tree = child.patch()
+        patch = patch_text.encode("utf-8", errors="surrogateescape")
+        if not patch:
+            return {"ok": True, "applied": False, "tree": current_tree, "paths": []}
+        target = Path(self.execution_path)
+        checked = _git_input(
+            target, patch, "apply", "--check", "--binary", "--whitespace=nowarn"
+        )
+        if checked.returncode != 0:
+            detail = checked.stderr.decode("utf-8", errors="replace").strip()
+            raise WorktreeError(
+                f"parallel writer changes conflict during deterministic integration: {detail}"
+            )
+        applied = _git_input(
+            target, patch, "apply", "--binary", "--whitespace=nowarn"
+        )
+        if applied.returncode != 0:
+            detail = applied.stderr.decode("utf-8", errors="replace").strip()
+            raise WorktreeError(f"parallel writer changes were not integrated: {detail}")
+        paths = _changed_paths(
+            Path(child.execution_path), child.applied_tree or child.baseline_tree, current_tree
+        )
+        self.save()
+        return {"ok": True, "applied": True, "tree": current_tree, "paths": paths}
+
     def apply(self) -> dict[str, Any]:
         patch_text, current_tree = self.patch()
         patch = patch_text.encode("utf-8", errors="surrogateescape")
@@ -187,6 +233,42 @@ class TaskCheckoutStore:
                 baseline_tree=source.baseline_tree,
                 baseline_commit=source.baseline_commit,
                 state="queued",
+            )
+            record.save()
+            return record
+        except Exception:
+            try:
+                if checkout.exists():
+                    _git(root, "worktree", "remove", "--force", str(checkout))
+            except WorktreeError:
+                pass
+            shutil.rmtree(task_dir, ignore_errors=True)
+            raise
+
+    @staticmethod
+    def fork(source: TaskCheckout, task_id: str) -> TaskCheckout:
+        """Fork the source checkout's current state for one parallel writer."""
+        if not _TASK_ID.fullmatch(task_id):
+            raise WorktreeError("parallel writer task id is invalid")
+        root = Path(source.workspace_root).expanduser().resolve()
+        task_dir = (TASKS_DIR / task_id).resolve()
+        if task_dir.parent != TASKS_DIR.resolve() or task_dir.exists():
+            raise WorktreeError("parallel writer task already exists or escaped its root")
+        baseline_commit, baseline_tree = source.snapshot_commit()
+        checkout = task_dir / "checkout"
+        task_dir.mkdir(parents=True, exist_ok=False)
+        try:
+            _git(root, "worktree", "add", "--detach", str(checkout), baseline_commit)
+            observed_tree = _git(checkout, "rev-parse", "HEAD^{tree}").strip()
+            if observed_tree != baseline_tree:
+                raise WorktreeError("parallel writer baseline could not be reproduced")
+            record = TaskCheckout(
+                id=task_id,
+                workspace_root=str(root),
+                execution_path=str(checkout),
+                baseline_tree=baseline_tree,
+                baseline_commit=baseline_commit,
+                state="running",
             )
             record.save()
             return record

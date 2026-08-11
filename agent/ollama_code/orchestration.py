@@ -2,9 +2,8 @@
 
 The control path is intentionally narrower than the ordinary agent loop:
 dispatchers and specialists receive no mutation, MCP, extension, or computer
-schemas. They return structured evidence to this module; ordered coding jobs
-are handed back to the server, which runs them sequentially through AgentCore's
-existing permission-controlled tool loop in one shared checkout.
+schemas. They return structured evidence to this module; independent coding
+jobs may run in isolated worktrees and are integrated deterministically.
 """
 from __future__ import annotations
 
@@ -184,6 +183,7 @@ class AgentTeam:
     default_writer_id: str
     use_managed_worktree: bool
     budget: OrchestrationBudget
+    parallel_writers: bool = False
     dispatch_approval_mode: str = "automatic"
     routing_mode: str = "manual"
     routing_weights: dict[str, float] = field(default_factory=dict)
@@ -1211,8 +1211,8 @@ class TeamOrchestrator:
             "Create the minimal dependency graph for the request. Only you may create jobs. "
             "Read-only planner/researcher/tester/reviewer jobs may be parallel. Add one or more "
             "writer jobs only for mutation-capable members, scope each writer to a distinct coding "
-            "area, and order every pair of writer jobs through dependencies because they share one "
-            "checkout and never run concurrently. The lead writer is available for fallback and "
+            "area. Independent writer jobs may omit dependencies when parallel worktrees are enabled; "
+            "add dependencies whenever one writer needs another writer's changes. The lead writer is available for fallback and "
             "review integration but need not own an initial coding job. No recursive delegation. Submit the plan "
             "with submit_dispatch_plan before doing any work.\n\n"
             f"Request:\n{request}\n\nWorkspace: {workspace}\n"
@@ -1581,6 +1581,8 @@ def parse_manifest(value: Any) -> tuple[str, AgentTeam, dict[str, AgentProfile],
         member_ids=members,
         default_writer_id=_identifier(raw.get("default_writer_id"), "default writer id"),
         use_managed_worktree=bool(raw.get("use_managed_worktree", True)),
+        parallel_writers=bool(raw.get("parallel_writers", False))
+        and bool(raw.get("use_managed_worktree", True)),
         budget=OrchestrationBudget.parse(raw.get("budget")),
         dispatch_approval_mode=str(raw.get("dispatch_approval_mode") or "automatic"),
         routing_mode=str(raw.get("routing_mode") or "manual"),
@@ -1688,7 +1690,8 @@ def validate_dispatch_plan(
     writers = [job for job in jobs if job.kind == "writer"]
     if not writers:
         raise OrchestrationError("dispatcher plan must contain at least one coding job")
-    _reject_unordered_writers(jobs, writers)
+    if not team.parallel_writers:
+        _reject_unordered_writers(jobs, writers)
     minimum_model_calls = len(jobs) + 2 + (1 if team.budget.max_rounds > 1 else 0)
     if team.budget.max_model_calls < minimum_model_calls:
         raise OrchestrationError(
@@ -1993,6 +1996,8 @@ def orchestration_fingerprint(
             "id": team.id, "dispatcher_id": team.dispatcher_id,
             "fallback_dispatcher_id": team.fallback_dispatcher_id,
             "member_ids": team.member_ids, "default_writer_id": team.default_writer_id,
+            "use_managed_worktree": team.use_managed_worktree,
+            "parallel_writers": team.parallel_writers,
             "budget": team.budget.__dict__,
             "dispatch_approval_mode": team.dispatch_approval_mode,
             "routing_mode": team.routing_mode, "routing_weights": team.routing_weights,
