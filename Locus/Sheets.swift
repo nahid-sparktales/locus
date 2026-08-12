@@ -455,9 +455,13 @@ private struct ExtensionsSettingsView: View {
                         }
                         ForEach(model.extensions.mcpPresets) { preset in
                             HStack(alignment: .top, spacing: 10) {
-                                Image(systemName: "network.badge.shield.half.filled")
-                                    .foregroundStyle(LocusTheme.muted)
-                                    .frame(width: 20)
+                                MCPLogo(
+                                    name: preset.displayName,
+                                    url: preset.url,
+                                    presetID: preset.id,
+                                    size: 28
+                                )
+                                .accessibilityIdentifier("extensions.mcp.preset.\(preset.id).logo")
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(preset.displayName)
                                         .font(.system(size: 10, weight: .semibold))
@@ -492,10 +496,23 @@ private struct ExtensionsSettingsView: View {
                     }
                     ForEach(model.extensions.mcpServers) { server in
                         VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Circle()
-                                    .fill(mcpStatusColor(server.state))
-                                    .frame(width: 7, height: 7)
+                            HStack(spacing: 10) {
+                                MCPLogo(
+                                    name: server.name,
+                                    url: server.url,
+                                    presetID: server.presetID,
+                                    size: 30
+                                )
+                                .overlay(alignment: .bottomTrailing) {
+                                    Circle()
+                                        .fill(mcpStatusColor(server.state))
+                                        .frame(width: 8, height: 8)
+                                        .overlay {
+                                            Circle().stroke(LocusTheme.white, lineWidth: 1.5)
+                                        }
+                                        .offset(x: 2, y: 2)
+                                }
+                                .accessibilityIdentifier("extensions.mcp.server.\(server.id).logo")
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(server.name).font(.system(size: 11, weight: .semibold))
                                     Text("\(server.transport.uppercased()) · \(server.state ?? "disconnected") · \(server.toolCount ?? 0) tools")
@@ -781,8 +798,16 @@ private struct MCPPresetReviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
-            Text("Review \(preset.displayName) connection")
-                .font(.system(size: 16, weight: .bold))
+            HStack(spacing: 10) {
+                MCPLogo(
+                    name: preset.displayName,
+                    url: preset.url,
+                    presetID: preset.id,
+                    size: 34
+                )
+                Text("Review \(preset.displayName) connection")
+                    .font(.system(size: 16, weight: .bold))
+            }
             Text(preset.description)
                 .font(.system(size: 10))
                 .foregroundStyle(LocusTheme.muted)
@@ -840,9 +865,17 @@ private struct MCPEnableReviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
-            Label("Connection verified", systemImage: "checkmark.shield.fill")
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(LocusTheme.success)
+            HStack(spacing: 10) {
+                MCPLogo(
+                    name: server.name,
+                    url: server.url,
+                    presetID: server.presetID,
+                    size: 34
+                )
+                Label("Connection verified", systemImage: "checkmark.shield.fill")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(LocusTheme.success)
+            }
             Text("\(server.name) completed its tool probe. Enable it now, or keep the reviewed server disabled in Settings.")
                 .font(.system(size: 10))
             Text("The default policy uses MCP safety annotations. Resources are discoverable; server prompts remain disabled until you explicitly allow them.")
@@ -1815,14 +1848,14 @@ struct SettingsView: View {
                     .disabled(model.allowedTools.isEmpty && model.permissionMode == .ask)
                     .accessibilityIdentifier("settings.resetPermissions")
 
-                Text("Ask and Accept File Edits confirm access outside the workspace. Bypass skips those confirmations, while the deny list and credential/transaction takeover rules still apply.")
+                Text("Ask and Accept File Edits confirm access outside the workspace. Full Access skips those confirmations, while the deny list and credential/transaction takeover rules still apply.")
                     .font(.system(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Label("macOS folder access is separate", systemImage: "folder.badge.questionmark")
                     .font(.system(size: 9, weight: .semibold))
-                Text("Bypass controls agent tool approvals. macOS may still ask Locus itself for Documents, Desktop, Accessibility, or Screen Recording access. A stable signed app normally remembers that system choice; rebuilding or launching a differently signed copy can make macOS ask again.")
+                Text("Full Access controls agent tool approvals. macOS may still ask Locus itself for Documents, Desktop, Accessibility, or Screen Recording access. A stable signed app normally remembers that system choice; rebuilding or launching a differently signed copy can make macOS ask again.")
                     .font(.system(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1834,7 +1867,7 @@ struct SettingsView: View {
                     set: { model.setBrowserEnabled($0) }
                 ))
                 .accessibilityIdentifier("settings.browser.enabled")
-                Text("The agent can open pages, read them, and act on them in the Browser tab. Reading never asks. Page JavaScript asks in Ask and Accept File Edits, and runs without another prompt in Bypass. Turning this off removes browser tools from the model.")
+                Text("The agent can open pages, read them, and act on them in the Browser tab. Reading never asks. Page JavaScript asks in Ask and Accept File Edits, and runs without another prompt in Full Access. Turning this off removes browser tools from the model.")
                     .font(.system(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)

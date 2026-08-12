@@ -502,7 +502,7 @@ final class ComputerControlService: ObservableObject {
         guard confirm.contains(where: context.contains) else { return true }
         let alert = NSAlert()
         alert.messageText = "Allow this computer action?"
-        alert.informativeText = "Locus wants to use \(tool) on “\(descriptor.title.nilIfEmpty ?? descriptor.role)”. This action stays confirmation-gated even in Bypass mode."
+        alert.informativeText = "Locus wants to use \(tool) on “\(descriptor.title.nilIfEmpty ?? descriptor.role)”. This action stays confirmation-gated even in Full Access mode."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Allow Once")
         alert.addButton(withTitle: "Cancel")

@@ -22,6 +22,19 @@ final class LocusUITests: XCTestCase {
         app.descendants(matching: .any)[identifier].firstMatch
     }
 
+    /// Existence becomes true at the start of a SwiftUI transition, before a
+    /// newly presented control has necessarily reached a clickable position.
+    private func waitUntilHittable(_ element: XCUIElement, timeout: TimeInterval = 3) -> Bool {
+        let ready = XCTNSPredicateExpectation(
+            predicate: NSPredicate { candidate, _ in
+                guard let candidate = candidate as? XCUIElement else { return false }
+                return candidate.exists && candidate.isHittable
+            },
+            object: element
+        )
+        return XCTWaiter.wait(for: [ready], timeout: timeout) == .completed
+    }
+
     /// SwiftUI alerts surface as sheets labeled "alert" on current macOS;
     /// their message text is exposed as a value, not a label.
     private func staticTextWithValue(containing fragment: String) -> XCUIElement {
@@ -141,7 +154,8 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.menuItems["Delete Chat"].exists)
         app.typeKey(.escape, modifierFlags: [])
 
-        XCTAssertTrue(anyElement("sidebar.addWorkspace").exists)
+        XCTAssertFalse(anyElement("sidebar.addWorkspace").exists)
+        XCTAssertTrue(anyElement("sidebar.activity").exists)
 
         anyElement("sidebar.more").click()
         let archivedToggle = app.menuItems["sidebar.showArchived"]
@@ -164,6 +178,8 @@ final class LocusUITests: XCTestCase {
     }
 
     func testWorkspaceProfileContextPackAndPromptHistoryControls() {
+        XCTAssertTrue(anyElement("workspace.header.workspaceIcon").waitForExistence(timeout: 3))
+
         let workspaceMenu = anyElement("sidebar.workspaceMenu")
         XCTAssertTrue(workspaceMenu.waitForExistence(timeout: 3))
         workspaceMenu.click()
@@ -194,6 +210,12 @@ final class LocusUITests: XCTestCase {
             let control = anyElement("extensions.tab.\(tab)")
             XCTAssertTrue(control.waitForExistence(timeout: 3))
             control.click()
+            if tab == "mcp-servers" {
+                XCTAssertTrue(
+                    anyElement("extensions.mcp.preset.github.logo").waitForExistence(timeout: 3),
+                    "MCP providers should display their own identity marks"
+                )
+            }
         }
         XCTAssertTrue(app.staticTexts["Reusable workflows"].exists)
     }
@@ -774,23 +796,67 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("plan.create").waitForExistence(timeout: 3))
     }
 
-    func testPlanTabOrdersContextThenActivePlanThenPermissions() {
+    func testPlanTabPlacesPlanBeforeContextAndOmitsPermissions() {
+        let tabBar = anyElement("inspector.tabBar")
         let context = anyElement("plan.contextWindow")
         let activePlan = anyElement("plan.activePlan")
+        let openIn = anyElement("plan.openIn")
         let permissionControl = anyElement("plan.permissionMode")
         let window = app.windows.firstMatch
 
+        XCTAssertTrue(tabBar.waitForExistence(timeout: 3))
         XCTAssertTrue(context.waitForExistence(timeout: 3))
         XCTAssertTrue(activePlan.exists)
-        XCTAssertTrue(permissionControl.exists)
-        XCTAssertLessThan(context.frame.minY, activePlan.frame.minY)
-        XCTAssertLessThan(activePlan.frame.minY, permissionControl.frame.minY)
-        XCTAssertLessThan(
-            window.frame.maxY - permissionControl.frame.maxY,
-            110,
-            "Permissions should stay anchored at the bottom of the inspector"
+        XCTAssertTrue(openIn.exists)
+        XCTAssertEqual(openIn.label, "Open workspace in Finder")
+        XCTAssertFalse(permissionControl.exists)
+        XCTAssertLessThanOrEqual(
+            abs(tabBar.frame.minY - window.frame.minY),
+            2,
+            "Inspector tabs should occupy the hidden title-bar band"
+        )
+        XCTAssertLessThan(activePlan.frame.minY, context.frame.minY)
+        XCTAssertLessThanOrEqual(
+            window.frame.maxY - context.frame.maxY,
+            30,
+            "Context window should stay pinned to the bottom of the Plan tab"
+        )
+        XCTAssertLessThanOrEqual(
+            context.frame.maxX,
+            tabBar.frame.maxX + 1,
+            "Plan cards must remain inside the inspector instead of clipping under the rail"
         )
         XCTAssertFalse(anyElement("checkpointTab.content").exists)
+    }
+
+    func testOverflowingInspectorTabsStillSwitchBrowserAndTerminal() {
+        // Six destinations exercise the horizontally scrolling tab path.
+        // Browser and Terminal both install native AppKit views; those views
+        // must never cover the shared inspector tabs for hit-testing.
+        app.typeKey("2", modifierFlags: .command)
+        app.typeKey("3", modifierFlags: .command)
+        app.typeKey("4", modifierFlags: .command)
+        app.typeKey("5", modifierFlags: .command)
+        app.typeKey("7", modifierFlags: .command)
+        app.typeKey("4", modifierFlags: .command)
+
+        var browserTab: XCUIElement { app.buttons["inspector.tab.preview"].firstMatch }
+        var terminalTab: XCUIElement { app.buttons["inspector.tab.terminal"].firstMatch }
+        XCTAssertTrue(browserTab.waitForExistence(timeout: 3))
+        XCTAssertTrue(terminalTab.exists)
+        XCTAssertTrue(browserTab.isHittable)
+        XCTAssertTrue(terminalTab.isHittable)
+        XCTAssertTrue(anyElement("terminal.output").waitForExistence(timeout: 3))
+
+        browserTab.click()
+        XCTAssertTrue(anyElement("browser.url").waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("terminal.output").exists)
+
+        terminalTab.click()
+        XCTAssertTrue(anyElement("terminal.output").waitForExistence(timeout: 3))
+
+        browserTab.click()
+        XCTAssertTrue(anyElement("browser.url").waitForExistence(timeout: 3))
     }
 
     func testChangesTabShowsSeededWorkingTreeAndOpensADiff() {
@@ -871,9 +937,10 @@ final class LocusUITests: XCTestCase {
     /// Relaunches with the opt-in pending-permission fixture. It is not part
     /// of the base seed because a pending request disables send and
     /// clear-chat, which would break the rest of the suite.
-    private func relaunchWithPendingPermission() {
+    private func relaunchWithPendingPermission(toolActivityMode: String? = nil) {
         app.terminate()
         app.launchEnvironment["LOCUS_UI_TESTING_PERMISSION"] = "1"
+        app.launchEnvironment["LOCUS_UI_TESTING_TOOL_ACTIVITY_MODE"] = toolActivityMode
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }
@@ -885,9 +952,10 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }
 
-    private func relaunchWithScrollFixture() {
+    private func relaunchWithScrollFixture(toolActivityMode: String? = nil) {
         app.terminate()
         app.launchEnvironment["LOCUS_UI_TESTING_SCROLL"] = "1"
+        app.launchEnvironment["LOCUS_UI_TESTING_TOOL_ACTIVITY_MODE"] = toolActivityMode
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }
@@ -957,21 +1025,30 @@ final class LocusUITests: XCTestCase {
         relaunchWithRunFixture("activity")
 
         let destination = anyElement("sidebar.activity")
+        let newChat = anyElement("sidebar.newSession")
         XCTAssertTrue(destination.waitForExistence(timeout: 3))
+        XCTAssertTrue(newChat.exists)
+        XCTAssertLessThanOrEqual(abs(destination.frame.midY - newChat.frame.midY), 2)
+        XCTAssertGreaterThan(destination.frame.minX, newChat.frame.maxX)
         XCTAssertTrue("\(destination.value ?? "")".contains("1 needs attention"))
         destination.click()
         XCTAssertTrue(anyElement("activity.center").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("activity.run.seed-run").waitForExistence(timeout: 3))
+        XCTAssertTrue(app.textViews["composer.input"].exists)
         XCTAssertTrue("\(destination.value ?? "")".contains("No new activity"))
 
-        anyElement("session.seed-current").click()
-        XCTAssertTrue(app.textViews["composer.input"].waitForExistence(timeout: 3))
+        destination.click()
         XCTAssertFalse(anyElement("activity.center").exists)
+        XCTAssertTrue(app.textViews["composer.input"].exists)
 
         destination.click()
         let remove = anyElement("activity.remove.seed-run")
         XCTAssertTrue(remove.waitForExistence(timeout: 3))
-        remove.click()
+        // The activity center is a SwiftUI overlay. macOS 15 and 26 can mark
+        // its visible buttons non-hittable in XCUI even though AppKit routes a
+        // pointer at the same frame correctly. Exercise the real hit-testing
+        // path at the button's center and verify the resulting removal.
+        remove.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         XCTAssertTrue(app.staticTexts["No Activity Yet"].waitForExistence(timeout: 3))
     }
 
@@ -980,31 +1057,77 @@ final class LocusUITests: XCTestCase {
 
         let transcript = anyElement("conversation.scroll")
         XCTAssertTrue(transcript.waitForExistence(timeout: 3))
+        let group = anyElement(
+            "toolActivity.group.00000000-0000-0000-0000-000000000101"
+        )
+        XCTAssertTrue(group.waitForExistence(timeout: 3))
         let firstTool = anyElement("tool.scroll-tool-0.toggle")
+        XCTAssertFalse(firstTool.exists, "collapsed mode starts with one request-level row")
+        group.click()
         XCTAssertTrue(firstTool.waitForExistence(timeout: 3))
         firstTool.click()
 
         // Begin the gesture over selectable tool output. It must continue on
         // the transcript instead of being swallowed by the nested responder.
-        firstTool.scroll(byDeltaX: 0, deltaY: -2_400)
         let lastTool = anyElement("tool.scroll-tool-11.toggle")
-        // Hosted macOS 15 runners can report a shorter wheel distance for the
-        // same synthesized gesture. Continue from the transcript until its
-        // final fixture item enters the accessibility viewport.
-        for _ in 0..<3 where !lastTool.isHittable {
-            transcript.scroll(byDeltaX: 0, deltaY: -2_400)
+        // Grouping puts the tool cards next to one another. Move through them
+        // in bounded steps so a single synthetic wheel event cannot jump past
+        // the lazy stack and evict the final card from accessibility.
+        firstTool.scroll(byDeltaX: 0, deltaY: -320)
+        for _ in 0..<8 {
+            if lastTool.exists, lastTool.isHittable { break }
+            transcript.scroll(byDeltaX: 0, deltaY: -320)
         }
         XCTAssertTrue(lastTool.waitForExistence(timeout: 3))
         XCTAssertTrue(lastTool.isHittable)
         lastTool.click()
 
-        lastTool.scroll(byDeltaX: 0, deltaY: 2_400)
         let firstMessage = anyElement("message.00000000-0000-0000-0000-000000000101")
-        for _ in 0..<3 where !firstMessage.isHittable {
-            transcript.scroll(byDeltaX: 0, deltaY: 2_400)
+        lastTool.scroll(byDeltaX: 0, deltaY: 320)
+        for _ in 0..<8 {
+            if firstMessage.exists, firstMessage.isHittable { break }
+            transcript.scroll(byDeltaX: 0, deltaY: 320)
         }
         XCTAssertTrue(firstMessage.waitForExistence(timeout: 3))
         XCTAssertTrue(firstMessage.isHittable)
+    }
+
+    func testCollapsedToolActivityGroupsAndExpands() {
+        relaunchWithScrollFixture()
+
+        let group = anyElement(
+            "toolActivity.group.00000000-0000-0000-0000-000000000101"
+        )
+        XCTAssertTrue(group.waitForExistence(timeout: 3))
+        XCTAssertTrue(group.label.contains("12 tool calls"))
+
+        let firstTool = anyElement("tool.scroll-tool-0.toggle")
+        XCTAssertFalse(firstTool.exists)
+        group.click()
+        XCTAssertTrue(firstTool.waitForExistence(timeout: 3))
+    }
+
+    func testVerboseToolActivityView() {
+        relaunchWithScrollFixture(toolActivityMode: "verbose")
+
+        XCTAssertTrue(anyElement("tool.scroll-tool-0.toggle").waitForExistence(timeout: 3))
+        XCTAssertFalse(
+            anyElement("toolActivity.group.00000000-0000-0000-0000-000000000101").exists
+        )
+    }
+
+    func testHiddenToolActivityView() {
+        relaunchWithScrollFixture(toolActivityMode: "hidden")
+
+        let hidden = anyElement(
+            "toolActivity.hidden.00000000-0000-0000-0000-000000000101"
+        )
+        XCTAssertTrue(hidden.waitForExistence(timeout: 3))
+        XCTAssertEqual(hidden.label, "Actions complete")
+        XCTAssertFalse(anyElement("tool.scroll-tool-0.toggle").exists)
+        XCTAssertFalse(
+            anyElement("toolActivity.group.00000000-0000-0000-0000-000000000101").exists
+        )
     }
 
     func testReviewAndLandShowsDiffChecksAndBothDestinations() {
@@ -1106,5 +1229,24 @@ final class LocusUITests: XCTestCase {
         // back on its own so "tell Locus what to do differently" just works.
         app.typeText("use a dry run instead")
         XCTAssertTrue((composer.value as? String)?.contains("use a dry run instead") == true)
+    }
+
+    func testHiddenToolActivityKeepsThePermissionPanelUsable() {
+        relaunchWithPendingPermission(toolActivityMode: "hidden")
+
+        XCTAssertTrue(anyElement("permission.panel").waitForExistence(timeout: 3))
+        let hidden = anyElement(
+            "toolActivity.hidden.00000000-0000-0000-0000-000000000201"
+        )
+        XCTAssertTrue(hidden.waitForExistence(timeout: 3))
+        XCTAssertEqual(hidden.label, "Action needs approval")
+        XCTAssertFalse(anyElement("tool.seed-tool-permission.toggle").exists)
+        XCTAssertTrue(anyElement("permission.once").exists)
+        XCTAssertTrue(anyElement("permission.always").exists)
+        XCTAssertTrue(anyElement("permission.deny").exists)
+        XCTAssertFalse(
+            anyElement("workspace.workStatus").label.localizedCaseInsensitiveContains("bash"),
+            "hidden mode must not leak the tool name through the persistent status strip"
+        )
     }
 }

@@ -17,34 +17,7 @@ struct WorkspaceView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-
-            if model.activityCenterPresented {
-                ActivityCenterView()
-                    .environmentObject(model)
-                    .frame(maxHeight: .infinity)
-            } else {
-                switch model.agentRuntimePhase {
-                case .recovering(let message):
-                    runtimeBanner(message, recovering: true)
-                case .unavailable(let message):
-                    runtimeBanner(message, recovering: false)
-                case .starting, .online:
-                    EmptyView()
-                }
-
-                if model.transcriptSearchPresented {
-                    TranscriptSearchBar()
-                        .environmentObject(model)
-                }
-
-                ConversationView(streamingReply: model.streamingReply)
-                    .frame(maxHeight: .infinity)
-
-                WorkStatusStrip(streamingReply: model.streamingReply)
-                    .environmentObject(model)
-
-                ComposerView()
-            }
+            contentArea
         }
         .background(LocusTheme.panel)
         .alert("Create Branch in Worktree", isPresented: $createBranchPresented) {
@@ -58,6 +31,61 @@ struct WorkspaceView: View {
             .disabled(branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         } message: {
             Text("The worktree is detached until you deliberately create a branch.")
+        }
+    }
+
+    private var contentArea: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .topTrailing) {
+                chatContent
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+
+                if model.activityCenterPresented {
+                    ActivityCenterView()
+                        .environmentObject(model)
+                        .frame(
+                            width: max(280, min(440, proxy.size.width - 24)),
+                            height: max(0, proxy.size.height - 24)
+                        )
+                        .background(LocusTheme.panel)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(LocusTheme.lineStrong, lineWidth: 1)
+                        }
+                        .shadow(color: .black.opacity(0.18), radius: 18, x: 0, y: 8)
+                        .padding(12)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                        .zIndex(2)
+                }
+            }
+            .clipped()
+        }
+    }
+
+    private var chatContent: some View {
+        VStack(spacing: 0) {
+            switch model.agentRuntimePhase {
+            case .recovering(let message):
+                runtimeBanner(message, recovering: true)
+            case .unavailable(let message):
+                runtimeBanner(message, recovering: false)
+            case .starting, .online:
+                EmptyView()
+            }
+
+            if model.transcriptSearchPresented {
+                TranscriptSearchBar()
+                    .environmentObject(model)
+            }
+
+            ConversationView(streamingReply: model.streamingReply)
+                .frame(maxHeight: .infinity)
+
+            WorkStatusStrip(streamingReply: model.streamingReply)
+                .environmentObject(model)
+
+            ComposerView()
         }
     }
 
@@ -77,9 +105,11 @@ struct WorkspaceView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 5) {
-                    Text(model.activityCenterPresented
-                        ? "ALL WORKSPACES"
-                        : URL(fileURLWithPath: model.workspacePath).lastPathComponent)
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundStyle(LocusTheme.muted)
+                        .accessibilityIdentifier("workspace.header.workspaceIcon")
+                    Text(URL(fileURLWithPath: model.workspacePath).lastPathComponent)
                     if let branch = model.gitBranch {
                         HStack(spacing: 3) {
                             Image(systemName: "arrow.triangle.branch")
@@ -96,7 +126,7 @@ struct WorkspaceView: View {
                 .font(.system(size: 8, design: .monospaced))
                 .foregroundStyle(LocusTheme.muted.opacity(0.8))
 
-                Text(model.activityCenterPresented ? "Activity" : sessionTitle)
+                Text(sessionTitle)
                     .font(.system(size: 14, weight: .bold))
                     .lineLimit(1)
             }
@@ -246,6 +276,19 @@ struct WorkspaceView: View {
                 .disabled(!model.sessions.contains(where: { $0.id == model.currentSessionID }))
                 .accessibilityIdentifier("workspace.actions.export")
                 Divider()
+                Picker("Tool activity", selection: Binding(
+                    get: { model.toolActivityVisibility },
+                    set: { model.toolActivityVisibility = $0 }
+                )) {
+                    ForEach(ToolActivityVisibility.allCases) { visibility in
+                        Text(visibility.title)
+                            .tag(visibility)
+                            .accessibilityIdentifier(
+                                "workspace.actions.toolActivity.\(visibility.rawValue)"
+                            )
+                    }
+                }
+                .pickerStyle(.inline)
                 Picker("Thinking", selection: Binding(
                     get: { model.thinkingVisibility },
                     set: { model.thinkingVisibility = $0 }
@@ -656,6 +699,21 @@ private enum ActivityGroup: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Activity rows use restrained text actions, but each still needs a reliable
+/// macOS click target. Padding lives inside the button style so the visible and
+/// accessibility frames agree instead of exposing a ten-point-tall link.
+private struct ActivityActionButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, 5)
+            .frame(minHeight: 22)
+            .background(configuration.isPressed ? LocusTheme.paperDeep : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .contentShape(Rectangle())
+            .opacity(configuration.isPressed ? 0.75 : 1)
+    }
+}
+
 struct ActivityCenterView: View {
     @EnvironmentObject private var model: AppModel
 
@@ -686,6 +744,18 @@ struct ActivityCenterView: View {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .accessibilityIdentifier("activity.refresh")
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        model.toggleActivityCenter()
+                    }
+                } label: {
+                    Image(systemName: "xmark")
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
+                .help("Close Activities")
+                .accessibilityLabel("Close Activities")
+                .accessibilityIdentifier("activity.close")
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -852,7 +922,7 @@ struct ActivityCenterView: View {
                 Spacer()
             }
             .font(.system(size: 8, weight: .semibold))
-            .buttonStyle(.borderless)
+            .buttonStyle(ActivityActionButtonStyle())
         }
         .padding(12)
         .background(LocusTheme.white.opacity(0.72))
@@ -1461,50 +1531,8 @@ private struct ConversationView: View {
                         EmptyConversationView()
                             .environmentObject(model)
                     } else {
-                        ForEach(model.blocks) { block in
-                            VStack(alignment: .leading, spacing: 12) {
-                                if block.kind == .assistant,
-                                   block.id == model.activeStreamingAssistantID
-                                {
-                                    ActiveAssistantBlockView(
-                                        reply: streamingReply,
-                                        thinkingVisibility: model.thinkingVisibility
-                                    )
-                                    .id(block.id)
-                                } else {
-                                    MessageBlockView(
-                                        block: block,
-                                        thinkingVisibility: model.thinkingVisibility,
-                                        actionsDisabled: model.isBusy || model.hasPendingPermission,
-                                        canRewind: model.canRewind(to: block),
-                                        canRegenerate: model.canRegenerate(block),
-                                        onCopy: { model.copyMessage(block.text) },
-                                        onUseAsDraft: { model.useAsDraft(block.text) },
-                                        onRewind: { model.rewind(to: block) },
-                                        onRegenerate: { model.retryLastResponse() }
-                                    )
-                                    .equatable()
-                                }
-                                if block.kind == .user, let runID = block.teamRunID {
-                                    TeamRunBoardView(runID: runID, request: block.text)
-                                        .environmentObject(model)
-                                        .id("team-board-\(runID)")
-                                }
-                            }
-                            .overlay {
-                                if let style = model.transcriptMatchStyle(for: block.id) {
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .stroke(
-                                            style == .current
-                                                ? LocusTheme.signalDeep
-                                                : LocusTheme.lineStrong.opacity(0.7),
-                                            lineWidth: style == .current ? 2 : 1
-                                        )
-                                        .padding(-7)
-                                        .allowsHitTesting(false)
-                                }
-                            }
-                            .id(block.id)
+                        ForEach(presentationItems) { item in
+                            presentationRow(item)
                         }
                     }
                     Color.clear
@@ -1554,6 +1582,76 @@ private struct ConversationView: View {
                 scrollToCurrentMatch(proxy)
             }
         }
+    }
+
+    private var presentationItems: [TranscriptPresentationItem] {
+        TranscriptPresentation.items(
+            from: model.blocks,
+            visibility: model.toolActivityVisibility
+        )
+    }
+
+    @ViewBuilder
+    private func presentationRow(_ item: TranscriptPresentationItem) -> some View {
+        switch item {
+        case .block(let block):
+            blockRow(block)
+        case .toolGroup(let id, let tools):
+            ToolActivityView(
+                groupID: id,
+                tools: tools,
+                visibility: model.toolActivityVisibility,
+                onExpansionChange: scrollCoordinator.detach
+            )
+            .padding(.leading, 43)
+            .id("tool-activity-\(id.uuidString)")
+        }
+    }
+
+    private func blockRow(_ block: ChatBlock) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if block.kind == .assistant,
+               block.id == model.activeStreamingAssistantID
+            {
+                ActiveAssistantBlockView(
+                    reply: streamingReply,
+                    thinkingVisibility: model.thinkingVisibility
+                )
+                .id(block.id)
+            } else {
+                MessageBlockView(
+                    block: block,
+                    thinkingVisibility: model.thinkingVisibility,
+                    actionsDisabled: model.isBusy || model.hasPendingPermission,
+                    canRewind: model.canRewind(to: block),
+                    canRegenerate: model.canRegenerate(block),
+                    onCopy: { model.copyMessage(block.text) },
+                    onUseAsDraft: { model.useAsDraft(block.text) },
+                    onRewind: { model.rewind(to: block) },
+                    onRegenerate: { model.retryLastResponse() }
+                )
+                .equatable()
+            }
+            if block.kind == .user, let runID = block.teamRunID {
+                TeamRunBoardView(runID: runID, request: block.text)
+                    .environmentObject(model)
+                    .id("team-board-\(runID)")
+            }
+        }
+        .overlay {
+            if let style = model.transcriptMatchStyle(for: block.id) {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(
+                        style == .current
+                            ? LocusTheme.signalDeep
+                            : LocusTheme.lineStrong.opacity(0.7),
+                        lineWidth: style == .current ? 2 : 1
+                    )
+                    .padding(-7)
+                    .allowsHitTesting(false)
+            }
+        }
+        .id(block.id)
     }
 
     private func scrollToCurrentMatch(_ proxy: ScrollViewProxy) {
@@ -2224,8 +2322,8 @@ private struct MessageBlockView: View, Equatable {
 
     private var userAvatar: AnyView {
         AnyView(
-            Text("N")
-                .font(.system(size: 10, weight: .bold))
+            Image(systemName: "person.fill")
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(LocusTheme.muted)
                 .frame(width: 30, height: 30)
                 .background(LocusTheme.paperDeep)
@@ -2234,6 +2332,7 @@ private struct MessageBlockView: View, Equatable {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(LocusTheme.line, lineWidth: 1)
                 }
+                .accessibilityHidden(true)
         )
     }
 
@@ -2524,6 +2623,139 @@ private struct ThinkingDots: View {
         }
         .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: active)
         .onAppear { active = true }
+    }
+}
+
+private struct ToolActivityView: View {
+    let groupID: UUID
+    let tools: [ToolPayload]
+    let visibility: ToolActivityVisibility
+    let onExpansionChange: () -> Void
+    @State private var expanded = false
+
+    private var status: ToolActivityAggregateStatus {
+        ToolActivityAggregateStatus(tools: tools)
+    }
+
+    @ViewBuilder
+    var body: some View {
+        switch visibility {
+        case .verbose:
+            EmptyView()
+        case .collapsed:
+            collapsedCard
+        case .hidden:
+            hiddenLine
+        }
+    }
+
+    private var collapsedCard: some View {
+        VStack(spacing: 0) {
+            Button {
+                onExpansionChange()
+                expanded.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(LocusTheme.muted)
+                    Image(systemName: statusSymbol)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(statusColor)
+                    Text("\(tools.count) tool call\(tools.count == 1 ? "" : "s")")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    Spacer()
+                    Text(collapsedStatusLabel.uppercased())
+                        .font(.system(size: 7, weight: .bold))
+                        .tracking(0.6)
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 39)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+                "\(tools.count) tool call\(tools.count == 1 ? "" : "s"), "
+                    + "\(collapsedStatusLabel), \(expanded ? "collapse" : "expand")"
+            )
+            .accessibilityIdentifier("toolActivity.group.\(groupID.uuidString)")
+
+            if expanded {
+                VStack(spacing: 8) {
+                    ForEach(tools, id: \.toolID) { tool in
+                        ToolCardView(tool: tool)
+                    }
+                }
+                .padding(10)
+                .overlay(alignment: .top) {
+                    Rectangle().fill(LocusTheme.line).frame(height: 1)
+                }
+            }
+        }
+        .locusCard(radius: 9)
+    }
+
+    private var hiddenLine: some View {
+        HStack(spacing: 8) {
+            Rectangle()
+                .fill(LocusTheme.line)
+                .frame(height: 1)
+            Image(systemName: statusSymbol)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(statusColor)
+            Text(hiddenStatusLabel)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(LocusTheme.inkSoft)
+                .fixedSize()
+            Rectangle()
+                .fill(LocusTheme.line)
+                .frame(height: 1)
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(hiddenStatusLabel)
+        .accessibilityIdentifier("toolActivity.hidden.\(groupID.uuidString)")
+    }
+
+    private var collapsedStatusLabel: String {
+        switch status {
+        case .awaitingPermission: "Needs approval"
+        case .running: "Running"
+        case .error: "Failed"
+        case .denied: "Skipped"
+        case .done: "Done"
+        }
+    }
+
+    private var hiddenStatusLabel: String {
+        switch status {
+        case .awaitingPermission: "Action needs approval"
+        case .running: "Working…"
+        case .error: "Action failed"
+        case .denied: "Action skipped"
+        case .done: "Actions complete"
+        }
+    }
+
+    private var statusSymbol: String {
+        switch status {
+        case .awaitingPermission: "exclamationmark.circle.fill"
+        case .running: "circle.dotted"
+        case .error: "xmark.circle.fill"
+        case .denied: "minus.circle.fill"
+        case .done: "checkmark.circle.fill"
+        }
+    }
+
+    private var statusColor: Color {
+        switch status {
+        case .awaitingPermission: LocusTheme.warning
+        case .running: LocusTheme.blue
+        case .error: LocusTheme.coral
+        case .denied: LocusTheme.muted
+        case .done: LocusTheme.success
+        }
     }
 }
 

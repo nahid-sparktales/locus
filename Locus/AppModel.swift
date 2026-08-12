@@ -1083,6 +1083,13 @@ final class AppModel: ObservableObject {
         set { settings.thinkingVisibilityRaw = newValue.rawValue }
     }
 
+    /// App-wide transcript density for tool activity. Like reasoning
+    /// visibility, changing it is immediate and persists through `settings`.
+    var toolActivityVisibility: ToolActivityVisibility {
+        get { settings.resolvedToolActivityVisibility }
+        set { settings.toolActivityVisibilityRaw = newValue.rawValue }
+    }
+
     var justChatEnabled: Bool { selectedMode == .ask }
 
     func setJustChatEnabled(_ enabled: Bool) {
@@ -1132,11 +1139,15 @@ final class AppModel: ObservableObject {
         if let steeringState { return steeringState }
         if let orchestrationState, isBusy { return orchestrationState.title }
         if let request = activePermissionRequest {
+            if toolActivityVisibility == .hidden { return "Action needs approval" }
             return "Waiting for permission · \(request.tool)"
         }
         if let tool = blocks.reversed().compactMap(\.tool).first(where: {
             $0.status == .running || $0.status == .awaitingPermission
         }) {
+            if toolActivityVisibility == .hidden {
+                return tool.status == .running ? "Working…" : "Action needs approval"
+            }
             return tool.status == .running
                 ? "Using \(tool.tool)"
                 : "Waiting for permission · \(tool.tool)"
@@ -5230,6 +5241,14 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             await refreshActivityRuns()
             markAllActivitySeen()
+        }
+    }
+
+    func toggleActivityCenter() {
+        if activityCenterPresented {
+            activityCenterPresented = false
+        } else {
+            openActivityCenter()
         }
     }
 
@@ -9872,6 +9891,11 @@ final class AppModel: ObservableObject {
         settings.automaticInspectorPresentationRaw = AutomaticInspectorPresentation.never.rawValue
         settings.soloPlanPresentationRaw = AutomaticInspectorPresentation.never.rawValue
         settings.teamRunsPresentationRaw = AutomaticInspectorPresentation.never.rawValue
+        if let rawMode = ProcessInfo.processInfo.environment[
+            "LOCUS_UI_TESTING_TOOL_ACTIVITY_MODE"
+        ], ToolActivityVisibility(rawValue: rawMode) != nil {
+            settings.toolActivityVisibilityRaw = rawMode
+        }
         // The suite's inspector tests assume the panel starts open; the
         // collapsed default is covered by a settings unit test instead.
         openInspectorTabs = [.plan]
@@ -9981,6 +10005,38 @@ final class AppModel: ObservableObject {
                 ))
             }
         }
+        extensions = ExtensionsResponse(
+            capabilities: ExtensionCapabilities(),
+            marketplaces: [],
+            plugins: [],
+            skills: [],
+            mcpServers: [],
+            mcpPresets: [
+                ExtensionMCPPreset(
+                    id: "github",
+                    name: "github",
+                    displayName: "GitHub",
+                    description: "Search repositories and work with issues and pull requests.",
+                    url: "https://api.githubcopilot.com/mcp/",
+                    sourceURL: nil,
+                    auth: "oauth",
+                    fallback: nil,
+                    fallbackHeader: nil,
+                    optionalHeader: nil,
+                    scopes: [],
+                    warning: "Review requested permissions before connecting.",
+                    requiresProjectRef: false,
+                    installed: false,
+                    serverID: nil,
+                    defaultToolsApprovalMode: "annotations",
+                    resourcesDiscoverable: true,
+                    promptsEnabled: false,
+                    catalogVersion: 1
+                ),
+            ],
+            errors: [],
+            pendingUpdates: 0
+        )
         promptHistory = ["Audit the current changes", "Review the workspace"]
 
         // The three newest inspector tabs read from state the agent normally
