@@ -81,9 +81,7 @@ private struct InspectorOpenTabBar: View {
                 proxy.scrollTo(model.inspectorTab.id, anchor: .center)
             }
             .onChange(of: model.inspectorTab) { _, tab in
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    proxy.scrollTo(tab.id, anchor: .center)
-                }
+                proxy.scrollTo(tab.id, anchor: .center)
             }
         }
         .frame(height: 28)
@@ -109,7 +107,7 @@ private struct InspectorOpenTabBar: View {
                 }
                 .padding(.leading, 10)
                 .padding(.trailing, 3)
-                .frame(maxHeight: .infinity)
+                .frame(height: 27)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

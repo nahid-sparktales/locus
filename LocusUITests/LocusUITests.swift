@@ -658,7 +658,12 @@ final class LocusUITests: XCTestCase {
 
         // Existing tabs switch in place and an active close selects the tab to
         // its right (Files here) without collapsing the inspector.
-        anyElement("inspector.tab.changes").click()
+        let changesTab = app.buttons["inspector.tab.changes"].firstMatch
+        XCTAssertTrue(changesTab.isHittable)
+        // On macOS 15 an AX click can land on the adjacent close control when
+        // two plain buttons share a horizontally scrolling tab. Press the
+        // label-side coordinate so this continues to exercise tab selection.
+        changesTab.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5)).click()
         XCTAssertTrue(anyElement("changes.file.0").waitForExistence(timeout: 3))
         anyElement("inspector.tab.close.changes").click()
         XCTAssertFalse(anyElement("inspector.tab.changes").exists)
@@ -1006,6 +1011,10 @@ final class LocusUITests: XCTestCase {
         let branchDestination = app.radioButtons["Branch, Commit & PR"].firstMatch
         XCTAssertTrue(branchDestination.exists)
         branchDestination.click()
+        // AppKit only publishes descendants of a SwiftUI ScrollView once they
+        // enter its viewport. Scroll the selected destination's form into the
+        // accessibility hierarchy before querying its fields.
+        anyElement("landing.destination").scroll(byDeltaX: 0, deltaY: -400)
         XCTAssertTrue(anyElement("landing.branch").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("landing.commitMessage").exists)
         XCTAssertTrue(anyElement("landing.confirm").exists)
