@@ -98,9 +98,7 @@ private struct InspectorOpenTabBar: View {
         let selected = model.inspectorTab == tab
         return HStack(spacing: 2) {
             Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    model.selectInspectorTab(tab)
-                }
+                model.selectInspectorTab(tab)
             } label: {
                 HStack(spacing: 6) {
                     Text(tab.title)
@@ -120,9 +118,7 @@ private struct InspectorOpenTabBar: View {
             .accessibilityIdentifier("inspector.tab.\(tab.rawValue)")
 
             Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    model.closeInspectorTab(tab)
-                }
+                model.closeInspectorTab(tab)
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .semibold))

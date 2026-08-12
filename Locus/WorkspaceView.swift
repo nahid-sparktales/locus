@@ -527,7 +527,6 @@ struct ReviewAndLandView: View {
                             }
                         } else {
                             TextField("Branch name", text: $branchName)
-                                .id("landing.branch")
                                 .accessibilityIdentifier("landing.branch")
                             if let branchProblem {
                                 Text(branchProblem).font(.system(size: 8)).foregroundStyle(LocusTheme.coral)
@@ -539,14 +538,16 @@ struct ReviewAndLandView: View {
                                 .font(.system(size: 8))
                                 .foregroundStyle(LocusTheme.muted)
                         }
+                        Color.clear
+                            .frame(height: 0)
+                            .id("landing.destination.bottom")
+                            .accessibilityHidden(true)
                     }
                     .padding(18)
                 }
                 .onChange(of: destination) { _, destination in
                     guard destination == "branch" else { return }
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        proxy.scrollTo("landing.branch", anchor: .bottom)
-                    }
+                    proxy.scrollTo("landing.destination.bottom", anchor: .bottom)
                 }
             }
 
