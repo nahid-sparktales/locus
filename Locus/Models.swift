@@ -1282,6 +1282,9 @@ struct AppSettings: Codable, Hashable {
     /// The last non-Plan, non-Browser panel. The inspector command restores
     /// this value so it never opens a special-purpose surface by accident.
     var inspectorLastWorkspaceTab = InspectorTab.changes.rawValue
+    /// Ordered raw values for the inspector's open, closable tabs. Strings
+    /// keep settings written by a future version from breaking this one.
+    var inspectorOpenTabs: [String] = []
     /// Legacy combined preference from the first implementation. It remains
     /// encoded so a settings file written by that build migrates cleanly; new
     /// UI writes the independent solo and team values below.
@@ -1398,6 +1401,24 @@ struct AppSettings: Codable, Hashable {
         return tab.isWorkspaceTab ? tab : .changes
     }
 
+    var resolvedInspectorOpenTabs: [InspectorTab] {
+        var seen: Set<InspectorTab> = []
+        return inspectorOpenTabs.compactMap { rawValue in
+            guard let tab = InspectorTab(rawValue: rawValue), seen.insert(tab).inserted else {
+                return nil
+            }
+            return tab
+        }
+    }
+
+    var resolvedRestoredInspectorTab: InspectorTab {
+        let openTabs = resolvedInspectorOpenTabs
+        let selected = resolvedInspectorTab
+        if openTabs.contains(selected) { return selected }
+        if let first = openTabs.first { return first }
+        return selected.isWorkspaceTab ? selected : resolvedInspectorWorkspaceTab
+    }
+
     var resolvedAutomaticInspectorPresentation: AutomaticInspectorPresentation {
         AutomaticInspectorPresentation(rawValue: automaticInspectorPresentationRaw) ?? .ask
     }
@@ -1477,6 +1498,20 @@ struct AppSettings: Codable, Hashable {
             String.self,
             forKey: .inspectorLastWorkspaceTab
         ) ?? defaults.inspectorLastWorkspaceTab
+        if container.contains(.inspectorOpenTabs) {
+            // A malformed future value should lose only the tab restoration,
+            // not the rest of the user's settings.
+            inspectorOpenTabs = (try? container.decode([String].self, forKey: .inspectorOpenTabs))
+                ?? []
+            inspectorOpenTabs = resolvedInspectorOpenTabs.map(\.rawValue)
+        } else {
+            // Before tabs were dynamic, relaunch deliberately restored the
+            // last general workspace panel instead of Plan or Browser.
+            let last = InspectorTab(rawValue: inspectorLastTab)
+            let legacy = last.flatMap { $0.isWorkspaceTab ? $0 : nil }
+                ?? (InspectorTab(rawValue: inspectorLastWorkspaceTab) ?? .changes)
+            inspectorOpenTabs = [legacy.rawValue]
+        }
         automaticInspectorPresentationRaw = try container.decodeIfPresent(
             String.self,
             forKey: .automaticInspectorPresentationRaw

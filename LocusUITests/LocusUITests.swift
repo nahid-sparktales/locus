@@ -93,10 +93,10 @@ final class LocusUITests: XCTestCase {
     }
 
     func testClearSessionsPreservesTheActiveJob() {
-        anyElement("workspace.actions").click()
+        anyElement("sidebar.more").click()
         // Matched by identifier, not title: the menu bar carries an item with
         // the same title, and an ambiguous query cannot be clicked.
-        app.menuItems["workspace.actions.clearSessions"].click()
+        app.menuItems["sidebar.clearSessions"].click()
 
         XCTAssertTrue(app.buttons["clearSessions.confirm"].waitForExistence(timeout: 3))
         XCTAssertTrue(
@@ -143,7 +143,7 @@ final class LocusUITests: XCTestCase {
 
         XCTAssertTrue(anyElement("sidebar.addWorkspace").exists)
 
-        anyElement("workspace.actions").click()
+        anyElement("sidebar.more").click()
         let archivedToggle = app.menuItems["sidebar.showArchived"]
         XCTAssertTrue(archivedToggle.waitForExistence(timeout: 2))
         archivedToggle.click()
@@ -573,15 +573,16 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("inspector.rail.more").exists, "the rail returns with agentic modes")
     }
 
-    func testRailOverflowReplacesSettingsAndSidebarSettingsIsRestored() {
+    func testRailOverflowReplacesSettingsAndSidebarSettingsMenuIsRestored() {
         let more = anyElement("inspector.rail.more")
         XCTAssertTrue(more.waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("inspector.rail.settings").exists)
         XCTAssertFalse(anyElement("inspector.rail.toggle").exists)
 
-        let settings = anyElement("sidebar.settings")
-        XCTAssertTrue(settings.waitForExistence(timeout: 3))
-        settings.click()
+        let settingsMenu = anyElement("sidebar.more")
+        XCTAssertTrue(settingsMenu.waitForExistence(timeout: 3))
+        settingsMenu.click()
+        app.menuItems["sidebar.settings"].click()
         XCTAssertTrue(anyElement("settings.page.general").waitForExistence(timeout: 3))
         app.buttons["settings.cancel"].click()
     }
@@ -591,6 +592,13 @@ final class LocusUITests: XCTestCase {
         // click collapses, its next click reopens.
         let planIcon = anyElement("inspector.rail.plan")
         XCTAssertTrue(planIcon.waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("inspector.tab.plan").exists)
+        for closedTab in ["changes", "files", "terminal", "preview", "checkpoints", "runs", "agents"] {
+            XCTAssertFalse(
+                anyElement("inspector.tab.\(closedTab)").exists,
+                "the old permanent inspector strip must not expose \(closedTab)"
+            )
+        }
         planIcon.click()
         XCTAssertFalse(anyElement("plan.contextWindow").exists)
         XCTAssertTrue(anyElement("inspector.rail.more").exists)
@@ -600,6 +608,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(terminalIcon.exists)
         terminalIcon.click()
         XCTAssertTrue(anyElement("terminal.output").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("inspector.tab.terminal").exists)
         terminalIcon.click()
         XCTAssertFalse(anyElement("terminal.output").exists)
 
@@ -608,6 +617,9 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(browserIcon.exists)
         browserIcon.click()
         XCTAssertTrue(anyElement("browser.url").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("inspector.tab.plan").exists)
+        XCTAssertTrue(anyElement("inspector.tab.terminal").exists)
+        XCTAssertTrue(anyElement("inspector.tab.preview").exists)
     }
 
     func testRailMoreMenuReachesOverflowTabs() {
@@ -629,11 +641,35 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(changes.waitForExistence(timeout: 3))
         changes.click()
         XCTAssertTrue(anyElement("changes.file.0").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("inspector.tab.plan").exists)
+        XCTAssertTrue(anyElement("inspector.tab.changes").exists)
+        XCTAssertFalse(anyElement("inspector.tab.files").exists)
 
-        // Strip-hosted tabs also close themselves now that the general toggle
-        // is gone.
+        // A second menu destination appends to the dynamic bar instead of
+        // replacing the first or exposing every destination permanently.
+        more.click()
+        let files = app.menuItems.matching(
+            NSPredicate(format: "identifier == %@", "inspector.rail.menu.files")
+        ).firstMatch
+        XCTAssertTrue(files.waitForExistence(timeout: 3))
+        files.click()
+        XCTAssertTrue(anyElement("files.search").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("inspector.tab.files").exists)
+
+        // Existing tabs switch in place and an active close selects the tab to
+        // its right (Files here) without collapsing the inspector.
         anyElement("inspector.tab.changes").click()
+        XCTAssertTrue(anyElement("changes.file.0").waitForExistence(timeout: 3))
+        anyElement("inspector.tab.close.changes").click()
+        XCTAssertFalse(anyElement("inspector.tab.changes").exists)
         XCTAssertFalse(anyElement("changes.file.0").exists)
+        XCTAssertTrue(anyElement("files.search").exists)
+
+        anyElement("inspector.tab.close.plan").click()
+        anyElement("inspector.tab.close.files").click()
+        XCTAssertFalse(anyElement("inspector.tabBar").exists)
+        XCTAssertFalse(anyElement("files.search").exists)
+        XCTAssertTrue(anyElement("inspector.rail.more").exists)
     }
 
     func testBrowserExpandsInPlaceAndRestores() {

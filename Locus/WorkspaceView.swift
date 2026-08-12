@@ -240,29 +240,11 @@ struct WorkspaceView: View {
                 }
                 .accessibilityIdentifier("workspace.actions.newLocalSession")
                 Divider()
-                Button("Clear Saved Sessions…") { model.requestClearSavedSessions() }
-                    .disabled(model.isClearingSessions)
-                    .accessibilityIdentifier("workspace.actions.clearSessions")
-                Divider()
                 Button("Export Current Session…") {
                     model.exportCurrentSession()
                 }
                 .disabled(!model.sessions.contains(where: { $0.id == model.currentSessionID }))
                 .accessibilityIdentifier("workspace.actions.export")
-                Divider()
-                Button("Usage & Costs…") { model.usageDashboardPresented = true }
-                    .accessibilityIdentifier("sidebar.usage")
-                Button("Session Checkpoints…") { model.checkpointPresented = true }
-                    .accessibilityIdentifier("sidebar.checkpoints")
-                Toggle("Show Archived Sessions", isOn: Binding(
-                    get: { model.showArchivedSessions },
-                    set: { model.setShowArchived($0) }
-                ))
-                .accessibilityIdentifier("sidebar.showArchived")
-                Button("Reconnect Agent") {
-                    Task { await model.bootstrap() }
-                }
-                .accessibilityIdentifier("sidebar.reconnect")
                 Divider()
                 Picker("Thinking", selection: Binding(
                     get: { model.thinkingVisibility },

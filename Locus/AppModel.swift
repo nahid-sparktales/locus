@@ -237,6 +237,14 @@ final class AppModel: ObservableObject {
     /// Only `selectInspectorTab(_:)` may change this. Backend events set a
     /// badge instead, so a run can never yank the panel out from under you.
     @Published private(set) var inspectorTab: InspectorTab = .plan
+    /// Ordered, de-duplicated tabs currently kept open in the inspector.
+    /// Selection and closure flow through the methods in the Inspector section
+    /// so persistence and fallback behavior cannot drift apart.
+    @Published private(set) var openInspectorTabs: [InspectorTab] = [] {
+        didSet {
+            settings.inspectorOpenTabs = openInspectorTabs.map(\.rawValue)
+        }
+    }
     @Published var inspectorCollapsed = true {
         didSet {
             guard inspectorCollapsed != oldValue else { return }
@@ -672,6 +680,15 @@ final class AppModel: ObservableObject {
             selectedAgentTeamID = loadedTeams.contains(where: { $0.id == loadedSelection })
                 ? loadedSelection : nil
         }
+        let restoredOpenInspectorTabs = loadedSettings.resolvedInspectorOpenTabs
+        loadedSettings.inspectorOpenTabs = restoredOpenInspectorTabs.map(\.rawValue)
+        if !loadedSettings.inspectorCollapsed, restoredOpenInspectorTabs.isEmpty {
+            // An open inspector without a tab has no renderable state. This is
+            // possible only through corrupt or hand-edited settings.
+            loadedSettings.inspectorCollapsed = true
+        }
+        let initialInspectorTab = loadedSettings.resolvedRestoredInspectorTab
+
         let migrateLegacyBuildMode = !loadedSettings.adaptiveWorkMigrationCompleted
         loadedSettings.adaptiveWorkMigrationCompleted = true
         if migrateLegacyBuildMode, persistenceEnabled,
@@ -728,10 +745,8 @@ final class AppModel: ObservableObject {
         zoomedChatWidth = CGFloat(loadedSettings.inspectorZoomedChatWidth)
         inspectorCollapsed = loadedSettings.inspectorCollapsed
         sidebarCollapsed = loadedSettings.sidebarCollapsed
-        let restoredInspectorTab = loadedSettings.resolvedInspectorTab
-        inspectorTab = restoredInspectorTab.isWorkspaceTab
-            ? restoredInspectorTab
-            : loadedSettings.resolvedInspectorWorkspaceTab
+        openInspectorTabs = restoredOpenInspectorTabs
+        inspectorTab = initialInspectorTab
 
         backend = backendOverride ?? BackendService(
             baseURL: URL(string: loadedSettings.backendURL) ?? URL(string: "http://127.0.0.1:8791")!
@@ -7635,11 +7650,11 @@ final class AppModel: ObservableObject {
             + "\n… \(lines.count - maxLines) more lines — open the file to see the rest."
     }
 
-    // Zoomed, the panel fills the window regardless of `inspectorWidth`.
-    var inspectorShowsLabels: Bool { inspectorZoomed || inspectorWidth >= 500 }
-
     func selectInspectorTab(_ tab: InspectorTab, selecting runID: String? = nil) {
         guard !justChatEnabled else { return }
+        if !openInspectorTabs.contains(tab) {
+            openInspectorTabs.append(tab)
+        }
         inspectorTab = tab
         if inspectorCollapsed {
             inspectorCollapsed = false
@@ -7671,6 +7686,25 @@ final class AppModel: ObservableObject {
         if tab.isWorkspaceTab {
             settings.inspectorLastWorkspaceTab = tab.rawValue
         }
+    }
+
+    /// Closes one dynamic inspector tab. The tab to the right occupies the
+    /// vacated position; closing the rightmost tab falls back to its left.
+    /// With no tabs left, the inspector returns to the rail while retaining
+    /// the last selection as the destination a future command can reopen.
+    func closeInspectorTab(_ tab: InspectorTab) {
+        guard let closingIndex = openInspectorTabs.firstIndex(of: tab) else { return }
+        let wasSelected = inspectorTab == tab
+        openInspectorTabs.remove(at: closingIndex)
+
+        guard !openInspectorTabs.isEmpty else {
+            inspectorCollapsed = true
+            return
+        }
+        guard wasSelected else { return }
+
+        let fallbackIndex = min(closingIndex, openInspectorTabs.count - 1)
+        selectInspectorTab(openInspectorTabs[fallbackIndex])
     }
 
     /// Ctrl-` mirrors the familiar integrated-terminal gesture: reveal the
@@ -7759,7 +7793,11 @@ final class AppModel: ObservableObject {
         guard zoomed != inspectorZoomed else { return }
         if zoomed {
             guard !justChatEnabled else { return }
-            if inspectorCollapsed { inspectorCollapsed = false }
+            if openInspectorTabs.isEmpty {
+                selectInspectorTab(inspectorTab)
+            } else if inspectorCollapsed {
+                inspectorCollapsed = false
+            }
             inspectorZoomed = true
             if !sidebarCollapsed {
                 restoreSidebarAfterZoom = true
@@ -9836,6 +9874,7 @@ final class AppModel: ObservableObject {
         settings.teamRunsPresentationRaw = AutomaticInspectorPresentation.never.rawValue
         // The suite's inspector tests assume the panel starts open; the
         // collapsed default is covered by a settings unit test instead.
+        openInspectorTabs = [.plan]
         inspectorTab = .plan
         inspectorCollapsed = false
         models = [
@@ -10273,6 +10312,9 @@ final class AppModel: ObservableObject {
             decode(OrchestrationEvent.self, from: $0)
         }
         orchestrationEventIDs = Set(orchestrationEvents.map(\.id))
+        if !openInspectorTabs.contains(.runs) {
+            openInspectorTabs.append(.runs)
+        }
         inspectorTab = .runs
         inspectorCollapsed = false
         if fixture == "completed",

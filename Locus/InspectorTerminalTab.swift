@@ -190,8 +190,11 @@ private struct TerminalHostView: NSViewRepresentable {
     @ObservedObject var terminal: TerminalSession
 
     func makeNSView(context: Context) -> NSView {
-        terminal.hostView
+        terminal.updateAppearance(isDark: context.environment.colorScheme == .dark)
+        return terminal.hostView
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateNSView(_ nsView: NSView, context: Context) {
+        terminal.updateAppearance(isDark: context.environment.colorScheme == .dark)
+    }
 }

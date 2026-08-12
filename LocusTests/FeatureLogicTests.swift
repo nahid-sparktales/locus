@@ -484,6 +484,10 @@ final class FeatureLogicTests: XCTestCase {
         settings.inspectorCollapsed = true
         settings.inspectorLastTab = InspectorTab.terminal.rawValue
         settings.inspectorLastWorkspaceTab = InspectorTab.files.rawValue
+        settings.inspectorOpenTabs = [
+            InspectorTab.files.rawValue,
+            InspectorTab.terminal.rawValue,
+        ]
         settings.soloPlanPresentationRaw = AutomaticInspectorPresentation.always.rawValue
         settings.teamRunsPresentationRaw = AutomaticInspectorPresentation.never.rawValue
 
@@ -496,8 +500,34 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertTrue(restored.inspectorCollapsed)
         XCTAssertEqual(restored.resolvedInspectorTab, .terminal)
         XCTAssertEqual(restored.resolvedInspectorWorkspaceTab, .files)
+        XCTAssertEqual(restored.resolvedInspectorOpenTabs, [.files, .terminal])
         XCTAssertEqual(restored.resolvedSoloPlanPresentation, .always)
         XCTAssertEqual(restored.resolvedTeamRunsPresentation, .never)
+    }
+
+    func testStoredInspectorTabsDropUnknownValuesAndDuplicatesInOrder() throws {
+        let stored = #"{"inspectorOpenTabs":["files","quantum","files","plan","runs"]}"#
+        let restored = try JSONDecoder().decode(AppSettings.self, from: Data(stored.utf8))
+
+        XCTAssertEqual(restored.resolvedInspectorOpenTabs, [.files, .plan, .runs])
+        XCTAssertEqual(restored.inspectorOpenTabs, ["files", "plan", "runs"])
+    }
+
+    func testInspectorRestorationKeepsAValidSelectionOrUsesTheFirstOpenTab() throws {
+        let valid = #"{"inspectorLastTab":"runs","inspectorOpenTabs":["files","runs"]}"#
+        let validRestored = try JSONDecoder().decode(AppSettings.self, from: Data(valid.utf8))
+        XCTAssertEqual(validRestored.resolvedRestoredInspectorTab, .runs)
+
+        let missing = #"{"inspectorLastTab":"plan","inspectorOpenTabs":["files","runs"]}"#
+        let missingRestored = try JSONDecoder().decode(AppSettings.self, from: Data(missing.utf8))
+        XCTAssertEqual(missingRestored.resolvedRestoredInspectorTab, .files)
+    }
+
+    func testLegacyInspectorSettingsSeedThePreviouslyRestoredWorkspacePanel() throws {
+        let legacy = #"{"inspectorLastTab":"preview","inspectorLastWorkspaceTab":"files"}"#
+        let restored = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
+
+        XCTAssertEqual(restored.resolvedInspectorOpenTabs, [.files])
     }
 
     func testStoredInspectorWidthIsClampedOnDecode() throws {
@@ -525,6 +555,7 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertTrue(restored.inspectorCollapsed, "the right panel starts collapsed")
         XCTAssertEqual(restored.resolvedInspectorTab, .plan)
         XCTAssertEqual(restored.resolvedInspectorWorkspaceTab, .changes)
+        XCTAssertEqual(restored.resolvedInspectorOpenTabs, [.changes])
         XCTAssertEqual(restored.resolvedSoloPlanPresentation, .ask)
         XCTAssertEqual(restored.resolvedTeamRunsPresentation, .ask)
         XCTAssertFalse(restored.sidebarCollapsed, "the session sidebar starts open")
@@ -989,6 +1020,20 @@ final class FeatureLogicTests: XCTestCase {
     }
 
     // MARK: - Terminal
+
+    @MainActor
+    func testTerminalColorsFollowActiveTheme() throws {
+        let session = TerminalSession()
+        session.updateAppearance(isDark: false)
+        let view = try XCTUnwrap(session.hostView as? LocusLocalProcessTerminalView)
+
+        assertColor(view.nativeBackgroundColor, red: 0.953, green: 0.945, blue: 0.918)
+        assertColor(view.nativeForegroundColor, red: 0.086, green: 0.094, blue: 0.078)
+
+        session.updateAppearance(isDark: true)
+        assertColor(view.nativeBackgroundColor, hex: 0x171713)
+        assertColor(view.nativeForegroundColor, hex: 0xF2EEE4)
+    }
 
     @MainActor
     func testNativeTerminalOwnsAPersistentPTY() async throws {
