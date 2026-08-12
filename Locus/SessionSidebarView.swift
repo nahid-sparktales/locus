@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The sidebar's shared rail. Every leading glyph — plus, magnifying glass,
-/// folder, and the nav rows above them — is drawn in a fixed-width column at
+/// bell, and the nav rows above them — is drawn in a fixed-width column at
 /// the same inset, so they line up down the edge whatever each symbol's own
 /// intrinsic width happens to be.
 private enum SidebarMetrics {
@@ -79,7 +79,12 @@ struct SessionSidebarView: View {
         .frame(maxHeight: .infinity)
         .background(LocusTheme.paperDeep)
         .overlay(alignment: .trailing) {
-            Rectangle().fill(LocusTheme.line).frame(width: 1)
+            Rectangle()
+                .fill(LocusTheme.line)
+                .frame(width: 1)
+                // The sidebar content stays below the traffic lights, but its
+                // column boundary should meet the top of the window chrome.
+                .ignoresSafeArea(.container, edges: .top)
         }
         .alert("Rename Session", isPresented: Binding(
             get: { sessionToRename != nil },
@@ -141,45 +146,6 @@ struct SessionSidebarView: View {
                     model.setJustChatEnabled(enabled)
                 }
             }
-
-            Button {
-                model.openActivityCenter()
-            } label: {
-                HStack(spacing: SidebarMetrics.iconGap) {
-                    Image(systemName: "waveform.path.ecg.rectangle")
-                        .font(.system(size: 12, weight: .medium))
-                        .frame(width: SidebarMetrics.iconColumn)
-                    Text("Activity")
-                        .font(.system(size: 10, weight: .semibold))
-                    Spacer(minLength: 4)
-                    if model.activityNeedsAttentionCount > 0 {
-                        Text("\(model.activityNeedsAttentionCount)")
-                            .font(.system(size: 8, weight: .bold, design: .monospaced))
-                            .foregroundStyle(LocusTheme.brandInk)
-                            .padding(.horizontal, 6)
-                            .frame(height: 18)
-                            .background(LocusTheme.signal)
-                            .clipShape(Capsule())
-                            .accessibilityIdentifier("sidebar.activity.badge")
-                    }
-                }
-                .foregroundStyle(model.activityCenterPresented
-                    ? LocusTheme.ink : LocusTheme.inkSoft)
-                .padding(.horizontal, SidebarMetrics.rowInset)
-                .frame(height: 30)
-                .background(model.activityCenterPresented
-                    ? LocusTheme.white.opacity(0.72) : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Monitor and control work across chats")
-            .accessibilityIdentifier("sidebar.activity")
-            .accessibilityValue(
-                model.activityNeedsAttentionCount > 0
-                    ? "\(model.activityNeedsAttentionCount) needs attention"
-                    : "No new activity"
-            )
 
             navigationRow(
                 symbol: "puzzlepiece.extension",
@@ -275,30 +241,46 @@ struct SessionSidebarView: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("sidebar.newSession")
 
-                Menu {
-                    Button("New Workspace Folder…") { model.createWorkspace() }
-                        .accessibilityIdentifier("workspace.new")
-                    Button("Add Existing Folder…") { model.chooseWorkspace() }
-                        .accessibilityIdentifier("workspace.addExisting")
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        model.toggleActivityCenter()
+                    }
                 } label: {
-                    Image(systemName: "folder.badge.plus")
+                    Image(systemName: model.activityCenterPresented ? "bell.fill" : "bell")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(LocusTheme.ink)
+                        .foregroundStyle(model.activityCenterPresented
+                            ? LocusTheme.ink : LocusTheme.inkSoft)
                         .frame(width: 36, height: 36)
-                        .background(LocusTheme.white.opacity(0.82))
+                        .background(model.activityCenterPresented
+                            ? LocusTheme.signal.opacity(0.9)
+                            : LocusTheme.white.opacity(0.82))
                         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                         .overlay {
                             RoundedRectangle(cornerRadius: 9, style: .continuous)
                                 .stroke(LocusTheme.line, lineWidth: 1)
                         }
+                        .overlay(alignment: .topTrailing) {
+                            if model.activityNeedsAttentionCount > 0 {
+                                Text("\(model.activityNeedsAttentionCount)")
+                                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(Color.white)
+                                    .frame(minWidth: 14, minHeight: 14)
+                                    .background(LocusTheme.danger)
+                                    .clipShape(Capsule())
+                                    .offset(x: 4, y: -4)
+                                    .accessibilityIdentifier("sidebar.activity.badge")
+                            }
+                        }
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .frame(width: 36)
-                .help("Add workspace")
-                .accessibilityLabel("Add workspace")
-                .accessibilityIdentifier("sidebar.addWorkspace")
-                .disabled(model.chatNavigationDisabled)
+                .buttonStyle(.plain)
+                .help("Activities")
+                .accessibilityLabel("Activities")
+                .accessibilityIdentifier("sidebar.activity")
+                .accessibilityValue(
+                    model.activityNeedsAttentionCount > 0
+                        ? "\(model.activityNeedsAttentionCount) needs attention"
+                        : "No new activity"
+                )
             }
 
             HStack(spacing: SidebarMetrics.iconGap) {
@@ -594,6 +576,7 @@ struct SessionSidebarView: View {
                     .font(.system(size: 11, weight: .medium))
                     .frame(width: SidebarMetrics.iconColumn)
                     .foregroundStyle(LocusTheme.muted)
+                    .accessibilityIdentifier("sidebar.workspaceIcon")
                 VStack(alignment: .leading, spacing: 1) {
                     Text(URL(fileURLWithPath: model.workspacePath).lastPathComponent)
                         .font(.system(size: 10, weight: .semibold))
@@ -1030,6 +1013,8 @@ private struct WorkspaceGroupRow: View {
                     Image(systemName: group.isOther ? "tray.full" : "folder.fill")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(active ? LocusTheme.signalDeep : LocusTheme.muted)
+                        .frame(width: 20, height: 20)
+                        .accessibilityIdentifier("workspace.group.icon.\(group.id)")
                     VStack(alignment: .leading, spacing: 1) {
                         Text(group.title)
                             .font(.system(size: 10, weight: .semibold))

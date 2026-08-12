@@ -310,12 +310,19 @@ struct RootView: View {
                             ? .infinity
                             : (locusIsUITesting ? 280 : model.inspectorWidth)
                     )
+                    // The dynamic tabs belong in the otherwise empty title-bar
+                    // band. Extending this column upward also carries its
+                    // leading separator cleanly to the window's top edge.
+                    .ignoresSafeArea(.container, edges: .top)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
 
             if !model.justChatEnabled {
                 InspectorRail()
                     .environmentObject(model)
+                    // Keep the inspector's outer separator continuous through
+                    // the hidden title bar, whether the panel is open or not.
+                    .ignoresSafeArea(.container, edges: .top)
             }
         }
         // Keyed on the sidebar and the zoom flag only: including the inspector

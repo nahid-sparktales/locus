@@ -934,7 +934,7 @@ private struct AgentProfileEditor: View {
                 .font(.system(size: 8, weight: .bold))
                 .tracking(0.8)
                 .foregroundStyle(LocusTheme.muted)
-            Text("Read-only agents get only the tool groups you check. These choices can remove access; they never override Bypass, workspace boundaries, or the read-only ceiling.")
+            Text("Read-only agents get only the tool groups you check. These choices can remove access; they never override Full Access, workspace boundaries, or the read-only ceiling.")
                 .font(.system(size: 8))
                 .foregroundStyle(LocusTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)

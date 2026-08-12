@@ -4,6 +4,7 @@ struct ComposerView: View {
     @EnvironmentObject private var model: AppModel
     @State private var contextPresented = false
     @State private var attachmentsPresented = false
+    @State private var permissionModesPresented = false
     @State private var popupSelection = 0
     @State private var popupDismissedDraft: String?
     @FocusState private var focused: Bool
@@ -798,55 +799,95 @@ struct ComposerView: View {
     /// Always-visible reminder of what the agent may do without asking, and
     /// the fastest way to change it.
     private var permissionChip: some View {
-        Menu {
-            Picker("Permission mode", selection: Binding(
-                get: { model.permissionMode },
-                set: { model.setPermissionMode($0) }
-            )) {
-                ForEach(PermissionMode.allCases) { mode in
-                    Label(mode.title, systemImage: mode.symbol).tag(mode)
-                }
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
-            Divider()
-            Text(model.permissionMode.detail)
-            Button("Reset session allowances") { model.resetPermissions() }
-                .disabled(model.allowedTools.isEmpty && model.permissionMode == .ask)
+        Button {
+            permissionModesPresented.toggle()
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: model.permissionMode.isRisky
-                    ? "exclamationmark.shield.fill"
-                    : "shield.lefthalf.filled")
-                Text(model.permissionMode.shortTitle)
-            }
-            .font(.system(size: 8, weight: .semibold))
-            .foregroundStyle(model.permissionMode.isRisky ? LocusTheme.coral : LocusTheme.muted)
-            .padding(.horizontal, 8)
-            .frame(height: 27)
-            .background(
-                model.permissionMode.isRisky
-                    ? LocusTheme.coral.opacity(0.1)
-                    : LocusTheme.paperDeep.opacity(0.75)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(
-                        model.permissionMode.isRisky
-                            ? LocusTheme.coral.opacity(0.35)
-                            : LocusTheme.line,
-                        lineWidth: 1
-                    )
-            }
-            .contentShape(Rectangle())
+            permissionChipLabel
+                .foregroundStyle(model.permissionMode.isRisky
+                    ? LocusTheme.danger : LocusTheme.muted)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
         .fixedSize()
+        .background(LocusTheme.paperDeep.opacity(0.75))
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(LocusTheme.line, lineWidth: 1)
+        }
+        .popover(isPresented: $permissionModesPresented, arrowEdge: .bottom) {
+            permissionModePopover
+        }
         .help("Permissions: \(model.permissionMode.detail)")
         .accessibilityLabel("Permission mode, \(model.permissionMode.title)")
+        .accessibilityValue(model.permissionMode.isRisky ? "Danger" : "Standard")
         .accessibilityIdentifier("composer.permissionMode")
+    }
+
+    private var permissionChipLabel: some View {
+        HStack(spacing: 5) {
+            Image(systemName: model.permissionMode.isRisky
+                ? "exclamationmark.shield.fill"
+                : "shield.lefthalf.filled")
+            Text(model.permissionMode.shortTitle)
+        }
+        .font(.system(size: 8, weight: .semibold))
+        .padding(.horizontal, 8)
+        .frame(height: 27)
+        .contentShape(Rectangle())
+    }
+
+    private var permissionModePopover: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Permission mode")
+                .font(.system(size: 10, weight: .bold))
+
+            ForEach(PermissionMode.allCases) { mode in
+                Button {
+                    model.setPermissionMode(mode)
+                    permissionModesPresented = false
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: mode.symbol)
+                            .frame(width: 15)
+                        Text(mode.title)
+                        Spacer(minLength: 12)
+                        if model.permissionMode == mode {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 8, weight: .bold))
+                        }
+                    }
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(mode.isRisky ? LocusTheme.danger : LocusTheme.inkSoft)
+                    .padding(.horizontal, 8)
+                    .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                    .background(model.permissionMode == mode
+                        ? LocusTheme.paperDeep : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("composer.permissionMode.\(mode.rawValue)")
+            }
+
+            Divider().overlay(LocusTheme.line)
+
+            Text(model.permissionMode.detail)
+                .font(.system(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button("Reset session allowances") {
+                model.resetPermissions()
+                permissionModesPresented = false
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundStyle(LocusTheme.inkSoft)
+            .disabled(model.allowedTools.isEmpty && model.permissionMode == .ask)
+        }
+        .padding(10)
+        .frame(width: 240)
+        .background(LocusTheme.white)
     }
 
     private var promptTrimmed: String {

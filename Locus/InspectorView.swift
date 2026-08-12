@@ -12,6 +12,10 @@ struct InspectorView: View {
             if !model.openInspectorTabs.isEmpty {
                 InspectorOpenTabBar()
                     .environmentObject(model)
+                    // Browser and Terminal install native AppKit surfaces.
+                    // Keep the title-bar controls above those siblings for
+                    // hit-testing as well as drawing.
+                    .zIndex(1)
             }
 
             Group {
@@ -36,6 +40,7 @@ struct InspectorView: View {
             }
             .environmentObject(model)
             .frame(maxHeight: .infinity)
+            .clipped()
         }
         .background(LocusTheme.paperDeep)
         .clipShape(RoundedRectangle(
@@ -68,10 +73,7 @@ private struct InspectorOpenTabBar: View {
 
     var body: some View {
         Group {
-            if model.openInspectorTabs.count <= 3 {
-                // Three tabs fit at the inspector's minimum width. Keeping
-                // them out of a ScrollView avoids a macOS 15 AppKit bug where
-                // its pan recognizer can consume clicks on sibling buttons.
+            if model.openInspectorTabs.count <= 4 {
                 tabItems
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
@@ -88,7 +90,8 @@ private struct InspectorOpenTabBar: View {
                 }
             }
         }
-        .frame(height: 28)
+        .frame(height: 31)
+        .clipped()
         .background(LocusTheme.paperDeep)
         .overlay(alignment: .bottom) {
             Rectangle().fill(LocusTheme.line).frame(height: 1)
@@ -98,75 +101,190 @@ private struct InspectorOpenTabBar: View {
     }
 
     private var tabItems: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 3) {
             ForEach(model.openInspectorTabs) { tab in
-                tabItem(tab)
+                InspectorOpenTabItem(tab: tab, width: tabWidth(tab))
+                    .environmentObject(model)
                     .id(tab.id)
             }
         }
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 7)
     }
 
-    private func tabItem(_ tab: InspectorTab) -> some View {
-        let selected = model.inspectorTab == tab
-        return HStack(spacing: 2) {
-            Button {
-                focus(tab)
-            } label: {
-                HStack(spacing: 6) {
-                    Text(tab.title)
-                        .font(.system(size: 10, weight: .semibold))
-                        .lineLimit(1)
-                    InspectorTextTabBadge(tab: tab)
-                        .environmentObject(model)
-                }
-                .padding(.leading, 10)
-                .padding(.trailing, 3)
-                .frame(height: 27)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.borderless)
-            .accessibilityLabel("\(tab.title) inspector tab")
-            .accessibilityValue(selected ? "Selected" : "Not selected")
-            .accessibilityIdentifier("inspector.tab.\(tab.rawValue)")
-            // macOS 15 can let the horizontal ScrollView's drag recognizer
-            // consume a plain button click. Give an intentional tap priority;
-            // the guarded action below keeps keyboard and AX activation on
-            // the same path without running selection side effects twice.
-            .highPriorityGesture(TapGesture().onEnded { focus(tab) })
+    private func tabWidth(_ tab: InspectorTab) -> CGFloat {
+        let labelWidth = ceil((tab.title as NSString).size(withAttributes: [
+            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+        ]).width)
+        let badgeWidth = InspectorOpenTabItem.reservedBadgeWidth(for: tab)
+        // Text, optional status, and close control each get a stable slot. This
+        // avoids the loose label/X spacing that made the old row feel uneven.
+        return min(104, max(55, labelWidth + badgeWidth + 35))
+    }
 
-            Button {
-                model.closeInspectorTab(tab)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(selected ? LocusTheme.inkSoft : LocusTheme.muted)
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
+}
+
+/// Kept as its own identity-bearing view so rebuilding the selected panel can
+/// never leave another tab's click closure attached to this tab's label.
+private struct InspectorOpenTabItem: View {
+    @EnvironmentObject private var model: AppModel
+    let tab: InspectorTab
+    let width: CGFloat
+    @State private var isHovering = false
+
+    private var selected: Bool { model.inspectorTab == tab }
+    private var labelWidth: CGFloat {
+        ceil((tab.title as NSString).size(withAttributes: [
+            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+        ]).width)
+    }
+
+    static func reservedBadgeWidth(for tab: InspectorTab) -> CGFloat {
+        tab == .changes ? 18 : (tab == .plan ? 7 : 0)
+    }
+
+    var body: some View {
+        HStack(spacing: 3) {
+            InspectorTabActivationButton(
+                title: tab.title,
+                selected: selected,
+                accessibilityIdentifier: "inspector.tab.\(tab.rawValue)",
+                action: focus
+            )
+            .frame(maxWidth: .infinity, minHeight: 26, maxHeight: 26)
+
+            if Self.reservedBadgeWidth(for: tab) > 0 {
+                InspectorTextTabBadge(tab: tab)
+                    .environmentObject(model)
+                    .frame(width: Self.reservedBadgeWidth(for: tab))
+                    .allowsHitTesting(false)
             }
-            .buttonStyle(.plain)
-            .help("Close \(tab.title)")
-            .accessibilityLabel("Close \(tab.title) tab")
-            .accessibilityIdentifier("inspector.tab.close.\(tab.rawValue)")
+
+            InspectorTabCloseButton(tab: tab, emphasized: selected || isHovering)
+                .environmentObject(model)
         }
-        .foregroundStyle(selected ? LocusTheme.ink : LocusTheme.muted)
-        // Leave the final point to the bar-wide divider so every tab has the
-        // same footprint and selecting Plan cannot cover the separator.
-        .frame(height: 27)
-        .fixedSize(horizontal: true, vertical: false)
-        .overlay(alignment: .bottom) {
+        .padding(.leading, 8)
+        .padding(.trailing, 4)
+        .frame(width: width, height: 28)
+        .background(
+            isHovering ? LocusTheme.white.opacity(selected ? 0.28 : 0.38) : Color.clear
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(alignment: .bottomLeading) {
             if selected {
-                Rectangle()
+                Capsule()
                     .fill(LocusTheme.ink)
                     .frame(height: 2)
-                    .padding(.horizontal, 8)
+                    .frame(width: min(labelWidth + 2, width - 30))
+                    .padding(.leading, 8)
             }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .onHover { isHovering = $0 }
+    }
+
+    private func focus() {
+        guard !selected || model.inspectorCollapsed else { return }
+        model.selectInspectorTab(tab)
+    }
+}
+
+/// The close affordance stays quiet until its tab is active or hovered, but
+/// its hit target never changes size. Tabs therefore remain calm and do not
+/// shift as the pointer moves across the bar.
+private struct InspectorTabCloseButton: View {
+    @EnvironmentObject private var model: AppModel
+    let tab: InspectorTab
+    let emphasized: Bool
+    @State private var isHovering = false
+
+    var body: some View {
+        Button {
+            model.closeInspectorTab(tab)
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 6.5, weight: .bold))
+                .foregroundStyle(LocusTheme.inkSoft)
+                .frame(width: 16, height: 18)
+                .background(isHovering ? LocusTheme.ink.opacity(0.08) : Color.clear)
+                .clipShape(Circle())
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(emphasized || isHovering ? 0.9 : 0.42)
+        .onHover { isHovering = $0 }
+        .help("Close \(tab.title)")
+        .accessibilityLabel("Close \(tab.title) tab")
+        .accessibilityIdentifier("inspector.tab.close.\(tab.rawValue)")
+    }
+}
+
+/// A title-bar control must accept the first mouse event even when a native
+/// editor, web view, or PTY currently owns first responder. SwiftUI's macOS
+/// Button does not guarantee that when it is moved into the hidden title-bar
+/// safe area, which makes the first tab switch appear to do nothing.
+private struct InspectorTabActivationButton: NSViewRepresentable {
+    let title: String
+    let selected: Bool
+    let accessibilityIdentifier: String
+    let action: () -> Void
+
+    final class FirstMouseButton: NSButton {
+        var mouseDownAction: (() -> Void)?
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func mouseDown(with event: NSEvent) {
+            // Browser and Terminal can change first responder during the same
+            // event transaction. Dispatch from the control that was hit
+            // instead of relying on mouse-up tracking to finish later.
+            mouseDownAction?()
         }
     }
 
-    private func focus(_ tab: InspectorTab) {
-        guard model.inspectorTab != tab || model.inspectorCollapsed else { return }
-        model.selectInspectorTab(tab)
+    final class Coordinator: NSObject {
+        var action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func activate() { action() }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
+
+    func makeNSView(context: Context) -> FirstMouseButton {
+        let button = FirstMouseButton(
+            title: title,
+            target: context.coordinator,
+            action: #selector(Coordinator.activate)
+        )
+        button.isBordered = false
+        button.focusRingType = .none
+        button.refusesFirstResponder = true
+        button.alignment = .left
+        button.lineBreakMode = .byTruncatingTail
+        button.setButtonType(.momentaryChange)
+        button.mouseDownAction = context.coordinator.activate
+        return button
+    }
+
+    func updateNSView(_ button: FirstMouseButton, context: Context) {
+        context.coordinator.action = action
+        // The selected-state rebuild can give an existing NSButton a fresh
+        // representable coordinator. NSControl does not retain its target, so
+        // refresh both pieces instead of leaving the button pointed at the
+        // coordinator from the previous panel transaction.
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.activate)
+        button.mouseDownAction = context.coordinator.activate
+        button.title = title
+        button.font = .systemFont(ofSize: 10, weight: selected ? .semibold : .medium)
+        button.contentTintColor = selected ? .labelColor : .secondaryLabelColor.withAlphaComponent(0.86)
+        button.identifier = NSUserInterfaceItemIdentifier(accessibilityIdentifier)
+        button.setAccessibilityIdentifier(accessibilityIdentifier)
+        button.setAccessibilityLabel("\(title) inspector tab")
+        button.setAccessibilityValue(selected ? "Selected" : "Not selected")
     }
 }
 

@@ -40,6 +40,7 @@ enum LocusTheme {
         let signal: NSColor
         let signalDeep: NSColor
         let coral: NSColor
+        let danger: NSColor
         let blue: NSColor
         let success: NSColor
         let warning: NSColor
@@ -63,6 +64,7 @@ enum LocusTheme {
         signal: rgb(red: 0.788, green: 0.961, blue: 0.29),
         signalDeep: rgb(red: 0.655, green: 0.827, blue: 0.153),
         coral: rgb(red: 0.89, green: 0.435, blue: 0.314),
+        danger: rgb(0xD92D20),
         blue: rgb(red: 0.322, green: 0.455, blue: 0.843),
         success: rgb(red: 0.259, green: 0.506, blue: 0.325),
         warning: rgb(red: 0.73, green: 0.49, blue: 0.13),
@@ -84,6 +86,7 @@ enum LocusTheme {
         signal: rgb(0xC9F54A),
         signalDeep: rgb(0xB6E33B),
         coral: rgb(0xF18364),
+        danger: rgb(0xFF5A52),
         blue: rgb(0x7998FF),
         success: rgb(0x6DBB7B),
         warning: rgb(0xE1A54B),
@@ -104,6 +107,7 @@ enum LocusTheme {
     static let signal = adaptive(\.signal)
     static let signalDeep = adaptive(\.signalDeep)
     static let coral = adaptive(\.coral)
+    static let danger = adaptive(\.danger)
     static let blue = adaptive(\.blue)
     static let success = adaptive(\.success)
     static let warning = adaptive(\.warning)
@@ -177,5 +181,120 @@ struct BrandMark: View {
         .shadow(color: .black.opacity(0.16), radius: 0, x: 2, y: 2)
         .rotationEffect(.degrees(-2.5))
         .accessibilityHidden(true)
+    }
+}
+
+/// Local MCP brand marks. Known providers receive a recognizable color and
+/// glyph; custom servers receive a deterministic monogram instead of the same
+/// generic network icon everywhere. Keeping these local avoids fetching
+/// favicons merely because Settings was opened.
+struct MCPLogo: View {
+    let name: String
+    var url: String? = nil
+    var presetID: String? = nil
+    var size: CGFloat = 26
+
+    private enum Mark {
+        case text(String)
+        case symbol(String)
+    }
+
+    private struct Style {
+        let background: Color
+        let foreground: Color
+        let mark: Mark
+    }
+
+    private static let fallbackColors = [
+        Color(red: 0.29, green: 0.42, blue: 0.78),
+        Color(red: 0.46, green: 0.33, blue: 0.72),
+        Color(red: 0.09, green: 0.55, blue: 0.48),
+        Color(red: 0.73, green: 0.35, blue: 0.24),
+        Color(red: 0.12, green: 0.48, blue: 0.65),
+    ]
+
+    private var identity: String {
+        [presetID, name, url]
+            .compactMap { $0 }
+            .joined(separator: " ")
+            .lowercased()
+    }
+
+    private var initials: String {
+        let words = name.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        let letters = words.prefix(2).compactMap(\.first)
+        let value = letters.isEmpty ? Array(name.prefix(2)) : letters
+        return String(value).uppercased()
+    }
+
+    private var style: Style {
+        if identity.contains("context7") {
+            return Style(
+                background: Color(red: 0.34, green: 0.27, blue: 0.95),
+                foreground: .white,
+                mark: .text("7")
+            )
+        }
+        if identity.contains("github") || identity.contains("githubcopilot") {
+            return Style(
+                background: Color(red: 0.12, green: 0.13, blue: 0.15),
+                foreground: .white,
+                mark: .text("GH")
+            )
+        }
+        if identity.contains("sentry") {
+            return Style(
+                background: Color(red: 0.43, green: 0.35, blue: 0.69),
+                foreground: .white,
+                mark: .symbol("scope")
+            )
+        }
+        if identity.contains("supabase") {
+            return Style(
+                background: Color(red: 0.24, green: 0.81, blue: 0.56),
+                foreground: Color(red: 0.04, green: 0.19, blue: 0.15),
+                mark: .symbol("bolt.fill")
+            )
+        }
+        if identity.contains("openai") {
+            return Style(
+                background: Color(red: 0.08, green: 0.09, blue: 0.09),
+                foreground: .white,
+                mark: .symbol("sparkles")
+            )
+        }
+
+        let index = identity.utf8.reduce(0) {
+            ($0 &* 31 &+ Int($1)) % Self.fallbackColors.count
+        }
+        return Style(
+            background: Self.fallbackColors[index],
+            foreground: .white,
+            mark: .text(initials)
+        )
+    }
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
+                .fill(style.background)
+            switch style.mark {
+            case .text(let text):
+                Text(text)
+                    .font(.system(size: size * (text.count > 1 ? 0.32 : 0.48), weight: .bold, design: .rounded))
+                    .foregroundStyle(style.foreground)
+            case .symbol(let symbol):
+                Image(systemName: symbol)
+                    .font(.system(size: size * 0.46, weight: .semibold))
+                    .foregroundStyle(style.foreground)
+            }
+        }
+        .frame(width: size, height: size)
+        .overlay {
+            RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
+                .stroke(Color.white.opacity(0.28), lineWidth: 0.75)
+        }
+        .shadow(color: .black.opacity(0.12), radius: 1, y: 1)
+        .accessibilityLabel("\(name) logo")
     }
 }

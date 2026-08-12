@@ -2591,6 +2591,193 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(restored.resolvedThinkingVisibility, .collapsed)
     }
 
+    // MARK: - Tool activity visibility
+
+    func testToolActivityVisibilityDefaultsRoundTripsAndToleratesFutureValues() throws {
+        XCTAssertEqual(AppSettings().resolvedToolActivityVisibility, .collapsed)
+
+        let legacy = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
+        XCTAssertEqual(legacy.resolvedToolActivityVisibility, .collapsed)
+
+        var chosen = AppSettings()
+        chosen.toolActivityVisibilityRaw = ToolActivityVisibility.hidden.rawValue
+        let restored = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONEncoder().encode(chosen)
+        )
+        XCTAssertEqual(restored.resolvedToolActivityVisibility, .hidden)
+
+        let future = #"{"toolActivityVisibilityRaw":"summary-only"}"#
+        let futureRestored = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data(future.utf8)
+        )
+        XCTAssertEqual(futureRestored.resolvedToolActivityVisibility, .collapsed)
+    }
+
+    @MainActor
+    func testToolActivityVisibilityAccessorUpdatesSettings() {
+        let model = AppModel(startImmediately: false)
+        model.toolActivityVisibility = .verbose
+        XCTAssertEqual(model.toolActivityVisibility, .verbose)
+        XCTAssertEqual(model.settings.toolActivityVisibilityRaw, "verbose")
+
+        model.blocks = [ChatBlock(
+            kind: .tool,
+            tool: ToolPayload(
+                toolID: "status-strip", tool: "bash", summary: "Run tests", detail: "swift test",
+                status: .running
+            )
+        )]
+        XCTAssertEqual(model.currentWorkPhase, "Using bash")
+        model.toolActivityVisibility = .hidden
+        XCTAssertEqual(model.currentWorkPhase, "Working…", "hidden mode must not leak tool metadata")
+    }
+
+    func testCompactTranscriptGroupsAllToolsForEachUserRequest() throws {
+        let firstUserID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000701"))
+        let secondUserID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000702"))
+        let emptyAssistantID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000703"))
+        let secondEmptyAssistantID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000704"))
+        let noteID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000705"))
+        let reasoningID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000706"))
+        let finalID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000707"))
+        let completionID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000708"))
+
+        let first = ToolPayload(
+            toolID: "first", tool: "list_dir", summary: "List files", detail: "",
+            status: .done
+        )
+        let second = ToolPayload(
+            toolID: "second", tool: "bash", summary: "Run tests", detail: "swift test",
+            status: .awaitingPermission
+        )
+        let third = ToolPayload(
+            toolID: "third", tool: "browser", summary: "Open preview", detail: "",
+            status: .error, result: "Could not connect"
+        )
+        let fourth = ToolPayload(
+            toolID: "fourth", tool: "read_file", summary: "Read README", detail: "",
+            status: .done
+        )
+        let blocks = [
+            ChatBlock(id: firstUserID, kind: .user, text: "Do the work"),
+            ChatBlock(id: emptyAssistantID, kind: .assistant),
+            ChatBlock(kind: .tool, tool: first),
+            ChatBlock(id: noteID, kind: .note, text: "Context was compacted"),
+            ChatBlock(id: reasoningID, kind: .assistant, reasoningText: "Checking next step"),
+            ChatBlock(kind: .tool, tool: second),
+            ChatBlock(id: secondEmptyAssistantID, kind: .assistant),
+            ChatBlock(kind: .tool, tool: third),
+            ChatBlock(id: finalID, kind: .assistant, text: "Finished with one warning."),
+            ChatBlock(
+                id: completionID,
+                kind: .note,
+                completion: TurnCompletion(
+                    outcome: .complete,
+                    mode: .work,
+                    durationMilliseconds: 1_000
+                )
+            ),
+            ChatBlock(id: secondUserID, kind: .user, text: "Check one more file"),
+            ChatBlock(kind: .assistant),
+            ChatBlock(kind: .tool, tool: fourth),
+        ]
+
+        let collapsed = TranscriptPresentation.items(from: blocks, visibility: .collapsed)
+        let hidden = TranscriptPresentation.items(from: blocks, visibility: .hidden)
+        XCTAssertEqual(hidden, collapsed, "compact modes share the same lossless grouping")
+        XCTAssertEqual(collapsed.count, 8)
+
+        guard case .toolGroup(let firstGroupID, let firstTools) = collapsed[1] else {
+            return XCTFail("the first tool position should become one request group")
+        }
+        XCTAssertEqual(firstGroupID, firstUserID)
+        XCTAssertEqual(firstTools.map(\.toolID), ["first", "second", "third"])
+        XCTAssertEqual(ToolActivityAggregateStatus(tools: firstTools), .awaitingPermission)
+
+        XCTAssertEqual(collapsed[2], .block(blocks[3]), "notes stay in transcript order")
+        XCTAssertEqual(collapsed[3], .block(blocks[4]), "reasoning stays in transcript order")
+        XCTAssertEqual(collapsed[4], .block(blocks[8]), "the final answer stays visible")
+        XCTAssertEqual(collapsed[5], .block(blocks[9]), "completion remains the request boundary")
+
+        guard case .toolGroup(let secondGroupID, let secondTools) = collapsed[7] else {
+            return XCTFail("the next user request should own a separate group")
+        }
+        XCTAssertEqual(secondGroupID, secondUserID)
+        XCTAssertEqual(secondTools.map(\.toolID), ["fourth"])
+
+        let compactBlockIDs = collapsed.compactMap { item -> UUID? in
+            guard case .block(let block) = item else { return nil }
+            return block.id
+        }
+        XCTAssertFalse(compactBlockIDs.contains(emptyAssistantID))
+        XCTAssertFalse(compactBlockIDs.contains(secondEmptyAssistantID))
+
+        let verbose = TranscriptPresentation.items(from: blocks, visibility: .verbose)
+        XCTAssertEqual(verbose, blocks.map(TranscriptPresentationItem.block))
+    }
+
+    func testToolActivityGroupIdentityAndStatusRemainStableAsCallsUpdate() throws {
+        let userID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000711"))
+        var blocks = [
+            ChatBlock(id: userID, kind: .user, text: "Run checks"),
+            ChatBlock(kind: .assistant),
+            ChatBlock(kind: .tool, tool: ToolPayload(
+                toolID: "one", tool: "bash", summary: "First check", detail: "",
+                status: .running
+            )),
+        ]
+
+        let firstProjection = TranscriptPresentation.items(from: blocks, visibility: .collapsed)
+        guard case .toolGroup(let initialID, let initialTools) = firstProjection[1] else {
+            return XCTFail("expected the initial tool group")
+        }
+        XCTAssertEqual(initialID, userID)
+        XCTAssertEqual(ToolActivityAggregateStatus(tools: initialTools), .running)
+
+        blocks[2].tool?.status = .error
+        blocks.append(ChatBlock(kind: .assistant))
+        blocks.append(ChatBlock(kind: .tool, tool: ToolPayload(
+            toolID: "two", tool: "read_file", summary: "Fallback check", detail: "",
+            status: .done
+        )))
+
+        let updatedProjection = TranscriptPresentation.items(from: blocks, visibility: .collapsed)
+        guard case .toolGroup(let updatedID, let updatedTools) = updatedProjection[1] else {
+            return XCTFail("expected the updated tool group")
+        }
+        XCTAssertEqual(updatedID, initialID)
+        XCTAssertEqual(updatedTools.map(\.toolID), ["one", "two"])
+        XCTAssertEqual(ToolActivityAggregateStatus(tools: updatedTools), .error)
+
+        func statusTools(_ statuses: [ToolStatus]) -> [ToolPayload] {
+            statuses.enumerated().map { index, status in
+                ToolPayload(
+                    toolID: "status-\(index)", tool: "tool", summary: "", detail: "",
+                    status: status
+                )
+            }
+        }
+        XCTAssertEqual(ToolActivityAggregateStatus(tools: statusTools([.done])), .done)
+        XCTAssertEqual(ToolActivityAggregateStatus(tools: statusTools([.done, .denied])), .denied)
+        XCTAssertEqual(
+            ToolActivityAggregateStatus(tools: statusTools([.done, .denied, .error])),
+            .error
+        )
+        XCTAssertEqual(
+            ToolActivityAggregateStatus(tools: statusTools([.done, .denied, .error, .running])),
+            .running
+        )
+        XCTAssertEqual(
+            ToolActivityAggregateStatus(
+                tools: statusTools([.done, .denied, .error, .running, .awaitingPermission])
+            ),
+            .awaitingPermission,
+            "attention and active states follow the documented precedence"
+        )
+    }
+
     // MARK: - Context window
 
     @MainActor

@@ -396,6 +396,36 @@ enum ThinkingVisibility: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// How much tool activity the transcript shows. This changes presentation
+/// only: every tool block remains in the conversation for permissions,
+/// persistence, resume, and export.
+enum ToolActivityVisibility: String, Codable, CaseIterable, Identifiable {
+    /// One expandable card for every tool call, matching the original UI.
+    case verbose
+    /// All calls made for one user request fold into a single expandable card.
+    case collapsed
+    /// A generic status line is the only transcript trace of tool activity.
+    case hidden
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .verbose: "Verbose"
+        case .collapsed: "Collapsed"
+        case .hidden: "Hidden"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .verbose: "Show every tool call as its own card"
+        case .collapsed: "Group each request's tool calls into one card"
+        case .hidden: "Show only a generic activity status line"
+        }
+    }
+}
+
 /// How much the agent may do without asking.
 enum PermissionMode: String, Codable, CaseIterable, Identifiable {
     /// Every write, command, and fetch asks first.
@@ -411,7 +441,7 @@ enum PermissionMode: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .ask: "Ask every time"
         case .acceptEdits: "Accept file edits"
-        case .bypass: "Bypass all"
+        case .bypass: "Full access"
         }
     }
 
@@ -427,7 +457,7 @@ enum PermissionMode: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .ask: "hand.raised"
         case .acceptEdits: "square.and.pencil"
-        case .bypass: "bolt"
+        case .bypass: "exclamationmark.shield.fill"
         }
     }
 
@@ -436,7 +466,7 @@ enum PermissionMode: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .ask: "Ask"
         case .acceptEdits: "Auto-edit"
-        case .bypass: "Bypass"
+        case .bypass: "Full access"
         }
     }
 
@@ -933,6 +963,31 @@ struct ToolPayload: Codable, Hashable {
     var result: String?
 }
 
+/// The status a compact tool-activity row presents for a group. Active work
+/// wins over earlier failures, while terminal groups preserve the most useful
+/// attention state instead of reading as successfully complete.
+enum ToolActivityAggregateStatus: Equatable {
+    case awaitingPermission
+    case running
+    case error
+    case denied
+    case done
+
+    init(tools: [ToolPayload]) {
+        if tools.contains(where: { $0.status == .awaitingPermission }) {
+            self = .awaitingPermission
+        } else if tools.contains(where: { $0.status == .running }) {
+            self = .running
+        } else if tools.contains(where: { $0.status == .error }) {
+            self = .error
+        } else if tools.contains(where: { $0.status == .denied }) {
+            self = .denied
+        } else {
+            self = .done
+        }
+    }
+}
+
 struct ChatBlock: Identifiable, Codable, Hashable {
     enum Kind: String, Codable {
         case user
@@ -981,6 +1036,82 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         self.completion = completion
         self.teamRunID = teamRunID
         self.historyIndex = historyIndex
+    }
+}
+
+/// A stable presentation-only projection of transcript blocks. Compact modes
+/// replace the first tool in each request with one group and leave the stored
+/// blocks untouched.
+enum TranscriptPresentationItem: Identifiable, Equatable {
+    enum ID: Hashable {
+        case block(UUID)
+        case toolGroup(UUID)
+    }
+
+    case block(ChatBlock)
+    case toolGroup(id: UUID, tools: [ToolPayload])
+
+    var id: ID {
+        switch self {
+        case .block(let block): .block(block.id)
+        case .toolGroup(let id, _): .toolGroup(id)
+        }
+    }
+}
+
+enum TranscriptPresentation {
+    static func items(
+        from blocks: [ChatBlock],
+        visibility: ToolActivityVisibility
+    ) -> [TranscriptPresentationItem] {
+        guard visibility != .verbose else { return blocks.map(TranscriptPresentationItem.block) }
+
+        var items: [TranscriptPresentationItem] = []
+        var requestBlocks: [ChatBlock] = []
+        var requestID: UUID?
+
+        func flushRequest() {
+            guard !requestBlocks.isEmpty else { return }
+            let tools = requestBlocks.compactMap(\.tool)
+            let groupID = requestID ?? requestBlocks.first(where: { $0.tool != nil })?.id
+            var insertedGroup = false
+
+            for block in requestBlocks {
+                if block.kind == .tool {
+                    if !insertedGroup, let groupID, !tools.isEmpty {
+                        items.append(.toolGroup(id: groupID, tools: tools))
+                        insertedGroup = true
+                    }
+                    continue
+                }
+                if isCompletedEmptyAssistant(block) { continue }
+                items.append(.block(block))
+            }
+            requestBlocks.removeAll(keepingCapacity: true)
+        }
+
+        for block in blocks {
+            if block.kind == .user {
+                flushRequest()
+                items.append(.block(block))
+                requestID = block.id
+            } else if block.completion != nil {
+                flushRequest()
+                items.append(.block(block))
+                requestID = nil
+            } else {
+                requestBlocks.append(block)
+            }
+        }
+        flushRequest()
+        return items
+    }
+
+    private static func isCompletedEmptyAssistant(_ block: ChatBlock) -> Bool {
+        guard block.kind == .assistant, !block.isStreaming else { return false }
+        return block.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (block.reasoningText ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
@@ -1295,6 +1426,9 @@ struct AppSettings: Codable, Hashable {
     var teamRunsPresentationRaw = AutomaticInspectorPresentation.ask.rawValue
     /// Raw string for the same forward-compatibility reason as the tab.
     var thinkingVisibilityRaw = ThinkingVisibility.collapsed.rawValue
+    /// Compact by default so tool-heavy requests do not overwhelm the answer.
+    /// Stored raw so a future mode cannot invalidate the rest of the settings.
+    var toolActivityVisibilityRaw = ToolActivityVisibility.collapsed.rawValue
     /// One-time compatibility marker: releases before adaptive Work persisted
     /// Build because an agentic mode was mandatory, not necessarily chosen.
     var adaptiveWorkMigrationCompleted = false
@@ -1447,6 +1581,10 @@ struct AppSettings: Codable, Hashable {
         ThinkingVisibility(rawValue: thinkingVisibilityRaw) ?? .collapsed
     }
 
+    var resolvedToolActivityVisibility: ToolActivityVisibility {
+        ToolActivityVisibility(rawValue: toolActivityVisibilityRaw) ?? .collapsed
+    }
+
     var preferredPermissionMode: PermissionMode? {
         PermissionMode(rawValue: permissionModeRaw)
     }
@@ -1528,6 +1666,10 @@ struct AppSettings: Codable, Hashable {
         ) ?? automaticInspectorPresentationRaw
         thinkingVisibilityRaw = try container.decodeIfPresent(String.self, forKey: .thinkingVisibilityRaw)
             ?? defaults.thinkingVisibilityRaw
+        toolActivityVisibilityRaw = try container.decodeIfPresent(
+            String.self,
+            forKey: .toolActivityVisibilityRaw
+        ) ?? defaults.toolActivityVisibilityRaw
         adaptiveWorkMigrationCompleted = try container.decodeIfPresent(
             Bool.self,
             forKey: .adaptiveWorkMigrationCompleted

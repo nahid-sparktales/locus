@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct InspectorPlanTab: View {
@@ -17,94 +18,140 @@ struct InspectorPlanTab: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    ContextWindowInfoCard()
-                        .environmentObject(model)
-
-                    Divider().overlay(LocusTheme.line)
-
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("CURRENT RUN")
-                                .font(.system(size: 8, weight: .bold))
-                                .tracking(0.8)
-                                .foregroundStyle(LocusTheme.muted)
-                            Text(model.todos.isEmpty ? "No active plan" : "Agent implementation plan")
-                                .font(.system(size: 11, weight: .bold))
-                        }
-                        Spacer()
-                    }
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier("plan.activePlan")
-
-                    if model.todos.isEmpty {
-                        VStack(spacing: 11) {
-                            Image(systemName: "list.bullet.clipboard")
-                                .font(.system(size: 23))
-                                .foregroundStyle(LocusTheme.muted)
-                            Text("Plans appear here as the agent breaks work into steps.")
-                                .font(.system(size: 9))
-                                .foregroundStyle(LocusTheme.muted)
-                                .multilineTextAlignment(.center)
-                            Button("Create a plan") {
-                                suggestionsPresented = true
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(LocusTheme.ink)
-                            .controlSize(.small)
-                            .disabled(model.isBusy || model.hasPendingPermission)
-                            .accessibilityIdentifier("plan.create")
-                            .popover(isPresented: $suggestionsPresented, arrowEdge: .bottom) {
-                                PlanSuggestionsPopover { prompt in
-                                    suggestionsPresented = false
-                                    model.requestPlan(prompt: prompt)
-                                }
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 28)
-                        .locusCard(radius: 9)
-                    } else {
-                        VStack(spacing: 6) {
-                            GeometryReader { proxy in
-                                ZStack(alignment: .leading) {
-                                    Capsule().fill(LocusTheme.line)
-                                    Capsule()
-                                        .fill(LocusTheme.signalDeep)
-                                        .frame(width: proxy.size.width * progress)
-                                }
-                            }
-                            .frame(height: 4)
-                            HStack {
-                                Text("\(completedCount) of \(model.todos.count) complete")
-                                Spacer()
-                                Text(progress.formatted(.percent.precision(.fractionLength(0))))
-                            }
-                            .font(.system(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
-                        }
-
-                        VStack(spacing: 0) {
-                            ForEach(Array(model.todos.enumerated()), id: \.element.id) { index, todo in
-                                PlanRow(todo: todo, isLast: index == model.todos.count - 1)
-                            }
-                        }
-                    }
+                    activePlanHeader
+                    planContent
                 }
+                // Constrain the padded stack to the vertical scroll view's
+                // viewport so Plan cards never extend under the inspector rail.
                 .padding(17)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider().overlay(LocusTheme.line)
 
-            PermissionGuardCard()
+            ContextWindowInfoCard()
                 .environmentObject(model)
                 .fixedSize(horizontal: false, vertical: true)
-                .layoutPriority(1)
-                .padding(.horizontal, 17)
-                .padding(.top, 12)
-                .padding(.bottom, 17)
+                .padding(17)
                 .background(LocusTheme.paperDeep)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var activePlanHeader: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("CURRENT RUN")
+                    .font(.system(size: 8, weight: .bold))
+                    .tracking(0.8)
+                    .foregroundStyle(LocusTheme.muted)
+                Text(model.todos.isEmpty ? "No active plan" : "Agent implementation plan")
+                    .font(.system(size: 11, weight: .bold))
+            }
+            Spacer(minLength: 6)
+            PlanOpenFinderButton()
+                .environmentObject(model)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("plan.activePlan")
+    }
+
+    @ViewBuilder
+    private var planContent: some View {
+        if model.todos.isEmpty {
+            VStack(spacing: 11) {
+                Image(systemName: "list.bullet.clipboard")
+                    .font(.system(size: 23))
+                    .foregroundStyle(LocusTheme.muted)
+                Text("Plans appear here as the agent breaks work into steps.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .multilineTextAlignment(.center)
+                Button("Create a plan") {
+                    suggestionsPresented = true
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(LocusTheme.ink)
+                .controlSize(.small)
+                .disabled(model.isBusy || model.hasPendingPermission)
+                .accessibilityIdentifier("plan.create")
+                .popover(isPresented: $suggestionsPresented, arrowEdge: .bottom) {
+                    PlanSuggestionsPopover { prompt in
+                        suggestionsPresented = false
+                        model.requestPlan(prompt: prompt)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 28)
+            .locusCard(radius: 9)
+        } else {
+            VStack(spacing: 6) {
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(LocusTheme.line)
+                        Capsule()
+                            .fill(LocusTheme.signalDeep)
+                            .frame(width: proxy.size.width * progress)
+                    }
+                }
+                .frame(height: 4)
+                HStack {
+                    Text("\(completedCount) of \(model.todos.count) complete")
+                    Spacer()
+                    Text(progress.formatted(.percent.precision(.fractionLength(0))))
+                }
+                .font(.system(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+            }
+
+            VStack(spacing: 0) {
+                ForEach(Array(model.todos.enumerated()), id: \.element.id) { index, todo in
+                    PlanRow(todo: todo, isLast: index == model.todos.count - 1)
+                }
+            }
+        }
+    }
+}
+
+/// Opens a managed task's checkout, or the current workspace, in Finder.
+private struct PlanOpenFinderButton: View {
+    @EnvironmentObject private var model: AppModel
+
+    private var targetURL: URL {
+        if let checkout = model.activeTaskRecord?.executionPath,
+           FileManager.default.fileExists(atPath: checkout) {
+            return URL(fileURLWithPath: checkout, isDirectory: true)
+        }
+        return URL(fileURLWithPath: model.workspacePath, isDirectory: true)
+    }
+
+    var body: some View {
+        Button {
+            NSWorkspace.shared.open(targetURL)
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "folder")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("Finder")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(LocusTheme.inkSoft)
+            .padding(.horizontal, 8)
+            .frame(height: 24)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(LocusTheme.white)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(LocusTheme.lineStrong, lineWidth: 1)
+        }
+        .help("Open workspace in Finder")
+        .accessibilityLabel("Open workspace in Finder")
+        .accessibilityIdentifier("plan.openIn")
     }
 }
 
@@ -272,88 +319,6 @@ struct PlanSuggestionsPopover: View {
     }
 }
 
-struct PermissionGuardCard: View {
-    @EnvironmentObject private var model: AppModel
-
-    private var mode: PermissionMode { model.permissionMode }
-
-    private var ink: Color {
-        mode.isRisky ? LocusTheme.coral : LocusTheme.permissionInk
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 5) {
-                Image(systemName: mode.isRisky ? "exclamationmark.shield.fill" : "shield.lefthalf.filled")
-                Text("Permissions")
-                Spacer()
-                Text(mode.shortTitle.uppercased())
-                    .font(.system(size: 7, weight: .bold))
-                    .tracking(0.6)
-            }
-            .font(.system(size: 9, weight: .bold))
-            .foregroundStyle(ink)
-
-            Picker("Permission mode", selection: Binding(
-                get: { mode },
-                set: { model.setPermissionMode($0) }
-            )) {
-                ForEach(PermissionMode.allCases) { option in
-                    Text(option.title).tag(option)
-                }
-            }
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-            .labelsHidden()
-            .accessibilityIdentifier("plan.permissionMode")
-
-            Text(mode.detail)
-                .font(.system(size: 8))
-                .foregroundStyle(LocusTheme.permissionMuted)
-                .lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if !model.allowedTools.isEmpty {
-                Text("Always allowed this session: \(model.allowedTools.joined(separator: ", "))")
-                    .font(.system(size: 8))
-                    .foregroundStyle(LocusTheme.permissionMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            HStack(spacing: 12) {
-                if !model.allowedTools.isEmpty || mode != .ask {
-                    Button("Reset") { model.resetPermissions() }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 8, weight: .bold))
-                        .underline()
-                        .accessibilityIdentifier("plan.permissionReset")
-                }
-                Button("Review settings") {
-                    model.settingsPresented = true
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 8, weight: .bold))
-                .underline()
-                .accessibilityIdentifier("plan.permissionSettings")
-            }
-        }
-        .padding(11)
-        .background(LocusTheme.paperDeep)
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(
-                    mode.isRisky
-                        ? LocusTheme.coral.opacity(0.4)
-                        : LocusTheme.line,
-                    lineWidth: 1
-                )
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("plan.permissions")
-    }
-}
-
 struct ContextWindowInfoCard: View {
     @EnvironmentObject private var model: AppModel
 
@@ -439,6 +404,7 @@ struct ContextWindowInfoCard: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(LocusTheme.white.opacity(0.72))
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay {
@@ -455,11 +421,14 @@ struct ContextWindowInfoCard: View {
             Text(label)
                 .font(.system(size: 8))
                 .foregroundStyle(LocusTheme.muted)
+                .lineLimit(1)
             Spacer(minLength: 4)
             Text(value)
                 .font(.system(size: 8, weight: .semibold, design: .monospaced))
                 .foregroundStyle(LocusTheme.inkSoft)
                 .multilineTextAlignment(.trailing)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
         }
     }
 }
