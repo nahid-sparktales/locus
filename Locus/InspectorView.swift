@@ -69,14 +69,12 @@ private struct InspectorOpenTabBar: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
-                    ForEach(model.openInspectorTabs) { tab in
-                        tabItem(tab)
-                            .id(tab.id)
-                    }
-                }
-                .padding(.horizontal, 4)
+                tabItems
             }
+            // When everything already fits, removing the drag recognizer also
+            // avoids a macOS 15 bug that consumes clicks on neighboring plain
+            // buttons. Larger collections retain normal horizontal scrolling.
+            .scrollDisabled(model.openInspectorTabs.count <= 3)
             .onAppear {
                 proxy.scrollTo(model.inspectorTab.id, anchor: .center)
             }
@@ -90,6 +88,16 @@ private struct InspectorOpenTabBar: View {
             Rectangle().fill(LocusTheme.line).frame(height: 1)
         }
         .accessibilityIdentifier("inspector.tabBar")
+    }
+
+    private var tabItems: some View {
+        HStack(spacing: 0) {
+            ForEach(model.openInspectorTabs) { tab in
+                tabItem(tab)
+                    .id(tab.id)
+            }
+        }
+        .padding(.horizontal, 4)
     }
 
     private func tabItem(_ tab: InspectorTab) -> some View {
@@ -110,7 +118,7 @@ private struct InspectorOpenTabBar: View {
                 .frame(height: 27)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.borderless)
             .accessibilityLabel("\(tab.title) inspector tab")
             .accessibilityValue(selected ? "Selected" : "Not selected")
             .accessibilityIdentifier("inspector.tab.\(tab.rawValue)")

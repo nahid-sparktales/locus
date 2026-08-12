@@ -1009,12 +1009,9 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("landing.destination").exists)
 
         let destinationControl = anyElement("landing.destination")
-        let branchDestination = app.radioButtons["Branch, Commit & PR"].firstMatch
+        let branchDestination = app.buttons["Branch, Commit & PR"].firstMatch
         XCTAssertTrue(branchDestination.exists)
-        // On macOS 15 XCTest can synthesize a click for the child radio button
-        // without changing the NSSegmentedControl. Click the right segment of
-        // the identified control itself so the binding receives the event.
-        destinationControl.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.5)).click()
+        branchDestination.click()
         // AppKit only publishes descendants of a SwiftUI ScrollView once they
         // enter its viewport. Scroll the selected destination's form into the
         // accessibility hierarchy before querying its fields.

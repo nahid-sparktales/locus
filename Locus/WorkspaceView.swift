@@ -491,12 +491,7 @@ struct ReviewAndLandView: View {
 
                         Divider()
                         stageHeader("3", "Choose destination")
-                        Picker("Destination", selection: $destination) {
-                            Text("Apply to Local").tag("local")
-                            Text("Branch, Commit & PR").tag("branch")
-                        }
-                        .pickerStyle(.segmented)
-                        .accessibilityIdentifier("landing.destination")
+                        landingDestinationControl
 
                         if destination == "local" {
                             if model.landingPreflight?.canApplyLocal == true {
@@ -593,6 +588,41 @@ struct ReviewAndLandView: View {
         } message: {
             Text("This confirmation is recorded in the run timeline. Review failures or stale evidence before continuing.")
         }
+    }
+
+    private var landingDestinationControl: some View {
+        HStack(spacing: 2) {
+            landingDestinationButton("Apply to Local", value: "local")
+            landingDestinationButton("Branch, Commit & PR", value: "branch")
+        }
+        .padding(2)
+        .background(LocusTheme.paperDeep)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(LocusTheme.line, lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Destination")
+        .accessibilityIdentifier("landing.destination")
+    }
+
+    private func landingDestinationButton(_ title: String, value: String) -> some View {
+        let selected = destination == value
+        return Button {
+            destination = value
+        } label: {
+            Text(title)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(selected ? LocusTheme.ink : LocusTheme.muted)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 5)
+                .background(selected ? LocusTheme.white : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .accessibilityValue(selected ? "Selected" : "Not selected")
     }
 
     private func stageHeader(_ number: String, _ title: String) -> some View {
