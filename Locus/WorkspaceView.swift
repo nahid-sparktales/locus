@@ -384,161 +384,170 @@ struct ReviewAndLandView: View {
 
             Divider()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    stageHeader("1", "Review changes")
-                    if let preflight = model.landingPreflight {
-                        HStack {
-                            Text("\(preflight.paths.count) file\(preflight.paths.count == 1 ? "" : "s")")
-                            Text(ByteCountFormatter.string(
-                                fromByteCount: Int64(preflight.patchBytes), countStyle: .file
-                            ))
-                            Spacer()
-                            Button("Copy Patch") { model.copyActiveTaskPatch() }
-                            Button("Open Checkout") { model.openActiveTaskCheckout() }
-                        }
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
-
-                        ScrollView([.horizontal, .vertical]) {
-                            Text(model.landingPatch.isEmpty ? "No changes." : model.landingPatch)
-                                .font(.system(size: 9, design: .monospaced))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(10)
-                        }
-                        .frame(height: 210)
-                        .background(LocusTheme.paperDeep)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        .overlay { RoundedRectangle(cornerRadius: 8).stroke(LocusTheme.line) }
-                        .accessibilityIdentifier("landing.diff")
-                    }
-
-                    Divider()
-                    stageHeader("2", "Review test evidence")
-                    Text("Enter one explicit check per line. Locus runs up to eight sequentially in this chat’s worktree; each has a ten-minute limit.")
-                        .font(.system(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                    TextEditor(text: $commandsText)
-                        .font(.system(size: 10, design: .monospaced))
-                        .scrollContentBackground(.hidden)
-                        .padding(6)
-                        .frame(height: 78)
-                        .background(LocusTheme.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        .overlay { RoundedRectangle(cornerRadius: 8).stroke(LocusTheme.line) }
-                        .accessibilityIdentifier("landing.checkCommands")
-                    HStack {
-                        if model.activeLandingCheckRunID != nil {
-                            ProgressView().controlSize(.small)
-                            Text("Running checks…")
-                                .font(.system(size: 9))
-                            Button("Stop") { model.stopLandingChecks() }
-                                .accessibilityIdentifier("landing.stopChecks")
-                        } else {
-                            Button("Run Checks") { model.runLandingChecks(commands: commands) }
-                                .disabled(commands.isEmpty || model.isLandingOperationRunning)
-                                .accessibilityIdentifier("landing.runChecks")
-                        }
-                        Spacer()
-                        if checksAreCurrentAndPassing {
-                            Label("Checks passed", systemImage: "checkmark.circle.fill")
-                                .foregroundStyle(LocusTheme.success)
-                        } else if let check = model.landingCheckRun {
-                            Label(
-                                check.tree == model.landingPreflight?.tree
-                                    ? "Checks did not pass" : "Checks are stale",
-                                systemImage: "exclamationmark.triangle.fill"
-                            )
-                            .foregroundStyle(LocusTheme.warning)
-                        } else {
-                            Text("No current check evidence")
-                                .foregroundStyle(LocusTheme.muted)
-                        }
-                    }
-                    .font(.system(size: 9, weight: .semibold))
-
-                    if let run = model.landingCheckRun {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(run.results) { result in
-                                DisclosureGroup {
-                                    if !result.output.isEmpty {
-                                        Text(result.output)
-                                            .font(.system(size: 8, design: .monospaced))
-                                            .textSelection(.enabled)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                    }
-                                } label: {
-                                    HStack {
-                                        Image(systemName: result.state == "passed"
-                                            ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                        Text(result.command).lineLimit(1)
-                                        Spacer()
-                                        Text(result.state.replacingOccurrences(of: "_", with: " "))
-                                        Text("\(result.durationMilliseconds) ms")
-                                    }
-                                    .font(.system(size: 8, design: .monospaced))
-                                    .foregroundStyle(result.state == "passed"
-                                        ? LocusTheme.success : LocusTheme.warning)
-                                }
-                            }
-                        }
-                        .padding(10)
-                        .background(LocusTheme.white.opacity(0.65))
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    }
-
-                    Divider()
-                    stageHeader("3", "Choose destination")
-                    Picker("Destination", selection: $destination) {
-                        Text("Apply to Local").tag("local")
-                        Text("Branch, Commit & PR").tag("branch")
-                    }
-                    .pickerStyle(.segmented)
-                    .accessibilityIdentifier("landing.destination")
-
-                    if destination == "local" {
-                        if model.landingPreflight?.canApplyLocal == true {
-                            Text("The complete patch will be applied unstaged to Local. This chat remains in its worktree.")
-                                .font(.system(size: 9))
-                                .foregroundStyle(LocusTheme.muted)
-                        } else {
-                            Label(
-                                model.landingPreflight?.conflict.nilIfEmpty
-                                    ?? "The patch conflicts with Local. Both checkouts are unchanged.",
-                                systemImage: "exclamationmark.triangle.fill"
-                            )
-                            .font(.system(size: 9))
-                            .foregroundStyle(LocusTheme.coral)
-                        }
-                    } else if let task = model.activeTaskRecord, task.landingCommit != nil {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label("Committed on \(task.branch ?? branchName)", systemImage: "checkmark.seal.fill")
-                                .foregroundStyle(LocusTheme.success)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        stageHeader("1", "Review changes")
+                        if let preflight = model.landingPreflight {
                             HStack {
-                                Button("Publish") { model.publishLandedWorktree() }
-                                    .disabled(model.isLandingOperationRunning)
-                                Button("Open Pull Request") { model.openLandedPullRequest() }
-                                Text(task.landingCommit?.prefix(10) ?? "")
-                                    .font(.system(size: 8, design: .monospaced))
+                                Text("\(preflight.paths.count) file\(preflight.paths.count == 1 ? "" : "s")")
+                                Text(ByteCountFormatter.string(
+                                    fromByteCount: Int64(preflight.patchBytes), countStyle: .file
+                                ))
+                                Spacer()
+                                Button("Copy Patch") { model.copyActiveTaskPatch() }
+                                Button("Open Checkout") { model.openActiveTaskCheckout() }
+                            }
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(LocusTheme.muted)
+
+                            ScrollView([.horizontal, .vertical]) {
+                                Text(model.landingPatch.isEmpty ? "No changes." : model.landingPatch)
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(10)
+                            }
+                            .frame(height: 210)
+                            .background(LocusTheme.paperDeep)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .overlay { RoundedRectangle(cornerRadius: 8).stroke(LocusTheme.line) }
+                            .accessibilityIdentifier("landing.diff")
+                        }
+
+                        Divider()
+                        stageHeader("2", "Review test evidence")
+                        Text("Enter one explicit check per line. Locus runs up to eight sequentially in this chat’s worktree; each has a ten-minute limit.")
+                            .font(.system(size: 9))
+                            .foregroundStyle(LocusTheme.muted)
+                        TextEditor(text: $commandsText)
+                            .font(.system(size: 10, design: .monospaced))
+                            .scrollContentBackground(.hidden)
+                            .padding(6)
+                            .frame(height: 78)
+                            .background(LocusTheme.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .overlay { RoundedRectangle(cornerRadius: 8).stroke(LocusTheme.line) }
+                            .accessibilityIdentifier("landing.checkCommands")
+                        HStack {
+                            if model.activeLandingCheckRunID != nil {
+                                ProgressView().controlSize(.small)
+                                Text("Running checks…")
+                                    .font(.system(size: 9))
+                                Button("Stop") { model.stopLandingChecks() }
+                                    .accessibilityIdentifier("landing.stopChecks")
+                            } else {
+                                Button("Run Checks") { model.runLandingChecks(commands: commands) }
+                                    .disabled(commands.isEmpty || model.isLandingOperationRunning)
+                                    .accessibilityIdentifier("landing.runChecks")
+                            }
+                            Spacer()
+                            if checksAreCurrentAndPassing {
+                                Label("Checks passed", systemImage: "checkmark.circle.fill")
+                                    .foregroundStyle(LocusTheme.success)
+                            } else if let check = model.landingCheckRun {
+                                Label(
+                                    check.tree == model.landingPreflight?.tree
+                                        ? "Checks did not pass" : "Checks are stale",
+                                    systemImage: "exclamationmark.triangle.fill"
+                                )
+                                .foregroundStyle(LocusTheme.warning)
+                            } else {
+                                Text("No current check evidence")
                                     .foregroundStyle(LocusTheme.muted)
                             }
                         }
-                    } else {
-                        TextField("Branch name", text: $branchName)
-                            .accessibilityIdentifier("landing.branch")
-                        if let branchProblem {
-                            Text(branchProblem).font(.system(size: 8)).foregroundStyle(LocusTheme.coral)
+                        .font(.system(size: 9, weight: .semibold))
+
+                        if let run = model.landingCheckRun {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(run.results) { result in
+                                    DisclosureGroup {
+                                        if !result.output.isEmpty {
+                                            Text(result.output)
+                                                .font(.system(size: 8, design: .monospaced))
+                                                .textSelection(.enabled)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
+                                    } label: {
+                                        HStack {
+                                            Image(systemName: result.state == "passed"
+                                                ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                            Text(result.command).lineLimit(1)
+                                            Spacer()
+                                            Text(result.state.replacingOccurrences(of: "_", with: " "))
+                                            Text("\(result.durationMilliseconds) ms")
+                                        }
+                                        .font(.system(size: 8, design: .monospaced))
+                                        .foregroundStyle(result.state == "passed"
+                                            ? LocusTheme.success : LocusTheme.warning)
+                                    }
+                                }
+                            }
+                            .padding(10)
+                            .background(LocusTheme.white.opacity(0.65))
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
-                        TextField("Commit message", text: $commitMessage, axis: .vertical)
-                            .lineLimit(2...5)
-                            .accessibilityIdentifier("landing.commitMessage")
-                        Text("A failed commit hook leaves the new branch and staged index ready to inspect and retry.")
-                            .font(.system(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+
+                        Divider()
+                        stageHeader("3", "Choose destination")
+                        Picker("Destination", selection: $destination) {
+                            Text("Apply to Local").tag("local")
+                            Text("Branch, Commit & PR").tag("branch")
+                        }
+                        .pickerStyle(.segmented)
+                        .accessibilityIdentifier("landing.destination")
+
+                        if destination == "local" {
+                            if model.landingPreflight?.canApplyLocal == true {
+                                Text("The complete patch will be applied unstaged to Local. This chat remains in its worktree.")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(LocusTheme.muted)
+                            } else {
+                                Label(
+                                    model.landingPreflight?.conflict.nilIfEmpty
+                                        ?? "The patch conflicts with Local. Both checkouts are unchanged.",
+                                    systemImage: "exclamationmark.triangle.fill"
+                                )
+                                .font(.system(size: 9))
+                                .foregroundStyle(LocusTheme.coral)
+                            }
+                        } else if let task = model.activeTaskRecord, task.landingCommit != nil {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Label("Committed on \(task.branch ?? branchName)", systemImage: "checkmark.seal.fill")
+                                    .foregroundStyle(LocusTheme.success)
+                                HStack {
+                                    Button("Publish") { model.publishLandedWorktree() }
+                                        .disabled(model.isLandingOperationRunning)
+                                    Button("Open Pull Request") { model.openLandedPullRequest() }
+                                    Text(task.landingCommit?.prefix(10) ?? "")
+                                        .font(.system(size: 8, design: .monospaced))
+                                        .foregroundStyle(LocusTheme.muted)
+                                }
+                            }
+                        } else {
+                            TextField("Branch name", text: $branchName)
+                                .id("landing.branch")
+                                .accessibilityIdentifier("landing.branch")
+                            if let branchProblem {
+                                Text(branchProblem).font(.system(size: 8)).foregroundStyle(LocusTheme.coral)
+                            }
+                            TextField("Commit message", text: $commitMessage, axis: .vertical)
+                                .lineLimit(2...5)
+                                .accessibilityIdentifier("landing.commitMessage")
+                            Text("A failed commit hook leaves the new branch and staged index ready to inspect and retry.")
+                                .font(.system(size: 8))
+                                .foregroundStyle(LocusTheme.muted)
+                        }
+                    }
+                    .padding(18)
+                }
+                .onChange(of: destination) { _, destination in
+                    guard destination == "branch" else { return }
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        proxy.scrollTo("landing.branch", anchor: .bottom)
                     }
                 }
-                .padding(18)
             }
 
             Divider()

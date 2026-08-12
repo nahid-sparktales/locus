@@ -57,7 +57,6 @@ struct InspectorView: View {
         // to the inspector when docked; only expanded mode needs the paper
         // color as a contrasting margin around its rounded panel.
         .background(model.inspectorZoomed ? LocusTheme.paper : LocusTheme.paperDeep)
-        .accessibilityIdentifier("inspector.surface")
     }
 }
 

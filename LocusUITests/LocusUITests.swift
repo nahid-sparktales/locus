@@ -667,7 +667,7 @@ final class LocusUITests: XCTestCase {
 
         anyElement("inspector.tab.close.plan").click()
         anyElement("inspector.tab.close.files").click()
-        XCTAssertFalse(anyElement("inspector.tabBar").exists)
+        XCTAssertTrue(anyElement("inspector.tabBar").waitForNonExistence(timeout: 3))
         XCTAssertFalse(anyElement("files.search").exists)
         XCTAssertTrue(anyElement("inspector.rail.more").exists)
     }
