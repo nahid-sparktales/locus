@@ -96,7 +96,7 @@ private struct InspectorOpenTabBar: View {
         let selected = model.inspectorTab == tab
         return HStack(spacing: 2) {
             Button {
-                model.selectInspectorTab(tab)
+                focus(tab)
             } label: {
                 HStack(spacing: 6) {
                     Text(tab.title)
@@ -114,6 +114,11 @@ private struct InspectorOpenTabBar: View {
             .accessibilityLabel("\(tab.title) inspector tab")
             .accessibilityValue(selected ? "Selected" : "Not selected")
             .accessibilityIdentifier("inspector.tab.\(tab.rawValue)")
+            // macOS 15 can let the horizontal ScrollView's drag recognizer
+            // consume a plain button click. Give an intentional tap priority;
+            // the guarded action below keeps keyboard and AX activation on
+            // the same path without running selection side effects twice.
+            .highPriorityGesture(TapGesture().onEnded { focus(tab) })
 
             Button {
                 model.closeInspectorTab(tab)
@@ -142,6 +147,11 @@ private struct InspectorOpenTabBar: View {
                     .padding(.horizontal, 8)
             }
         }
+    }
+
+    private func focus(_ tab: InspectorTab) {
+        guard model.inspectorTab != tab || model.inspectorCollapsed else { return }
+        model.selectInspectorTab(tab)
     }
 }
 
