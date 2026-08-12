@@ -497,8 +497,9 @@ struct SessionSidebarView: View {
 
     // MARK: - Footer
 
-    /// Two quiet rows: the workspace selector, then runtime status and the
-    /// restored Settings gear. The sidebar remains focused on conversations.
+    /// Two quiet rows: the workspace selector, then status with the app-wide
+    /// actions tucked into a gear menu. The header overflow stays scoped to
+    /// the current chat and worktree.
     private var footer: some View {
         VStack(spacing: 8) {
             workspaceMenu
@@ -506,7 +507,7 @@ struct SessionSidebarView: View {
             HStack(spacing: 8) {
                 status
                 Spacer(minLength: 4)
-                settingsButton
+                settingsMenu
             }
         }
         .padding(.horizontal, SidebarMetrics.gutter)
@@ -517,9 +518,30 @@ struct SessionSidebarView: View {
         }
     }
 
-    private var settingsButton: some View {
-        Button {
-            model.settingsPresented = true
+    private var settingsMenu: some View {
+        Menu {
+            Button("Settings…") { model.settingsPresented = true }
+                .accessibilityIdentifier("sidebar.settings")
+            Button("Usage & Costs…") { model.usageDashboardPresented = true }
+                .accessibilityIdentifier("sidebar.usage")
+            Button("Session Checkpoints…") { model.checkpointPresented = true }
+                .accessibilityIdentifier("sidebar.checkpoints")
+            Divider()
+            Toggle("Show Archived Sessions", isOn: Binding(
+                get: { model.showArchivedSessions },
+                set: { model.setShowArchived($0) }
+            ))
+            .accessibilityIdentifier("sidebar.showArchived")
+            Button(model.isClearingSessions ? "Clearing Saved Sessions…" : "Clear Saved Sessions…") {
+                model.requestClearSavedSessions()
+            }
+            .disabled(model.isClearingSessions)
+            .accessibilityIdentifier("sidebar.clearSessions")
+            Divider()
+            Button("Reconnect Agent") {
+                Task { await model.bootstrap() }
+            }
+            .accessibilityIdentifier("sidebar.reconnect")
         } label: {
             Image(systemName: "gearshape")
                 .font(.system(size: 12, weight: .medium))
@@ -527,11 +549,12 @@ struct SessionSidebarView: View {
                 .frame(width: 24, height: 22)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .frame(width: 24)
-        .help("Settings… (⌘,)")
-        .accessibilityLabel("Open Settings")
-        .accessibilityIdentifier("sidebar.settings")
+        .help("Settings and more")
+        .accessibilityLabel("Settings and more")
+        .accessibilityIdentifier("sidebar.more")
     }
 
     private var workspaceMenu: some View {

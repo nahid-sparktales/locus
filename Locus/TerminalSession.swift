@@ -27,6 +27,7 @@ final class TerminalSession: NSObject, ObservableObject {
     private var configuration: Configuration?
     private var pendingConfiguration: Configuration?
     private var directoryTimer: Timer?
+    private var usesDarkAppearance = false
 
     static var isSandboxedBuild: Bool {
         #if LOCUS_APP_STORE
@@ -102,6 +103,16 @@ final class TerminalSession: NSObject, ObservableObject {
         }
     }
 
+    /// SwiftTerm resolves its native colors when they are assigned, so a
+    /// terminal created under Light would otherwise stay white after the app
+    /// switches to Dark. Keep its default foreground/background synchronized
+    /// with SwiftUI while leaving explicit ANSI colors untouched.
+    func updateAppearance(isDark: Bool) {
+        usesDarkAppearance = isDark
+        guard let terminalView else { return }
+        applyTheme(to: terminalView)
+    }
+
     func restart() {
         terminate()
         terminalView?.terminal.resetToInitialState()
@@ -171,8 +182,7 @@ final class TerminalSession: NSObject, ObservableObject {
             options: options
         )
         view.processDelegate = self
-        view.nativeBackgroundColor = NSColor.textBackgroundColor
-        view.nativeForegroundColor = NSColor.textColor
+        applyTheme(to: view)
         view.allowMouseReporting = true
         view.linkReporting = .implicit
         view.linkHighlightMode = .hoverWithModifier
@@ -184,6 +194,14 @@ final class TerminalSession: NSObject, ObservableObject {
         view.setAccessibilityIdentifier("terminal.output")
         view.setAccessibilityLabel("Terminal output")
         return view
+    }
+
+    private func applyTheme(to view: LocusLocalProcessTerminalView) {
+        let palette = usesDarkAppearance ? LocusTheme.darkPalette : LocusTheme.lightPalette
+        view.nativeBackgroundColor = palette.paper
+        view.nativeForegroundColor = palette.ink
+        view.needsDisplay = true
+        view.layer?.setNeedsDisplay()
     }
 
     private func startConfiguredShell() {

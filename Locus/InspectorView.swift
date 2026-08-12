@@ -1,18 +1,16 @@
 import AppKit
 import SwiftUI
 
-/// The right-hand inspector: a tab shell around workspace run state, files,
-/// instructions, terminal and checkpoints, with a drag handle on its leading
-/// edge. Terminal, Plan and Browser have first-class rail icons instead of
-/// strip tabs, so when one is selected the strip stands down and the panel
-/// gets the entire height.
+/// The right-hand inspector: a dynamic, closable tab shell around workspace
+/// run state, files, instructions, terminal and checkpoints, with a drag
+/// handle on its leading edge.
 struct InspectorView: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
         VStack(spacing: 0) {
-            if InspectorRail.overflowTabs.contains(model.inspectorTab) {
-                InspectorTabStrip()
+            if !model.openInspectorTabs.isEmpty {
+                InspectorOpenTabBar()
                     .environmentObject(model)
             }
 
@@ -40,67 +38,161 @@ struct InspectorView: View {
             .frame(maxHeight: .infinity)
         }
         .background(LocusTheme.paperDeep)
+        .clipShape(RoundedRectangle(
+            cornerRadius: model.inspectorZoomed ? 12 : 0,
+            style: .continuous
+        ))
+        .overlay {
+            if model.inspectorZoomed {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(LocusTheme.line, lineWidth: 1)
+            }
+        }
         .overlay(alignment: .leading) {
             InspectorResizeHandle()
                 .environmentObject(model)
         }
+        .padding(model.inspectorZoomed ? 8 : 0)
+        // The outer surface reaches into the hidden title-bar area. Match it
+        // to the inspector when docked; only expanded mode needs the paper
+        // color as a contrasting margin around its rounded panel.
+        .background(model.inspectorZoomed ? LocusTheme.paper : LocusTheme.paperDeep)
     }
 }
 
-/// Icon-first tab strip over the strip-hosted tabs — Plan and Browser live on
-/// the rail instead. Labels appear only when the panel is wide enough, and
-/// the attention badge sits on the icon so it survives icon-only mode.
-private struct InspectorTabStrip: View {
+/// Only panels the user has opened appear here. The rail and overflow menu are
+/// launchers; this bar is the durable, ordered workspace for switching and
+/// closing panels without the permanent icon row competing for space.
+private struct InspectorOpenTabBar: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(InspectorRail.overflowTabs) { tab in
-                tabButton(tab)
+        Group {
+            if model.openInspectorTabs.count <= 3 {
+                // Three tabs fit at the inspector's minimum width. Keeping
+                // them out of a ScrollView avoids a macOS 15 AppKit bug where
+                // its pan recognizer can consume clicks on sibling buttons.
+                tabItems
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        tabItems
+                    }
+                    .onAppear {
+                        proxy.scrollTo(model.inspectorTab.id, anchor: .center)
+                    }
+                    .onChange(of: model.inspectorTab) { _, tab in
+                        proxy.scrollTo(tab.id, anchor: .center)
+                    }
+                }
             }
         }
-        .frame(height: 44)
+        .frame(height: 28)
+        .background(LocusTheme.paperDeep)
         .overlay(alignment: .bottom) {
             Rectangle().fill(LocusTheme.line).frame(height: 1)
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("inspector.tabBar")
     }
 
-    private func tabButton(_ tab: InspectorTab) -> some View {
-        let selected = model.inspectorTab == tab
-        return Button {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                model.toggleInspectorTab(tab)
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: tab.symbol)
-                    .font(.system(size: 12, weight: .medium))
-                    .overlay(alignment: .topTrailing) {
-                        InspectorTabBadge(tab: tab)
-                    }
-                if model.inspectorShowsLabels {
-                    Text(tab.title)
-                        .font(.system(size: 9, weight: .semibold))
-                        .lineLimit(1)
-                }
-            }
-            .foregroundStyle(selected ? LocusTheme.ink : LocusTheme.muted)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .overlay(alignment: .bottom) {
-                if selected {
-                    Rectangle()
-                        .fill(LocusTheme.ink)
-                        .frame(height: 2)
-                        .padding(.horizontal, 8)
-                }
+    private var tabItems: some View {
+        HStack(spacing: 0) {
+            ForEach(model.openInspectorTabs) { tab in
+                tabItem(tab)
+                    .id(tab.id)
             }
         }
-        .buttonStyle(.plain)
-        .help(tab.title)
-        .accessibilityLabel("\(tab.title) inspector")
-        .accessibilityValue(selected ? "Selected" : "Not selected")
-        .accessibilityIdentifier("inspector.tab.\(tab.rawValue)")
+        .padding(.horizontal, 4)
+    }
+
+    private func tabItem(_ tab: InspectorTab) -> some View {
+        let selected = model.inspectorTab == tab
+        return HStack(spacing: 2) {
+            Button {
+                focus(tab)
+            } label: {
+                HStack(spacing: 6) {
+                    Text(tab.title)
+                        .font(.system(size: 10, weight: .semibold))
+                        .lineLimit(1)
+                    InspectorTextTabBadge(tab: tab)
+                        .environmentObject(model)
+                }
+                .padding(.leading, 10)
+                .padding(.trailing, 3)
+                .frame(height: 27)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("\(tab.title) inspector tab")
+            .accessibilityValue(selected ? "Selected" : "Not selected")
+            .accessibilityIdentifier("inspector.tab.\(tab.rawValue)")
+            // macOS 15 can let the horizontal ScrollView's drag recognizer
+            // consume a plain button click. Give an intentional tap priority;
+            // the guarded action below keeps keyboard and AX activation on
+            // the same path without running selection side effects twice.
+            .highPriorityGesture(TapGesture().onEnded { focus(tab) })
+
+            Button {
+                model.closeInspectorTab(tab)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(selected ? LocusTheme.inkSoft : LocusTheme.muted)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Close \(tab.title)")
+            .accessibilityLabel("Close \(tab.title) tab")
+            .accessibilityIdentifier("inspector.tab.close.\(tab.rawValue)")
+        }
+        .foregroundStyle(selected ? LocusTheme.ink : LocusTheme.muted)
+        // Leave the final point to the bar-wide divider so every tab has the
+        // same footprint and selecting Plan cannot cover the separator.
+        .frame(height: 27)
+        .fixedSize(horizontal: true, vertical: false)
+        .overlay(alignment: .bottom) {
+            if selected {
+                Rectangle()
+                    .fill(LocusTheme.ink)
+                    .frame(height: 2)
+                    .padding(.horizontal, 8)
+            }
+        }
+    }
+
+    private func focus(_ tab: InspectorTab) {
+        guard model.inspectorTab != tab || model.inspectorCollapsed else { return }
+        model.selectInspectorTab(tab)
+    }
+}
+
+/// Compact attention state for text tabs. Destination symbols stay on the
+/// vertical rail; the top bar uses only labels, badges, and close controls.
+private struct InspectorTextTabBadge: View {
+    @EnvironmentObject private var model: AppModel
+    let tab: InspectorTab
+
+    @ViewBuilder
+    var body: some View {
+        if tab == .changes, model.changedFileCount > 0 {
+            Text(model.changedFileCount > 99 ? "99+" : "\(model.changedFileCount)")
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(Color.white)
+                .padding(.horizontal, 3)
+                .frame(height: 11)
+                .background(model.changesHaveUnseenUpdate ? LocusTheme.coral : LocusTheme.muted)
+                .clipShape(Capsule())
+                .accessibilityHidden(true)
+        } else if tab == .plan, model.planHasUnseenUpdate {
+            Circle()
+                .fill(LocusTheme.coral)
+                .frame(width: 5, height: 5)
+                .accessibilityHidden(true)
+        }
     }
 }
 

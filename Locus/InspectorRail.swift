@@ -7,9 +7,10 @@ import SwiftUI
 struct InspectorRail: View {
     @EnvironmentObject private var model: AppModel
 
-    /// Tabs that live behind the ellipsis rather than on the rail itself.
-    /// Terminal joins Plan and Browser as a direct destination.
-    static let overflowTabs = InspectorTab.workspaceTabs.filter { $0 != .terminal }
+    /// Destinations that live behind the ellipsis rather than on the rail
+    /// itself. The inspector's dynamic tab bar is driven by open state, not
+    /// this fixed menu inventory.
+    static let menuTabs = InspectorTab.workspaceTabs.filter { $0 != .terminal }
 
     var body: some View {
         VStack(spacing: 6) {
@@ -88,7 +89,7 @@ struct InspectorRail: View {
 
     private var moreMenu: some View {
         Menu {
-            ForEach(Self.overflowTabs) { tab in
+            ForEach(Self.menuTabs) { tab in
                 Button(menuTitle(for: tab)) {
                     withAnimation(.easeInOut(duration: 0.18)) {
                         model.selectInspectorTab(tab)

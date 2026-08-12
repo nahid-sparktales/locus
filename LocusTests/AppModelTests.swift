@@ -1913,7 +1913,60 @@ final class AppModelTests: XCTestCase {
 
         XCTAssertFalse(model.inspectorCollapsed)
         XCTAssertEqual(model.inspectorTab, .changes)
+        XCTAssertEqual(model.openInspectorTabs, [.changes])
         XCTAssertEqual(model.settings.inspectorLastTab, "changes")
+        XCTAssertEqual(model.settings.inspectorOpenTabs, ["changes"])
+    }
+
+    @MainActor
+    func testSelectingInspectorTabsAppendsInOpeningOrderWithoutDuplicates() {
+        let model = AppModel(startImmediately: false)
+
+        model.selectInspectorTab(.changes)
+        model.selectInspectorTab(.files)
+        model.selectInspectorTab(.plan)
+        model.selectInspectorTab(.files)
+
+        XCTAssertEqual(model.openInspectorTabs, [.changes, .files, .plan])
+        XCTAssertEqual(model.inspectorTab, .files)
+        XCTAssertEqual(model.settings.inspectorOpenTabs, ["changes", "files", "plan"])
+    }
+
+    @MainActor
+    func testClosingInspectorTabsSelectsRightThenLeftAndCollapsesWhenEmpty() {
+        let model = AppModel(startImmediately: false)
+        model.selectInspectorTab(.changes)
+        model.selectInspectorTab(.files)
+        model.selectInspectorTab(.plan)
+
+        model.selectInspectorTab(.files)
+        model.closeInspectorTab(.files)
+        XCTAssertEqual(model.openInspectorTabs, [.changes, .plan])
+        XCTAssertEqual(model.inspectorTab, .plan, "the tab to the right fills the closed slot")
+        XCTAssertFalse(model.inspectorCollapsed)
+
+        model.closeInspectorTab(.plan)
+        XCTAssertEqual(model.openInspectorTabs, [.changes])
+        XCTAssertEqual(model.inspectorTab, .changes, "the rightmost tab falls back to its left")
+
+        model.closeInspectorTab(.changes)
+        XCTAssertTrue(model.openInspectorTabs.isEmpty)
+        XCTAssertTrue(model.inspectorCollapsed)
+        XCTAssertEqual(model.inspectorTab, .changes, "the last destination remains available to reopen")
+    }
+
+    @MainActor
+    func testClosingAnInactiveInspectorTabKeepsTheCurrentSelection() {
+        let model = AppModel(startImmediately: false)
+        model.selectInspectorTab(.changes)
+        model.selectInspectorTab(.files)
+        model.selectInspectorTab(.plan)
+
+        model.closeInspectorTab(.changes)
+
+        XCTAssertEqual(model.openInspectorTabs, [.files, .plan])
+        XCTAssertEqual(model.inspectorTab, .plan)
+        XCTAssertFalse(model.inspectorCollapsed)
     }
 
     @MainActor
@@ -1953,6 +2006,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.settings.resolvedTeamRunsPresentation, .ask)
         XCTAssertNil(model.automaticInspectorPrompt)
         XCTAssertEqual(model.inspectorTab, .plan)
+        XCTAssertEqual(model.openInspectorTabs, [.plan])
         XCTAssertFalse(model.inspectorCollapsed)
 
         model.inspectorCollapsed = true
@@ -2054,10 +2108,12 @@ final class AppModelTests: XCTestCase {
 
         model.toggleInspectorTab(.preview)
         XCTAssertTrue(model.inspectorCollapsed, "the open tab's own icon closes the panel")
+        XCTAssertEqual(model.openInspectorTabs, [.plan, .preview], "collapsing does not close tabs")
 
         model.toggleInspectorTab(.preview)
         XCTAssertFalse(model.inspectorCollapsed, "and reopens it")
         XCTAssertEqual(model.inspectorTab, .preview)
+        XCTAssertEqual(model.openInspectorTabs, [.plan, .preview])
     }
 
     @MainActor
