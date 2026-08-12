@@ -991,15 +991,16 @@ final class LocusUITests: XCTestCase {
         // Hosted macOS 15 runners can report a shorter wheel distance for the
         // same synthesized gesture. Continue from the transcript until its
         // final fixture item enters the accessibility viewport.
-        for _ in 0..<2 where !lastTool.exists {
+        for _ in 0..<3 where !lastTool.isHittable {
             transcript.scroll(byDeltaX: 0, deltaY: -2_400)
         }
         XCTAssertTrue(lastTool.waitForExistence(timeout: 3))
+        XCTAssertTrue(lastTool.isHittable)
         lastTool.click()
 
         lastTool.scroll(byDeltaX: 0, deltaY: 2_400)
         let firstMessage = anyElement("message.00000000-0000-0000-0000-000000000101")
-        for _ in 0..<2 where !firstMessage.exists {
+        for _ in 0..<3 where !firstMessage.isHittable {
             transcript.scroll(byDeltaX: 0, deltaY: 2_400)
         }
         XCTAssertTrue(firstMessage.waitForExistence(timeout: 3))
