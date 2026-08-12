@@ -67,19 +67,25 @@ private struct InspectorOpenTabBar: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
+        Group {
+            if model.openInspectorTabs.count <= 3 {
+                // Three tabs fit at the inspector's minimum width. Keeping
+                // them out of a ScrollView avoids a macOS 15 AppKit bug where
+                // its pan recognizer can consume clicks on sibling buttons.
                 tabItems
-            }
-            // When everything already fits, removing the drag recognizer also
-            // avoids a macOS 15 bug that consumes clicks on neighboring plain
-            // buttons. Larger collections retain normal horizontal scrolling.
-            .scrollDisabled(model.openInspectorTabs.count <= 3)
-            .onAppear {
-                proxy.scrollTo(model.inspectorTab.id, anchor: .center)
-            }
-            .onChange(of: model.inspectorTab) { _, tab in
-                proxy.scrollTo(tab.id, anchor: .center)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        tabItems
+                    }
+                    .onAppear {
+                        proxy.scrollTo(model.inspectorTab.id, anchor: .center)
+                    }
+                    .onChange(of: model.inspectorTab) { _, tab in
+                        proxy.scrollTo(tab.id, anchor: .center)
+                    }
+                }
             }
         }
         .frame(height: 28)
@@ -87,6 +93,7 @@ private struct InspectorOpenTabBar: View {
         .overlay(alignment: .bottom) {
             Rectangle().fill(LocusTheme.line).frame(height: 1)
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("inspector.tabBar")
     }
 
