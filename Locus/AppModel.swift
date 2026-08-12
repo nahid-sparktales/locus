@@ -10005,6 +10005,38 @@ final class AppModel: ObservableObject {
                 ))
             }
         }
+        extensions = ExtensionsResponse(
+            capabilities: ExtensionCapabilities(),
+            marketplaces: [],
+            plugins: [],
+            skills: [],
+            mcpServers: [],
+            mcpPresets: [
+                ExtensionMCPPreset(
+                    id: "github",
+                    name: "github",
+                    displayName: "GitHub",
+                    description: "Search repositories and work with issues and pull requests.",
+                    url: "https://api.githubcopilot.com/mcp/",
+                    sourceURL: nil,
+                    auth: "oauth",
+                    fallback: nil,
+                    fallbackHeader: nil,
+                    optionalHeader: nil,
+                    scopes: [],
+                    warning: "Review requested permissions before connecting.",
+                    requiresProjectRef: false,
+                    installed: false,
+                    serverID: nil,
+                    defaultToolsApprovalMode: "annotations",
+                    resourcesDiscoverable: true,
+                    promptsEnabled: false,
+                    catalogVersion: 1
+                ),
+            ],
+            errors: [],
+            pendingUpdates: 0
+        )
         promptHistory = ["Audit the current changes", "Review the workspace"]
 
         // The three newest inspector tabs read from state the agent normally

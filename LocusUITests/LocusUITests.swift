@@ -1044,8 +1044,11 @@ final class LocusUITests: XCTestCase {
         destination.click()
         let remove = anyElement("activity.remove.seed-run")
         XCTAssertTrue(remove.waitForExistence(timeout: 3))
-        XCTAssertTrue(waitUntilHittable(remove))
-        remove.click()
+        // The activity center is a SwiftUI overlay. macOS 15 and 26 can mark
+        // its visible buttons non-hittable in XCUI even though AppKit routes a
+        // pointer at the same frame correctly. Exercise the real hit-testing
+        // path at the button's center and verify the resulting removal.
+        remove.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         XCTAssertTrue(app.staticTexts["No Activity Yet"].waitForExistence(timeout: 3))
     }
 
@@ -1066,22 +1069,24 @@ final class LocusUITests: XCTestCase {
 
         // Begin the gesture over selectable tool output. It must continue on
         // the transcript instead of being swallowed by the nested responder.
-        firstTool.scroll(byDeltaX: 0, deltaY: -2_400)
         let lastTool = anyElement("tool.scroll-tool-11.toggle")
-        // Hosted macOS 15 runners can report a shorter wheel distance for the
-        // same synthesized gesture. Continue from the transcript until its
-        // final fixture item enters the accessibility viewport.
-        for _ in 0..<3 where !lastTool.isHittable {
-            transcript.scroll(byDeltaX: 0, deltaY: -2_400)
+        // Grouping puts the tool cards next to one another. Move through them
+        // in bounded steps so a single synthetic wheel event cannot jump past
+        // the lazy stack and evict the final card from accessibility.
+        firstTool.scroll(byDeltaX: 0, deltaY: -320)
+        for _ in 0..<8 {
+            if lastTool.exists, lastTool.isHittable { break }
+            transcript.scroll(byDeltaX: 0, deltaY: -320)
         }
         XCTAssertTrue(lastTool.waitForExistence(timeout: 3))
         XCTAssertTrue(lastTool.isHittable)
         lastTool.click()
 
-        lastTool.scroll(byDeltaX: 0, deltaY: 2_400)
         let firstMessage = anyElement("message.00000000-0000-0000-0000-000000000101")
-        for _ in 0..<3 where !firstMessage.isHittable {
-            transcript.scroll(byDeltaX: 0, deltaY: 2_400)
+        lastTool.scroll(byDeltaX: 0, deltaY: 320)
+        for _ in 0..<8 {
+            if firstMessage.exists, firstMessage.isHittable { break }
+            transcript.scroll(byDeltaX: 0, deltaY: 320)
         }
         XCTAssertTrue(firstMessage.waitForExistence(timeout: 3))
         XCTAssertTrue(firstMessage.isHittable)

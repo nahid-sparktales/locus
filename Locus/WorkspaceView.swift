@@ -1600,7 +1600,8 @@ private struct ConversationView: View {
             ToolActivityView(
                 groupID: id,
                 tools: tools,
-                visibility: model.toolActivityVisibility
+                visibility: model.toolActivityVisibility,
+                onExpansionChange: scrollCoordinator.detach
             )
             .padding(.leading, 43)
             .id("tool-activity-\(id.uuidString)")
@@ -2629,6 +2630,7 @@ private struct ToolActivityView: View {
     let groupID: UUID
     let tools: [ToolPayload]
     let visibility: ToolActivityVisibility
+    let onExpansionChange: () -> Void
     @State private var expanded = false
 
     private var status: ToolActivityAggregateStatus {
@@ -2650,6 +2652,7 @@ private struct ToolActivityView: View {
     private var collapsedCard: some View {
         VStack(spacing: 0) {
             Button {
+                onExpansionChange()
                 expanded.toggle()
             } label: {
                 HStack(spacing: 8) {

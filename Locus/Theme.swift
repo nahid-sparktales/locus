@@ -295,6 +295,7 @@ struct MCPLogo: View {
                 .stroke(Color.white.opacity(0.28), lineWidth: 0.75)
         }
         .shadow(color: .black.opacity(0.12), radius: 1, y: 1)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(name) logo")
     }
 }
