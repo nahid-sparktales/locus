@@ -444,6 +444,33 @@ final class FeatureLogicTests: XCTestCase {
         assertColor(dark.permissionInk, hex: 0xD7A77E)
     }
 
+    func testEveryInspectorTabTitleIsWhiteInDarkAppearance() {
+        for selected in [false, true] {
+            assertColor(
+                InspectorTabAppearance.titleColor(
+                    colorScheme: .dark,
+                    selected: selected
+                ),
+                red: 1,
+                green: 1,
+                blue: 1
+            )
+        }
+    }
+
+    func testWorkspaceIconsAreLargerThanChatIcons() {
+        XCTAssertEqual(SidebarIconMetrics.workspaceIconSize, 27)
+        XCTAssertEqual(SidebarIconMetrics.chatIconSize, 20)
+        XCTAssertGreaterThan(
+            SidebarIconMetrics.workspaceIconSize,
+            SidebarIconMetrics.chatIconSize
+        )
+        XCTAssertGreaterThan(
+            SidebarIconMetrics.workspaceSymbolSize,
+            SidebarIconMetrics.chatSymbolSize
+        )
+    }
+
     private func assertColor(
         _ color: NSColor,
         hex: UInt32,
@@ -1653,6 +1680,22 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertTrue(RemoteEndpointTester.authHeaders(apiKey: "", kind: .claude).isEmpty)
     }
 
+    func testProviderFailuresPreserveUsefulVLLMDetailsAndRedactKeys() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "error": "Bad Request: The endpoint is paused for sk-private; ask a maintainer to restart it",
+        ])
+
+        let message = RemoteEndpointTester.failureMessage(
+            status: 400,
+            data: data,
+            apiKey: "sk-private"
+        )
+
+        XCTAssertTrue(message.contains("rejected the request (400)"))
+        XCTAssertTrue(message.contains("endpoint is paused"))
+        XCTAssertFalse(message.contains("sk-private"))
+    }
+
     func testEveryProviderHasTheMetadataTheUIDependsOn() {
         for kind in ProviderKind.allCases where kind != .custom {
             XCTAssertFalse(kind.defaultBaseURL.isEmpty, "\(kind) needs an endpoint")
@@ -1998,24 +2041,122 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
-    // MARK: - Plan prompt suggestions
+    // MARK: - Plan panel presentation
 
-    func testPlanPromptSuggestionsAreFiveDistinctReadyToSendPrompts() {
-        let suggestions = PlanPromptSuggestion.curated
-        XCTAssertEqual(suggestions.count, 5)
-        XCTAssertEqual(Set(suggestions.map(\.title)).count, suggestions.count)
-        XCTAssertEqual(Set(suggestions.map(\.prompt)).count, suggestions.count)
-        for suggestion in suggestions {
-            XCTAssertFalse(suggestion.title.isEmpty)
-            XCTAssertFalse(
-                suggestion.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                "an empty prompt would send nothing"
-            )
-            XCTAssertFalse(
-                suggestion.prompt.hasPrefix("/"),
-                "a leading slash would be routed as a command, not a plan request"
-            )
-        }
+    func testPlanPanelPhaseUsesAttentionAndRunStatePrecedence() {
+        let pending = [TodoItem(content: "Inspect the panel", status: .pending)]
+        let complete = [TodoItem(content: "Inspect the panel", status: .completed)]
+        let stopped = TurnCompletion(
+            outcome: .interrupted,
+            mode: .build,
+            durationMilliseconds: 2_000,
+            iterationLimit: nil
+        )
+
+        XCTAssertEqual(
+            planPhase(permission: true, approval: true, busy: true, mode: .plan, todos: pending),
+            .waitingForPermission
+        )
+        XCTAssertEqual(
+            planPhase(approval: true, busy: true, mode: .plan, todos: pending),
+            .readyForApproval
+        )
+        XCTAssertEqual(planPhase(busy: true, mode: .plan), .planning)
+        XCTAssertEqual(planPhase(busy: true, mode: .build, todos: pending), .executing)
+        XCTAssertEqual(planPhase(busy: true, mode: .work), .working)
+        XCTAssertEqual(planPhase(todos: complete), .completed)
+        XCTAssertEqual(planPhase(todos: pending, completion: stopped), .stopped)
+        XCTAssertEqual(
+            planPhase(todos: complete, completion: stopped),
+            .stopped,
+            "an interrupted outcome takes precedence over completed step markers"
+        )
+        XCTAssertEqual(
+            planPhase(
+                todos: pending,
+                completion: TurnCompletion(
+                    outcome: .error,
+                    mode: .work,
+                    durationMilliseconds: 500,
+                    iterationLimit: nil
+                )
+            ),
+            .stopped
+        )
+        XCTAssertEqual(planPhase(todos: pending), .saved)
+        XCTAssertEqual(planPhase(), .idle)
+    }
+
+    func testPlanWorkspaceBriefingSummarizesTheLiveRouteAndRepository() {
+        let briefing = PlanWorkspaceBriefing.resolve(
+            workspacePath: "/Users/example/Projects/locus",
+            modelName: "Work · gpt-5.4",
+            providerName: "OpenAI API",
+            modelStatus: "Ready",
+            contextWindowTokens: 400_000,
+            isGitRepository: true,
+            branch: "codex/plan-panel",
+            changedFileCount: 3,
+            gitChangeSummary: "1 staged · 2 modified",
+            ahead: 2,
+            behind: 1,
+            indexedFileCount: 128,
+            messageCount: 71
+        )
+
+        XCTAssertEqual(briefing.folderName, "locus")
+        XCTAssertEqual(briefing.folderPath, "/Users/example/Projects/locus")
+        XCTAssertEqual(briefing.repositoryDetail, "codex/plan-panel · 3 changed files · ↑2 · ↓1")
+        XCTAssertEqual(briefing.modelName, "Work · gpt-5.4")
+        XCTAssertTrue(briefing.modelDetail.contains("OpenAI API · Ready"))
+        XCTAssertTrue(briefing.modelDetail.contains("400"))
+        XCTAssertTrue(briefing.modelDetail.contains("token window"))
+        XCTAssertEqual(briefing.activityTitle, "Workspace has unreviewed changes")
+        XCTAssertEqual(
+            briefing.activityDetail,
+            "1 staged · 2 modified · 128 indexed files · 71 messages"
+        )
+    }
+
+    func testPlanWorkspaceBriefingHandlesACleanNonGitFolder() {
+        let briefing = PlanWorkspaceBriefing.resolve(
+            workspacePath: "/tmp/notes",
+            modelName: "qwen3:8b",
+            providerName: "Local Ollama",
+            modelStatus: "Starting",
+            contextWindowTokens: nil,
+            isGitRepository: false,
+            branch: nil,
+            changedFileCount: 0,
+            gitChangeSummary: "No changes",
+            ahead: 0,
+            behind: 0,
+            indexedFileCount: 1,
+            messageCount: 1
+        )
+
+        XCTAssertEqual(briefing.repositoryDetail, "Git not detected")
+        XCTAssertEqual(briefing.modelDetail, "Local Ollama · Starting")
+        XCTAssertEqual(briefing.activityTitle, "Workspace indexed")
+        XCTAssertEqual(briefing.activityDetail, "Ready for inspection · 1 indexed file · 1 message")
+    }
+
+    private func planPhase(
+        permission: Bool = false,
+        approval: Bool = false,
+        busy: Bool = false,
+        mode: WorkMode? = nil,
+        todos: [TodoItem] = [],
+        completion: TurnCompletion? = nil
+    ) -> PlanPanelPhase {
+        PlanPanelPresentation.resolve(
+            hasPendingPermission: permission,
+            planApprovalPending: approval,
+            isBusy: busy,
+            dispatchedMode: mode,
+            todos: todos,
+            latestCompletion: completion
+        ).phase
     }
 
     // MARK: - Agent teams
@@ -2126,6 +2267,33 @@ final class FeatureLogicTests: XCTestCase {
 
         let alreadyPreview = AgentTeamStore.migrateToOneTimeApproval(migration.teams)
         XCTAssertFalse(alreadyPreview.changed)
+    }
+
+    func testNewTeamsDefaultToAdaptiveSwarmWhileMissingPolicyDecodesFlat() throws {
+        let newTeam = AgentTeam(
+            name: "Adaptive",
+            dispatcherID: nil,
+            fallbackDispatcherID: nil,
+            memberIDs: [],
+            defaultWriterID: nil
+        )
+        XCTAssertEqual(newTeam.resolvedSwarmPolicy.delegationMode, .readOnlyChildren)
+        XCTAssertEqual(newTeam.resolvedSwarmPolicy.engine, .locusManaged)
+        XCTAssertEqual(newTeam.resolvedSwarmPolicy.maxTotalAgents, 8)
+        XCTAssertEqual(newTeam.resolvedSwarmPolicy.maxDepth, 2)
+        XCTAssertEqual(newTeam.budget.maxConcurrentCalls, 3)
+
+        let encoded = try JSONEncoder().encode(newTeam)
+        var legacyObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        legacyObject.removeValue(forKey: "swarmPolicy")
+        let legacyData = try JSONSerialization.data(withJSONObject: legacyObject)
+        let restored = try JSONDecoder().decode(AgentTeam.self, from: legacyData)
+
+        XCTAssertNil(restored.swarmPolicy)
+        XCTAssertEqual(restored.resolvedSwarmPolicy.delegationMode, .flat)
+        XCTAssertEqual(restored.resolvedSwarmPolicy.engine, .locusManaged)
     }
 
     func testFormerDefaultTeamBudgetMigratesToAutomaticButCustomBudgetStaysFixed() {
@@ -2315,6 +2483,8 @@ final class FeatureLogicTests: XCTestCase {
         let activity = try JSONDecoder().decode(AgentActivity.self, from: data)
         XCTAssertEqual(activity.reasoningText, "Explicit reasoning")
         XCTAssertEqual(activity.promptTokens + activity.completionTokens, 25)
+        XCTAssertEqual(activity.depth, 0)
+        XCTAssertEqual(activity.executionEngine, "locus_managed")
     }
 
     func testPerTokenTeamStreamsAreExcludedFromTheDurableTimeline() throws {
@@ -2329,6 +2499,182 @@ final class FeatureLogicTests: XCTestCase {
 
         XCTAssertTrue(stream.isTransientStream)
         XCTAssertFalse(completed.isTransientStream)
+    }
+
+    func testSessionStateReducerRunsAPlanLifecycle() {
+        var state = SessionState.empty(workspacePath: "/tmp/project", modelID: "gpt-5.6-sol")
+        let steps = [
+            SessionPlanStep(id: "one", label: "Inspect", state: .pending),
+            SessionPlanStep(id: "two", label: "Implement", state: .pending),
+        ]
+        state = SessionStateReducer.reduce(state, .planCreated(steps: steps, at: 1_000))
+        state = SessionStateReducer.reduce(
+            state,
+            .stepState(stepID: "one", state: .running, at: 2_000)
+        )
+        state = SessionStateReducer.reduce(
+            state,
+            .stepState(stepID: "one", state: .done, at: 5_000)
+        )
+
+        XCTAssertEqual(state.plan[0].state, .done)
+        XCTAssertEqual(state.plan[0].startedAt, 2_000)
+        XCTAssertEqual(state.plan[0].endedAt, 5_000)
+        XCTAssertEqual(state.plan[1].state, .pending)
+    }
+
+    func testSessionStateReducerDeduplicatesAndAccumulatesFiles() {
+        var state = SessionState.empty()
+        state = SessionStateReducer.reduce(
+            state,
+            .fileEdit(path: "Sources/App.swift", added: 10, removed: 2, at: 1)
+        )
+        state = SessionStateReducer.reduce(
+            state,
+            .fileEdit(path: "Sources/App.swift", added: 4, removed: 1, at: 2)
+        )
+        state = SessionStateReducer.reduce(
+            state,
+            .fileRead(path: "Sources/App.swift", at: 3)
+        )
+
+        XCTAssertEqual(state.files.count, 1)
+        XCTAssertEqual(state.files[0].added, 14)
+        XCTAssertEqual(state.files[0].removed, 3)
+        XCTAssertEqual(state.files[0].kind, .edit)
+        XCTAssertEqual(state.files[0].lastTouchedAt, 3)
+    }
+
+    func testSessionStateReducerUpdatesTokensAndPrefersReportedWindow() {
+        let state = SessionStateReducer.reduce(
+            SessionState.empty(modelID: "gpt-5.6-sol"),
+            .tokens(used: 24_100, window: 64_000, costUsd: 0.42, at: 1)
+        )
+
+        XCTAssertEqual(state.resources.tokensUsed, 24_100)
+        XCTAssertEqual(state.model.contextWindow, 64_000)
+        XCTAssertEqual(state.resources.costUsd, 0.42)
+    }
+
+    func testSessionRunFinishedCreatesIdleSummaryAndSuggestions() {
+        let summary = SessionRunSummary(
+            completedSteps: 4,
+            totalSteps: 4,
+            durationMs: 372_000,
+            endedAt: 10,
+            summary: "Refactored retry logic with backoff; tests passing.",
+            outcome: .completed
+        )
+        var state = SessionState.empty()
+        state = SessionStateReducer.reduce(
+            state,
+            .status(status: .running, reason: nil, at: 1)
+        )
+        state = SessionStateReducer.reduce(
+            state,
+            .runFinished(
+                summary: summary,
+                suggestions: ["Add integration tests", "Review diff", "Ship", "Ignored"],
+                at: 10
+            )
+        )
+
+        XCTAssertEqual(state.status, .idle)
+        XCTAssertEqual(state.lastRun, summary)
+        XCTAssertEqual(state.suggestions, ["Add integration tests", "Review diff", "Ship"])
+    }
+
+    func testSessionEventRingKeepsTheNewestTwoHundred() {
+        var state = SessionState.empty()
+        for index in 0..<230 {
+            state = SessionStateReducer.reduce(
+                state,
+                .message(role: .assistant, at: index)
+            )
+        }
+        XCTAssertEqual(state.events.count, 200)
+        XCTAssertEqual(state.events.first?.timestamp, 30)
+        XCTAssertEqual(state.events.last?.timestamp, 229)
+    }
+
+    @MainActor
+    func testSessionEmitterRestoresEachPersistedSession() throws {
+        let suiteName = "LocusTests.sessionOverview.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let key = "session-state"
+
+        let writer = SessionStateEmitter()
+        writer.configurePersistence(enabled: true, defaults: defaults, key: key)
+        writer.activate(
+            sessionID: "one",
+            initial: .empty(workspacePath: "/tmp/one", modelID: "gpt-5.6-sol")
+        )
+        writer.emit(.status(status: .running, reason: nil, at: 1))
+        writer.activate(
+            sessionID: "two",
+            initial: .empty(workspacePath: "/tmp/two", modelID: "local-model")
+        )
+        writer.emit(.fileRead(path: "README.md", at: 2))
+
+        let reader = SessionStateEmitter()
+        reader.configurePersistence(enabled: true, defaults: defaults, key: key)
+
+        XCTAssertEqual(reader.states["one"]?.status, .running)
+        XCTAssertEqual(reader.states["two"]?.files.first?.path, "README.md")
+    }
+
+    func testTwoProviderAdaptersFoldTheSameEventsWithoutUIKnowledge() {
+        func folded(provider: String) -> SessionState {
+            var state = SessionState.empty(
+                workspacePath: "/tmp/project",
+                modelID: provider == "openai" ? "gpt-5.6-sol" : "claude-test",
+                provider: provider
+            )
+            state = SessionStateReducer.reduce(
+                state,
+                .fileEdit(path: "App.swift", added: 2, removed: 1, at: 1)
+            )
+            state = SessionStateReducer.reduce(
+                state,
+                .tokens(used: 100, window: 1_000, costUsd: 0.01, at: 2)
+            )
+            return state
+        }
+
+        let openAI = folded(provider: "openai")
+        let secondProvider = folded(provider: "anthropic")
+        XCTAssertEqual(openAI.files, secondProvider.files)
+        XCTAssertEqual(openAI.resources, secondProvider.resources)
+        XCTAssertNotEqual(openAI.model.provider, secondProvider.model.provider)
+    }
+
+    func testProxyConfigResolutionPrefersWorkspaceFilesAndCreatesFallback() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let workspace = root.appending(path: "workspace", directoryHint: .isDirectory)
+        let config = workspace.appending(path: "config", directoryHint: .isDirectory)
+        let fallback = root.appending(path: "app-config", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        let existing = config.appending(path: "proxies.json")
+        try Data("{}".utf8).write(to: existing)
+
+        let found = try SessionQuickActionFiles.resolveProxyConfig(
+            workspacePath: workspace.path,
+            appConfigDirectory: fallback
+        )
+        XCTAssertEqual(found.url, existing)
+        XCTAssertFalse(found.created)
+
+        try FileManager.default.removeItem(at: existing)
+        let created = try SessionQuickActionFiles.resolveProxyConfig(
+            workspacePath: workspace.path,
+            appConfigDirectory: fallback
+        )
+        XCTAssertTrue(created.created)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: created.url.path))
+        XCTAssertTrue(try String(contentsOf: created.url).contains("$schemaNote"))
+        try FileManager.default.removeItem(at: root)
     }
 
     func testTaskConversationStateRoundTripsWithoutConversationContent() throws {

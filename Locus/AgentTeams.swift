@@ -565,6 +565,54 @@ struct OrchestrationBudget: Codable, Hashable {
     }
 }
 
+struct SwarmPolicy: Codable, Hashable {
+    enum Engine: String, Codable, CaseIterable, Identifiable {
+        case locusManaged = "locus_managed"
+        case openAIResponses = "openai_responses"
+
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .locusManaged: "Locus managed"
+            case .openAIResponses: "OpenAI Responses (beta)"
+            }
+        }
+    }
+
+    enum DelegationMode: String, Codable {
+        case flat
+        case readOnlyChildren = "read_only_children"
+    }
+
+    enum SizingMode: String, Codable {
+        case adaptive
+    }
+
+    var version = 1
+    var engine: Engine = .locusManaged
+    var delegationMode: DelegationMode = .readOnlyChildren
+    var sizingMode: SizingMode = .adaptive
+    var maxTotalAgents = 8
+    var maxDepth = 2
+
+    static let adaptiveDefault = SwarmPolicy()
+    static let legacyFlat = SwarmPolicy(delegationMode: .flat)
+
+    enum CodingKeys: String, CodingKey {
+        case version, engine
+        case delegationMode = "delegation_mode"
+        case sizingMode = "sizing_mode"
+        case maxTotalAgents = "max_total_agents"
+        case maxDepth = "max_depth"
+    }
+
+    mutating func clamp() {
+        version = 1
+        maxTotalAgents = min(max(maxTotalAgents, 1), 32)
+        maxDepth = min(max(maxDepth, 1), 4)
+    }
+}
+
 struct AgentTeam: Identifiable, Codable, Hashable {
     var id = UUID()
     var name: String
@@ -580,6 +628,9 @@ struct AgentTeam: Identifiable, Codable, Hashable {
     var routingWeights: AgentScoreWeights? = nil
     var evaluationTags: [String]? = nil
     var maximumEstimatedCost: Double? = nil
+    /// Optional so a missing field remains a legacy flat team. New memberwise
+    /// initializers receive the adaptive default explicitly.
+    var swarmPolicy: SwarmPolicy? = .adaptiveDefault
 
     mutating func clamp() {
         name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(64))
@@ -601,12 +652,14 @@ struct AgentTeam: Identifiable, Codable, Hashable {
             String($0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().prefix(40))
         }.filter { !$0.isEmpty })).sorted().prefix(24).map { $0 }
         maximumEstimatedCost = min(max(maximumEstimatedCost ?? 0, 0), 100_000)
+        if swarmPolicy != nil { swarmPolicy?.clamp() }
     }
 
     var resolvedDispatchApprovalMode: DispatchApprovalMode { .preview }
     var resolvedRoutingMode: AgentRoutingMode { routingMode ?? .manual }
     var resolvedRoutingWeights: AgentScoreWeights { routingWeights ?? .init() }
     var resolvedParallelWriters: Bool { parallelWriters ?? useManagedWorktree }
+    var resolvedSwarmPolicy: SwarmPolicy { swarmPolicy ?? .legacyFlat }
 }
 
 enum AgentTeamValidation {
@@ -651,6 +704,13 @@ enum AgentTeamValidation {
         for profile in team.memberIDs.compactMap({ byID[$0] }) where !profile.isConfigured {
             errors.append("Configure a model for \(profile.name.isEmpty ? "an agent" : profile.name).")
         }
+        let policy = team.resolvedSwarmPolicy
+        if !(1...32).contains(policy.maxTotalAgents) {
+            errors.append("Maximum total agents must be between 1 and 32.")
+        }
+        if !(1...4).contains(policy.maxDepth) {
+            errors.append("Maximum swarm depth must be between 1 and 4.")
+        }
         return Array(Set(errors)).sorted()
     }
 
@@ -666,6 +726,20 @@ enum AgentTeamValidation {
         let byID = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
         let accountsByID = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
         var errors: [String] = []
+
+        if team.resolvedSwarmPolicy.engine == .openAIResponses {
+            guard let dispatcherID = team.dispatcherID,
+                  let dispatcher = byID[dispatcherID],
+                  case .providerAccount(let accountID) = dispatcher.route,
+                  let account = accountsByID[accountID],
+                  account.kind == .codex,
+                  dispatcher.model.lowercased() == "gpt-5.6"
+                    || dispatcher.model.lowercased().hasPrefix("gpt-5.6-")
+            else {
+                errors.append("OpenAI Responses requires an OpenAI API dispatcher using a GPT-5.6 model. ChatGPT plan accounts stay Locus-managed.")
+                return Array(Set(errors)).sorted()
+            }
+        }
 
         for profile in team.memberIDs.compactMap({ byID[$0] }) {
             guard case .providerAccount(let accountID) = profile.route,
@@ -851,6 +925,10 @@ struct AgentActivity: Identifiable, Codable, Hashable {
     var writerJobID: String? = nil
     var writerPosition: Int? = nil
     var writerTotal: Int? = nil
+    var nodeID: String? = nil
+    var parentNodeID: String? = nil
+    var depth: Int = 0
+    var executionEngine: String = "locus_managed"
 
     enum CodingKeys: String, CodingKey {
         case id, role, provider, model, goal, state, output, tool, evidence
@@ -863,6 +941,40 @@ struct AgentActivity: Identifiable, Codable, Hashable {
         case writerJobID = "writer_job_id"
         case writerPosition = "writer_position"
         case writerTotal = "writer_total"
+        case nodeID = "node_id"
+        case parentNodeID = "parent_node_id"
+        case depth
+        case executionEngine = "execution_engine"
+    }
+}
+
+extension AgentActivity {
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        agentName = try values.decode(String.self, forKey: .agentName)
+        role = try values.decode(String.self, forKey: .role)
+        provider = try values.decode(String.self, forKey: .provider)
+        model = try values.decode(String.self, forKey: .model)
+        goal = try values.decode(String.self, forKey: .goal)
+        state = try values.decode(TeamRunState.self, forKey: .state)
+        output = try values.decode(String.self, forKey: .output)
+        reasoningText = try values.decodeIfPresent(String.self, forKey: .reasoningText)
+        tool = try values.decodeIfPresent(String.self, forKey: .tool)
+        evidence = try values.decode([String].self, forKey: .evidence)
+        startedAt = try values.decodeIfPresent(Date.self, forKey: .startedAt)
+        elapsedMilliseconds = try values.decode(Int.self, forKey: .elapsedMilliseconds)
+        promptTokens = try values.decode(Int.self, forKey: .promptTokens)
+        completionTokens = try values.decode(Int.self, forKey: .completionTokens)
+        writerJobID = try values.decodeIfPresent(String.self, forKey: .writerJobID)
+        writerPosition = try values.decodeIfPresent(Int.self, forKey: .writerPosition)
+        writerTotal = try values.decodeIfPresent(Int.self, forKey: .writerTotal)
+        nodeID = try values.decodeIfPresent(String.self, forKey: .nodeID)
+        parentNodeID = try values.decodeIfPresent(String.self, forKey: .parentNodeID)
+        depth = try values.decodeIfPresent(Int.self, forKey: .depth) ?? 0
+        executionEngine = try values.decodeIfPresent(
+            String.self, forKey: .executionEngine
+        ) ?? "locus_managed"
     }
 }
 
@@ -1034,6 +1146,10 @@ struct OrchestrationEvent: Identifiable, Codable, Hashable {
     var isTransientStream: Bool { type == "agent_job_stream" }
     var jobID: String? { text("job_id") }
     var attemptID: String? { text("attempt_id") }
+    var nodeID: String? { text("node_id") }
+    var parentNodeID: String? { text("parent_node_id") }
+    var depth: Int { values["depth"]?.integer ?? 0 }
+    var executionEngine: String { text("execution_engine") ?? "locus_managed" }
     var occurredAt: Date? {
         guard case .number(let value) = values["occurred_at"] else { return nil }
         return Date(timeIntervalSince1970: value)
@@ -1080,6 +1196,10 @@ struct AgentJobAttempt: Identifiable, Codable, Hashable {
     let role: String?
     let provider: String?
     let model: String?
+    let nodeID: String?
+    let parentNodeID: String?
+    let depth: Int?
+    let executionEngine: String?
     let state: String
     let goal: String
     let result: [String: JSONValue]?
@@ -1087,14 +1207,20 @@ struct AgentJobAttempt: Identifiable, Codable, Hashable {
     let completedAt: Double?
 
     var id: String { attemptID }
+    var resolvedNodeID: String { nodeID ?? jobID }
+    var resolvedDepth: Int { depth ?? 0 }
+    var resolvedExecutionEngine: String { executionEngine ?? "locus_managed" }
 
     enum CodingKeys: String, CodingKey {
-        case attempt, role, provider, model, state, goal, result
+        case attempt, role, provider, model, state, goal, result, depth
         case runID = "run_id"
         case jobID = "job_id"
         case attemptID = "attempt_id"
         case agentID = "agent_id"
         case agentName = "agent_name"
+        case nodeID = "node_id"
+        case parentNodeID = "parent_node_id"
+        case executionEngine = "execution_engine"
         case startedAt = "started_at"
         case completedAt = "completed_at"
     }
@@ -1104,6 +1230,7 @@ struct AgentJobAttempt: Identifiable, Codable, Hashable {
     var reasoningText: String? { result?["reasoning_text"]?.string }
     var promptTokens: Int { result?["prompt_tokens"]?.integer ?? 0 }
     var completionTokens: Int { result?["completion_tokens"]?.integer ?? 0 }
+    var modelCalls: Int { result?["model_calls"]?.integer ?? 1 }
     var elapsedMilliseconds: Int { result?["elapsed_ms"]?.integer ?? 0 }
     var evidence: [String] {
         guard case .array(let values) = result?["evidence"] else { return [] }
@@ -1268,6 +1395,10 @@ struct DispatchJob: Identifiable, Codable, Hashable {
     var requiredRole: String?
     var capabilityTags: [String]?
     var preferredAgentID: String?
+    var nodeID: String? = nil
+    var parentNodeID: String? = nil
+    var depth: Int? = nil
+    var executionEngine: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, goal, dependencies, kind
@@ -1275,6 +1406,26 @@ struct DispatchJob: Identifiable, Codable, Hashable {
         case requiredRole = "required_role"
         case capabilityTags = "capability_tags"
         case preferredAgentID = "preferred_agent_id"
+        case nodeID = "node_id"
+        case parentNodeID = "parent_node_id"
+        case executionEngine = "execution_engine"
+    }
+}
+
+struct DispatchProvider: Codable, Hashable, Identifiable {
+    var agentID: String
+    var agentName: String
+    var provider: String
+    var model: String
+    var readOnly: Bool
+
+    var id: String { agentID }
+
+    enum CodingKeys: String, CodingKey {
+        case provider, model
+        case agentID = "agent_id"
+        case agentName = "agent_name"
+        case readOnly = "read_only"
     }
 }
 
@@ -1283,10 +1434,14 @@ struct DispatchPlan: Codable, Hashable {
     var jobs: [DispatchJob]
     var budget: OrchestrationBudget? = nil
     var maximumEstimatedCost: Double? = nil
+    var swarmPolicy: SwarmPolicy? = nil
+    var providerRoster: [DispatchProvider]? = nil
 
     enum CodingKeys: String, CodingKey {
         case summary, jobs, budget
         case maximumEstimatedCost = "maximum_estimated_cost"
+        case swarmPolicy = "swarm_policy"
+        case providerRoster = "provider_roster"
     }
 }
 

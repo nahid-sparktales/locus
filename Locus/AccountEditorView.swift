@@ -336,8 +336,9 @@ struct AccountEditorView: View {
             }
             updated.baseURLOverride = nil
             updated.contextWindow = nil
-            model.saveProviderAccount(updated, apiKey: nil)
-            dismiss()
+            if model.saveProviderAccount(updated, apiKey: nil) {
+                dismiss()
+            }
             return
         }
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -361,8 +362,12 @@ struct AccountEditorView: View {
         // Empty means "use the published figure"; a number overrides it.
         let typed = contextWindow.trimmingCharacters(in: .whitespacesAndNewlines)
         updated.contextWindow = typed.isEmpty ? nil : Int(typed)
-        model.saveProviderAccount(updated, apiKey: trimmedKey.isEmpty ? nil : trimmedKey)
-        dismiss()
+        if model.saveProviderAccount(
+            updated,
+            apiKey: trimmedKey.isEmpty ? nil : trimmedKey
+        ) {
+            dismiss()
+        }
     }
 
     /// Side-effect free, like the endpoint test it grew out of: it reads the
@@ -370,9 +375,11 @@ struct AccountEditorView: View {
     private func testConnection() {
         isTesting = true
         testResult = nil
-        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let typedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let usedSavedCredential = typedKey.isEmpty
+        let key = usedSavedCredential
             ? (CredentialStore.get(account: account.credentialAccount) ?? "")
-            : apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            : typedKey
         let base = resolvedBaseURL
         let probeModel = account.preferredModel.isEmpty ? kind.probeModel : account.preferredModel
         Task {
@@ -382,9 +389,27 @@ struct AccountEditorView: View {
                 apiKey: key,
                 kind: kind
             )
+            var message = outcome.message
+            var failed = !outcome.ok
+            if outcome.ok {
+                switch await model.reconnectAfterSuccessfulConnectionTest(
+                    account: account,
+                    usedSavedCredential: usedSavedCredential
+                ) {
+                case .notNeeded:
+                    break
+                case .saveRequired:
+                    message += " Save this key to reconnect Locus."
+                case .reconnected:
+                    message += " Locus reconnected this account."
+                case .reconnectFailed:
+                    failed = true
+                    message += " The provider accepted the key, but Locus could not reconnect its local agent. Try Reconnect Agent."
+                }
+            }
             isTesting = false
-            testFailed = !outcome.ok
-            testResult = outcome.message
+            testFailed = failed
+            testResult = message
         }
     }
 }

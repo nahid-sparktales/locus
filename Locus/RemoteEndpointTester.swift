@@ -206,17 +206,40 @@ enum RemoteEndpointTester {
         }
     }
 
-    private static func failureMessage(status: Int, data: Data, apiKey: String) -> String {
-        var body = String(data: data.prefix(300), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    /// Shared by Test Connection and the background account catalogue so both
+    /// surfaces preserve a provider's useful explanation (for example, a vLLM
+    /// host saying the endpoint is paused) instead of reducing every failure to
+    /// an apparent credential problem.
+    static func failureMessage(status: Int, data: Data, apiKey: String) -> String {
+        var body = errorDetail(from: data)
         if !apiKey.isEmpty {
             body = body.replacingOccurrences(of: apiKey, with: "[redacted]")
         }
         let hint = switch status {
         case 401, 403: "The endpoint rejected the API key"
+        case 400: "The endpoint rejected the request (400)"
         case 404: "Nothing answered at that path"
+        case 429: "The endpoint is rate-limiting requests (429)"
+        case 503: "The endpoint is not ready yet (503)"
         default: "The endpoint answered \(status)"
         }
         return body.isEmpty ? "\(hint)." : "\(hint): \(body)"
+    }
+
+    private static func errorDetail(from data: Data) -> String {
+        if let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let error = root["error"] as? [String: Any],
+               let message = error["message"] as? String, !message.isEmpty
+            {
+                return message
+            }
+            for key in ["error", "message", "detail"] {
+                if let message = root[key] as? String, !message.isEmpty {
+                    return message
+                }
+            }
+        }
+        return String(data: data.prefix(300), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 }

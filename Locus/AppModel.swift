@@ -105,6 +105,13 @@ struct AutomaticInspectorPrompt: Equatable {
 
 @MainActor
 final class AppModel: ObservableObject {
+    enum ProviderConnectionTestFollowUp: Equatable {
+        case notNeeded
+        case saveRequired
+        case reconnected
+        case reconnectFailed
+    }
+
     @Published var agentRuntimePhase: RuntimePhase = .starting("Starting the local agent…")
     @Published var modelRuntimePhase: RuntimePhase = .starting("Checking the model provider…")
     var isAgentOnline: Bool { agentRuntimePhase.isOnline }
@@ -371,6 +378,10 @@ final class AppModel: ObservableObject {
         didSet { transcriptSearchSelection = 0 }
     }
     @Published var transcriptSearchSelection = 0
+    /// A one-shot destination requested by the session overview activity feed.
+    /// ConversationView owns the actual scrolling so the overview never reaches
+    /// through to transcript UI state.
+    @Published var transcriptJumpTarget: UUID?
     @Published var streamRevision = 0
     @Published var toast: AppToast?
     var toastMessage: String? { toast?.message }
@@ -391,8 +402,11 @@ final class AppModel: ObservableObject {
     /// progress change far too often to republish AppModel over.
     let browser = BrowserService()
     let streamingReply = StreamingReplyState()
+    /// Provider-neutral, event-sourced state consumed by the Plan inspector.
+    let sessionOverview = SessionStateEmitter()
 
     private let backend: BackendService
+    private let providerCredentialWriter: (String, String) -> Bool
     private let backendProcess = BackendProcess()
     private var taskWorkers: [String: ChatWorkerRuntime] = [:]
     private var chatAdmissionQueue = ChatAdmissionQueue()
@@ -560,10 +574,14 @@ final class AppModel: ObservableObject {
     init(
         startImmediately: Bool = true,
         backendOverride: BackendService? = nil,
-        lifecycleJournal: AppLifecycleJournal? = nil
+        lifecycleJournal: AppLifecycleJournal? = nil,
+        providerCredentialWriter: ((String, String) -> Bool)? = nil
     ) {
         let isUITesting = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1"
         self.isUITesting = isUITesting
+        self.providerCredentialWriter = providerCredentialWriter ?? { value, account in
+            CredentialStore.set(value, account: account)
+        }
         persistenceEnabled = startImmediately && !isUITesting
         let launchJournal = lifecycleJournal ?? AppLifecycleJournal()
         self.lifecycleJournal = persistenceEnabled ? launchJournal : nil
@@ -697,6 +715,10 @@ final class AppModel: ObservableObject {
             defaults.set(data, forKey: "Locus.settings")
         }
         settings = loadedSettings
+        sessionOverview.configurePersistence(
+            enabled: persistenceEnabled && !isUITesting,
+            defaults: defaults
+        )
         // The proxy snapshot is what static call sites read; seed it before
         // anything can make a request. A test model must not read the
         // credential file, for the same reason it must not read accounts.
@@ -1088,6 +1110,16 @@ final class AppModel: ObservableObject {
     var toolActivityVisibility: ToolActivityVisibility {
         get { settings.resolvedToolActivityVisibility }
         set { settings.toolActivityVisibilityRaw = newValue.rawValue }
+    }
+
+    var showTeamProgressInHeader: Bool {
+        get { settings.showTeamProgressInHeader }
+        set { settings.showTeamProgressInHeader = newValue }
+    }
+
+    var showContextUsageInHeader: Bool {
+        get { settings.showContextUsageInHeader }
+        set { settings.showContextUsageInHeader = newValue }
     }
 
     var justChatEnabled: Bool { selectedMode == .ask }
@@ -1520,10 +1552,16 @@ final class AppModel: ObservableObject {
             return false
         }
 
-        agentRuntimePhase = .online
         // The app is the source of truth for provider routing and credentials,
-        // so it must reapply them after every agent restart.
-        await applyProvider(announce: false)
+        // so it must reapply them after every agent restart. A live HTTP server
+        // is not a recovered runtime until that handoff succeeds: hosted keys
+        // live only in the app's credential file and process memory, never in
+        // the agent config it just reloaded.
+        guard await applyProvider(announce: false) else {
+            agentRuntimePhase = .recovering("Restoring the model provider…")
+            return false
+        }
+        agentRuntimePhase = .online
         backend.connect()
         return true
     }
@@ -2656,6 +2694,15 @@ final class AppModel: ObservableObject {
         let teamRunID = (dispatchedTeam?["run_id"] as? String)?.nilIfEmpty
         let visibleBlock = ChatBlock(kind: .user, text: visibleText, teamRunID: teamRunID)
         blocks.append(visibleBlock)
+        if let info = sessionInfo, sessionOverview.activeSessionID != info.sessionID {
+            activateSessionOverview(info)
+        }
+        sessionOverview.emit(.message(role: .user, at: Self.sessionTimestamp))
+        sessionOverview.emit(.status(
+            status: .running,
+            reason: nil,
+            at: Self.sessionTimestamp
+        ))
         if !text.isEmpty { recordPrompt(text) }
         if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
             draftText = ""
@@ -3108,6 +3155,11 @@ final class AppModel: ObservableObject {
         planReadyThisTurn = false
         turnDispatchedInPlanMode = selectedMode == .plan
         turnDispatchedMode = selectedMode
+        sessionOverview.emit(.status(
+            status: .running,
+            reason: nil,
+            at: Self.sessionTimestamp
+        ))
         showToast("Regenerating the last response")
     }
 
@@ -3763,6 +3815,7 @@ final class AppModel: ObservableObject {
                         "base_url": account.resolvedBaseURL,
                         "api_key": CredentialStore.get(account: account.credentialAccount) ?? "",
                         "auth_style": account.kind.authStyle,
+                        "account_kind": account.kind.rawValue,
                         "lists_models": account.kind.listsModels,
                         "account_label": account.displayName,
                     ]
@@ -3819,6 +3872,14 @@ final class AppModel: ObservableObject {
             ],
             "evaluation_tags": team.evaluationTags ?? [],
             "maximum_estimated_cost": team.maximumEstimatedCost ?? 0,
+            "swarm_policy": [
+                "version": team.resolvedSwarmPolicy.version,
+                "engine": team.resolvedSwarmPolicy.engine.rawValue,
+                "delegation_mode": team.resolvedSwarmPolicy.delegationMode.rawValue,
+                "sizing_mode": team.resolvedSwarmPolicy.sizingMode.rawValue,
+                "max_total_agents": team.resolvedSwarmPolicy.maxTotalAgents,
+                "max_depth": team.resolvedSwarmPolicy.maxDepth,
+            ],
             "budget": [
                 "max_jobs": team.budget.maxJobs,
                 "max_rounds": team.budget.maxRounds,
@@ -4216,6 +4277,62 @@ final class AppModel: ObservableObject {
             body: ["manifest": manifest],
             runID: run.id
         )
+    }
+
+    func stopOrchestrationBranch(_ attempt: AgentJobAttempt, in run: OrchestrationRun) {
+        guard teamRunPresentation(for: run.id, durable: run).isActivelyOwned,
+              !isCodingAttempt(attempt, in: run)
+        else {
+            showToast("Only an active read-only branch can be stopped")
+            return
+        }
+        guard let node = encodedAgentNode(attempt.resolvedNodeID) else {
+            showToast("That agent branch has an invalid identity")
+            return
+        }
+        orchestrationAction(
+            path: "/api/orchestrations/\(run.id)/agents/\(node)/stop",
+            runID: run.id
+        )
+    }
+
+    func retryOrchestrationBranch(_ attempt: AgentJobAttempt, in run: OrchestrationRun) {
+        guard teamRunPresentation(for: run.id, durable: run).canRecover else {
+            showToast("Pause the team run before retrying a branch")
+            return
+        }
+        guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
+              let manifest = teamManifest(for: run.request, teamID: teamID),
+              let node = encodedAgentNode(attempt.resolvedNodeID)
+        else {
+            showToast("Repair the team before retrying this branch")
+            return
+        }
+        orchestrationAction(
+            path: "/api/orchestrations/\(run.id)/agents/\(node)/retry",
+            body: ["manifest": manifest],
+            runID: run.id
+        )
+    }
+
+    func runOrchestrationWithLocus(_ run: OrchestrationRun) {
+        guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
+              let manifest = teamManifest(for: run.request, teamID: teamID)
+        else {
+            showToast("Repair the team before continuing with Locus")
+            return
+        }
+        orchestrationAction(
+            path: "/api/orchestrations/\(run.id)/run-with-locus",
+            body: ["manifest": manifest],
+            runID: run.id
+        )
+    }
+
+    private func encodedAgentNode(_ nodeID: String) -> String? {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return nodeID.addingPercentEncoding(withAllowedCharacters: allowed)
     }
 
     func reassignOrchestrationJob(
@@ -5700,11 +5817,12 @@ final class AppModel: ObservableObject {
     /// Adds or updates an account. The key is written here rather than in the
     /// editor so an abandoned sheet leaves nothing behind; `apiKey` nil means
     /// "keep the saved one".
-    func saveProviderAccount(_ account: ProviderAccount, apiKey: String?) {
+    @discardableResult
+    func saveProviderAccount(_ account: ProviderAccount, apiKey: String?) -> Bool {
         if account.kind == .chatGPT {
             if providerAccounts.contains(where: { $0.kind == .chatGPT && $0.id != account.id }) {
                 showToast("Only one ChatGPT plan account can be added")
-                return
+                return false
             }
         } else {
             let effectiveKey = apiKey ?? CredentialStore.get(account: account.credentialAccount) ?? ""
@@ -5713,7 +5831,7 @@ final class AppModel: ObservableObject {
                 apiKey: effectiveKey
             ) {
                 showToast(error)
-                return
+                return false
             }
         }
         var updated = account
@@ -5723,13 +5841,20 @@ final class AppModel: ObservableObject {
             existing: providerAccounts,
             excluding: account.id
         )
+        // Write the credential before publishing the account. Otherwise a disk
+        // or permission failure produces a convincing "Saved" account whose
+        // key never survived, and closing the editor loses the only copy the
+        // user may have of a one-time key.
+        if let apiKey, updated.kind.requiresAPIKey,
+           !providerCredentialWriter(apiKey, updated.credentialAccount)
+        {
+            showToast("Could not save the API key to \(CredentialStore.displayPath)")
+            return false
+        }
         if let index = providerAccounts.firstIndex(where: { $0.id == updated.id }) {
             providerAccounts[index] = updated
         } else {
             providerAccounts.append(updated)
-        }
-        if let apiKey, updated.kind.requiresAPIKey {
-            CredentialStore.set(apiKey, account: updated.credentialAccount)
         }
         persistProviderAccounts()
         forgetAccountCatalog(updated.id)
@@ -5742,6 +5867,7 @@ final class AppModel: ObservableObject {
             }
         }
         showToast("Saved \(updated.displayName)")
+        return true
     }
 
     func refreshChatGPTAccount(forceTokenRefresh: Bool = false) async {
@@ -7037,13 +7163,14 @@ final class AppModel: ObservableObject {
     /// Pushes the chosen provider to the local agent. The key travels from the
     /// app's credential file to the agent process in memory — the agent never
     /// writes it to its own config, so it is re-sent on every launch.
-    func applyProvider(verify: Bool = false, announce: Bool = true) async {
+    @discardableResult
+    func applyProvider(verify: Bool = false, announce: Bool = true) async -> Bool {
         let account = activeAccount
         if let account, account.kind != .chatGPT, account.resolvedBaseURL.isEmpty {
             if announce {
                 showToast("Add the endpoint URL for \(account.displayName) in Settings")
             }
-            return
+            return true
         }
         do {
             let state = try await backend.post(
@@ -7070,17 +7197,41 @@ final class AppModel: ObservableObject {
             if let ollamaFailure, !modelRuntimePhase.isOnline {
                 modelRuntimePhase = ollamaFailure
             }
-            guard announce else { return }
+            guard announce else { return true }
             showToast(
                 state.provider == "remote" || state.provider == "chatgpt"
                     ? "Using \(account?.displayName ?? shortHost(state.host))"
                     : "Using local Ollama"
             )
+            return true
         } catch {
+            let message = "Could not restore the model provider: \(error.localizedDescription)"
+            modelRuntimePhase = .unavailable(message)
+            if let account {
+                accountStatus[account.id] = .failed(message)
+            }
             if announce {
                 showToast("Could not switch model provider: \(error.localizedDescription)")
             }
+            return false
         }
+    }
+
+    /// A successful Settings probe proves the provider accepted the tested
+    /// credential, but that request bypasses the local agent. Reapply the
+    /// active saved account so a helper that just restarted receives its key
+    /// again. A newly typed key remains a draft and must be saved first.
+    func reconnectAfterSuccessfulConnectionTest(
+        account: ProviderAccount,
+        usedSavedCredential: Bool
+    ) async -> ProviderConnectionTestFollowUp {
+        guard activeAccount?.id == account.id else { return .notNeeded }
+        guard usedSavedCredential else { return .saveRequired }
+        guard await applyProvider(announce: false) else { return .reconnectFailed }
+        if accountStatus[account.id]?.isHealthy != true {
+            accountStatus[account.id] = .keySaved
+        }
+        return .reconnected
     }
 
     private func shortHost(_ value: String) -> String {
@@ -7138,6 +7289,7 @@ final class AppModel: ObservableObject {
 
     func applyGitStatus(_ response: GitStatusResponse) {
         let previous = Set(gitChanges.map(\.path))
+        let previousChanges = Dictionary(uniqueKeysWithValues: gitChanges.map { ($0.path, $0) })
         gitChanges = response.files
         isGitRepository = response.isRepo
         lastGitRefreshFailed = false
@@ -7159,6 +7311,25 @@ final class AppModel: ObservableObject {
             changesTabVisible: inspectorTab == .changes && !inspectorCollapsed
         ) {
             changesHaveUnseenUpdate = true
+        }
+        synchronizeSessionIdentity()
+        guard sessionOverview.state.status == .running else { return }
+        let now = Self.sessionTimestamp
+        for change in response.files {
+            let old = previousChanges[change.path]
+            let added = max((change.additions ?? 0) - (old?.additions ?? 0), 0)
+            let removed = max((change.deletions ?? 0) - (old?.deletions ?? 0), 0)
+            if old == nil, change.status == .added || change.status == .untracked {
+                sessionOverview.emit(.fileCreate(path: change.path, at: now))
+            }
+            if added > 0 || removed > 0 || (old == nil && change.status != .untracked) {
+                sessionOverview.emit(.fileEdit(
+                    path: change.path,
+                    added: added,
+                    removed: removed,
+                    at: now
+                ))
+            }
         }
     }
 
@@ -7642,6 +7813,120 @@ final class AppModel: ObservableObject {
     func revealInFinder(_ relativePath: String) {
         let url = URL(fileURLWithPath: workspacePath).appending(path: relativePath)
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    func revealSessionWorkspace() {
+        NSWorkspace.shared.activateFileViewerSelecting([
+            URL(fileURLWithPath: sessionOverview.state.workspace.path, isDirectory: true),
+        ])
+    }
+
+    func revealSessionProxyConfig() {
+        do {
+            let resolution = try SessionQuickActionFiles.resolveProxyConfig(
+                workspacePath: sessionOverview.state.workspace.path
+            )
+            NSWorkspace.shared.activateFileViewerSelecting([resolution.url])
+            showToast(resolution.created ? "Created the proxy config template" : "Opened proxy config")
+        } catch {
+            showToast("Could not open proxy config: \(error.localizedDescription)")
+        }
+    }
+
+    func revealSessionLogs() {
+        let url = SessionQuickActionFiles.logURL(sessionID: currentSessionID)
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let output = [backendLogHint, backendProcess.recentOutput]
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .joined(separator: "\n\n")
+            let contents = output.isEmpty
+                ? "No local agent log output has been captured for this session yet.\n"
+                : output + "\n"
+            try Data(contents.utf8).write(to: url, options: .atomic)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch {
+            showToast("Could not open session logs: \(error.localizedDescription)")
+        }
+    }
+
+    func copySessionOverview() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(sessionOverview.state.summaryMarkdown, forType: .string)
+        showToast("Session summary copied")
+    }
+
+    func clearSessionOverviewContext() {
+        contextFiles = contextFiles.map { file in
+            var updated = file
+            updated.isIncluded = false
+            return updated
+        }
+        chatAttachments = []
+        showToast("Attached context cleared")
+    }
+
+    func openSessionModelSettings() {
+        settingsPage = .accounts
+        settingsPresented = true
+    }
+
+    func openSessionFile(_ relativePath: String) {
+        let url = URL(fileURLWithPath: workspacePath).appending(path: relativePath)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            showToast("That file is no longer on disk")
+            return
+        }
+        selectInspectorTab(.files)
+        previewFile(url)
+    }
+
+    func prefillSessionSuggestion(_ suggestion: String) {
+        draftText = suggestion
+        inspectorCollapsed = true
+    }
+
+    func viewSessionTranscript() {
+        let target = blocks.last(where: {
+            $0.kind == .assistant || $0.kind == .error || $0.completion != nil
+        })?.id
+        requestTranscriptJump(target)
+        inspectorCollapsed = true
+    }
+
+    func jumpToSessionEvent(_ event: SessionEvent) {
+        let target: ChatBlock?
+        switch event {
+        case .fileEdit(let path, _, _, _), .fileRead(let path, _), .fileCreate(let path, _):
+            target = blocks.reversed().first(where: {
+                $0.tool.map { tool in
+                    tool.summary.contains(path) || tool.detail.contains(path)
+                        || (tool.result?.contains(path) == true)
+                } == true
+            })
+        case .command(let command, _, _):
+            target = blocks.reversed().first(where: {
+                $0.tool.map { $0.summary.contains(command) || $0.detail.contains(command) } == true
+            })
+        case .message(let role, _):
+            let kind: ChatBlock.Kind = role == .user ? .user : .assistant
+            target = blocks.reversed().first(where: { $0.kind == kind })
+        case .runFinished, .status, .tokens, .planCreated, .stepState:
+            target = blocks.reversed().first(where: {
+                $0.kind == .assistant || $0.kind == .error || $0.completion != nil
+            })
+        }
+        guard let target else { return }
+        requestTranscriptJump(target.id)
+        inspectorCollapsed = true
+    }
+
+    private func requestTranscriptJump(_ target: UUID?) {
+        transcriptJumpTarget = nil
+        DispatchQueue.main.async { [weak self] in self?.transcriptJumpTarget = target }
     }
 
     /// Adds a workspace-relative path to the context pack.
@@ -8342,6 +8627,21 @@ final class AppModel: ObservableObject {
             if !Task.isCancelled { showToast("The chat worker did not become ready") }
             return nil
         }
+
+        // A worker restores non-secret provider metadata from the shared agent
+        // config, but provider keys deliberately never reach that file. Hand
+        // the complete active route to this process before it resumes a chat or
+        // accepts a message, then ask the worker itself whether that provider is
+        // usable. An HTTP 200 from /health only means the local server answered;
+        // `ollama` is the compatibility field that reports model readiness.
+        if let failure = await prepareChatWorkerProvider(using: runtime.service) {
+            taskWorkers.removeValue(forKey: requestedSessionID)
+            runtime.stop()
+            if !Task.isCancelled {
+                showToast("The chat worker could not restore the model provider: \(failure)")
+            }
+            return nil
+        }
         runtime.service.connect()
         for _ in 0..<40 where !runtime.isConnected {
             if Task.isCancelled { break }
@@ -8388,6 +8688,27 @@ final class AppModel: ObservableObject {
         syncPreferredPermissionMode(to: runtime.service)
         syncBrowserProtectedSessions()
         return runtime
+    }
+
+    /// Restores the active provider to a newly launched conversation worker.
+    /// Internal for regression tests; callers receive the provider's useful
+    /// explanation instead of a bool so startup failures remain actionable.
+    func prepareChatWorkerProvider(using service: BackendService) async -> String? {
+        let body = providerRequestBody(verify: false)
+        do {
+            let state = try await service.post(
+                "/api/provider",
+                body: body,
+                as: ProviderStateResponse.self
+            )
+            let health = try await service.get("/api/health", as: HealthResponse.self)
+            guard health.ollama else {
+                return health.error ?? "\(shortHost(state.host)) is not ready."
+            }
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
     }
 
     /// Mirror the live worker set into the browser so tab eviction never
@@ -8660,6 +8981,218 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private static var sessionTimestamp: Int {
+        Int(Date().timeIntervalSince1970 * 1_000)
+    }
+
+    private var sessionOverviewWorkspace: SessionWorkspaceIdentity {
+        let path = workspacePath
+        let git: SessionWorkspaceIdentity.Git? = isGitRepository
+            ? SessionWorkspaceIdentity.Git(
+                branch: gitBranch?.nilIfEmpty ?? "detached",
+                dirty: gitChanges.count,
+                ahead: gitAhead > 0 ? gitAhead : nil,
+                behind: gitBehind > 0 ? gitBehind : nil
+            )
+            : nil
+        return SessionWorkspaceIdentity(
+            name: URL(fileURLWithPath: path).lastPathComponent.nilIfEmpty ?? path,
+            path: path,
+            git: git
+        )
+    }
+
+    private func sessionOverviewModel(for info: SessionInfo) -> SessionModelIdentity {
+        let published = activeAccount?.kind.publishedContextWindow(for: info.model)
+            ?? SessionModelMetadata.lookup(info.model)?.contextWindow
+        return SessionModelIdentity(
+            provider: activeAccount?.kind.rawValue ?? info.provider ?? "local",
+            id: info.model,
+            // A live provider value is authoritative. The metadata map is only
+            // the fallback that prevents known models from reading "unknown".
+            contextWindow: info.contextLimit > 0 ? info.contextLimit : published
+        )
+    }
+
+    private func activateSessionOverview(_ info: SessionInfo, reset: Bool = false) {
+        let model = sessionOverviewModel(for: info)
+        let initial = SessionState.empty(
+            workspacePath: info.workspaceRoot ?? info.cwd,
+            modelID: info.model,
+            provider: model.provider
+        )
+        var seeded = initial
+        seeded.workspace = sessionOverviewWorkspace
+        seeded.model = model
+        seeded.resources.messages = info.messages
+        if reset {
+            sessionOverview.reset(sessionID: info.sessionID, initial: seeded)
+            sessionOverview.emit(
+                .status(status: .idle, reason: nil, at: Self.sessionTimestamp),
+                sessionID: info.sessionID
+            )
+        } else {
+            sessionOverview.activate(sessionID: info.sessionID, initial: seeded)
+        }
+        sessionOverview.synchronize(
+            workspace: sessionOverviewWorkspace,
+            model: model,
+            messages: info.messages,
+            sessionID: info.sessionID
+        )
+        let cost = SessionModelMetadata.lookup(info.model)?.estimatedCost(
+            promptTokens: info.promptTokens,
+            completionTokens: info.completionTokens
+        )
+        sessionOverview.emit(
+            .tokens(
+                used: info.approxTokens,
+                window: model.contextWindow,
+                costUsd: cost,
+                at: Self.sessionTimestamp
+            ),
+            sessionID: info.sessionID
+        )
+        synchronizeSessionPlan(todos)
+    }
+
+    private func synchronizeSessionIdentity() {
+        guard !sessionOverview.activeSessionID.isEmpty else { return }
+        let model = sessionInfo.map(sessionOverviewModel(for:))
+        sessionOverview.synchronize(workspace: sessionOverviewWorkspace, model: model)
+    }
+
+    private func synchronizeSessionPlan(_ source: [TodoItem]) {
+        guard !sessionOverview.activeSessionID.isEmpty else { return }
+        let now = Self.sessionTimestamp
+        let desired = source.enumerated().map { index, todo in
+            let state: SessionPlanStep.State = switch todo.status {
+            case .pending: .pending
+            case .inProgress: .running
+            case .completed: .done
+            }
+            return SessionPlanStep(
+                id: "\(index)-\(todo.content)",
+                label: todo.content,
+                state: state,
+                startedAt: nil,
+                endedAt: nil
+            )
+        }
+        let current = sessionOverview.state.plan
+        if current.map(\.id) != desired.map(\.id) {
+            let pending = desired.map {
+                SessionPlanStep(
+                    id: $0.id,
+                    label: $0.label,
+                    state: .pending,
+                    startedAt: nil,
+                    endedAt: nil
+                )
+            }
+            sessionOverview.emit(.planCreated(steps: pending, at: now))
+        }
+        for step in desired where sessionOverview.state.plan.first(where: { $0.id == step.id })?.state != step.state {
+            sessionOverview.emit(.stepState(stepID: step.id, state: step.state, at: now))
+        }
+    }
+
+    private func recordSessionToolActivity(_ event: [String: Any]) {
+        guard !sessionOverview.activeSessionID.isEmpty else { return }
+        let toolID = event["id"] as? String
+        let payload = toolID.flatMap { id in
+            blocks.reversed().compactMap(\.tool).first(where: { $0.toolID == id })
+        }
+        let tool = (event["tool"] as? String ?? payload?.tool ?? "").lowercased()
+        let summary = event["summary"] as? String ?? payload?.summary ?? ""
+        let detail = event["detail"] as? String ?? payload?.detail ?? ""
+        let result = event["result"] as? String ?? payload?.result ?? ""
+        let now = Self.sessionTimestamp
+        if tool.contains("command") || tool.contains("shell") || tool.contains("terminal")
+            || tool == "bash" || tool == "exec" {
+            let command = summary.nilIfEmpty ?? detail.nilIfEmpty ?? tool
+            sessionOverview.emit(.command(
+                cmd: command,
+                exitCode: (event["ok"] as? Bool) == true ? 0 : 1,
+                at: now
+            ))
+            return
+        }
+        guard let path = sessionActivityPath(in: [summary, detail, result]) else { return }
+        if tool.contains("read") || tool.contains("view") {
+            sessionOverview.emit(.fileRead(path: path, at: now))
+        } else if tool.contains("create") || tool.contains("write") {
+            sessionOverview.emit(.fileCreate(path: path, at: now))
+        } else if tool.contains("edit") || tool.contains("patch") {
+            sessionOverview.emit(.fileEdit(path: path, added: 0, removed: 0, at: now))
+        }
+    }
+
+    private func sessionActivityPath(in values: [String]) -> String? {
+        let root = workspacePath.hasSuffix("/") ? workspacePath : workspacePath + "/"
+        for value in values where !value.isEmpty {
+            if let indexed = workspaceFileIndex
+                .map({ WorkspaceIndex.relativePath($0, root: workspacePath) })
+                .filter({ value.contains($0) })
+                .max(by: { $0.count < $1.count }) {
+                return indexed
+            }
+            for raw in value.split(whereSeparator: { $0.isWhitespace }) {
+                let token = String(raw).trimmingCharacters(
+                    in: CharacterSet(charactersIn: "`'\"(),:[]{}")
+                )
+                if token.hasPrefix(root) { return String(token.dropFirst(root.count)) }
+                guard !token.contains("://"), !token.hasPrefix("-"),
+                      token.contains("/"), URL(fileURLWithPath: token).pathExtension.nilIfEmpty != nil
+                else { continue }
+                return token
+            }
+        }
+        return nil
+    }
+
+    private func finishSessionOverview(reason: String, durationMilliseconds: Int?) {
+        let now = Self.sessionTimestamp
+        synchronizeSessionPlan(todos)
+        let state = sessionOverview.state
+        let failedReason = state.statusReason
+        let outcome: SessionRunSummary.Outcome = reason == "complete"
+            ? (state.plan.allSatisfy { $0.state == .done } ? .completed : .partial)
+            : .failed
+        let assistantText = blocks.last(where: { $0.kind == .assistant })?.text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let summary = String((assistantText?.nilIfEmpty
+            ?? (outcome == .completed ? "The requested work completed." : "The run stopped before every step completed."))
+            .prefix(180))
+        let run = SessionRunSummary(
+            completedSteps: state.plan.filter { $0.state == .done }.count,
+            totalSteps: state.plan.count,
+            durationMs: durationMilliseconds
+                ?? turnStartedAt.map { max(Int(Date().timeIntervalSince($0) * 1_000), 0) }
+                ?? 0,
+            endedAt: now,
+            summary: summary,
+            outcome: outcome
+        )
+        var suggestions: [String] = []
+        if outcome == .failed { suggestions.append("Review the error and retry the failed step") }
+        if !state.files.isEmpty { suggestions.append("Review the diff before committing") }
+        if state.plan.contains(where: { $0.state == .pending }) {
+            suggestions.append("Continue the remaining plan steps")
+        } else {
+            suggestions.append("Run the relevant tests")
+        }
+        sessionOverview.emit(.runFinished(summary: run, suggestions: suggestions, at: now))
+        if outcome == .failed {
+            sessionOverview.emit(.status(
+                status: .error,
+                reason: failedReason ?? "The run stopped with \(reason.replacingOccurrences(of: "_", with: " ")).",
+                at: now
+            ))
+        }
+    }
+
     private func handle(_ event: [String: Any]) {
         guard let type = event["type"] as? String else { return }
         if type != "agent_job_stream",
@@ -8709,6 +9242,7 @@ final class AppModel: ObservableObject {
                 }
                 noteLocalHost(from: info)
                 applyWorkspaceProfileIfNeeded(for: info)
+                activateSessionOverview(info)
             }
 
         case "session_started":
@@ -8746,6 +9280,7 @@ final class AppModel: ObservableObject {
                 runtime.streamingText = ""
                 runtime.streamingReasoning = ""
             }
+            sessionOverview.emit(.message(role: .assistant, at: Self.sessionTimestamp))
             streamRevision += 1
 
         case "tool_call_proposed":
@@ -8840,6 +9375,7 @@ final class AppModel: ObservableObject {
                 runtime.executionState = .running
                 updateBackgroundChatState(runtime)
             }
+            recordSessionToolActivity(event)
 
         case "workspace_changed":
             // The agent touched the tree; the Changes panel is now stale.
@@ -9033,6 +9569,37 @@ final class AppModel: ObservableObject {
                 ? "Evaluation interrupted" : "Evaluation complete"
             Task { @MainActor [weak self] in await self?.refreshEvaluations() }
 
+        case "agent_spawned":
+            let nodeID = event["node_id"] as? String ?? UUID().uuidString
+            guard !agentActivities.contains(where: { ($0.nodeID ?? $0.id) == nodeID }) else {
+                break
+            }
+            agentActivities.append(AgentActivity(
+                id: event["job_id"] as? String ?? nodeID,
+                agentName: event["agent_name"] as? String ?? "Hosted agent",
+                role: event["role"] as? String ?? "researcher",
+                provider: event["provider"] as? String ?? "",
+                model: event["model"] as? String ?? "",
+                goal: event["goal"] as? String ?? "Gathering evidence",
+                state: .running,
+                output: "Branch started",
+                reasoningText: nil,
+                tool: nil,
+                evidence: [],
+                startedAt: Date(),
+                elapsedMilliseconds: 0,
+                promptTokens: 0,
+                completionTokens: 0,
+                writerJobID: nil,
+                writerPosition: nil,
+                writerTotal: nil,
+                nodeID: nodeID,
+                parentNodeID: event["parent_node_id"] as? String,
+                depth: event["depth"] as? Int ?? 0,
+                executionEngine: event["execution_engine"] as? String
+                    ?? "locus_managed"
+            ))
+
         case "agent_job_started":
             let jobID = event["job_id"] as? String ?? UUID().uuidString
             if let index = agentActivities.firstIndex(where: { $0.id == jobID }) {
@@ -9041,6 +9608,11 @@ final class AppModel: ObservableObject {
                 agentActivities[index].writerJobID = event["writer_job_id"] as? String
                 agentActivities[index].writerPosition = event["writer_position"] as? Int
                 agentActivities[index].writerTotal = event["writer_total"] as? Int
+                agentActivities[index].nodeID = event["node_id"] as? String ?? jobID
+                agentActivities[index].parentNodeID = event["parent_node_id"] as? String
+                agentActivities[index].depth = event["depth"] as? Int ?? 0
+                agentActivities[index].executionEngine = event["execution_engine"] as? String
+                    ?? "locus_managed"
             } else {
                 agentActivities.append(AgentActivity(
                     id: jobID,
@@ -9060,7 +9632,12 @@ final class AppModel: ObservableObject {
                     completionTokens: 0,
                     writerJobID: event["writer_job_id"] as? String,
                     writerPosition: event["writer_position"] as? Int,
-                    writerTotal: event["writer_total"] as? Int
+                    writerTotal: event["writer_total"] as? Int,
+                    nodeID: event["node_id"] as? String ?? jobID,
+                    parentNodeID: event["parent_node_id"] as? String,
+                    depth: event["depth"] as? Int ?? 0,
+                    executionEngine: event["execution_engine"] as? String
+                        ?? "locus_managed"
                 ))
             }
 
@@ -9070,6 +9647,21 @@ final class AppModel: ObservableObject {
                 agentActivities[index].state = .running
                 agentActivities[index].output = event["message"] as? String
                     ?? "Continuing coding job…"
+            }
+            if let usage = event["usage"] as? [String: Any] {
+                teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
+                teamMeteredTokens = usage["metered_tokens"] as? Int ?? teamMeteredTokens
+            }
+
+        case "agent_branch_stopped":
+            let nodeID = event["node_id"] as? String ?? ""
+            if let index = agentActivities.firstIndex(where: {
+                ($0.nodeID ?? $0.id) == nodeID
+            }) {
+                agentActivities[index].state = .interrupted
+                agentActivities[index].output = event["message"] as? String
+                    ?? event["reason"] as? String
+                    ?? "This read-only branch stopped."
             }
             if let usage = event["usage"] as? [String: Any] {
                 teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
@@ -9097,8 +9689,9 @@ final class AppModel: ObservableObject {
         case "agent_job_completed":
             guard let result = event["result"] as? [String: Any] else { return }
             let jobID = result["job_id"] as? String ?? ""
-            let state = (event["state"] as? String) == "failed"
-                ? TeamRunState.failed : .completed
+            let rawState = event["state"] as? String
+            let state: TeamRunState = rawState == "failed"
+                ? .failed : rawState == "stopped" ? .interrupted : .completed
             let index = agentActivities.firstIndex(where: { $0.id == jobID })
             let activity = AgentActivity(
                 id: jobID.isEmpty ? UUID().uuidString : jobID,
@@ -9121,7 +9714,22 @@ final class AppModel: ObservableObject {
                 writerPosition: event["writer_position"] as? Int
                     ?? index.flatMap { agentActivities[$0].writerPosition },
                 writerTotal: event["writer_total"] as? Int
-                    ?? index.flatMap { agentActivities[$0].writerTotal }
+                    ?? index.flatMap { agentActivities[$0].writerTotal },
+                nodeID: result["node_id"] as? String
+                    ?? event["node_id"] as? String
+                    ?? index.flatMap { agentActivities[$0].nodeID }
+                    ?? jobID,
+                parentNodeID: result["parent_node_id"] as? String
+                    ?? event["parent_node_id"] as? String
+                    ?? index.flatMap { agentActivities[$0].parentNodeID },
+                depth: result["depth"] as? Int
+                    ?? event["depth"] as? Int
+                    ?? index.map { agentActivities[$0].depth }
+                    ?? 0,
+                executionEngine: result["execution_engine"] as? String
+                    ?? event["execution_engine"] as? String
+                    ?? index.map { agentActivities[$0].executionEngine }
+                    ?? "locus_managed"
             )
             if let index { agentActivities[index] = activity } else { agentActivities.append(activity) }
             if let usage = event["usage"] as? [String: Any] {
@@ -9256,6 +9864,7 @@ final class AppModel: ObservableObject {
                 if !todos.isEmpty, inspectorTab != .plan || inspectorCollapsed {
                     planHasUnseenUpdate = true
                 }
+                synchronizeSessionPlan(todos)
             }
 
         case "plan_ready":
@@ -9266,6 +9875,7 @@ final class AppModel: ObservableObject {
                 activePlan = plan
                 planReadyThisTurn = true
                 todos = plan.steps.map { TodoItem(content: $0, status: .pending) }
+                synchronizeSessionPlan(todos)
                 if inspectorTab != .plan || inspectorCollapsed {
                     planHasUnseenUpdate = true
                 }
@@ -9294,6 +9904,10 @@ final class AppModel: ObservableObject {
                     modelCallLimit: event["model_call_limit"] as? Int
                 )
             }
+            finishSessionOverview(
+                reason: reason,
+                durationMilliseconds: event["duration_ms"] as? Int
+            )
             isBusy = false
             if let runtime = taskWorkers[currentSessionID] {
                 let finalState = runtime.dispatchedTeamRunID == nil
@@ -9373,12 +9987,27 @@ final class AppModel: ObservableObject {
             streamingAssistantID = nil
             streamedCharsThisTurn = 0
             streamingReply.resetTurn()
+            let errorMessage = annotatingRejectedKey(
+                event["message"] as? String ?? "Unknown agent error"
+            )
             blocks.append(
                 ChatBlock(
                     kind: .error,
-                    text: annotatingRejectedKey(event["message"] as? String ?? "Unknown agent error")
+                    text: errorMessage
                 )
             )
+            if let running = sessionOverview.state.plan.first(where: { $0.state == .running }) {
+                sessionOverview.emit(.stepState(
+                    stepID: running.id,
+                    state: .failed,
+                    at: Self.sessionTimestamp
+                ))
+            }
+            sessionOverview.emit(.status(
+                status: .error,
+                reason: errorMessage,
+                at: Self.sessionTimestamp
+            ))
             if let runtime = taskWorkers[currentSessionID] {
                 runtime.lastError = event["message"] as? String
                 runtime.executionState = .failed
@@ -9439,6 +10068,11 @@ final class AppModel: ObservableObject {
         syncBrowserProfile()
         currentSessionID = info.sessionID
         activeTaskRecord = info.task
+        let startsFreshOverview = pendingSessionReset
+            || reason == "clear_chat"
+            || reason == "workspace_chat"
+            || reason == "deleted_active"
+        activateSessionOverview(info, reset: startsFreshOverview)
         if isDuplicateAcknowledgement { return }
         sessionResetWatchdog?.cancel()
 
@@ -9473,6 +10107,7 @@ final class AppModel: ObservableObject {
                 showToast("Checkpoint restored")
             }
             Task { await refreshContextFiles() }
+            synchronizeSessionPlan(todos)
         } else if reason == "retry" || pendingRetry {
             flushPendingTokens()
             if let userIndex = blocks.lastIndex(where: { $0.kind == .user }) {
@@ -9484,6 +10119,11 @@ final class AppModel: ObservableObject {
             planTodosChangedThisTurn = false
             pendingRetry = false
             isBusy = true
+            sessionOverview.emit(.status(
+                status: .running,
+                reason: nil,
+                at: Self.sessionTimestamp
+            ))
         } else if pendingSessionReset
                     || reason == "clear_chat"
                     || reason == "workspace_chat"
@@ -9510,6 +10150,7 @@ final class AppModel: ObservableObject {
             teamMeteredTokens = 0
             taskHasChanges = false
             taskPatchBytes = 0
+            synchronizeSessionPlan([])
             showToast(reason == "deleted_active" ? "Fresh chat opened" : "Fresh chat started")
         }
         if persistenceEnabled {
@@ -9896,6 +10537,11 @@ final class AppModel: ObservableObject {
         ], ToolActivityVisibility(rawValue: rawMode) != nil {
             settings.toolActivityVisibilityRaw = rawMode
         }
+        if let rawMode = ProcessInfo.processInfo.environment[
+            "LOCUS_UI_TESTING_THINKING_MODE"
+        ], ThinkingVisibility(rawValue: rawMode) != nil {
+            settings.thinkingVisibilityRaw = rawMode
+        }
         // The suite's inspector tests assume the panel starts open; the
         // collapsed default is covered by a settings unit test instead.
         openInspectorTabs = [.plan]
@@ -10005,6 +10651,56 @@ final class AppModel: ObservableObject {
                 ))
             }
         }
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_THINKING_FIXTURE"] == "1" {
+            blocks = [
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000101")!,
+                    kind: .user,
+                    text: "Audit the workspace"
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000201")!,
+                    kind: .assistant,
+                    reasoningText: "Inspect the remaining files."
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000202")!,
+                    kind: .assistant,
+                    text: "The first audit pass is complete."
+                ),
+                ChatBlock(
+                    kind: .tool,
+                    tool: ToolPayload(
+                        toolID: "thinking-fixture-tool",
+                        tool: "read_file",
+                        summary: "Read remaining files",
+                        detail: "",
+                        status: .done,
+                        result: "Files inspected"
+                    )
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000203")!,
+                    kind: .assistant,
+                    text: "<thinking>Confirm the remaining modules.</thinking>"
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000204")!,
+                    kind: .assistant,
+                    text: "The workspace audit is complete.",
+                    reasoningText: "Prepare the final audit response."
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000205")!,
+                    kind: .note,
+                    completion: TurnCompletion(
+                        outcome: .complete,
+                        mode: .work,
+                        durationMilliseconds: 1_000
+                    )
+                ),
+            ]
+        }
         extensions = ExtensionsResponse(
             capabilities: ExtensionCapabilities(),
             marketplaces: [],
@@ -10100,6 +10796,7 @@ final class AppModel: ObservableObject {
                 draft: ""
             ),
         ]
+        seedSessionOverviewUITest(workspace: workspace)
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_LANDING"] == "1" {
             activeTaskRecord = TaskRecord(
                 id: "seed-task",
@@ -10152,6 +10849,70 @@ final class AppModel: ObservableObject {
         seedUITestRunFixtureIfNeeded()
     }
 
+    private func seedSessionOverviewUITest(workspace: String) {
+        let now = Self.sessionTimestamp
+        var initial = SessionState.empty(
+            workspacePath: workspace,
+            modelID: "qwen3:8b",
+            provider: "ollama"
+        )
+        initial.workspace = sessionOverviewWorkspace
+        initial.model.contextWindow = 64_000
+        initial.resources = SessionResources(tokensUsed: 24_100, costUsd: 0.42, messages: 4)
+        sessionOverview.reset(sessionID: currentSessionID, initial: initial)
+
+        let fixture = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_PLAN_OVERVIEW"]
+            ?? "idle"
+        if fixture == "running" || fixture == "error" {
+            let steps = [
+                SessionPlanStep(id: "scan", label: "Scan checkout flow for parsing bugs", state: .pending),
+                SessionPlanStep(id: "map", label: "Map retry paths in scraper module", state: .pending),
+                SessionPlanStep(id: "refactor", label: "Refactor retry logic with backoff", state: .pending),
+                SessionPlanStep(id: "tests", label: "Add unit tests and run lint", state: .pending),
+            ]
+            sessionOverview.emit(.planCreated(steps: steps, at: now - 190_000))
+            sessionOverview.emit(.stepState(stepID: "scan", state: .running, at: now - 190_000))
+            sessionOverview.emit(.stepState(stepID: "scan", state: .done, at: now - 170_000))
+            sessionOverview.emit(.stepState(stepID: "map", state: .running, at: now - 165_000))
+            sessionOverview.emit(.stepState(stepID: "map", state: .done, at: now - 120_000))
+            sessionOverview.emit(.stepState(stepID: "refactor", state: .running, at: now - 84_000))
+            sessionOverview.emit(.fileRead(path: "checkout/parser.ts", at: now - 120_000))
+            sessionOverview.emit(.command(cmd: "npm test", exitCode: 3, at: now - 60_000))
+            sessionOverview.emit(.fileEdit(
+                path: "scraper/retry.ts",
+                added: 42,
+                removed: 11,
+                at: now - 12_000
+            ))
+            sessionOverview.emit(.status(status: .running, reason: nil, at: now - 190_000))
+            if fixture == "error" {
+                sessionOverview.emit(.stepState(stepID: "refactor", state: .failed, at: now))
+                sessionOverview.emit(.status(
+                    status: .error,
+                    reason: "The model endpoint rejected the request. Check the account connection, then retry.",
+                    at: now
+                ))
+            }
+        } else {
+            let summary = SessionRunSummary(
+                completedSteps: 4,
+                totalSteps: 4,
+                durationMs: 372_000,
+                endedAt: now - 372_000,
+                summary: "Refactored retry logic with backoff; tests passing.",
+                outcome: .completed
+            )
+            sessionOverview.emit(.runFinished(
+                summary: summary,
+                suggestions: [
+                    "Add integration tests for retry paths",
+                    "Review diff before committing",
+                ],
+                at: now - 372_000
+            ))
+        }
+    }
+
     /// A deterministic two-hunk diff so the seeded Changes tab has assertable
     /// per-hunk controls without a live agent behind it.
     func seedUITestDiffIfNeeded(for change: GitChange) {
@@ -10177,16 +10938,74 @@ final class AppModel: ObservableObject {
 
     private func seedUITestRunFixtureIfNeeded() {
         guard let fixture = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_RUN_FIXTURE"],
-              ["completed", "recoverable", "dispatcher-repair", "dispatch-plan", "activity"].contains(fixture)
+              [
+                "completed", "recoverable", "dispatcher-repair", "dispatch-plan",
+                "activity", "swarm-live", "swarm-recoverable",
+              ].contains(fixture)
         else { return }
         let state: TeamRunState = switch fixture {
         case "completed": .completed
-        case "recoverable": .interrupted
+        case "recoverable", "swarm-recoverable": .interrupted
         case "dispatch-plan": .waitingDispatchApproval
         case "activity": .failed
+        case "swarm-live": .running
         default: .dispatching
         }
         let lastSequence = ["dispatcher-repair", "dispatch-plan"].contains(fixture) ? 1 : 1_200
+        let swarmAttempts: [AgentJobAttempt]? = if fixture.hasPrefix("swarm-") {
+            [
+                AgentJobAttempt(
+                    runID: "seed-run",
+                    jobID: "inspect",
+                    attempt: 1,
+                    attemptID: "seed-run:inspect:1",
+                    agentID: "seed-dispatcher",
+                    agentName: "Research lead",
+                    role: "researcher",
+                    provider: "OpenAI API",
+                    model: "gpt-5.6",
+                    nodeID: "inspect",
+                    parentNodeID: nil,
+                    depth: 0,
+                    executionEngine: "locus_managed",
+                    state: "completed",
+                    goal: "Inspect the stock-checking flow",
+                    result: [
+                        "output": .string("Located the inventory boundary."),
+                        "evidence": .array([.string("InventoryService.swift:42")]),
+                        "model_calls": .number(2),
+                    ],
+                    startedAt: Date().addingTimeInterval(-30).timeIntervalSince1970,
+                    completedAt: Date().addingTimeInterval(-20).timeIntervalSince1970
+                ),
+                AgentJobAttempt(
+                    runID: "seed-run",
+                    jobID: "inspect.1",
+                    attempt: 1,
+                    attemptID: "seed-run:inspect.1:1",
+                    agentID: "seed-child",
+                    agentName: "API specialist",
+                    role: "researcher",
+                    provider: "OpenAI API",
+                    model: "gpt-5.6",
+                    nodeID: "inspect.1",
+                    parentNodeID: "inspect",
+                    depth: 1,
+                    executionEngine: "locus_managed",
+                    state: fixture == "swarm-live" ? "running" : "stopped",
+                    goal: "Verify the inventory API contract",
+                    result: fixture == "swarm-live" ? nil : [
+                        "error": .string("Branch stopped before it finished."),
+                        "model_calls": .number(1),
+                    ],
+                    startedAt: Date().addingTimeInterval(-12).timeIntervalSince1970,
+                    completedAt: fixture == "swarm-live"
+                        ? nil : Date().addingTimeInterval(-2).timeIntervalSince1970
+                ),
+            ]
+        } else {
+            nil
+        }
         let run = OrchestrationRun(
             id: "seed-run",
             sessionID: "seed-current",
@@ -10204,10 +11023,11 @@ final class AppModel: ObservableObject {
             lastSequence: lastSequence,
             pinned: false,
             legacy: false,
-            recoverable: fixture == "recoverable",
-            recoveryReason: fixture == "recoverable" ? "Saved checkpoint available" : nil,
+            recoverable: ["recoverable", "swarm-recoverable"].contains(fixture),
+            recoveryReason: ["recoverable", "swarm-recoverable"].contains(fixture)
+                ? "Saved checkpoint available" : nil,
             checkpoint: nil,
-            attempts: nil,
+            attempts: swarmAttempts,
             plan: nil,
             usage: ["model_calls": .number(12)],
             jobCount: 4,
@@ -10227,12 +11047,23 @@ final class AppModel: ObservableObject {
         selectedOrchestrationRun = run
         orchestrationRunID = run.id
         orchestrationState = state
+        if fixture == "swarm-live" { isBusy = true }
         if fixture == "activity" {
             activityRuns = [run]
             return
         }
         let rawEvents: [[String: Any]]
-        if ["dispatcher-repair", "dispatch-plan"].contains(fixture) {
+        if fixture.hasPrefix("swarm-") {
+            rawEvents = [[
+                "event_id": "seed-event-1",
+                "run_id": run.id,
+                "seq": 1,
+                "type": "agent_spawned",
+                "node_id": "inspect.1",
+                "parent_node_id": "inspect",
+                "depth": 1,
+            ]]
+        } else if ["dispatcher-repair", "dispatch-plan"].contains(fixture) {
             let dispatcherID = UUID(uuidString: "00000000-0000-0000-0000-000000000501")!
             let writerID = UUID(uuidString: "00000000-0000-0000-0000-000000000502")!
             let teamID = UUID(uuidString: "00000000-0000-0000-0000-000000000503")!

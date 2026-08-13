@@ -104,7 +104,8 @@ reports when solo recording began; earlier turns were never recorded and
 cannot be backfilled. Gated by the `durable_runs` capability.
 
 Recovery controls are `POST /pause`, `/resume`, `/cancel`, `/discard`,
-`/jobs/{job_id}/retry`, `/jobs/{job_id}/reassign`, `/replay`, and `/duplicate`.
+`/jobs/{job_id}/retry`, `/jobs/{job_id}/reassign`, `/agents/{node_id}/stop`,
+`/agents/{node_id}/retry`, `/run-with-locus`, `/replay`, and `/duplicate`.
 `POST /recovery-assessment` returns the current repair checklist without
 starting work. `DELETE /api/tasks/{task_id}` is the separate, explicit managed
 checkout archival action: it snapshots first and can be restored later.
@@ -649,6 +650,14 @@ A team budget may include `call_budget_mode: "automatic" | "fixed"`.
 the supplied `max_model_calls`. Missing mode remains fixed for compatibility
 with older clients.
 
+A team may also include a version-1 `swarm_policy` with `engine`
+(`locus_managed` or `openai_responses`), `delegation_mode` (`flat` or
+`read_only_children`), `sizing_mode: "adaptive"`, `max_total_agents` (1–32),
+and `max_depth` (1–4). A missing policy is legacy flat execution. Native clients
+write the adaptive Locus policy for newly created teams. OpenAI Responses is
+accepted only for eligible OpenAI API GPT-5.6 dispatcher routes; ChatGPT-managed
+accounts are not eligible.
+
 Any other `type` produces
 `command_error {operation: "<type>", message: "unknown message type: ..."}`.
 
@@ -805,8 +814,14 @@ away from the person at the keyboard.
   dispatching without an intermediate `turn_done`.
 - `agent_job_started`, `agent_job_stream`, and `agent_job_completed` identify
   the agent, exact provider/model, bounded goal, elapsed time, evidence, and
-  usage. Only explicitly supplied `reasoning_text` is retained; signatures and
-  redacted reasoning are never exposed. Stream chunks are not persisted.
+  usage. Tree-aware variants add stable `node_id`, optional `parent_node_id`,
+  `depth`, and `execution_engine`. Only explicitly supplied `reasoning_text` is
+  retained; signatures and redacted reasoning are never exposed. Stream chunks
+  are not persisted.
+- `agent_spawned` adds a read-only child to the durable tree.
+  `agent_branch_stopped` records a user stop, safety rejection, or policy bound
+  without cancelling unrelated branches. `swarm_telemetry` contains tree shape,
+  engine, latency, and aggregate usage metadata only.
 - Ordered writer attempts add `writer_job_id`, `writer_position`, and
   `writer_total`. `agent_job_continuing` reports another bounded slice of the
   same coding job. `agent_job_incomplete` reports a checkpointed, paused job
@@ -830,11 +845,21 @@ when applicable `attempt_id`. `orchestration_checkpoint`,
 are additive. Older clients may ignore all unknown events and fields.
 
 Dispatchers and read-only specialists receive no mutation, MCP, extension, or
-computer schemas. Specialists cannot recursively delegate. Only a write-capable
-member assigned to the current ordered coding job enters the existing
-permission-controlled agent loop. Coding jobs share a checkout but never
-overlap. Computer Control remains foreground-only and globally exclusive in the
-native broker.
+computer schemas. Under adaptive Locus execution, a read-only specialist may
+request one bounded wave of unique, goal-contained read-only children, followed
+by one non-delegating aggregation continuation. Descendants may do the same only
+within the team depth, total-agent, concurrency, and call budgets. Writers never
+delegate. Only a write-capable member assigned to the current ordered coding job
+enters the existing permission-controlled agent loop. Coding jobs share a
+checkout but never overlap. Computer Control remains foreground-only and
+globally exclusive in the native broker.
+
+The optional OpenAI Responses path uses the multi-agent beta only for the
+approved read-only evidence phase. It exposes bounded read/glob/grep/list/status/
+diff tools (plus explicitly approved workspace knowledge), monitors the hosted
+tree against the local limits, and keeps Locus's existing writers, permissions,
+review, checkpoints, and apply flow. An unavailable beta pauses with the explicit
+`run_with_locus` action; the service never switches engines silently.
 
 ### `tool_call_proposed`
 The model asked to run a tool. Always emitted before any `permission_request`
@@ -965,6 +990,7 @@ orchestration_started
 scheduler_lease_waiting/acquired/released       (dispatcher)
 dispatch_plan
 agent_job_started/completed × N                 (read-only waves may overlap)
+agent_spawned + child agent_job_* × N           (adaptive bounded tree)
 agent_job_started {writer_job_id, writer_position, writer_total}
 message/tool/permission events × N              (ordinary permission loop)
 agent_job_completed {writer_job_id, writer_position, writer_total}

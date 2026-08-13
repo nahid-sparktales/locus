@@ -179,6 +179,12 @@ struct TeamRunBoardView: View {
 
     private func activityRow(_ activity: AgentActivity, now: Date) -> some View {
         HStack(alignment: .top, spacing: 8) {
+            if activity.depth > 0 {
+                Image(systemName: "arrow.turn.down.right")
+                    .font(.system(size: 7))
+                    .foregroundStyle(LocusTheme.muted)
+                    .padding(.leading, CGFloat((activity.depth - 1) * 12))
+            }
             Image(systemName: activity.state == .completed
                 ? "checkmark.circle.fill"
                 : activity.state == .paused ? "pause.circle.fill" : "circle.dotted")
@@ -198,7 +204,9 @@ struct TeamRunBoardView: View {
                             .foregroundStyle(LocusTheme.muted)
                     }
                 }
-                Text([activity.provider, activity.model].filter { !$0.isEmpty }.joined(separator: " · "))
+                Text([activity.provider, activity.model,
+                      activity.executionEngine.replacingOccurrences(of: "_", with: " ")]
+                    .filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.system(size: 7, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
                     .lineLimit(1)
@@ -217,6 +225,7 @@ struct TeamRunBoardView: View {
                     .foregroundStyle(LocusTheme.muted)
             }
         }
+        .accessibilityIdentifier("teamBoard.agentTree.\(activity.nodeID ?? activity.id)")
     }
 
     private func elapsedText(_ seconds: TimeInterval) -> String {
@@ -227,10 +236,17 @@ struct TeamRunBoardView: View {
     private var actionRow: some View {
         HStack(spacing: 9) {
             if presentation.canRecover, let run {
-                Button("Resume") { model.resumeOrchestration(run) }
-                    .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
-                    .accessibilityIdentifier("teamBoard.resume")
+                if run.checkpoint?.state["fallback_action"]?.string == "run_with_locus" {
+                    Button("Run with Locus") { model.runOrchestrationWithLocus(run) }
+                        .buttonStyle(.borderedProminent)
+                        .tint(LocusTheme.ink)
+                        .accessibilityIdentifier("teamBoard.runWithLocus")
+                } else {
+                    Button("Resume") { model.resumeOrchestration(run) }
+                        .buttonStyle(.borderedProminent)
+                        .tint(LocusTheme.ink)
+                        .accessibilityIdentifier("teamBoard.resume")
+                }
                 Button("Discard", role: .destructive) { model.discardOrchestration(run.id) }
                     .buttonStyle(.borderless)
                     .accessibilityIdentifier("teamBoard.discard")
@@ -640,7 +656,7 @@ struct TeamDispatchApprovalPromptView: View {
                 Text("Approve this complete plan once?")
                     .font(.system(size: 12, weight: .bold))
             }
-            Text("After Run Plan, every listed agent and step proceeds without another dispatch approval. Tool permissions still follow your security settings.")
+            Text("After Run Plan, every listed job and any bounded read-only children proceed without another dispatch approval. Writers still cannot delegate, and tool permissions continue to follow your security settings.")
                 .font(.system(size: 8))
                 .foregroundStyle(LocusTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -700,6 +716,37 @@ struct TeamDispatchApprovalPromptView: View {
                         budgetPill(cost.formatted(.currency(code: "USD")))
                     }
                 }
+            }
+
+            let policy = plan.swarmPolicy ?? model.activeOrchestrationTeam?.resolvedSwarmPolicy
+            if let policy, policy.delegationMode == .readOnlyChildren {
+                HStack(spacing: 8) {
+                    budgetPill("Adaptive read-only children")
+                    budgetPill("\(policy.maxTotalAgents) agents total")
+                    budgetPill("Depth \(policy.maxDepth)")
+                    budgetPill(policy.engine.title)
+                }
+                Text("This approval covers only narrower read-only children beneath the listed specialist goals and within this provider roster and cost ceiling.")
+                    .font(.system(size: 8))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("teamDispatch.swarmScope")
+            }
+
+            if let roster = plan.providerRoster, !roster.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("APPROVED PROVIDERS")
+                        .font(.system(size: 7, weight: .bold))
+                        .tracking(0.5)
+                        .foregroundStyle(LocusTheme.muted)
+                    ForEach(roster) { provider in
+                        Text("\(provider.agentName) · \(provider.provider) · \(provider.model)\(provider.readOnly ? " · read only" : " · writer")")
+                            .font(.system(size: 7, design: .monospaced))
+                            .foregroundStyle(LocusTheme.inkSoft)
+                            .lineLimit(1)
+                    }
+                }
+                .accessibilityIdentifier("teamDispatch.providerRoster")
             }
 
             Button("Review or edit in Runs") {

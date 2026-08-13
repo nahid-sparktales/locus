@@ -292,6 +292,11 @@ class RemoteClient:
         if not self.base_url:
             raise OllamaError("no endpoint URL is configured")
         if not self.lists_models:
+            if not self.api_key:
+                # Kimi Code cannot be checked through /models, but accepting an
+                # empty in-memory key as healthy makes a freshly restarted
+                # helper look connected before the app restores its credential.
+                raise OllamaError("no API key is loaded for this provider")
             # Nothing here that would not lie. A provider serving only chat
             # completions answers this path with an auth error whatever the
             # key is, and reporting that as "offline" would condemn a

@@ -108,7 +108,6 @@ struct WorkspaceView: View {
                     Image(systemName: "folder.fill")
                         .font(.system(size: 8, weight: .medium))
                         .foregroundStyle(LocusTheme.muted)
-                        .accessibilityIdentifier("workspace.header.workspaceIcon")
                     Text(URL(fileURLWithPath: model.workspacePath).lastPathComponent)
                     if let branch = model.gitBranch {
                         HStack(spacing: 3) {
@@ -118,22 +117,30 @@ struct WorkspaceView: View {
                         }
                         .foregroundStyle(LocusTheme.muted)
                         .accessibilityLabel("Git branch \(branch)")
-                        .accessibilityIdentifier("workspace.gitBranch")
                     }
                     Text("/")
                     Text("sessions")
                 }
                 .font(.system(size: 8, design: .monospaced))
                 .foregroundStyle(LocusTheme.muted.opacity(0.8))
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("workspace.breadcrumb")
 
                 Text(sessionTitle)
                     .font(.system(size: 14, weight: .bold))
                     .lineLimit(1)
+                    .accessibilityIdentifier("workspace.sessionTitle")
+            }
+            .overlay(alignment: .topLeading) {
+                finderButton
+                    // The button border begins to the left so the glyph itself
+                    // shares the folder icon's exact leading axis below.
+                    .offset(x: -10, y: -31)
             }
 
             Spacer()
 
-            if model.selectedAgentTeam != nil {
+            if model.showTeamProgressInHeader, model.selectedAgentTeam != nil {
                 Button {
                     teamProgressPresented.toggle()
                 } label: {
@@ -170,8 +177,10 @@ struct WorkspaceView: View {
                 }
             }
 
-            ContextUsageChip()
-                .environmentObject(model)
+            if model.showContextUsageInHeader {
+                ContextUsageChip()
+                    .environmentObject(model)
+            }
 
             if model.activeTaskRecord != nil, model.taskHasChanges {
                 Button("Review & Land") { model.prepareReviewAndLand() }
@@ -300,6 +309,19 @@ struct WorkspaceView: View {
                     }
                 }
                 .pickerStyle(.inline)
+                Divider()
+                Menu("Header controls") {
+                    Toggle("Team progress", isOn: Binding(
+                        get: { model.showTeamProgressInHeader },
+                        set: { model.showTeamProgressInHeader = $0 }
+                    ))
+                    .accessibilityIdentifier("workspace.actions.showTeamProgress")
+                    Toggle("Context window", isOn: Binding(
+                        get: { model.showContextUsageInHeader },
+                        set: { model.showContextUsageInHeader = $0 }
+                    ))
+                    .accessibilityIdentifier("workspace.actions.showContextUsage")
+                }
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 14, weight: .semibold))
@@ -321,7 +343,7 @@ struct WorkspaceView: View {
             // rail's toggle owns that job now.
         }
         .padding(.horizontal, 22)
-        .frame(height: 72)
+        .frame(height: 62)
         .background(LocusTheme.panel)
         .overlay(alignment: .bottom) {
             Rectangle().fill(LocusTheme.line).frame(height: 1)
@@ -331,6 +353,41 @@ struct WorkspaceView: View {
     private var teamProgressTitle: String {
         if model.selectedTeamRouteIssue != nil { return "Needs setup" }
         return model.orchestrationState?.title ?? "Ready"
+    }
+
+    private var finderTargetURL: URL {
+        if let checkout = model.activeTaskRecord?.executionPath,
+           FileManager.default.fileExists(atPath: checkout) {
+            return URL(fileURLWithPath: checkout, isDirectory: true)
+        }
+        return URL(fileURLWithPath: model.workspacePath, isDirectory: true)
+    }
+
+    private var finderButton: some View {
+        Button {
+            NSWorkspace.shared.open(finderTargetURL)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "folder")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("Finder")
+            }
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .foregroundStyle(LocusTheme.muted)
+            .padding(.horizontal, 10)
+            .frame(height: 24)
+            .background(LocusTheme.white.opacity(0.72))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(LocusTheme.line, lineWidth: 1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Open workspace in Finder")
+        .accessibilityLabel("Open workspace in Finder")
+        .accessibilityIdentifier("workspace.openInFinder")
     }
 
     private var teamProgressColor: Color {
@@ -1368,44 +1425,74 @@ private struct WorkStatusStrip: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(model.isBusy ? LocusTheme.signalDeep : LocusTheme.success)
-                    .frame(width: 6, height: 6)
-                Text(model.currentWorkPhase)
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
-                if model.isBusy, let started = model.activeWorkStartedAt {
-                    Text(elapsed(from: started, to: context.date))
-                        .monospacedDigit()
-                }
-                Spacer()
-                if model.isBusy {
-                    Text("~\(model.estimatedStreamingTokens.formatted()) streamed tokens")
-                }
-                if model.orchestrationState != nil {
-                    Text("\(model.teamModelCalls.formatted()) team calls")
-                    if model.teamMeteredTokens > 0 {
-                        Text("\(model.teamMeteredTokens.formatted()) hosted tokens")
+            HStack {
+                HStack(spacing: 8) {
+                    statusPill(
+                        label: model.providerLabel,
+                        color: runtimeColor(model.modelRuntimePhase),
+                        identifier: "workspace.modelStatus"
+                    )
+                    if model.isBusy, let started = model.activeWorkStartedAt {
+                        Text(model.currentWorkPhase)
+                            .fontWeight(.semibold)
+                            .lineLimit(1)
+                        Text(elapsed(from: started, to: context.date))
+                            .monospacedDigit()
+                    }
+                    Spacer()
+                    if model.isBusy {
+                        Text("~\(model.estimatedStreamingTokens.formatted()) streamed tokens")
+                    }
+                    if model.orchestrationState != nil {
+                        Text("\(model.teamModelCalls.formatted()) team calls")
+                        if model.teamMeteredTokens > 0 {
+                            Text("\(model.teamMeteredTokens.formatted()) hosted tokens")
+                        }
+                    }
+                    if let info = model.sessionInfo {
+                        Text("provider · \(info.promptTokens.formatted()) in / \(info.completionTokens.formatted()) out")
                     }
                 }
-                if let info = model.sessionInfo {
-                    Text("provider · \(info.promptTokens.formatted()) in / \(info.completionTokens.formatted()) out")
-                }
+                .font(.system(size: 8, design: .monospaced))
+                .foregroundStyle(LocusTheme.muted)
+                .frame(maxWidth: 740)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("workspace.workStatus")
             }
-            .font(.system(size: 8, design: .monospaced))
-            .foregroundStyle(LocusTheme.muted)
+            // Match the composer's bounded column. Expanding or collapsing
+            // side panels must not pull the two readiness dots toward the
+            // window edges while the composer remains centered.
             .padding(.horizontal, 24)
+            .frame(maxWidth: .infinity)
             .frame(height: 25)
             .background(LocusTheme.panel)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("workspace.workStatus")
         }
     }
 
     private func elapsed(from start: Date, to end: Date) -> String {
         let seconds = max(Int(end.timeIntervalSince(start)), 0)
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    private func statusPill(label: String, color: Color, identifier: String) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+            Text(label)
+                .fontWeight(.semibold)
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(identifier)
+    }
+
+    private func runtimeColor(_ phase: RuntimePhase) -> Color {
+        switch phase {
+        case .starting, .recovering: LocusTheme.warning
+        case .online: LocusTheme.success
+        case .unavailable: LocusTheme.coral
+        }
     }
 }
 
@@ -1581,13 +1668,18 @@ private struct ConversationView: View {
                 scrollCoordinator.detach()
                 scrollToCurrentMatch(proxy)
             }
+            .onChange(of: model.transcriptJumpTarget) {
+                scrollCoordinator.detach()
+                scrollToOverviewTarget(proxy)
+            }
         }
     }
 
     private var presentationItems: [TranscriptPresentationItem] {
         TranscriptPresentation.items(
             from: model.blocks,
-            visibility: model.toolActivityVisibility
+            toolVisibility: model.toolActivityVisibility,
+            thinkingVisibility: model.thinkingVisibility
         )
     }
 
@@ -1605,6 +1697,15 @@ private struct ConversationView: View {
             )
             .padding(.leading, 43)
             .id("tool-activity-\(id.uuidString)")
+        case .thinkingGroup(let id, let entries):
+            ThinkingActivityView(
+                groupID: id,
+                entries: entries,
+                visibility: model.thinkingVisibility,
+                onExpansionChange: scrollCoordinator.detach
+            )
+            .padding(.leading, 43)
+            .id("thinking-activity-\(id.uuidString)")
         }
     }
 
@@ -1658,6 +1759,26 @@ private struct ConversationView: View {
         guard let match = model.currentTranscriptMatch else { return }
         withAnimation(.easeOut(duration: 0.14)) {
             proxy.scrollTo(match, anchor: .center)
+        }
+    }
+
+    private func scrollToOverviewTarget(_ proxy: ScrollViewProxy) {
+        guard let target = model.transcriptJumpTarget,
+              let block = model.blocks.first(where: { $0.id == target })
+        else { return }
+        let destination = presentationItems.first(where: { item in
+            switch item {
+            case .block(let candidate): return candidate.id == target
+            case .toolGroup(_, let tools):
+                guard let toolID = block.tool?.toolID else { return false }
+                return tools.contains(where: { $0.toolID == toolID })
+            case .thinkingGroup(_, let entries):
+                return entries.contains(where: { $0.id.sourceBlockID == target })
+            }
+        })?.id
+        guard let destination else { return }
+        withAnimation(.easeOut(duration: 0.14)) {
+            proxy.scrollTo(destination, anchor: .center)
         }
     }
 }
@@ -1769,10 +1890,11 @@ final class TranscriptScrollCoordinator: ObservableObject {
 
             // SwiftUI can place selectable text and horizontal code views in
             // their own scroll responders. Letting those receive a vertical
-            // trackpad gesture makes the transcript appear to stop at every
-            // reasoning/tool block. Route the complete vertical gesture to
-            // the transcript's one native scroll view; horizontal-dominant
-            // gestures still reach code blocks normally.
+            // trackpad gesture makes the transcript appear to stop at message,
+            // reasoning, and tool boundaries. Route the complete gesture to
+            // the transcript's native scroll view so AppKit retains precise
+            // deltas, momentum, elasticity, and its normal frame pacing.
+            // Horizontal-dominant gestures still reach code blocks normally.
             candidate.scrollWheel(with: event)
             let phaseEnded = event.phase.contains(.ended) || event.phase.contains(.cancelled)
             let momentumEnded = event.momentumPhase.contains(.ended)
@@ -2292,7 +2414,6 @@ private struct MessageBlockView: View, Equatable {
                     }
             }
         }
-        .onHover { isHovering = $0 }
         .accessibilityIdentifier(blockAccessibilityIdentifier)
         .contextMenu {
             if block.kind == .user || block.kind == .assistant {
@@ -2348,14 +2469,22 @@ private struct MessageBlockView: View, Equatable {
                     Text(name)
                         .font(.system(size: 10, weight: .bold))
                     Spacer()
-                    if isHovering {
-                        messageActions
-                            .transition(.opacity)
-                    }
+                    // Keep this region in the layout even while hidden. If
+                    // hover inserts the buttons as rows pass beneath a fixed
+                    // pointer, their height changes during a wheel gesture and
+                    // makes the transcript visibly jump.
+                    messageActions
+                        .opacity(isHovering ? 1 : 0)
+                        .allowsHitTesting(isHovering)
+                        .accessibilityHidden(!isHovering)
                 }
+                .frame(minHeight: 22)
                 content()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .onHover { hovering in
+            if hovering != isHovering { isHovering = hovering }
         }
     }
 
@@ -2623,6 +2752,83 @@ private struct ThinkingDots: View {
         }
         .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: active)
         .onAppear { active = true }
+    }
+}
+
+/// Completed reasoning is presentation-only activity, so one user request
+/// gets one disclosure row instead of a stack of otherwise empty assistant
+/// identities. Expanded mode pins the same request-level group open.
+private struct ThinkingActivityView: View {
+    let groupID: UUID
+    let entries: [ThinkingPresentationEntry]
+    let visibility: ThinkingVisibility
+    let onExpansionChange: () -> Void
+    @State private var expanded = false
+
+    private var isOpen: Bool { expanded || visibility == .expanded }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button {
+                guard visibility != .expanded else { return }
+                onExpansionChange()
+                expanded.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    if visibility != .expanded {
+                        Image(systemName: isOpen ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(LocusTheme.muted)
+                    }
+                    Image(systemName: "brain")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(LocusTheme.muted)
+                    Text("Thought process")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    Spacer()
+                    Text("DONE")
+                        .font(.system(size: 7, weight: .bold))
+                        .tracking(0.6)
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 39)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(visibility == .expanded)
+            .accessibilityLabel(
+                "Thought process, \(entries.count) update\(entries.count == 1 ? "" : "s"), "
+                    + "done, \(isOpen ? "collapse" : "expand")"
+            )
+            .accessibilityIdentifier("thinkingActivity.group.\(groupID.uuidString)")
+
+            if isOpen {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                        Text(entry.text)
+                            .font(.system(size: 10))
+                            .foregroundStyle(LocusTheme.muted)
+                            .lineSpacing(3)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .accessibilityIdentifier(
+                                "thinkingActivity.entry.\(entry.id.sourceBlockID.uuidString).\(entry.id.ordinal)"
+                            )
+                        if index < entries.count - 1 {
+                            Rectangle()
+                                .fill(LocusTheme.line)
+                                .frame(height: 1)
+                        }
+                    }
+                }
+                .overlay(alignment: .top) {
+                    Rectangle().fill(LocusTheme.line).frame(height: 1)
+                }
+            }
+        }
+        .locusCard(radius: 9)
     }
 }
 

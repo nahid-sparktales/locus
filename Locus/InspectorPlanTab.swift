@@ -1,157 +1,282 @@
-import AppKit
 import SwiftUI
 
-struct InspectorPlanTab: View {
-    @EnvironmentObject private var model: AppModel
-    @State private var suggestionsPresented = false
+enum PlanPanelPhase: String, Equatable {
+    case idle
+    case working
+    case planning
+    case executing
+    case waitingForPermission
+    case readyForApproval
+    case stopped
+    case completed
+    case saved
+}
 
-    private var completedCount: Int {
-        model.todos.filter { $0.status == .completed }.count
-    }
+struct PlanPanelPresentation: Equatable {
+    let phase: PlanPanelPhase
+    let stoppedOutcome: TurnCompletion.Outcome?
 
-    private var progress: Double {
-        guard !model.todos.isEmpty else { return 0 }
-        return Double(completedCount) / Double(model.todos.count)
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    activePlanHeader
-                    planContent
-                }
-                // Constrain the padded stack to the vertical scroll view's
-                // viewport so Plan cards never extend under the inspector rail.
-                .padding(17)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            Divider().overlay(LocusTheme.line)
-
-            ContextWindowInfoCard()
-                .environmentObject(model)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(17)
-                .background(LocusTheme.paperDeep)
+    static func resolve(
+        hasPendingPermission: Bool,
+        planApprovalPending: Bool,
+        isBusy: Bool,
+        dispatchedMode: WorkMode?,
+        todos: [TodoItem],
+        latestCompletion: TurnCompletion?
+    ) -> PlanPanelPresentation {
+        if hasPendingPermission {
+            return PlanPanelPresentation(phase: .waitingForPermission, stoppedOutcome: nil)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var activePlanHeader: some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("CURRENT RUN")
-                    .font(.system(size: 8, weight: .bold))
-                    .tracking(0.8)
-                    .foregroundStyle(LocusTheme.muted)
-                Text(model.todos.isEmpty ? "No active plan" : "Agent implementation plan")
-                    .font(.system(size: 11, weight: .bold))
-            }
-            Spacer(minLength: 6)
-            PlanOpenFinderButton()
-                .environmentObject(model)
+        if planApprovalPending {
+            return PlanPanelPresentation(phase: .readyForApproval, stoppedOutcome: nil)
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("plan.activePlan")
-    }
-
-    @ViewBuilder
-    private var planContent: some View {
-        if model.todos.isEmpty {
-            VStack(spacing: 11) {
-                Image(systemName: "list.bullet.clipboard")
-                    .font(.system(size: 23))
-                    .foregroundStyle(LocusTheme.muted)
-                Text("Plans appear here as the agent breaks work into steps.")
-                    .font(.system(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
-                    .multilineTextAlignment(.center)
-                Button("Create a plan") {
-                    suggestionsPresented = true
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
-                .controlSize(.small)
-                .disabled(model.isBusy || model.hasPendingPermission)
-                .accessibilityIdentifier("plan.create")
-                .popover(isPresented: $suggestionsPresented, arrowEdge: .bottom) {
-                    PlanSuggestionsPopover { prompt in
-                        suggestionsPresented = false
-                        model.requestPlan(prompt: prompt)
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 28)
-            .locusCard(radius: 9)
-        } else {
-            VStack(spacing: 6) {
-                GeometryReader { proxy in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(LocusTheme.line)
-                        Capsule()
-                            .fill(LocusTheme.signalDeep)
-                            .frame(width: proxy.size.width * progress)
-                    }
-                }
-                .frame(height: 4)
-                HStack {
-                    Text("\(completedCount) of \(model.todos.count) complete")
-                    Spacer()
-                    Text(progress.formatted(.percent.precision(.fractionLength(0))))
-                }
-                .font(.system(size: 8))
-                .foregroundStyle(LocusTheme.muted)
-            }
-
-            VStack(spacing: 0) {
-                ForEach(Array(model.todos.enumerated()), id: \.element.id) { index, todo in
-                    PlanRow(todo: todo, isLast: index == model.todos.count - 1)
-                }
+        if isBusy {
+            switch dispatchedMode {
+            case .plan:
+                return PlanPanelPresentation(phase: .planning, stoppedOutcome: nil)
+            case .build where !todos.isEmpty:
+                return PlanPanelPresentation(phase: .executing, stoppedOutcome: nil)
+            default:
+                return PlanPanelPresentation(phase: .working, stoppedOutcome: nil)
             }
         }
+        if !todos.isEmpty,
+           let completion = latestCompletion,
+           completion.outcome != .complete,
+           completion.mode == .work || completion.mode == .plan || completion.mode == .build
+        {
+            return PlanPanelPresentation(
+                phase: .stopped,
+                stoppedOutcome: completion.outcome
+            )
+        }
+        if !todos.isEmpty, todos.allSatisfy({ $0.status == .completed }) {
+            return PlanPanelPresentation(phase: .completed, stoppedOutcome: nil)
+        }
+        if !todos.isEmpty {
+            return PlanPanelPresentation(phase: .saved, stoppedOutcome: nil)
+        }
+        return PlanPanelPresentation(phase: .idle, stoppedOutcome: nil)
     }
 }
 
-/// Opens a managed task's checkout, or the current workspace, in Finder.
-private struct PlanOpenFinderButton: View {
+struct PlanWorkspaceBriefing: Equatable {
+    let folderName: String
+    let folderPath: String
+    let repositoryDetail: String
+    let modelName: String
+    let modelDetail: String
+    let activityTitle: String
+    let activityDetail: String
+
+    static func resolve(
+        workspacePath: String,
+        modelName: String,
+        providerName: String,
+        modelStatus: String,
+        contextWindowTokens: Int?,
+        isGitRepository: Bool,
+        branch: String?,
+        changedFileCount: Int,
+        gitChangeSummary: String,
+        ahead: Int,
+        behind: Int,
+        indexedFileCount: Int,
+        messageCount: Int
+    ) -> PlanWorkspaceBriefing {
+        let folderURL = URL(fileURLWithPath: workspacePath)
+        let resolvedFolderName = folderURL.lastPathComponent.nilIfEmpty ?? workspacePath
+
+        var repositoryParts: [String] = []
+        if isGitRepository {
+            repositoryParts.append(branch?.nilIfEmpty ?? "Detached HEAD")
+            repositoryParts.append(
+                changedFileCount == 0
+                    ? "Clean"
+                    : "\(changedFileCount) changed \(changedFileCount == 1 ? "file" : "files")"
+            )
+            if ahead > 0 { repositoryParts.append("↑\(ahead)") }
+            if behind > 0 { repositoryParts.append("↓\(behind)") }
+        } else {
+            repositoryParts.append("Git not detected")
+        }
+
+        var modelParts = [providerName, modelStatus]
+        if let contextWindowTokens, contextWindowTokens > 0 {
+            modelParts.append("\(contextWindowTokens.formatted()) token window")
+        }
+
+        let activityTitle: String
+        let activityLead: String
+        if changedFileCount > 0 {
+            activityTitle = "Workspace has unreviewed changes"
+            activityLead = gitChangeSummary
+        } else if isGitRepository {
+            activityTitle = "Workspace is clean"
+            activityLead = "No uncommitted files"
+        } else {
+            activityTitle = "Workspace indexed"
+            activityLead = "Ready for inspection"
+        }
+        let indexedLabel = "\(indexedFileCount) indexed \(indexedFileCount == 1 ? "file" : "files")"
+        let messageLabel = "\(messageCount) \(messageCount == 1 ? "message" : "messages")"
+
+        return PlanWorkspaceBriefing(
+            folderName: resolvedFolderName,
+            folderPath: workspacePath,
+            repositoryDetail: repositoryParts.joined(separator: " · "),
+            modelName: modelName,
+            modelDetail: modelParts.joined(separator: " · "),
+            activityTitle: activityTitle,
+            activityDetail: [activityLead, indexedLabel, messageLabel].joined(separator: " · ")
+        )
+    }
+}
+
+extension AppModel {
+    var planPanelPresentation: PlanPanelPresentation {
+        PlanPanelPresentation.resolve(
+            hasPendingPermission: hasPendingPermission,
+            planApprovalPending: planApprovalPending,
+            isBusy: isBusy,
+            dispatchedMode: turnDispatchedMode,
+            todos: todos,
+            latestCompletion: latestTurnCompletion
+        )
+    }
+
+    var planPanelActiveToolSummary: String? {
+        guard let tool = blocks.reversed().compactMap(\.tool).first(where: {
+            $0.status == .running || $0.status == .awaitingPermission
+        }) else { return nil }
+        let summary = tool.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !summary.isEmpty { return summary }
+        return tool.detail.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    }
+
+    private var latestTurnCompletion: TurnCompletion? {
+        blocks.reversed().compactMap(\.completion).first
+    }
+}
+
+struct InspectorPlanTab: View {
     @EnvironmentObject private var model: AppModel
 
-    private var targetURL: URL {
-        if let checkout = model.activeTaskRecord?.executionPath,
-           FileManager.default.fileExists(atPath: checkout) {
-            return URL(fileURLWithPath: checkout, isDirectory: true)
-        }
-        return URL(fileURLWithPath: model.workspacePath, isDirectory: true)
+    var body: some View {
+        SessionOverviewView(session: model.sessionOverview)
+            .environmentObject(model)
+    }
+}
+
+/// The established Locus context card. It stays pinned beneath the dynamic
+/// session overview so context details remain available without changing the
+/// visual language used by the rest of the inspector.
+struct ContextWindowInfoCard: View {
+    @EnvironmentObject private var model: AppModel
+
+    private var fraction: Double? { model.contextWindowUsageFraction }
+
+    private var accent: Color {
+        (fraction ?? 0) > 0.8 ? LocusTheme.warning : LocusTheme.signalDeep
+    }
+
+    private var remainingTokens: Int? {
+        guard let usable = model.contextUsableTokens else { return nil }
+        return max(usable - model.contextUsedTokens, 0)
+    }
+
+    private var isAssumed: Bool {
+        !model.contextWindowProvenance.isMeasured && fraction != nil
+    }
+
+    private var usageLabel: String {
+        guard let fraction else { return "WINDOW UNKNOWN" }
+        let percent = fraction.formatted(.percent.precision(.fractionLength(0)))
+        return (isAssumed ? "≈ " : "") + percent + " USED"
     }
 
     var body: some View {
-        Button {
-            NSWorkspace.shared.open(targetURL)
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "folder")
-                    .font(.system(size: 9, weight: .semibold))
-                Text("Finder")
-                    .font(.system(size: 8, weight: .semibold))
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "circle.dotted.circle")
+                Text("Context window")
+                Spacer()
+                Text(usageLabel)
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .tracking(0.45)
+                    .foregroundStyle(accent)
             }
+            .font(.system(size: 9, weight: .bold))
             .foregroundStyle(LocusTheme.inkSoft)
-            .padding(.horizontal, 8)
-            .frame(height: 24)
-            .contentShape(Rectangle())
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(LocusTheme.line)
+                    if let fraction {
+                        Capsule()
+                            .fill(accent)
+                            .frame(width: proxy.size.width * fraction)
+                    }
+                }
+            }
+            .frame(height: 5)
+
+            VStack(spacing: 7) {
+                statRow("This conversation", "~\(model.contextUsedTokens.formatted()) tokens")
+                statRow(
+                    "Remaining",
+                    remainingTokens.map { "~\($0.formatted()) tokens" } ?? "Unknown"
+                )
+                statRow(
+                    "Model window",
+                    model.contextWindowTokens.map { "\($0.formatted()) tokens" } ?? "Unknown"
+                )
+                statRow("Source", model.contextWindowProvenance.label)
+                if let usable = model.contextUsableTokens,
+                   let window = model.contextWindowTokens,
+                   usable < window {
+                    statRow("Usable for chat", "\(usable.formatted()) tokens")
+                }
+                statRow(
+                    "Context pack next send",
+                    "\(model.includedContextTokens.formatted()) · \(model.includedContextCount) files"
+                )
+                statRow("Messages", "\(model.sessionInfo?.messages ?? 0)")
+            }
+
+            Text("Locus compacts the conversation when it reaches the usable limit, preserving room for tools and the next response.")
+                .font(.system(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .buttonStyle(.plain)
-        .background(LocusTheme.white)
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(LocusTheme.white.opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(LocusTheme.lineStrong, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(LocusTheme.line, lineWidth: 1)
         }
-        .help("Open workspace in Finder")
-        .accessibilityLabel("Open workspace in Finder")
-        .accessibilityIdentifier("plan.openIn")
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Context window information")
+        .accessibilityIdentifier("plan.contextWindow")
+    }
+
+    private func statRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .font(.system(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Text(value)
+                .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                .foregroundStyle(LocusTheme.inkSoft)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
     }
 }
 
@@ -265,222 +390,5 @@ struct InspectorCheckpointsTab: View {
         }
         .padding(10)
         .locusCard(radius: 9)
-    }
-}
-
-/// Offered when the user asks for a plan without having described one:
-/// five ready-made prompts, each sent to the agent in Plan mode.
-struct PlanSuggestionsPopover: View {
-    let choose: (String) -> Void
-
-    @State private var hovered: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("WHAT SHOULD THE PLAN COVER?")
-                .font(.system(size: 8, weight: .bold))
-                .tracking(0.8)
-                .foregroundStyle(LocusTheme.muted)
-                .padding(.horizontal, 8)
-                .padding(.top, 10)
-                .padding(.bottom, 4)
-            ForEach(Array(PlanPromptSuggestion.curated.enumerated()), id: \.element.id) { index, suggestion in
-                Button {
-                    choose(suggestion.prompt)
-                } label: {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(suggestion.title)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(LocusTheme.ink)
-                        Text(suggestion.prompt)
-                            .font(.system(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
-                            .lineSpacing(1)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 7)
-                    .background(hovered == suggestion.id ? LocusTheme.paperDeep : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .onHover { hovering in
-                    hovered = hovering ? suggestion.id : (hovered == suggestion.id ? nil : hovered)
-                }
-                .accessibilityLabel(suggestion.title)
-                .accessibilityIdentifier("plan.suggestion.\(index)")
-            }
-        }
-        .padding(6)
-        .frame(width: 264)
-    }
-}
-
-struct ContextWindowInfoCard: View {
-    @EnvironmentObject private var model: AppModel
-
-    private var fraction: Double? { model.contextWindowUsageFraction }
-
-    private var accent: Color {
-        (fraction ?? 0) > 0.8 ? LocusTheme.warning : LocusTheme.signalDeep
-    }
-
-    private var remainingTokens: Int? {
-        guard let usable = model.contextUsableTokens else { return nil }
-        return max(usable - model.contextUsedTokens, 0)
-    }
-
-    /// The window is a vendor's published figure rather than anything observed.
-    private var isAssumed: Bool {
-        !model.contextWindowProvenance.isMeasured && fraction != nil
-    }
-
-    private var usageLabel: String {
-        guard let fraction else {
-            // The one honest signal this card has when nothing is known. It has
-            // to survive: a percentage here would be invented.
-            return "WINDOW UNKNOWN"
-        }
-        let percent = fraction.formatted(.percent.precision(.fractionLength(0)))
-        return (isAssumed ? "≈ " : "") + percent + " USED"
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "circle.dotted.circle")
-                Text("Context window")
-                Spacer()
-                Text(usageLabel)
-                    .font(.system(size: 7, weight: .bold, design: .monospaced))
-                    .tracking(0.45)
-                    .foregroundStyle(accent)
-            }
-            .font(.system(size: 9, weight: .bold))
-            .foregroundStyle(LocusTheme.inkSoft)
-
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(LocusTheme.line)
-                    if let fraction {
-                        Capsule()
-                            .fill(accent)
-                            .frame(width: proxy.size.width * fraction)
-                    }
-                }
-            }
-            .frame(height: 5)
-
-            VStack(spacing: 7) {
-                statRow("This conversation", "~\(model.contextUsedTokens.formatted()) tokens")
-                statRow(
-                    "Remaining",
-                    remainingTokens.map { "~\($0.formatted()) tokens" } ?? "Unknown"
-                )
-                statRow(
-                    "Model window",
-                    model.contextWindowTokens.map { "\($0.formatted()) tokens" } ?? "Unknown"
-                )
-                statRow("Source", model.contextWindowProvenance.label)
-                if let usable = model.contextUsableTokens,
-                   let window = model.contextWindowTokens,
-                   usable < window {
-                    statRow("Usable for chat", "\(usable.formatted()) tokens")
-                }
-                statRow(
-                    "Context pack next send",
-                    "\(model.includedContextTokens.formatted()) · \(model.includedContextCount) files"
-                )
-                statRow("Messages", "\(model.sessionInfo?.messages ?? 0)")
-            }
-
-            Text("Locus compacts the conversation when it reaches the usable limit, preserving room for tools and the next response.")
-                .font(.system(size: 8))
-                .foregroundStyle(LocusTheme.muted)
-                .lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(11)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(LocusTheme.white.opacity(0.72))
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(LocusTheme.line, lineWidth: 1)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Context window information")
-        .accessibilityIdentifier("plan.contextWindow")
-    }
-
-    private func statRow(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(label)
-                .font(.system(size: 8))
-                .foregroundStyle(LocusTheme.muted)
-                .lineLimit(1)
-            Spacer(minLength: 4)
-            Text(value)
-                .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                .foregroundStyle(LocusTheme.inkSoft)
-                .multilineTextAlignment(.trailing)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-        }
-    }
-}
-
-struct PlanRow: View {
-    let todo: TodoItem
-    let isLast: Bool
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 9) {
-            VStack(spacing: 0) {
-                Image(systemName: symbol)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(symbolColor)
-                    .frame(width: 23, height: 23)
-                    .background(symbolBackground)
-                    .clipShape(Circle())
-                    .overlay {
-                        Circle().stroke(symbolBorder, lineWidth: 1)
-                    }
-                if !isLast {
-                    Rectangle()
-                        .fill(LocusTheme.lineStrong)
-                        .frame(width: 1, height: 25)
-                }
-            }
-            Text(todo.content)
-                .font(.system(size: 9, weight: todo.status == .inProgress ? .bold : .medium))
-                .foregroundStyle(todo.status == .completed ? LocusTheme.muted : LocusTheme.ink)
-                .strikethrough(todo.status == .completed, color: LocusTheme.muted)
-                .padding(.top, 5)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var symbol: String {
-        switch todo.status {
-        case .completed: "checkmark"
-        case .inProgress: "play.fill"
-        case .pending: "circle"
-        }
-    }
-
-    private var symbolColor: Color {
-        todo.status == .inProgress ? LocusTheme.signal : LocusTheme.success
-    }
-
-    private var symbolBackground: Color {
-        todo.status == .inProgress ? LocusTheme.ink : LocusTheme.successSoft
-    }
-
-    private var symbolBorder: Color {
-        todo.status == .inProgress ? LocusTheme.ink : LocusTheme.signalDeep.opacity(0.45)
     }
 }

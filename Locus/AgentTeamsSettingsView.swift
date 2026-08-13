@@ -1189,7 +1189,12 @@ private struct AgentTeamEditor: View {
     }
 
     var body: some View {
-        let errors = AgentTeamValidation.errors(team: draft, profiles: model.agentProfiles)
+        let engineErrors = (
+            draft.resolvedSwarmPolicy.engine == .openAIResponses && !openAIEngineEligible
+        ) ? ["OpenAI Responses requires an OpenAI API dispatcher on GPT-5.6."] : []
+        let errors = AgentTeamValidation.errors(
+            team: draft, profiles: model.agentProfiles
+        ) + engineErrors
         VStack(spacing: 0) {
             ScrollView {
                 Form {
@@ -1274,6 +1279,63 @@ private struct AgentTeamEditor: View {
                                 .foregroundStyle(LocusTheme.muted)
                         }
                     }
+                    Section("Adaptive read-only delegation") {
+                        Toggle("Allow read-only agents to create bounded children", isOn: Binding(
+                            get: { draft.resolvedSwarmPolicy.delegationMode == .readOnlyChildren },
+                            set: { enabled in
+                                updateSwarmPolicy {
+                                    $0.delegationMode = enabled ? .readOnlyChildren : .flat
+                                }
+                            }
+                        ))
+                        .accessibilityIdentifier("teamEditor.readOnlyDelegation")
+                        Picker("Execution engine", selection: Binding(
+                            get: { draft.resolvedSwarmPolicy.engine },
+                            set: { engine in updateSwarmPolicy { $0.engine = engine } }
+                        )) {
+                            ForEach(SwarmPolicy.Engine.allCases) { engine in
+                                Text(engine.title).tag(engine)
+                                    .disabled(engine == .openAIResponses && !openAIEngineEligible)
+                            }
+                        }
+                        .accessibilityIdentifier("teamEditor.swarmEngine")
+                        Text(openAIEngineEligible
+                            ? "OpenAI-native orchestration is optional and uses the dispatcher's OpenAI API billing route."
+                            : "OpenAI-native orchestration is available only with an OpenAI API dispatcher on GPT-5.6; ChatGPT plan accounts remain Locus-managed.")
+                            .font(.system(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("teamEditor.swarmEngineEligibility")
+                        Stepper(
+                            "Maximum simultaneous agents: \(draft.budget.maxConcurrentCalls)",
+                            value: $draft.budget.maxConcurrentCalls,
+                            in: 1...8
+                        )
+                        .accessibilityIdentifier("teamEditor.maxSimultaneousAgents")
+                        Stepper(
+                            "Maximum total agents: \(draft.resolvedSwarmPolicy.maxTotalAgents)",
+                            value: Binding(
+                                get: { draft.resolvedSwarmPolicy.maxTotalAgents },
+                                set: { value in updateSwarmPolicy { $0.maxTotalAgents = value } }
+                            ),
+                            in: 1...32
+                        )
+                        .accessibilityIdentifier("teamEditor.maxTotalAgents")
+                        Stepper(
+                            "Maximum depth: \(draft.resolvedSwarmPolicy.maxDepth)",
+                            value: Binding(
+                                get: { draft.resolvedSwarmPolicy.maxDepth },
+                                set: { value in updateSwarmPolicy { $0.maxDepth = value } }
+                            ),
+                            in: 1...4
+                        )
+                        .accessibilityIdentifier("teamEditor.maxSwarmDepth")
+                        Text("Children are always read-only and stay inside the approved goals, providers, and budgets. Writers can never delegate.")
+                            .font(.system(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("teamEditor.writerDelegationExplanation")
+                    }
                     Section("Hard budgets") {
                         Stepper("Delegated jobs: \(draft.budget.maxJobs)", value: $draft.budget.maxJobs, in: 1...16)
                         Stepper("Orchestration rounds: \(draft.budget.maxRounds)", value: $draft.budget.maxRounds, in: 1...8)
@@ -1297,7 +1359,6 @@ private struct AgentTeamEditor: View {
                                 .font(.system(size: 8))
                                 .foregroundStyle(LocusTheme.muted)
                         }
-                        Stepper("Concurrent calls: \(draft.budget.maxConcurrentCalls)", value: $draft.budget.maxConcurrentCalls, in: 1...8)
                         Stepper("Metered tokens: \(draft.budget.maxMeteredTokens.formatted())", value: $draft.budget.maxMeteredTokens, in: 1_000...2_000_000, step: 10_000)
                     }
                     if !errors.isEmpty {
@@ -1338,6 +1399,22 @@ private struct AgentTeamEditor: View {
 
     private var memberProfiles: [AgentProfile] {
         model.agentProfiles.filter { draft.memberIDs.contains($0.id) }
+    }
+
+    private var openAIEngineEligible: Bool {
+        guard let dispatcherID = draft.dispatcherID,
+              let dispatcher = model.agentProfiles.first(where: { $0.id == dispatcherID }),
+              case .providerAccount(let accountID) = dispatcher.route,
+              model.providerAccounts.first(where: { $0.id == accountID })?.kind == .codex
+        else { return false }
+        let name = dispatcher.model.lowercased()
+        return name == "gpt-5.6" || name.hasPrefix("gpt-5.6-")
+    }
+
+    private func updateSwarmPolicy(_ update: (inout SwarmPolicy) -> Void) {
+        var policy = draft.resolvedSwarmPolicy
+        update(&policy)
+        draft.swarmPolicy = policy
     }
 
     private func scoreWeight(

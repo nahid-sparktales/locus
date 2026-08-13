@@ -161,38 +161,6 @@ enum PlanSignalDetector {
     }
 }
 
-/// A ready-made prompt offered when the user asks for a plan without having
-/// described one. Titles are what the picker shows; prompts are what is sent.
-struct PlanPromptSuggestion: Identifiable {
-    let title: String
-    let prompt: String
-
-    var id: String { title }
-
-    static let curated: [PlanPromptSuggestion] = [
-        PlanPromptSuggestion(
-            title: "Plan the current request",
-            prompt: "Create a step-by-step implementation plan for the most recent request in this conversation."
-        ),
-        PlanPromptSuggestion(
-            title: "Fix the latest problem",
-            prompt: "Diagnose the most recent error or failing behavior we discussed and plan the fix."
-        ),
-        PlanPromptSuggestion(
-            title: "Improve this codebase",
-            prompt: "Review the workspace and plan the highest-impact improvements, ordered so the quickest wins come first."
-        ),
-        PlanPromptSuggestion(
-            title: "Add missing tests",
-            prompt: "Identify the most important untested behavior in this workspace and plan the test coverage for it."
-        ),
-        PlanPromptSuggestion(
-            title: "Refactor a rough spot",
-            prompt: "Find the most tangled part of the codebase and plan a safe, incremental refactor."
-        ),
-    ]
-}
-
 enum InspectorTab: String, CaseIterable, Identifiable {
     case plan
     case changes
@@ -1039,33 +1007,48 @@ struct ChatBlock: Identifiable, Codable, Hashable {
     }
 }
 
-/// A stable presentation-only projection of transcript blocks. Compact modes
-/// replace the first tool in each request with one group and leave the stored
-/// blocks untouched.
+/// A stable presentation-only projection of transcript blocks. Tool calls and
+/// completed reasoning can become request-level activity groups while the
+/// stored blocks remain untouched.
 enum TranscriptPresentationItem: Identifiable, Equatable {
     enum ID: Hashable {
         case block(UUID)
         case toolGroup(UUID)
+        case thinkingGroup(UUID)
     }
 
     case block(ChatBlock)
     case toolGroup(id: UUID, tools: [ToolPayload])
+    case thinkingGroup(id: UUID, entries: [ThinkingPresentationEntry])
 
     var id: ID {
         switch self {
         case .block(let block): .block(block.id)
         case .toolGroup(let id, _): .toolGroup(id)
+        case .thinkingGroup(let id, _): .thinkingGroup(id)
         }
     }
+}
+
+/// One provider-supplied reasoning segment inside a request-level thought
+/// group. The source block and ordinal keep SwiftUI identity stable without
+/// changing the persisted transcript model.
+struct ThinkingPresentationEntry: Identifiable, Equatable {
+    struct ID: Hashable {
+        let sourceBlockID: UUID
+        let ordinal: Int
+    }
+
+    let id: ID
+    let text: String
 }
 
 enum TranscriptPresentation {
     static func items(
         from blocks: [ChatBlock],
-        visibility: ToolActivityVisibility
+        toolVisibility: ToolActivityVisibility,
+        thinkingVisibility: ThinkingVisibility
     ) -> [TranscriptPresentationItem] {
-        guard visibility != .verbose else { return blocks.map(TranscriptPresentationItem.block) }
-
         var items: [TranscriptPresentationItem] = []
         var requestBlocks: [ChatBlock] = []
         var requestID: UUID?
@@ -1074,16 +1057,47 @@ enum TranscriptPresentation {
             guard !requestBlocks.isEmpty else { return }
             let tools = requestBlocks.compactMap(\.tool)
             let groupID = requestID ?? requestBlocks.first(where: { $0.tool != nil })?.id
+            var assistantProjections: [UUID: AssistantProjection] = [:]
+            for block in requestBlocks where block.kind == .assistant && !block.isStreaming {
+                assistantProjections[block.id] = assistantProjection(for: block)
+            }
+            let thinkingEntries = requestBlocks.flatMap { block in
+                assistantProjections[block.id]?.thinkingEntries ?? []
+            }
+            let thinkingGroupID = requestID
+                ?? thinkingEntries.first?.id.sourceBlockID
             var insertedGroup = false
+            var insertedThinkingGroup = false
 
             for block in requestBlocks {
                 if block.kind == .tool {
-                    if !insertedGroup, let groupID, !tools.isEmpty {
+                    if toolVisibility == .verbose {
+                        items.append(.block(block))
+                    } else if !insertedGroup, let groupID, !tools.isEmpty {
                         items.append(.toolGroup(id: groupID, tools: tools))
                         insertedGroup = true
                     }
                     continue
                 }
+
+                if let projection = assistantProjections[block.id] {
+                    if !projection.thinkingEntries.isEmpty,
+                       !insertedThinkingGroup,
+                       thinkingVisibility != .hidden,
+                       let thinkingGroupID
+                    {
+                        items.append(.thinkingGroup(
+                            id: thinkingGroupID,
+                            entries: thinkingEntries
+                        ))
+                        insertedThinkingGroup = true
+                    }
+                    if let visibleBlock = projection.visibleBlock {
+                        items.append(.block(visibleBlock))
+                    }
+                    continue
+                }
+
                 if isCompletedEmptyAssistant(block) { continue }
                 items.append(.block(block))
             }
@@ -1105,6 +1119,55 @@ enum TranscriptPresentation {
         }
         flushRequest()
         return items
+    }
+
+    private struct AssistantProjection {
+        let thinkingEntries: [ThinkingPresentationEntry]
+        let visibleBlock: ChatBlock?
+    }
+
+    private static func assistantProjection(for block: ChatBlock) -> AssistantProjection {
+        var thinkingEntries: [ThinkingPresentationEntry] = []
+        var ordinal = 0
+
+        func appendThinking(_ text: String) {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            thinkingEntries.append(ThinkingPresentationEntry(
+                id: .init(sourceBlockID: block.id, ordinal: ordinal),
+                text: trimmed
+            ))
+            ordinal += 1
+        }
+
+        if let nativeReasoning = block.reasoningText {
+            appendThinking(nativeReasoning)
+        }
+
+        let segments = AssistantSegment.parse(block.text)
+        let containsInlineThinking = segments.contains { segment in
+            if case .thinking = segment { return true }
+            return false
+        }
+        var visibleSegments: [String] = []
+        for segment in segments {
+            switch segment {
+            case .thinking(let text, _):
+                appendThinking(text)
+            case .visible(let text):
+                visibleSegments.append(text)
+            }
+        }
+
+        var visibleBlock = block
+        visibleBlock.reasoningText = nil
+        if containsInlineThinking {
+            visibleBlock.text = visibleSegments.joined(separator: "\n\n")
+        }
+        if visibleBlock.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return AssistantProjection(thinkingEntries: thinkingEntries, visibleBlock: nil)
+        }
+        return AssistantProjection(thinkingEntries: thinkingEntries, visibleBlock: visibleBlock)
     }
 
     private static func isCompletedEmptyAssistant(_ block: ChatBlock) -> Bool {
@@ -1429,6 +1492,10 @@ struct AppSettings: Codable, Hashable {
     /// Compact by default so tool-heavy requests do not overwhelm the answer.
     /// Stored raw so a future mode cannot invalidate the rest of the settings.
     var toolActivityVisibilityRaw = ToolActivityVisibility.collapsed.rawValue
+    /// Optional status controls stay out of the header until the user asks for
+    /// them, leaving the widest possible title and model-selection area.
+    var showTeamProgressInHeader = false
+    var showContextUsageInHeader = false
     /// One-time compatibility marker: releases before adaptive Work persisted
     /// Build because an agentic mode was mandatory, not necessarily chosen.
     var adaptiveWorkMigrationCompleted = false
@@ -1670,6 +1737,14 @@ struct AppSettings: Codable, Hashable {
             String.self,
             forKey: .toolActivityVisibilityRaw
         ) ?? defaults.toolActivityVisibilityRaw
+        showTeamProgressInHeader = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .showTeamProgressInHeader
+        ) ?? defaults.showTeamProgressInHeader
+        showContextUsageInHeader = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .showContextUsageInHeader
+        ) ?? defaults.showContextUsageInHeader
         adaptiveWorkMigrationCompleted = try container.decodeIfPresent(
             Bool.self,
             forKey: .adaptiveWorkMigrationCompleted

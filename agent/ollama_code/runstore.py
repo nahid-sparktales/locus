@@ -21,7 +21,7 @@ from typing import Any
 
 from . import paths
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 DEFAULT_RETENTION_DAYS = 90
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EVENT_JSON_BYTES = 512 * 1024
@@ -355,6 +355,25 @@ class RunStore:
                 )
                 connection.execute("UPDATE schema_meta SET version=6 WHERE singleton=1")
                 connection.commit()
+            if version < 7:
+                connection.execute("BEGIN IMMEDIATE")
+                columns = {
+                    str(row[1]) for row in connection.execute("PRAGMA table_info(job_attempts)")
+                }
+                for statement in (
+                    "ALTER TABLE job_attempts ADD COLUMN node_id TEXT",
+                    "ALTER TABLE job_attempts ADD COLUMN parent_node_id TEXT",
+                    "ALTER TABLE job_attempts ADD COLUMN depth INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE job_attempts ADD COLUMN execution_engine TEXT NOT NULL DEFAULT 'locus_managed'",
+                ):
+                    column = statement.split("ADD COLUMN ", 1)[1].split(" ", 1)[0]
+                    if column not in columns:
+                        connection.execute(statement)
+                connection.execute(
+                    "UPDATE job_attempts SET node_id=job_id WHERE node_id IS NULL OR node_id=''"
+                )
+                connection.execute("UPDATE schema_meta SET version=7 WHERE singleton=1")
+                connection.commit()
 
     def upsert_mcp_task(
         self,
@@ -681,14 +700,18 @@ class RunStore:
             connection.execute(
                 """INSERT INTO job_attempts(
                     run_id, job_id, attempt, attempt_id, agent_id, agent_name,
-                    role, provider, model, state, goal, started_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    role, provider, model, state, goal, started_at, node_id,
+                    parent_node_id, depth, execution_engine
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id, job_id, attempt, attempt_id, str(event.get("agent_id") or ""),
                     str(event.get("agent_name") or ""), str(event.get("role") or ""),
                     str(event.get("provider") or ""), str(event.get("model") or ""),
                     str(event.get("state") or "running"), str(event.get("goal") or "")[:120_000],
-                    now,
+                    now, str(event.get("node_id") or job_id),
+                    str(event.get("parent_node_id") or ""),
+                    max(int(event.get("depth") or 0), 0),
+                    str(event.get("execution_engine") or "locus_managed"),
                 ),
             )
         elif event_type in {"agent_job_completed", "agent_job_incomplete"}:
@@ -706,10 +729,16 @@ class RunStore:
                 connection.execute(
                     """INSERT INTO job_attempts(
                         run_id, job_id, attempt, attempt_id, agent_id, agent_name,
-                        role, state, goal, started_at
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, 'running', '', ?)""",
+                        role, state, goal, started_at, node_id, parent_node_id,
+                        depth, execution_engine
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, 'running', '', ?, ?, ?, ?, ?)""",
                     (run_id, job_id, attempt, attempt_id, str(result.get("agent_id") or ""),
-                     str(result.get("agent_name") or ""), str(result.get("role") or ""), now),
+                     str(result.get("agent_name") or ""), str(result.get("role") or ""), now,
+                     str(result.get("node_id") or event.get("node_id") or job_id),
+                     str(result.get("parent_node_id") or event.get("parent_node_id") or ""),
+                     max(int(result.get("depth") or event.get("depth") or 0), 0),
+                     str(result.get("execution_engine") or event.get("execution_engine")
+                         or "locus_managed")),
                 )
             else:
                 attempt, attempt_id = int(row[0]), str(row[1])
@@ -776,6 +805,10 @@ class RunStore:
             "attempt_id": row["attempt_id"], "agent_id": row["agent_id"],
             "agent_name": row["agent_name"], "role": row["role"], "state": row["state"],
             "provider": row["provider"], "model": row["model"],
+            "node_id": row["node_id"] or row["job_id"],
+            "parent_node_id": row["parent_node_id"],
+            "depth": int(row["depth"] or 0),
+            "execution_engine": row["execution_engine"] or "locus_managed",
             "goal": row["goal"],
             "result": json.loads(row["result_json"]) if row["result_json"] else None,
             "started_at": row["started_at"], "completed_at": row["completed_at"],

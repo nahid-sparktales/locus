@@ -164,7 +164,7 @@ Example: delete an obsolete debugging chat, then select Undo when you realize it
 
 Choose Solo or Team from the composer. `@AgentName` forces an eligible member of the selected team, while `@TeamName` selects a configured team.
 
-The dispatcher is the only agent that creates jobs. Read-only planners, researchers, testers, and reviewers may run concurrently. A plan may assign multiple write-capable coding agents, but every coding job is dependency-ordered and Locus runs them one at a time in the shared checkout. Specialists return structured results to the dispatcher and cannot recursively delegate.
+The dispatcher creates the approved top-level plan. Read-only planners, researchers, testers, and reviewers may run concurrently and, when adaptive delegation is enabled, may request bounded read-only child branches for narrower evidence gathering. Each logical agent gets one child wave and one final aggregation pass; writers never delegate. A plan may assign multiple write-capable coding agents, but every coding job is dependency-ordered and Locus runs them one at a time in the shared checkout.
 
 Example: send `@Mac App Team investigate the scrolling regression, update the backend contract, implement the SwiftUI fix, run tests, and review the diff.` The dispatcher can schedule research and test-design in parallel, then run a backend coding job followed by a UI coding job.
 
@@ -223,10 +223,19 @@ Every team has:
 - Any number of read-only specialists and reviewers
 - Dispatch and routing behavior
 - Hard limits for jobs, rounds, concurrent calls, total model calls, metered tokens, and estimated cost
+- An adaptive swarm policy with execution engine, read-only delegation toggle,
+  maximum total agents, and maximum tree depth
 
 Example: create `Mac App Team`, select `Local Dispatcher`, `Code Researcher`, `Backend Writer`, `UI Writer`, and `Final Reviewer`, then set `Backend Writer` as Lead Writer. A plan can order Backend Writer before UI Writer, while the Lead Writer remains responsible for fallback and post-review integration.
 
 Hosted provider accounts require one-time consent under **Automatic Hosted Routing** before the dispatcher may send team data to them automatically.
+
+New teams default to adaptive Locus execution, eight total agents, depth two,
+and three simultaneous model calls. Previously saved teams with no swarm policy
+remain flat for compatibility. The optional **OpenAI Responses beta** engine is
+shown only for an OpenAI API account using a GPT-5.6 dispatcher; it is not used
+with ChatGPT-managed accounts. If that beta path is unavailable, the run pauses
+and offers **Run with Locus**—billing or execution never switches silently.
 
 ## 6. Durable team runs
 
@@ -242,6 +251,7 @@ The store records:
 - Visible agent output and provider-supplied reasoning
 - Redacted tool previews and results
 - Evidence, timing, tokens, and estimated cost
+- Stable node identity, parent identity, depth, execution engine, and attempts
 - Scheduler waits, permission waits, fallbacks, revisions, and errors
 
 It never records API keys, authorization headers, secure-field values, provider signatures, or hidden reasoning.
@@ -258,7 +268,8 @@ relaunch. Multiple team requests in one chat keep separate boards.
 During dispatch the board names the dispatcher route, elapsed time, request,
 observable stage, and any bounded validation correction. At approval it shows
 the complete ordered plan and its budget. While running it shows the active
-agent/model, job position, waits, duration, calls, tokens, Pause, and Stop.
+agent/model, hierarchical agent tree, job position, waits, duration, calls,
+tokens, branch Stop/Retry controls, Pause, and Stop.
 Terminal boards collapse automatically to a result summary with Expand and
 **Open Team Runs**. Raw model output and hidden reasoning are not shown.
 

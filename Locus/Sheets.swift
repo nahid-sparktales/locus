@@ -1378,6 +1378,23 @@ struct SettingsView: View {
                     .font(.system(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
+
+                Toggle(
+                    "Show team progress in the workspace header",
+                    isOn: $draft.showTeamProgressInHeader
+                )
+                .accessibilityIdentifier("settings.showTeamProgressInHeader")
+
+                Toggle(
+                    "Show context window usage in the workspace header",
+                    isOn: $draft.showContextUsageInHeader
+                )
+                .accessibilityIdentifier("settings.showContextUsageInHeader")
+
+                Text("Both header status controls are hidden by default. They can also be changed from the workspace’s ellipsis menu.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("Local model") {

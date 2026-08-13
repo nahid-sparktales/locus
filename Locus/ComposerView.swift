@@ -67,7 +67,10 @@ struct ComposerView: View {
                             .scrollContentBackground(.hidden)
                             .padding(.horizontal, 7)
                             .padding(.vertical, 4)
-                            .frame(minHeight: 58, maxHeight: 120)
+                            // Start compact and keep long drafts internally
+                            // scrollable. The previous 120-point editor used
+                            // nearly twice the vertical space of the transcript.
+                            .frame(minHeight: 52, idealHeight: 60, maxHeight: 68)
                             .focused($focused)
                             .accessibilityLabel("Message Locus")
                             .accessibilityIdentifier("composer.input")

@@ -10,10 +10,13 @@ from types import SimpleNamespace
 import pytest
 
 from ollama_code.ollama import OllamaError
+from ollama_code.openai_responses_multi_agent import OpenAIResponsesMultiAgentError
 from ollama_code.orchestration import (
     AgentJob,
+    AgentResult,
     CrossProcessModelCallScheduler,
     ModelCallScheduler,
+    OpenAIResponsesFallbackRequired,
     OrchestrationError,
     TeamOrchestrator,
     TeamPreparation,
@@ -118,6 +121,131 @@ def test_manifest_and_dispatch_plan_require_a_writer_and_known_members():
         validate_dispatch_plan(no_writer, team, profiles)
 
 
+def test_missing_swarm_policy_is_legacy_flat_and_explicit_policy_is_bounded():
+    _, legacy, _, _ = parse_manifest(_manifest())
+    assert legacy.swarm_policy.engine == "locus_managed"
+    assert legacy.swarm_policy.delegation_mode == "flat"
+
+    manifest = _manifest(swarm_policy={
+        "version": 1,
+        "engine": "locus_managed",
+        "delegation_mode": "read_only_children",
+        "sizing_mode": "adaptive",
+        "max_total_agents": 8,
+        "max_depth": 2,
+    })
+    _, adaptive, _, _ = parse_manifest(manifest)
+    assert adaptive.swarm_policy.delegation_mode == "read_only_children"
+    assert adaptive.swarm_policy.max_total_agents == 8
+    assert adaptive.budget.max_concurrent_calls == 3
+
+    manifest["team"]["swarm_policy"]["max_depth"] = 5
+    with pytest.raises(OrchestrationError, match="max_depth"):
+        parse_manifest(manifest)
+
+
+def test_openai_responses_engine_requires_api_gpt_56_dispatcher():
+    policy = {
+        "version": 1, "engine": "openai_responses",
+        "delegation_mode": "read_only_children", "sizing_mode": "adaptive",
+        "max_total_agents": 8, "max_depth": 2,
+    }
+    manifest = _manifest(swarm_policy=policy)
+    with pytest.raises(OrchestrationError, match="OpenAI API dispatcher"):
+        parse_manifest(manifest)
+
+    manifest["profiles"][0]["model"] = "gpt-5.6-sol"
+    manifest["profiles"][0]["route"] = {
+        "provider": "remote", "account_kind": "codex",
+        "base_url": "https://api.openai.com/v1", "api_key": "test-key",
+    }
+    _, team, _, _ = parse_manifest(manifest)
+    assert team.swarm_policy.engine == "openai_responses"
+
+
+def test_openai_evidence_failure_pauses_with_the_validated_plan_for_explicit_fallback(
+    monkeypatch,
+):
+    manifest = _manifest(swarm_policy={
+        "version": 1, "engine": "openai_responses",
+        "delegation_mode": "read_only_children", "sizing_mode": "adaptive",
+        "max_total_agents": 8, "max_depth": 2,
+    })
+    dispatcher = next(item for item in manifest["profiles"] if item["id"] == "dispatcher")
+    dispatcher["model"] = "gpt-5.6"
+    dispatcher["route"] = {
+        "provider": "remote", "base_url": "https://api.openai.com/v1",
+        "api_key": "secret", "account_kind": "codex",
+    }
+    _, team, profiles, _ = parse_manifest(manifest)
+    plan = validate_dispatch_plan(_valid_plan(), team, profiles)
+    orchestrator = TeamOrchestrator(lambda _event: None, lambda: False)
+    monkeypatch.setattr(orchestrator, "_dispatch_with_status", lambda *_a, **_k: plan)
+    monkeypatch.setattr(
+        orchestrator, "_openai_responses_evidence",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            OpenAIResponsesMultiAgentError("beta unavailable")
+        ),
+    )
+
+    with pytest.raises(OpenAIResponsesFallbackRequired) as raised:
+        orchestrator.prepare("Build it", "/tmp/workspace", manifest)
+
+    assert raised.value.validated_plan == plan
+    assert "beta unavailable" in str(raised.value)
+
+
+def test_read_only_delegation_rejects_writer_and_preserves_node_identity(monkeypatch):
+    manifest = _manifest(swarm_policy={
+        "version": 1, "engine": "locus_managed",
+        "delegation_mode": "read_only_children", "sizing_mode": "adaptive",
+        "max_total_agents": 4, "max_depth": 2,
+    })
+    _, team, profiles, _ = parse_manifest(manifest)
+    events = []
+    orchestrator = TeamOrchestrator(events.append, lambda: False)
+    parent = AgentResult(
+        job_id="plan", agent_id="planner", agent_name="Planner", role="planner",
+        output="{}", evidence=[], prompt_tokens=1, completion_tokens=1,
+        elapsed_ms=1, node_id="plan", goal="Inspect authentication tests",
+        delegation_requests=[
+            {"goal": "Inspect authentication tests for failures", "agent_id": "writer"},
+            {"goal": "Inspect authentication tests for edge cases", "agent_id": "reviewer"},
+        ],
+    )
+
+    def parallel(_run, jobs, _profiles, _prior, _budget, **_kwargs):
+        return [AgentResult(
+            job_id=job.id, agent_id=job.agent_id,
+            agent_name=profiles[job.agent_id].name, role=profiles[job.agent_id].role,
+            output="{}", evidence=["tests/auth.py"], prompt_tokens=1,
+            completion_tokens=1, elapsed_ms=1, node_id=job.node_id,
+            parent_node_id=job.parent_node_id, depth=job.depth, goal=job.goal,
+        ) for job in jobs]
+
+    def continuation(_run, job, profile, _budget, **_kwargs):
+        return AgentResult(
+            job_id=job.id, agent_id=profile.id, agent_name=profile.name,
+            role=profile.role, output="{}", evidence=[], prompt_tokens=1,
+            completion_tokens=1, elapsed_ms=1, node_id=job.node_id,
+            parent_node_id=job.parent_node_id, depth=job.depth, goal=parent.goal,
+        )
+
+    monkeypatch.setattr(orchestrator, "_parallel_results", parallel)
+    monkeypatch.setattr(orchestrator, "_call_agent", continuation)
+    expanded = orchestrator._expand_delegation_tree(
+        "run-1", parent, profiles, team, [1],
+        branch_goals={"inspect authentication tests"},
+    )
+
+    spawned = [event for event in events if event["type"] == "agent_spawned"]
+    assert len(spawned) == 1
+    assert spawned[0]["agent_id"] == "reviewer"
+    assert spawned[0]["node_id"] == "plan.1"
+    assert expanded["plan.1"].parent_node_id == "plan"
+    assert expanded["plan"].model_calls == 2
+
+
 def test_automatic_call_budget_uses_the_bounded_adaptive_pool():
     manifest = _manifest()
     manifest["team"]["budget"].update({
@@ -209,6 +337,69 @@ def test_multi_writer_recovery_skips_completed_coding_jobs(monkeypatch):
     assert [result.job_id for result in prepared.writer_results] == ["write"]
     assert "ui" in prepared.writer_prompt
     assert "backend contract completed" in prepared.writer_prompt
+
+
+def test_delegated_retry_preserves_completed_siblings_and_reuses_node_identity(monkeypatch):
+    manifest = _manifest(swarm_policy={
+        "version": 1,
+        "engine": "locus_managed",
+        "delegation_mode": "read_only_children",
+        "sizing_mode": "adaptive",
+        "max_total_agents": 8,
+        "max_depth": 2,
+    })
+    _, team, profiles, _ = parse_manifest(manifest)
+    parent = AgentResult(
+        "plan", "planner", "Planner", "planner", "parent", ["parent-old"],
+        1, 1, 1, node_id="plan", goal="Inspect the evidence and plan",
+        delegation_requests=[{"goal": "Inspect authentication"}], model_calls=2,
+    )
+    failed = AgentResult(
+        "plan.1", "planner", "Planner", "planner", "", [], 1, 1, 1,
+        error="stopped", node_id="plan.1", parent_node_id="plan", depth=1,
+        goal="Inspect authentication",
+    )
+    sibling = AgentResult(
+        "plan.2", "reviewer", "Reviewer", "reviewer", "complete", ["kept"],
+        1, 1, 1, node_id="plan.2", parent_node_id="plan", depth=1,
+        goal="Inspect persistence",
+    )
+    calls = []
+
+    def fake_call(_run, job, profile, _budget, **kwargs):
+        calls.append((job.id, job.node_id, profile.id, kwargs.get("continuation", False)))
+        return AgentResult(
+            job.id, profile.id, profile.name, profile.role, "new", [job.id],
+            1, 1, 1, node_id=job.node_id, parent_node_id=job.parent_node_id,
+            depth=job.depth, goal=job.approved_goal,
+        )
+
+    orchestrator = TeamOrchestrator(lambda _event: None, lambda: False)
+    monkeypatch.setattr(orchestrator, "_call_agent", fake_call)
+    results = orchestrator._retry_saved_branch(
+        "run-1", failed,
+        {result.job_id: result for result in [parent, failed, sibling]},
+        profiles, team,
+    )
+
+    assert calls == [
+        ("plan.1", "plan.1", "planner", False),
+        ("plan", "plan", "planner", True),
+    ]
+    assert results["plan.1"].node_id == "plan.1"
+    assert results["plan.2"] is sibling
+    assert results["plan.2"].output == "complete"
+
+
+def test_hosted_branch_node_ids_can_be_stopped_without_accepting_path_traversal():
+    events = []
+    orchestrator = TeamOrchestrator(events.append, lambda: False)
+    orchestrator._register_node("/root/researcher", "/root")
+
+    assert orchestrator.stop_branch("run-1", "/root/researcher") is True
+    assert orchestrator.branch_stopped("/root/researcher") is True
+    with pytest.raises(OrchestrationError, match="node id is invalid"):
+        orchestrator.stop_branch("run-1", "/root/../escape")
 
 
 def test_dispatcher_progress_names_the_model_and_reports_completion(monkeypatch):
