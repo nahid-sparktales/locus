@@ -87,9 +87,13 @@ struct SessionOverviewView: View {
         }
         return HStack(spacing: 7) {
             Circle().fill(presentation.1).frame(width: 7, height: 7)
+                .accessibilityHidden(true)
             Text(presentation.0)
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(state.status == .idle ? LocusTheme.muted : presentation.1)
+                .accessibilityLabel("Session status: \(presentation.0)")
+                .accessibilityAddTraits(.updatesFrequently)
+                .accessibilityIdentifier("plan.status")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -102,11 +106,6 @@ struct SessionOverviewView: View {
                         : LocusTheme.white.opacity(0.72)
             )
         )
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Session status: \(presentation.0)")
-        // VoiceOver re-announces this element when its published label changes.
-        .accessibilityAddTraits(.updatesFrequently)
-        .accessibilityIdentifier("plan.status")
     }
 
     private var identityStrip: some View {
@@ -115,21 +114,29 @@ struct SessionOverviewView: View {
                 state.workspace.name.nilIfEmpty ?? "Workspace",
                 symbol: "folder",
                 help: state.workspace.path,
+                accessibilityIdentifier: "plan.identity.workspace",
                 action: model.revealSessionWorkspace
             )
             .frame(maxWidth: .infinity)
-            identityChip(gitIdentity, symbol: "arrow.triangle.branch", help: gitIdentity)
+            identityChip(
+                gitIdentity,
+                symbol: "arrow.triangle.branch",
+                help: gitIdentity,
+                accessibilityIdentifier: "plan.identity.git"
+            )
                 .frame(maxWidth: .infinity)
             identityButton(
                 state.model.id.nilIfEmpty ?? "Unknown model",
                 symbol: "cpu",
                 help: [state.model.provider, state.model.id].filter { !$0.isEmpty }.joined(separator: " · "),
+                accessibilityIdentifier: "plan.identity.model",
                 action: model.openSessionModelSettings
             )
             .frame(maxWidth: .infinity)
         }
         .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Session identity")
         .accessibilityIdentifier("plan.identity")
     }
 
@@ -145,16 +152,28 @@ struct SessionOverviewView: View {
         _ title: String,
         symbol: String,
         help: String,
+        accessibilityIdentifier: String,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) { identityChipLabel(title, symbol: symbol) }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity)
             .help(help)
+            .accessibilityLabel(title)
+            .accessibilityIdentifier(accessibilityIdentifier)
     }
 
-    private func identityChip(_ title: String, symbol: String, help: String) -> some View {
-        identityChipLabel(title, symbol: symbol).help(help)
+    private func identityChip(
+        _ title: String,
+        symbol: String,
+        help: String,
+        accessibilityIdentifier: String
+    ) -> some View {
+        identityChipLabel(title, symbol: symbol)
+            .help(help)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(title)
+            .accessibilityIdentifier(accessibilityIdentifier)
     }
 
     private func identityChipLabel(_ title: String, symbol: String) -> some View {

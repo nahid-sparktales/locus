@@ -11099,6 +11099,9 @@ final class AppModel: ObservableObject {
                 defaultWriterID: writerID
             )]
             selectedAgentTeamID = teamID
+            // Header progress is optional in the real app. These fixtures
+            // explicitly exercise that control, so opt in deterministically.
+            showTeamProgressInHeader = true
             isBusy = true
             if fixture == "dispatcher-repair" {
                 dispatcherActivity = AgentActivity(

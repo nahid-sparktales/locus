@@ -173,6 +173,7 @@ struct InspectorPlanTab: View {
 /// visual language used by the rest of the inspector.
 struct ContextWindowInfoCard: View {
     @EnvironmentObject private var model: AppModel
+    @AppStorage("Locus.contextWindowInfo.collapsed") private var isCollapsed = false
 
     private var fraction: Double? { model.contextWindowUsageFraction }
 
@@ -197,58 +198,74 @@ struct ContextWindowInfoCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "circle.dotted.circle")
-                Text("Context window")
-                Spacer()
-                Text(usageLabel)
-                    .font(.system(size: 7, weight: .bold, design: .monospaced))
-                    .tracking(0.45)
-                    .foregroundStyle(accent)
+            Button {
+                isCollapsed.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "circle.dotted.circle")
+                    Text("Context window")
+                    Spacer()
+                    Text(usageLabel)
+                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .tracking(0.45)
+                        .foregroundStyle(accent)
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             .font(.system(size: 9, weight: .bold))
             .foregroundStyle(LocusTheme.inkSoft)
+            .accessibilityLabel(isCollapsed ? "Expand context window" : "Collapse context window")
+            .accessibilityIdentifier("plan.contextWindow.toggle")
 
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(LocusTheme.line)
-                    if let fraction {
-                        Capsule()
-                            .fill(accent)
-                            .frame(width: proxy.size.width * fraction)
+            if !isCollapsed {
+                VStack(alignment: .leading, spacing: 10) {
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(LocusTheme.line)
+                            if let fraction {
+                                Capsule()
+                                    .fill(accent)
+                                    .frame(width: proxy.size.width * fraction)
+                            }
+                        }
                     }
-                }
-            }
-            .frame(height: 5)
+                    .frame(height: 5)
 
-            VStack(spacing: 7) {
-                statRow("This conversation", "~\(model.contextUsedTokens.formatted()) tokens")
-                statRow(
-                    "Remaining",
-                    remainingTokens.map { "~\($0.formatted()) tokens" } ?? "Unknown"
-                )
-                statRow(
-                    "Model window",
-                    model.contextWindowTokens.map { "\($0.formatted()) tokens" } ?? "Unknown"
-                )
-                statRow("Source", model.contextWindowProvenance.label)
-                if let usable = model.contextUsableTokens,
-                   let window = model.contextWindowTokens,
-                   usable < window {
-                    statRow("Usable for chat", "\(usable.formatted()) tokens")
-                }
-                statRow(
-                    "Context pack next send",
-                    "\(model.includedContextTokens.formatted()) · \(model.includedContextCount) files"
-                )
-                statRow("Messages", "\(model.sessionInfo?.messages ?? 0)")
-            }
+                    VStack(spacing: 7) {
+                        statRow("This conversation", "~\(model.contextUsedTokens.formatted()) tokens")
+                        statRow(
+                            "Remaining",
+                            remainingTokens.map { "~\($0.formatted()) tokens" } ?? "Unknown"
+                        )
+                        statRow(
+                            "Model window",
+                            model.contextWindowTokens.map { "\($0.formatted()) tokens" } ?? "Unknown"
+                        )
+                        statRow("Source", model.contextWindowProvenance.label)
+                        if let usable = model.contextUsableTokens,
+                           let window = model.contextWindowTokens,
+                           usable < window {
+                            statRow("Usable for chat", "\(usable.formatted()) tokens")
+                        }
+                        statRow(
+                            "Context pack next send",
+                            "\(model.includedContextTokens.formatted()) · \(model.includedContextCount) files"
+                        )
+                        statRow("Messages", "\(model.sessionInfo?.messages ?? 0)")
+                    }
 
-            Text("Locus compacts the conversation when it reaches the usable limit, preserving room for tools and the next response.")
-                .font(.system(size: 8))
-                .foregroundStyle(LocusTheme.muted)
-                .lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
+                    Text("Locus compacts the conversation when it reaches the usable limit, preserving room for tools and the next response.")
+                        .font(.system(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityIdentifier("plan.contextWindow.details")
+            }
         }
         .padding(11)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -261,6 +278,7 @@ struct ContextWindowInfoCard: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Context window information")
         .accessibilityIdentifier("plan.contextWindow")
+        .animation(.easeInOut(duration: 0.16), value: isCollapsed)
     }
 
     private func statRow(_ label: String, _ value: String) -> some View {

@@ -863,10 +863,14 @@ final class LocusUITests: XCTestCase {
 
         // ⌘1 — back to Plan, which shows the live workspace snapshot while idle.
         app.typeKey("1", modifierFlags: .command)
-        let workspaceOverview = anyElement("plan.identity")
-        XCTAssertTrue(workspaceOverview.waitForExistence(timeout: 3))
-        let overviewText = "\(workspaceOverview.label) \((workspaceOverview.value as? String) ?? "")"
-        XCTAssertTrue(overviewText.contains("qwen3:8b"))
+        XCTAssertTrue(anyElement("plan.identity").waitForExistence(timeout: 3))
+        let modelIdentity = anyElement("plan.identity.model")
+        XCTAssertTrue(modelIdentity.waitForExistence(timeout: 3))
+        let overviewText = "\(modelIdentity.label) \((modelIdentity.value as? String) ?? "")"
+        XCTAssertTrue(
+            overviewText.contains("qwen3:8b"),
+            "Plan identity should expose the full workspace, git, and model summary; got: \(overviewText)"
+        )
     }
 
     func testIdlePlanTabShowsSummaryActionsAndPinnedContext() {
@@ -921,12 +925,31 @@ final class LocusUITests: XCTestCase {
         XCTAssertEqual(input.value as? String, "Add integration tests for retry paths")
     }
 
+    func testContextWindowCardCollapsesAndExpands() {
+        let toggle = anyElement("plan.contextWindow.toggle")
+        let details = anyElement("plan.contextWindow.details")
+        XCTAssertTrue(toggle.waitForExistence(timeout: 3))
+        if !details.exists {
+            toggle.click()
+            XCTAssertTrue(details.waitForExistence(timeout: 3))
+        }
+
+        toggle.click()
+        XCTAssertTrue(waitUntil { !details.exists })
+        toggle.click()
+        XCTAssertTrue(details.waitForExistence(timeout: 3))
+    }
+
     func testRunningPlanTabShowsLiveChecklistActivityAndOverflowActions() {
         relaunchWithPlanOverview("running")
 
         let status = anyElement("plan.status")
         XCTAssertTrue(status.waitForExistence(timeout: 3))
-        XCTAssertTrue(status.label.contains("Running"))
+        let statusText = "\(status.label) \((status.value as? String) ?? "")"
+        XCTAssertTrue(
+            statusText.contains("Running"),
+            "Expected the running status text; got: \(statusText)"
+        )
         XCTAssertTrue(anyElement("plan.livePlan").exists)
         XCTAssertTrue(anyElement("plan.activity").exists)
         XCTAssertTrue(anyElement("plan.files").exists)
@@ -945,7 +968,11 @@ final class LocusUITests: XCTestCase {
 
         let status = anyElement("plan.status")
         XCTAssertTrue(status.waitForExistence(timeout: 3))
-        XCTAssertTrue(status.label.contains("Error"))
+        let statusText = "\(status.label) \((status.value as? String) ?? "")"
+        XCTAssertTrue(
+            statusText.contains("Error"),
+            "Expected the error status text; got: \(statusText)"
+        )
         XCTAssertTrue(anyElement("plan.error").exists)
         XCTAssertTrue(anyElement("plan.livePlan").exists)
         XCTAssertTrue(anyElement("plan.activity").exists)
