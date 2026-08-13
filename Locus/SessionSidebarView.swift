@@ -15,6 +15,15 @@ private enum SidebarMetrics {
     static let iconGap: CGFloat = 8
 }
 
+/// Workspace groups are the parent object, so their folder is the larger
+/// anchor; individual chats use the former compact workspace footprint.
+enum SidebarIconMetrics {
+    static let workspaceIconSize: CGFloat = 27
+    static let workspaceSymbolSize: CGFloat = 12
+    static let chatIconSize: CGFloat = 20
+    static let chatSymbolSize: CGFloat = 10
+}
+
 struct SessionSidebarView: View {
     @EnvironmentObject private var model: AppModel
     @State private var sessionToRename: SessionSummary?
@@ -479,16 +488,16 @@ struct SessionSidebarView: View {
 
     // MARK: - Footer
 
-    /// Two quiet rows: the workspace selector, then status with the app-wide
-    /// actions tucked into a gear menu. The header overflow stays scoped to
-    /// the current chat and worktree.
+    /// The service indicators live with the composer, where they remain fixed
+    /// as panels resize. The sidebar footer only owns workspace and app-wide
+    /// controls now.
     private var footer: some View {
         VStack(spacing: 8) {
             workspaceMenu
 
-            HStack(spacing: 8) {
-                status
-                Spacer(minLength: 4)
+            HStack {
+                agentStatus
+                Spacer()
                 settingsMenu
             }
         }
@@ -611,46 +620,26 @@ struct SessionSidebarView: View {
         .accessibilityIdentifier("sidebar.workspaceMenu")
     }
 
-    private var status: some View {
-        HStack(spacing: 9) {
-            statusPill(
-                label: backendStatusText,
-                color: backendStatusColor,
-                identifier: "sidebar.backendStatus"
-            )
-            statusPill(
-                label: model.providerLabel,
-                color: runtimeColor(model.modelRuntimePhase),
-                identifier: "sidebar.ollamaStatus"
-            )
+    private var agentStatus: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(runtimeColor(model.agentRuntimePhase))
+                .frame(width: 6, height: 6)
+            Text(agentStatusText)
+                .lineLimit(1)
         }
         .font(.system(size: 8))
         .foregroundStyle(LocusTheme.muted)
-        .frame(height: 22)
-    }
-
-    private func statusPill(label: String, color: Color, identifier: String) -> some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(color)
-                .frame(width: 6, height: 6)
-            Text(label)
-                .lineLimit(1)
-        }
         .accessibilityElement(children: .combine)
-        .accessibilityIdentifier(identifier)
+        .accessibilityIdentifier("sidebar.agentStatus")
     }
 
-    private var backendStatusColor: Color {
-        runtimeColor(model.agentRuntimePhase)
-    }
-
-    private var backendStatusText: String {
+    private var agentStatusText: String {
         switch model.agentRuntimePhase {
-        case .starting: "Agent starting"
-        case .online: "Agent ready"
-        case .recovering: "Agent recovering"
-        case .unavailable: "Agent offline"
+        case .starting: "Starting"
+        case .online: "Ready"
+        case .recovering: "Recovering"
+        case .unavailable: "Offline"
         }
     }
 
@@ -661,6 +650,7 @@ struct SessionSidebarView: View {
         case .unavailable: LocusTheme.coral
         }
     }
+
 }
 
 struct TeamProgressPopover: View {
@@ -1011,9 +1001,12 @@ private struct WorkspaceGroupRow: View {
             Button(action: onOpen) {
                 HStack(spacing: 7) {
                     Image(systemName: group.isOther ? "tray.full" : "folder.fill")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: SidebarIconMetrics.workspaceSymbolSize, weight: .medium))
                         .foregroundStyle(active ? LocusTheme.signalDeep : LocusTheme.muted)
-                        .frame(width: 20, height: 20)
+                        .frame(
+                            width: SidebarIconMetrics.workspaceIconSize,
+                            height: SidebarIconMetrics.workspaceIconSize
+                        )
                         .accessibilityIdentifier("workspace.group.icon.\(group.id)")
                     VStack(alignment: .leading, spacing: 1) {
                         Text(group.title)
@@ -1089,11 +1082,15 @@ private struct SessionRow: View {
         Button(action: action) {
             HStack(spacing: 9) {
                 Image(systemName: sessionSymbol)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: SidebarIconMetrics.chatSymbolSize, weight: .medium))
                     .foregroundStyle(isActive ? LocusTheme.ink : LocusTheme.muted)
-                    .frame(width: 27, height: 27)
+                    .frame(
+                        width: SidebarIconMetrics.chatIconSize,
+                        height: SidebarIconMetrics.chatIconSize
+                    )
                     .background(isActive ? LocusTheme.signal : LocusTheme.line.opacity(0.55))
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .accessibilityIdentifier("session.\(session.id).icon")
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(session.displayTitle)

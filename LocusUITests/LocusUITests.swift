@@ -35,6 +35,17 @@ final class LocusUITests: XCTestCase {
         return XCTWaiter.wait(for: [ready], timeout: timeout) == .completed
     }
 
+    private func waitUntil(
+        timeout: TimeInterval = 3,
+        condition: @escaping () -> Bool
+    ) -> Bool {
+        let ready = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in condition() },
+            object: nil
+        )
+        return XCTWaiter.wait(for: [ready], timeout: timeout) == .completed
+    }
+
     /// SwiftUI alerts surface as sheets labeled "alert" on current macOS;
     /// their message text is exposed as a value, not a label.
     private func staticTextWithValue(containing fragment: String) -> XCUIElement {
@@ -178,7 +189,31 @@ final class LocusUITests: XCTestCase {
     }
 
     func testWorkspaceProfileContextPackAndPromptHistoryControls() {
-        XCTAssertTrue(anyElement("workspace.header.workspaceIcon").waitForExistence(timeout: 3))
+        let finder = anyElement("workspace.openInFinder")
+        let breadcrumb = anyElement("workspace.breadcrumb")
+        let title = anyElement("workspace.sessionTitle")
+        let modelPicker = anyElement("workspace.modelPicker")
+        XCTAssertTrue(finder.waitForExistence(timeout: 3))
+        XCTAssertTrue(breadcrumb.exists)
+        XCTAssertTrue(title.exists)
+        XCTAssertTrue(modelPicker.exists)
+        XCTAssertLessThanOrEqual(
+            finder.frame.maxY + 5,
+            breadcrumb.frame.minY,
+            "Finder should have clear breathing room above the workspace/session breadcrumb"
+        )
+        XCTAssertEqual(
+            finder.frame.minX + 10,
+            breadcrumb.frame.minX,
+            accuracy: 2,
+            "the Finder and breadcrumb folder glyphs should share a leading axis"
+        )
+        XCTAssertEqual(
+            (breadcrumb.frame.minY + title.frame.maxY) / 2,
+            modelPicker.frame.midY,
+            accuracy: 3,
+            "the breadcrumb/title group should align vertically with the model picker"
+        )
 
         let workspaceMenu = anyElement("sidebar.workspaceMenu")
         XCTAssertTrue(workspaceMenu.waitForExistence(timeout: 3))
@@ -315,10 +350,36 @@ final class LocusUITests: XCTestCase {
     }
 
     func testAppearanceSettingsExposeAndApplySystemLightDarkChoices() {
+        XCTAssertFalse(
+            anyElement("workspace.contextUsage").exists,
+            "context usage is opt-in so the header starts uncluttered"
+        )
+        XCTAssertLessThanOrEqual(
+            app.textViews["composer.input"].frame.height,
+            70,
+            "the resting composer should leave most of the window to the transcript"
+        )
+        let status = anyElement("workspace.workStatus")
+        let composer = app.textViews["composer.input"]
+        XCTAssertTrue(status.exists)
+        XCTAssertTrue(anyElement("sidebar.agentStatus").exists)
+        XCTAssertFalse(anyElement("workspace.agentStatus").exists)
+        XCTAssertTrue(anyElement("workspace.modelStatus").exists)
+        XCTAssertLessThanOrEqual(status.frame.width, 740)
+        XCTAssertEqual(
+            status.frame.midX,
+            composer.frame.midX,
+            accuracy: 2,
+            "the model readiness indicator should stay centered with the composer"
+        )
         app.typeKey(",", modifierFlags: .command)
 
         let picker = anyElement("settings.appearance")
         XCTAssertTrue(picker.waitForExistence(timeout: 3))
+        let teamProgress = anyElement("settings.showTeamProgressInHeader")
+        let contextUsage = anyElement("settings.showContextUsageInHeader")
+        XCTAssertTrue(teamProgress.exists)
+        XCTAssertTrue(contextUsage.exists)
         for value in ["system", "light", "dark"] {
             let choice = anyElement("settings.appearance.\(value)")
             XCTAssertTrue(choice.exists, "Missing \(value) appearance choice")
@@ -326,9 +387,12 @@ final class LocusUITests: XCTestCase {
             choice.click()
             XCTAssertEqual(picker.value as? String, value)
         }
+        teamProgress.click()
+        contextUsage.click()
 
         app.buttons["settings.save"].click()
         XCTAssertFalse(picker.exists)
+        XCTAssertTrue(anyElement("workspace.contextUsage").waitForExistence(timeout: 3))
 
         // UI-test models do not persist to disk, but the saved in-memory
         // preference must still drive both scenes for the rest of the launch.
@@ -336,7 +400,13 @@ final class LocusUITests: XCTestCase {
         let dark = anyElement("settings.appearance.dark")
         XCTAssertTrue(dark.waitForExistence(timeout: 3))
         XCTAssertEqual(anyElement("settings.appearance").value as? String, "dark")
+        XCTAssertTrue(anyElement("settings.showTeamProgressInHeader").exists)
+        XCTAssertTrue(anyElement("settings.showContextUsageInHeader").exists)
         app.buttons["settings.cancel"].click()
+        XCTAssertTrue(
+            anyElement("workspace.contextUsage").exists,
+            "reopening and cancelling Settings must keep the saved header choice"
+        )
     }
 
     func testBackgroundChatAndWorktreeControlsAreReachable() {
@@ -573,7 +643,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(anyElement("composer.context").exists)
         XCTAssertFalse(anyElement("composer.mode.plan").exists)
         XCTAssertFalse(anyElement("composer.mode.build").exists)
-        XCTAssertFalse(anyElement("plan.contextWindow").exists)
+        XCTAssertFalse(anyElement("plan.context").exists)
         // Just Chat is not a workspace surface, so the rail goes with the
         // panel — the whole right side disappears.
         XCTAssertFalse(anyElement("inspector.rail.more").exists)
@@ -585,13 +655,13 @@ final class LocusUITests: XCTestCase {
         )
 
         app.typeKey("1", modifierFlags: .command)
-        XCTAssertFalse(anyElement("plan.contextWindow").exists)
+        XCTAssertFalse(anyElement("plan.context").exists)
 
         work.click()
         XCTAssertTrue(work.isSelected)
         XCTAssertTrue(anyElement("composer.mode.plan").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("composer.mode.build").exists)
-        XCTAssertTrue(anyElement("plan.contextWindow").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("plan.context").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("inspector.rail.more").exists, "the rail returns with agentic modes")
     }
 
@@ -622,7 +692,7 @@ final class LocusUITests: XCTestCase {
             )
         }
         planIcon.click()
-        XCTAssertFalse(anyElement("plan.contextWindow").exists)
+        XCTAssertFalse(anyElement("plan.context").exists)
         XCTAssertTrue(anyElement("inspector.rail.more").exists)
 
         // Terminal is a direct rail destination and closes on a second click.
@@ -791,42 +861,96 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("agents.editor").exists)
         XCTAssertTrue(anyElement("agents.save").exists)
 
-        // ⌘1 — back to Plan, which shows its empty state (no seeded todos).
+        // ⌘1 — back to Plan, which shows the live workspace snapshot while idle.
         app.typeKey("1", modifierFlags: .command)
-        XCTAssertTrue(anyElement("plan.create").waitForExistence(timeout: 3))
+        let workspaceOverview = anyElement("plan.identity")
+        XCTAssertTrue(workspaceOverview.waitForExistence(timeout: 3))
+        let overviewText = "\(workspaceOverview.label) \((workspaceOverview.value as? String) ?? "")"
+        XCTAssertTrue(overviewText.contains("qwen3:8b"))
     }
 
-    func testPlanTabPlacesPlanBeforeContextAndOmitsPermissions() {
+    func testIdlePlanTabShowsSummaryActionsAndPinnedContext() {
         let tabBar = anyElement("inspector.tabBar")
-        let context = anyElement("plan.contextWindow")
-        let activePlan = anyElement("plan.activePlan")
-        let openIn = anyElement("plan.openIn")
-        let permissionControl = anyElement("plan.permissionMode")
+        let overview = anyElement("plan.status")
+        let identity = anyElement("plan.identity")
+        let lastRun = anyElement("plan.lastRun")
+        let suggestions = anyElement("plan.suggestions")
+        let actions = anyElement("plan.quickActions")
+        let context = anyElement("plan.context")
         let window = app.windows.firstMatch
 
         XCTAssertTrue(tabBar.waitForExistence(timeout: 3))
-        XCTAssertTrue(context.waitForExistence(timeout: 3))
-        XCTAssertTrue(activePlan.exists)
-        XCTAssertTrue(openIn.exists)
-        XCTAssertEqual(openIn.label, "Open workspace in Finder")
-        XCTAssertFalse(permissionControl.exists)
-        XCTAssertLessThanOrEqual(
-            abs(tabBar.frame.minY - window.frame.minY),
-            2,
-            "Inspector tabs should occupy the hidden title-bar band"
-        )
-        XCTAssertLessThan(activePlan.frame.minY, context.frame.minY)
+        XCTAssertTrue(overview.exists)
+        XCTAssertTrue(identity.exists)
+        XCTAssertTrue(lastRun.exists)
+        XCTAssertTrue(suggestions.exists)
+        XCTAssertTrue(actions.exists)
+        XCTAssertTrue(anyElement("plan.quickAction.proxy-config").exists)
+        XCTAssertTrue(context.exists)
+        XCTAssertFalse(anyElement("plan.livePlan").exists)
+        XCTAssertFalse(anyElement("plan.activity").exists)
+        XCTAssertLessThan(identity.frame.minY, lastRun.frame.minY)
+        XCTAssertLessThan(lastRun.frame.minY, context.frame.minY)
         XCTAssertLessThanOrEqual(
             window.frame.maxY - context.frame.maxY,
             30,
-            "Context window should stay pinned to the bottom of the Plan tab"
+            "Context should remain pinned to the bottom of the Plan tab"
         )
         XCTAssertLessThanOrEqual(
             context.frame.maxX,
             tabBar.frame.maxX + 1,
-            "Plan cards must remain inside the inspector instead of clipping under the rail"
+            "Session overview content must stay inside the inspector"
         )
         XCTAssertFalse(anyElement("checkpointTab.content").exists)
+    }
+
+    private func relaunchWithPlanOverview(_ fixture: String) {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_PLAN_OVERVIEW"] = fixture
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+    }
+
+    func testIdlePlanSuggestionPrefillsTheComposerWithoutSending() {
+        let suggestion = anyElement("plan.suggestion.0")
+        XCTAssertTrue(suggestion.waitForExistence(timeout: 3))
+        suggestion.click()
+
+        let input = anyElement("composer.input")
+        XCTAssertTrue(input.waitForExistence(timeout: 3))
+        XCTAssertEqual(input.value as? String, "Add integration tests for retry paths")
+    }
+
+    func testRunningPlanTabShowsLiveChecklistActivityAndOverflowActions() {
+        relaunchWithPlanOverview("running")
+
+        let status = anyElement("plan.status")
+        XCTAssertTrue(status.waitForExistence(timeout: 3))
+        XCTAssertTrue(status.label.contains("Running"))
+        XCTAssertTrue(anyElement("plan.livePlan").exists)
+        XCTAssertTrue(anyElement("plan.activity").exists)
+        XCTAssertTrue(anyElement("plan.files").exists)
+        XCTAssertTrue(anyElement("plan.runningActions").exists)
+        XCTAssertFalse(anyElement("plan.quickActions").exists)
+        XCTAssertTrue(app.staticTexts["Refactor retry logic with backoff"].exists)
+
+        anyElement("plan.runningActions").click()
+        app.menuItems["New session"].click()
+        XCTAssertTrue(staticTextWithValue(containing: "Start a new session?").waitForExistence(timeout: 3))
+        cancelConfirmation()
+    }
+
+    func testErrorPlanTabKeepsStoppedWorkVisibleWithRecoveryActions() {
+        relaunchWithPlanOverview("error")
+
+        let status = anyElement("plan.status")
+        XCTAssertTrue(status.waitForExistence(timeout: 3))
+        XCTAssertTrue(status.label.contains("Error"))
+        XCTAssertTrue(anyElement("plan.error").exists)
+        XCTAssertTrue(anyElement("plan.livePlan").exists)
+        XCTAssertTrue(anyElement("plan.activity").exists)
+        XCTAssertTrue(app.buttons["Retry"].exists)
+        XCTAssertTrue(app.buttons["View logs"].exists)
     }
 
     func testOverflowingInspectorTabsStillSwitchBrowserAndTerminal() {
@@ -960,6 +1084,15 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }
 
+    private func relaunchWithThinkingFixture(mode: String) {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_THINKING_FIXTURE"] = "1"
+        app.launchEnvironment["LOCUS_UI_TESTING_THINKING_MODE"] = mode
+        app.launchEnvironment["LOCUS_UI_TESTING_TOOL_ACTIVITY_MODE"] = "collapsed"
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+    }
+
     private func relaunchWithRunFixture(
         _ fixture: String,
         uncleanRecovery: Bool = false,
@@ -992,7 +1125,7 @@ final class LocusUITests: XCTestCase {
 
         // Exercise controls after the 1,200-event timeline has laid out.
         app.typeKey("1", modifierFlags: .command)
-        XCTAssertTrue(anyElement("plan.create").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("plan.identity").waitForExistence(timeout: 3))
         app.typeKey("7", modifierFlags: .command)
         XCTAssertTrue(anyElement("runs.state").waitForExistence(timeout: 3))
     }
@@ -1090,6 +1223,24 @@ final class LocusUITests: XCTestCase {
         }
         XCTAssertTrue(firstMessage.waitForExistence(timeout: 3))
         XCTAssertTrue(firstMessage.isHittable)
+
+        let messageHeightBeforeHover = firstMessage.frame.height
+        firstMessage.hover()
+        XCTAssertEqual(
+            firstMessage.frame.height,
+            messageHeightBeforeHover,
+            accuracy: 0.5,
+            "revealing message actions must not change transcript geometry"
+        )
+
+        // Starting a fresh wheel gesture over ordinary selectable chat text
+        // must move the transcript by the same amount as a gesture over its
+        // scrollbar or empty background.
+        let messageYBeforeWheel = firstMessage.frame.minY
+        firstMessage.scroll(byDeltaX: 0, deltaY: -160)
+        XCTAssertTrue(waitUntil(timeout: 3) {
+            firstMessage.exists && firstMessage.frame.minY < messageYBeforeWheel - 20
+        })
     }
 
     func testCollapsedToolActivityGroupsAndExpands() {
@@ -1128,6 +1279,65 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(
             anyElement("toolActivity.group.00000000-0000-0000-0000-000000000101").exists
         )
+    }
+
+    func testCollapsedThinkingGroupsReasoningWithoutEmptyAssistantRows() {
+        relaunchWithThinkingFixture(mode: "collapsed")
+
+        let group = anyElement(
+            "thinkingActivity.group.00000000-0000-0000-0000-000000000101"
+        )
+        XCTAssertTrue(group.waitForExistence(timeout: 3))
+        XCTAssertTrue(group.label.contains("3 updates"))
+        XCTAssertFalse(anyElement(
+            "thinkingActivity.entry.00000000-0000-0000-0000-000000000201.0"
+        ).exists)
+        XCTAssertFalse(anyElement("message.00000000-0000-0000-0000-000000000201").exists)
+        XCTAssertFalse(anyElement("message.00000000-0000-0000-0000-000000000203").exists)
+        XCTAssertTrue(anyElement("message.00000000-0000-0000-0000-000000000202").exists)
+        XCTAssertTrue(anyElement("message.00000000-0000-0000-0000-000000000204").exists)
+
+        group.click()
+        XCTAssertTrue(anyElement(
+            "thinkingActivity.entry.00000000-0000-0000-0000-000000000201.0"
+        ).waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement(
+            "thinkingActivity.entry.00000000-0000-0000-0000-000000000203.0"
+        ).exists)
+        XCTAssertTrue(anyElement(
+            "thinkingActivity.entry.00000000-0000-0000-0000-000000000204.0"
+        ).exists)
+    }
+
+    func testHiddenThinkingRemovesGroupAndReasoningOnlyAssistantRows() {
+        relaunchWithThinkingFixture(mode: "hidden")
+
+        XCTAssertFalse(anyElement(
+            "thinkingActivity.group.00000000-0000-0000-0000-000000000101"
+        ).exists)
+        XCTAssertFalse(anyElement("message.00000000-0000-0000-0000-000000000201").exists)
+        XCTAssertFalse(anyElement("message.00000000-0000-0000-0000-000000000203").exists)
+        XCTAssertTrue(anyElement("message.00000000-0000-0000-0000-000000000202").exists)
+        XCTAssertTrue(anyElement("message.00000000-0000-0000-0000-000000000204").exists)
+    }
+
+    func testExpandedThinkingStartsWithGroupedReasoningOpen() {
+        relaunchWithThinkingFixture(mode: "expanded")
+
+        let group = anyElement(
+            "thinkingActivity.group.00000000-0000-0000-0000-000000000101"
+        )
+        XCTAssertTrue(group.waitForExistence(timeout: 3))
+        XCTAssertTrue(group.label.contains("collapse"))
+        XCTAssertTrue(anyElement(
+            "thinkingActivity.entry.00000000-0000-0000-0000-000000000201.0"
+        ).waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement(
+            "thinkingActivity.entry.00000000-0000-0000-0000-000000000203.0"
+        ).exists)
+        XCTAssertTrue(anyElement(
+            "thinkingActivity.entry.00000000-0000-0000-0000-000000000204.0"
+        ).exists)
     }
 
     func testReviewAndLandShowsDiffChecksAndBothDestinations() {
@@ -1194,6 +1404,25 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("teamDispatch.redispatch").exists)
         XCTAssertTrue(anyElement("teamDispatch.cancel").exists)
         XCTAssertTrue(anyElement("workspace.teamProgress").exists)
+    }
+
+    func testLiveSwarmTreeShowsNestedBranchAndStopControl() {
+        relaunchWithRunFixture("swarm-live")
+
+        XCTAssertTrue(anyElement("runs.agentTree").waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Research lead"].exists)
+        XCTAssertTrue(app.staticTexts["API specialist"].exists)
+        XCTAssertTrue(anyElement("runs.agentTree.stop.inspect.1").exists)
+        XCTAssertFalse(anyElement("runs.agentTree.retry.inspect.1").exists)
+    }
+
+    func testRecoverableSwarmTreeShowsBranchRetryControl() {
+        relaunchWithRunFixture("swarm-recoverable")
+
+        XCTAssertTrue(anyElement("runs.agentTree").waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["API specialist"].exists)
+        XCTAssertTrue(anyElement("runs.agentTree.retry.inspect.1").exists)
+        XCTAssertFalse(anyElement("runs.agentTree.stop.inspect.1").exists)
     }
 
     func testPermissionPanelRepliesWithTheKeyboard() {

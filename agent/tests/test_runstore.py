@@ -31,6 +31,51 @@ def test_run_store_orders_events_and_rebuilds_attempts(tmp_path) -> None:
     assert detail["attempts"][0]["result"]["output"] == "done"
 
 
+def test_run_store_persists_agent_tree_metadata_without_rewriting_job_ids(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    store.start_run("run-tree", state="running")
+    store.append_event("run-tree", {
+        "type": "agent_job_started", "job_id": "plan.1", "node_id": "plan.1",
+        "parent_node_id": "plan", "depth": 1,
+        "execution_engine": "locus_managed", "agent_id": "reviewer",
+        "agent_name": "Reviewer", "role": "reviewer", "goal": "Inspect tests",
+    })
+    store.append_event("run-tree", {
+        "type": "agent_job_completed", "state": "completed",
+        "result": {
+            "job_id": "plan.1", "node_id": "plan.1", "parent_node_id": "plan",
+            "depth": 1, "execution_engine": "locus_managed", "output": "done",
+        },
+    })
+
+    attempt = store.run("run-tree")["attempts"][0]
+    assert attempt["job_id"] == "plan.1"
+    assert attempt["node_id"] == "plan.1"
+    assert attempt["parent_node_id"] == "plan"
+    assert attempt["depth"] == 1
+    assert attempt["execution_engine"] == "locus_managed"
+
+
+def test_branch_retry_creates_a_new_attempt_under_the_same_node(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    store.start_run("run-retry", state="running")
+    for state in ("stopped", "completed"):
+        store.append_event("run-retry", {
+            "type": "agent_job_started", "job_id": "plan.1", "node_id": "plan.1",
+            "parent_node_id": "plan", "depth": 1, "agent_id": "researcher",
+            "agent_name": "Researcher", "role": "researcher", "goal": "Inspect auth",
+        })
+        store.append_event("run-retry", {
+            "type": "agent_job_completed", "state": state,
+            "result": {"job_id": "plan.1", "node_id": "plan.1", "output": state},
+        })
+
+    attempts = store.run("run-retry")["attempts"]
+    assert [attempt["attempt"] for attempt in attempts] == [1, 2]
+    assert [attempt["node_id"] for attempt in attempts] == ["plan.1", "plan.1"]
+    assert attempts[0]["attempt_id"] != attempts[1]["attempt_id"]
+
+
 def test_run_store_attempt_ids_are_scoped_to_each_run(tmp_path) -> None:
     store = RunStore(tmp_path / "runs.sqlite3")
     attempt_ids = []
@@ -259,7 +304,7 @@ def test_current_schema_reopens_writable_without_reapplying_migrations(tmp_path)
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT version FROM schema_meta WHERE singleton=1"
-        ).fetchone()[0] == 6
+        ).fetchone()[0] == 7
 
 
 def test_schema_v4_migrates_a_v3_store_and_records_turn_usage(tmp_path) -> None:

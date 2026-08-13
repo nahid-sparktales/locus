@@ -102,6 +102,111 @@ private final class OrchestrationURLProtocol: URLProtocol {
     }
 }
 
+private final class ProviderHandoffURLProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var recordedProviderBodies: [[String: Any]] = []
+    private static var recordedPaths: [String] = []
+    static var providerStatusCode = 200
+    static var providerReady = true
+    static var providerError: String?
+
+    static func reset() {
+        lock.lock()
+        recordedProviderBodies = []
+        recordedPaths = []
+        providerStatusCode = 200
+        providerReady = true
+        providerError = nil
+        lock.unlock()
+    }
+
+    static var providerBodies: [[String: Any]] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedProviderBodies
+    }
+
+    static var paths: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedPaths
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url else { return }
+        let path = url.path
+        Self.lock.lock()
+        Self.recordedPaths.append("\(url.host ?? "")\(path)")
+        Self.lock.unlock()
+        var status = 200
+        var body: [String: Any]
+        switch path {
+        case "/api/provider":
+            var requestData = request.httpBody ?? Data()
+            if requestData.isEmpty, let stream = request.httpBodyStream {
+                stream.open()
+                defer { stream.close() }
+                var buffer = [UInt8](repeating: 0, count: 4_096)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    if count <= 0 { break }
+                    requestData.append(contentsOf: buffer.prefix(count))
+                }
+            }
+            if !requestData.isEmpty,
+               var decoded = try? JSONSerialization.jsonObject(with: requestData) as? [String: Any]
+            {
+                decoded["__test_host"] = url.host ?? ""
+                Self.lock.lock()
+                Self.recordedProviderBodies.append(decoded)
+                Self.lock.unlock()
+            }
+            status = Self.providerStatusCode
+            body = status == 200
+                ? [
+                    "provider": "remote",
+                    "host": "https://api.kimi.com/coding/v1",
+                    "model": "k3",
+                    "remote_base_url": "https://api.kimi.com/coding/v1",
+                    "remote_model": "k3",
+                    "has_api_key": true,
+                ]
+                : ["detail": "provider handoff temporarily unavailable"]
+        case "/api/health":
+            body = [
+                "ok": true,
+                "version": "test",
+                "ollama": Self.providerReady,
+                "host": "https://api.kimi.com/coding/v1",
+                "model": "k3",
+            ]
+            if let error = Self.providerError { body["error"] = error }
+        case "/api/models":
+            body = ["models": [], "current": "k3"]
+        case "/api/sessions":
+            body = ["sessions": [], "current": "session-1"]
+        default:
+            status = 404
+            body = ["detail": "not part of this provider handoff test"]
+        }
+        let data = try! JSONSerialization.data(withJSONObject: body)
+        let response = HTTPURLResponse(
+            url: url,
+            statusCode: status,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
 final class AppModelTests: XCTestCase {
     @MainActor
     private func orchestrationModel() -> AppModel {
@@ -120,6 +225,7 @@ final class AppModelTests: XCTestCase {
     override func setUp() {
         super.setUp()
         OrchestrationURLProtocol.reset()
+        ProviderHandoffURLProtocol.reset()
     }
 
     @MainActor
@@ -155,6 +261,53 @@ final class AppModelTests: XCTestCase {
                 .queryItems?.first(where: { $0.name == "after_seq" })?.value,
             "66"
         )
+    }
+
+    @MainActor
+    func testSessionOverviewFoldsProviderEventsWithoutReadingTheProvider() {
+        let model = AppModel(startImmediately: false)
+        var info = sessionInfo(id: "overview-session")
+        info["type"] = "session_info"
+        info["model"] = "gpt-5.6-sol"
+        info["provider"] = "openai"
+        info["context_limit"] = 64_000
+        info["approx_tokens"] = 24_100
+        model.handleEventForTesting(info)
+
+        model.handleEventForTesting([
+            "type": "todo_update",
+            "todos": [
+                ["content": "Inspect", "status": "completed"],
+                ["content": "Implement", "status": "in_progress"],
+            ],
+        ])
+        model.handleEventForTesting([
+            "type": "tool_call_proposed",
+            "id": "read-one",
+            "tool": "read_file",
+            "summary": "Read Sources/App.swift",
+            "detail": "Sources/App.swift",
+            "auto": true,
+        ])
+        model.handleEventForTesting([
+            "type": "tool_result",
+            "id": "read-one",
+            "ok": true,
+            "result": "File inspected",
+        ])
+
+        XCTAssertEqual(model.sessionOverview.state.model.provider, "openai")
+        XCTAssertEqual(model.sessionOverview.state.model.contextWindow, 64_000)
+        XCTAssertEqual(model.sessionOverview.state.resources.tokensUsed, 24_100)
+        XCTAssertEqual(model.sessionOverview.state.plan.map(\.state), [.done, .running])
+        XCTAssertEqual(model.sessionOverview.state.files.first?.path, "Sources/App.swift")
+
+        model.handleEventForTesting(["type": "error", "message": "Endpoint unavailable"])
+        XCTAssertEqual(model.sessionOverview.state.status, .error)
+        XCTAssertEqual(model.sessionOverview.state.plan.last?.state, .failed)
+        model.handleEventForTesting(["type": "turn_done", "reason": "error", "duration_ms": 25])
+        XCTAssertEqual(model.sessionOverview.state.status, .error)
+        XCTAssertEqual(model.sessionOverview.state.lastRun?.outcome, .failed)
     }
 
     @MainActor
@@ -496,6 +649,11 @@ final class AppModelTests: XCTestCase {
         let budget = try XCTUnwrap(teamPayload["budget"] as? [String: Any])
         XCTAssertEqual(budget["call_budget_mode"] as? String, "automatic")
         XCTAssertEqual(budget["max_model_calls"] as? Int, 100)
+        let swarm = try XCTUnwrap(teamPayload["swarm_policy"] as? [String: Any])
+        XCTAssertEqual(swarm["engine"] as? String, "locus_managed")
+        XCTAssertEqual(swarm["delegation_mode"] as? String, "read_only_children")
+        XCTAssertEqual(swarm["max_total_agents"] as? Int, 8)
+        XCTAssertEqual(swarm["max_depth"] as? Int, 2)
         XCTAssertTrue(JSONSerialization.isValidJSONObject(manifest))
         let encoded = try JSONSerialization.data(withJSONObject: manifest)
         XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("api_key"))
@@ -604,6 +762,46 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.agentActivities.first?.state, .paused)
         XCTAssertEqual(model.agentActivities.first?.output, "Call budget reached before this coding job finished.")
         XCTAssertEqual(model.teamModelCalls, 12)
+    }
+
+    @MainActor
+    func testSwarmSpawnReplayDeduplicatesNodeAndBranchStopUpdatesIt() {
+        let model = AppModel(startImmediately: false)
+        let spawned: [String: Any] = [
+            "type": "agent_spawned",
+            "run_id": "run-1",
+            "job_id": "inspect.1",
+            "node_id": "inspect.1",
+            "parent_node_id": "inspect",
+            "depth": 1,
+            "execution_engine": "locus_managed",
+            "agent_name": "API specialist",
+            "role": "researcher",
+            "provider": "vLLM",
+            "model": "qwen3",
+            "goal": "Verify the API contract",
+        ]
+
+        model.handleEventForTesting(spawned)
+        model.handleEventForTesting(spawned)
+
+        XCTAssertEqual(model.agentActivities.count, 1)
+        XCTAssertEqual(model.agentActivities.first?.nodeID, "inspect.1")
+        XCTAssertEqual(model.agentActivities.first?.parentNodeID, "inspect")
+        XCTAssertEqual(model.agentActivities.first?.depth, 1)
+
+        model.handleEventForTesting([
+            "type": "agent_branch_stopped",
+            "run_id": "run-1",
+            "node_id": "inspect.1",
+            "message": "Branch stopped at a safe boundary.",
+        ])
+
+        XCTAssertEqual(model.agentActivities.first?.state, .interrupted)
+        XCTAssertEqual(
+            model.agentActivities.first?.output,
+            "Branch stopped at a safe boundary."
+        )
     }
 
     func testWorkModeInstructionsAreDistinct() {
@@ -1186,6 +1384,24 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    private func providerHandoffService(
+        host: String = "provider-handoff.test"
+    ) -> BackendService {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ProviderHandoffURLProtocol.self]
+        return BackendService(
+            baseURL: URL(string: "http://\(host)")!,
+            authToken: "test",
+            session: URLSession(configuration: configuration)
+        )
+    }
+
+    @MainActor
+    private func providerHandoffModel() -> AppModel {
+        AppModel(startImmediately: false, backendOverride: providerHandoffService())
+    }
+
+    @MainActor
     func testSavingAProxyPublishesItBeforeAnythingCanUseIt() {
         let model = AppModel(startImmediately: false)
         XCTAssertNil(ProxyRuntime.shared.current, "a test model starts with no proxy")
@@ -1234,6 +1450,146 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(body["api_key"] as? String, "sk-ant-secret")
         XCTAssertEqual(body["auth_style"] as? String, "anthropic")
         XCTAssertEqual(body["account_label"] as? String, "Claude — Work")
+    }
+
+    @MainActor
+    func testSuccessfulConnectionTestReappliesTheSavedActiveCredential() async {
+        let model = providerHandoffModel()
+        let account = seedAccount(
+            model,
+            kind: .kimiCode,
+            name: "Membership",
+            preferredModel: "k3",
+            key: "kimi-saved-key"
+        )
+        model.settings.activeAccountID = account.id.uuidString
+
+        let followUp = await model.reconnectAfterSuccessfulConnectionTest(
+            account: account,
+            usedSavedCredential: true
+        )
+
+        XCTAssertEqual(followUp, .reconnected)
+        XCTAssertEqual(
+            ProviderHandoffURLProtocol.providerBodies.last?["api_key"] as? String,
+            "kimi-saved-key"
+        )
+        XCTAssertEqual(model.accountStatus[account.id], .keySaved)
+    }
+
+    @MainActor
+    func testNewChatWorkerReceivesSavedKeyBeforeProviderReadinessCheck() async {
+        let model = providerHandoffModel()
+        let account = seedAccount(
+            model,
+            kind: .kimiCode,
+            name: "Membership",
+            preferredModel: "k3",
+            key: "kimi-worker-key"
+        )
+        model.settings.activeAccountID = account.id.uuidString
+
+        let failure = await model.prepareChatWorkerProvider(
+            using: providerHandoffService(host: "chat-worker-provider.test")
+        )
+
+        XCTAssertNil(failure)
+        let workerPaths = ProviderHandoffURLProtocol.paths.filter {
+            $0.hasPrefix("chat-worker-provider.test")
+        }
+        XCTAssertEqual(Array(workerPaths.prefix(2)), [
+            "chat-worker-provider.test/api/provider",
+            "chat-worker-provider.test/api/health",
+        ])
+        XCTAssertEqual(
+            ProviderHandoffURLProtocol.providerBodies.last(where: {
+                $0["__test_host"] as? String == "chat-worker-provider.test"
+            })?["api_key"] as? String,
+            "kimi-worker-key"
+        )
+    }
+
+    @MainActor
+    func testNewChatWorkerRejectsAnAnsweringButUnreadyProvider() async {
+        let model = providerHandoffModel()
+        let account = seedAccount(
+            model,
+            kind: .kimiCode,
+            name: "Membership",
+            preferredModel: "k3",
+            key: "kimi-worker-key"
+        )
+        model.settings.activeAccountID = account.id.uuidString
+        ProviderHandoffURLProtocol.providerReady = false
+        ProviderHandoffURLProtocol.providerError = "no API key is loaded for this provider"
+
+        let failure = await model.prepareChatWorkerProvider(
+            using: providerHandoffService(host: "chat-worker-provider.test")
+        )
+
+        XCTAssertEqual(failure, "no API key is loaded for this provider")
+        let workerPaths = ProviderHandoffURLProtocol.paths.filter {
+            $0.hasPrefix("chat-worker-provider.test")
+        }
+        XCTAssertEqual(Array(workerPaths.prefix(2)), [
+            "chat-worker-provider.test/api/provider",
+            "chat-worker-provider.test/api/health",
+        ])
+    }
+
+    @MainActor
+    func testSuccessfulDraftKeyTestRequiresSaveBeforeReconnect() async {
+        let model = providerHandoffModel()
+        let account = seedAccount(
+            model,
+            kind: .kimiCode,
+            name: "Membership",
+            preferredModel: "k3"
+        )
+        model.settings.activeAccountID = account.id.uuidString
+
+        let followUp = await model.reconnectAfterSuccessfulConnectionTest(
+            account: account,
+            usedSavedCredential: false
+        )
+
+        XCTAssertEqual(followUp, .saveRequired)
+        XCTAssertTrue(ProviderHandoffURLProtocol.providerBodies.isEmpty)
+    }
+
+    @MainActor
+    func testFailedProviderHandoffIsReportedForRecovery() async {
+        let model = providerHandoffModel()
+        let account = seedAccount(
+            model,
+            kind: .kimiCode,
+            name: "Membership",
+            preferredModel: "k3"
+        )
+        model.settings.activeAccountID = account.id.uuidString
+        ProviderHandoffURLProtocol.providerStatusCode = 503
+
+        let followUp = await model.reconnectAfterSuccessfulConnectionTest(
+            account: account,
+            usedSavedCredential: true
+        )
+
+        XCTAssertEqual(followUp, .reconnectFailed)
+        XCTAssertFalse(model.isModelOnline)
+        XCTAssertTrue(model.accountStatus[account.id]?.summary.contains("temporarily unavailable") == true)
+    }
+
+    @MainActor
+    func testCredentialWriteFailureDoesNotPublishAnAccount() {
+        let model = AppModel(
+            startImmediately: false,
+            providerCredentialWriter: { _, _ in false }
+        )
+        let account = ProviderAccount(kind: .kimiCode, name: "Membership")
+
+        XCTAssertFalse(model.saveProviderAccount(account, apiKey: "one-time-key"))
+        XCTAssertTrue(model.providerAccounts.isEmpty)
+        XCTAssertTrue(model.toastMessage?.contains("Could not save the API key") == true)
     }
 
     @MainActor
@@ -2615,6 +2971,26 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(futureRestored.resolvedToolActivityVisibility, .collapsed)
     }
 
+    func testOptionalHeaderControlsDefaultOffAndRoundTrip() throws {
+        let defaults = AppSettings()
+        XCTAssertFalse(defaults.showTeamProgressInHeader)
+        XCTAssertFalse(defaults.showContextUsageInHeader)
+
+        let legacy = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
+        XCTAssertFalse(legacy.showTeamProgressInHeader)
+        XCTAssertFalse(legacy.showContextUsageInHeader)
+
+        var enabled = AppSettings()
+        enabled.showTeamProgressInHeader = true
+        enabled.showContextUsageInHeader = true
+        let restored = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONEncoder().encode(enabled)
+        )
+        XCTAssertTrue(restored.showTeamProgressInHeader)
+        XCTAssertTrue(restored.showContextUsageInHeader)
+    }
+
     @MainActor
     func testToolActivityVisibilityAccessorUpdatesSettings() {
         let model = AppModel(startImmediately: false)
@@ -2684,9 +3060,17 @@ final class AppModelTests: XCTestCase {
             ChatBlock(kind: .tool, tool: fourth),
         ]
 
-        let collapsed = TranscriptPresentation.items(from: blocks, visibility: .collapsed)
-        let hidden = TranscriptPresentation.items(from: blocks, visibility: .hidden)
-        XCTAssertEqual(hidden, collapsed, "compact modes share the same lossless grouping")
+        let collapsed = TranscriptPresentation.items(
+            from: blocks,
+            toolVisibility: .collapsed,
+            thinkingVisibility: .collapsed
+        )
+        let hiddenTools = TranscriptPresentation.items(
+            from: blocks,
+            toolVisibility: .hidden,
+            thinkingVisibility: .collapsed
+        )
+        XCTAssertEqual(hiddenTools, collapsed, "compact tool modes share the same lossless grouping")
         XCTAssertEqual(collapsed.count, 8)
 
         guard case .toolGroup(let firstGroupID, let firstTools) = collapsed[1] else {
@@ -2697,7 +3081,11 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(ToolActivityAggregateStatus(tools: firstTools), .awaitingPermission)
 
         XCTAssertEqual(collapsed[2], .block(blocks[3]), "notes stay in transcript order")
-        XCTAssertEqual(collapsed[3], .block(blocks[4]), "reasoning stays in transcript order")
+        guard case .thinkingGroup(let thinkingGroupID, let thinkingEntries) = collapsed[3] else {
+            return XCTFail("reasoning should become one request-level thought group")
+        }
+        XCTAssertEqual(thinkingGroupID, firstUserID)
+        XCTAssertEqual(thinkingEntries.map(\.text), ["Checking next step"])
         XCTAssertEqual(collapsed[4], .block(blocks[8]), "the final answer stays visible")
         XCTAssertEqual(collapsed[5], .block(blocks[9]), "completion remains the request boundary")
 
@@ -2713,9 +3101,131 @@ final class AppModelTests: XCTestCase {
         }
         XCTAssertFalse(compactBlockIDs.contains(emptyAssistantID))
         XCTAssertFalse(compactBlockIDs.contains(secondEmptyAssistantID))
+        XCTAssertFalse(compactBlockIDs.contains(reasoningID))
 
-        let verbose = TranscriptPresentation.items(from: blocks, visibility: .verbose)
-        XCTAssertEqual(verbose, blocks.map(TranscriptPresentationItem.block))
+        let hiddenThinking = TranscriptPresentation.items(
+            from: blocks,
+            toolVisibility: .collapsed,
+            thinkingVisibility: .hidden
+        )
+        XCTAssertFalse(hiddenThinking.contains { item in
+            if case .thinkingGroup = item { return true }
+            return false
+        })
+        XCTAssertFalse(hiddenThinking.contains { item in
+            guard case .block(let block) = item else { return false }
+            return block.id == reasoningID
+        })
+
+        let verbose = TranscriptPresentation.items(
+            from: blocks,
+            toolVisibility: .verbose,
+            thinkingVisibility: .collapsed
+        )
+        XCTAssertFalse(verbose.contains { item in
+            if case .toolGroup = item { return true }
+            return false
+        })
+        XCTAssertEqual(verbose.compactMap { item -> String? in
+            guard case .block(let block) = item else { return nil }
+            return block.tool?.toolID
+        }, ["first", "second", "third", "fourth"])
+    }
+
+    func testThoughtPresentationGroupsNativeAndInlineReasoningAndPreservesAnswers() throws {
+        let userID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000721"))
+        let nativeOnlyID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000722"))
+        let mixedID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000723"))
+        let finalID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000724"))
+        let completionID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000725"))
+        let nextUserID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000726"))
+        let nextReasoningID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000727"))
+        let blocks = [
+            ChatBlock(id: userID, kind: .user, text: "Audit the workspace"),
+            ChatBlock(id: nativeOnlyID, kind: .assistant, reasoningText: "Inspect files"),
+            ChatBlock(
+                id: mixedID,
+                kind: .assistant,
+                text: "<think>Compare results</think>Visible progress",
+                reasoningText: "Choose the next check"
+            ),
+            ChatBlock(
+                kind: .tool,
+                tool: ToolPayload(
+                    toolID: "read", tool: "read_file", summary: "Read files", detail: "",
+                    status: .done
+                )
+            ),
+            ChatBlock(
+                id: finalID,
+                kind: .assistant,
+                text: "Before<thinking>Prepare response</thinking>After"
+            ),
+            ChatBlock(
+                id: completionID,
+                kind: .note,
+                completion: TurnCompletion(
+                    outcome: .complete,
+                    mode: .work,
+                    durationMilliseconds: 1_000
+                )
+            ),
+            ChatBlock(id: nextUserID, kind: .user, text: "Continue"),
+            ChatBlock(id: nextReasoningID, kind: .assistant, reasoningText: "Second request"),
+        ]
+
+        let collapsed = TranscriptPresentation.items(
+            from: blocks,
+            toolVisibility: .verbose,
+            thinkingVisibility: .collapsed
+        )
+        let groups = collapsed.compactMap { item -> (UUID, [ThinkingPresentationEntry])? in
+            guard case .thinkingGroup(let id, let entries) = item else { return nil }
+            return (id, entries)
+        }
+        XCTAssertEqual(groups.count, 2)
+        XCTAssertEqual(groups[0].0, userID)
+        XCTAssertEqual(groups[0].1.map(\.text), [
+            "Inspect files",
+            "Choose the next check",
+            "Compare results",
+            "Prepare response",
+        ])
+        XCTAssertEqual(groups[1].0, nextUserID)
+        XCTAssertEqual(groups[1].1.map(\.text), ["Second request"])
+
+        let visibleAssistants = collapsed.compactMap { item -> ChatBlock? in
+            guard case .block(let block) = item, block.kind == .assistant else { return nil }
+            return block
+        }
+        XCTAssertEqual(visibleAssistants.map(\.id), [mixedID, finalID])
+        XCTAssertEqual(visibleAssistants.map(\.text), ["Visible progress", "Before\n\nAfter"])
+        XCTAssertTrue(visibleAssistants.allSatisfy { $0.reasoningText == nil })
+
+        let expanded = TranscriptPresentation.items(
+            from: blocks,
+            toolVisibility: .verbose,
+            thinkingVisibility: .expanded
+        )
+        XCTAssertEqual(expanded, collapsed, "expanded mode changes only how the group is rendered")
+
+        let hidden = TranscriptPresentation.items(
+            from: blocks,
+            toolVisibility: .verbose,
+            thinkingVisibility: .hidden
+        )
+        XCTAssertFalse(hidden.contains { item in
+            if case .thinkingGroup = item { return true }
+            return false
+        })
+        XCTAssertEqual(hidden.compactMap { item -> UUID? in
+            guard case .block(let block) = item, block.kind == .assistant else { return nil }
+            return block.id
+        }, [mixedID, finalID])
+        XCTAssertFalse(hidden.contains { item in
+            guard case .block(let block) = item else { return false }
+            return block.id == nativeOnlyID || block.id == nextReasoningID
+        })
     }
 
     func testToolActivityGroupIdentityAndStatusRemainStableAsCallsUpdate() throws {
@@ -2729,7 +3239,11 @@ final class AppModelTests: XCTestCase {
             )),
         ]
 
-        let firstProjection = TranscriptPresentation.items(from: blocks, visibility: .collapsed)
+        let firstProjection = TranscriptPresentation.items(
+            from: blocks,
+            toolVisibility: .collapsed,
+            thinkingVisibility: .collapsed
+        )
         guard case .toolGroup(let initialID, let initialTools) = firstProjection[1] else {
             return XCTFail("expected the initial tool group")
         }
@@ -2743,7 +3257,11 @@ final class AppModelTests: XCTestCase {
             status: .done
         )))
 
-        let updatedProjection = TranscriptPresentation.items(from: blocks, visibility: .collapsed)
+        let updatedProjection = TranscriptPresentation.items(
+            from: blocks,
+            toolVisibility: .collapsed,
+            thinkingVisibility: .collapsed
+        )
         guard case .toolGroup(let updatedID, let updatedTools) = updatedProjection[1] else {
             return XCTFail("expected the updated tool group")
         }
@@ -2982,6 +3500,50 @@ final class AppModelTests: XCTestCase {
         armPlanApproval(model)
 
         XCTAssertTrue(model.planApprovalPending, "a finished plan is a decision point")
+        XCTAssertEqual(model.planPanelPresentation.phase, .readyForApproval)
+    }
+
+    @MainActor
+    func testPlanPanelTracksDraftingStepsAndApproval() {
+        let model = AppModel(startImmediately: false)
+        model.selectedMode = .plan
+        model.turnDispatchedInPlanMode = true
+        model.turnDispatchedMode = .plan
+        model.isBusy = true
+
+        XCTAssertEqual(model.planPanelPresentation.phase, .planning)
+        model.handleEventForTesting([
+            "type": "todo_update",
+            "todos": [["content": "Audit the sidebar", "status": "pending"]],
+        ])
+        XCTAssertEqual(model.planPanelPresentation.phase, .planning)
+
+        model.handleEventForTesting([
+            "type": "turn_done",
+            "reason": "complete",
+            "duration_ms": 3_000,
+        ])
+
+        XCTAssertEqual(model.planPanelPresentation.phase, .readyForApproval)
+        XCTAssertEqual(model.activePlan?.steps, ["Audit the sidebar"])
+    }
+
+    @MainActor
+    func testPlanPanelPreservesStoppedBuildPlan() {
+        let model = AppModel(startImmediately: false)
+        model.turnDispatchedMode = .build
+        model.isBusy = true
+        model.todos = [TodoItem(content: "Verify the app", status: .inProgress)]
+
+        model.handleEventForTesting([
+            "type": "turn_done",
+            "reason": "interrupted",
+            "duration_ms": 2_400,
+        ])
+
+        XCTAssertEqual(model.planPanelPresentation.phase, .stopped)
+        XCTAssertEqual(model.planPanelPresentation.stoppedOutcome, .interrupted)
+        XCTAssertEqual(model.todos.first?.status, .inProgress)
     }
 
     @MainActor

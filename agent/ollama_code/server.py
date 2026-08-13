@@ -72,6 +72,7 @@ from .orchestration import (
     GLOBAL_MODEL_SCHEDULER,
     AgentProfile,
     AgentResult,
+    OpenAIResponsesFallbackRequired,
     OrchestrationError,
     TeamOrchestrator,
     TeamPreparation,
@@ -264,8 +265,12 @@ class ChatService:
             event = dict(event)
             event.setdefault("worker_id", self.worker_id)
             event.setdefault("process_id", os.getpid())
+        swarm_event = event_type in {
+            "agent_spawned", "agent_branch_stopped", "swarm_telemetry",
+        }
         if event_type.startswith(("agent_job_", "orchestration_", "scheduler_lease", "mcp_task_")) \
-                or event_type in {"dispatch_plan", "dispatcher_plan_rejected"}:
+                or event_type in {"dispatch_plan", "dispatcher_plan_rejected"} \
+                or swarm_event:
             event = dict(event)
             event.setdefault("worker_id", self.worker_id)
         run_id = str(event.get("run_id") or self.active_run_id or "")
@@ -294,6 +299,7 @@ class ChatService:
         if run_id and (
             event_type in persisted_types
             or durable_agent_event
+            or swarm_event
             or event_type.startswith(("orchestration_", "scheduler_lease", "mcp_task_"))
         ):
             event = dict(event)
@@ -323,7 +329,8 @@ class ChatService:
                 pass
         if event_type in {"agent_job_started", "agent_job_continuing",
                           "agent_job_incomplete", "agent_job_completed", "dispatch_plan",
-                          "dispatcher_plan_rejected"} \
+                          "dispatcher_plan_rejected", "agent_spawned",
+                          "agent_branch_stopped", "swarm_telemetry"} \
                 or event_type.startswith("orchestration_") \
                 or event_type.startswith("scheduler_lease") \
                 or event_type.startswith("mcp_task_"):
@@ -2716,16 +2723,27 @@ async def _resume_orchestration(
     if not isinstance(manifest, dict):
         raise HTTPException(422, "resume requires the current in-memory team manifest")
     manifest = dict(manifest)
-    if action in {"resume", "retry", "reassign"}:
+    same_run_actions = {"resume", "retry", "reassign", "run_with_locus"}
+    if action in same_run_actions:
         manifest["run_id"] = run_id
     else:
         manifest["run_id"] = uuid.uuid4().hex
     checkpoint = record.get("checkpoint")
-    if action in {"resume", "retry", "reassign"}:
+    if action in same_run_actions:
         if not isinstance(checkpoint, dict):
             raise HTTPException(409, "this run has no stable checkpoint to resume")
         manifest["_resume"] = checkpoint.get("state") or {}
         manifest["_resume_from_run_id"] = run_id
+    if action == "run_with_locus":
+        team_value = manifest.get("team")
+        if not isinstance(team_value, dict):
+            raise HTTPException(422, "the current team definition is required")
+        team_value = dict(team_value)
+        policy = team_value.get("swarm_policy")
+        policy = dict(policy) if isinstance(policy, dict) else {}
+        policy.update({"version": 1, "engine": "locus_managed"})
+        team_value["swarm_policy"] = policy
+        manifest["team"] = team_value
     if action == "retry":
         job_id = str(body.get("job_id") or "")
         if not job_id:
@@ -2739,7 +2757,7 @@ async def _resume_orchestration(
         manifest["_reassign"] = {"job_id": job_id, "agent_id": agent_id}
     task_id = str(record.get("task_id") or "")
     source_task = TaskCheckoutStore.load(task_id) if task_id else None
-    if action in {"resume", "retry", "reassign", "replay"} and task_id and source_task is None:
+    if action in {*same_run_actions, "replay"} and task_id and source_task is None:
         raise HTTPException(409, "the managed checkout for this run is missing")
     checkpoint_state = (
         checkpoint.get("state") if isinstance(checkpoint, dict)
@@ -2782,6 +2800,19 @@ async def orchestration_resume(
     run_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
     return await _resume_orchestration(run_id, body, action="resume")
+
+
+@app.post("/api/orchestrations/{run_id}/run-with-locus")
+async def orchestration_run_with_locus(
+    run_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    """Explicitly move a paused OpenAI-native run onto Locus-managed execution."""
+    record = service().run_store.run(run_id)
+    checkpoint = record.get("checkpoint") if isinstance(record, dict) else None
+    state = checkpoint.get("state") if isinstance(checkpoint, dict) else None
+    if not isinstance(state, dict) or state.get("fallback_action") != "run_with_locus":
+        raise HTTPException(409, "this run is not waiting for an engine fallback")
+    return await _resume_orchestration(run_id, body, action="run_with_locus")
 
 
 @app.post("/api/orchestrations/{run_id}/recovery-assessment")
@@ -2843,6 +2874,30 @@ async def orchestration_retry_job(
     run_id: str, job_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
     return await _resume_orchestration(run_id, {**body, "job_id": job_id}, action="retry")
+
+
+@app.post("/api/orchestrations/{run_id}/agents/{node_id:path}/stop")
+def orchestration_stop_agent_branch(run_id: str, node_id: str) -> dict[str, Any]:
+    """Stop one active read-only subtree while sibling branches keep running."""
+    _require_capability("recovery_controls")
+    svc = service()
+    if svc.active_run_id != run_id or svc.active_orchestrator is None or not svc.busy:
+        raise HTTPException(409, "that agent branch is not actively running")
+    known = svc.active_orchestrator.stop_branch(run_id, node_id)
+    return {
+        "ok": True, "run_id": run_id, "node_id": node_id,
+        "state": "stopping", "known": known,
+    }
+
+
+@app.post("/api/orchestrations/{run_id}/agents/{node_id:path}/retry")
+async def orchestration_retry_agent_branch(
+    run_id: str, node_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    """Retry a paused branch under its existing durable node identity."""
+    return await _resume_orchestration(
+        run_id, {**body, "job_id": node_id}, action="retry",
+    )
 
 
 @app.post("/api/orchestrations/{run_id}/jobs/{job_id}/reassign")
@@ -4447,6 +4502,34 @@ def _run_team_turn(
             "state": "completed",
             "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
             "usage": orchestrator.usage(),
+        })
+    except OpenAIResponsesFallbackRequired as exc:
+        terminal_reason = "paused"
+        _, fallback_team, fallback_profiles, _ = parse_manifest(manifest)
+        fallback_state: dict[str, Any] = {
+            "state": "paused",
+            "restart_dispatch": True,
+            "fallback_reason": str(exc),
+            "fallback_action": "run_with_locus",
+            "orchestration_fingerprint": orchestration_fingerprint(
+                fallback_team, fallback_profiles,
+            ),
+            "baseline_tree": svc.current_task.baseline_tree
+            if svc.current_task is not None else "",
+            "usage": orchestrator.usage(),
+        }
+        if exc.validated_plan is not None:
+            fallback_state["validated_plan"] = exc.validated_plan.structured()
+        svc.checkpoint("openai_responses_fallback", fallback_state)
+        svc.run_store.set_state(
+            run_id, "paused", recoverable=True,
+            reason="OpenAI-native orchestration paused. Choose Run with Locus to continue explicitly.",
+        )
+        svc.emit({
+            "type": "orchestration_paused", "run_id": run_id,
+            "state": "paused", "reason": "openai_responses_unavailable",
+            "message": str(exc), "action": "run_with_locus",
+            "action_title": "Run with Locus", "usage": orchestrator.usage(),
         })
     except TeamWriterBudgetPause as exc:
         terminal_reason = exc.reason

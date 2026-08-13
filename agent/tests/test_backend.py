@@ -29,7 +29,7 @@ from ollama_code import server as server_mod
 from ollama_code import sessions as sessions_mod
 from ollama_code.core import AgentCore
 from ollama_code.ollama import ChatResponse, OllamaError, process_chunk
-from ollama_code.orchestration import AgentResult
+from ollama_code.orchestration import AgentResult, TeamOrchestrator
 from ollama_code.permissions import PermissionManager, build_preview
 from ollama_code.render import ThinkFilter, strip_think
 from ollama_code.sessions import SessionMeta, SessionStore, strip_prompt_decoration
@@ -1758,6 +1758,51 @@ def test_cancel_interrupts_the_worker_that_owns_the_run(client, tmp_path):
         svc.active_run_id = None
         svc.cancel_requested_runs.discard(run_id)
         svc.core._interrupt.clear()
+
+
+def test_active_agent_branch_stop_is_scoped_and_persisted(client, tmp_path):
+    svc = client.app.state.service
+    run_id = "branch-stop-run"
+    svc.run_store.start_run(
+        run_id,
+        session_id=svc.core.session.session_id,
+        team_id="team-1",
+        team_name="Team",
+        worker_id=svc.worker_id,
+        workspace_root=str(tmp_path),
+        execution_path=str(tmp_path),
+        request="Inspect safely",
+        manifest={},
+        state="running",
+    )
+    orchestrator = TeamOrchestrator(svc.emit, lambda: False)
+    orchestrator._register_node("plan.1", "plan")
+    orchestrator._register_node("/root/researcher", "/root")
+    turn: Future[None] = Future()
+    svc.turn_future = turn
+    svc.active_run_id = run_id
+    svc.active_orchestrator = orchestrator
+    try:
+        response = client.post(
+            f"/api/orchestrations/{run_id}/agents/plan.1/stop"
+        )
+
+        assert response.status_code == 200
+        assert response.json()["known"] is True
+        assert orchestrator.branch_stopped("plan.1") is True
+        hosted = client.post(
+            f"/api/orchestrations/{run_id}/agents/%2Froot%2Fresearcher/stop"
+        )
+        assert hosted.status_code == 200
+        assert hosted.json()["node_id"] == "/root/researcher"
+        stored = svc.run_store.events(run_id)
+        assert stored[-1]["type"] == "agent_branch_stopped"
+        assert stored[-1]["node_id"] == "/root/researcher"
+    finally:
+        turn.set_result(None)
+        svc.turn_future = None
+        svc.active_run_id = None
+        svc.active_orchestrator = None
 
 
 def test_running_run_cannot_be_assessed_or_resumed_from_stale_recovery_flag(
@@ -5824,6 +5869,21 @@ def test_a_provider_without_a_model_listing_is_not_reported_offline(monkeypatch)
 
     # The default is unchanged for everyone else.
     assert remote_mod.RemoteClient("https://api.openai.com/v1").lists_models is True
+
+
+def test_a_provider_without_a_model_listing_is_offline_until_its_key_is_restored():
+    """The helper reloads provider metadata from disk, but never the API key.
+    Health must expose that handoff window instead of claiming Kimi is ready."""
+    from ollama_code import remote as remote_mod
+
+    client = remote_mod.RemoteClient(
+        "https://api.kimi.com/coding/v1",
+        model="k3",
+        lists_models=False,
+    )
+
+    with pytest.raises(OllamaError, match="no API key is loaded"):
+        client.check()
 
 
 def test_the_listing_capability_reaches_the_client_from_the_provider_call(tmp_path, monkeypatch):

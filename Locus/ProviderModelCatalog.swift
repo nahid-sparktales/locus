@@ -62,7 +62,13 @@ enum ProviderModelCatalog {
                 let fallback = fallbackModels(for: account)
                 return Result(
                     models: fallback,
-                    status: status == 404 ? .keySaved : .failed("The endpoint answered \(status).")
+                    status: status == 404
+                        ? .keySaved
+                        : .failed(RemoteEndpointTester.failureMessage(
+                            status: status,
+                            data: data,
+                            apiKey: key
+                        ))
                 )
             }
             let names = ProviderModelFilter.parseModelList(data)

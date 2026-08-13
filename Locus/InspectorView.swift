@@ -279,12 +279,30 @@ private struct InspectorTabActivationButton: NSViewRepresentable {
         button.action = #selector(Coordinator.activate)
         button.mouseDownAction = context.coordinator.activate
         button.title = title
-        button.font = .systemFont(ofSize: 10, weight: selected ? .semibold : .medium)
-        button.contentTintColor = selected ? .labelColor : .secondaryLabelColor.withAlphaComponent(0.86)
+        let font = NSFont.systemFont(ofSize: 10, weight: selected ? .semibold : .medium)
+        let titleColor = InspectorTabAppearance.titleColor(
+            colorScheme: context.environment.colorScheme,
+            selected: selected
+        )
+        // contentTintColor does not reliably color an NSButton title in the
+        // dark title-bar material. An attributed title keeps every open tab
+        // white instead of only the selected or hovered one.
+        button.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [.font: font, .foregroundColor: titleColor]
+        )
+        button.contentTintColor = titleColor
         button.identifier = NSUserInterfaceItemIdentifier(accessibilityIdentifier)
         button.setAccessibilityIdentifier(accessibilityIdentifier)
         button.setAccessibilityLabel("\(title) inspector tab")
         button.setAccessibilityValue(selected ? "Selected" : "Not selected")
+    }
+}
+
+enum InspectorTabAppearance {
+    static func titleColor(colorScheme: ColorScheme, selected: Bool) -> NSColor {
+        if colorScheme == .dark { return .white }
+        return selected ? .labelColor : .secondaryLabelColor.withAlphaComponent(0.86)
     }
 }
 
@@ -628,7 +646,11 @@ struct InspectorRunsTab: View {
                 model.setOrchestrationPinned(run, pinned: !run.pinned)
             }
             if presentation.canRecover, run.runKind != "solo" {
-                Button("Resume") { model.resumeOrchestration(run) }
+                if run.checkpoint?.state["fallback_action"]?.string == "run_with_locus" {
+                    Button("Run with Locus") { model.runOrchestrationWithLocus(run) }
+                } else {
+                    Button("Resume") { model.resumeOrchestration(run) }
+                }
             }
             if run.taskID != nil && !run.legacy {
                 Button("Replay Same Baseline") { model.replayOrchestration(run) }
@@ -756,6 +778,17 @@ struct InspectorRunsTab: View {
                                 }
                             }
                         }
+                    }
+                }
+
+                if !agentTreeAttempts(run).isEmpty {
+                    overviewCard("AGENT TREE", symbol: "point.3.connected.trianglepath.dotted") {
+                        VStack(alignment: .leading, spacing: 7) {
+                            ForEach(agentTreeAttempts(run)) { attempt in
+                                agentTreeRow(attempt, run: run)
+                            }
+                        }
+                        .accessibilityIdentifier("runs.agentTree")
                     }
                 }
 
@@ -953,6 +986,102 @@ struct InspectorRunsTab: View {
             Text(value).fontWeight(.semibold)
         }
         .font(.system(size: 8))
+    }
+
+    private func agentTreeAttempts(_ run: OrchestrationRun) -> [AgentJobAttempt] {
+        var latest: [String: AgentJobAttempt] = [:]
+        for attempt in run.attempts ?? [] {
+            let node = attempt.resolvedNodeID
+            if latest[node] == nil || attempt.attempt > (latest[node]?.attempt ?? 0) {
+                latest[node] = attempt
+            }
+        }
+        return latest.values.sorted {
+            if $0.resolvedDepth != $1.resolvedDepth {
+                return $0.resolvedDepth < $1.resolvedDepth
+            }
+            let left = $0.startedAt ?? 0
+            let right = $1.startedAt ?? 0
+            return left == right ? $0.resolvedNodeID < $1.resolvedNodeID : left < right
+        }
+    }
+
+    private func agentTreeRow(_ attempt: AgentJobAttempt, run: OrchestrationRun) -> some View {
+        let presentation = model.teamRunPresentation(for: run.id, durable: run)
+        let isCoding = model.isCodingAttempt(attempt, in: run)
+        let branchError = attempt.result?["error"]?.string
+        return HStack(alignment: .top, spacing: 7) {
+            HStack(spacing: 3) {
+                if attempt.resolvedDepth > 0 {
+                    Rectangle()
+                        .fill(LocusTheme.lineStrong)
+                        .frame(width: 1, height: 20)
+                    Image(systemName: "arrow.turn.down.right")
+                        .font(.system(size: 7))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                Image(systemName: attempt.state == "completed"
+                    ? "checkmark.circle.fill"
+                    : attempt.state == "stopped" ? "stop.circle.fill"
+                    : attempt.state == "failed" ? "exclamationmark.circle.fill"
+                    : "circle.dotted")
+                    .foregroundStyle(attempt.state == "completed"
+                        ? LocusTheme.success
+                        : ["failed", "stopped"].contains(attempt.state)
+                            ? LocusTheme.coral : LocusTheme.signalDeep)
+            }
+            .frame(width: CGFloat(attempt.resolvedDepth * 14 + 17), alignment: .trailing)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    Text(attempt.agentName ?? attempt.agentID ?? "Agent")
+                        .font(.system(size: 8, weight: .bold))
+                    Text("· \(attempt.state.replacingOccurrences(of: "_", with: " "))")
+                        .font(.system(size: 7, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                Text("\(attempt.provider ?? "Unknown provider") · \(attempt.model ?? "Unknown model") · \(attempt.resolvedExecutionEngine.replacingOccurrences(of: "_", with: " "))")
+                    .font(.system(size: 7, design: .monospaced))
+                    .foregroundStyle(LocusTheme.muted)
+                    .lineLimit(1)
+                Text(attempt.goal)
+                    .font(.system(size: 8))
+                    .foregroundStyle(LocusTheme.inkSoft)
+                    .lineLimit(3)
+                if let branchError, !branchError.isEmpty {
+                    Text(branchError)
+                        .font(.system(size: 7))
+                        .foregroundStyle(LocusTheme.coral)
+                        .lineLimit(3)
+                }
+                if !attempt.evidence.isEmpty {
+                    Text("Evidence · \(attempt.evidence.joined(separator: ", "))")
+                        .font(.system(size: 7))
+                        .foregroundStyle(LocusTheme.muted)
+                        .lineLimit(3)
+                }
+                Text("\(attempt.modelCalls) calls · \(attempt.promptTokens + attempt.completionTokens) tokens · \(attempt.elapsedMilliseconds) ms")
+                    .font(.system(size: 7, design: .monospaced))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            Spacer(minLength: 0)
+            if presentation.isActivelyOwned, attempt.state == "running", !isCoding {
+                Button("Stop") { model.stopOrchestrationBranch(attempt, in: run) }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 7, weight: .semibold))
+                    .foregroundStyle(LocusTheme.coral)
+                    .accessibilityIdentifier("runs.agentTree.stop.\(attempt.resolvedNodeID)")
+            } else if presentation.canRecover,
+                      ["failed", "stopped", "paused"].contains(attempt.state),
+                      !isCoding {
+                Button("Retry") { model.retryOrchestrationBranch(attempt, in: run) }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 7, weight: .semibold))
+                    .accessibilityIdentifier("runs.agentTree.retry.\(attempt.resolvedNodeID)")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("runs.agentTree.node.\(attempt.resolvedNodeID)")
     }
 
     private func timeline(_ run: OrchestrationRun, showsFilter: Bool = true) -> some View {
