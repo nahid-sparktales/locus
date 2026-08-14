@@ -34,6 +34,11 @@ resolved="${repo_root}/Locus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
     echo "error: SwiftTerm is not pinned to the audited 1.18.0 revision" >&2
     exit 1
 }
+[[ -f "${resolved}" ]] \
+    && /usr/bin/grep -Fq -- "b6496a74a087257ef5e6da1c5b29a447a60f5bd7" "${resolved}" || {
+    echo "error: Sparkle is not pinned to the audited 2.9.4 revision" >&2
+    exit 1
+}
 [[ -x "${codex_helper}" ]] || {
     echo "error: bundled Codex App Server helper is missing" >&2
     exit 1
@@ -105,6 +110,7 @@ actual_code_mode_host_archs="$(/usr/bin/lipo -archs "${code_mode_host}" | /usr/b
 for notice in \
     "| websockets | 17.0 |" \
     "SwiftTerm 1.18.0" \
+    "Sparkle 2.9.4" \
     "Anthropic Frontend Design" \
     "Vercel React Best Practices" \
     "Superpowers Systematic Debugging"
@@ -117,6 +123,7 @@ done
 
 for required in \
     "SwiftTerm-1.18.0/LICENSE" \
+    "Sparkle-2.9.4/LICENSE" \
     "builtin-skills-anthropic/LICENSE" \
     "builtin-skills-vercel/LICENSE" \
     "builtin-skills-superpowers/LICENSE"
@@ -222,6 +229,7 @@ trap '/bin/rm -f "${entitlements}"' EXIT
 # --xml: without it codesign writes a human-readable dump plutil cannot parse,
 # and every extraction below fails open. Dots in entitlement names must be
 # escaped or plutil walks them as a key path and never finds the key.
+sandboxed=0
 if /usr/bin/codesign -d --entitlements "${entitlements}" --xml "${app}" >/dev/null 2>&1; then
     for forbidden in \
         com.apple.security.get-task-allow \
@@ -234,6 +242,90 @@ if /usr/bin/codesign -d --entitlements "${entitlements}" --xml "${app}" >/dev/nu
             exit 1
         }
     done
+    if [[ "$(/usr/bin/plutil -extract 'com\.apple\.security\.app-sandbox' raw -o - \
+        "${entitlements}" 2>/dev/null || true)" == "true" ]]
+    then
+        sandboxed=1
+    fi
+fi
+
+sparkle="${app}/Contents/Frameworks/Sparkle.framework"
+if [[ "${sandboxed}" == "1" ]]; then
+    [[ ! -e "${sparkle}" ]] || {
+        echo "error: the Mac App Store build contains Sparkle.framework" >&2
+        exit 1
+    }
+    ! /usr/bin/plutil -p "${app}/Contents/Info.plist" | /usr/bin/grep -Eq '^  "SU[^" ]*"' || {
+        echo "error: the Mac App Store build contains Sparkle updater configuration" >&2
+        exit 1
+    }
+    unexpected_updater="$(/usr/bin/find "${app}/Contents" \
+        \( -name Updater.app -o -name Autoupdate -o -name Downloader.xpc -o -name Installer.xpc \) \
+        -print -quit)"
+    [[ -z "${unexpected_updater}" ]] || {
+        echo "error: the Mac App Store build contains updater helper ${unexpected_updater}" >&2
+        exit 1
+    }
+else
+    [[ -d "${sparkle}" ]] || {
+        echo "error: the direct-download build is missing Sparkle.framework" >&2
+        exit 1
+    }
+    sparkle_version="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - \
+        "${sparkle}/Resources/Info.plist" 2>/dev/null || true)"
+    [[ "${sparkle_version}" == "2.9.4" ]] || {
+        echo "error: bundled Sparkle is ${sparkle_version:-unknown}, expected 2.9.4" >&2
+        exit 1
+    }
+    for required in \
+        "Versions/B/Autoupdate" \
+        "Versions/B/Updater.app/Contents/MacOS/Updater" \
+        "Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader" \
+        "Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer"
+    do
+        [[ -x "${sparkle}/${required}" ]] || {
+            echo "error: Sparkle updater payload is missing ${required}" >&2
+            exit 1
+        }
+    done
+    expected_feed="https://github.com/nahid-sparktales/locus/releases/latest/download/appcast.xml"
+    [[ "$(/usr/bin/plutil -extract SUFeedURL raw -o - "${app}/Contents/Info.plist")" \
+        == "${expected_feed}" ]] || {
+        echo "error: direct-download update feed does not match ${expected_feed}" >&2
+        exit 1
+    }
+    [[ "$(/usr/bin/plutil -extract SUPublicEDKey raw -o - "${app}/Contents/Info.plist")" \
+        == "S/F9z1jR20s26+oHOxVjFend/ajDH04OY8Ietw+IDl4=" ]] || {
+        echo "error: direct-download Sparkle public key is missing or unexpected" >&2
+        exit 1
+    }
+    for boolean_key in \
+        SUAllowsAutomaticUpdates \
+        SUEnableAutomaticChecks \
+        SUAutomaticallyUpdate \
+        SURequireSignedFeed \
+        SUVerifyUpdateBeforeExtraction
+    do
+        [[ "$(/usr/bin/plutil -extract "${boolean_key}" raw -o - \
+            "${app}/Contents/Info.plist")" == "true" ]] || {
+            echo "error: direct-download updater requires ${boolean_key}=true" >&2
+            exit 1
+        }
+    done
+    [[ "$(/usr/bin/plutil -extract SUEnableSystemProfiling raw -o - \
+        "${app}/Contents/Info.plist")" == "false" ]] || {
+        echo "error: direct-download updater must disable anonymous system profiling" >&2
+        exit 1
+    }
+    [[ "$(/usr/bin/plutil -extract SUScheduledCheckInterval raw -o - \
+        "${app}/Contents/Info.plist")" == "86400" ]] || {
+        echo "error: direct-download updater must check every 24 hours" >&2
+        exit 1
+    }
+    /usr/bin/codesign --verify --deep --strict "${sparkle}" || {
+        echo "error: Sparkle.framework or a nested updater helper has an invalid signature" >&2
+        exit 1
+    }
 fi
 
 for sealed_helper in "${codex_helper}" "${code_mode_host}"; do

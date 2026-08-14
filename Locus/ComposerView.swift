@@ -504,9 +504,22 @@ struct ComposerView: View {
             Divider().frame(height: 16).padding(.horizontal, 4)
             Menu {
                 Button {
-                    model.selectAgentTeam(nil)
+                    model.selectSoloRoute(swarm: false)
                 } label: {
-                    Label("Solo", systemImage: model.selectedAgentTeamID == nil ? "checkmark" : "person")
+                    Label(
+                        "Solo",
+                        systemImage: model.selectedAgentTeamID == nil && !model.soloSwarmEnabled
+                            ? "checkmark" : "person"
+                    )
+                }
+                Button {
+                    model.selectSoloRoute(swarm: true)
+                } label: {
+                    Label(
+                        "Solo Swarm",
+                        systemImage: model.selectedAgentTeamID == nil && model.soloSwarmEnabled
+                            ? "checkmark" : "point.3.connected.trianglepath.dotted"
+                    )
                 }
                 if !model.agentTeams.isEmpty {
                     Divider()
@@ -528,8 +541,12 @@ struct ComposerView: View {
                 }
             } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: model.teamModeEnabled ? "person.3.fill" : "person.fill")
-                    Text(model.selectedAgentTeam?.name ?? "Solo")
+                    Image(systemName: model.teamModeEnabled
+                        ? "person.3.fill"
+                        : (model.soloSwarmEnabled
+                            ? "point.3.connected.trianglepath.dotted" : "person.fill"))
+                    Text(model.selectedAgentTeam?.name
+                        ?? (model.soloSwarmEnabled ? "Solo Swarm" : "Solo"))
                         .lineLimit(1)
                 }
                 .font(.system(size: 9, weight: .semibold))

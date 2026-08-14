@@ -674,6 +674,12 @@ endpoint for models. Releases up to 1.5.1 were published from the old `locus-mac
 repository and required Homebrew's `python@3.14`; builds from this repository
 do not.
 
+Starting with 1.14.0, the direct-download app checks the stable release channel
+daily, downloads signed updates in the background, and installs them when
+Locus quits. People upgrading from 1.13.0 or earlier need to download 1.14.0
+once; future releases update automatically. Mac App Store installations keep
+using the App Store's update service.
+
 The release pipeline can produce a SparkTales **Developer ID** build that is
 notarized by Apple and stapled, so it opens normally on a Mac that has never
 seen it. Only an archive produced with `LOCUS_NOTARIZE=1` and passing the
@@ -866,7 +872,7 @@ runtime, **not** sandboxed. Build it, then sign, notarize, staple and package
 in one step:
 
 ```bash
-LOCUS_NOTARIZE=1 Tools/PackageRelease.sh /path/to/Locus.app artifacts/direct/Locus-<version>.zip
+LOCUS_NOTARIZE=1 Tools/PackageRelease.sh /path/to/Locus.app artifacts/direct/Locus-macOS.zip
 ```
 
 `PackageRelease.sh` signs in an order that cannot ship a broken seal: every
@@ -880,6 +886,20 @@ that a fresh extraction still passes `spctl` and carries the ticket. Signing
 identity comes from `LOCUS_SIGN_IDENTITY`, else the first Developer ID
 Application certificate in the keychain.
 
+A notarized run also creates `artifacts/direct/appcast.xml`. It uses the
+Sparkle 2.9.4 tools pinned and checksum-verified by the release script, signs
+the ZIP and feed with the `io.sparktales` Ed25519 key in the login Keychain,
+and embeds the matching section from `CHANGELOG.md` as release notes. Create a
+draft GitHub release for `v<version>`, upload both `Locus-macOS.zip` and
+`appcast.xml`, verify both assets, and only then publish the draft. Never upload
+one without the other.
+
+The update-signing private key is intentionally outside this public
+repository. Its local backup is stored with mode `0600` at
+`~/Library/Application Support/Locus Release Keys/Sparkle-io.sparktales.ed25519`;
+keep an additional encrypted backup. Packaging fails if the Keychain key, the
+embedded public key, and the generated signatures do not agree.
+
 Running the script without `LOCUS_NOTARIZE=1` is supported for private
 verification only and is labeled that way. The script still requires a
 Developer ID Application identity, embeds the exact source revision and build
@@ -889,8 +909,8 @@ clean source tree.
 
 ## Mac App Store archive
 
-`ReleaseMAS` is the sandboxed, arm64 Mac App Store build for the SparkTales
-team. It signs the bundled Python interpreter as an inheriting sandbox helper,
+The `LocusMAS` scheme's `ReleaseMAS` configuration is the sandboxed, arm64 Mac
+App Store build for the SparkTales team. It signs the bundled Python interpreter as an inheriting sandbox helper,
 stores agent data in the app container, and persists user-selected workspace
 access with security-scoped bookmarks.
 
@@ -925,7 +945,8 @@ Every archive runs `Tools/AuditDistribution.sh` before export. The audit
 rejects unused GPL-licensed GNU gdbm content, the broken Tk extension, and
 missing third-party license materials. It also verifies the pinned Codex
 source, normalized Cargo lockfile, V8 inputs, helper architecture and SHA-256
-provenance, signatures, sandbox inheritance, and code-mode JIT entitlements.
+provenance, signatures, sandbox inheritance, code-mode JIT entitlements, and
+that Sparkle is present only in the direct-download artifact.
 The component inventory is in
 `Locus/Resources/ThirdPartyNotices.md`.
 

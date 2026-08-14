@@ -817,6 +817,23 @@ final class AppModelTests: XCTestCase {
     func testAdaptiveWorkIsTheNeutralDefault() {
         let model = AppModel(startImmediately: false)
         XCTAssertEqual(model.selectedMode, .work)
+        XCTAssertFalse(model.soloSwarmEnabled)
+    }
+
+    @MainActor
+    func testSoloTeamAndSoloSwarmRoutesAreMutuallyExclusive() {
+        let model = AppModel(startImmediately: false)
+        model.selectSoloRoute(swarm: true)
+        XCTAssertTrue(model.soloSwarmEnabled)
+        XCTAssertNil(model.selectedAgentTeamID)
+
+        model.selectAgentTeam(UUID())
+        XCTAssertFalse(model.soloSwarmEnabled)
+        XCTAssertNotNil(model.selectedAgentTeamID)
+
+        model.selectSoloRoute(swarm: false)
+        XCTAssertFalse(model.soloSwarmEnabled)
+        XCTAssertNil(model.selectedAgentTeamID)
     }
 
     @MainActor

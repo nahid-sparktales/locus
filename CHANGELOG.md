@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.14.0 — 2026-08-13
+
+### Added
+
+- **Direct-download builds now update themselves.** Locus checks the stable
+  GitHub release feed daily, verifies signed feeds and archives with Sparkle
+  plus Apple code signing, downloads updates in the background, and installs
+  them when the app quits. Updates settings expose the automatic choices and a
+  manual check. The Mac App Store target contains no updater and continues to
+  receive releases through Apple. Existing installations need one final manual
+  download of 1.14.0; later releases update automatically.
+
 ## 1.13.0 — 2026-08-09
 
 ### Added

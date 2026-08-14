@@ -2,10 +2,17 @@ import AppKit
 import SwiftUI
 import UserNotifications
 
-private let locusIsUITesting = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1"
+func locusShouldStartAutomaticUpdater(environment: [String: String]) -> Bool {
+    environment["XCTestConfigurationFilePath"] == nil
+        && environment["LOCUS_UI_TESTING"] != "1"
+}
+
+private let locusEnvironment = ProcessInfo.processInfo.environment
+private let locusIsUITesting = locusEnvironment["LOCUS_UI_TESTING"] == "1"
 private let locusIsUnitTesting =
-    ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    locusEnvironment["XCTestConfigurationFilePath"] != nil
         && !locusIsUITesting
+private let locusStartsAutomaticUpdater = locusShouldStartAutomaticUpdater(environment: locusEnvironment)
 
 enum LocusWindowSizing {
     static let defaultSize = NSSize(width: 1_250, height: 760)
@@ -32,11 +39,15 @@ struct LocusApp: App {
     // inert so it cannot start a second backend or workspace watcher alongside
     // the models owned by unit tests. UI tests still need their seeded app.
     @StateObject private var model = AppModel(startImmediately: !locusIsUnitTesting)
+    @StateObject private var updates = AppUpdateController(
+        startImmediately: locusStartsAutomaticUpdater
+    )
 
     var body: some Scene {
         Window("Locus", id: "main") {
             RootView()
                 .environmentObject(model)
+                .environmentObject(updates)
                 .onAppear { appDelegate.model = model }
                 .preferredColorScheme(model.effectiveAppearance.colorScheme)
                 .frame(
@@ -55,6 +66,14 @@ struct LocusApp: App {
             height: LocusWindowSizing.defaultSize.height
         )
         .commands {
+            CommandGroup(after: .appInfo) {
+                if updates.isAvailable {
+                    Button("Check for Updates…") { updates.checkForUpdates() }
+                        .disabled(!updates.canCheckForUpdates)
+                        .accessibilityIdentifier("menu.checkForUpdates")
+                }
+            }
+
             CommandGroup(replacing: .newItem) {
                 Button("New Session") { model.newSession() }
                     .keyboardShortcut("n", modifiers: .command)
@@ -131,6 +150,7 @@ struct LocusApp: App {
         Settings {
             SettingsView(presentationContext: .settingsWindow)
                 .environmentObject(model)
+                .environmentObject(updates)
                 .preferredColorScheme(model.effectiveAppearance.colorScheme)
         }
     }
@@ -280,6 +300,7 @@ private final class MainWindowMarkerView: NSView {
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var updates: AppUpdateController
 
     var body: some View {
         HStack(spacing: 0) {
@@ -299,6 +320,9 @@ struct RootView: View {
                         : (locusIsUITesting ? 400 : 520),
                     maxWidth: model.inspectorZoomed ? model.zoomedChatWidth : .infinity
                 )
+                // The workspace header now owns the full hidden-title-bar
+                // band; there is no separate Finder row above it.
+                .ignoresSafeArea(.container, edges: .top)
 
             if !model.inspectorCollapsed && !model.justChatEnabled {
                 InspectorView()
@@ -382,6 +406,7 @@ struct RootView: View {
         }) {
             SettingsView(presentationContext: .sheet)
                 .environmentObject(model)
+                .environmentObject(updates)
         }
         .sheet(isPresented: $model.usageDashboardPresented) {
             UsageDashboardView()

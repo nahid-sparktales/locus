@@ -19,6 +19,7 @@ runtime="${app}/Contents/Resources/AgentRuntime"
 repo_root="${0:A:h:h}"
 resources="${app}/Contents/Resources"
 info_plist="${app}/Contents/Info.plist"
+sparkle="${app}/Contents/Frameworks/Sparkle.framework"
 
 identity="${LOCUS_SIGN_IDENTITY:-}"
 if [[ -z "${identity}" ]]; then
@@ -57,6 +58,10 @@ if [[ "${LOCUS_NOTARIZE:-0}" == "1" && "${built_revision}" != "${revision}" ]]; 
     echo "Rebuild the Release configuration before notarization." >&2
     exit 1
 fi
+if [[ "${LOCUS_NOTARIZE:-0}" == "1" && "${zip_out:t}" != "Locus-macOS.zip" ]]; then
+    echo "error: public direct-download releases must be named Locus-macOS.zip" >&2
+    exit 1
+fi
 revision_label="${revision}"
 if [[ "${dirty}" == "1" ]]; then
     revision_label="${revision}-dirty"
@@ -75,8 +80,6 @@ fi
     echo "xcode=$(/usr/bin/xcodebuild -version | /usr/bin/tr '\n' ' ')"
 } > "${resources}/BuildProvenance.txt"
 
-"${repo_root}/Tools/AuditDistribution.sh" "${app}"
-
 if [[ -d "${runtime}" ]]; then
     # --options runtime and --timestamp on every Mach-O: notarization
     # rejects a bundle where anything lacks either. Hardened runtime turns on
@@ -91,7 +94,20 @@ if [[ -d "${runtime}" ]]; then
             --sign "${identity}" "${interp}"
     done
 fi
+if [[ -d "${sparkle}" ]]; then
+    for nested in \
+        "${sparkle}/Versions/B/Autoupdate" \
+        "${sparkle}/Versions/B/Updater.app" \
+        "${sparkle}/Versions/B/XPCServices/Downloader.xpc" \
+        "${sparkle}/Versions/B/XPCServices/Installer.xpc" \
+        "${sparkle}"
+    do
+        /usr/bin/codesign --force --timestamp --options runtime \
+            --sign "${identity}" "${nested}"
+    done
+fi
 /usr/bin/codesign --force --timestamp --options runtime --sign "${identity}" "${app}"
+"${repo_root}/Tools/AuditDistribution.sh" "${app}"
 /usr/bin/codesign --verify --deep --strict "${app}"
 echo "Seal valid after signing."
 
@@ -163,3 +179,7 @@ if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
 fi
 /usr/bin/shasum -a 256 "${zip_out}"
 /bin/ls -lh "${zip_out}"
+if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
+    "${repo_root}/Tools/GenerateAppcast.sh" "${zip_out}" "${zip_out:h}/appcast.xml"
+    echo "Upload Locus-macOS.zip and appcast.xml to the same draft GitHub release."
+fi

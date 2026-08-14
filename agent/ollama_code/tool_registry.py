@@ -8,6 +8,7 @@ from typing import Any
 
 from .capabilities import enabled as capability_enabled
 from .extensions import ExtensionError, ExtensionManager
+from .solo_swarm import DELEGATE_READ_ONLY_SCHEMA
 from .tools import SAFE_TOOLS, TOOL_SCHEMAS, ToolContext, execute_tool
 
 _SAFE_EXTENSION_TOOLS = {
@@ -381,6 +382,7 @@ class ToolRegistry:
         self._agent_access_ceiling = "workspace_write"
         self._agent_role = ""
         self._user_capability_policy: dict[str, bool] = {}
+        self._solo_swarm_enabled = False
         self.computer_enabled = False
         #: Off until the app announces a live native broker, exactly like
         #: ``computer_enabled``. The browser is on by default *in the app's
@@ -471,8 +473,14 @@ class ToolRegistry:
             )
         }
 
+    def set_solo_swarm_enabled(self, enabled: bool) -> None:
+        """Expose the internal delegation tool only for the active root turn."""
+        self._solo_swarm_enabled = bool(enabled)
+
     def _user_allows(self, name: str) -> bool:
         policy = self._user_capability_policy
+        if name == "delegate_read_only" and not policy.get("workspace_read", True):
+            return False
         if name in _WORKSPACE_READ_TOOLS and not policy.get("workspace_read", True):
             return False
         if name in _WORKSPACE_WRITE_TOOLS and not policy.get("workspace_write", True):
@@ -524,6 +532,12 @@ class ToolRegistry:
             schema for schema in self.browser_schemas()
             if self._user_allows(schema["function"]["name"])
         )
+        if (
+            self._solo_swarm_enabled
+            and self._agent_access_ceiling != "read_only"
+            and self._user_allows("delegate_read_only")
+        ):
+            schemas.append(DELEGATE_READ_ONLY_SCHEMA)
         for name in sorted(self._active_mcp):
             tool = self._mcp_by_qualified.get(name)
             if not tool or not self._allows_mcp_item(tool, "tools", qualified=name):
@@ -777,6 +791,8 @@ class ToolRegistry:
         return "\n".join(lines)
 
     def is_safe(self, name: str) -> bool:
+        if name == "delegate_read_only":
+            return self._solo_swarm_enabled and self._user_allows(name)
         if self.computer_enabled and name in _READ_ONLY_COMPUTER_TOOLS:
             return True
         if self.browser_enabled and name in _READ_ONLY_BROWSER_TOOLS:

@@ -189,30 +189,18 @@ final class LocusUITests: XCTestCase {
     }
 
     func testWorkspaceProfileContextPackAndPromptHistoryControls() {
-        let finder = anyElement("workspace.openInFinder")
         let breadcrumb = anyElement("workspace.breadcrumb")
         let title = anyElement("workspace.sessionTitle")
         let modelPicker = anyElement("workspace.modelPicker")
-        XCTAssertTrue(finder.waitForExistence(timeout: 3))
+        XCTAssertTrue(breadcrumb.waitForExistence(timeout: 3))
         XCTAssertTrue(breadcrumb.exists)
         XCTAssertTrue(title.exists)
         XCTAssertTrue(modelPicker.exists)
+        XCTAssertFalse(anyElement("workspace.openInFinder").exists)
         XCTAssertLessThanOrEqual(
-            finder.frame.maxY + 5,
-            breadcrumb.frame.minY,
-            "Finder should have clear breathing room above the workspace/session breadcrumb"
-        )
-        XCTAssertEqual(
-            finder.frame.minX + 10,
-            breadcrumb.frame.minX,
-            accuracy: 2,
-            "the Finder and breadcrumb folder glyphs should share a leading axis"
-        )
-        XCTAssertEqual(
-            (breadcrumb.frame.minY + title.frame.maxY) / 2,
-            modelPicker.frame.midY,
-            accuracy: 3,
-            "the breadcrumb/title group should align vertically with the model picker"
+            breadcrumb.frame.minY - app.windows.firstMatch.frame.minY,
+            20,
+            "the workspace header should occupy the hidden title-bar band without a blank top row"
         )
 
         let workspaceMenu = anyElement("sidebar.workspaceMenu")
@@ -253,6 +241,25 @@ final class LocusUITests: XCTestCase {
             }
         }
         XCTAssertTrue(app.staticTexts["Reusable workflows"].exists)
+    }
+
+    func testUpdatesSettingsShowAutomaticDirectDownloadControls() {
+        app.menuBars.menuBarItems["Locus"].firstMatch.click()
+        XCTAssertTrue(app.menuItems["Check for Updates…"].exists)
+        app.typeKey(.escape, modifierFlags: [])
+
+        anyElement("workspace.modelPicker").click()
+        app.buttons["Manage Accounts…"].click()
+
+        let updatesPage = anyElement("settings.page.updates")
+        XCTAssertTrue(updatesPage.waitForExistence(timeout: 3))
+        updatesPage.click()
+
+        XCTAssertTrue(anyElement("settings.updateVersion").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("settings.automaticUpdateChecks").exists)
+        XCTAssertTrue(anyElement("settings.automaticUpdateDownloads").exists)
+        XCTAssertTrue(anyElement("settings.checkForUpdates").exists)
+        XCTAssertFalse(anyElement("settings.appStoreUpdates").exists)
     }
 
     func testAgentProfileEditorKeepsInstructionsAndAdvancedActionsVisible() {

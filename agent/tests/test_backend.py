@@ -692,12 +692,15 @@ def test_sanitize_messages_drops_system_and_keeps_tools():
         {"role": "system", "content": "hidden"},
         {"role": "user", "content": "[Locus mode: Ask]\nx\n\nUser request:\nhi",
          "team_run_id": "run-42"},
+        {"role": "user", "content": "canonical", "run_id": "run-43"},
         {"role": "tool", "name": "bash", "content": "output"},
     ])
-    assert [m["role"] for m in out] == ["user", "tool"]
+    assert [m["role"] for m in out] == ["user", "user", "tool"]
     assert out[0]["content"] == "hi"
-    assert out[0]["team_run_id"] == "run-42"
-    assert out[1]["name"] == "bash"
+    assert out[0]["run_id"] == "run-42"
+    assert "team_run_id" not in out[0]
+    assert out[1]["run_id"] == "run-43"
+    assert out[2]["name"] == "bash"
 
 
 # ------------------------------------------------------------ remote provider
@@ -2533,6 +2536,50 @@ def test_websocket_ask_mode_routes_through_the_tool_free_turn_boundary(client, m
     )]
 
 
+def test_websocket_solo_swarm_routes_only_ordinary_agentic_solo_turns(client, monkeypatch):
+    from ollama_code import server as server_mod
+
+    service = client.app.state.service
+    captured = []
+    errors = []
+    monkeypatch.setattr(
+        service, "start_turn",
+        lambda _loop, call, *args: captured.append((call, args)) or True,
+    )
+    monkeypatch.setattr(
+        server_mod, "_command_error",
+        lambda _service, _operation, message: errors.append(message),
+    )
+
+    for mode in ("work", "plan", "build"):
+        asyncio.run(server_mod._handle_client_message(service, {
+            "type": "user_message",
+            "text": "Inspect independent areas",
+            "mode": mode,
+            "run_id": f"swarm-{mode}",
+            "solo_swarm": {"enabled": True},
+        }))
+
+    assert len(captured) == 3
+    for index, mode in enumerate(("work", "plan", "build")):
+        call, args = captured[index]
+        assert call is server_mod._run_user_turn
+        assert args[-2:] == (f"swarm-{mode}", True)
+
+    for message in (
+        {"text": "just chat", "mode": "ask"},
+        {"text": "/init", "mode": "work"},
+        {"text": "team", "mode": "work", "team": {"run_id": "team"}},
+    ):
+        asyncio.run(server_mod._handle_client_message(service, {
+            "type": "user_message",
+            **message,
+            "solo_swarm": {"enabled": True},
+        }))
+    assert len(errors) == 3
+    assert all("Solo Swarm requires" in error for error in errors)
+
+
 def test_websocket_ask_mode_validates_and_routes_image_attachments(client, monkeypatch):
     from ollama_code import server as server_mod
 
@@ -3446,6 +3493,61 @@ def test_solo_turn_done_records_usage_and_summary_serves_it(client):
     ).json()
     assert filtered["solo"]["turns"] == 0
     assert server_mod is not None
+
+
+def test_solo_swarm_turn_combines_root_and_worker_usage_without_changing_context_totals(client):
+    service = client.app.state.service
+    service.run_store.start_run(
+        "solo-swarm-usage",
+        session_id="swarm-session",
+        worker_id=service.worker_id,
+        workspace_root="/tmp/swarm",
+        execution_path="/tmp/swarm",
+        request="Investigate in parallel",
+        state="running",
+        run_kind="solo",
+    )
+    service.active_run_id = "solo-swarm-usage"
+    service.active_solo_swarm = SimpleNamespace(usage={
+        "model_calls": 3,
+        "prompt_tokens": 120,
+        "completion_tokens": 30,
+        "delegated_tokens": 150,
+    })
+    context_totals = (service.core.total_prompt_tokens, service.core.total_completion_tokens)
+    try:
+        service.emit({
+            "type": "turn_done",
+            "reason": "complete",
+            "model_calls": 1,
+            "prompt_tokens": 200,
+            "completion_tokens": 80,
+            "provider": "ollama",
+            "model": "test-model",
+            "workspace_root": "/tmp/swarm",
+            "session_id": "swarm-session",
+        })
+    finally:
+        service.active_solo_swarm = None
+        service.active_run_id = None
+
+    record = service.run_store.run("solo-swarm-usage")
+    assert record["state"] == "completed"
+    assert record["usage"] == {
+        "prompt_tokens": 320,
+        "completion_tokens": 110,
+        "metered_tokens": 430,
+        "model_calls": 4,
+        "root_prompt_tokens": 200,
+        "root_completion_tokens": 80,
+        "worker_prompt_tokens": 120,
+        "worker_completion_tokens": 30,
+        "worker_model_calls": 3,
+    }
+    assert (service.core.total_prompt_tokens, service.core.total_completion_tokens) == context_totals
+    summary = client.get("/api/usage/summary").json()
+    assert summary["solo"]["prompt_tokens"] == 320
+    assert summary["solo"]["completion_tokens"] == 110
 
 
 def test_generic_run_routes_include_solo_trace_identity_and_events(client):

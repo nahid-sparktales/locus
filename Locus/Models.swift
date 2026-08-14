@@ -234,6 +234,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case knowledge = "Memory & Knowledge"
     case permissions = "Permissions"
     case extensions = "Extensions"
+    case updates = "Updates"
     case shortcuts = "Keyboard Shortcuts"
 
     var id: String { rawValue }
@@ -247,6 +248,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .knowledge: "books.vertical.fill"
         case .permissions: "lock.shield"
         case .extensions: "puzzlepiece.extension"
+        case .updates: "arrow.triangle.2.circlepath"
         case .shortcuts: "keyboard"
         }
     }
@@ -895,11 +897,14 @@ struct HistoryMessage: Codable {
     let content: String
     let name: String?
     let reasoning: String?
-    let teamRunID: String?
+    let runID: String?
+
+    var teamRunID: String? { runID }
 
     private enum CodingKeys: String, CodingKey {
         case role, content, name, reasoning
-        case teamRunID = "team_run_id"
+        case runID = "run_id"
+        case legacyTeamRunID = "team_run_id"
     }
 
     // A single null-content tool message must not fail an entire resume.
@@ -909,7 +914,17 @@ struct HistoryMessage: Codable {
         content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
         name = try? container.decodeIfPresent(String.self, forKey: .name)
         reasoning = try? container.decodeIfPresent(String.self, forKey: .reasoning)
-        teamRunID = try? container.decodeIfPresent(String.self, forKey: .teamRunID)
+        runID = (try? container.decodeIfPresent(String.self, forKey: .runID))
+            ?? (try? container.decodeIfPresent(String.self, forKey: .legacyTeamRunID))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(role, forKey: .role)
+        try container.encode(content, forKey: .content)
+        try container.encodeIfPresent(name, forKey: .name)
+        try container.encodeIfPresent(reasoning, forKey: .reasoning)
+        try container.encodeIfPresent(runID, forKey: .runID)
     }
 }
 
@@ -976,13 +991,24 @@ struct ChatBlock: Identifiable, Codable, Hashable {
     /// Present only for the quiet end-of-turn note rendered after a run.
     /// Optional keeps checkpoints written by older Locus releases decodable.
     var completion: TurnCompletion?
-    /// Links a team request to its durable board without changing ordinary
-    /// transcript rendering. Optional decoding keeps existing checkpoints.
-    var teamRunID: String?
+    /// Links a request to its durable run. Ordinary Solo rows remain unchanged
+    /// because their activity panel stays hidden until delegation begins.
+    var runID: String?
+    var teamRunID: String? {
+        get { runID }
+        set { runID = newValue }
+    }
     /// Position in the restored message array, so a cross-session search hit
     /// can address this block even after empty messages were dropped.
     /// Optional decoding keeps existing checkpoints.
     var historyIndex: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, text, reasoningText, isStreaming, tool, completion, historyIndex
+        case runID = "run_id"
+        case legacyRunID = "runID"
+        case legacyTeamRunID = "teamRunID"
+    }
 
     init(
         id: UUID = UUID(),
@@ -992,6 +1018,7 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         isStreaming: Bool = false,
         tool: ToolPayload? = nil,
         completion: TurnCompletion? = nil,
+        runID: String? = nil,
         teamRunID: String? = nil,
         historyIndex: Int? = nil
     ) {
@@ -1002,8 +1029,36 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         self.isStreaming = isStreaming
         self.tool = tool
         self.completion = completion
-        self.teamRunID = teamRunID
+        self.runID = runID ?? teamRunID
         self.historyIndex = historyIndex
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        kind = try container.decode(Kind.self, forKey: .kind)
+        text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
+        reasoningText = try container.decodeIfPresent(String.self, forKey: .reasoningText)
+        isStreaming = try container.decodeIfPresent(Bool.self, forKey: .isStreaming) ?? false
+        tool = try container.decodeIfPresent(ToolPayload.self, forKey: .tool)
+        completion = try container.decodeIfPresent(TurnCompletion.self, forKey: .completion)
+        runID = try container.decodeIfPresent(String.self, forKey: .runID)
+            ?? container.decodeIfPresent(String.self, forKey: .legacyRunID)
+            ?? container.decodeIfPresent(String.self, forKey: .legacyTeamRunID)
+        historyIndex = try container.decodeIfPresent(Int.self, forKey: .historyIndex)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(text, forKey: .text)
+        try container.encodeIfPresent(reasoningText, forKey: .reasoningText)
+        try container.encode(isStreaming, forKey: .isStreaming)
+        try container.encodeIfPresent(tool, forKey: .tool)
+        try container.encodeIfPresent(completion, forKey: .completion)
+        try container.encodeIfPresent(runID, forKey: .runID)
+        try container.encodeIfPresent(historyIndex, forKey: .historyIndex)
     }
 }
 
@@ -2377,7 +2432,11 @@ struct WorkspaceProfile: Identifiable, Codable, Hashable {
     var previewURL: String
     var contextFiles: [ContextFile]
     var draft: String
+    /// Optional on disk so profiles from earlier releases decode as disabled.
+    var soloSwarmEnabled: Bool? = nil
     var landingCheckCommands: [String]? = nil
+
+    var resolvedSoloSwarmEnabled: Bool { soloSwarmEnabled ?? false }
 
     var resolvedLandingCheckCommands: [String] {
         Array((landingCheckCommands ?? []).filter { !$0.isEmpty }.prefix(8))

@@ -145,8 +145,20 @@ final class AppModel: ObservableObject {
     }
     @Published var selectedAgentTeamID: UUID? = nil {
         didSet {
+            if selectedAgentTeamID != nil, soloSwarmEnabled {
+                soloSwarmEnabled = false
+            }
             guard persistenceEnabled else { return }
             UserDefaults.standard.set(selectedAgentTeamID?.uuidString, forKey: AgentTeamStore.selectionKey)
+        }
+    }
+    @Published var soloSwarmEnabled = false {
+        didSet {
+            guard soloSwarmEnabled != oldValue else { return }
+            if soloSwarmEnabled, selectedAgentTeamID != nil {
+                selectedAgentTeamID = nil
+            }
+            scheduleWorkspacePersistence()
         }
     }
     @Published private(set) var orchestrationRunID: String?
@@ -163,6 +175,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var taskPatchBytes = 0
     @Published private(set) var orchestrationRuns: [OrchestrationRun] = []
     @Published private(set) var selectedOrchestrationRun: OrchestrationRun?
+    @Published private(set) var runDetailsByID: [String: OrchestrationRun] = [:]
     @Published private(set) var orchestrationEvents: [OrchestrationEvent] = []
     @Published private(set) var isLoadingOrchestrationRuns = false
     @Published private(set) var pendingDispatchPlan: DispatchPlan?
@@ -454,6 +467,17 @@ final class AppModel: ObservableObject {
             durableState: run.flatMap { TeamRunState(rawValue: $0.state) },
             durableRecoverable: run?.recoverable == true
         )
+    }
+
+    func runRecord(for runID: String) -> OrchestrationRun? {
+        if selectedOrchestrationRun?.id == runID { return selectedOrchestrationRun }
+        if let detail = runDetailsByID[runID] { return detail }
+        return orchestrationRuns.first(where: { $0.id == runID })
+    }
+
+    func runKind(for runID: String) -> String {
+        if turnDispatchedTeamRunID == runID { return "team" }
+        return runRecord(for: runID)?.runKind ?? "solo"
     }
 
     static func resolveTeamRunPresentation(
@@ -2656,6 +2680,11 @@ final class AppModel: ObservableObject {
             && (selectedAgentTeamID != nil || teamMention.agent != nil || teamMention.team != nil)
         let dispatchedTeam = wantsTeam ? teamManifest(for: text) : nil
         if wantsTeam, dispatchedTeam == nil { return }
+        let dispatchedSoloSwarm = dispatchedTeam == nil
+            && selectedAgentTeamID == nil
+            && soloSwarmEnabled
+            && dispatchedMode != .ask
+            && !isSlashPassthrough
         // Agent-side slash commands never receive attachments (the server
         // routes them past the turn machinery), so dispatching any would
         // silently drop them — keep the chips for the next real message.
@@ -2692,7 +2721,8 @@ final class AppModel: ObservableObject {
             .compactMap { $0 }
             .joined(separator: "\n\n")
         let teamRunID = (dispatchedTeam?["run_id"] as? String)?.nilIfEmpty
-        let visibleBlock = ChatBlock(kind: .user, text: visibleText, teamRunID: teamRunID)
+        let reservedRunID = teamRunID ?? UUID().uuidString
+        let visibleBlock = ChatBlock(kind: .user, text: visibleText, runID: reservedRunID)
         blocks.append(visibleBlock)
         if let info = sessionInfo, sessionOverview.activeSessionID != info.sessionID {
             activateSessionOverview(info)
@@ -2708,7 +2738,6 @@ final class AppModel: ObservableObject {
             draftText = ""
         }
         presentInspectorForSentRequest(isTeam: dispatchedTeam != nil, runID: teamRunID)
-        let reservedRunID = teamRunID ?? UUID().uuidString
         let previousRuntimeState = taskConversationStates[dispatchedSessionID]
         taskConversationStates[dispatchedSessionID] = TaskConversationState(
             sessionID: dispatchedSessionID,
@@ -2797,6 +2826,9 @@ final class AppModel: ObservableObject {
             }
             if let dispatchedTeam { request["team"] = dispatchedTeam }
             if dispatchedTeam == nil { request["run_id"] = reservedRunID }
+            if dispatchedSoloSwarm {
+                request["solo_swarm"] = ["enabled": true]
+            }
             let imageAttachments: [[String: Any]] = dispatchedAttachments.compactMap {
                 attachment in
                 guard attachment.kind == .image,
@@ -3595,8 +3627,15 @@ final class AppModel: ObservableObject {
     }
 
     func selectAgentTeam(_ id: UUID?) {
+        if id != nil { soloSwarmEnabled = false }
         selectedAgentTeamID = id
         showToast(id == nil ? "Solo mode" : "Team mode")
+    }
+
+    func selectSoloRoute(swarm: Bool) {
+        selectedAgentTeamID = nil
+        soloSwarmEnabled = swarm
+        showToast(swarm ? "Solo Swarm mode" : "Solo mode")
     }
 
     func savePrimaryAgentBehavior(_ behavior: AgentBehavior) {
@@ -4005,6 +4044,7 @@ final class AppModel: ObservableObject {
             if selectedOrchestrationRun != detail {
                 selectedOrchestrationRun = detail
             }
+            runDetailsByID[runID] = detail
             if orchestrationEvents != merged {
                 orchestrationEvents = merged
             }
@@ -6300,7 +6340,7 @@ final class AppModel: ObservableObject {
                    blocks.last?.text != error {
                     blocks.append(ChatBlock(kind: .error, text: error))
                 }
-                refreshAnchoredTeamRunsIfNeeded()
+                refreshAnchoredRunsIfNeeded()
                 applyPendingSearchHitIfNeeded()
                 sessionInfo = response.sessionInfo
                 currentSessionID = response.sessionInfo.sessionID
@@ -6395,7 +6435,7 @@ final class AppModel: ObservableObject {
                     ))
                     streamingAssistantID = streamingID
                 }
-                refreshAnchoredTeamRunsIfNeeded()
+                refreshAnchoredRunsIfNeeded()
                 agentActivities = detail.agentActivities ?? []
                 orchestrationState = detail.orchestrationState
                     ?? taskConversationStates[runtime.sessionID]?.state
@@ -8021,10 +8061,22 @@ final class AppModel: ObservableObject {
         selectInspectorTab(.runs, selecting: runID)
     }
 
-    private func refreshAnchoredTeamRunsIfNeeded() {
-        guard blocks.contains(where: { $0.teamRunID != nil }) else { return }
+    private func refreshAnchoredRunsIfNeeded() {
+        guard blocks.contains(where: { $0.runID != nil }) else { return }
         Task { @MainActor [weak self] in
-            await self?.refreshOrchestrationRuns()
+            guard let self else { return }
+            await self.refreshOrchestrationRuns()
+            let identifiers = Set(self.blocks.compactMap(\.runID))
+            for runID in identifiers where self.runRecord(for: runID)?.jobCount ?? 0 > 0 {
+                do {
+                    let detail: OrchestrationRun = try await self.orchestrationBackend(
+                        for: runID
+                    ).get("/api/orchestrations/\(runID)", as: OrchestrationRun.self)
+                    self.runDetailsByID[runID] = detail
+                } catch {
+                    continue
+                }
+            }
         }
     }
 
@@ -9439,6 +9491,9 @@ final class AppModel: ObservableObject {
             orchestrationRunID = event["run_id"] as? String
             orchestrationState = .running
             activeWorkerID = event["worker_id"] as? String ?? activeWorkerID
+            agentActivities = []
+            teamModelCalls = 0
+            teamMeteredTokens = 0
             if let runID = orchestrationRunID {
                 selectedOrchestrationRun = nil
                 orchestrationEvents = []
@@ -9690,8 +9745,8 @@ final class AppModel: ObservableObject {
             guard let result = event["result"] as? [String: Any] else { return }
             let jobID = result["job_id"] as? String ?? ""
             let rawState = event["state"] as? String
-            let state: TeamRunState = rawState == "failed"
-                ? .failed : rawState == "stopped" ? .interrupted : .completed
+            let state = rawState.flatMap(TeamRunState.init(rawValue:))
+                ?? (rawState == "stopped" ? .interrupted : .completed)
             let index = agentActivities.firstIndex(where: { $0.id == jobID })
             let activity = AgentActivity(
                 id: jobID.isEmpty ? UUID().uuidString : jobID,
@@ -9734,7 +9789,17 @@ final class AppModel: ObservableObject {
             if let index { agentActivities[index] = activity } else { agentActivities.append(activity) }
             if let usage = event["usage"] as? [String: Any] {
                 teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
-                teamMeteredTokens = usage["metered_tokens"] as? Int ?? teamMeteredTokens
+                teamMeteredTokens = usage["delegated_tokens"] as? Int
+                    ?? ((usage["prompt_tokens"] as? Int ?? 0)
+                        + (usage["completion_tokens"] as? Int ?? 0))
+            }
+
+        case "swarm_telemetry":
+            if let usage = event["usage"] as? [String: Any] {
+                teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
+                teamMeteredTokens = usage["delegated_tokens"] as? Int
+                    ?? ((usage["prompt_tokens"] as? Int ?? 0)
+                        + (usage["completion_tokens"] as? Int ?? 0))
             }
 
         case "orchestration_completed":
@@ -10336,10 +10401,12 @@ final class AppModel: ObservableObject {
             planApprovalPending = false
             restoredTranscriptContext = nil
         }
+        soloSwarmEnabled = false
         if let profile = workspaceProfiles.first(where: {
             SessionSummary.canonicalWorkspacePath($0.path) == path
         }) {
             draftText = profile.draft
+            soloSwarmEnabled = profile.resolvedSoloSwarmEnabled
             selectedMode = profile.mode
             settings.previewURL = profile.previewURL
             contextFiles = profile.contextFiles
@@ -10391,7 +10458,8 @@ final class AppModel: ObservableObject {
                     mode: selectedMode,
                     previewURL: settings.previewURL,
                     contextFiles: contextFiles,
-                    draft: draftText
+                    draft: draftText,
+                    soloSwarmEnabled: soloSwarmEnabled
                 )
             )
         }
@@ -10434,6 +10502,7 @@ final class AppModel: ObservableObject {
             previewURL: settings.previewURL,
             contextFiles: contextFiles,
             draft: draftText,
+            soloSwarmEnabled: soloSwarmEnabled,
             landingCheckCommands: workspaceProfiles.first(where: {
                 SessionSummary.canonicalWorkspacePath($0.path) == path
             })?.landingCheckCommands
@@ -11041,7 +11110,7 @@ final class AppModel: ObservableObject {
         )
         if let requestIndex = blocks.firstIndex(where: { $0.kind == .user }) {
             blocks[requestIndex].text = run.request
-            blocks[requestIndex].teamRunID = run.id
+            blocks[requestIndex].runID = run.id
         }
         orchestrationRuns = [run]
         selectedOrchestrationRun = run
@@ -11617,7 +11686,7 @@ final class AppModel: ObservableObject {
                 ChatBlock(
                     kind: .user,
                     text: displayUserText(message.content),
-                    teamRunID: message.teamRunID,
+                    runID: message.runID,
                     historyIndex: index
                 )
             case "assistant" where !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

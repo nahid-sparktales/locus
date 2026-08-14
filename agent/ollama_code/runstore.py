@@ -720,12 +720,16 @@ class RunStore:
             if not job_id:
                 return
             row = connection.execute(
-                """SELECT attempt, attempt_id FROM job_attempts
+                """SELECT attempt, attempt_id, execution_engine FROM job_attempts
                    WHERE run_id=? AND job_id=? ORDER BY attempt DESC LIMIT 1""",
                 (run_id, job_id),
             ).fetchone()
             if row is None:
                 attempt, attempt_id = 1, f"{run_id}:{job_id}:1"
+                attempt_engine = str(
+                    result.get("execution_engine") or event.get("execution_engine")
+                    or "locus_managed"
+                )
                 connection.execute(
                     """INSERT INTO job_attempts(
                         run_id, job_id, attempt, attempt_id, agent_id, agent_name,
@@ -737,20 +741,24 @@ class RunStore:
                      str(result.get("node_id") or event.get("node_id") or job_id),
                      str(result.get("parent_node_id") or event.get("parent_node_id") or ""),
                      max(int(result.get("depth") or event.get("depth") or 0), 0),
-                     str(result.get("execution_engine") or event.get("execution_engine")
-                         or "locus_managed")),
+                     attempt_engine),
                 )
             else:
                 attempt, attempt_id = int(row[0]), str(row[1])
+                attempt_engine = str(
+                    result.get("execution_engine") or event.get("execution_engine")
+                    or row[2] or "locus_managed"
+                )
             event["attempt"] = attempt
             event["attempt_id"] = attempt_id
             connection.execute(
-                """UPDATE job_attempts SET state=?, result_json=?, completed_at=?
+                """UPDATE job_attempts SET state=?, result_json=?, completed_at=?, execution_engine=?
                    WHERE run_id=? AND job_id=? AND attempt=?""",
                 (str(event.get("state") or (
                     "paused" if event_type == "agent_job_incomplete" else "completed"
                 )), _json(result),
                  now if event_type == "agent_job_completed" else None,
+                 attempt_engine,
                  run_id, job_id, attempt),
             )
 

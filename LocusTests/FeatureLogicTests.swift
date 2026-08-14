@@ -2012,6 +2012,15 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(restored.count, 1)
         XCTAssertNil(restored[0].accountID, "an old profile means the local runtime")
         XCTAssertEqual(restored[0].model, "qwen3:8b")
+        XCTAssertFalse(restored[0].resolvedSoloSwarmEnabled)
+
+        var updated = restored[0]
+        updated.soloSwarmEnabled = true
+        let roundTrip = try JSONDecoder().decode(
+            WorkspaceProfile.self,
+            from: JSONEncoder().encode(updated)
+        )
+        XCTAssertTrue(roundTrip.resolvedSoloSwarmEnabled)
     }
 
     func testSettingsCarryTheActiveAccountAndOldOnesDecodeWithout() throws {
@@ -2443,17 +2452,23 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertFalse(encoded.contains("maxModelCalls"))
     }
 
-    func testTeamRunIDSurvivesHistoryAndTranscriptSerialization() throws {
+    func testRunIDGeneralizesHistoryAndDecodesLegacyTeamAnchors() throws {
         let historyData = Data(#"{"role":"user","content":"Build it","team_run_id":"run-42"}"#.utf8)
         let history = try JSONDecoder().decode(HistoryMessage.self, from: historyData)
-        XCTAssertEqual(history.teamRunID, "run-42")
+        XCTAssertEqual(history.runID, "run-42")
 
-        let block = ChatBlock(kind: .user, text: "Build it", teamRunID: "run-42")
+        let soloData = Data(#"{"role":"user","content":"Inspect it","run_id":"solo-7"}"#.utf8)
+        let solo = try JSONDecoder().decode(HistoryMessage.self, from: soloData)
+        XCTAssertEqual(solo.runID, "solo-7")
+
+        let block = ChatBlock(kind: .user, text: "Build it", runID: "run-42")
         let restored = try JSONDecoder().decode(
             ChatBlock.self,
             from: JSONEncoder().encode(block)
         )
-        XCTAssertEqual(restored.teamRunID, "run-42")
+        XCTAssertEqual(restored.runID, "run-42")
+        XCTAssertTrue(String(decoding: try JSONEncoder().encode(block), as: UTF8.self)
+            .contains("run_id"))
     }
 
     func testSessionInfoDecodesManagedTaskMetadataTolerantly() throws {

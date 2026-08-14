@@ -84,6 +84,9 @@ class ToolContext:
     #: App-owned process broker. Work submitted here is detached from the
     #: current turn and therefore survives Stop.
     background_service: Callable[[dict[str, Any]], str] | None = None
+    #: Per-turn Solo Swarm executor. It is installed only for eligible Solo
+    #: turns and removed before the turn identity is released.
+    delegate_read_only: Callable[[dict[str, Any]], str] | None = None
 
     def stopped(self) -> bool:
         return bool(self.should_stop and self.should_stop())
@@ -987,6 +990,12 @@ def _impl_propose_memory(args: dict[str, Any], ctx: ToolContext) -> str:
     )
 
 
+def _impl_delegate_read_only(args: dict[str, Any], ctx: ToolContext) -> str:
+    if ctx.delegate_read_only is None:
+        return "Error: Solo Swarm is not active for this turn."
+    return ctx.delegate_read_only(args)
+
+
 _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
     "read_file": _impl_read_file,
     "write_file": _impl_write_file,
@@ -1005,6 +1014,7 @@ _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
     "search_workspace_knowledge": _impl_search_workspace_knowledge,
     "search_memory": _impl_search_memory,
     "propose_memory": _impl_propose_memory,
+    "delegate_read_only": _impl_delegate_read_only,
 }
 
 

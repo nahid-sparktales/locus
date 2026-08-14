@@ -6,6 +6,7 @@
 .build-*/
 DerivedData/
 .derivedData*/
+.release-tools/
 xcuserdata/
 *.xcuserstate
 *.app

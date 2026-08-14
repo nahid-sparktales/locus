@@ -24,6 +24,12 @@ SAFE_TOOL_NAMES = frozenset({
     "read_file", "glob", "grep", "list_dir", "git_status", "git_diff",
     "workspace_knowledge_search",
 })
+SENSITIVE_WORKSPACE_DIRS = frozenset({".git", ".ssh", ".aws", ".gnupg"})
+SENSITIVE_WORKSPACE_FILES = frozenset({
+    ".env", ".npmrc", ".pypirc", ".netrc", ".authinfo",
+    "credentials", "credentials.json", "service-account.json",
+})
+SENSITIVE_WORKSPACE_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".jks")
 
 
 class OpenAIResponsesMultiAgentError(RuntimeError):
@@ -111,7 +117,9 @@ class ReadOnlyWorkspaceTools:
                 raise OpenAIResponsesMultiAgentError("glob must stay inside the workspace")
             values = [
                 str(path.relative_to(self.root)) for path in self.root.rglob("*")
-                if path.is_file() and fnmatch.fnmatch(str(path.relative_to(self.root)), pattern)
+                if path.is_file()
+                and not self._sensitive(path)
+                and fnmatch.fnmatch(str(path.relative_to(self.root)), pattern)
             ]
             return json.dumps(values[:2_000])
         if name == "grep":
@@ -120,7 +128,16 @@ class ReadOnlyWorkspaceTools:
                 raise OpenAIResponsesMultiAgentError("grep query is required")
             target = self._path(arguments.get("path") or ".")
             result = subprocess.run(
-                ["rg", "--fixed-strings", "--line-number", "--", query, str(target)],
+                [
+                    "rg", "--fixed-strings", "--line-number",
+                    "--glob", "!**/.env*", "--glob", "!**/.git/**",
+                    "--glob", "!**/.ssh/**", "--glob", "!**/.aws/**",
+                    "--glob", "!**/.gnupg/**", "--glob", "!**/*.pem",
+                    "--glob", "!**/*.key", "--glob", "!**/*.p12",
+                    "--glob", "!**/*.pfx", "--glob", "!**/*.jks",
+                    "--glob", "!**/credentials", "--glob", "!**/credentials.json",
+                    "--glob", "!**/service-account.json", "--", query, str(target),
+                ],
                 cwd=self.root, text=True, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, timeout=15, check=False,
             )
@@ -129,10 +146,17 @@ class ReadOnlyWorkspaceTools:
             target = self._path(arguments.get("path") or ".")
             if not target.is_dir():
                 raise OpenAIResponsesMultiAgentError("list_dir target is not a directory")
-            return json.dumps(sorted(path.name for path in target.iterdir())[:2_000])
+            return json.dumps(sorted(
+                path.name for path in target.iterdir() if not self._sensitive(path)
+            )[:2_000])
         if name in {"git_status", "git_diff"}:
             command = ["git", "status", "--short", "--branch"] if name == "git_status" else [
-                "git", "diff", "--no-ext-diff", "--unified=3",
+                "git", "diff", "--no-ext-diff", "--no-textconv", "--unified=3", "--", ".",
+                ":(exclude)**/.env*", ":(exclude)**/.ssh/**", ":(exclude)**/.aws/**",
+                ":(exclude)**/.gnupg/**", ":(exclude)**/*.pem", ":(exclude)**/*.key",
+                ":(exclude)**/*.p12", ":(exclude)**/*.pfx", ":(exclude)**/*.jks",
+                ":(exclude)**/credentials", ":(exclude)**/credentials.json",
+                ":(exclude)**/service-account.json",
             ]
             result = subprocess.run(
                 command, cwd=self.root, text=True, stdout=subprocess.PIPE,
@@ -152,7 +176,24 @@ class ReadOnlyWorkspaceTools:
             raise OpenAIResponsesMultiAgentError("workspace path escaped the approved root") from exc
         if require_file and not candidate.is_file():
             raise OpenAIResponsesMultiAgentError("workspace file was not found")
+        if self._sensitive(candidate):
+            raise OpenAIResponsesMultiAgentError("workspace credential paths are not available to workers")
         return candidate
+
+    def _sensitive(self, path: Path) -> bool:
+        try:
+            relative = path.resolve().relative_to(self.root)
+        except ValueError:
+            return True
+        parts = relative.parts
+        if any(part.lower() in SENSITIVE_WORKSPACE_DIRS for part in parts):
+            return True
+        name = relative.name.lower()
+        return (
+            name in SENSITIVE_WORKSPACE_FILES
+            or name.startswith(".env.")
+            or name.endswith(SENSITIVE_WORKSPACE_SUFFIXES)
+        )
 
 
 class OpenAIResponsesMultiAgentClient:
@@ -172,6 +213,8 @@ class OpenAIResponsesMultiAgentClient:
         should_stop: Callable[[], bool] | None = None,
         knowledge_search: Callable[[str], Any] | None = None,
         opener: Callable[..., Any] | None = None,
+        before_request: Callable[[], None] | None = None,
+        usage_observer: Callable[[int, int], None] | None = None,
     ) -> None:
         if not api_key:
             raise OpenAIResponsesMultiAgentError("OpenAI API credentials are missing")
@@ -188,6 +231,8 @@ class OpenAIResponsesMultiAgentClient:
         self.workspace_tools = ReadOnlyWorkspaceTools(workspace, knowledge_search)
         self.tools = safe_tool_schemas(knowledge_enabled=knowledge_search is not None)
         self._opener = opener or urllib.request.urlopen
+        self.before_request = before_request
+        self.usage_observer = usage_observer
 
     def run(
         self,
@@ -210,7 +255,7 @@ class OpenAIResponsesMultiAgentClient:
         ]
         final_text = ""
         evidence_records: list[dict[str, Any]] = []
-        usage: dict[str, int] = {}
+        usage = {"prompt_tokens": 0, "completion_tokens": 0}
         known_agents = {"/root"}
         tree_depth = 0
         for _continuation in range(32):
@@ -232,6 +277,8 @@ class OpenAIResponsesMultiAgentClient:
             pending_calls: list[dict[str, Any]] = []
             item_agents: dict[int, str] = {}
             root_chunks: list[str] = []
+            if self.before_request is not None:
+                self.before_request()
             for event in self._stream(payload):
                 event_type = str(event.get("type") or "")
                 if event_type == "response.output_item.added":
@@ -262,10 +309,12 @@ class OpenAIResponsesMultiAgentClient:
                 elif event_type == "response.completed":
                     response = event.get("response") if isinstance(event.get("response"), dict) else {}
                     raw_usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
-                    usage = {
-                        "prompt_tokens": int(raw_usage.get("input_tokens") or 0),
-                        "completion_tokens": int(raw_usage.get("output_tokens") or 0),
-                    }
+                    prompt_tokens = max(int(raw_usage.get("input_tokens") or 0), 0)
+                    completion_tokens = max(int(raw_usage.get("output_tokens") or 0), 0)
+                    usage["prompt_tokens"] += prompt_tokens
+                    usage["completion_tokens"] += completion_tokens
+                    if self.usage_observer is not None:
+                        self.usage_observer(prompt_tokens, completion_tokens)
                 elif event_type in {"error", "response.failed", "response.incomplete"}:
                     raise OpenAIResponsesMultiAgentError(
                         "OpenAI Responses multi-agent request did not complete"

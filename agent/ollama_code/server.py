@@ -91,6 +91,7 @@ from .sessions import (
     strip_prompt_decoration,
     update_session_metadata,
 )
+from .solo_swarm import SoloSwarmError, SoloSwarmExecutor, snapshot_route
 from .telemetry import TelemetryError, send_otlp, traceparent_for_run
 from .tools import truncate_output
 from .transcript_search import TranscriptIndex, TranscriptSearchError
@@ -177,6 +178,7 @@ class ChatService:
         self.turn_future: Any = None
         self._terminal_events = 0
         self.active_orchestrator: TeamOrchestrator | None = None
+        self.active_solo_swarm: SoloSwarmExecutor | None = None
         self.active_team: TeamPreparation | None = None
         self.active_run_id: str | None = None
         self.cancel_requested_runs: set[str] = set()
@@ -258,6 +260,26 @@ class ChatService:
     # -- core event bridge (called from the worker thread) --
     def emit(self, event: dict[str, Any]) -> None:
         event_type = str(event.get("type") or "")
+        if event_type == "turn_done" and self.active_solo_swarm is not None:
+            event = dict(event)
+            worker_usage = self.active_solo_swarm.usage
+            root_prompt = max(int(event.get("prompt_tokens") or 0), 0)
+            root_completion = max(int(event.get("completion_tokens") or 0), 0)
+            event["prompt_tokens"] = root_prompt + worker_usage["prompt_tokens"]
+            event["completion_tokens"] = root_completion + worker_usage["completion_tokens"]
+            event["model_calls"] = max(int(event.get("model_calls") or 0), 0) + worker_usage["model_calls"]
+            event["solo_swarm"] = True
+            event["usage"] = {
+                "prompt_tokens": event["prompt_tokens"],
+                "completion_tokens": event["completion_tokens"],
+                "metered_tokens": event["prompt_tokens"] + event["completion_tokens"],
+                "model_calls": event["model_calls"],
+                "root_prompt_tokens": root_prompt,
+                "root_completion_tokens": root_completion,
+                "worker_prompt_tokens": worker_usage["prompt_tokens"],
+                "worker_completion_tokens": worker_usage["completion_tokens"],
+                "worker_model_calls": worker_usage["model_calls"],
+            }
         if event_type == "turn_done":
             self._terminal_events += 1
             self._record_turn_usage(event)
@@ -4103,6 +4125,7 @@ def _run_user_turn(
     agent_config: dict[str, Any] | None = None,
     mode: str = "work",
     reserved_run_id: str = "",
+    solo_swarm_enabled: bool = False,
 ) -> None:
     """Worker entry that makes the UI's chat-only boundary explicit."""
     run_id = reserved_run_id if re.fullmatch(r"[A-Za-z0-9_-]{1,160}", reserved_run_id) else uuid.uuid4().hex
@@ -4127,6 +4150,7 @@ def _run_user_turn(
     svc.emit({
         "type": "run_started", "run_id": run_id, "run_kind": "solo",
         "state": "running", "traceparent": traceparent_for_run(run),
+        "solo_swarm": bool(solo_swarm_enabled and not just_chat),
     })
     configuration = AgentConfiguration.parse(agent_config)
     memory_context = _automatic_memory_context(
@@ -4137,12 +4161,44 @@ def _run_user_turn(
         mode="ask" if just_chat else mode,
         memory_context=memory_context,
     )
+    swarm: SoloSwarmExecutor | None = None
+    workspace_read_allowed = configuration.capability_policy.workspace_read
+    if solo_swarm_enabled and not just_chat and workspace_read_allowed:
+        knowledge_search = None
+        if capability_enabled("workspace_knowledge"):
+            workspace = svc.core.workspace_root or svc.core.cwd
+
+            def knowledge_search(query: str) -> Any:
+                return _knowledge_store(workspace).search(query, limit=8)
+
+        try:
+            swarm = SoloSwarmExecutor(
+                snapshot_route(svc.core, svc.codex),
+                emit=svc.emit,
+                should_stop=svc.core._should_stop_stream,
+                knowledge_search=knowledge_search,
+            )
+        except SoloSwarmError as exc:
+            svc.emit({"type": "note", "text": str(exc)})
+    elif solo_swarm_enabled and not just_chat:
+        svc.emit({
+            "type": "note",
+            "text": "Solo Swarm stayed single-model because workspace reading is disabled.",
+        })
+    svc.active_solo_swarm = swarm
+    svc.core.tool_ctx.delegate_read_only = swarm.execute if swarm is not None else None
+    svc.core.tool_registry.set_solo_swarm_enabled(swarm is not None)
+    svc.core.reset_system_message()
     try:
         svc.core.run_turn(
             text,
             svc.decide,
             allow_tools=not just_chat,
             attachments=attachments,
+            persisted_user_metadata={
+                "run_id": run_id,
+                **({"solo_swarm": True} if swarm is not None else {}),
+            },
         )
     except Exception:
         # Preserve a durable terminal boundary while the run identity is still
@@ -4156,6 +4212,10 @@ def _run_user_turn(
     finally:
         # ``turn_done`` persists the terminal boundary before this identity is
         # released. A process crash leaves the running record recoverable.
+        svc.core.tool_registry.set_solo_swarm_enabled(False)
+        svc.core.tool_ctx.delegate_read_only = None
+        svc.active_solo_swarm = None
+        svc.core.reset_system_message()
         svc.active_run_id = None
         svc.core.tool_ctx.memory_run_id = ""
 
@@ -4208,7 +4268,7 @@ def _run_team_turn(
         # addressable in the sidebar. Internal writer prompts stay in memory.
         if not isinstance(manifest.get("_resume"), dict):
             core._add_message({
-                "role": "user", "content": text, "team_run_id": run_id,
+                "role": "user", "content": text, "run_id": run_id,
             })
         workspace_root = core.workspace_root
         if team.use_managed_worktree and svc.current_task is None \
@@ -5490,6 +5550,19 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             _command_error(svc, str(mtype), str(exc))
             return
         team_manifest = msg.get("team")
+        solo_swarm = msg.get("solo_swarm")
+        if solo_swarm is not None and not isinstance(solo_swarm, dict):
+            _command_error(svc, str(mtype), "The Solo Swarm setting is malformed.")
+            return
+        solo_swarm_enabled = bool(
+            isinstance(solo_swarm, dict) and solo_swarm.get("enabled") is True
+        )
+        if solo_swarm_enabled and (just_chat or text.startswith("/") or team_manifest is not None):
+            _command_error(
+                svc, str(mtype),
+                "Solo Swarm requires an ordinary Solo Work, Plan, or Build message.",
+            )
+            return
         if team_manifest is not None and (just_chat or text.startswith("/")):
             _command_error(svc, str(mtype), "Team routing requires an ordinary Work message.")
             return
@@ -5505,6 +5578,10 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             args = (svc, text, just_chat, attachments, agent_config, mode or "work")
             if reserved_run_id:
                 args = (*args, reserved_run_id)
+            if solo_swarm_enabled:
+                if not reserved_run_id:
+                    args = (*args, "")
+                args = (*args, True)
             call = _run_user_turn
         if not svc.start_turn(loop, call, *args):
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")

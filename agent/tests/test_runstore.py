@@ -37,7 +37,7 @@ def test_run_store_persists_agent_tree_metadata_without_rewriting_job_ids(tmp_pa
     store.append_event("run-tree", {
         "type": "agent_job_started", "job_id": "plan.1", "node_id": "plan.1",
         "parent_node_id": "plan", "depth": 1,
-        "execution_engine": "locus_managed", "agent_id": "reviewer",
+        "execution_engine": "openai_responses", "agent_id": "reviewer",
         "agent_name": "Reviewer", "role": "reviewer", "goal": "Inspect tests",
     })
     store.append_event("run-tree", {

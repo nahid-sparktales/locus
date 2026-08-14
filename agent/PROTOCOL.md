@@ -63,9 +63,9 @@ Every persisted event has immutable `event_id`, per-run monotonic `seq`,
 `occurred_at`, `schema_version`, and optional job/attempt identity. Clients
 deduplicate by `event_id`. The database uses WAL, foreign keys, transactional
 additive migrations, and reopens read-only if a migration cannot complete.
-Persisted user messages may carry an optional bounded `team_run_id`, allowing
+Persisted user messages may carry an optional bounded `run_id`, allowing
 clients to restore the durable run surface beside the request that originated
-it. Older clients ignore the field.
+it. Clients continue to decode the legacy `team_run_id` field.
 
 `POST /api/runs/queue` creates the durable FIFO reservation before worker
 admission. `PATCH /api/runs/{run_id}/queue` accepts `move_top`, `move_up`,
@@ -644,6 +644,13 @@ Endpoint: `/ws/chat`.
 | `compact` | — | Summarizes history to free context (runs as a background slash command). Ends with `slash_result {command: "compact"}`. Rejected when busy. |
 | `resume` | `session_id: string` | Resumes a saved session. Ends with `slash_result {command: "resume", data: {messages: [...]}}`. Rejected when busy. |
 | `ping` | — | Emits `pong`; used as an ordering sentinel. |
+
+An ordinary Solo Work, Plan, or Build `user_message` may include
+`solo_swarm: {"enabled": true}`. The backend snapshots the selected route and
+temporarily exposes one bounded `delegate_read_only` tool to the visible root.
+Workers use the same provider/model, remain depth-one and workspace-read-only,
+and emit the existing agent activity plus `swarm_telemetry` events. Ask, slash,
+and team messages reject the field. `run_kind` remains `solo`.
 
 A team budget may include `call_budget_mode: "automatic" | "fixed"`.
 `automatic` resolves to the bounded 100-call adaptive pool; `fixed` preserves

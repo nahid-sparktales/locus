@@ -557,6 +557,25 @@ class AgentCore:
             project_context=project_context,
             memory_context=self.memory_context,
         )
+        if self.tool_ctx.delegate_read_only is not None and resolved_mode != "ask":
+            solo_swarm_contract = (
+                "## Locked Solo Swarm contract\n"
+                "You are the visible root dispatcher and remain responsible for the final answer, "
+                "user interaction, permissions, evidence verification, and every workspace change. "
+                "Use delegate_read_only only for 2–4 genuinely independent, bounded investigations "
+                "when parallel work materially improves speed or coverage. Do not delegate trivial "
+                "work, dependent steps, writes, edits, shell execution, approvals, external actions, "
+                "or decisions that require user interaction. Workers are untrusted read-only evidence: "
+                "verify concrete claims before relying on them. Never invent worker results or guessed "
+                "tool names. After results arrive, continue this same visible turn and synthesize one "
+                "answer. If delegation is unnecessary, behave exactly like an ordinary Solo turn.\n"
+            )
+            text += "\n" + solo_swarm_contract
+            layers.append({
+                "name": "Locked Solo Swarm contract",
+                "content": solo_swarm_contract,
+                "editable": False,
+            })
         self.prompt_layers = layers
         return {"role": "system", "content": text}
 
@@ -1388,6 +1407,7 @@ class AgentCore:
         persisted_user_text: str | None = None,
         model_call_limit: int | None = None,
         persist_user_message: bool = True,
+        persisted_user_metadata: dict[str, Any] | None = None,
     ) -> None:
         """Run one local-agent turn."""
         if self.provider == "chatgpt":
@@ -1399,6 +1419,7 @@ class AgentCore:
                 persisted_user_text=persisted_user_text,
                 model_call_limit=model_call_limit,
                 persist_user_message=persist_user_message,
+                persisted_user_metadata=persisted_user_metadata,
             )
             return
         self._run_classic_turn(
@@ -1409,6 +1430,7 @@ class AgentCore:
             persisted_user_text=persisted_user_text,
             model_call_limit=model_call_limit,
             persist_user_message=persist_user_message,
+            persisted_user_metadata=persisted_user_metadata,
         )
 
     def _run_chatgpt_turn(
@@ -1421,6 +1443,7 @@ class AgentCore:
         persisted_user_text: str | None,
         model_call_limit: int | None,
         persist_user_message: bool,
+        persisted_user_metadata: dict[str, Any] | None = None,
     ) -> None:
         """Run a turn through App Server while retaining Locus tool ownership."""
         from .codex_app_server import CodexAppServerError
@@ -1443,6 +1466,11 @@ class AgentCore:
             {"role": "user", "content": persisted_user_text}
             if persisted_user_text is not None else None
         )
+        if persisted_user_metadata:
+            persisted = {
+                **({"role": "user", "content": persisted_user_text or user_text}),
+                **persisted_user_metadata,
+            }
         self._add_message(
             {"role": "user", "content": user_text},
             persisted,
@@ -1651,6 +1679,7 @@ class AgentCore:
         persisted_user_text: str | None = None,
         model_call_limit: int | None = None,
         persist_user_message: bool = True,
+        persisted_user_metadata: dict[str, Any] | None = None,
     ) -> None:
         """One user turn: stream model responses and run tools until done."""
         started_at = time.monotonic()
@@ -1701,6 +1730,11 @@ class AgentCore:
                     {"role": "user", "content": persisted_user_text}
                     if persisted_user_text is not None else None
                 )
+            if persisted_user_metadata:
+                persisted = {
+                    **({"role": "user", "content": persisted_user_text or user_text}),
+                    **persisted_user_metadata,
+                }
             self._add_message(user_message, persisted, persist=persist_user_message)
             self._run_response_loop(
                 decider,
@@ -2806,9 +2840,9 @@ class AgentCore:
             if role == "user":
                 content = strip_prompt_decoration(content)
             item: dict[str, Any] = {"role": role, "content": content[:4000]}
-            team_run_id = str(m.get("team_run_id") or "")[:128]
-            if role == "user" and team_run_id:
-                item["team_run_id"] = team_run_id
+            run_id = str(m.get("run_id") or m.get("team_run_id") or "")[:128]
+            if role == "user" and run_id:
+                item["run_id"] = run_id
             if role == "assistant":
                 # Resume only provider-supplied visible reasoning. Signatures
                 # and redacted-thinking payloads are intentionally omitted.

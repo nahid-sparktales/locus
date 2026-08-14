@@ -131,12 +131,6 @@ struct WorkspaceView: View {
                     .lineLimit(1)
                     .accessibilityIdentifier("workspace.sessionTitle")
             }
-            .overlay(alignment: .topLeading) {
-                finderButton
-                    // The button border begins to the left so the glyph itself
-                    // shares the folder icon's exact leading axis below.
-                    .offset(x: -10, y: -31)
-            }
 
             Spacer()
 
@@ -353,41 +347,6 @@ struct WorkspaceView: View {
     private var teamProgressTitle: String {
         if model.selectedTeamRouteIssue != nil { return "Needs setup" }
         return model.orchestrationState?.title ?? "Ready"
-    }
-
-    private var finderTargetURL: URL {
-        if let checkout = model.activeTaskRecord?.executionPath,
-           FileManager.default.fileExists(atPath: checkout) {
-            return URL(fileURLWithPath: checkout, isDirectory: true)
-        }
-        return URL(fileURLWithPath: model.workspacePath, isDirectory: true)
-    }
-
-    private var finderButton: some View {
-        Button {
-            NSWorkspace.shared.open(finderTargetURL)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "folder")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("Finder")
-            }
-            .font(.system(size: 10, weight: .semibold, design: .monospaced))
-            .foregroundStyle(LocusTheme.muted)
-            .padding(.horizontal, 10)
-            .frame(height: 24)
-            .background(LocusTheme.white.opacity(0.72))
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(LocusTheme.line, lineWidth: 1)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Open workspace in Finder")
-        .accessibilityLabel("Open workspace in Finder")
-        .accessibilityIdentifier("workspace.openInFinder")
     }
 
     private var teamProgressColor: Color {
@@ -1733,10 +1692,16 @@ private struct ConversationView: View {
                 )
                 .equatable()
             }
-            if block.kind == .user, let runID = block.teamRunID {
-                TeamRunBoardView(runID: runID, request: block.text)
-                    .environmentObject(model)
-                    .id("team-board-\(runID)")
+            if block.kind == .user, let runID = block.runID {
+                if model.runKind(for: runID) == "team" {
+                    TeamRunBoardView(runID: runID, request: block.text)
+                        .environmentObject(model)
+                        .id("team-board-\(runID)")
+                } else {
+                    SoloSwarmPanelView(runID: runID)
+                        .environmentObject(model)
+                        .id("solo-swarm-panel-\(runID)")
+                }
             }
         }
         .overlay {

@@ -213,6 +213,42 @@ def test_safe_tool_call_continues_the_same_response_history(tmp_path):
     }]
 
 
+def test_hosted_continuations_observe_calls_and_aggregate_usage(tmp_path):
+    (tmp_path / "note.txt").write_text("bounded evidence\n")
+    requests = []
+    observed_usage = []
+    first = [
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "function_call", "name": "read_file",
+                "arguments": '{"path":"note.txt"}', "call_id": "call-1",
+                "agent": {"agent_name": "/root"},
+            },
+        },
+        {
+            "type": "response.completed",
+            "response": {"usage": {"input_tokens": 12, "output_tokens": 3}},
+        },
+    ]
+    second = _events('{"evidence_records": []}', child="/root/researcher")
+
+    def opener(_request, **_kwargs):
+        requests.append(True)
+        return _Response(first if len(requests) == 1 else second)
+
+    client = OpenAIResponsesMultiAgentClient(
+        api_key="test", model="gpt-5.6", workspace=str(tmp_path), opener=opener,
+        before_request=lambda: None,
+        usage_observer=lambda prompt, completion: observed_usage.append((prompt, completion)),
+    )
+    result = client.run("inspect")
+
+    assert len(requests) == 2
+    assert observed_usage == [(12, 3), (12, 8)]
+    assert result.usage == {"prompt_tokens": 24, "completion_tokens": 11}
+
+
 def test_malformed_hosted_root_schema_is_a_safe_adapter_error(tmp_path):
     def opener(_request, **_kwargs):
         return _Response(_events("not-json", child="/root/researcher"))

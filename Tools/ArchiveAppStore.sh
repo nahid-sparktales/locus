@@ -57,7 +57,7 @@ xcodegen generate >/dev/null
 
 xcodebuild -quiet \
     -project "${repo_root}/Locus.xcodeproj" \
-    -scheme Locus \
+    -scheme LocusMAS \
     -configuration ReleaseMAS \
     -destination "generic/platform=macOS" \
     -archivePath "${archive_path}" \

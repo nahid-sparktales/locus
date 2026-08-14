@@ -108,6 +108,16 @@ The native terminal uses SwiftTerm 1.18.0 at commit
 - License: MIT
 - License text: `ThirdPartyLicenses/SwiftTerm-1.18.0/LICENSE`
 
+## Sparkle
+
+Direct-download builds use Sparkle 2.9.4 at commit
+`b6496a74a087257ef5e6da1c5b29a447a60f5bd7` to verify, download, and install
+Locus updates. Sparkle is not linked or bundled in the Mac App Store build.
+
+- Source: https://github.com/sparkle-project/Sparkle/releases/tag/2.9.4
+- License: MIT and bundled permissive component licenses
+- License text: `ThirdPartyLicenses/Sparkle-2.9.4/LICENSE`
+
 ## Bundled coding skills
 
 Locus includes complete, offline copies of five skill directories. Their

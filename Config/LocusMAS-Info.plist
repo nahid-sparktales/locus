@@ -45,25 +45,5 @@
 	<string>Locus needs access when you choose files or projects from Downloads.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 SparkTales Inc.</string>
-	<key>SUAllowsAutomaticUpdates</key>
-	<true/>
-	<key>SUAutomaticallyUpdate</key>
-	<true/>
-	<key>SUEnableAutomaticChecks</key>
-	<true/>
-	<key>SUEnableSystemProfiling</key>
-	<false/>
-	<key>SUFeedURL</key>
-	<string>https://github.com/nahid-sparktales/locus/releases/latest/download/appcast.xml</string>
-	<key>SUPublicEDKey</key>
-	<string>S/F9z1jR20s26+oHOxVjFend/ajDH04OY8Ietw+IDl4=</string>
-	<key>SURequireSignedFeed</key>
-	<true/>
-	<key>SUScheduledCheckInterval</key>
-	<integer>86400</integer>
-	<key>SUScheduledImpatientCheckInterval</key>
-	<integer>604800</integer>
-	<key>SUVerifyUpdateBeforeExtraction</key>
-	<true/>
 </dict>
 </plist>

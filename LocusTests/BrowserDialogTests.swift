@@ -1,4 +1,4 @@
-import AppKit
+ import AppKit
 import WebKit
 import XCTest
 @testable import Locus

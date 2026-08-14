@@ -1174,6 +1174,7 @@ enum SettingsPresentationContext {
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var updates: AppUpdateController
     @Environment(\.dismiss) private var dismiss
     @State private var draft = AppSettings()
     @State private var localWindow = ""
@@ -1245,6 +1246,7 @@ struct SettingsView: View {
                 case .extensions:
                     ExtensionsSettingsView()
                         .environmentObject(model)
+                case .updates: updatesPage
                 case .shortcuts:
                     KeyboardShortcutsSettingsView()
                 }
@@ -1650,6 +1652,62 @@ struct SettingsView: View {
                     .font(.system(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var updatesPage: some View {
+        Form {
+            Section("Installed version") {
+                LabeledContent("Locus") {
+                    Text(updates.versionLabel)
+                        .accessibilityIdentifier("settings.updateVersion")
+                }
+            }
+
+            Section("Software updates") {
+                if updates.isAvailable {
+                    Toggle(
+                        "Automatically check for updates",
+                        isOn: Binding(
+                            get: { updates.automaticallyChecksForUpdates },
+                            set: { updates.setAutomaticallyChecksForUpdates($0) }
+                        )
+                    )
+                    .accessibilityIdentifier("settings.automaticUpdateChecks")
+
+                    Toggle(
+                        "Download and install updates automatically",
+                        isOn: Binding(
+                            get: { updates.automaticallyDownloadsUpdates },
+                            set: { updates.setAutomaticallyDownloadsUpdates($0) }
+                        )
+                    )
+                    .disabled(!updates.automaticallyChecksForUpdates)
+                    .accessibilityIdentifier("settings.automaticUpdateDownloads")
+
+                    Button("Check for Updates…") { updates.checkForUpdates() }
+                        .disabled(!updates.canCheckForUpdates)
+                        .accessibilityIdentifier("settings.checkForUpdates")
+
+                    Text("Locus checks the stable release channel daily. Updates download securely in the background and install when Locus quits. If an update needs administrator approval, macOS asks before installing it.")
+                        .font(.system(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Label(
+                        "Updates are installed through the Mac App Store.",
+                        systemImage: "shippingbox.fill"
+                    )
+                    .font(.system(size: 10))
+                    .accessibilityIdentifier("settings.appStoreUpdates")
+
+                    Text("Keep automatic updates enabled in the App Store to receive new Locus releases without downloading them manually.")
+                        .font(.system(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .formStyle(.grouped)

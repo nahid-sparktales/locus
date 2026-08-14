@@ -18,8 +18,8 @@ settings:
     SWIFT_VERSION: "5.10"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     ENABLE_USER_SCRIPT_SANDBOXING: NO
-    CURRENT_PROJECT_VERSION: 16
-    MARKETING_VERSION: 1.13.0
+    CURRENT_PROJECT_VERSION: 17
+    MARKETING_VERSION: 1.14.0
   configs:
     Debug:
       CODE_SIGN_STYLE: Manual
@@ -50,11 +50,14 @@ settings:
       ENABLE_APP_SANDBOX: YES
       ENABLE_HARDENED_RUNTIME: YES
 packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle.git
+    exactVersion: 2.9.4
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm.git
     exactVersion: 1.18.0
-targets:
-  Locus:
+targetTemplates:
+  LocusApplication:
     type: application
     platform: macOS
     sources:
@@ -82,19 +85,37 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus
         PRODUCT_NAME: Locus
+        COMBINE_HIDPI_IMAGES: YES
+targets:
+  Locus:
+    templates:
+      - LocusApplication
+    settings:
+      base:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Locus/Info.plist
-        COMBINE_HIDPI_IMAGES: YES
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD"
+    dependencies:
+      - package: Sparkle
+      - package: SwiftTerm
+    scheme:
+      testTargets:
+        - LocusTests
+        - LocusUITests
+  LocusMAS:
+    templates:
+      - LocusApplication
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Config/LocusMAS-Info.plist
+        PRODUCT_MODULE_NAME: Locus
       configs:
         ReleaseMAS:
           CODE_SIGN_ENTITLEMENTS: Config/Locus.entitlements
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_APP_STORE"
     dependencies:
       - package: SwiftTerm
-    scheme:
-      testTargets:
-        - LocusTests
-        - LocusUITests
   LocusTests:
     type: bundle.unit-test
     platform: macOS
@@ -118,3 +139,26 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.ui-tests
         TEST_TARGET_NAME: Locus
         GENERATE_INFOPLIST_FILE: YES
+  LocusMASUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: LocusMASUITests
+    dependencies:
+      - target: LocusMAS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.mas-ui-tests
+        TEST_TARGET_NAME: LocusMAS
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  LocusMAS:
+    build:
+      targets:
+        LocusMAS: all
+    archive:
+      config: ReleaseMAS
+    test:
+      config: Debug
+      targets:
+        - LocusMASUITests

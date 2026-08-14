@@ -1,5 +1,133 @@
 import SwiftUI
 
+/// A deliberately small inline view of temporary Solo workers. It appears only
+/// after the root delegates and has no team controls, approvals, or writer UI.
+struct SoloSwarmPanelView: View {
+    @EnvironmentObject private var model: AppModel
+    let runID: String
+
+    var body: some View {
+        Group {
+            if hasDelegation {
+                if isActive {
+                    TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                        panel(now: timeline.date, compact: false)
+                    }
+                } else {
+                    panel(now: Date(), compact: true)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("soloSwarmPanel.\(runID)")
+    }
+
+    private func panel(now: Date, compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: compact ? 6 : 10) {
+            HStack(spacing: 8) {
+                Image(systemName: isSuccessful ? "checkmark.circle.fill" : "circle.hexagongrid.fill")
+                    .foregroundStyle(isSuccessful ? LocusTheme.success : LocusTheme.signalDeep)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("SOLO SWARM")
+                        .font(.system(size: 8, weight: .bold))
+                        .tracking(0.8)
+                        .foregroundStyle(LocusTheme.muted)
+                    Text(summaryText(now: now))
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(LocusTheme.ink)
+                }
+                Spacer()
+                if modelCalls > 0 || delegatedTokens > 0 {
+                    Text("\(modelCalls) calls · \(delegatedTokens.formatted()) tok")
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+            }
+            if !compact {
+                Divider()
+                ForEach(liveActivities) { activity in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: activity.state == .completed
+                            ? "checkmark.circle.fill" : "circle.dotted")
+                            .foregroundStyle(activity.state == .completed
+                                ? LocusTheme.success : LocusTheme.signalDeep)
+                            .frame(width: 13)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(activity.agentName)
+                                .font(.system(size: 9, weight: .semibold))
+                            Text(activity.goal)
+                                .font(.system(size: 8))
+                                .foregroundStyle(LocusTheme.inkSoft)
+                                .lineLimit(2)
+                            Text([activity.provider, activity.model,
+                                  activity.executionEngine.replacingOccurrences(of: "_", with: " ")]
+                                .filter { !$0.isEmpty }.joined(separator: " · "))
+                                .font(.system(size: 7, design: .monospaced))
+                                .foregroundStyle(LocusTheme.muted)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .locusCard(radius: 10)
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(LocusTheme.signalDeep.opacity(0.28), lineWidth: 1)
+        }
+    }
+
+    private var run: OrchestrationRun? { model.runRecord(for: runID) }
+    private var isActive: Bool { model.orchestrationRunID == runID && model.isBusy }
+    private var liveActivities: [AgentActivity] {
+        guard model.orchestrationRunID == runID else { return [] }
+        return model.agentActivities.filter { $0.depth == 1 }
+    }
+    private var attempts: [AgentJobAttempt] { run?.attempts ?? [] }
+    private var hasDelegation: Bool {
+        !liveActivities.isEmpty || !attempts.isEmpty || (run?.jobCount ?? 0) > 0
+    }
+    private var workerCount: Int {
+        if !liveActivities.isEmpty { return Set(liveActivities.map(\.id)).count }
+        return Set(attempts.map(\.jobID)).count
+    }
+    private var completedCount: Int {
+        if !liveActivities.isEmpty {
+            return liveActivities.filter { $0.state == .completed }.count
+        }
+        return attempts.filter { $0.state == "completed" }.count
+    }
+    private var modelCalls: Int {
+        if !liveActivities.isEmpty { return model.teamModelCalls }
+        return attempts.reduce(0) { $0 + $1.modelCalls }
+    }
+    private var delegatedTokens: Int {
+        if !liveActivities.isEmpty { return model.teamMeteredTokens }
+        return attempts.reduce(0) { $0 + $1.promptTokens + $1.completionTokens }
+    }
+    private var isSuccessful: Bool {
+        !isActive && workerCount > 0 && completedCount == workerCount
+    }
+
+    private func summaryText(now: Date) -> String {
+        let progress = isActive
+            ? "\(completedCount)/\(workerCount) workers"
+            : "\(workerCount) workers · \(completedCount) completed"
+        let elapsed: TimeInterval
+        if isActive, let started = liveActivities.compactMap(\.startedAt).min() {
+            elapsed = max(now.timeIntervalSince(started), 0)
+        } else if let run {
+            elapsed = max((run.completedAt ?? run.updatedAt) - run.createdAt, 0)
+        } else {
+            elapsed = 0
+        }
+        let seconds = Int(elapsed)
+        return "\(progress) · \(seconds < 60 ? "\(seconds)s" : "\(seconds / 60)m \(seconds % 60)s")"
+    }
+}
+
 /// A durable, user-facing representation of one team run. It is rendered in
 /// the conversation directly below the request carrying the same run id, so
 /// planning and execution never displace the message composer.
