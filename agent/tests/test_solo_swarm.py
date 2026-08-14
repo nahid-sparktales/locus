@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import ollama_code.openai_responses_multi_agent as responses_multi_agent
 from ollama_code.core import AgentCore
 from ollama_code.ollama import ChatResponse
 from ollama_code.openai_responses_multi_agent import (
@@ -379,7 +380,7 @@ def test_worker_tool_inventory_is_read_only_and_executor_rejects_guessed_names(t
         executor.workspace_tools.execute("write_file", '{"path":"owned"}')
 
 
-def test_worker_reads_cannot_escape_or_open_workspace_credentials(tmp_path):
+def test_worker_reads_cannot_escape_or_open_workspace_credentials(tmp_path, monkeypatch):
     outside = tmp_path.parent / f"{tmp_path.name}-outside-secret.txt"
     outside.write_text("outside-secret")
     (tmp_path / "escape.txt").symlink_to(outside)
@@ -388,6 +389,15 @@ def test_worker_reads_cannot_escape_or_open_workspace_credentials(tmp_path):
     (tmp_path / "visible.txt").write_text("ordinary evidence\n")
     executor = SoloSwarmExecutor(
         _route(tmp_path), emit=lambda _event: None, should_stop=lambda: False,
+    )
+
+    def missing_ripgrep(*_args, **_kwargs):
+        raise FileNotFoundError("rg")
+
+    monkeypatch.setattr(
+        responses_multi_agent.subprocess,
+        "run",
+        missing_ripgrep,
     )
 
     with pytest.raises(OpenAIResponsesMultiAgentError, match="escaped"):
@@ -401,6 +411,10 @@ def test_worker_reads_cannot_escape_or_open_workspace_credentials(tmp_path):
         "grep", '{"path":".","query":"workspace-secret"}',
     )
     assert "workspace-secret" not in searched
+    ordinary = executor.workspace_tools.execute(
+        "grep", '{"path":".","query":"ordinary evidence"}',
+    )
+    assert "visible.txt:1:ordinary evidence" in ordinary
 
 
 def test_root_delegation_tool_is_ephemeral_and_requires_workspace_read(tmp_path):

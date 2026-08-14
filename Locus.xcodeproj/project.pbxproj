@@ -545,9 +545,9 @@
 			targets = (
 				4896638691C4AFF8C4B6701D /* Locus */,
 				7323BA3A6165E3D7FD525C6C /* LocusMAS */,
-				5B63DF227FB0A11687B95EAC /* LocusMASUITests */,
 				A0463F65BF102D8D5DE8EDD0 /* LocusTests */,
 				54F38C8317FB3757358B2EBD /* LocusUITests */,
+				5B63DF227FB0A11687B95EAC /* LocusMASUITests */,
 			);
 		};
 /* End PBXProject section */

@@ -127,20 +127,23 @@ class ReadOnlyWorkspaceTools:
             if not query:
                 raise OpenAIResponsesMultiAgentError("grep query is required")
             target = self._path(arguments.get("path") or ".")
-            result = subprocess.run(
-                [
-                    "rg", "--fixed-strings", "--line-number",
-                    "--glob", "!**/.env*", "--glob", "!**/.git/**",
-                    "--glob", "!**/.ssh/**", "--glob", "!**/.aws/**",
-                    "--glob", "!**/.gnupg/**", "--glob", "!**/*.pem",
-                    "--glob", "!**/*.key", "--glob", "!**/*.p12",
-                    "--glob", "!**/*.pfx", "--glob", "!**/*.jks",
-                    "--glob", "!**/credentials", "--glob", "!**/credentials.json",
-                    "--glob", "!**/service-account.json", "--", query, str(target),
-                ],
-                cwd=self.root, text=True, stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, timeout=15, check=False,
-            )
+            try:
+                result = subprocess.run(
+                    [
+                        "rg", "--fixed-strings", "--line-number",
+                        "--glob", "!**/.env*", "--glob", "!**/.git/**",
+                        "--glob", "!**/.ssh/**", "--glob", "!**/.aws/**",
+                        "--glob", "!**/.gnupg/**", "--glob", "!**/*.pem",
+                        "--glob", "!**/*.key", "--glob", "!**/*.p12",
+                        "--glob", "!**/*.pfx", "--glob", "!**/*.jks",
+                        "--glob", "!**/credentials", "--glob", "!**/credentials.json",
+                        "--glob", "!**/service-account.json", "--", query, str(target),
+                    ],
+                    cwd=self.root, text=True, stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT, timeout=15, check=False,
+                )
+            except FileNotFoundError:
+                return self._grep_without_ripgrep(target, query)
             return result.stdout[:120_000]
         if name == "list_dir":
             target = self._path(arguments.get("path") or ".")
@@ -167,6 +170,52 @@ class ReadOnlyWorkspaceTools:
             raise OpenAIResponsesMultiAgentError("workspace knowledge search is not approved")
         return json.dumps(self.knowledge_search(str(arguments.get("query") or "")[:4_000]))[:120_000]
 
+    def _grep_without_ripgrep(self, target: Path, query: str) -> str:
+        max_candidates = 10_000
+        max_file_bytes = 5_000_000
+        max_total_bytes = 50_000_000
+        max_output_chars = 120_000
+        candidates: Iterable[Path] = [target] if target.is_file() else target.rglob("*")
+        output: list[str] = []
+        output_chars = 0
+        scanned_bytes = 0
+        examined_paths = 0
+
+        for path in candidates:
+            if examined_paths >= max_candidates or scanned_bytes >= max_total_bytes:
+                break
+            examined_paths += 1
+            try:
+                resolved = path.resolve()
+                if not resolved.is_file() or self._sensitive(resolved):
+                    continue
+                size = resolved.stat().st_size
+            except OSError:
+                continue
+            if size > max_file_bytes or scanned_bytes + size > max_total_bytes:
+                continue
+            try:
+                with resolved.open("rb") as handle:
+                    data = handle.read(max_file_bytes + 1)
+            except OSError:
+                continue
+            if len(data) > max_file_bytes or b"\0" in data:
+                continue
+            scanned_bytes += len(data)
+            text = data.decode("utf-8", errors="replace")
+            relative = resolved.relative_to(self.root)
+            for line_number, line in enumerate(text.splitlines(), start=1):
+                if query not in line:
+                    continue
+                entry = f"{relative}:{line_number}:{line}\n"
+                remaining = max_output_chars - output_chars
+                if len(entry) >= remaining:
+                    output.append(entry[:remaining])
+                    return "".join(output)
+                output.append(entry)
+                output_chars += len(entry)
+        return "".join(output)
+
     def _path(self, value: Any, *, require_file: bool = False) -> Path:
         raw = str(value or ".")
         candidate = (self.root / raw).resolve()
@@ -191,7 +240,7 @@ class ReadOnlyWorkspaceTools:
         name = relative.name.lower()
         return (
             name in SENSITIVE_WORKSPACE_FILES
-            or name.startswith(".env.")
+            or name.startswith(".env")
             or name.endswith(SENSITIVE_WORKSPACE_SUFFIXES)
         )
 
