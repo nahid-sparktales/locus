@@ -19,11 +19,11 @@ struct CommandPaletteView: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 16))
+                    .font(.locus(size: 16))
                     .foregroundStyle(LocusTheme.muted)
                 TextField("Run a command…", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 13))
+                    .font(.locus(size: 13))
                     .focused($focused)
                     .accessibilityIdentifier("palette.search")
                     .onKeyPress(.upArrow) {
@@ -39,8 +39,8 @@ struct CommandPaletteView: View {
                         return .handled
                     }
                 Button("esc") { dismiss() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 8, design: .monospaced))
+                    .buttonStyle(.locus())
+                    .font(.locus(size: 8, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
                     .padding(.horizontal, 6)
                     .frame(height: 22)
@@ -57,7 +57,7 @@ struct CommandPaletteView: View {
 
             if commands.isEmpty {
                 Text("No commands match that search.")
-                    .font(.system(size: 10))
+                    .font(.locus(size: 10))
                     .foregroundStyle(LocusTheme.muted)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -70,7 +70,7 @@ struct CommandPaletteView: View {
                                 } label: {
                                     HStack(spacing: 10) {
                                         Image(systemName: command.symbol)
-                                            .font(.system(size: 13))
+                                            .font(.locus(size: 13))
                                             .foregroundStyle(LocusTheme.muted)
                                             .frame(width: 30, height: 30)
                                             .background(LocusTheme.panel)
@@ -80,16 +80,16 @@ struct CommandPaletteView: View {
                                                     .stroke(LocusTheme.line, lineWidth: 1)
                                             }
                                         Text(command.title)
-                                            .font(.system(size: 10, weight: .medium))
+                                            .font(.locus(size: 10, weight: .medium))
                                         Spacer()
                                         if index == selection {
                                             Text("↵")
-                                                .font(.system(size: 8, design: .monospaced))
+                                                .font(.locus(size: 8, design: .monospaced))
                                                 .foregroundStyle(LocusTheme.muted)
                                         }
                                         if !command.shortcut.isEmpty {
                                             Text(command.shortcut)
-                                                .font(.system(size: 8, design: .monospaced))
+                                                .font(.locus(size: 8, design: .monospaced))
                                                 .foregroundStyle(LocusTheme.muted)
                                         }
                                     }
@@ -99,7 +99,7 @@ struct CommandPaletteView: View {
                                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                     .contentShape(Rectangle())
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.locus())
                                 .onHover { hovering in
                                     if hovering { selection = index }
                                 }
@@ -121,7 +121,7 @@ struct CommandPaletteView: View {
                 Spacer()
                 Text("⌘K Close")
             }
-            .font(.system(size: 7))
+            .font(.locus(size: 7))
             .foregroundStyle(LocusTheme.muted)
             .padding(.horizontal, 14)
             .frame(height: 34)
@@ -142,7 +142,7 @@ struct CommandPaletteView: View {
             // shortcut that opened it.
             Button("") { dismiss() }
                 .keyboardShortcut("k", modifiers: .command)
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .opacity(0)
                 .accessibilityHidden(true)
         }
@@ -202,9 +202,9 @@ private struct ExtensionsSettingsView: View {
                     Text(error).lineLimit(2)
                     Spacer()
                     Button("Dismiss") { model.extensionErrorMessage = nil }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.locus())
                 }
-                .font(.system(size: 9))
+                .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.coral)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
@@ -250,6 +250,10 @@ private struct ExtensionsSettingsView: View {
                 Task { await model.setMCPServer(server.id, enabled: true, scope: scope) }
             }
         }
+        .sheet(item: $model.mcpDeviceAuthorization) { prompt in
+            MCPDeviceAuthorizationView(prompt: prompt)
+                .environmentObject(model)
+        }
     }
 
     private var installedPane: some View {
@@ -268,16 +272,16 @@ private struct ExtensionsSettingsView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(plugin.displayName ?? plugin.name)
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.locus(size: 12, weight: .semibold))
                                 Text([
                                     plugin.version.map { "Version \($0)" },
                                     plugin.author,
                                 ].compactMap { $0 }.joined(separator: " · "))
-                                .font(.system(size: 9))
+                                .font(.locus(size: 9))
                                 .foregroundStyle(LocusTheme.muted)
                                 if plugin.updateAvailable == true {
                                     Text("Update available")
-                                        .font(.system(size: 8, weight: .semibold))
+                                        .font(.locus(size: 8, weight: .semibold))
                                         .foregroundStyle(LocusTheme.warning)
                                 }
                             }
@@ -289,7 +293,7 @@ private struct ExtensionsSettingsView: View {
                         }
                         if let description = plugin.description, !description.isEmpty {
                             Text(description)
-                                .font(.system(size: 10))
+                                .font(.locus(size: 10))
                                 .foregroundStyle(LocusTheme.muted)
                         }
                         HStack(spacing: 12) {
@@ -301,7 +305,7 @@ private struct ExtensionsSettingsView: View {
                             }
                             Spacer()
                         }
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         HStack {
                             let workspaceEnabled = !plugin.disabledWorkspaces.contains(model.workspacePath)
@@ -330,7 +334,7 @@ private struct ExtensionsSettingsView: View {
                             }
                             .disabled(model.isBusy)
                         }
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                     }
                     .padding(12)
                     .locusCard(radius: 10)
@@ -372,7 +376,7 @@ private struct ExtensionsSettingsView: View {
                 }
                 .disabled(marketplaceSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .font(.system(size: 9))
+            .font(.locus(size: 9))
 
             ScrollView {
                 LazyVStack(spacing: 9) {
@@ -383,13 +387,13 @@ private struct ExtensionsSettingsView: View {
                                 .foregroundStyle(LocusTheme.muted)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(entry.displayName ?? entry.name)
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .font(.locus(size: 11, weight: .semibold))
                                 Text(entry.description?.isEmpty == false ? entry.description! : (entry.category ?? "Plugin"))
-                                    .font(.system(size: 9))
+                                    .font(.locus(size: 9))
                                     .foregroundStyle(LocusTheme.muted)
                                     .lineLimit(2)
                                 if let error = entry.error {
-                                    Text(error).font(.system(size: 8)).foregroundStyle(LocusTheme.coral)
+                                    Text(error).font(.locus(size: 8)).foregroundStyle(LocusTheme.coral)
                                 }
                             }
                             Spacer()
@@ -428,10 +432,10 @@ private struct ExtensionsSettingsView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("External tools from MCP servers")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.locus(size: 11, weight: .semibold))
                     if !model.extensions.capabilities.stdio {
                         Text("This App Store build supports remote MCP servers and skills. Local command-based servers are unavailable.")
-                            .font(.system(size: 9))
+                            .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.muted)
                     }
                 }
@@ -447,10 +451,10 @@ private struct ExtensionsSettingsView: View {
                     if !model.extensions.mcpPresets.isEmpty {
                         HStack {
                             Text("Recommended")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(.locus(size: 11, weight: .semibold))
                             Spacer()
                             Text("Bundled templates · no startup network access")
-                                .font(.system(size: 8))
+                                .font(.locus(size: 8))
                                 .foregroundStyle(LocusTheme.muted)
                         }
                         ForEach(model.extensions.mcpPresets) { preset in
@@ -464,20 +468,20 @@ private struct ExtensionsSettingsView: View {
                                 .accessibilityIdentifier("extensions.mcp.preset.\(preset.id).logo")
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(preset.displayName)
-                                        .font(.system(size: 10, weight: .semibold))
+                                        .font(.locus(size: 10, weight: .semibold))
                                     Text(preset.description)
-                                        .font(.system(size: 9))
+                                        .font(.locus(size: 9))
                                         .foregroundStyle(LocusTheme.muted)
                                         .lineLimit(2)
                                     Text(preset.url)
-                                        .font(.system(size: 8, design: .monospaced))
+                                        .font(.locus(size: 8, design: .monospaced))
                                         .foregroundStyle(LocusTheme.muted)
                                         .textSelection(.enabled)
                                 }
                                 Spacer()
                                 if preset.installed {
                                     Label("Added", systemImage: "checkmark.circle.fill")
-                                        .font(.system(size: 9))
+                                        .font(.locus(size: 9))
                                         .foregroundStyle(LocusTheme.success)
                                 } else {
                                     Button("Review & connect") { presetReview = preset }
@@ -490,7 +494,7 @@ private struct ExtensionsSettingsView: View {
                         Divider().padding(.vertical, 4)
                         HStack {
                             Text("Configured servers")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(.locus(size: 11, weight: .semibold))
                             Spacer()
                         }
                     }
@@ -514,9 +518,9 @@ private struct ExtensionsSettingsView: View {
                                 }
                                 .accessibilityIdentifier("extensions.mcp.server.\(server.id).logo")
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(server.name).font(.system(size: 11, weight: .semibold))
+                                    Text(server.name).font(.locus(size: 11, weight: .semibold))
                                     Text("\(server.transport.uppercased()) · \(server.state ?? "disconnected") · \(server.toolCount ?? 0) tools")
-                                        .font(.system(size: 8))
+                                        .font(.locus(size: 8))
                                         .foregroundStyle(LocusTheme.muted)
                                 }
                                 Spacer()
@@ -532,7 +536,7 @@ private struct ExtensionsSettingsView: View {
                                 }
                             }
                             if let error = server.error, !error.isEmpty {
-                                Text(error).font(.system(size: 8)).foregroundStyle(LocusTheme.coral)
+                                Text(error).font(.locus(size: 8)).foregroundStyle(LocusTheme.coral)
                             }
                             HStack {
                                 Menu("Default: \(policyTitle(server.approvalMode))") {
@@ -575,7 +579,7 @@ private struct ExtensionsSettingsView: View {
                                     }
                                 }
                             }
-                            .font(.system(size: 9))
+                            .font(.locus(size: 9))
 
                             let tools = model.extensionTools.filter { $0.serverID == server.id }
                             if !tools.isEmpty {
@@ -583,8 +587,8 @@ private struct ExtensionsSettingsView: View {
                                     ForEach(tools) { tool in
                                         HStack {
                                             VStack(alignment: .leading, spacing: 1) {
-                                                Text(tool.name).font(.system(size: 9, weight: .medium, design: .monospaced))
-                                                Text(tool.description).font(.system(size: 8)).foregroundStyle(LocusTheme.muted).lineLimit(1)
+                                                Text(tool.name).font(.locus(size: 9, weight: .medium, design: .monospaced))
+                                                Text(tool.description).font(.locus(size: 8)).foregroundStyle(LocusTheme.muted).lineLimit(1)
                                             }
                                             Spacer()
                                             Menu(policyTitle(tool.approvalMode)) {
@@ -593,7 +597,7 @@ private struct ExtensionsSettingsView: View {
                                         }
                                     }
                                 }
-                                .font(.system(size: 9))
+                                .font(.locus(size: 9))
                             }
                         }
                         .padding(11)
@@ -609,9 +613,9 @@ private struct ExtensionsSettingsView: View {
         VStack(spacing: 10) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Reusable workflows").font(.system(size: 11, weight: .semibold))
+                    Text("Reusable workflows").font(.locus(size: 11, weight: .semibold))
                     Text("Type $skill in the composer. Locus can also load skills automatically when their metadata matches your request.")
-                        .font(.system(size: 9)).foregroundStyle(LocusTheme.muted)
+                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
                 }
                 Spacer()
                 Button("Import skill…") { chooseSkill() }.disabled(model.isBusy)
@@ -623,19 +627,41 @@ private struct ExtensionsSettingsView: View {
                             Image(systemName: "sparkles").foregroundStyle(LocusTheme.muted)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("$\(skill.builtin == true ? skill.name : skill.id)")
-                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                Text(skill.description).font(.system(size: 9)).foregroundStyle(LocusTheme.muted).lineLimit(2)
+                                    .font(.locus(size: 10, weight: .semibold, design: .monospaced))
+                                Text(skill.description).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted).lineLimit(2)
                                 Text([
                                     skill.provenance?.provider ?? skill.source,
                                     skill.shadowed == true ? "superseded by your copy" : nil,
-                                    skill.allowImplicitInvocation == false ? "explicit only" : "automatic or explicit",
+                                    skill.activation == "startup" ? "always on in development chats" : nil,
+                                    skill.activation == "explicit" || skill.allowImplicitInvocation == false
+                                        ? "explicit only"
+                                        : (skill.activation == "startup" ? nil : "automatic or explicit"),
                                 ].compactMap { $0 }.joined(separator: " · "))
-                                    .font(.system(size: 8)).foregroundStyle(LocusTheme.muted)
+                                    .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
                             }
                             Spacer()
                             if skill.source == "imported" || skill.builtin == true {
-                                Button(skill.enabled ? "Disable" : "Enable") {
-                                    Task { await model.setSkill(skill.id, enabled: !skill.enabled, scope: "global") }
+                                let enabledEverywhere = skill.enabledGlobal ?? skill.enabled
+                                Button(enabledEverywhere ? "Disable globally" : "Enable globally") {
+                                    Task {
+                                        await model.setSkill(
+                                            skill.id,
+                                            enabled: !enabledEverywhere,
+                                            scope: "global"
+                                        )
+                                    }
+                                }
+                                let enabledHere = skill.disabledWorkspaces?.contains(model.workspacePath) != true
+                                    && (enabledEverywhere
+                                        || skill.enabledWorkspaces?.contains(model.workspacePath) == true)
+                                Button(enabledHere ? "Disable here" : "Enable here") {
+                                    Task {
+                                        await model.setSkill(
+                                            skill.id,
+                                            enabled: !enabledHere,
+                                            scope: "workspace"
+                                        )
+                                    }
                                 }
                                 if skill.source == "imported" {
                                     Button("Remove", role: .destructive) {
@@ -644,7 +670,7 @@ private struct ExtensionsSettingsView: View {
                                 }
                             } else {
                                 Text(skill.enabled ? "Enabled" : "Managed by plugin")
-                                    .font(.system(size: 8)).foregroundStyle(LocusTheme.muted)
+                                    .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
                             }
                         }
                         .padding(10)
@@ -714,6 +740,59 @@ private struct ExtensionsSettingsView: View {
     }
 }
 
+private struct MCPDeviceAuthorizationView: View {
+    @EnvironmentObject private var model: AppModel
+    let prompt: MCPDeviceAuthorizationPrompt
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 10) {
+                MCPLogo(
+                    name: prompt.serverName,
+                    url: "https://github.com",
+                    presetID: "github",
+                    size: 34
+                )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Connect GitHub")
+                        .font(.locus(size: 14, weight: .bold))
+                    Text("Locus opened GitHub's secure device verification page.")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+            }
+            Text(prompt.userCode)
+                .font(.locus(size: 24, weight: .bold, design: .monospaced))
+                .tracking(3)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .locusCard(radius: 10)
+            Text("Copy this one-time code, enter it on GitHub, then approve the repositories Locus may access. This window closes automatically when sign-in completes.")
+                .font(.locus(size: 9))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Cancel", role: .cancel) {
+                    model.cancelMCPDeviceAuthorization()
+                }
+                Spacer()
+                Button("Copy Code") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(prompt.userCode, forType: .string)
+                }
+                Button("Open GitHub") {
+                    NSWorkspace.shared.open(prompt.verificationURL)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(LocusTheme.ink)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
+    }
+}
+
 private struct PluginTrustReviewView: View {
     @Environment(\.dismiss) private var dismiss
     let item: PluginInstallReview
@@ -722,9 +801,9 @@ private struct PluginTrustReviewView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(item.entry.installed ? "Review plugin update" : "Review plugin")
-                .font(.system(size: 16, weight: .bold))
+                .font(.locus(size: 16, weight: .bold))
             Text(item.trust.plugin.displayName ?? item.trust.plugin.name)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.locus(size: 12, weight: .semibold))
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
                 GridRow { Text("Publisher"); Text(item.trust.plugin.author ?? "Not provided") }
                 GridRow {
@@ -739,7 +818,7 @@ private struct PluginTrustReviewView: View {
                 GridRow { Text("Digest"); Text(String(item.trust.digest.prefix(20)) + "…").fontDesign(.monospaced) }
                 GridRow { Text("Skills"); Text("\(item.trust.trust.skills)") }
             }
-            .font(.system(size: 9))
+            .font(.locus(size: 9))
             if !item.trust.trust.skillScripts.isEmpty {
                 trustWarning("Skill scripts", item.trust.trust.skillScripts)
             }
@@ -748,7 +827,7 @@ private struct PluginTrustReviewView: View {
             }
             ForEach(item.trust.trust.mcpServers, id: \.name) { server in
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("MCP: \(server.name)").font(.system(size: 10, weight: .semibold))
+                    Text("MCP: \(server.name)").font(.locus(size: 10, weight: .semibold))
                     Text(
                         server.transport == "stdio"
                             ? ([server.command].compactMap { $0 } + (server.args ?? [])).joined(separator: " ")
@@ -758,7 +837,7 @@ private struct PluginTrustReviewView: View {
                     if !server.requestedEnv.isEmpty { Text("Environment access: \(server.requestedEnv.joined(separator: ", "))") }
                     if !server.requestedHeaders.isEmpty { Text("Headers: \(server.requestedHeaders.joined(separator: ", "))") }
                 }
-                .font(.system(size: 9))
+                .font(.locus(size: 9))
                 .padding(8)
                 .locusCard(radius: 7)
             }
@@ -766,7 +845,7 @@ private struct PluginTrustReviewView: View {
                 trustWarning("Not supported by Locus V1", item.trust.trust.unsupported)
             }
             Text("Install only if you trust this publisher and source. Capability changes will require another review.")
-                .font(.system(size: 9)).foregroundStyle(LocusTheme.muted)
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
             Spacer()
             HStack {
                 Button("Cancel") { dismiss() }
@@ -783,8 +862,8 @@ private struct PluginTrustReviewView: View {
 
     private func trustWarning(_ title: String, _ values: [String]) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.system(size: 10, weight: .semibold))
-            ForEach(values, id: \.self) { Text("• \($0)").font(.system(size: 9)) }
+            Text(title).font(.locus(size: 10, weight: .semibold))
+            ForEach(values, id: \.self) { Text("• \($0)").font(.locus(size: 9)) }
         }
         .foregroundStyle(LocusTheme.warning)
     }
@@ -806,10 +885,10 @@ private struct MCPPresetReviewView: View {
                     size: 34
                 )
                 Text("Review \(preset.displayName) connection")
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.locus(size: 16, weight: .bold))
             }
             Text(preset.description)
-                .font(.system(size: 10))
+                .font(.locus(size: 10))
                 .foregroundStyle(LocusTheme.muted)
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 7) {
                 GridRow { Text("Host"); Text(URL(string: preset.url)?.host ?? preset.url) }
@@ -828,19 +907,19 @@ private struct MCPPresetReviewView: View {
                 GridRow { Text("Resources"); Text(preset.resourcesDiscoverable ? "Discoverable" : "Disabled") }
                 GridRow { Text("Prompts"); Text(preset.promptsEnabled ? "Allowed" : "Disabled") }
             }
-            .font(.system(size: 9))
+            .font(.locus(size: 9))
             if preset.requiresProjectRef == true {
                 TextField("Supabase project reference", text: $projectRef)
                     .textFieldStyle(.roundedBorder)
                 Text("The initial URL is project-scoped and read-only. Write access requires an explicit later edit.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
             }
             Label(preset.warning, systemImage: "hand.raised.fill")
-                .font(.system(size: 9))
+                .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.warning)
             Text("Continue copies this versioned template into your settings while it is disabled. Locus then signs in if needed, probes the server, and asks once more before enabling it.")
-                .font(.system(size: 9))
+                .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.muted)
             Spacer()
             HStack {
@@ -873,13 +952,13 @@ private struct MCPEnableReviewView: View {
                     size: 34
                 )
                 Label("Connection verified", systemImage: "checkmark.shield.fill")
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.locus(size: 16, weight: .bold))
                     .foregroundStyle(LocusTheme.success)
             }
             Text("\(server.name) completed its tool probe. Enable it now, or keep the reviewed server disabled in Settings.")
-                .font(.system(size: 10))
+                .font(.locus(size: 10))
             Text("The default policy uses MCP safety annotations. Resources are discoverable; server prompts remain disabled until you explicitly allow them.")
-                .font(.system(size: 9))
+                .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.muted)
             Spacer()
             HStack {
@@ -920,7 +999,7 @@ private struct MCPServerEditorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(server == nil ? "Add MCP server" : "Edit MCP server")
-                .font(.system(size: 16, weight: .bold))
+                .font(.locus(size: 16, weight: .bold))
             Form {
                 TextField("Name", text: $name)
                 Picker("Transport", selection: $transport) {
@@ -1027,13 +1106,13 @@ private struct MCPCredentialView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Credentials for \(server.name)").font(.system(size: 15, weight: .bold))
+            Text("Credentials for \(server.name)").font(.locus(size: 15, weight: .bold))
             if server.auth == "headers" || server.transport == "stdio" {
                 TextField(server.transport == "stdio" ? "Environment variable" : "Header name", text: $fieldName)
             }
             SecureField(server.auth == "bearer" ? "Bearer token" : "Secret value", text: $secret)
             Text("The value is stored in \(MCPCredentialStore.displayName), readable only by your macOS user account. Only the current access token or header is sent to the local agent in memory; OAuth registrations and refresh tokens stay native.")
-                .font(.system(size: 9)).foregroundStyle(LocusTheme.muted)
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
             HStack {
                 Button("Cancel") { dismiss() }
                 Spacer()
@@ -1072,9 +1151,9 @@ struct CheckpointSheet: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Session checkpoints")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(.locus(size: 15, weight: .bold))
                     Text("Save and restore the conversation, tasks, workspace, model, and context pack.")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 Spacer()
@@ -1083,7 +1162,7 @@ struct CheckpointSheet: View {
                 } label: {
                     Image(systemName: "xmark")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .accessibilityLabel("Close checkpoints")
                 .accessibilityIdentifier("checkpoints.close")
             }
@@ -1109,12 +1188,12 @@ struct CheckpointSheet: View {
             if model.checkpoints.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "clock.badge.questionmark")
-                        .font(.system(size: 25))
+                        .font(.locus(size: 25))
                         .foregroundStyle(LocusTheme.muted)
                     Text("No checkpoints yet")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.locus(size: 10, weight: .semibold))
                     Text("Create one before a risky or exploratory turn.")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1124,17 +1203,17 @@ struct CheckpointSheet: View {
                         ForEach(model.checkpoints) { checkpoint in
                             HStack(spacing: 11) {
                                 Image(systemName: "clock.arrow.circlepath")
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .font(.locus(size: 14, weight: .semibold))
                                     .foregroundStyle(LocusTheme.signal)
                                     .frame(width: 34, height: 34)
                                     .background(LocusTheme.ink)
                                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(checkpoint.title)
-                                        .font(.system(size: 10, weight: .bold))
+                                        .font(.locus(size: 10, weight: .bold))
                                         .lineLimit(1)
                                     Text(checkpoint.createdAt.formatted(date: .abbreviated, time: .shortened))
-                                        .font(.system(size: 8))
+                                        .font(.locus(size: 8))
                                         .foregroundStyle(LocusTheme.muted)
                                 }
                                 Spacer()
@@ -1147,7 +1226,7 @@ struct CheckpointSheet: View {
                                 } label: {
                                     Image(systemName: "trash")
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.locus())
                                 .foregroundStyle(LocusTheme.coral)
                                 .help("Delete checkpoint")
                                 .accessibilityLabel("Delete \(checkpoint.title)")
@@ -1188,6 +1267,8 @@ struct SettingsView: View {
     @State private var addingAccount: ProviderAccount?
     @State private var editingAccount: ProviderAccount?
     @State private var accountPendingRemoval: ProviderAccount?
+    @State private var localModelPendingDeletion: ModelInfo?
+    @State private var deletingLocalModelName: String?
     let presentationContext: SettingsPresentationContext
 
     init(presentationContext: SettingsPresentationContext = .sheet) {
@@ -1199,9 +1280,9 @@ struct SettingsView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Locus Settings")
-                        .font(.system(size: 16, weight: .bold))
-                    Text("Local agent and browser configuration")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 16, weight: .bold))
+                    Text("Local agent, models, browser, and account configuration")
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 Spacer()
@@ -1212,11 +1293,12 @@ struct SettingsView: View {
                 } label: {
                     Image(systemName: "xmark")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .accessibilityLabel("Close settings")
                 .accessibilityIdentifier("settings.close")
             }
             .padding(17)
+            .locusSurface(.toolbar)
             .overlay(alignment: .bottom) {
                 Rectangle().fill(LocusTheme.line).frame(height: 1)
             }
@@ -1224,6 +1306,12 @@ struct SettingsView: View {
             HStack(spacing: 0) {
                 List(SettingsPage.allCases, selection: $model.settingsPage) { item in
                     Label(item.rawValue, systemImage: item.symbol)
+                        .font(LocusType.callout)
+                        // A native sidebar applies vibrancy and its own
+                        // selected-row treatment. Use the native semantic
+                        // label color here so macOS can resolve the correct
+                        // foreground against both states.
+                        .foregroundStyle(Color.primary)
                         .tag(item)
                         .accessibilityIdentifier("settings.page.\(item.accessibilityKey)")
                 }
@@ -1235,6 +1323,7 @@ struct SettingsView: View {
                 switch model.settingsPage {
                 case .general: generalPage
                 case .network: networkPage
+                case .browser: browserPage
                 case .accounts: accountsPage
                 case .agents:
                     AgentTeamsSettingsView()
@@ -1255,7 +1344,10 @@ struct SettingsView: View {
             // Network shares General's draft and Save: the proxy has no side
             // effects until Save, and Save is the single point where the
             // settings, the password file, and the agent relaunch commit.
-            if model.settingsPage == .general || model.settingsPage == .network {
+            if model.settingsPage == .general
+                || model.settingsPage == .network
+                || model.settingsPage == .browser
+            {
                 HStack {
                     Button("Cancel") {
                         model.clearAppearancePreview()
@@ -1269,7 +1361,7 @@ struct SettingsView: View {
                     // greyed-out button with no stated reason is a dead end.
                     if let error = proxyDraftError {
                         Text(error)
-                            .font(.system(size: 9))
+                            .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.coral)
                             .accessibilityIdentifier("settings.proxyError")
                     }
@@ -1290,6 +1382,7 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings.save")
                 }
                 .padding(15)
+                .locusSurface(.toolbar)
                 .overlay(alignment: .top) {
                     Rectangle().fill(LocusTheme.line).frame(height: 1)
                 }
@@ -1355,6 +1448,33 @@ struct SettingsView: View {
                 secondaryButton: .cancel()
             )
         }
+        .confirmationDialog(
+            "Delete \(localModelPendingDeletion?.name ?? "this model") from this Mac?",
+            isPresented: Binding(
+                get: { localModelPendingDeletion != nil },
+                set: { if !$0 { localModelPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: localModelPendingDeletion
+        ) { localModel in
+            Button("Delete Downloaded Model", role: .destructive) {
+                deletingLocalModelName = localModel.name
+                Task {
+                    await model.deleteLocalModelFromComputer(localModel)
+                    deletingLocalModelName = nil
+                    localModelPendingDeletion = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { localModelPendingDeletion = nil }
+        } message: { localModel in
+            Text(
+                "This permanently removes "
+                    + (localModel.size > 0
+                        ? "\(localModel.sizeLabel) of downloaded model data"
+                        : "the downloaded model data")
+                    + " from Ollama. Chats and notes are kept. You can download the model again later."
+            )
+        }
     }
 
     // MARK: - Pages
@@ -1377,7 +1497,7 @@ struct SettingsView: View {
                 .accessibilityValue(Text(draft.appearanceRaw))
 
                 Text("Selections preview immediately. Save keeps the choice; Cancel restores the saved appearance. System follows your Mac automatically.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -1394,24 +1514,50 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.showContextUsageInHeader")
 
                 Text("Both header status controls are hidden by default. They can also be changed from the workspace’s ellipsis menu.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("Local model") {
                 Label(
-                    "Local Ollama — models installed on this Mac appear in the picker automatically.",
+                    "Local Ollama — manage which downloaded models appear in Locus.",
                     systemImage: "bolt.fill"
                 )
-                .font(.system(size: 10))
+                .font(.locus(size: 10))
                 .foregroundStyle(LocusTheme.muted)
+
+                if model.installedLocalModels.isEmpty {
+                    Text(model.isModelOnline
+                        ? "No local models are installed."
+                        : "Connect to Ollama to see installed models.")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                } else {
+                    ForEach(model.installedLocalModels) { localModel in
+                        localModelRow(localModel)
+                    }
+                }
+
+                HStack {
+                    Button("Browse Models…") {
+                        model.openModelLibraryFromSettings()
+                        dismiss()
+                    }
+                    .accessibilityIdentifier("settings.localModels.browse")
+
+                    Button("Refresh") {
+                        Task { await model.refreshMetadata() }
+                    }
+                    .disabled(deletingLocalModelName != nil)
+                    .accessibilityIdentifier("settings.localModels.refresh")
+                }
 
                 TextField("Local context window in tokens (optional)", text: $localWindow)
                     .accessibilityIdentifier("settings.localContextWindow")
 
                 Text("Leave empty and Locus asks Ollama for the largest window the model was built for, up to 32,768 tokens — Ollama's own default is 4,096, most of which a turn spends on tools before the conversation starts. Bigger windows cost memory for the KV cache, and a model that ends up partly on the CPU is backed off automatically. Set a value to pin one exactly; it is requested as num_ctx and is what compaction budgets against.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1421,7 +1567,7 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings.maxIterations")
 
                 Text("Leave empty for 40. This ceiling applies to local, ChatGPT-plan, and API-backed requests because Locus still coordinates their tool loop. A request that reaches the limit stops and says so.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1438,7 +1584,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.soloPlanPresentation")
 
                 Picker(
-                    "Team requests — Team Runs",
+                    "Team & Solo Swarm requests — Runs",
                     selection: $draft.teamRunsPresentationRaw
                 ) {
                     ForEach(AutomaticInspectorPresentation.allCases) { presentation in
@@ -1448,7 +1594,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.teamRunsPresentation")
 
                 Text("Solo and team choices are independent. Choosing “Ask the first time” shows the matching explanation when that kind of request is first sent.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
             }
 
@@ -1476,7 +1622,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.worktreeRetentionLimit")
 
                 Text("Running chats stay attached to their own worker when you switch conversations. Worktrees isolate concurrent edits in the same Git repository.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1487,14 +1633,14 @@ struct SettingsView: View {
                 Toggle("Start as a login shell", isOn: $draft.terminalLoginShell)
                     .accessibilityIdentifier("settings.terminalLoginShell")
                 Text("Leave the executable empty to use $SHELL and then /bin/zsh. The terminal runs with your direct input and is separate from agent command permissions.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("Local agent") {
                 Text("The app includes its own local-agent runtime. These settings are used for custom or development backends.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                 TextField("Backend URL", text: $draft.backendURL)
                     .accessibilityIdentifier("settings.backendURL")
@@ -1508,11 +1654,6 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings.revealBackend")
                 }
-            }
-
-            Section("Browser") {
-                TextField("Home URL", text: $draft.previewURL)
-                    .accessibilityIdentifier("settings.previewURL")
             }
 
             Section("Notifications") {
@@ -1543,20 +1684,146 @@ struct SettingsView: View {
                 }
                 if let reason = model.modelRuntimePhase.message, !reason.isEmpty {
                     Text(reason)
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(runtimeColor(model.modelRuntimePhase))
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("settings.ollamaError")
                 }
                 if !model.backendLogHint.isEmpty {
                     Text(model.backendLogHint)
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 if !model.isAgentOnline || !model.isModelOnline {
                     Button("Retry Now") { model.retryLocalServices() }
                         .accessibilityIdentifier("settings.retryLocalServices")
                 }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func localModelRow(_ localModel: ModelInfo) -> some View {
+        let hidden = model.isLocalModelHidden(localModel.name)
+        let current = model.isCurrentRoute(account: nil, model: localModel.name)
+        let details = [
+            localModel.detail,
+            localModel.size > 0 ? localModel.sizeLabel : "",
+        ].filter { !$0.isEmpty }.joined(separator: " · ")
+
+        return HStack(spacing: 10) {
+            Image(systemName: hidden ? "eye.slash" : "shippingbox.fill")
+                .font(.locus(size: 11, weight: .medium))
+                .foregroundStyle(hidden ? LocusTheme.muted : LocusTheme.signalDeep)
+                .frame(width: 18)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(localModel.name)
+                        .font(.locus(size: 10, weight: .semibold))
+                        .lineLimit(1)
+                    if current {
+                        Text("IN USE")
+                            .font(.locus(size: 7, weight: .bold))
+                            .foregroundStyle(LocusTheme.signalDeep)
+                    }
+                    if hidden {
+                        Text("REMOVED FROM LOCUS")
+                            .font(.locus(size: 7, weight: .bold))
+                            .foregroundStyle(LocusTheme.muted)
+                    }
+                }
+                if !details.isEmpty {
+                    Text(details)
+                        .font(.locus(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            if deletingLocalModelName == localModel.name {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Deleting \(localModel.name)")
+            } else {
+                Menu {
+                    if hidden {
+                        Button("Restore to Locus", systemImage: "arrow.uturn.backward") {
+                            model.restoreLocalModelToLocus(localModel)
+                        }
+                    } else {
+                        Button("Remove from Locus", systemImage: "eye.slash") {
+                            model.removeLocalModelFromLocus(localModel)
+                        }
+                    }
+                    Divider()
+                    Button("Delete from This Mac…", systemImage: "trash", role: .destructive) {
+                        localModelPendingDeletion = localModel
+                    }
+                    .disabled(model.isBusy)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .frame(width: 24, height: 22)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .frame(width: 24)
+                .help("Manage \(localModel.name)")
+                .accessibilityLabel("Manage \(localModel.name)")
+                .accessibilityIdentifier("settings.localModels.manage.\(localModel.name)")
+            }
+        }
+        .padding(.vertical, 3)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var browserPage: some View {
+        Form {
+            Section("Browser") {
+                Toggle("Let the agent browse the web", isOn: $draft.browserEnabled)
+                    .accessibilityIdentifier("settings.browser.enabled")
+
+                Text("The agent can open pages, read them, and act on them in the Browser tab. Reading never asks. Page JavaScript follows the permission level in Settings → Permissions. Turning this off removes browser tools from the model.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("Defaults") {
+                TextField("Home URL", text: $draft.previewURL)
+                    .accessibilityIdentifier("settings.previewURL")
+
+                Picker("Default viewport", selection: $draft.browserViewportRaw) {
+                    ForEach(BrowserViewport.allCases) { viewport in
+                        Text(viewport.title).tag(viewport.rawValue)
+                    }
+                }
+                .accessibilityIdentifier("settings.browser.viewport")
+
+                Text("The home page is used when a new Browser tab opens. The viewport can still be changed per tab from the Browser toolbar.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("Privacy & data") {
+                Picker("Browsing profile", selection: $draft.browserPersistProfile) {
+                    Text("Forget when Locus quits").tag(false)
+                    Text("Keep per workspace").tag(true)
+                }
+                .accessibilityIdentifier("settings.browser.persistProfile")
+
+                Text("Forgetting browses ephemerally: cookies, logins, and cache do not outlive the app. Keeping stores a separate profile for each workspace, including that workspace’s signed-in sessions.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button("Clear Browsing Data…", role: .destructive) {
+                    model.browser.clearBrowsingData()
+                }
+                .accessibilityIdentifier("settings.browser.clearData")
             }
         }
         .formStyle(.grouped)
@@ -1576,13 +1843,13 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.proxyMode")
 
                 Text(proxyModeDetail)
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if draft.resolvedProxyMode == .system, ProxyConfigurator.systemProxyUsesPAC() {
                     Text("The system proxy is configured through a PAC file, which only the app's own requests can follow — the agent's traffic stays direct. Use a manual proxy to cover everything.")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.warning)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("settings.proxyPACWarning")
@@ -1606,7 +1873,7 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings.proxyBypass")
 
                     Text("Comma-separated: exact hostnames, IP addresses, or domain suffixes like .corp.example.com. Loopback addresses, the local agent, and the Ollama host always connect directly and do not need listing.")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1625,7 +1892,7 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings.proxyPassword")
 
                         Text("The password is written to \(CredentialStore.displayPath) on Save, readable only by your macOS user account. It is used by the app and its agent; commands the model runs see the proxy address but never the password, so they cannot pass its sign-in.")
-                            .font(.system(size: 9))
+                            .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.muted)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -1638,7 +1905,7 @@ struct SettingsView: View {
                             .accessibilityIdentifier("settings.proxyTest")
                         if let outcome = proxyTestOutcome {
                             Text(outcome.message)
-                                .font(.system(size: 9))
+                                .font(.locus(size: 9))
                                 .foregroundStyle(outcome.ok ? LocusTheme.success : LocusTheme.coral)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .accessibilityIdentifier("settings.proxyTestResult")
@@ -1649,7 +1916,7 @@ struct SettingsView: View {
 
             Section {
                 Text("The proxy carries the app's own requests, the agent's model and web traffic, extensions, and git. A proxy that stops answering is an error, never a silent direct connection. The agent restarts when these settings change.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1692,7 +1959,7 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings.checkForUpdates")
 
                     Text("Locus checks the stable release channel daily. Updates download securely in the background and install when Locus quits. If an update needs administrator approval, macOS asks before installing it.")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
@@ -1700,11 +1967,11 @@ struct SettingsView: View {
                         "Updates are installed through the Mac App Store.",
                         systemImage: "shippingbox.fill"
                     )
-                    .font(.system(size: 10))
+                    .font(.locus(size: 10))
                     .accessibilityIdentifier("settings.appStoreUpdates")
 
                     Text("Keep automatic updates enabled in the App Store to receive new Locus releases without downloading them manually.")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1821,7 +2088,7 @@ struct SettingsView: View {
             Section("Provider accounts") {
                 if model.providerAccounts.isEmpty {
                     Text("No accounts yet — Locus runs on local Ollama until you add one.")
-                        .font(.system(size: 10))
+                        .font(.locus(size: 10))
                         .foregroundStyle(LocusTheme.muted)
                         .accessibilityIdentifier("settings.accounts.empty")
                 }
@@ -1837,9 +2104,9 @@ struct SettingsView: View {
                             .frame(width: 7, height: 7)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(account.displayName)
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(.locus(size: 11, weight: .semibold))
                             Text(accountDetail(account))
-                                .font(.system(size: 9))
+                                .font(.locus(size: 9))
                                 .foregroundStyle(LocusTheme.muted)
                                 .lineLimit(1)
                         }
@@ -1866,7 +2133,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.accounts.add")
 
                 Text("API accounts keep their keys in \(CredentialStore.displayPath), readable only by your macOS user account. ChatGPT plan sign-in is isolated in OpenAI's managed runtime and its tokens never enter Locus account files.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1876,7 +2143,7 @@ struct SettingsView: View {
                     "Local Ollama needs no account — models installed on this Mac appear in the picker automatically.",
                     systemImage: "bolt.fill"
                 )
-                .font(.system(size: 10))
+                .font(.locus(size: 10))
                 .foregroundStyle(LocusTheme.muted)
 
                 Button("Browse Hugging Face Models…") {
@@ -1905,7 +2172,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.permissionMode")
 
                 Text(model.permissionMode.detail)
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(
                         model.permissionMode.isRisky ? LocusTheme.coral : LocusTheme.muted
                     )
@@ -1914,7 +2181,7 @@ struct SettingsView: View {
                 if !model.allowedTools.isEmpty {
                     LabeledContent("Always allowed") {
                         Text(model.allowedTools.joined(separator: ", "))
-                            .font(.system(size: 9))
+                            .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.muted)
                     }
                 }
@@ -1924,44 +2191,16 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings.resetPermissions")
 
                 Text("Ask and Accept File Edits confirm access outside the workspace. Full Access skips those confirmations, while the deny list and credential/transaction takeover rules still apply.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Label("macOS folder access is separate", systemImage: "folder.badge.questionmark")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.locus(size: 9, weight: .semibold))
                 Text("Full Access controls agent tool approvals. macOS may still ask Locus itself for Documents, Desktop, Accessibility, or Screen Recording access. A stable signed app normally remembers that system choice; rebuilding or launching a differently signed copy can make macOS ask again.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Section("Browser") {
-                Toggle("Let the agent browse the web", isOn: Binding(
-                    get: { model.settings.browserEnabled },
-                    set: { model.setBrowserEnabled($0) }
-                ))
-                .accessibilityIdentifier("settings.browser.enabled")
-                Text("The agent can open pages, read them, and act on them in the Browser tab. Reading never asks. Page JavaScript asks in Ask and Accept File Edits, and runs without another prompt in Full Access. Turning this off removes browser tools from the model.")
-                    .font(.system(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                Picker("Browsing profile", selection: Binding(
-                    get: { model.settings.browserPersistProfile },
-                    set: { model.setBrowserPersistProfile($0) }
-                )) {
-                    Text("Forget when Locus quits").tag(false)
-                    Text("Keep per workspace").tag(true)
-                }
-                .accessibilityIdentifier("settings.browser.persistProfile")
-                Text("Forgetting browses ephemerally: no cookies, logins, or cache outlive the app, and every launch starts cold. Keeping stores each workspace's profile on disk — pages load noticeably faster across launches, and the agent browses with that workspace's logins. Switching closes open tabs.")
-                    .font(.system(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("Clear Browsing Data") {
-                    model.browser.clearBrowsingData()
-                }
-                .accessibilityIdentifier("settings.browser.clearData")
             }
 
             Section("Computer Control") {
@@ -1973,7 +2212,7 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings.computerControl.enabled")
 
                     Text("Off by default. Read-only app inspection is automatic. Clicks, typing, keys, scrolling, and dragging follow the permission mode above, with non-bypassable safeguards for credentials and high-consequence actions.")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -1992,21 +2231,21 @@ struct SettingsView: View {
                         )
                     }
                     Text("Screenshots are target-window scoped and exclude Locus. Before a screenshot is sent to a hosted provider, Locus names that provider and asks once per session. Local Ollama screenshots remain local.")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Label("Unavailable in the Mac App Store build", systemImage: "lock.app.dashed")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.locus(size: 10, weight: .semibold))
                     Text("Apple requires App Sandbox for Mac App Store apps, while assistive Accessibility control is incompatible with that sandbox. Install the signed direct-download build to opt in.")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                     Link(
                         "Apple App Sandbox guidance",
                         destination: URL(string: "https://developer.apple.com/documentation/security/protecting-user-data-with-app-sandbox")!
                     )
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.locus(size: 9, weight: .semibold))
                 }
             }
         }
@@ -2028,7 +2267,7 @@ struct SettingsView: View {
                 Button("Open Settings", action: settings)
             }
         }
-        .font(.system(size: 9, weight: .semibold))
+        .font(.locus(size: 9, weight: .semibold))
     }
 
     private func accountDetail(_ account: ProviderAccount) -> String {

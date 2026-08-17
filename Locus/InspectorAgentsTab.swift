@@ -124,10 +124,10 @@ struct InspectorAgentsTab: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
                 Image(systemName: "doc.text.fill")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.locus(size: 12, weight: .semibold))
                     .foregroundStyle(LocusTheme.signalDeep)
                 Text("WORKSPACE INSTRUCTIONS")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.locus(size: 8, weight: .bold))
                     .tracking(0.8)
                     .foregroundStyle(LocusTheme.muted)
                     .accessibilityIdentifier("agents.content")
@@ -137,7 +137,7 @@ struct InspectorAgentsTab: View {
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .foregroundStyle(LocusTheme.muted)
                 .disabled(model.isLoadingAgentInstructions || model.isSavingAgentInstructions)
                 .help("Reload AGENTS.md from disk")
@@ -148,8 +148,9 @@ struct InspectorAgentsTab: View {
                         model.revealAgentInstructionsInFinder()
                     } label: {
                         Image(systemName: "folder")
+                            .accessibilityHidden(true)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.locus())
                     .foregroundStyle(LocusTheme.muted)
                     .help("Reveal AGENTS.md in Finder")
                     .accessibilityLabel("Reveal AGENTS.md in Finder")
@@ -158,13 +159,13 @@ struct InspectorAgentsTab: View {
             }
 
             Text("AGENTS.md gives the coding agent persistent guidance for this workspace: project conventions, commands, boundaries, and verification steps.")
-                .font(.system(size: 9))
+                .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.inkSoft)
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
 
             Text("Locus loads the root file for every Work turn. It is ordinary project text, so keep secrets out and commit it when the guidance should be shared.")
-                .font(.system(size: 8))
+                .font(.locus(size: 8))
                 .foregroundStyle(LocusTheme.muted)
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -174,7 +175,7 @@ struct InspectorAgentsTab: View {
 
             if let error = model.agentInstructionsError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 8, weight: .medium))
+                    .font(.locus(size: 8, weight: .medium))
                     .foregroundStyle(LocusTheme.coral)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("agents.error")
@@ -190,10 +191,10 @@ struct InspectorAgentsTab: View {
         VStack(spacing: 0) {
             HStack {
                 Text("AGENTS.md")
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .font(.locus(size: 9, weight: .semibold, design: .monospaced))
                 Spacer()
                 Text(model.agentInstructionsHasUnsavedChanges ? "UNSAVED" : "SAVED")
-                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .font(.locus(size: 7, weight: .bold, design: .monospaced))
                     .tracking(0.5)
                     .foregroundStyle(
                         model.agentInstructionsHasUnsavedChanges
@@ -205,7 +206,7 @@ struct InspectorAgentsTab: View {
             .frame(height: 34)
 
             TextEditor(text: $model.agentInstructionsDraft)
-                .font(.system(size: 10, design: .monospaced))
+                .font(.locus(size: 10, design: .monospaced))
                 .lineSpacing(2)
                 .scrollContentBackground(.hidden)
                 .padding(8)
@@ -218,14 +219,14 @@ struct InspectorAgentsTab: View {
 
             HStack(spacing: 10) {
                 Text(model.isBusy ? "Available after the current run" : "Applies to the next Work turn")
-                    .font(.system(size: 8))
+                    .font(.locus(size: 8))
                     .foregroundStyle(LocusTheme.muted)
                 Spacer(minLength: 4)
                 Button("Revert") {
                     model.revertAgentInstructions()
                 }
-                .buttonStyle(.plain)
-                .font(.system(size: 9, weight: .semibold))
+                .buttonStyle(.locus())
+                .font(.locus(size: 9, weight: .semibold))
                 .disabled(!model.agentInstructionsHasUnsavedChanges || model.isSavingAgentInstructions)
                 .accessibilityIdentifier("agents.revert")
                 Button {
@@ -256,12 +257,12 @@ struct InspectorAgentsTab: View {
     private var missingState: some View {
         VStack(spacing: 12) {
             Image(systemName: "doc.badge.plus")
-                .font(.system(size: 26))
+                .font(.locus(size: 26))
                 .foregroundStyle(LocusTheme.muted)
             Text("No AGENTS.md in this workspace")
-                .font(.system(size: 11, weight: .bold))
+                .font(.locus(size: 11, weight: .bold))
             Text("Create one at the workspace root, then add the instructions the agent should follow while planning, editing, and verifying work.")
-                .font(.system(size: 9))
+                .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.muted)
                 .multilineTextAlignment(.center)
                 .lineSpacing(2)

@@ -27,6 +27,8 @@ jobs:
       - run: xcodegen generate
       - name: Generated project is current
         run: git diff --exit-code -- Locus.xcodeproj/project.pbxproj
+      - name: Design-system source audit
+        run: Tools/AuditDesignSystem.sh
       - name: Swift unit tests
         env:
           LOCUS_BUNDLE_MODE: skip

@@ -56,6 +56,23 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
+    func testUITestWindowSupportsBothAcceptanceSizes() {
+        let display = NSRect(x: 0, y: 0, width: 1_600, height: 1_000)
+        let compact = LocusWindowSizing.uiTestFrame(
+            in: display,
+            environment: [
+                "LOCUS_UI_TESTING_WINDOW_WIDTH": "1120",
+                "LOCUS_UI_TESTING_WINDOW_HEIGHT": "700",
+            ]
+        )
+        let standard = LocusWindowSizing.uiTestFrame(in: display, environment: [:])
+
+        XCTAssertEqual(compact.size, NSSize(width: 1_120, height: 700))
+        XCTAssertEqual(standard.size, NSSize(width: 1_250, height: 760))
+        XCTAssertEqual(compact.midX, display.midX)
+        XCTAssertEqual(compact.midY, display.midY)
+    }
+
     func testRuntimePhasesDistinguishRecoveryFromFailure() {
         XCTAssertFalse(RuntimePhase.starting("starting").isOnline)
         XCTAssertTrue(RuntimePhase.online.isOnline)
@@ -338,7 +355,7 @@ final class FeatureLogicTests: XCTestCase {
     // MARK: - Inspector chrome
 
     func testInspectorTabsAreStableAndUnique() {
-        XCTAssertEqual(InspectorTab.allCases.count, 8)
+        XCTAssertEqual(InspectorTab.allCases.count, 9)
         let raws = InspectorTab.allCases.map(\.rawValue)
         XCTAssertEqual(Set(raws).count, raws.count)
         XCTAssertEqual(Set(InspectorTab.allCases.map(\.symbol)).count, raws.count)
@@ -349,12 +366,17 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(InspectorTab(rawValue: "checkpoints"), .checkpoints)
         XCTAssertEqual(InspectorTab(rawValue: "runs"), .runs)
         XCTAssertEqual(InspectorTab(rawValue: "agents"), .agents)
+        XCTAssertEqual(InspectorTab(rawValue: "notes"), .notes)
+        XCTAssertEqual(InspectorTab.plan.title, "Overview")
+        XCTAssertEqual(InspectorTab.plan.symbol, "rectangle.grid.2x2")
+        XCTAssertEqual(InspectorTab.notes.title, "Notes")
+        XCTAssertEqual(InspectorTab.notes.symbol, "note.text")
     }
 
-    func testInspectorShortcutsAreOneThroughEight() {
+    func testInspectorShortcutsPreserveExistingKeysAndAddNotesOnNine() {
         XCTAssertEqual(
             InspectorTab.allCases.map(\.shortcutKey),
-            ["1", "2", "3", "4", "5", "6", "7", "8"]
+            ["1", "2", "3", "4", "5", "9", "6", "7", "8"]
         )
     }
 
@@ -394,6 +416,63 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(AppSettings.clampInspectorWidth(9999), 520)
         XCTAssertEqual(AppSettings.clampInspectorWidth(400), 400)
         XCTAssertEqual(AppSettings.clampInspectorWidth(.nan), 340, "a corrupt value must not survive")
+    }
+
+    func testSidebarWidthClampsPreferenceAndRenderedGeometryIndependently() throws {
+        XCTAssertEqual(AppSettings.clampSidebarWidth(0), 220)
+        XCTAssertEqual(AppSettings.clampSidebarWidth(9999), 420)
+        XCTAssertEqual(AppSettings.clampSidebarWidth(310), 310)
+        XCTAssertEqual(AppSettings.clampSidebarWidth(.nan), 260)
+        XCTAssertEqual(AppSettings.renderedSidebarWidth(380, availableWidth: 295), 295)
+        XCTAssertEqual(AppSettings.renderedSidebarWidth(380, availableWidth: 800), 380)
+
+        var settings = AppSettings()
+        settings.sidebarWidth = 375
+        let restored = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONEncoder().encode(settings)
+        )
+        XCTAssertEqual(restored.sidebarWidth, 375)
+        XCTAssertEqual(
+            try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8)).sidebarWidth,
+            260
+        )
+        XCTAssertEqual(
+            try JSONDecoder().decode(
+                AppSettings.self, from: Data(#"{"sidebarWidth":900}"#.utf8)
+            ).sidebarWidth,
+            420
+        )
+    }
+
+    func testSoloSwarmClassificationUsesManifestAndLegacyWorkerAttempts() throws {
+        func decodeRun(_ extra: String) throws -> OrchestrationRun {
+            let json = """
+            {
+              "id":"run-1","state":"completed","request":"Inspect",
+              "created_at":1,"updated_at":2,"last_seq":0,
+              "pinned":false,"legacy":false,"recoverable":false,
+              "run_kind":"solo"\(extra)
+            }
+            """
+            return try JSONDecoder().decode(OrchestrationRun.self, from: Data(json.utf8))
+        }
+
+        let explicit = try decodeRun(",\"manifest\":{\"solo_swarm\":true}")
+        let neverDelegated = try decodeRun(",\"manifest\":{\"solo_swarm\":true},\"attempts\":[]")
+        let ordinary = try decodeRun("")
+        let legacy = try decodeRun("""
+        ,"attempts":[{"run_id":"run-1","job_id":"worker-1","attempt":1,
+        "attempt_id":"worker-1:1","state":"completed","goal":"Inspect API"}]
+        """)
+
+        XCTAssertTrue(explicit.isSoloSwarm)
+        XCTAssertTrue(neverDelegated.isSoloSwarm)
+        XCTAssertFalse(ordinary.isSoloSwarm)
+        XCTAssertTrue(legacy.isSoloSwarm)
+        XCTAssertTrue(RunScope.soloSwarm.includes(explicit))
+        XCTAssertFalse(RunScope.teams.includes(explicit))
+        XCTAssertTrue(RunScope.all.includes(ordinary))
     }
 
     func testZoomedChatWidthIsClampedToTheUsableRange() {
@@ -444,6 +523,119 @@ final class FeatureLogicTests: XCTestCase {
         assertColor(dark.permissionInk, hex: 0xD7A77E)
     }
 
+    func testSemanticTextColorsMeetNormalTextContrastAcrossPaperSurfaces() throws {
+        let light = LocusTheme.palette(for: try XCTUnwrap(NSAppearance(named: .aqua)))
+        let dark = LocusTheme.palette(for: try XCTUnwrap(NSAppearance(named: .darkAqua)))
+
+        assertTextContrast(
+            foregrounds: [
+                light.ink, light.inkSoft, light.muted, light.signalDeep,
+                light.coral, light.danger, light.success, light.warning,
+            ],
+            backgrounds: [light.paper, light.paperDeep, light.panel, light.white]
+        )
+        assertTextContrast(
+            foregrounds: [
+                dark.ink, dark.inkSoft, dark.muted, dark.signalDeep,
+                dark.coral, dark.danger, dark.success, dark.warning,
+            ],
+            backgrounds: [dark.paper, dark.paperDeep, dark.panel, dark.white]
+        )
+    }
+
+    func testIncreasedContrastBoundariesMeetNonTextContrast() throws {
+        let light = LocusTheme.palette(for: try XCTUnwrap(NSAppearance(named: .aqua)))
+        let dark = LocusTheme.palette(for: try XCTUnwrap(NSAppearance(named: .darkAqua)))
+
+        for surface in [light.paper, light.paperDeep, light.panel, light.white] {
+            XCTAssertGreaterThanOrEqual(contrastRatio(light.lineStrong, surface), 3)
+        }
+        for surface in [dark.paper, dark.paperDeep, dark.panel, dark.white] {
+            XCTAssertGreaterThanOrEqual(contrastRatio(dark.lineStrong, surface), 3)
+        }
+    }
+
+    func testReduceMotionDisablesSpatialMotion() {
+        XCTAssertFalse(LocusMotion.allowsSpatialMotion(reduceMotion: true))
+        XCTAssertTrue(LocusMotion.allowsSpatialMotion(reduceMotion: false))
+    }
+
+    func testRecommendationsRankRecoveryBeforeSafetyAndContinuity() {
+        let recommendations = RecommendationEngine.recommendations(for: RecommendationContext(
+            runtimeUnavailable: true,
+            modelUnavailable: true,
+            lastRunFailed: true,
+            changedFileCount: 4,
+            hasPendingPlanSteps: true,
+            hasTestFiles: true,
+            projectKind: .swift,
+            memoryConflictCount: 2
+        ))
+
+        XCTAssertEqual(recommendations.map(\.kind), [.chooseModel, .recoverRun, .reviewMemory])
+        XCTAssertEqual(recommendations.count, 3)
+        XCTAssertEqual(recommendations.first?.intent, .openSettings(.accounts))
+        XCTAssertTrue(recommendations.allSatisfy { !$0.rationale.isEmpty })
+    }
+
+    func testRecommendationsRankSafetyContinuityAndVerification() {
+        let recommendations = RecommendationEngine.recommendations(for: RecommendationContext(
+            changedFileCount: 3,
+            hasPendingPlanSteps: true,
+            hasTestFiles: true,
+            projectKind: .swift
+        ))
+
+        XCTAssertEqual(recommendations.map(\.kind), [.reviewChanges, .continuePlan, .verifyTests])
+        XCTAssertEqual(recommendations[0].intent, .openInspector(.changes))
+        guard case .prefill = recommendations[1].intent else {
+            return XCTFail("Continuity work should remain editable before it is sent")
+        }
+    }
+
+    func testLegacyRecommendationsAreDeduplicatedAndRemainFallbacks() {
+        let recommendations = RecommendationEngine.recommendations(for: RecommendationContext(
+            projectKind: .python,
+            legacySuggestions: ["  Check retry paths  ", "Check another legacy item", ""]
+        ))
+
+        XCTAssertEqual(recommendations.map(\.kind), [.legacy, .exploreProject, .makePlan])
+        XCTAssertEqual(recommendations.first?.title, "Check retry paths")
+        XCTAssertEqual(recommendations.filter { $0.kind == .legacy }.count, 1)
+        XCTAssertEqual(Set(recommendations.map(\.id)).count, recommendations.count)
+    }
+
+    @MainActor
+    func testActivatingAgentRecommendationOnlyPrefillsTheComposer() {
+        let model = AppModel(startImmediately: false)
+        let messageCount = model.blocks.count
+        let recommendation = LocusRecommendation(
+            id: "prefill-test",
+            kind: .verifyTests,
+            title: "Run relevant tests",
+            rationale: "The workspace contains changes.",
+            priority: 1,
+            intent: .prefill("Run the tests relevant to these changes.")
+        )
+
+        model.activateRecommendation(recommendation)
+
+        XCTAssertEqual(model.draftText, "Run the tests relevant to these changes.")
+        XCTAssertEqual(model.blocks.count, messageCount, "Prefill must never send a message")
+        XCTAssertTrue(model.inspectorCollapsed)
+    }
+
+    func testEmptyWorkspaceRecommendationsAreStableProjectAwareAndCapped() {
+        let first = RecommendationEngine.recommendations(for: RecommendationContext(projectKind: .web))
+        let second = RecommendationEngine.recommendations(for: RecommendationContext(projectKind: .web))
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.count, 3)
+        XCTAssertEqual(first.map(\.kind), [.exploreProject, .makePlan, .polishInterface])
+        XCTAssertEqual(first.first?.title, "Polish the primary interface")
+        XCTAssertTrue(first.allSatisfy { !$0.title.isEmpty && !$0.rationale.isEmpty })
+    }
+
     func testEveryInspectorTabTitleIsWhiteInDarkAppearance() {
         for selected in [false, true] {
             assertColor(
@@ -458,17 +650,9 @@ final class FeatureLogicTests: XCTestCase {
         }
     }
 
-    func testWorkspaceIconsAreLargerThanChatIcons() {
+    func testWorkspaceFolderRetainsItsVisualAnchorMetrics() {
         XCTAssertEqual(SidebarIconMetrics.workspaceIconSize, 27)
-        XCTAssertEqual(SidebarIconMetrics.chatIconSize, 20)
-        XCTAssertGreaterThan(
-            SidebarIconMetrics.workspaceIconSize,
-            SidebarIconMetrics.chatIconSize
-        )
-        XCTAssertGreaterThan(
-            SidebarIconMetrics.workspaceSymbolSize,
-            SidebarIconMetrics.chatSymbolSize
-        )
+        XCTAssertEqual(SidebarIconMetrics.workspaceSymbolSize, 12)
     }
 
     private func assertColor(
@@ -502,6 +686,42 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(resolved.redComponent, red, accuracy: 0.0001, file: file, line: line)
         XCTAssertEqual(resolved.greenComponent, green, accuracy: 0.0001, file: file, line: line)
         XCTAssertEqual(resolved.blueComponent, blue, accuracy: 0.0001, file: file, line: line)
+    }
+
+    private func assertTextContrast(
+        foregrounds: [NSColor],
+        backgrounds: [NSColor],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        for foreground in foregrounds {
+            for background in backgrounds {
+                XCTAssertGreaterThanOrEqual(
+                    contrastRatio(foreground, background),
+                    4.5,
+                    file: file,
+                    line: line
+                )
+            }
+        }
+    }
+
+    private func contrastRatio(_ first: NSColor, _ second: NSColor) -> CGFloat {
+        let lighter = max(relativeLuminance(first), relativeLuminance(second))
+        let darker = min(relativeLuminance(first), relativeLuminance(second))
+        return (lighter + 0.05) / (darker + 0.05)
+    }
+
+    private func relativeLuminance(_ color: NSColor) -> CGFloat {
+        guard let resolved = color.usingColorSpace(.sRGB) else { return 0 }
+        func linear(_ component: CGFloat) -> CGFloat {
+            component <= 0.04045
+                ? component / 12.92
+                : pow((component + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * linear(resolved.redComponent)
+            + 0.7152 * linear(resolved.greenComponent)
+            + 0.0722 * linear(resolved.blueComponent)
     }
 
     func testInspectorChromeSurvivesASettingsRoundTrip() throws {
@@ -1258,6 +1478,41 @@ final class FeatureLogicTests: XCTestCase {
         )
         XCTAssertFalse(migrated.notifyOnCompletion)
         XCTAssertFalse(migrated.notifyOnNeedsAttention)
+        XCTAssertTrue(restored.hiddenLocalModels.isEmpty)
+    }
+
+    func testHiddenLocalModelsRoundTripWithoutAffectingOllamaData() throws {
+        var settings = AppSettings()
+        settings.hiddenLocalModels = ["qwen3:8b", "hf.co/example/model:Q4_K_M"]
+
+        let restored = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONEncoder().encode(settings)
+        )
+
+        XCTAssertEqual(restored.hiddenLocalModels, settings.hiddenLocalModels)
+    }
+
+    func testBrowserHasItsOwnSettingsDestination() {
+        XCTAssertTrue(SettingsPage.allCases.contains(.browser))
+        XCTAssertEqual(SettingsPage.browser.symbol, "safari")
+        XCTAssertEqual(SettingsPage.browser.accessibilityKey, "browser")
+    }
+
+    func testLocalModelDeletionBuildsAnOllamaDeleteRequest() throws {
+        let request = try LocalModelManagement.deleteRequest(
+            ollamaHost: "http://127.0.0.1:11434/",
+            model: "qwen3:8b"
+        )
+
+        XCTAssertEqual(request.url?.absoluteString, "http://127.0.0.1:11434/api/delete")
+        XCTAssertEqual(request.httpMethod, "DELETE")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        let body = try XCTUnwrap(request.httpBody)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: body) as? [String: String]
+        )
+        XCTAssertEqual(object, ["model": "qwen3:8b"])
     }
 
     func testProviderTitlesAreDistinct() {
@@ -2801,6 +3056,88 @@ final class FeatureLogicTests: XCTestCase {
     }
 
     @MainActor
+    func testGitHubDeviceFlowShowsCodeValidatesAccountAndReturnsRefreshableCredentials() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MCPURLProtocol.self]
+        MCPURLProtocol.handler = { request in
+            let url = request.url!
+            func json(_ value: [String: Any]) throws -> Data {
+                try JSONSerialization.data(withJSONObject: value)
+            }
+            switch (url.host, url.path, request.httpMethod ?? "GET") {
+            case ("github.com", "/login/device/code", "POST"):
+                return (200, ["Content-Type": "application/json"], try json([
+                    "device_code": "device-secret",
+                    "user_code": "ABCD-1234",
+                    "verification_uri": "https://github.com/login/device",
+                    "expires_in": 30,
+                    "interval": 1,
+                ]))
+            case ("github.com", "/login/oauth/access_token", "POST"):
+                return (200, ["Content-Type": "application/json"], try json([
+                    "access_token": "github-access",
+                    "refresh_token": "github-refresh",
+                    "expires_in": 28_800,
+                    "scope": "",
+                ]))
+            case ("api.github.com", "/user", "GET"):
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer github-access")
+                return (200, ["Content-Type": "application/json"], try json([
+                    "login": "octocat",
+                ]))
+            default:
+                throw NSError(
+                    domain: "MCPURLProtocol",
+                    code: 404,
+                    userInfo: [NSLocalizedDescriptionKey: "Unexpected request \(request)"]
+                )
+            }
+        }
+        let server = try JSONDecoder().decode(
+            ExtensionMCPServer.self,
+            from: Data(#"""
+            {"id":"github-device","name":"GitHub","transport":"streamable_http",
+             "url":"https://api.githubcopilot.com/mcp/","auth":"oauth",
+             "oauth_strategy":"github_device",
+             "oauth":{"authorization_endpoint":"","token_endpoint":"",
+                      "client_id":"public-github-client","scopes":[],
+                      "redirect_uri":"locus://mcp/oauth"}}
+            """#.utf8)
+        )
+        let codeShown = expectation(description: "device code shown")
+        let completed = expectation(description: "device authorization completed")
+        var prompt: MCPDeviceAuthorizationPrompt?
+        var credentials: [String: Any]?
+        var completionError: Error?
+        let coordinator = MCPAuthCoordinator(configurationForTesting: configuration)
+
+        coordinator.authorize(
+            server: server,
+            onDeviceCode: {
+                prompt = $0
+                codeShown.fulfill()
+            },
+            completion: { result in
+                switch result {
+                case let .success(value): credentials = value
+                case let .failure(error): completionError = error
+                }
+                completed.fulfill()
+            }
+        )
+        await fulfillment(of: [codeShown, completed], timeout: 4)
+
+        XCTAssertNil(completionError)
+        XCTAssertEqual(prompt?.userCode, "ABCD-1234")
+        XCTAssertEqual(prompt?.verificationURL.absoluteString, "https://github.com/login/device")
+        XCTAssertEqual(credentials?["access_token"] as? String, "github-access")
+        XCTAssertEqual(credentials?["refresh_token"] as? String, "github-refresh")
+        XCTAssertEqual(credentials?["account_login"] as? String, "octocat")
+        XCTAssertEqual(credentials?["auth_strategy"] as? String, "github_device")
+        XCTAssertNil(credentials?["client_secret"])
+    }
+
+    @MainActor
     func testMCPAutomaticOAuthFallsBackToOIDCPathInsertion() async throws {
         let serverID = "oauth-oidc-test-\(UUID().uuidString)"
         defer { MCPCredentialStore.remove(serverID: serverID) }
@@ -2971,6 +3308,52 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertNil(runtime["refresh_token"])
         XCTAssertNil(runtime["client_secret"])
         XCTAssertNil(runtime["issuer"])
+    }
+
+    @MainActor
+    func testGitHubDeviceRefreshSendsNoSecretOrMCPResource() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MCPURLProtocol.self]
+        MCPURLProtocol.handler = { request in
+            var bodyData = request.httpBody ?? Data()
+            if bodyData.isEmpty, let stream = request.httpBodyStream {
+                stream.open()
+                defer { stream.close() }
+                var buffer = [UInt8](repeating: 0, count: 4_096)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    if count <= 0 { break }
+                    bodyData.append(contentsOf: buffer.prefix(count))
+                }
+            }
+            let body = String(decoding: bodyData, as: UTF8.self)
+            XCTAssertTrue(body.contains("refresh_token=github-refresh"))
+            XCTAssertTrue(body.contains("client_id=public-github-client"))
+            XCTAssertFalse(body.contains("client_secret"))
+            XCTAssertFalse(body.contains("resource="))
+            let data = try JSONSerialization.data(withJSONObject: [
+                "access_token": "rotated-github-access",
+                "refresh_token": "rotated-github-refresh",
+                "expires_in": 28_800,
+            ])
+            return (200, ["Content-Type": "application/json"], data)
+        }
+
+        let refreshed = try await MCPAuthCoordinator(
+            configurationForTesting: configuration
+        ).refreshedCredentialsIfNeeded([
+            "access_token": "expired-github-access",
+            "refresh_token": "github-refresh",
+            "expires_at": 0,
+            "token_endpoint": "https://github.com/login/oauth/access_token",
+            "client_id": "public-github-client",
+            "issuer": "https://github.com/login/oauth",
+            "resource": "https://api.githubcopilot.com/mcp/",
+            "auth_strategy": "github_device",
+        ])
+
+        XCTAssertEqual(refreshed["access_token"] as? String, "rotated-github-access")
+        XCTAssertEqual(refreshed["refresh_token"] as? String, "rotated-github-refresh")
     }
 
     func testTelemetryDefaultsOffAndRoundTripsPlaintextAuthorization() throws {

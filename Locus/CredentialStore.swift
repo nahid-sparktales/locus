@@ -2,6 +2,7 @@ import Foundation
 import AuthenticationServices
 import AppKit
 import CryptoKit
+import Security
 
 /// Credential storage for provider API keys and MCP server tokens.
 ///
@@ -314,23 +315,24 @@ enum CredentialStore {
     }
 }
 
-/// MCP credentials use the same file-backed shape as the rest of Locus's
-/// account material: JSON inside the atomic, user-only `auth.json` file.
-///
-/// Codex and Claude keep ordinary MCP definitions in config files and support
-/// environment references for externally managed secrets. Locus's native OAuth
-/// flow also needs durable refresh and client-registration values, so those
-/// values live in the credential section of `auth.json` rather than Keychain.
-/// Only the runtime subset crosses the native/backend boundary.
+/// MCP OAuth and token material is app-owned Keychain data. A one-time lazy
+/// migration preserves credentials written by older Locus releases.
 enum MCPCredentialStore {
-    static var displayName: String { CredentialStore.displayPath }
+    private static let service = "io.sparktales.locus.mcp"
+    static var displayName: String { "macOS Keychain" }
 
     static func get(serverID: String) -> [String: Any]? {
-        guard let encoded = CredentialStore.get(
-            account: CredentialStore.mcpCredentialKey(serverID)
-        ), let data = encoded.data(using: .utf8),
-           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if let data = data(serverID: serverID),
+           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return root
+        }
+        let legacyAccount = CredentialStore.mcpCredentialKey(serverID)
+        guard let encoded = CredentialStore.get(account: legacyAccount),
+              let legacyData = encoded.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: legacyData) as? [String: Any],
+              set(root, serverID: serverID)
         else { return nil }
+        _ = CredentialStore.remove(account: legacyAccount)
         return root
     }
 
@@ -340,18 +342,73 @@ enum MCPCredentialStore {
               let data = try? JSONSerialization.data(
                 withJSONObject: values,
                 options: [.sortedKeys]
-              ),
-              let encoded = String(data: data, encoding: .utf8)
+              )
         else { return false }
-        return CredentialStore.set(
-            encoded,
-            account: CredentialStore.mcpCredentialKey(serverID)
-        )
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: serverID,
+        ]
+        let updates: [CFString: Any] = [kSecValueData: data]
+        let status = SecItemUpdate(query as CFDictionary, updates as CFDictionary)
+        if status == errSecSuccess { return true }
+        guard status == errSecItemNotFound else { return false }
+        var created = query
+        created[kSecValueData] = data
+        created[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return SecItemAdd(created as CFDictionary, nil) == errSecSuccess
     }
 
     @discardableResult
     static func remove(serverID: String) -> Bool {
-        CredentialStore.remove(account: CredentialStore.mcpCredentialKey(serverID))
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: serverID,
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        _ = CredentialStore.remove(account: CredentialStore.mcpCredentialKey(serverID))
+        return status == errSecSuccess || status == errSecItemNotFound
+    }
+
+    static func removeOrphaned(keeping liveServerIDs: Set<String>) {
+        for serverID in allServerIDs() where !liveServerIDs.contains(serverID) {
+            _ = remove(serverID: serverID)
+        }
+        CredentialStore.removeOrphanedMCPCredentials(keeping: liveServerIDs)
+    }
+
+    private static func data(serverID: String) -> Data? {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: serverID,
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne,
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else {
+            return nil
+        }
+        return result as? Data
+    }
+
+    private static func allServerIDs() -> [String] {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecReturnAttributes: true,
+            kSecMatchLimit: kSecMatchLimitAll,
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else {
+            return []
+        }
+        let rows: [[CFString: Any]]
+        if let values = result as? [[CFString: Any]] { rows = values }
+        else if let value = result as? [CFString: Any] { rows = [value] }
+        else { rows = [] }
+        return rows.compactMap { $0[kSecAttrAccount] as? String }
     }
 }
 
@@ -391,6 +448,7 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
     private let maximumMetadataBytes = 1_048_576
     private let testConfiguration: URLSessionConfiguration?
     private var session: ASWebAuthenticationSession?
+    private var deviceTask: Task<Void, Never>?
 
     override init() {
         testConfiguration = nil
@@ -404,8 +462,17 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
 
     func authorize(
         server: ExtensionMCPServer,
+        onDeviceCode: ((MCPDeviceAuthorizationPrompt) -> Void)? = nil,
         completion: @escaping (Result<[String: Any], Error>) -> Void
     ) {
+        if server.oauthStrategy == "github_device" {
+            startGitHubDeviceAuthorization(
+                server: server,
+                onDeviceCode: onDeviceCode,
+                completion: completion
+            )
+            return
+        }
         Task { @MainActor in
             do {
                 let context = try await resolve(server: server)
@@ -419,6 +486,8 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
     func cancel() {
         session?.cancel()
         session = nil
+        deviceTask?.cancel()
+        deviceTask = nil
     }
 
     func resolvedConfigurationForTesting(
@@ -455,7 +524,9 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
         if let clientSecret = credentials["client_secret"] as? String, !clientSecret.isEmpty {
             fields["client_secret"] = clientSecret
         }
-        if let resource = credentials["resource"] as? String, !resource.isEmpty {
+        if credentials["auth_strategy"] as? String != "github_device",
+           let resource = credentials["resource"] as? String,
+           !resource.isEmpty {
             fields["resource"] = resource
         }
         let root = try await tokenRequest(url: tokenURL, fields: fields, operation: "refresh")
@@ -472,6 +543,186 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
         }
         updated["issuer"] = issuer
         return updated
+    }
+
+    private func startGitHubDeviceAuthorization(
+        server: ExtensionMCPServer,
+        onDeviceCode: ((MCPDeviceAuthorizationPrompt) -> Void)?,
+        completion: @escaping (Result<[String: Any], Error>) -> Void
+    ) {
+        deviceTask?.cancel()
+        deviceTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let values = try await githubDeviceCredentials(
+                    server: server,
+                    onDeviceCode: onDeviceCode
+                )
+                guard !Task.isCancelled else {
+                    throw authError("GitHub sign-in was cancelled.")
+                }
+                deviceTask = nil
+                completion(.success(values))
+            } catch is CancellationError {
+                deviceTask = nil
+                completion(.failure(authError("GitHub sign-in was cancelled.")))
+            } catch {
+                deviceTask = nil
+                completion(.failure(error))
+            }
+        }
+    }
+
+    private func githubDeviceCredentials(
+        server: ExtensionMCPServer,
+        onDeviceCode: ((MCPDeviceAuthorizationPrompt) -> Void)?
+    ) async throws -> [String: Any] {
+        let clientID = try githubClientID(server: server)
+        guard let resourceURL = try? secureURL(server.url ?? "", label: "GitHub MCP server")
+        else { throw authError("The GitHub MCP server URL is invalid.") }
+        let deviceURL = URL(string: "https://github.com/login/device/code")!
+        let tokenURL = URL(string: "https://github.com/login/oauth/access_token")!
+        let device = try await githubFormRequest(
+            url: deviceURL,
+            fields: ["client_id": clientID],
+            operation: "device authorization"
+        )
+        guard let deviceCode = device["device_code"] as? String,
+              let userCode = device["user_code"] as? String,
+              let verification = device["verification_uri"] as? String,
+              let verificationURL = URL(string: verification),
+              let expiresIn = device["expires_in"] as? NSNumber
+        else {
+            throw authError("GitHub returned an incomplete device authorization response.")
+        }
+        var interval = max((device["interval"] as? NSNumber)?.intValue ?? 5, 1)
+        let expiresAt = Date().addingTimeInterval(expiresIn.doubleValue)
+        onDeviceCode?(
+            MCPDeviceAuthorizationPrompt(
+                serverID: server.id,
+                serverName: server.name,
+                userCode: userCode,
+                verificationURL: verificationURL,
+                expiresAt: expiresAt
+            )
+        )
+
+        while Date() < expiresAt {
+            try await Task.sleep(nanoseconds: UInt64(interval) * 1_000_000_000)
+            try Task.checkCancellation()
+            let response = try await githubFormRequest(
+                url: tokenURL,
+                fields: [
+                    "client_id": clientID,
+                    "device_code": deviceCode,
+                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                ],
+                operation: "device token"
+            )
+            if let accessToken = response["access_token"] as? String,
+               !accessToken.isEmpty {
+                let login = try await validateGitHubAccount(accessToken: accessToken)
+                var credentials: [String: Any] = [
+                    "access_token": accessToken,
+                    "token_endpoint": tokenURL.absoluteString,
+                    "client_id": clientID,
+                    "issuer": "https://github.com/login/oauth",
+                    "resource": resourceURL.absoluteString,
+                    "auth_strategy": "github_device",
+                    "account_login": login,
+                ]
+                if let refreshToken = response["refresh_token"] as? String,
+                   !refreshToken.isEmpty {
+                    credentials["refresh_token"] = refreshToken
+                }
+                if let tokenExpires = response["expires_in"] as? NSNumber {
+                    credentials["expires_at"] = Date().timeIntervalSince1970
+                        + tokenExpires.doubleValue
+                }
+                if let scope = response["scope"] as? String { credentials["scope"] = scope }
+                return credentials
+            }
+            switch response["error"] as? String {
+            case "authorization_pending":
+                continue
+            case "slow_down":
+                interval += 5
+            case "access_denied":
+                throw authError("GitHub sign-in was denied. You can try again or use a personal token instead.")
+            case "expired_token":
+                throw authError("The GitHub sign-in code expired. Start Connect account again for a new code.")
+            case "device_flow_disabled":
+                throw authError("Device flow is disabled for the configured Locus GitHub App.")
+            case let value?:
+                let description = response["error_description"] as? String
+                throw authError(description?.isEmpty == false ? description! : "GitHub sign-in failed (\(value)).")
+            case nil:
+                throw authError("GitHub returned neither a token nor a device-flow status.")
+            }
+        }
+        throw authError("The GitHub sign-in code expired. Start Connect account again for a new code.")
+    }
+
+    private func githubClientID(server: ExtensionMCPServer) throws -> String {
+        let configured = server.oauth?.clientID.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let bundled = (Bundle.main.object(forInfoDictionaryKey: "LocusGitHubOAuthClientID") as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let environment = ProcessInfo.processInfo.environment["LOCUS_GITHUB_OAUTH_CLIENT_ID"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let clientID = [configured, bundled, environment].first {
+            !$0.isEmpty && !$0.contains("$(")
+        } ?? ""
+        guard !clientID.isEmpty else {
+            throw authError(
+                "GitHub account sign-in is unavailable in this build because its public app client ID is not configured. Use a personal token instead."
+            )
+        }
+        return clientID
+    }
+
+    private func githubFormRequest(
+        url: URL,
+        fields: [String: String],
+        operation: String
+    ) async throws -> [String: Any] {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = fields
+            .map { "\(Self.formEncode($0.key))=\(Self.formEncode($0.value))" }
+            .sorted()
+            .joined(separator: "&")
+            .data(using: .utf8)
+        let (data, response) = try await dataWithoutRedirects(for: request)
+        guard (200..<300).contains(response.statusCode),
+              data.count <= maximumMetadataBytes,
+              let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            throw authError("GitHub \(operation) failed. Check your network and release configuration.")
+        }
+        return root
+    }
+
+    private func validateGitHubAccount(accessToken: String) async throws -> String {
+        var request = URLRequest(url: URL(string: "https://api.github.com/user")!)
+        request.timeoutInterval = 30
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+        let (data, response) = try await dataWithoutRedirects(for: request)
+        guard response.statusCode == 200,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let login = root["login"] as? String,
+              !login.isEmpty
+        else {
+            if response.statusCode == 403 {
+                throw authError("GitHub accepted the sign-in but the account or organization blocked access. Ask an organization owner to approve and install the Locus GitHub App, or use a permitted personal token.")
+            }
+            throw authError("GitHub returned credentials that could not validate the signed-in account.")
+        }
+        return login
     }
 
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
@@ -689,7 +940,7 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
             registration["token_endpoint"] = tokenURL.absoluteString
             registration["resource"] = normalizedResource
             guard MCPCredentialStore.set(registration, serverID: server.id) else {
-                throw authError("The OAuth registration could not be stored in \(CredentialStore.displayPath).")
+                throw authError("The OAuth registration could not be stored in \(MCPCredentialStore.displayName).")
             }
         }
         return Context(

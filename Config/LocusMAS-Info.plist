@@ -35,6 +35,8 @@
 	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>LocusGitHubOAuthClientID</key>
+	<string>$(LOCUS_GITHUB_OAUTH_CLIENT_ID)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
 	<key>LSMultipleInstancesProhibited</key>

@@ -185,14 +185,14 @@ struct MessageContentView: View {
                     ProgressView()
                         .controlSize(.mini)
                     Text("Thinking…")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.locus(size: 9, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 .accessibilityIdentifier("message.thinking.hiddenIndicator")
             }
         } else {
             Text(text)
-                .font(.system(size: 12))
+                .font(.locus(size: 12))
                 .foregroundStyle(LocusTheme.inkSoft)
                 .lineSpacing(4)
                 .textSelection(.enabled)
@@ -249,7 +249,7 @@ struct StreamingMessageContentView: View {
                     HStack(spacing: 7) {
                         ProgressView().controlSize(.mini)
                         Text("Thinking…")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.locus(size: 9, weight: .semibold))
                             .foregroundStyle(LocusTheme.muted)
                     }
                 }
@@ -285,11 +285,11 @@ private struct StreamingThinkingSegmentView: View {
                 HStack(spacing: 7) {
                     if !forceExpanded {
                         Image(systemName: isOpen ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 8, weight: .semibold))
+                            .font(.locus(size: 8, weight: .semibold))
                     }
-                    Image(systemName: "brain").font(.system(size: 10))
+                    Image(systemName: "brain").font(.locus(size: 10))
                     Text(isActive ? "Thinking…" : "Thought process")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.locus(size: 9, weight: .semibold))
                     if isActive { ProgressView().controlSize(.mini) }
                     Spacer()
                 }
@@ -298,7 +298,7 @@ private struct StreamingThinkingSegmentView: View {
                 .frame(height: 30)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .disabled(forceExpanded)
 
             if isOpen {
@@ -432,12 +432,12 @@ struct ThinkingSegmentView: View {
                 HStack(spacing: 7) {
                     if !forceExpanded {
                         Image(systemName: isOpen ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 8, weight: .semibold))
+                            .font(.locus(size: 8, weight: .semibold))
                     }
                     Image(systemName: "brain")
-                        .font(.system(size: 10))
+                        .font(.locus(size: 10))
                     Text(isActive ? "Thinking…" : "Thought process")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.locus(size: 9, weight: .semibold))
                     if isActive {
                         ProgressView()
                             .controlSize(.mini)
@@ -449,14 +449,14 @@ struct ThinkingSegmentView: View {
                 .frame(height: 30)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .disabled(forceExpanded)
             .accessibilityLabel(isOpen ? "Collapse thought process" : "Expand thought process")
             .accessibilityIdentifier("message.thinking.toggle")
 
             if isOpen {
                 Text(text)
-                    .font(.system(size: 10))
+                    .font(.locus(size: 10))
                     .foregroundStyle(LocusTheme.muted)
                     .lineSpacing(3)
                     .textSelection(.enabled)
@@ -490,13 +490,13 @@ struct InlineMarkdownText: View {
                 switch block {
                 case .heading(let level, let value):
                     Text(value)
-                        .font(.system(size: level <= 2 ? 15 : 13, weight: .bold))
+                        .font(.locus(size: level <= 2 ? 15 : 13, weight: .bold))
                         .foregroundStyle(LocusTheme.ink)
                         .padding(.top, 4)
                         .textSelection(.enabled)
                 case .paragraph(let value):
                     Text(inline(value))
-                        .font(.system(size: 12))
+                        .font(.locus(size: 12))
                         .foregroundStyle(LocusTheme.inkSoft)
                         .lineSpacing(4)
                         .textSelection(.enabled)
@@ -561,7 +561,7 @@ struct CodeBlockView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text((language ?? "code").lowercased())
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .font(.locus(size: 8, weight: .bold, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
                 Spacer()
                 Button {
@@ -574,10 +574,10 @@ struct CodeBlockView: View {
                     }
                 } label: {
                     Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 8, weight: .semibold))
+                        .font(.locus(size: 8, weight: .semibold))
                         .foregroundStyle(copied ? LocusTheme.success : LocusTheme.muted)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .accessibilityLabel("Copy code block")
                 .accessibilityIdentifier("message.codeBlock.copy")
             }
@@ -587,7 +587,7 @@ struct CodeBlockView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(code)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.locus(size: 10, design: .monospaced))
                     .foregroundStyle(LocusTheme.inkSoft)
                     .lineSpacing(2)
                     .textSelection(.enabled)
@@ -647,7 +647,7 @@ struct DiffTextView: View {
     private var rows: some View {
         ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
             Text(line.isEmpty ? " " : line)
-                .font(.system(size: 9, design: .monospaced))
+                .font(.locus(size: 9, design: .monospaced))
                 .foregroundStyle(color(for: line))
                 // One source line stays one row: wrapping a long diff line
                 // costs a text-layout pass per row and buys little in a panel
@@ -685,8 +685,8 @@ struct ToolOutputText: View {
             DiffTextView(text: text)
         } else {
             Text(text)
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(LocusTheme.inkSoft)
+                .font(.locus(size: 9, design: .monospaced))
+                .foregroundStyle(LocusTheme.textPrimary)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

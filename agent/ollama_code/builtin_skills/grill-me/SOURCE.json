@@ -1,0 +1,10 @@
+{
+  "provider": "Matt Pocock",
+  "repository": "https://github.com/mattpocock/skills",
+  "commit": "068b6e0c62393147daf03530149cdce209c93da8",
+  "upstream_path": "skills/productivity/grill-me",
+  "license": "MIT",
+  "license_file": "LICENSE",
+  "activation": "explicit",
+  "adaptation": "Maps the upstream Skill-tool invocation to Locus load_skill"
+}

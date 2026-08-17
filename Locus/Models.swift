@@ -167,17 +167,18 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     case files
     case terminal
     case preview
+    case notes
     case checkpoints
     case runs
     case agents
 
     var id: String { rawValue }
 
-    /// The general workspace panels reached from the inspector command. Plan
+    /// The general workspace panels reached from the inspector command. Overview
     /// and Browser have dedicated rail buttons and open only when explicitly
     /// requested (or when an active request needs them).
     static let workspaceTabs: [InspectorTab] = [
-        .changes, .files, .terminal, .checkpoints, .runs, .agents,
+        .changes, .files, .terminal, .notes, .checkpoints, .runs, .agents,
     ]
 
     var isWorkspaceTab: Bool { Self.workspaceTabs.contains(self) }
@@ -187,11 +188,12 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     /// change without breaking either.
     var title: String {
         switch self {
-        case .plan: "Plan"
+        case .plan: "Overview"
         case .changes: "Changes"
         case .files: "Files"
         case .terminal: "Terminal"
         case .preview: "Browser"
+        case .notes: "Notes"
         case .checkpoints: "Checkpoints"
         case .runs: "Runs"
         case .agents: "AGENTS.md"
@@ -200,18 +202,19 @@ enum InspectorTab: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .plan: "list.bullet.clipboard"
+        case .plan: "rectangle.grid.2x2"
         case .changes: "plusminus.circle"
         case .files: "folder"
         case .terminal: "terminal"
         case .preview: "globe"
+        case .notes: "note.text"
         case .checkpoints: "clock.arrow.circlepath"
         case .runs: "point.3.connected.trianglepath.dotted"
         case .agents: "doc.text.fill"
         }
     }
 
-    /// ⌘1…⌘8, in declaration order. Existing shortcuts stay stable.
+    /// Existing ⌘1…⌘8 bindings remain stable; Notes uses the new ⌘9 binding.
     var shortcutKey: Character {
         switch self {
         case .plan: "1"
@@ -222,6 +225,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .checkpoints: "6"
         case .runs: "7"
         case .agents: "8"
+        case .notes: "9"
         }
     }
 }
@@ -229,6 +233,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
 enum SettingsPage: String, CaseIterable, Identifiable {
     case general = "General"
     case network = "Network"
+    case browser = "Browser"
     case accounts = "Accounts"
     case agents = "Agents & Teams"
     case knowledge = "Memory & Knowledge"
@@ -243,6 +248,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: "gearshape"
         case .network: "network"
+        case .browser: "safari"
         case .accounts: "person.crop.circle"
         case .agents: "person.3.sequence.fill"
         case .knowledge: "books.vertical.fill"
@@ -255,6 +261,221 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 
     var accessibilityKey: String {
         self == .shortcuts ? "shortcuts" : rawValue.lowercased()
+    }
+}
+
+enum LocusProjectKind: String, Equatable {
+    case swift
+    case web
+    case python
+    case general
+}
+
+enum LocusRecommendationKind: String, Equatable {
+    case chooseModel
+    case recoverRun
+    case reviewMemory
+    case reviewChanges
+    case continuePlan
+    case verifyTests
+    case exploreProject
+    case makePlan
+    case polishInterface
+    case legacy
+
+    var symbol: String {
+        switch self {
+        case .chooseModel: "cpu"
+        case .recoverRun: "arrow.clockwise.circle"
+        case .reviewMemory: "brain.head.profile"
+        case .reviewChanges: "plusminus.circle"
+        case .continuePlan: "list.bullet.clipboard"
+        case .verifyTests: "checkmark.seal"
+        case .exploreProject: "doc.text.magnifyingglass"
+        case .makePlan: "checklist"
+        case .polishInterface: "sparkles"
+        case .legacy: "arrow.turn.down.right"
+        }
+    }
+}
+
+enum LocusRecommendationIntent: Equatable {
+    case prefill(String)
+    case openInspector(InspectorTab)
+    case openSettings(SettingsPage)
+    case openModelLibrary
+}
+
+struct LocusRecommendation: Identifiable, Equatable {
+    let id: String
+    let kind: LocusRecommendationKind
+    let title: String
+    let rationale: String
+    let priority: Int
+    let intent: LocusRecommendationIntent
+}
+
+/// A value-only snapshot keeps ranking deterministic and unit-testable. It is
+/// deliberately assembled from state the app already owns; producing a list
+/// can never contact a provider or start a background fetch.
+struct RecommendationContext: Equatable {
+    var runtimeUnavailable = false
+    var modelUnavailable = false
+    var lastRunFailed = false
+    var changedFileCount = 0
+    var hasPendingPlanSteps = false
+    var hasTestFiles = false
+    var projectKind: LocusProjectKind = .general
+    var memoryConflictCount = 0
+    var legacySuggestions: [String] = []
+}
+
+enum RecommendationEngine {
+    static func recommendations(for context: RecommendationContext) -> [LocusRecommendation] {
+        var candidates: [LocusRecommendation] = []
+
+        if context.runtimeUnavailable || context.modelUnavailable {
+            candidates.append(LocusRecommendation(
+                id: "choose-model",
+                kind: .chooseModel,
+                title: "Choose a ready model",
+                rationale: context.runtimeUnavailable
+                    ? "Local services need attention before Locus can start work."
+                    : "The selected model is not currently available.",
+                priority: 1_000,
+                intent: .openSettings(.accounts)
+            ))
+        }
+
+        if context.lastRunFailed {
+            candidates.append(LocusRecommendation(
+                id: "recover-run",
+                kind: .recoverRun,
+                title: "Review the failure and retry safely",
+                rationale: "The last run stopped before it completed.",
+                priority: 950,
+                intent: .prefill("Review the last run's error, explain the cause, and retry only the failed work.")
+            ))
+        }
+
+        if context.memoryConflictCount > 0 {
+            let count = context.memoryConflictCount
+            candidates.append(LocusRecommendation(
+                id: "review-memory",
+                kind: .reviewMemory,
+                title: "Review memory conflicts",
+                rationale: "\(count) suggestion\(count == 1 ? "" : "s") need your decision before approval.",
+                priority: 900,
+                intent: .openSettings(.knowledge)
+            ))
+        }
+
+        if context.changedFileCount > 0 {
+            let count = context.changedFileCount
+            candidates.append(LocusRecommendation(
+                id: "review-changes",
+                kind: .reviewChanges,
+                title: "Review the current changes",
+                rationale: "\(count) file\(count == 1 ? " has" : "s have") unreviewed edits.",
+                priority: 800,
+                intent: .openInspector(.changes)
+            ))
+        }
+
+        if context.hasPendingPlanSteps {
+            candidates.append(LocusRecommendation(
+                id: "continue-plan",
+                kind: .continuePlan,
+                title: "Continue the remaining plan",
+                rationale: "This session still has incomplete steps.",
+                priority: 700,
+                intent: .prefill("Continue the remaining plan steps. Verify each completed step before moving on.")
+            ))
+        }
+
+        if context.hasTestFiles && context.changedFileCount > 0 {
+            candidates.append(LocusRecommendation(
+                id: "verify-tests",
+                kind: .verifyTests,
+                title: "Run the relevant tests",
+                rationale: "This project has tests and the workspace contains changes.",
+                priority: 600,
+                intent: .prefill("Run the tests relevant to the current changes, investigate any failures, and report the result.")
+            ))
+        }
+
+        for (index, raw) in context.legacySuggestions.enumerated() {
+            let suggestion = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !suggestion.isEmpty else { continue }
+            candidates.append(LocusRecommendation(
+                id: "legacy-\(index)",
+                kind: .legacy,
+                title: suggestion,
+                rationale: "Suggested from the previous session state.",
+                priority: 500 - index,
+                intent: .prefill(suggestion)
+            ))
+        }
+
+        let discovery: (String, String, String) = switch context.projectKind {
+        case .swift:
+            (
+                "Audit the Swift architecture",
+                "This workspace contains Swift sources.",
+                "Audit this Swift project and identify the three highest-risk architectural or concurrency areas."
+            )
+        case .web:
+            (
+                "Polish the primary interface",
+                "This workspace contains a web application.",
+                "Polish the primary interface without changing its behavior, and verify the result in the browser."
+            )
+        case .python:
+            (
+                "Map the Python service and its risks",
+                "This workspace contains a Python project.",
+                "Map this Python project and identify the three highest-risk reliability or maintenance areas."
+            )
+        case .general:
+            (
+                "Audit the project’s highest-risk areas",
+                "A focused audit is a useful first step for this workspace.",
+                "Audit this project and identify the three highest-risk areas."
+            )
+        }
+        candidates.append(LocusRecommendation(
+            id: "explore-project",
+            kind: .exploreProject,
+            title: discovery.0,
+            rationale: discovery.1,
+            priority: 300,
+            intent: .prefill(discovery.2)
+        ))
+        candidates.append(LocusRecommendation(
+            id: "make-plan",
+            kind: .makePlan,
+            title: "Turn outstanding work into a plan",
+            rationale: "Planning first keeps implementation focused and reviewable.",
+            priority: 200,
+            intent: .prefill("Find the outstanding work in this project and turn it into a prioritized implementation plan.")
+        ))
+        candidates.append(LocusRecommendation(
+            id: "polish-interface",
+            kind: .polishInterface,
+            title: "Polish an existing interface",
+            rationale: "Improve clarity and craft without changing behavior.",
+            priority: 100,
+            intent: .prefill("Polish an existing interface without changing its behavior.")
+        ))
+
+        var seenKinds = Set<LocusRecommendationKind>()
+        return candidates
+            .sorted {
+                $0.priority == $1.priority ? $0.id < $1.id : $0.priority > $1.priority
+            }
+            .filter { seenKinds.insert($0.kind).inserted }
+            .prefix(3)
+            .map { $0 }
     }
 }
 
@@ -702,6 +923,11 @@ struct ModelInfo: Codable, Hashable, Identifiable {
         let window = trainedContextLength > 0 ? trainedContextLength : contextLength
         let context = window > 0 ? "\(max(window / 1024, 1))k ctx" : ""
         return [parameterSize, context].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    var sizeLabel: String {
+        guard size > 0 else { return "Size unavailable" }
+        return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
     }
 }
 
@@ -1507,12 +1733,20 @@ struct AppSettings: Codable, Hashable {
     /// A context window for local Ollama, when the user wants to pin one
     /// exactly rather than let Locus choose from the model's own ceiling.
     var localContextWindow: Int?
+    /// Models hidden from Locus stay installed in Ollama and can be restored
+    /// from Settings. Names are stored rather than model metadata so an Ollama
+    /// refresh remains the source of truth for size and capabilities.
+    var hiddenLocalModels: [String] = []
     /// Tool steps one turn may take. nil uses the agent's default of 40. Exposed
     /// because a bad value here is otherwise undiagnosable from inside the app:
     /// the turn just stops, and until this setting existed the only way to see
     /// or change the number was to hand-edit the agent's config file.
     var maxIterations: Int?
     var inspectorWidth: Double = AppSettings.defaultInspectorWidth
+    /// Preferred width of the conversations/workspaces sidebar. Layout may
+    /// temporarily render it narrower in a compact window without overwriting
+    /// this preference.
+    var sidebarWidth: Double = AppSettings.defaultSidebarWidth
     /// The chat column's width while the panel is zoomed over the window.
     /// The zoom flag itself is deliberately not persisted — it is a focus
     /// mode, and relaunch returns to the normal layout — but the width the
@@ -1613,6 +1847,20 @@ struct AppSettings: Codable, Hashable {
     static func clampInspectorWidth(_ width: Double) -> Double {
         guard width.isFinite else { return defaultInspectorWidth }
         return min(max(width, minimumInspectorWidth), maximumInspectorWidth)
+    }
+
+    static let defaultSidebarWidth: Double = 260
+    static let minimumSidebarWidth: Double = 220
+    static let maximumSidebarWidth: Double = 420
+
+    static func clampSidebarWidth(_ width: Double) -> Double {
+        guard width.isFinite else { return defaultSidebarWidth }
+        return min(max(width, minimumSidebarWidth), maximumSidebarWidth)
+    }
+
+    static func renderedSidebarWidth(_ preferred: Double, availableWidth: Double) -> Double {
+        guard availableWidth.isFinite else { return clampSidebarWidth(preferred) }
+        return min(clampSidebarWidth(preferred), max(availableWidth, 0))
     }
 
     static let defaultZoomedChatWidth: Double = 420
@@ -1737,12 +1985,20 @@ struct AppSettings: Codable, Hashable {
         activeAccountID = try container.decodeIfPresent(String.self, forKey: .activeAccountID)
             ?? defaults.activeAccountID
         localContextWindow = try container.decodeIfPresent(Int.self, forKey: .localContextWindow)
+        hiddenLocalModels = try container.decodeIfPresent(
+            [String].self,
+            forKey: .hiddenLocalModels
+        ) ?? defaults.hiddenLocalModels
         maxIterations = try container.decodeIfPresent(Int.self, forKey: .maxIterations)
         // Clamped on the way in as well as on the way out: a corrupt or
         // out-of-range stored value must not produce an unusable panel.
         inspectorWidth = Self.clampInspectorWidth(
             try container.decodeIfPresent(Double.self, forKey: .inspectorWidth)
                 ?? defaults.inspectorWidth
+        )
+        sidebarWidth = Self.clampSidebarWidth(
+            try container.decodeIfPresent(Double.self, forKey: .sidebarWidth)
+                ?? defaults.sidebarWidth
         )
         inspectorZoomedChatWidth = Self.clampZoomedChatWidth(
             try container.decodeIfPresent(Double.self, forKey: .inspectorZoomedChatWidth)
@@ -1958,17 +2214,24 @@ struct ExtensionSkill: Codable, Identifiable, Hashable {
     let source: String
     let pluginID: String?
     let allowImplicitInvocation: Bool?
+    let activation: String?
     let enabled: Bool
+    let enabledGlobal: Bool?
+    let enabledWorkspaces: [String]?
+    let disabledWorkspaces: [String]?
     let error: String?
     let builtin: Bool?
     let shadowed: Bool?
     let provenance: ExtensionSkillProvenance?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, description, source, enabled, error, builtin, shadowed, provenance
+        case id, name, description, source, enabled, error, builtin, shadowed, provenance, activation
         case displayName = "display_name"
         case pluginID = "plugin_id"
         case allowImplicitInvocation = "allow_implicit_invocation"
+        case enabledGlobal = "enabled_global"
+        case enabledWorkspaces = "enabled_workspaces"
+        case disabledWorkspaces = "disabled_workspaces"
     }
 }
 
@@ -2038,6 +2301,7 @@ struct ExtensionMCPServer: Codable, Identifiable, Hashable {
     let approvalMode: String?
     let auth: String?
     let oauth: MCPOAuthConfiguration?
+    let oauthStrategy: String?
     let presetID: String?
     let authFallback: String?
     let fallbackHeader: String?
@@ -2056,6 +2320,7 @@ struct ExtensionMCPServer: Codable, Identifiable, Hashable {
         case authFallback = "auth_fallback"
         case fallbackHeader = "fallback_header"
         case optionalHeader = "optional_header"
+        case oauthStrategy = "oauth_strategy"
     }
 }
 
@@ -2067,6 +2332,7 @@ struct ExtensionMCPPreset: Codable, Identifiable, Hashable {
     let url: String
     let sourceURL: String?
     let auth: String
+    let oauthStrategy: String?
     let fallback: String?
     let fallbackHeader: String?
     let optionalHeader: String?
@@ -2092,6 +2358,7 @@ struct ExtensionMCPPreset: Codable, Identifiable, Hashable {
         case resourcesDiscoverable = "resources_discoverable"
         case promptsEnabled = "prompts_enabled"
         case catalogVersion = "catalog_version"
+        case oauthStrategy = "oauth_strategy"
     }
 }
 
@@ -2110,6 +2377,15 @@ struct MCPOAuthConfiguration: Codable, Hashable {
         case clientID = "client_id"
         case redirectURI = "redirect_uri"
     }
+}
+
+struct MCPDeviceAuthorizationPrompt: Identifiable, Hashable {
+    let id = UUID()
+    let serverID: String
+    let serverName: String
+    let userCode: String
+    let verificationURL: URL
+    let expiresAt: Date
 }
 
 struct ExtensionsResponse: Codable, Hashable {

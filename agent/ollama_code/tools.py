@@ -46,6 +46,7 @@ IGNORE_DIRS = {
 SAFE_TOOLS = {
     "read_file", "glob", "grep", "list_dir", "todo_write", "submit_plan",
     "search_workspace_knowledge", "search_memory", "propose_memory",
+    "record_skill_observation", "capture_context_snapshot",
     "computer_list_apps", "computer_get_state",
     # Reading a page never prompts. Note this is a deliberate departure from
     # `web_fetch`, which is not here: these are the first never-ask tools that
@@ -81,6 +82,7 @@ class ToolContext:
     memory_proposals_enabled: bool = True
     memory_session_id: str = ""
     memory_run_id: str = ""
+    cross_chat_context_enabled: bool = True
     #: App-owned process broker. Work submitted here is detached from the
     #: current turn and therefore survives Stop.
     background_service: Callable[[dict[str, Any]], str] | None = None
@@ -990,6 +992,62 @@ def _impl_propose_memory(args: dict[str, Any], ctx: ToolContext) -> str:
     )
 
 
+def _impl_record_skill_observation(args: dict[str, Any], ctx: ToolContext) -> str:
+    """Store evidence-backed observer notes outside the user's repository."""
+    from .continuity import ContinuityError, ContinuityStore
+
+    payload = {
+        **args,
+        "source_session_id": ctx.memory_session_id,
+        "source_run_id": ctx.memory_run_id,
+    }
+    try:
+        item = ContinuityStore().record_observation(
+            ctx.memory_workspace or ctx.cwd, payload
+        )
+    except ContinuityError as exc:
+        return f"Error: {exc}"
+    if item.get("checkpoint_only"):
+        return "Skill-observation checkpoint recorded; no repository file was created."
+    return (
+        f"Skill observation #{item['number']} recorded for user review. "
+        "No skill was changed automatically."
+    )
+
+
+def _impl_capture_context_snapshot(args: dict[str, Any], ctx: ToolContext) -> str:
+    """Explicitly replace this session's encrypted workspace handoff."""
+    if not ctx.cross_chat_context_enabled:
+        return "Error: cross-chat context is disabled for this agent."
+    from .continuity import ContinuityError, ContinuityStore, workspace_changed_files
+
+    pending = str(args.get("pending") or "").strip()
+    if not pending:
+        pending = "; ".join(
+            str(item.get("content") or "")
+            for item in ctx.todos
+            if item.get("status") != "completed" and item.get("content")
+        )
+    try:
+        snapshot = ContinuityStore().save_snapshot(
+            ctx.memory_workspace or ctx.cwd,
+            ctx.memory_session_id,
+            {
+                "goal": args.get("goal"),
+                "outcome": args.get("outcome"),
+                "mode": args.get("mode") or "work",
+                "plan": ctx.plan_document,
+                "todos": ctx.todos,
+                "changed_files": workspace_changed_files(ctx.memory_workspace or ctx.cwd),
+                "pending": pending,
+            },
+            pinned=bool(args.get("pinned")),
+        )
+    except ContinuityError as exc:
+        return f"Error: {exc}"
+    return f"Encrypted context handoff saved for session {snapshot['session_id']}."
+
+
 def _impl_delegate_read_only(args: dict[str, Any], ctx: ToolContext) -> str:
     if ctx.delegate_read_only is None:
         return "Error: Solo Swarm is not active for this turn."
@@ -1014,6 +1072,8 @@ _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
     "search_workspace_knowledge": _impl_search_workspace_knowledge,
     "search_memory": _impl_search_memory,
     "propose_memory": _impl_propose_memory,
+    "record_skill_observation": _impl_record_skill_observation,
+    "capture_context_snapshot": _impl_capture_context_snapshot,
     "delegate_read_only": _impl_delegate_read_only,
 }
 
@@ -1048,6 +1108,34 @@ def _schema(name: str, description: str, properties: dict[str, Any], required: l
 
 
 TOOL_SCHEMAS: list[dict[str, Any]] = [
+    _schema(
+        "record_skill_observation",
+        "Record one evidence-backed skill improvement opportunity in Locus app data for user review; never changes a skill automatically.",
+        {
+            "title": {"type": "string"},
+            "session_context": {"type": "string"},
+            "skill": {"type": "string"},
+            "type": {"type": "string", "enum": ["open-source", "internal"]},
+            "phase_area": {"type": "string"},
+            "issue": {"type": "string"},
+            "suggested_improvement": {"type": "string"},
+            "principle": {"type": "string"},
+            "checkpoint_only": {"type": "boolean"},
+        },
+        [],
+    ),
+    _schema(
+        "capture_context_snapshot",
+        "Explicitly save or replace this development session's encrypted cross-chat handoff without another model call.",
+        {
+            "goal": {"type": "string"},
+            "outcome": {"type": "string"},
+            "pending": {"type": "string"},
+            "mode": {"type": "string", "enum": ["work", "plan", "build"]},
+            "pinned": {"type": "boolean"},
+        },
+        ["goal", "outcome"],
+    ),
     _schema(
         "search_memory",
         "Search approved local memory within this agent's allowed personal, workspace, and agent scopes.",

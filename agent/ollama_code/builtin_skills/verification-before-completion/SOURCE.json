@@ -1,9 +1,9 @@
 {
-  "catalog_version": 1,
   "provider": "Superpowers",
   "repository": "https://github.com/obra/superpowers",
-  "commit": "44c9b2d6e889982ac18c27d05a19fefe335194e1",
+  "commit": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
   "upstream_path": "skills/verification-before-completion",
   "license": "MIT",
-  "license_file": "LICENSE"
+  "license_file": "LICENSE",
+  "activation": "automatic"
 }

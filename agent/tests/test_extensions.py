@@ -222,7 +222,21 @@ def test_version_one_state_migrates_with_builtins_and_preserves_user_entries(tmp
     assert builtin["shadowed"] is True
     assert builtin["enabled"] is False
     assert next(item for item in skills if item["id"] == "frontend-design")["enabled"] is True
-    assert len([item for item in skills if item.get("builtin")]) == 5
+    bundled = [item for item in skills if item.get("builtin")]
+    assert len(bundled) == 26
+    assert {
+        "builtin:using-superpowers",
+        "builtin:task-observer",
+        "builtin:grill-me",
+        "builtin:grilling",
+        "builtin:gsd-workflow",
+        "builtin:gsd-project",
+        "builtin:gsd-quality",
+        "builtin:gsd-context",
+        "builtin:gsd-manage",
+        "builtin:gsd-ideate",
+        "builtin:context-handoff",
+    } <= {item["id"] for item in bundled}
     assert manager.mcp_servers()[0]["id"] == "user:existing:1"
     assert manager.mcp_servers()[0]["approval_mode"] == "ask"
 
@@ -236,8 +250,61 @@ def test_version_one_state_migrates_with_builtins_and_preserves_user_entries(tmp
     with pytest.raises(ExtensionError, match="only imported"):
         manager.remove_skill("builtin:systematic-debugging")
     persisted = json.loads((state / "state.json").read_text())
-    assert persisted["version"] == 2
+    assert persisted["version"] == 3
     assert persisted["builtin_skill_overrides"]
+
+
+def test_startup_skills_are_trusted_ordered_and_shadow_safe(tmp_path):
+    manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
+    assert [item["id"] for item in manager.startup_skills(str(tmp_path))] == [
+        "builtin:using-superpowers",
+        "builtin:task-observer",
+    ]
+
+    registry = ToolRegistry(manager)
+    registry.begin_turn("Use $grill-me to clarify this feature", str(tmp_path))
+    context = registry.explicit_skill_context
+    assert context.index("Startup skill $using-superpowers") < context.index(
+        "Startup skill $task-observer"
+    )
+    assert context.index("Startup skill $task-observer") < context.index(
+        "Explicitly activated skill $builtin:grill-me"
+    )
+
+    shadow = _skill(tmp_path / "user-skills", name="using-superpowers")
+    manager.import_skill(str(shadow))
+    startup = manager.startup_skills(str(tmp_path))
+    assert all(item["name"] != "using-superpowers" for item in startup)
+    replacement = next(
+        item for item in manager.skills(str(tmp_path))
+        if item["name"] == "using-superpowers" and not item.get("builtin")
+    )
+    assert replacement["activation"] == "automatic"
+
+
+def test_bundled_skill_source_pins_and_activation_metadata(tmp_path):
+    manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
+    skills = {item["id"]: item for item in manager.skills(str(tmp_path))}
+
+    assert skills["builtin:task-observer"]["provenance"]["commit"] == (
+        "281f13466cd3a73e9ebc9d210907748e1941a3dd"
+    )
+    assert skills["builtin:task-observer"]["activation"] == "startup"
+    assert skills["builtin:using-superpowers"]["provenance"]["commit"] == (
+        "b36e0829c6d0140e93cfef2ca599b1b07d4a7797"
+    )
+    assert skills["builtin:using-superpowers"]["activation"] == "startup"
+    assert skills["builtin:grill-me"]["provenance"]["commit"] == (
+        "068b6e0c62393147daf03530149cdce209c93da8"
+    )
+    assert skills["builtin:grill-me"]["activation"] == "explicit"
+    assert skills["builtin:grilling"]["activation"] == "automatic"
+    for router in ("workflow", "project", "quality", "context", "manage", "ideate"):
+        skill = skills[f"builtin:gsd-{router}"]
+        assert skill["provenance"]["commit"] == (
+            "bdcaab2c752d9a33a1a1ca9acf3a3c81fb991815"
+        )
+        assert skill["activation"] == "automatic"
 
 
 def test_recommended_mcp_presets_are_inert_scoped_and_idempotent(tmp_path, monkeypatch):
@@ -251,6 +318,9 @@ def test_recommended_mcp_presets_are_inert_scoped_and_idempotent(tmp_path, monke
         "context7", "github", "sentry", "supabase", "openai-docs"
     ]
     assert all(item["installed"] is False for item in presets)
+    github = next(item for item in presets if item["id"] == "github")
+    assert github["catalog_version"] == 2
+    assert github["oauth_strategy"] == "github_device"
 
     with pytest.raises(ExtensionError, match="project reference"):
         manager.materialize_mcp_preset("supabase")
@@ -262,6 +332,35 @@ def test_recommended_mcp_presets_are_inert_scoped_and_idempotent(tmp_path, monke
         "supabase", project_ref="different"
     )["id"] == server["id"]
     assert manager.mcp_presets()[3]["installed"] is True
+
+
+def test_github_preset_state_migration_preserves_user_scope(tmp_path):
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "state.json").write_text(json.dumps({
+        "version": 2,
+        "mcp_servers": [{
+            "id": "user:custom-github",
+            "name": "GitHub",
+            "url": "https://api.githubcopilot.com/mcp/",
+            "enabled": False,
+            "enabled_global": False,
+            "enabled_workspaces": [str(tmp_path)],
+            "disabled_workspaces": [],
+            "custom_marker": "keep-me",
+        }],
+    }))
+
+    manager = ExtensionManager(str(tmp_path), root=state)
+    server = manager.mcp_servers(str(tmp_path))[0]
+    assert server["id"] == "user:custom-github"
+    assert server["enabled"] is False
+    assert server["enabled_global"] is False
+    assert server["enabled_workspaces"] == [str(tmp_path)]
+    assert server["custom_marker"] == "keep-me"
+    assert server["preset_id"] == "github"
+    assert server["oauth_strategy"] == "github_device"
+    assert server["preset_provenance"]["catalog_version"] == 2
 
 
 def test_oauth_metadata_discovery_validates_issuer_and_does_not_follow_redirects(monkeypatch):

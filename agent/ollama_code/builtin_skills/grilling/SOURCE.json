@@ -1,0 +1,10 @@
+{
+  "provider": "Matt Pocock",
+  "repository": "https://github.com/mattpocock/skills",
+  "commit": "068b6e0c62393147daf03530149cdce209c93da8",
+  "upstream_path": "skills/productivity/grilling",
+  "license": "MIT",
+  "license_file": "LICENSE",
+  "activation": "automatic",
+  "adaptation": "Locus asks one decision question per turn, discovers repository facts directly, and locks implementation until the user confirms shared understanding"
+}

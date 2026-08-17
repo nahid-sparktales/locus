@@ -1,0 +1,13 @@
+{
+  "provider": "Locus native",
+  "repository": "https://github.com/mksglu/context-mode",
+  "commit": "design-reference-only",
+  "upstream_path": "",
+  "license": "Native implementation; referenced projects retain their own licenses",
+  "license_file": "REFERENCES.md",
+  "activation": "explicit",
+  "design_references": [
+    "https://github.com/mksglu/context-mode",
+    "https://github.com/thedotmack/claude-mem"
+  ]
+}

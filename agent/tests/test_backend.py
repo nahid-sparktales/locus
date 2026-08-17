@@ -27,6 +27,7 @@ from ollama_code import config as config_mod
 from ollama_code import core as core_module
 from ollama_code import server as server_mod
 from ollama_code import sessions as sessions_mod
+from ollama_code.continuity import ContinuityStore
 from ollama_code.core import AgentCore
 from ollama_code.ollama import ChatResponse, OllamaError, process_chunk
 from ollama_code.orchestration import AgentResult, TeamOrchestrator
@@ -50,6 +51,51 @@ def test_provider_keys_are_consumed_from_the_environment(monkeypatch):
 @pytest.fixture
 def ctx(tmp_path):
     return ToolContext(cwd=str(tmp_path))
+
+
+def test_context_and_observation_settings_endpoints(client, tmp_path, monkeypatch):
+    workspace = client.app.state.service.core.workspace_root \
+        or client.app.state.service.core.cwd
+    store = ContinuityStore(tmp_path / "continuity.sqlite3", key=b"e" * 32)
+    monkeypatch.setattr(server_mod, "_continuity_store", lambda: store)
+    snapshot = store.save_snapshot(
+        workspace, "session-endpoint", {"goal": "preserve context"}
+    )
+    observation = store.record_observation(workspace, {
+        "issue": "A verification command was not named.",
+        "suggested_improvement": "Record the focused command.",
+        "principle": "Evidence should be reproducible.",
+    })
+
+    listed = client.get("/api/context-snapshots", params={"workspace": workspace})
+    assert listed.status_code == 200
+    assert listed.json()["snapshots"][0]["id"] == snapshot["id"]
+    pinned = client.put(
+        f"/api/context-snapshots/{snapshot['id']}",
+        json={"workspace": workspace, "pinned": True},
+    )
+    assert pinned.status_code == 200
+    assert pinned.json()["snapshot"]["pinned"] is True
+
+    reviewed = client.put(
+        f"/api/skill-observations/{observation['id']}",
+        json={"workspace": workspace, "status": "DECLINED"},
+    )
+    assert reviewed.status_code == 200
+    assert reviewed.json()["observation"]["status"] == "DECLINED"
+    exported = client.get(
+        "/api/skill-observations/export", params={"workspace": workspace}
+    )
+    assert exported.status_code == 200
+    assert exported.json()["observations"][0]["id"] == observation["id"]
+    assert client.delete(
+        f"/api/skill-observations/{observation['id']}",
+        params={"workspace": workspace},
+    ).status_code == 200
+    assert client.delete(
+        f"/api/context-snapshots/{snapshot['id']}",
+        params={"workspace": workspace},
+    ).status_code == 200
 
 
 # --------------------------------------------------------------------- tools
@@ -3585,11 +3631,14 @@ def test_durable_run_queue_reorder_filter_cancel_and_retry(client):
             "workspace_root": "/tmp/workspace-a" if index < 2 else "/tmp/workspace-b",
             "request": f"request {index}",
             "run_kind": "solo",
+            "solo_swarm": index == 1,
             "execution_environment": "worktree",
         })
         assert response.status_code == 200
         queued.append(response.json())
     assert [item["queue_position"] for item in queued] == [1, 2, 3]
+    assert queued[0]["manifest"]["solo_swarm"] is False
+    assert queued[1]["manifest"]["solo_swarm"] is True
 
     moved = client.patch("/api/runs/queued-2/queue", json={"action": "move_top"})
     assert moved.status_code == 200 and moved.json()["queue_position"] == 1
@@ -3604,6 +3653,7 @@ def test_durable_run_queue_reorder_filter_cancel_and_retry(client):
     assert retried.status_code == 200
     assert retried.json()["retry_parent_id"] == "queued-1"
     assert retried.json()["session_id"] == "chat-1"
+    assert retried.json()["manifest"]["solo_swarm"] is True
 
 
 def test_memory_diagnostics_and_selected_chat_reprocessing_are_content_free(client, tmp_path):

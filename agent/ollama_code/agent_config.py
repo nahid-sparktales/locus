@@ -44,6 +44,9 @@ class MemoryPolicy:
     scopes: tuple[str, ...] = ("personal", "workspace", "agent")
     max_automatic_memories: int = 8
     max_automatic_tokens: int = 1_200
+    cross_chat_context_enabled: bool = True
+    max_automatic_context_snapshots: int = 2
+    max_automatic_context_tokens: int = 1_200
 
 
 @dataclass(frozen=True)
@@ -155,6 +158,15 @@ class AgentConfiguration:
                 max_automatic_tokens=_bounded_int(
                     memory_raw.get("max_automatic_tokens"), 1_200, 0, 4_000
                 ),
+                cross_chat_context_enabled=bool(
+                    memory_raw.get("cross_chat_context_enabled", True)
+                ),
+                max_automatic_context_snapshots=_bounded_int(
+                    memory_raw.get("max_automatic_context_snapshots"), 2, 0, 10
+                ),
+                max_automatic_context_tokens=_bounded_int(
+                    memory_raw.get("max_automatic_context_tokens"), 1_200, 0, 4_000
+                ),
             ),
             runtime_policy=RuntimePolicy(
                 max_tool_iterations=optional_int("max_tool_iterations", 1, 100),
@@ -188,6 +200,7 @@ def compose_system_prompt(
     role_contract: str = "",
     project_context: tuple[str, str] | None = None,
     memory_context: str = "",
+    continuity_context: str = "",
 ) -> tuple[str, list[dict[str, str]]]:
     """Compose ordered prompt layers and return preview-safe metadata."""
     mode = mode if mode in VALID_MODES else "work"
@@ -222,6 +235,8 @@ def compose_system_prompt(
     sections.append(("Editable agent behavior", "\n\n".join(editable_parts)))
     if memory_context.strip():
         sections.append(("Approved memory", memory_context.strip()))
+    if mode != "ask" and continuity_context.strip():
+        sections.append(("Cross-chat workspace context", continuity_context.strip()))
     if project_context:
         name, content = project_context
         sections.append((

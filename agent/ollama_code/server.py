@@ -56,6 +56,12 @@ from .config import (
     save_config,
 )
 from .core import AgentCore
+from .continuity import (
+    ContinuityError,
+    ContinuityStore,
+    format_context_snapshots,
+    workspace_changed_files,
+)
 from .devserver import DevServerError, DevServerManager
 from .evaluations import (
     EvaluationError,
@@ -950,6 +956,117 @@ def _memory_vault(workspace: str = "") -> MemoryVault:
 
 def _memory_workspace(workspace: str = "") -> str:
     return workspace.strip() or service().core.workspace_root or service().core.cwd
+
+
+def _continuity_store() -> ContinuityStore:
+    try:
+        return ContinuityStore()
+    except (ContinuityError, MemoryError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/context-snapshots")
+def context_snapshots(
+    workspace: str = Query(default=""),
+    limit: int = Query(default=50, ge=1, le=100),
+) -> dict[str, Any]:
+    target = _memory_workspace(workspace)
+    try:
+        return {"snapshots": _continuity_store().list_snapshots(target, limit=limit)}
+    except ContinuityError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.put("/api/context-snapshots/{snapshot_id}")
+def context_snapshot_update(
+    snapshot_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    target = _memory_workspace(str(body.get("workspace") or ""))
+    if not isinstance(body.get("pinned"), bool):
+        raise HTTPException(422, "pinned must be a boolean")
+    try:
+        snapshot = _continuity_store().set_snapshot_pinned(
+            snapshot_id, target, bool(body["pinned"])
+        )
+    except ContinuityError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {"ok": True, "snapshot": snapshot}
+
+
+@app.delete("/api/context-snapshots/{snapshot_id}")
+def context_snapshot_delete(
+    snapshot_id: str, workspace: str = Query(default="")
+) -> dict[str, Any]:
+    target = _memory_workspace(workspace)
+    try:
+        deleted = _continuity_store().delete_snapshot(snapshot_id, target)
+    except ContinuityError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not deleted:
+        raise HTTPException(404, "context snapshot not found")
+    return {"ok": True}
+
+
+@app.delete("/api/context-snapshots")
+def context_snapshots_clear(workspace: str = Query(default="")) -> dict[str, Any]:
+    target = _memory_workspace(workspace)
+    try:
+        return {"ok": True, "deleted": _continuity_store().clear_snapshots(target)}
+    except ContinuityError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/skill-observations")
+def skill_observations(
+    workspace: str = Query(default=""),
+    status: str = Query(default=""),
+) -> dict[str, Any]:
+    target = _memory_workspace(workspace)
+    try:
+        return {
+            "observations": _continuity_store().list_observations(
+                target, status=status
+            )
+        }
+    except ContinuityError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.put("/api/skill-observations/{observation_id}")
+def skill_observation_update(
+    observation_id: str, body: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    target = _memory_workspace(str(body.get("workspace") or ""))
+    try:
+        observation = _continuity_store().set_observation_status(
+            observation_id, target, str(body.get("status") or "")
+        )
+    except ContinuityError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"ok": True, "observation": observation}
+
+
+@app.delete("/api/skill-observations/{observation_id}")
+def skill_observation_delete(
+    observation_id: str, workspace: str = Query(default="")
+) -> dict[str, Any]:
+    target = _memory_workspace(workspace)
+    try:
+        deleted = _continuity_store().delete_observation(observation_id, target)
+    except ContinuityError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not deleted:
+        raise HTTPException(404, "skill observation not found")
+    return {"ok": True}
+
+
+@app.get("/api/skill-observations/export")
+def skill_observation_export(workspace: str = Query(default="")) -> dict[str, Any]:
+    target = _memory_workspace(workspace)
+    try:
+        return _continuity_store().export_observations(target)
+    except ContinuityError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.get("/api/knowledge/status")
@@ -2493,6 +2610,7 @@ def run_queue(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, An
         run_kind=str(body.get("run_kind") or "solo"),
         execution_environment=str(body.get("execution_environment") or "local"),
         retry_parent_id=str(body.get("retry_parent_id") or ""),
+        manifest={"solo_swarm": body.get("solo_swarm") is True},
     )
 
 
@@ -2530,6 +2648,8 @@ def run_retry(run_id: str) -> dict[str, Any]:
         run_kind=str(original.get("run_kind") or "solo"),
         execution_environment=str(original.get("execution_environment") or "local"),
         retry_parent_id=run_id,
+        manifest=original.get("manifest")
+        if isinstance(original.get("manifest"), dict) else None,
     )
 
 
@@ -4117,6 +4237,76 @@ def _automatic_memory_context(
     return context[:policy.max_automatic_tokens * 4]
 
 
+def _automatic_continuity_context(
+    core: AgentCore,
+    query: str,
+    configuration: AgentConfiguration,
+    *,
+    just_chat: bool,
+) -> str:
+    policy = configuration.memory_policy
+    if (
+        just_chat
+        or not policy.cross_chat_context_enabled
+        or not policy.max_automatic_context_snapshots
+        or not policy.max_automatic_context_tokens
+    ):
+        return ""
+    workspace = core.workspace_root or core.cwd
+    try:
+        results = ContinuityStore().search_snapshots(
+            query,
+            workspace,
+            exclude_session=core.session.session_id,
+            limit=policy.max_automatic_context_snapshots,
+        )
+    except (ContinuityError, MemoryError):
+        return ""
+    return format_context_snapshots(results, policy.max_automatic_context_tokens)
+
+
+def _capture_continuity_snapshot(
+    svc: ChatService,
+    *,
+    goal: str,
+    mode: str,
+    configuration: AgentConfiguration,
+    run_id: str,
+    plan: dict[str, Any] | None = None,
+    todos: list[dict[str, Any]] | None = None,
+) -> None:
+    """Replace the rolling session snapshot from state already produced this turn."""
+    policy = configuration.memory_policy
+    if not policy.cross_chat_context_enabled:
+        return
+    core = svc.core
+    active_todos = todos if todos is not None else core.tool_ctx.todos
+    pending = "; ".join(
+        str(item.get("content") or "")
+        for item in active_todos
+        if item.get("status") != "completed" and item.get("content")
+    )
+    checkpoint = svc.run_store.latest_checkpoint(run_id)
+    try:
+        ContinuityStore().save_snapshot(
+            core.workspace_root or core.cwd,
+            core.session.session_id,
+            {
+                "goal": goal,
+                "outcome": _latest_assistant_output(core),
+                "mode": mode,
+                "plan": plan if plan is not None else core.tool_ctx.plan_document,
+                "todos": active_todos,
+                "checkpoint": checkpoint,
+                "changed_files": workspace_changed_files(core.workspace_root or core.cwd),
+                "pending": pending,
+            },
+        )
+    except (ContinuityError, MemoryError, OSError):
+        # Continuity is helpful but never allowed to fail an otherwise complete turn.
+        return
+
+
 def _run_user_turn(
     svc: ChatService,
     text: str,
@@ -4140,6 +4330,7 @@ def _run_user_turn(
         request=text,
         state="running",
         run_kind="solo",
+        manifest={"solo_swarm": bool(solo_swarm_enabled and not just_chat)},
         content_policy="metadata",
         execution_environment=environment,
     )
@@ -4156,10 +4347,14 @@ def _run_user_turn(
     memory_context = _automatic_memory_context(
         svc.core, text, configuration, just_chat=just_chat,
     )
+    continuity_context = _automatic_continuity_context(
+        svc.core, text, configuration, just_chat=just_chat,
+    )
     svc.core.configure_agent(
         agent_config,
         mode="ask" if just_chat else mode,
         memory_context=memory_context,
+        continuity_context=continuity_context,
     )
     swarm: SoloSwarmExecutor | None = None
     workspace_read_allowed = configuration.capability_policy.workspace_read
@@ -4189,6 +4384,7 @@ def _run_user_turn(
     svc.core.tool_ctx.delegate_read_only = swarm.execute if swarm is not None else None
     svc.core.tool_registry.set_solo_swarm_enabled(swarm is not None)
     svc.core.reset_system_message()
+    completed = False
     try:
         svc.core.run_turn(
             text,
@@ -4200,6 +4396,7 @@ def _run_user_turn(
                 **({"solo_swarm": True} if swarm is not None else {}),
             },
         )
+        completed = True
     except Exception:
         # Preserve a durable terminal boundary while the run identity is still
         # attached. The executor completion guard sees it and does not repeat it.
@@ -4210,6 +4407,14 @@ def _run_user_turn(
         svc.emit({"type": "turn_done", "reason": "error", "duration_ms": 0})
         raise
     finally:
+        if completed and not just_chat:
+            _capture_continuity_snapshot(
+                svc,
+                goal=text,
+                mode=mode,
+                configuration=configuration,
+                run_id=run_id,
+            )
         # ``turn_done`` persists the terminal boundary before this identity is
         # released. A process crash leaves the running record recoverable.
         svc.core.tool_registry.set_solo_swarm_enabled(False)
@@ -4298,12 +4503,22 @@ def _run_team_turn(
             profile = parsed_profiles.get(str(raw_profile.get("id") or ""))
             if profile is None:
                 continue
-            raw_profile["_memory_context"] = _automatic_memory_context(
-                core,
-                text,
-                profile.behavior,
-                just_chat=False,
-                agent_id=profile.id,
+            raw_profile["_memory_context"] = "\n\n".join(
+                section for section in (
+                    _automatic_memory_context(
+                        core,
+                        text,
+                        profile.behavior,
+                        just_chat=False,
+                        agent_id=profile.id,
+                    ),
+                    _automatic_continuity_context(
+                        core,
+                        text,
+                        profile.behavior,
+                        just_chat=False,
+                    ),
+                ) if section
             )
 
         stage = "preparing the dispatch plan"
@@ -4692,6 +4907,27 @@ def _run_team_turn(
             "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
         })
     finally:
+        if terminal_reason == "complete" and prepared is not None:
+            team_todos = [
+                {
+                    "content": job.goal,
+                    "status": (
+                        "completed"
+                        if job.id in prepared.completed_writer_job_ids
+                        else "pending"
+                    ),
+                }
+                for job in prepared.writer_jobs
+            ]
+            _capture_continuity_snapshot(
+                svc,
+                goal=text,
+                mode="build",
+                configuration=prepared.writer.behavior,
+                run_id=run_id,
+                plan=prepared.plan.structured(),
+                todos=team_todos,
+            )
         if svc.current_task is not None:
             task_state = {
                 "complete": "completed",
@@ -5375,6 +5611,7 @@ def _install_writer_route(core: AgentCore, writer: AgentProfile) -> dict[str, An
         "agent_mode": getattr(core, "agent_mode", "work"),
         "agent_role_contract": getattr(core, "agent_role_contract", ""),
         "memory_context": getattr(core, "memory_context", ""),
+        "continuity_context": getattr(core, "continuity_context", ""),
         "max_iterations": getattr(core, "max_iterations", 50),
     }
     core.model = writer.model
@@ -5449,6 +5686,7 @@ def _restore_writer_route(core: AgentCore, snapshot: dict[str, Any]) -> None:
             mode=snapshot["agent_mode"],
             role_contract=snapshot["agent_role_contract"],
             memory_context=snapshot["memory_context"],
+            continuity_context=snapshot["continuity_context"],
             agent_id=snapshot["agent_id"],
         )
         core.max_iterations = snapshot["max_iterations"]

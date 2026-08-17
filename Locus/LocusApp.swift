@@ -19,9 +19,21 @@ enum LocusWindowSizing {
     static let normalizationKey = "Locus.didNormalizeMainWindow.1250x760"
 
     static func centeredFrame(in visibleFrame: NSRect) -> NSRect {
+        centeredFrame(size: defaultSize, in: visibleFrame)
+    }
+
+    static func uiTestFrame(in visibleFrame: NSRect, environment: [String: String]) -> NSRect {
+        let width = environment["LOCUS_UI_TESTING_WINDOW_WIDTH"].flatMap(Double.init)
+            ?? defaultSize.width
+        let height = environment["LOCUS_UI_TESTING_WINDOW_HEIGHT"].flatMap(Double.init)
+            ?? defaultSize.height
+        return centeredFrame(size: NSSize(width: width, height: height), in: visibleFrame)
+    }
+
+    private static func centeredFrame(size: NSSize, in visibleFrame: NSRect) -> NSRect {
         let size = NSSize(
-            width: min(defaultSize.width, visibleFrame.width),
-            height: min(defaultSize.height, visibleFrame.height)
+            width: min(size.width, visibleFrame.width),
+            height: min(size.height, visibleFrame.height)
         )
         return NSRect(
             x: visibleFrame.midX - size.width / 2,
@@ -45,15 +57,17 @@ struct LocusApp: App {
 
     var body: some Scene {
         Window("Locus", id: "main") {
-            RootView()
+            sceneContent
                 .environmentObject(model)
                 .environmentObject(updates)
                 .onAppear { appDelegate.model = model }
                 .preferredColorScheme(model.effectiveAppearance.colorScheme)
                 .frame(
-                    // Sidebar 260 + workspace 520 + panel 280 + rail 44.
-                    minWidth: locusIsUITesting ? 980 : 1_120,
-                    minHeight: locusIsUITesting ? 620 : 700
+                    // The full three-column layout fits comfortably at the
+                    // default size. Narrow windows progressively overlay the
+                    // sidebar and inspector instead of clipping the workspace.
+                    minWidth: locusIsUITesting ? 680 : 720,
+                    minHeight: 620
                 )
                 .background {
                     MainWindowMarker()
@@ -126,12 +140,12 @@ struct LocusApp: App {
                 }
                 .keyboardShortcut("0", modifiers: .command)
                 Button(model.inspectorCollapsed ? "Show Inspector" : "Hide Inspector") {
-                    withAnimation(.easeInOut(duration: 0.18)) { model.toggleInspector() }
+                    withAnimation(LocusMotion.spatial) { model.toggleInspector() }
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
                 .disabled(model.justChatEnabled)
                 Button(model.inspectorZoomed ? "Restore Panel" : "Expand Panel") {
-                    withAnimation(.easeInOut(duration: 0.18)) { model.toggleInspectorZoom() }
+                    withAnimation(LocusMotion.spatial) { model.toggleInspectorZoom() }
                 }
                 .keyboardShortcut("e", modifiers: [.command, .option])
                 .disabled(model.justChatEnabled)
@@ -152,6 +166,53 @@ struct LocusApp: App {
                 .environmentObject(model)
                 .environmentObject(updates)
                 .preferredColorScheme(model.effectiveAppearance.colorScheme)
+        }
+    }
+
+    /// Accessibility fixtures render one surface as the window root. This
+    /// avoids XCTest's macOS sheet-snapshot race and audits the same production
+    /// views without a dimmed, inaccessible workspace behind them.
+    @ViewBuilder
+    private var sceneContent: some View {
+        switch locusEnvironment["LOCUS_UI_TESTING_ACCESSIBILITY_SURFACE"] {
+        case "settings":
+            SettingsView(presentationContext: .sheet)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(LocusTheme.surfaceCanvas)
+        case "model-library":
+            ModelLibraryView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(LocusTheme.surfaceCanvas)
+        case "agent-editor":
+            AgentProfileEditor(
+                profile: AgentProfile(
+                    name: "Review Agent",
+                    model: "qwen3:8b",
+                    role: .reviewer,
+                    instructions: AgentRole.reviewer.defaultInstructions
+                ),
+                onSave: { _ in }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(LocusTheme.surfaceCanvas)
+        case "permission":
+            Group {
+                if let request = model.activePermissionRequest {
+                    PermissionPromptView(request: request)
+                        .frame(maxWidth: 740)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            .background(LocusTheme.surfaceCanvas)
+        case "plan-approval":
+            PlanApprovalPromptView()
+                .frame(maxWidth: 740)
+                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .background(LocusTheme.surfaceCanvas)
+        default:
+            RootView()
         }
     }
 }
@@ -280,7 +341,10 @@ private final class MainWindowMarkerView: NSView {
         if locusIsUITesting {
             guard !preparedUITestWindow else { return }
             preparedUITestWindow = true
-            window.setFrame(LocusWindowSizing.centeredFrame(in: visibleFrame), display: true)
+            window.setFrame(
+                LocusWindowSizing.uiTestFrame(in: visibleFrame, environment: locusEnvironment),
+                display: true
+            )
             return
         }
 
@@ -301,70 +365,163 @@ private final class MainWindowMarkerView: NSView {
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var updates: AppUpdateController
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var compactSidebarPresented = false
+
+    private let inspectorRailWidth: CGFloat = 44
+    private let minimumWorkspaceWidth: CGFloat = 360
 
     var body: some View {
-        HStack(spacing: 0) {
-            if !model.sidebarCollapsed {
-                SessionSidebarView()
-                    .frame(width: locusIsUITesting ? 240 : 260)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-            }
+        GeometryReader { proxy in
+            let inspectorOpen = !model.inspectorCollapsed && !model.justChatEnabled
+            let railWidth = model.justChatEnabled ? 0 : inspectorRailWidth
+            let minimumSidebarWidth = CGFloat(AppSettings.minimumSidebarWidth)
+            let minimumInspectorWidth = CGFloat(AppSettings.minimumInspectorWidth)
+            let inspectorReservation = inspectorOpen ? minimumInspectorWidth : 0
+            let minimumThreeColumnWidth = minimumSidebarWidth
+                + minimumWorkspaceWidth
+                + inspectorReservation
+                + railWidth
+            let docksSidebar = !model.sidebarCollapsed
+                && proxy.size.width >= minimumThreeColumnWidth
+            // Keep the saved preference intact when the window is tight. The
+            // rendered width alone contracts so dragging never crosses the
+            // docking threshold and makes the sidebar vanish under the cursor.
+            let availableSidebarWidth = max(
+                minimumSidebarWidth,
+                proxy.size.width - minimumWorkspaceWidth - inspectorReservation - railWidth
+            )
+            let sidebarWidth = CGFloat(AppSettings.renderedSidebarWidth(
+                Double(model.sidebarWidth),
+                availableWidth: Double(availableSidebarWidth)
+            ))
+            let overlaySidebarWidth = CGFloat(AppSettings.renderedSidebarWidth(
+                Double(model.sidebarWidth),
+                availableWidth: Double(proxy.size.width - railWidth)
+            ))
+            let widthAfterChrome = proxy.size.width
+                - (docksSidebar ? sidebarWidth : 0)
+                - railWidth
+            let docksInspector = inspectorOpen
+                && widthAfterChrome
+                    >= minimumWorkspaceWidth + minimumInspectorWidth
+            let availableInspectorWidth = max(
+                minimumInspectorWidth,
+                widthAfterChrome - minimumWorkspaceWidth
+            )
+            let dockedInspectorWidth = min(model.inspectorWidth, availableInspectorWidth)
+            let zoomedWorkspaceWidth = min(
+                model.zoomedChatWidth,
+                max(minimumWorkspaceWidth, widthAfterChrome - minimumInspectorWidth)
+            )
 
-            // Zoomed, chat becomes the fixed column and the panel takes the
-            // remainder; one frame call, because a stacked min-then-fixed
-            // pair would let the inner minimum win over the outer width.
-            WorkspaceView()
-                .frame(
-                    minWidth: model.inspectorZoomed
-                        ? model.zoomedChatWidth
-                        : (locusIsUITesting ? 400 : 520),
-                    maxWidth: model.inspectorZoomed ? model.zoomedChatWidth : .infinity
-                )
-                // The workspace header now owns the full hidden-title-bar
-                // band; there is no separate Finder row above it.
-                .ignoresSafeArea(.container, edges: .top)
+            ZStack(alignment: .leading) {
+                HStack(spacing: 0) {
+                    if docksSidebar {
+                        SessionSidebarView()
+                            .frame(width: sidebarWidth)
+                            .transition(LocusMotion.transition(
+                                edge: .leading,
+                                reduceMotion: reduceMotion
+                            ))
+                    }
 
-            if !model.inspectorCollapsed && !model.justChatEnabled {
-                InspectorView()
-                    .frame(
-                        minWidth: model.inspectorZoomed
-                            ? nil
-                            : (locusIsUITesting ? 280 : model.inspectorWidth),
-                        maxWidth: model.inspectorZoomed
-                            ? .infinity
-                            : (locusIsUITesting ? 280 : model.inspectorWidth)
+                    WorkspaceView(
+                        sidebarVisible: docksSidebar,
+                        showSidebar: {
+                            if proxy.size.width < minimumThreeColumnWidth {
+                                model.sidebarCollapsed = false
+                                compactSidebarPresented = true
+                            } else {
+                                model.sidebarCollapsed = false
+                            }
+                        }
                     )
-                    // The dynamic tabs belong in the otherwise empty title-bar
-                    // band. Extending this column upward also carries its
-                    // leading separator cleanly to the window's top edge.
+                    .frame(
+                        minWidth: 0,
+                        maxWidth: model.inspectorZoomed && docksInspector
+                            ? zoomedWorkspaceWidth
+                            : .infinity
+                    )
+                    .frame(
+                        width: model.inspectorZoomed && docksInspector
+                            ? zoomedWorkspaceWidth
+                            : nil
+                    )
+                    .layoutPriority(1)
                     .ignoresSafeArea(.container, edges: .top)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            }
 
-            if !model.justChatEnabled {
-                InspectorRail()
-                    .environmentObject(model)
-                    // Keep the inspector's outer separator continuous through
-                    // the hidden title bar, whether the panel is open or not.
-                    .ignoresSafeArea(.container, edges: .top)
+                    if docksInspector {
+                        InspectorView()
+                            .frame(
+                                minWidth: model.inspectorZoomed
+                                    ? minimumInspectorWidth
+                                    : dockedInspectorWidth,
+                                maxWidth: model.inspectorZoomed
+                                    ? .infinity
+                                    : dockedInspectorWidth
+                            )
+                            .ignoresSafeArea(.container, edges: .top)
+                            .transition(LocusMotion.transition(
+                                edge: .trailing,
+                                reduceMotion: reduceMotion
+                            ))
+                    }
+
+                    if !model.justChatEnabled {
+                        InspectorRail()
+                            .environmentObject(model)
+                            .ignoresSafeArea(.container, edges: .top)
+                    }
+                }
+
+                if inspectorOpen && !docksInspector {
+                    InspectorView()
+                        .frame(width: min(model.inspectorWidth, proxy.size.width - railWidth))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                        .padding(.trailing, railWidth)
+                        .shadow(color: .black.opacity(0.16), radius: 18, x: -8, y: 0)
+                        .transition(LocusMotion.transition(
+                            edge: .trailing,
+                            reduceMotion: reduceMotion
+                        ))
+                        .zIndex(2)
+                }
+
+                if compactSidebarPresented && !docksSidebar && !model.sidebarCollapsed {
+                    SessionSidebarView()
+                        .frame(width: overlaySidebarWidth)
+                        .shadow(color: .black.opacity(0.18), radius: 18, x: 8, y: 0)
+                        .transition(LocusMotion.transition(
+                            edge: .leading,
+                            reduceMotion: reduceMotion
+                        ))
+                        .zIndex(3)
+                }
+            }
+            .onChange(of: docksSidebar) { _, docked in
+                if docked { compactSidebarPresented = false }
+            }
+            .onChange(of: model.sidebarCollapsed) { _, collapsed in
+                if collapsed { compactSidebarPresented = false }
             }
         }
         // Keyed on the sidebar and the zoom flag only: including the inspector
         // would put the width change in scope too, and the panel would lag
         // behind the cursor during a resize drag. Zoom is safe — it flips on
         // toggle, never during a drag. Collapse animates at its call sites.
-        .animation(.easeInOut(duration: 0.18), value: model.sidebarCollapsed)
-        .animation(.easeInOut(duration: 0.18), value: model.inspectorZoomed)
+        .animation(LocusMotion.spatial, value: model.sidebarCollapsed)
+        .animation(LocusMotion.spatial, value: model.inspectorZoomed)
         .background(LocusTheme.paper)
         .overlay(alignment: .bottomTrailing) {
             if let toast = model.toast {
                 HStack(spacing: 12) {
                     Label(toast.message, systemImage: toast.systemImage)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.locus(size: 11, weight: .semibold))
                     if let actionTitle = toast.actionTitle {
                         Button(actionTitle) { model.performToastAction() }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 11, weight: .bold))
+                            .buttonStyle(.locus())
+                            .font(.locus(size: 11, weight: .bold))
                             .foregroundStyle(LocusTheme.signal)
                             .accessibilityIdentifier("toast.action")
                     }
@@ -376,10 +533,21 @@ struct RootView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
                 .padding(18)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
             }
         }
-        .animation(.easeOut(duration: 0.18), value: model.toast?.id)
+        .animation(LocusMotion.content, value: model.toast?.id)
+        // Reduced Motion is an app-wide contract. Individual components still
+        // choose a gentler transition where useful, while this guard prevents
+        // an overlooked state mutation from introducing spatial movement.
+        .transaction { transaction in
+            if reduceMotion {
+                transaction.animation = nil
+                transaction.disablesAnimations = true
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Locus workspace")
         .sheet(isPresented: $model.commandPalettePresented) {
             CommandPaletteView()
                 .environmentObject(model)
@@ -485,15 +653,15 @@ private struct RememberConfirmationView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Remember This")
-                .font(.system(size: 16, weight: .bold))
+                .font(.locus(size: 16, weight: .bold))
             Text("Review or edit the memory before saving. Saving is explicit approval, so it can be recalled in future chats within its scope.")
-                .font(.system(size: 9))
+                .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
             TextField("Title", text: $title)
                 .accessibilityIdentifier("remember.title")
             TextEditor(text: $content)
-                .font(.system(size: 10))
+                .font(.locus(size: 10))
                 .scrollContentBackground(.hidden)
                 .padding(6)
                 .frame(height: 120)
@@ -549,14 +717,14 @@ private struct MCPInputRequestView: View {
                 request.mode == "url" ? "Complete in your browser" : "Extension input requested",
                 systemImage: request.mode == "url" ? "safari" : "list.bullet.rectangle"
             )
-            .font(.system(size: 14, weight: .bold))
+            .font(.locus(size: 14, weight: .bold))
             Text(request.message)
-                .font(.system(size: 10))
+                .font(.locus(size: 10))
                 .foregroundStyle(LocusTheme.inkSoft)
                 .fixedSize(horizontal: false, vertical: true)
             if request.mode == "url" {
                 Text("Sensitive information stays on the extension's verified HTTPS page. Never paste credentials, payment details, or API keys into Locus.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.warning)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Open Secure Page") {
@@ -581,7 +749,7 @@ private struct MCPInputRequestView: View {
                     }
                 }
                 Text("Only the displayed non-sensitive fields are returned to the extension.")
-                    .font(.system(size: 8))
+                    .font(.locus(size: 8))
                     .foregroundStyle(LocusTheme.muted)
             }
             HStack {

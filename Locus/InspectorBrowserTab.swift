@@ -26,7 +26,7 @@ struct InspectorBrowserTab: View {
             },
             isExpanded: model.inspectorZoomed,
             onToggleExpand: { [weak model] in
-                withAnimation(.easeInOut(duration: 0.18)) {
+                withAnimation(LocusMotion.spatial) {
                     model?.toggleInspectorZoom()
                 }
             }
@@ -132,7 +132,7 @@ struct BrowserPanel: View {
                 .keyboardShortcut("[", modifiers: [.command, .shift])
                 .disabled(sessionTabs.count < 2)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .frame(width: 0, height: 0)
         .opacity(0)
         .accessibilityHidden(true)
@@ -163,11 +163,11 @@ struct BrowserPanel: View {
                         newTabFocusingAddress()
                     } label: {
                         Image(systemName: "plus")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.locus(size: 9, weight: .semibold))
                             .foregroundStyle(LocusTheme.muted)
                             .frame(width: 20, height: 20)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.locus())
                     .help("New tab (⌘T)")
                     .accessibilityLabel("New browser tab")
                     .accessibilityIdentifier("browser.tabs.new")
@@ -179,7 +179,7 @@ struct BrowserPanel: View {
                 // Switching — including via ⇧⌘] — must reveal the active chip
                 // at the inspector's narrowest widths.
                 if let activeID {
-                    withAnimation { proxy.scrollTo(activeID) }
+                    withAnimation(LocusMotion.scroll) { proxy.scrollTo(activeID) }
                 }
             }
         }
@@ -206,14 +206,14 @@ struct BrowserPanel: View {
                         .interpolation(.medium)
                 } else {
                     Image(systemName: "globe")
-                        .font(.system(size: 8))
+                        .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.muted)
                 }
             }
             .frame(width: 12, height: 12)
             .clipShape(RoundedRectangle(cornerRadius: 2, style: .continuous))
             Text(title)
-                .font(.system(size: 9, weight: tab.isActive ? .semibold : .regular))
+                .font(.locus(size: 9, weight: tab.isActive ? .semibold : .regular))
                 .foregroundStyle(tab.isActive ? LocusTheme.ink : LocusTheme.muted)
                 .lineLimit(1)
                 .frame(maxWidth: 120)
@@ -221,10 +221,10 @@ struct BrowserPanel: View {
                 browser.userCloseTab(tab.id, sessionID: sessionID)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 7, weight: .bold))
+                    .font(.locus(size: 7, weight: .bold))
                     .foregroundStyle(LocusTheme.muted)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .help("Close tab")
             .accessibilityLabel("Close \(title)")
         }
@@ -273,9 +273,9 @@ struct BrowserPanel: View {
             Button {
                 browser.userGoBack(sessionID: sessionID)
             } label: {
-                Image(systemName: "chevron.left").font(.system(size: 10, weight: .semibold))
+                Image(systemName: "chevron.left").font(.locus(size: 10, weight: .semibold))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .disabled(snapshot?.canGoBack != true)
             .foregroundStyle(snapshot?.canGoBack == true ? LocusTheme.ink : LocusTheme.muted)
             .help("Back")
@@ -285,9 +285,9 @@ struct BrowserPanel: View {
             Button {
                 browser.userGoForward(sessionID: sessionID)
             } label: {
-                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                Image(systemName: "chevron.right").font(.locus(size: 10, weight: .semibold))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .disabled(snapshot?.canGoForward != true)
             .foregroundStyle(snapshot?.canGoForward == true ? LocusTheme.ink : LocusTheme.muted)
             .help("Forward")
@@ -298,9 +298,9 @@ struct BrowserPanel: View {
                 Button {
                     browser.userStopLoading(sessionID: sessionID)
                 } label: {
-                    Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                    Image(systemName: "xmark").font(.locus(size: 9, weight: .semibold))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .foregroundStyle(LocusTheme.coral)
                 .help("Stop loading")
                 .accessibilityLabel("Stop loading")
@@ -309,9 +309,9 @@ struct BrowserPanel: View {
                 Button {
                     browser.userReload(sessionID: sessionID)
                 } label: {
-                    Image(systemName: "arrow.clockwise").font(.system(size: 9, weight: .semibold))
+                    Image(systemName: "arrow.clockwise").font(.locus(size: 9, weight: .semibold))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .foregroundStyle(snapshot == nil ? LocusTheme.muted : LocusTheme.ink)
                 .disabled(snapshot == nil)
                 .help("Reload")
@@ -321,16 +321,16 @@ struct BrowserPanel: View {
 
             TextField("Search or enter address", text: $draft)
                 .textFieldStyle(.roundedBorder)
-                .font(.system(size: 9, design: .monospaced))
+                .font(.locus(size: 9, design: .monospaced))
                 .focused($addressFocused)
                 .onSubmit(navigateToDraft)
                 .accessibilityLabel("Address")
                 .accessibilityIdentifier("browser.url")
 
             Button(action: navigateToDraft) {
-                Image(systemName: "return").font(.system(size: 10, weight: .semibold))
+                Image(systemName: "return").font(.locus(size: 10, weight: .semibold))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .foregroundStyle(draft.isEmpty ? LocusTheme.muted : LocusTheme.ink)
             .disabled(draft.isEmpty)
             .help("Go")
@@ -350,7 +350,7 @@ struct BrowserPanel: View {
                     .frame(width: proxy.size.width * max(0.05, snapshot.progress))
             }
             .frame(height: 2)
-            .animation(.easeOut(duration: 0.2), value: snapshot.progress)
+            .animation(LocusMotion.content, value: snapshot.progress)
         } else {
             Rectangle().fill(LocusTheme.line).frame(height: 1)
         }
@@ -412,7 +412,7 @@ struct BrowserPanel: View {
                     BrowserViewport(rawValue: viewportRaw)?.title ?? "Desktop",
                     systemImage: "rectangle.ratio.3.to.4"
                 )
-                .font(.system(size: 8, weight: .semibold))
+                .font(.locus(size: 8, weight: .semibold))
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -426,10 +426,10 @@ struct BrowserPanel: View {
                 captureForAnnotation()
             } label: {
                 Image(systemName: "camera")
-                    .font(.system(size: 10))
+                    .font(.locus(size: 10))
                     .foregroundStyle(LocusTheme.muted)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .disabled(isCapturing || snapshot?.url.isEmpty != false)
             .help("Capture the page to annotate and attach")
             .accessibilityLabel("Capture page for chat")
@@ -439,10 +439,10 @@ struct BrowserPanel: View {
                 drawerOpen.toggle()
             } label: {
                 Image(systemName: drawerOpen ? "chevron.down.square.fill" : "chevron.up.square")
-                    .font(.system(size: 10))
+                    .font(.locus(size: 10))
                     .foregroundStyle(drawerOpen ? LocusTheme.ink : LocusTheme.muted)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .help("Console and network")
             .accessibilityLabel("Toggle console and network drawer")
             .accessibilityIdentifier("browser.drawer")
@@ -451,10 +451,10 @@ struct BrowserPanel: View {
                 browser.openCurrentTabExternally(sessionID: sessionID)
             } label: {
                 Image(systemName: "arrow.up.right.square")
-                    .font(.system(size: 10))
+                    .font(.locus(size: 10))
                     .foregroundStyle(snapshot == nil ? LocusTheme.muted : LocusTheme.ink)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .disabled(snapshot == nil)
             .help("Open in your default browser")
             .accessibilityLabel("Open in default browser")
@@ -469,10 +469,10 @@ struct BrowserPanel: View {
                             ? "arrow.down.right.and.arrow.up.left"
                             : "arrow.up.left.and.arrow.down.right"
                     )
-                    .font(.system(size: 10))
+                    .font(.locus(size: 10))
                     .foregroundStyle(LocusTheme.ink)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .help(isExpanded ? "Restore panel size" : "Expand in window")
                 .accessibilityLabel(isExpanded ? "Restore panel size" : "Expand in window")
                 .accessibilityIdentifier("browser.expand")
@@ -604,12 +604,12 @@ struct CaptureDrawer: View {
     private var consoleLines: some View {
         if log.console.isEmpty {
             Text("The console is empty.")
-                .font(.system(size: 9))
+                .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.muted)
         } else {
             ForEach(log.console) { entry in
                 Text("[\(entry.level)] \(entry.message)")
-                    .font(.system(size: 9, design: .monospaced))
+                    .font(.locus(size: 9, design: .monospaced))
                     .foregroundStyle(entry.isError ? LocusTheme.coral : LocusTheme.inkSoft)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -617,7 +617,7 @@ struct CaptureDrawer: View {
             }
             if log.droppedEntries > 0 {
                 Text("\(log.droppedEntries) entries dropped while the page was noisy.")
-                    .font(.system(size: 8))
+                    .font(.locus(size: 8))
                     .foregroundStyle(LocusTheme.muted)
             }
         }
@@ -627,12 +627,12 @@ struct CaptureDrawer: View {
     private var networkLines: some View {
         if log.network.isEmpty {
             Text("No requests recorded for this page.")
-                .font(.system(size: 9))
+                .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.muted)
         } else {
             ForEach(log.network) { entry in
                 Text(entry.summary)
-                    .font(.system(size: 9, design: .monospaced))
+                    .font(.locus(size: 9, design: .monospaced))
                     .foregroundStyle(entry.ok ? LocusTheme.inkSoft : LocusTheme.coral)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)

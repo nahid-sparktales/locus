@@ -1,0 +1,10 @@
+{
+  "provider": "GSD / Lex Christopherson",
+  "repository": "https://github.com/gsd-build/get-shit-done",
+  "commit": "bdcaab2c752d9a33a1a1ca9acf3a3c81fb991815",
+  "upstream_path": "commands/gsd/ns-workflow.md",
+  "license": "MIT",
+  "license_file": "LICENSE",
+  "activation": "automatic",
+  "adaptation": "Locus-native router; no Node runtime or hooks"
+}

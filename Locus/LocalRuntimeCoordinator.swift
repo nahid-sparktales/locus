@@ -12,6 +12,11 @@ enum RuntimePhase: Equatable {
         return false
     }
 
+    var isUnavailable: Bool {
+        if case .unavailable = self { return true }
+        return false
+    }
+
     var message: String? {
         switch self {
         case .starting(let message), .recovering(let message), .unavailable(let message):

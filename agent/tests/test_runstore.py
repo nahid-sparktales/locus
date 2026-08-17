@@ -31,6 +31,31 @@ def test_run_store_orders_events_and_rebuilds_attempts(tmp_path) -> None:
     assert detail["attempts"][0]["result"]["output"] == "done"
 
 
+def test_solo_swarm_identity_survives_queue_execution_completion_and_restore(tmp_path) -> None:
+    path = tmp_path / "runs.sqlite3"
+    store = RunStore(path)
+    queued = store.queue_run(
+        "solo-swarm-no-workers",
+        session_id="session",
+        request="Inspect the project",
+        run_kind="solo",
+        manifest={"solo_swarm": True},
+    )
+    assert queued["manifest"] == {"solo_swarm": True}
+    assert queued["attempts"] == []
+
+    store.admit("solo-swarm-no-workers")
+    assert store.run("solo-swarm-no-workers")["manifest"]["solo_swarm"] is True
+    store.set_state("solo-swarm-no-workers", "running")
+    assert store.run("solo-swarm-no-workers")["manifest"]["solo_swarm"] is True
+    store.set_state("solo-swarm-no-workers", "completed")
+
+    restored = RunStore(path).run("solo-swarm-no-workers")
+    assert restored["state"] == "completed"
+    assert restored["manifest"] == {"solo_swarm": True}
+    assert restored["attempts"] == []
+
+
 def test_run_store_persists_agent_tree_metadata_without_rewriting_job_ids(tmp_path) -> None:
     store = RunStore(tmp_path / "runs.sqlite3")
     store.start_run("run-tree", state="running")

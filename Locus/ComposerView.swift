@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ComposerView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var contextPresented = false
     @State private var attachmentsPresented = false
     @State private var permissionModesPresented = false
@@ -30,13 +31,13 @@ struct ComposerView: View {
             if let request = model.activePermissionRequest {
                 PermissionPromptView(request: request)
                     .frame(maxWidth: 740)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
             } else if model.planApprovalPending {
                 // Same contract as the permission panel: the finished plan is
                 // a decision point, so the decision replaces the input.
                 PlanApprovalPromptView()
                     .frame(maxWidth: 740)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
             } else {
                 VStack(spacing: 0) {
                     if let popup = activePopup {
@@ -48,21 +49,22 @@ struct ComposerView: View {
 
                     if !model.justChatEnabled {
                         modeRow
-                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .transition(LocusMotion.transition(edge: .top, reduceMotion: reduceMotion))
                     }
 
                     ZStack(alignment: .topLeading) {
                         if model.draftText.isEmpty {
                             Text(placeholder)
-                                .font(.system(size: 12))
-                                .foregroundStyle(LocusTheme.muted.opacity(0.58))
+                                .font(.locus(size: 12))
+                                .foregroundStyle(LocusTheme.inkSoft)
                                 .padding(.horizontal, 12)
                                 .padding(.top, 11)
                                 .allowsHitTesting(false)
+                                .accessibilityIdentifier("composer.placeholder")
                         }
 
                         TextEditor(text: $model.draftText)
-                            .font(.system(size: 12))
+                            .font(.locus(size: 12))
                             .foregroundStyle(LocusTheme.ink)
                             .scrollContentBackground(.hidden)
                             .padding(.horizontal, 7)
@@ -88,11 +90,16 @@ struct ComposerView: View {
                     actionRow
                 }
                 .frame(maxWidth: 740)
-                .locusCard(radius: 13)
+                .locusSurface(.floating, radius: 13)
+                .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .stroke(LocusTheme.separator, lineWidth: 1)
+                }
                 .chatAttachmentDropTarget()
                 .chatPasteInterceptor(editorFocused: focused)
                 .shadow(color: .black.opacity(0.08), radius: 22, y: 9)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
             }
         }
         .padding(.horizontal, 24)
@@ -105,8 +112,8 @@ struct ComposerView: View {
                 endPoint: .bottom
             )
         )
-        .animation(.easeInOut(duration: 0.18), value: model.activePermissionRequest?.requestID)
-        .animation(.easeInOut(duration: 0.18), value: model.planApprovalPending)
+        .animation(LocusMotion.spatial, value: model.activePermissionRequest?.requestID)
+        .animation(LocusMotion.spatial, value: model.planApprovalPending)
         .onAppear { restoreFocus() }
         .onChange(of: model.activePermissionRequest?.requestID) {
             // Focus returns to the editor after any decision — option 3 is
@@ -117,6 +124,9 @@ struct ComposerView: View {
             // Same for "keep planning": the natural next act is typing the
             // refinement, so the editor takes focus back.
             if !model.planApprovalPending { restoreFocus() }
+        }
+        .onChange(of: model.composerFocusToken) {
+            restoreFocus()
         }
         .onChange(of: model.shouldShowTeamDispatchApproval) {
             if !model.shouldShowTeamDispatchApproval && !model.shouldShowTeamDispatchProgress {
@@ -348,20 +358,20 @@ struct ComposerView: View {
     private var queueRow: some View {
         HStack(spacing: 6) {
             Image(systemName: "tray.full")
-                .font(.system(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .font(.locus(size: 9))
+                .foregroundStyle(LocusTheme.inkSoft)
             ForEach(Array(model.queuedMessages.enumerated()), id: \.offset) { index, message in
                 HStack(spacing: 5) {
                     Text(message.components(separatedBy: .newlines).first.map { String($0.prefix(38)) } ?? "")
-                        .font(.system(size: 8, weight: .medium))
+                        .font(.locus(size: 8, weight: .medium))
                         .lineLimit(1)
                     Button {
                         model.removeQueuedMessage(at: index)
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.locus(size: 7, weight: .bold))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.locus())
                     .accessibilityLabel("Remove queued message")
                     .accessibilityIdentifier("composer.queued.\(index).remove")
                 }
@@ -452,20 +462,20 @@ struct ComposerView: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: symbol)
-                    .font(.system(size: 10))
+                    .font(.locus(size: 10))
                     .foregroundStyle(LocusTheme.muted)
                     .frame(width: 18)
                 Text(title)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .font(.locus(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(LocusTheme.ink)
                 Text(subtitle)
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .lineLimit(1)
                 Spacer()
                 if index == popupSelection {
                     Text("↵")
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.locus(size: 8, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
                 }
             }
@@ -475,7 +485,7 @@ struct ComposerView: View {
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .onHover { hovering in
             if hovering { popupSelection = index }
         }
@@ -489,14 +499,14 @@ struct ComposerView: View {
                     model.selectedMode = model.selectedMode == mode ? .work : mode
                 } label: {
                     Text(mode.rawValue.capitalized)
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.locus(size: 9, weight: .semibold))
                         .foregroundStyle(model.selectedMode == mode ? LocusTheme.paper : LocusTheme.muted)
                         .padding(.horizontal, 9)
                         .frame(height: 24)
                         .background(model.selectedMode == mode ? LocusTheme.ink : Color.clear)
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .accessibilityLabel("\(mode.rawValue.capitalized) mode")
                 .accessibilityValue(model.selectedMode == mode ? "Selected" : "Not selected")
                 .accessibilityIdentifier("composer.mode.\(mode.rawValue)")
@@ -529,7 +539,7 @@ struct ComposerView: View {
                         } label: {
                             Label(
                                 team.name,
-                                systemImage: model.selectedAgentTeamID == team.id ? "checkmark" : "person.3"
+                                systemImage: model.selectedAgentTeamID == team.id ? "checkmark" : "person.2"
                             )
                         }
                     }
@@ -542,14 +552,14 @@ struct ComposerView: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: model.teamModeEnabled
-                        ? "person.3.fill"
+                        ? "person.2.fill"
                         : (model.soloSwarmEnabled
                             ? "point.3.connected.trianglepath.dotted" : "person.fill"))
                     Text(model.selectedAgentTeam?.name
                         ?? (model.soloSwarmEnabled ? "Solo Swarm" : "Solo"))
                         .lineLimit(1)
                 }
-                .font(.system(size: 9, weight: .semibold))
+                .font(.locus(size: 9, weight: .semibold))
                 .foregroundStyle(model.teamModeEnabled ? LocusTheme.signalDeep : LocusTheme.muted)
                 .padding(.horizontal, 8)
                 .frame(height: 24)
@@ -563,8 +573,9 @@ struct ComposerView: View {
             .accessibilityIdentifier("composer.team")
             Spacer()
             Text(model.selectedMode.description)
-                .font(.system(size: 8))
-                .foregroundStyle(LocusTheme.muted.opacity(0.75))
+                .font(.locus(size: 8))
+                .foregroundStyle(LocusTheme.inkSoft)
+                .accessibilityIdentifier("composer.modeDescription")
         }
         .padding(.horizontal, 10)
         .frame(height: 37)
@@ -583,7 +594,7 @@ struct ComposerView: View {
                         Image(systemName: "paperclip")
                         Text("\(model.availableChatAttachments.count) attached")
                     }
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.locus(size: 8, weight: .semibold))
                     .padding(.horizontal, 8)
                     .frame(height: 27)
                     .background(LocusTheme.paperDeep.opacity(0.75))
@@ -593,7 +604,7 @@ struct ComposerView: View {
                             .stroke(LocusTheme.line, lineWidth: 1)
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .popover(isPresented: $contextPresented, arrowEdge: .bottom) {
                     ChatAttachmentsPopover()
                         .environmentObject(model)
@@ -605,7 +616,7 @@ struct ComposerView: View {
                     model.addChatAttachments()
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.locus(size: 11, weight: .semibold))
                         .frame(width: 27, height: 27)
                         .background(LocusTheme.paperDeep.opacity(0.75))
                         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -614,14 +625,14 @@ struct ComposerView: View {
                                 .stroke(LocusTheme.line, lineWidth: 1)
                         }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .help("Attach files, PDFs, or images to this message")
                 .accessibilityLabel("Add chat attachments")
                 .accessibilityIdentifier("composer.addChatAttachment")
                 .disabled(model.isLoadingChatAttachments)
 
                 Label("Chat only", systemImage: "lock.fill")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.locus(size: 8, weight: .semibold))
                     .foregroundStyle(LocusTheme.muted)
                     .padding(.horizontal, 8)
                     .frame(height: 27)
@@ -638,7 +649,7 @@ struct ComposerView: View {
                         Text(model.includedContextTokens.formatted(.number.notation(.compactName)))
                             .foregroundStyle(LocusTheme.muted.opacity(0.68))
                     }
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.locus(size: 8, weight: .semibold))
                     .padding(.horizontal, 8)
                     .frame(height: 27)
                     .background(LocusTheme.paperDeep.opacity(0.75))
@@ -648,7 +659,7 @@ struct ComposerView: View {
                             .stroke(LocusTheme.line, lineWidth: 1)
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .popover(isPresented: $contextPresented, arrowEdge: .bottom) {
                     ContextPopover()
                         .environmentObject(model)
@@ -660,7 +671,7 @@ struct ComposerView: View {
                     model.addContext()
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.locus(size: 11, weight: .semibold))
                         .frame(width: 27, height: 27)
                         .background(LocusTheme.paperDeep.opacity(0.75))
                         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -669,7 +680,7 @@ struct ComposerView: View {
                                 .stroke(LocusTheme.line, lineWidth: 1)
                         }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .help("Add files or folders to context")
                 .accessibilityLabel("Add context")
                 .accessibilityIdentifier("composer.addContext")
@@ -685,7 +696,7 @@ struct ComposerView: View {
                             Text("\(model.availableChatAttachments.count)")
                         }
                     }
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.locus(size: 8, weight: .semibold))
                     .foregroundStyle(
                         attachmentWarningActive ? LocusTheme.warning : LocusTheme.ink
                     )
@@ -702,7 +713,7 @@ struct ComposerView: View {
                             )
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .popover(isPresented: $attachmentsPresented, arrowEdge: .bottom) {
                     ChatAttachmentsPopover()
                         .environmentObject(model)
@@ -717,8 +728,9 @@ struct ComposerView: View {
             Spacer()
 
             Text(sendHint)
-                .font(.system(size: 8))
-                .foregroundStyle(LocusTheme.muted.opacity(0.62))
+                .font(.locus(size: 8))
+                .foregroundStyle(LocusTheme.inkSoft)
+                .accessibilityIdentifier("composer.sendHint")
 
             if model.isBusy {
                 if primaryAction != .stop, !isWaitingForTeamApproval, !isStopping {
@@ -732,7 +744,7 @@ struct ComposerView: View {
                         }
                     } label: {
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.locus(size: 9, weight: .bold))
                             .foregroundStyle(LocusTheme.muted)
                             .frame(width: 24, height: 30)
                             .background(LocusTheme.paperDeep)
@@ -760,7 +772,7 @@ struct ComposerView: View {
                                     .controlSize(.small)
                             } else {
                                 Image(systemName: "stop.fill")
-                                    .font(.system(size: 12, weight: .bold))
+                                    .font(.locus(size: 12, weight: .bold))
                                     .foregroundStyle(Color.white)
                             }
                         }
@@ -768,7 +780,7 @@ struct ComposerView: View {
                         .background(LocusTheme.coral)
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.locus())
                     .disabled(isStopping)
                     .help(isStopping ? "Stopping…" : "Stop the current run (⌘↵ or Esc)")
                     .accessibilityLabel(isStopping ? "Stopping" : "Stop the current run")
@@ -778,13 +790,13 @@ struct ComposerView: View {
                         submit()
                     } label: {
                         Image(systemName: "tray.and.arrow.down.fill")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.locus(size: 12, weight: .bold))
                             .foregroundStyle(canSubmit ? LocusTheme.brandInk : LocusTheme.muted)
                             .frame(width: 30, height: 30)
                             .background(canSubmit ? LocusTheme.signal : LocusTheme.paperDeep)
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.locus())
                     .disabled(!canSubmit)
                     .help("Queue for the next turn (↵)")
                     .accessibilityLabel("Queue for next turn")
@@ -795,13 +807,13 @@ struct ComposerView: View {
                     submit()
                 } label: {
                     Image(systemName: "arrow.up")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.locus(size: 13, weight: .bold))
                         .foregroundStyle(canSubmit ? LocusTheme.signal : LocusTheme.paper)
                         .frame(width: 30, height: 30)
                         .background(LocusTheme.ink.opacity(canSubmit ? 1 : 0.22))
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .disabled(!canSubmit || model.hasPendingPermission)
                 .help(
                     model.hasPendingPermission
@@ -826,7 +838,7 @@ struct ComposerView: View {
                 .foregroundStyle(model.permissionMode.isRisky
                     ? LocusTheme.danger : LocusTheme.muted)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .fixedSize()
         .background(LocusTheme.paperDeep.opacity(0.75))
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -850,7 +862,7 @@ struct ComposerView: View {
                 : "shield.lefthalf.filled")
             Text(model.permissionMode.shortTitle)
         }
-        .font(.system(size: 8, weight: .semibold))
+        .font(.locus(size: 8, weight: .semibold))
         .padding(.horizontal, 8)
         .frame(height: 27)
         .contentShape(Rectangle())
@@ -859,7 +871,7 @@ struct ComposerView: View {
     private var permissionModePopover: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Permission mode")
-                .font(.system(size: 10, weight: .bold))
+                .font(.locus(size: 10, weight: .bold))
 
             ForEach(PermissionMode.allCases) { mode in
                 Button {
@@ -873,10 +885,10 @@ struct ComposerView: View {
                         Spacer(minLength: 12)
                         if model.permissionMode == mode {
                             Image(systemName: "checkmark")
-                                .font(.system(size: 8, weight: .bold))
+                                .font(.locus(size: 8, weight: .bold))
                         }
                     }
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.locus(size: 9, weight: .semibold))
                     .foregroundStyle(mode.isRisky ? LocusTheme.danger : LocusTheme.inkSoft)
                     .padding(.horizontal, 8)
                     .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
@@ -885,14 +897,14 @@ struct ComposerView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .accessibilityIdentifier("composer.permissionMode.\(mode.rawValue)")
             }
 
             Divider().overlay(LocusTheme.line)
 
             Text(model.permissionMode.detail)
-                .font(.system(size: 8))
+                .font(.locus(size: 8))
                 .foregroundStyle(LocusTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -900,8 +912,8 @@ struct ComposerView: View {
                 model.resetPermissions()
                 permissionModesPresented = false
             }
-            .buttonStyle(.plain)
-            .font(.system(size: 8, weight: .semibold))
+            .buttonStyle(.locus())
+            .font(.locus(size: 8, weight: .semibold))
             .foregroundStyle(LocusTheme.inkSoft)
             .disabled(model.allowedTools.isEmpty && model.permissionMode == .ask)
         }
@@ -950,24 +962,24 @@ struct ComposerView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                         } else {
                             Image(systemName: attachment.kind == .image ? "photo" : "doc.text")
-                                .font(.system(size: 10))
+                                .font(.locus(size: 10))
                                 .foregroundStyle(
                                     attachment.isAvailable ? LocusTheme.muted : LocusTheme.warning
                                 )
                                 .frame(width: 22, height: 22)
                         }
                         Text(attachment.name)
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.locus(size: 9, weight: .semibold))
                             .lineLimit(1)
                             .frame(maxWidth: 140, alignment: .leading)
                         Button {
                             model.removeChatAttachment(attachment)
                         } label: {
                             Image(systemName: "xmark")
-                                .font(.system(size: 8, weight: .semibold))
+                                .font(.locus(size: 8, weight: .semibold))
                                 .foregroundStyle(LocusTheme.muted)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.locus())
                         .accessibilityLabel("Remove \(attachment.name)")
                         .accessibilityIdentifier(
                             "composer.attachmentChip.\(attachment.id.uuidString).remove"
@@ -1084,11 +1096,11 @@ private struct ChatAttachmentsPopover: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("CHAT ATTACHMENTS")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.locus(size: 8, weight: .bold))
                         .tracking(0.8)
                         .foregroundStyle(LocusTheme.muted)
                     Text("Files sent with this message")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.locus(size: 11, weight: .bold))
                 }
                 Spacer()
                 Button {
@@ -1096,8 +1108,8 @@ private struct ChatAttachmentsPopover: View {
                 } label: {
                     Label("Add", systemImage: "plus")
                 }
-                .buttonStyle(.borderless)
-                .font(.system(size: 9, weight: .semibold))
+                .buttonStyle(.locus())
+                .font(.locus(size: 9, weight: .semibold))
                 .accessibilityIdentifier("chatAttachments.add")
                 .disabled(model.isLoadingChatAttachments)
             }
@@ -1111,7 +1123,7 @@ private struct ChatAttachmentsPopover: View {
                         + "team run, images reach the dispatcher and the first coding job.",
                 systemImage: model.justChatEnabled ? "lock.shield" : "paperclip"
             )
-            .font(.system(size: 8))
+            .font(.locus(size: 8))
             .foregroundStyle(LocusTheme.muted)
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
@@ -1127,7 +1139,7 @@ private struct ChatAttachmentsPopover: View {
                         + "rejects them.",
                     systemImage: "eye.slash"
                 )
-                .font(.system(size: 8))
+                .font(.locus(size: 8))
                 .foregroundStyle(LocusTheme.warning)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1142,7 +1154,7 @@ private struct ChatAttachmentsPopover: View {
                     ProgressView()
                         .controlSize(.small)
                     Text("Preparing attachments…")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.locus(size: 9, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 .padding(.vertical, 28)
@@ -1150,12 +1162,12 @@ private struct ChatAttachmentsPopover: View {
             } else if model.chatAttachments.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "paperclip")
-                        .font(.system(size: 19))
+                        .font(.locus(size: 19))
                         .foregroundStyle(LocusTheme.muted)
                     Text("No attachments yet")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.locus(size: 10, weight: .semibold))
                     Text("Attach text or source files, PDFs, and common image formats.")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 .padding(.vertical, 28)
@@ -1165,19 +1177,19 @@ private struct ChatAttachmentsPopover: View {
                         ForEach(model.chatAttachments) { attachment in
                             HStack(spacing: 8) {
                                 Image(systemName: attachment.kind == .image ? "photo" : "doc.text")
-                                    .font(.system(size: 11))
+                                    .font(.locus(size: 11))
                                     .foregroundStyle(
                                         attachment.isAvailable ? LocusTheme.muted : LocusTheme.warning
                                     )
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(attachment.name)
-                                        .font(.system(size: 9, weight: .semibold))
+                                        .font(.locus(size: 9, weight: .semibold))
                                         .foregroundStyle(
                                             attachment.isAvailable ? LocusTheme.ink : LocusTheme.muted
                                         )
                                         .lineLimit(1)
                                     Text(attachment.detail)
-                                        .font(.system(size: 7))
+                                        .font(.locus(size: 7))
                                         .foregroundStyle(
                                             attachment.issue == nil ? LocusTheme.muted : LocusTheme.warning
                                         )
@@ -1188,9 +1200,9 @@ private struct ChatAttachmentsPopover: View {
                                     model.removeChatAttachment(attachment)
                                 } label: {
                                     Image(systemName: "xmark")
-                                        .font(.system(size: 9, weight: .semibold))
+                                        .font(.locus(size: 9, weight: .semibold))
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.locus())
                                 .foregroundStyle(LocusTheme.muted)
                                 .accessibilityLabel("Remove \(attachment.name)")
                                 .accessibilityIdentifier(
@@ -1209,7 +1221,7 @@ private struct ChatAttachmentsPopover: View {
 
             if let notice = model.chatAttachmentNotice {
                 Label(notice, systemImage: "info.circle")
-                    .font(.system(size: 8))
+                    .font(.locus(size: 8))
                     .foregroundStyle(LocusTheme.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 13)
@@ -1230,11 +1242,11 @@ private struct ContextPopover: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("CONTEXT PACK")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.locus(size: 8, weight: .bold))
                         .tracking(0.8)
                         .foregroundStyle(LocusTheme.muted)
                     Text("Selected project files")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.locus(size: 11, weight: .bold))
                 }
                 Spacer()
                 Button {
@@ -1242,8 +1254,8 @@ private struct ContextPopover: View {
                 } label: {
                     Label("Add", systemImage: "plus")
                 }
-                .buttonStyle(.borderless)
-                .font(.system(size: 9, weight: .semibold))
+                .buttonStyle(.locus())
+                .font(.locus(size: 9, weight: .semibold))
                 .accessibilityIdentifier("context.add")
                 .disabled(model.isLoadingContext)
             }
@@ -1265,7 +1277,7 @@ private struct ContextPopover: View {
                 .accessibilityValue("\(model.includedContextTokens) of \(model.contextBudgetTokens) tokens")
                 if let notice = model.contextNotice {
                     Label(notice, systemImage: "info.circle")
-                        .font(.system(size: 8))
+                        .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.muted)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1275,13 +1287,13 @@ private struct ContextPopover: View {
                             ? "60% of an assumed \(AppModel.assumedContextWindowTokens.formatted())-token window is available for files — this model's real window is unknown."
                             : "60% of the \(model.selectedModel) context window is available for files."
                     )
-                    .font(.system(size: 8))
+                    .font(.locus(size: 8))
                     .foregroundStyle(LocusTheme.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .font(.system(size: 8))
+            .font(.locus(size: 8))
             .foregroundStyle(LocusTheme.muted)
             .padding(.horizontal, 13)
             .padding(.vertical, 9)
@@ -1292,7 +1304,7 @@ private struct ContextPopover: View {
                     ProgressView()
                         .controlSize(.small)
                     Text("Reading files off the main thread…")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.locus(size: 9, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 .padding(.vertical, 28)
@@ -1300,12 +1312,12 @@ private struct ContextPopover: View {
             } else if model.contextFiles.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "doc.badge.plus")
-                        .font(.system(size: 19))
+                        .font(.locus(size: 19))
                         .foregroundStyle(LocusTheme.muted)
                     Text("No context files yet")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.locus(size: 10, weight: .semibold))
                     Text("Add only the files this run should focus on.")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 .padding(.vertical, 28)
@@ -1320,20 +1332,20 @@ private struct ContextPopover: View {
                                     Image(systemName: file.isAvailable ? (file.isIncluded ? "checkmark.square.fill" : "square") : "exclamationmark.triangle.fill")
                                         .foregroundStyle(file.isAvailable ? (file.isIncluded ? LocusTheme.ink : LocusTheme.muted) : LocusTheme.warning)
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.locus())
                                 .accessibilityLabel(file.isIncluded ? "Exclude \(file.name)" : "Include \(file.name)")
                                 .accessibilityIdentifier("context.file.\(file.id.uuidString).toggle")
 
                                 Image(systemName: "doc.text")
-                                    .font(.system(size: 11))
+                                    .font(.locus(size: 11))
                                     .foregroundStyle(LocusTheme.muted)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(file.name)
-                                        .font(.system(size: 9, weight: .semibold))
+                                        .font(.locus(size: 9, weight: .semibold))
                                         .foregroundStyle(file.isAvailable ? LocusTheme.ink : LocusTheme.muted)
                                         .lineLimit(1)
                                     Text(file.issue ?? "\(file.estimatedTokens.formatted()) tokens")
-                                        .font(.system(size: 7))
+                                        .font(.locus(size: 7))
                                         .foregroundStyle(file.issue == nil ? LocusTheme.muted : LocusTheme.warning)
                                         .lineLimit(1)
                                 }
@@ -1342,9 +1354,9 @@ private struct ContextPopover: View {
                                     model.removeContext(file)
                                 } label: {
                                     Image(systemName: "xmark")
-                                        .font(.system(size: 9, weight: .semibold))
+                                        .font(.locus(size: 9, weight: .semibold))
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.locus())
                                 .foregroundStyle(LocusTheme.muted)
                                 .accessibilityLabel("Remove \(file.name)")
                                 .accessibilityIdentifier("context.file.\(file.id.uuidString).remove")

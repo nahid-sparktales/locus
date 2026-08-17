@@ -59,15 +59,20 @@ enum LocusTheme {
         panel: rgb(red: 0.973, green: 0.965, blue: 0.941),
         white: rgb(red: 1.0, green: 0.996, blue: 0.98),
         line: rgb(red: 0.85, green: 0.835, blue: 0.792),
-        lineStrong: rgb(red: 0.773, green: 0.753, blue: 0.71),
-        muted: rgb(red: 0.467, green: 0.475, blue: 0.435),
+        lineStrong: rgb(0x77766D),
+        // Secondary copy used to sit between 3.6:1 and 4.4:1 on the paper
+        // surfaces. Keep the warm gray character, but make it readable at the
+        // compact sizes a desktop workspace needs.
+        muted: rgb(0x5F6258),
         signal: rgb(red: 0.788, green: 0.961, blue: 0.29),
-        signalDeep: rgb(red: 0.655, green: 0.827, blue: 0.153),
-        coral: rgb(red: 0.89, green: 0.435, blue: 0.314),
-        danger: rgb(0xD92D20),
+        // `signal` remains the bright brand fill. This deeper olive is the
+        // accessible foreground/link partner for light surfaces.
+        signalDeep: rgb(0x526800),
+        coral: rgb(0xA33A24),
+        danger: rgb(0xB42318),
         blue: rgb(red: 0.322, green: 0.455, blue: 0.843),
-        success: rgb(red: 0.259, green: 0.506, blue: 0.325),
-        warning: rgb(red: 0.73, green: 0.49, blue: 0.13),
+        success: rgb(0x2F6D3F),
+        warning: rgb(0x7D5106),
         permissionInk: rgb(red: 0.42, green: 0.31, blue: 0.25),
         permissionMuted: rgb(red: 0.52, green: 0.42, blue: 0.36),
         successSoft: rgb(red: 0.906, green: 0.949, blue: 0.792)
@@ -81,7 +86,7 @@ enum LocusTheme {
         panel: rgb(0x1B1B17),
         white: rgb(0x292820),
         line: rgb(0x3D3B32),
-        lineStrong: rgb(0x5C584B),
+        lineStrong: rgb(0x858074),
         muted: rgb(0x9C988A),
         signal: rgb(0xC9F54A),
         signalDeep: rgb(0xB6E33B),
@@ -115,6 +120,26 @@ enum LocusTheme {
     static let permissionMuted = adaptive(\.permissionMuted)
     static let successSoft = adaptive(\.successSoft)
 
+    // Semantic roles. The legacy names above remain source-compatible while
+    // screens migrate; new UI should describe the purpose of a color rather
+    // than the swatch it happens to use.
+    static let textPrimary = ink
+    static let textSecondary = inkSoft
+    static let textTertiary = muted
+    static let surfaceCanvas = paper
+    static let surfaceStructural = paperDeep
+    static let surfacePanel = panel
+    static let surfaceCard = white
+    static let separator = line
+    static let separatorStrong = lineStrong
+    static let accentFill = signal
+    static let accentAction = signalDeep
+    static let successForeground = success
+    static let warningForeground = warning
+    static let dangerForeground = danger
+    static let selectionFill = signal
+    static let focusRing = blue
+
     /// Artwork drawn on the lime signal color must stay dark in both modes.
     static let brandInk = Color(nsColor: rgb(red: 0.086, green: 0.094, blue: 0.078))
 
@@ -143,15 +168,281 @@ enum LocusTheme {
     }
 }
 
-extension View {
-    func locusCard(radius: CGFloat = 10) -> some View {
-        self
-            .background(LocusTheme.white)
+/// Semantic type roles backed by the macOS preferred text styles. The legacy
+/// adapter lets the large existing surface migrate mechanically while still
+/// enforcing an 11-point floor for user-facing content.
+enum LocusType {
+    static let display = Font.system(size: 40, weight: .medium)
+    static let title = Font.system(.title3, design: .default, weight: .bold)
+    static let body = Font.system(.body, design: .default, weight: .regular)
+    static let callout = Font.system(.callout, design: .default, weight: .regular)
+    static let caption = Font.system(.subheadline, design: .default, weight: .regular)
+    static let badge = Font.system(.subheadline, design: .default, weight: .semibold)
+    static let mono = Font.system(.callout, design: .monospaced, weight: .regular)
+    static let monoCaption = Font.system(.subheadline, design: .monospaced, weight: .regular)
+}
+
+extension Font {
+    /// Compatibility bridge for existing point-sized call sites. Values at or
+    /// below the old micro-copy range become preferred semantic styles, so
+    /// accessibility sizing and the 11-point readability floor apply without
+    /// flattening the deliberate display hierarchy.
+    static func locus(
+        size: CGFloat,
+        weight: Font.Weight = .regular,
+        design: Font.Design = .default
+    ) -> Font {
+        switch size {
+        case ..<11:
+            .system(.subheadline, design: design, weight: weight)
+        case ..<13:
+            .system(.callout, design: design, weight: weight)
+        case ..<15:
+            .system(.body, design: design, weight: weight)
+        case ..<17:
+            .system(.title3, design: design, weight: weight)
+        case ..<20:
+            .system(.title2, design: design, weight: weight)
+        case ..<26:
+            .system(.title, design: design, weight: weight)
+        default:
+            .system(size: size, weight: weight, design: design)
+        }
+    }
+}
+
+enum LocusMotion {
+    /// Spatial state changes are critically damped: quick, interruptible, and
+    /// free of decorative overshoot.
+    static let spatial = Animation.spring(response: 0.32, dampingFraction: 1.0)
+    static let content = Animation.easeInOut(duration: 0.18)
+    static let scroll = Animation.easeOut(duration: 0.14)
+    static let press = Animation.easeOut(duration: 0.10)
+    static let activityPulse = Animation.easeInOut(duration: 0.9)
+        .repeatForever(autoreverses: true)
+
+    static func allowsSpatialMotion(reduceMotion: Bool) -> Bool {
+        !reduceMotion
+    }
+
+    static func transition(edge: Edge, reduceMotion: Bool) -> AnyTransition {
+        allowsSpatialMotion(reduceMotion: reduceMotion)
+            ? .move(edge: edge).combined(with: .opacity)
+            : .opacity
+    }
+}
+
+enum LocusSurfaceKind {
+    case structural
+    case toolbar
+    case floating
+}
+
+private struct LocusSurfaceModifier: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    let kind: LocusSurfaceKind
+    let radius: CGFloat
+
+    private var solidColor: Color {
+        switch kind {
+        case .structural: LocusTheme.surfaceStructural
+        case .toolbar: LocusTheme.surfacePanel
+        case .floating: LocusTheme.surfaceCard
+        }
+    }
+
+    private var tintOpacity: Double {
+        switch kind {
+        case .structural: 0.78
+        case .toolbar: 0.70
+        case .floating: 0.62
+        }
+    }
+
+    func body(content: Content) -> some View {
+        content.background {
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .fill(Color.clear)
+                .background {
+                    if reduceTransparency || contrast == .increased {
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .fill(solidColor)
+                    } else {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                                .fill(kind == .structural ? .regularMaterial : .thinMaterial)
+                            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                                .fill(solidColor.opacity(tintOpacity))
+                        }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        }
+    }
+}
+
+private struct LocusCardModifier: ViewModifier {
+    @Environment(\.colorSchemeContrast) private var contrast
+    let radius: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .background(LocusTheme.surfaceCard)
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .stroke(LocusTheme.line, lineWidth: 1)
+                    .stroke(
+                        contrast == .increased
+                            ? LocusTheme.separatorStrong
+                            : LocusTheme.separator,
+                        lineWidth: contrast == .increased ? 1.5 : 1
+                    )
             }
+    }
+}
+
+enum LocusButtonKind {
+    case quiet
+    case icon
+    case card
+    case primary
+    case destructive
+}
+
+struct LocusButtonStyle: ButtonStyle {
+    let kind: LocusButtonKind
+
+    func makeBody(configuration: Configuration) -> some View {
+        LocusButtonStyleBody(configuration: configuration, kind: kind)
+    }
+}
+
+private struct LocusButtonStyleBody: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.isFocused) private var isFocused
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovering = false
+
+    let configuration: ButtonStyle.Configuration
+    let kind: LocusButtonKind
+
+    private var hoverColor: Color {
+        switch kind {
+        case .quiet, .icon: LocusTheme.textPrimary.opacity(0.055)
+        case .card: LocusTheme.accentFill.opacity(0.10)
+        case .primary: Color.white.opacity(0.12)
+        case .destructive: LocusTheme.dangerForeground.opacity(0.10)
+        }
+    }
+
+    var body: some View {
+        configuration.label
+            .contentShape(Rectangle())
+            .background(hovering && isEnabled ? hoverColor : Color.clear)
+            .overlay {
+                RoundedRectangle(cornerRadius: kind == .icon ? 7 : 9, style: .continuous)
+                    .stroke(
+                        isFocused ? LocusTheme.focusRing : Color.clear,
+                        lineWidth: contrast == .increased ? 3 : 2
+                    )
+                    .padding(-2)
+            }
+            .scaleEffect(
+                reduceMotion || !configuration.isPressed
+                    ? 1
+                    : (kind == .icon ? 0.94 : 0.98)
+            )
+            .opacity(isEnabled ? (configuration.isPressed ? 0.78 : 1) : 0.50)
+            .animation(reduceMotion ? nil : LocusMotion.press, value: configuration.isPressed)
+            .animation(reduceMotion ? nil : LocusMotion.press, value: hovering)
+            .onHover { hovering = $0 }
+    }
+}
+
+extension ButtonStyle where Self == LocusButtonStyle {
+    static func locus(_ kind: LocusButtonKind = .quiet) -> LocusButtonStyle {
+        LocusButtonStyle(kind: kind)
+    }
+}
+
+extension View {
+    func locusCard(radius: CGFloat = 10) -> some View {
+        modifier(LocusCardModifier(radius: radius))
+    }
+
+    func locusSurface(_ kind: LocusSurfaceKind, radius: CGFloat = 0) -> some View {
+        modifier(LocusSurfaceModifier(kind: kind, radius: radius))
+    }
+}
+
+/// Shared presentation for local task recommendations. The action stays with
+/// the caller so the card remains usable in the empty workspace, inspector,
+/// and future surfaces without coupling the design system to AppModel.
+struct LocusRecommendationCard: View {
+    let recommendation: LocusRecommendation
+    let identifier: String
+    var compact = false
+    let action: () -> Void
+
+    private var actionSymbol: String {
+        switch recommendation.intent {
+        case .prefill: "arrow.turn.down.left"
+        case .openInspector, .openSettings, .openModelLibrary: "arrow.up.right"
+        }
+    }
+
+    private var actionHint: String {
+        switch recommendation.intent {
+        case .prefill: "Places this suggestion in the message composer for review."
+        case .openInspector: "Opens the relevant workspace panel."
+        case .openSettings: "Opens the relevant Settings page."
+        case .openModelLibrary: "Opens Model Library."
+        }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .center, spacing: compact ? 9 : 11) {
+                Image(systemName: recommendation.kind.symbol)
+                    .font(.locus(size: compact ? 11 : 13, weight: .semibold))
+                    .foregroundStyle(LocusTheme.brandInk)
+                    .frame(width: compact ? 28 : 32, height: compact ? 28 : 32)
+                    .background(LocusTheme.accentFill)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(recommendation.title)
+                        .font(LocusType.caption.weight(.semibold))
+                        .foregroundStyle(LocusTheme.textPrimary)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(compact ? 2 : 1)
+                    Text(recommendation.rationale)
+                        .font(LocusType.caption)
+                        .foregroundStyle(LocusTheme.textTertiary)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(compact ? 2 : 1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: actionSymbol)
+                    .font(.locus(size: 11, weight: .semibold))
+                    .foregroundStyle(LocusTheme.textTertiary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, compact ? 10 : 12)
+            .padding(.vertical, compact ? 8 : 10)
+            .frame(maxWidth: .infinity, minHeight: compact ? 54 : 60, alignment: .leading)
+            .locusCard(radius: 9)
+        }
+        .buttonStyle(.locus(.card))
+        .help(actionHint)
+        .accessibilityLabel("\(recommendation.title). \(recommendation.rationale)")
+        .accessibilityHint(actionHint)
+        .accessibilityIdentifier(identifier)
     }
 }
 
@@ -281,11 +572,11 @@ struct MCPLogo: View {
             switch style.mark {
             case .text(let text):
                 Text(text)
-                    .font(.system(size: size * (text.count > 1 ? 0.32 : 0.48), weight: .bold, design: .rounded))
+                    .font(.locus(size: size * (text.count > 1 ? 0.32 : 0.48), weight: .bold, design: .rounded))
                     .foregroundStyle(style.foreground)
             case .symbol(let symbol):
                 Image(systemName: symbol)
-                    .font(.system(size: size * 0.46, weight: .semibold))
+                    .font(.locus(size: size * 0.46, weight: .semibold))
                     .foregroundStyle(style.foreground)
             }
         }

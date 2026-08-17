@@ -147,6 +147,60 @@ enum ModelLibraryError: LocalizedError {
     }
 }
 
+enum LocalModelManagementError: LocalizedError {
+    case invalidOllamaAddress
+    case invalidResponse
+    case server(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidOllamaAddress:
+            "The Ollama address is invalid."
+        case .invalidResponse:
+            "Ollama returned an unreadable response."
+        case .server(let message):
+            message
+        }
+    }
+}
+
+enum LocalModelManagement {
+    static func deleteRequest(ollamaHost: String, model: String) throws -> URLRequest {
+        let host = ollamaHost.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(host)/api/delete"),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { throw LocalModelManagementError.invalidOllamaAddress }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 60
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["model": model])
+        return request
+    }
+
+    static func delete(ollamaHost: String, model: String) async throws {
+        let request = try deleteRequest(ollamaHost: ollamaHost, model: model)
+        let (data, response) = try await ProxyRuntime.shared.urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw LocalModelManagementError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let detail = (object?["error"] as? String)?.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            throw LocalModelManagementError.server(
+                detail?.isEmpty == false
+                    ? detail!
+                    : "Ollama could not delete \(model) (HTTP \(http.statusCode))."
+            )
+        }
+    }
+}
+
 actor ModelLibraryService {
     private let decoder = JSONDecoder()
 

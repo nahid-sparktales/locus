@@ -85,9 +85,9 @@ struct BrowserScreenshotSheet: View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Annotate screenshot")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.locus(size: 15, weight: .bold))
                 Text(draft.pageTitle.isEmpty ? "Captured page" : draft.pageTitle)
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .lineLimit(1)
             }
@@ -97,7 +97,7 @@ struct BrowserScreenshotSheet: View {
             } label: {
                 Image(systemName: "xmark")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .accessibilityLabel("Close annotation")
             .accessibilityIdentifier("browser.annotate.close")
         }
@@ -131,7 +131,7 @@ struct BrowserScreenshotSheet: View {
                                 }
                             }
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.locus())
                     .accessibilityLabel("\(swatch.rawValue) color")
                     .accessibilityIdentifier("browser.annotate.color.\(swatch.rawValue)")
                 }
@@ -141,14 +141,14 @@ struct BrowserScreenshotSheet: View {
 
             if crop != nil {
                 Button("Reset Crop") { crop = nil }
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.locus(size: 9, weight: .semibold))
                     .accessibilityIdentifier("browser.annotate.resetCrop")
             }
             Button {
                 if !shapes.isEmpty { shapes.removeLast() }
             } label: {
                 Label("Undo", systemImage: "arrow.uturn.backward")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.locus(size: 9, weight: .semibold))
             }
             .keyboardShortcut("z", modifiers: .command)
             .disabled(shapes.isEmpty)
@@ -203,7 +203,7 @@ struct BrowserScreenshotSheet: View {
                 if case .label(let text, let origin, _) = shape {
                     context.draw(
                         Text(text)
-                            .font(.system(size: fontSize, weight: .semibold))
+                            .font(.locus(size: fontSize, weight: .semibold))
                             .foregroundColor(Color(nsColor: swatch.nsColor)),
                         at: origin,
                         anchor: .topLeading
@@ -237,7 +237,7 @@ struct BrowserScreenshotSheet: View {
     private func labelEditor(origin: CGPoint, fitScale: CGFloat) -> some View {
         TextField("Label", text: $labelText)
             .textFieldStyle(.roundedBorder)
-            .font(.system(size: 12, weight: .semibold))
+            .font(.locus(size: 12, weight: .semibold))
             .frame(width: 220)
             .focused($labelFocused)
             .onSubmit {
@@ -334,7 +334,7 @@ struct BrowserScreenshotSheet: View {
                 .accessibilityIdentifier("browser.annotate.cancel")
             if attachRefused {
                 Text("The composer could not take it — remove an attachment or crop smaller.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.warning)
                     .accessibilityIdentifier("browser.annotate.refused")
             }

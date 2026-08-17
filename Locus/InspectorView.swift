@@ -30,6 +30,12 @@ struct InspectorView: View {
                     InspectorTerminalTab()
                 case .preview:
                     InspectorBrowserTab()
+                case .notes:
+                    InspectorNotesTab(
+                        workspacePath: model.workspacePath,
+                        sessionID: model.currentSessionID
+                    )
+                    .id(model.workspacePath + "\u{0}" + model.currentSessionID)
                 case .checkpoints:
                     InspectorCheckpointsTab()
                 case .runs:
@@ -42,7 +48,10 @@ struct InspectorView: View {
             .frame(maxHeight: .infinity)
             .clipped()
         }
-        .background(LocusTheme.paperDeep)
+        .locusSurface(
+            .structural,
+            radius: model.inspectorZoomed ? 12 : 0
+        )
         .clipShape(RoundedRectangle(
             cornerRadius: model.inspectorZoomed ? 12 : 0,
             style: .continuous
@@ -61,7 +70,7 @@ struct InspectorView: View {
         // The outer surface reaches into the hidden title-bar area. Match it
         // to the inspector when docked; only expanded mode needs the paper
         // color as a contrasting margin around its rounded panel.
-        .background(model.inspectorZoomed ? LocusTheme.paper : LocusTheme.paperDeep)
+        .background(model.inspectorZoomed ? LocusTheme.paper : Color.clear)
     }
 }
 
@@ -72,27 +81,20 @@ private struct InspectorOpenTabBar: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        Group {
-            if model.openInspectorTabs.count <= 4 {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
                 tabItems
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        tabItems
-                    }
-                    .onAppear {
-                        proxy.scrollTo(model.inspectorTab.id, anchor: .center)
-                    }
-                    .onChange(of: model.inspectorTab) { _, tab in
-                        proxy.scrollTo(tab.id, anchor: .center)
-                    }
-                }
+            }
+            .onAppear {
+                proxy.scrollTo(model.inspectorTab.id, anchor: .center)
+            }
+            .onChange(of: model.inspectorTab) { _, tab in
+                proxy.scrollTo(tab.id, anchor: .center)
             }
         }
         .frame(height: 31)
         .clipped()
-        .background(LocusTheme.paperDeep)
+        .locusSurface(.toolbar)
         .overlay(alignment: .bottom) {
             Rectangle().fill(LocusTheme.line).frame(height: 1)
         }
@@ -113,7 +115,7 @@ private struct InspectorOpenTabBar: View {
 
     private func tabWidth(_ tab: InspectorTab) -> CGFloat {
         let labelWidth = ceil((tab.title as NSString).size(withAttributes: [
-            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
         ]).width)
         let badgeWidth = InspectorOpenTabItem.reservedBadgeWidth(for: tab)
         // Text, optional status, and close control each get a stable slot. This
@@ -134,7 +136,7 @@ private struct InspectorOpenTabItem: View {
     private var selected: Bool { model.inspectorTab == tab }
     private var labelWidth: CGFloat {
         ceil((tab.title as NSString).size(withAttributes: [
-            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
         ]).width)
     }
 
@@ -202,14 +204,14 @@ private struct InspectorTabCloseButton: View {
             model.closeInspectorTab(tab)
         } label: {
             Image(systemName: "xmark")
-                .font(.system(size: 6.5, weight: .bold))
+                .font(.locus(size: 6.5, weight: .bold))
                 .foregroundStyle(LocusTheme.inkSoft)
                 .frame(width: 16, height: 18)
                 .background(isHovering ? LocusTheme.ink.opacity(0.08) : Color.clear)
                 .clipShape(Circle())
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .opacity(emphasized || isHovering ? 0.9 : 0.42)
         .onHover { isHovering = $0 }
         .help("Close \(tab.title)")
@@ -279,7 +281,7 @@ private struct InspectorTabActivationButton: NSViewRepresentable {
         button.action = #selector(Coordinator.activate)
         button.mouseDownAction = context.coordinator.activate
         button.title = title
-        let font = NSFont.systemFont(ofSize: 10, weight: selected ? .semibold : .medium)
+        let font = NSFont.systemFont(ofSize: 11, weight: selected ? .semibold : .medium)
         let titleColor = InspectorTabAppearance.titleColor(
             colorScheme: context.environment.colorScheme,
             selected: selected
@@ -316,10 +318,10 @@ private struct InspectorTextTabBadge: View {
     var body: some View {
         if tab == .changes, model.changedFileCount > 0 {
             Text(model.changedFileCount > 99 ? "99+" : "\(model.changedFileCount)")
-                .font(.system(size: 7, weight: .bold))
+                .font(.locus(size: 7, weight: .bold))
                 .foregroundStyle(Color.white)
                 .padding(.horizontal, 3)
-                .frame(height: 11)
+                .frame(minHeight: 16)
                 .background(model.changesHaveUnseenUpdate ? LocusTheme.coral : LocusTheme.muted)
                 .clipShape(Capsule())
                 .accessibilityHidden(true)
@@ -342,12 +344,12 @@ struct InspectorPlaceholder: View {
     var body: some View {
         VStack(spacing: 10) {
             Image(systemName: symbol)
-                .font(.system(size: 23))
+                .font(.locus(size: 23))
                 .foregroundStyle(LocusTheme.muted)
             Text(title)
-                .font(.system(size: 11, weight: .bold))
+                .font(.locus(size: 11, weight: .bold))
             Text(message)
-                .font(.system(size: 9))
+                .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.muted)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -370,10 +372,10 @@ struct InspectorTabBadge: View {
             // the tab the count stays but stops asking for attention.
             let unseen = model.changesHaveUnseenUpdate
             Text(model.changedFileCount > 99 ? "99+" : "\(model.changedFileCount)")
-                .font(.system(size: 7, weight: .bold))
+                .font(.locus(size: 7, weight: .bold))
                 .foregroundStyle(Color.white)
                 .padding(.horizontal, 3)
-                .frame(height: 11)
+                .frame(minHeight: 16)
                 .background(unseen ? LocusTheme.coral : LocusTheme.muted)
                 .clipShape(Capsule())
                 .offset(x: 9, y: -5)
@@ -463,19 +465,82 @@ private struct InspectorResizeHandle: View {
                             model.commitInspectorWidth()
                         }
                     }
-                    .accessibilityElement()
-                    .accessibilityLabel(
-                        model.inspectorZoomed
-                            ? "Expanded panel resize grip"
-                            : "Resize inspector divider"
-                    )
-                    .accessibilityIdentifier("inspector.resizeHandle")
+                    .accessibilityRepresentation {
+                        Slider(
+                            value: Binding(
+                                get: {
+                                    Double(
+                                        model.inspectorZoomed
+                                            ? model.zoomedChatWidth
+                                            : model.inspectorWidth
+                                    )
+                                },
+                                set: { value in
+                                    if model.inspectorZoomed {
+                                        model.setZoomedChatWidth(CGFloat(value))
+                                        model.commitZoomedChatWidth()
+                                    } else {
+                                        model.setInspectorWidth(CGFloat(value))
+                                        model.commitInspectorWidth()
+                                    }
+                                }
+                            ),
+                            in: model.inspectorZoomed
+                                ? AppSettings.minimumZoomedChatWidth...AppSettings.maximumZoomedChatWidth
+                                : AppSettings.minimumInspectorWidth...AppSettings.maximumInspectorWidth
+                        ) {
+                            Text(
+                                model.inspectorZoomed
+                                    ? "Expanded panel width"
+                                    : "Inspector width"
+                            )
+                        }
+                        .accessibilityHint("Adjust the panel width. Double-click the divider to reset it.")
+                        .accessibilityIdentifier("inspector.resizeHandle")
+                    }
             }
+    }
+}
+
+private enum RunsStatusFilter: String, CaseIterable, Identifiable {
+    case all
+    case active
+    case attention
+    case finished
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: "Any status"
+        case .active: "Active"
+        case .attention: "Needs attention"
+        case .finished: "Finished"
+        }
+    }
+
+    func includes(_ run: OrchestrationRun) -> Bool {
+        switch self {
+        case .all:
+            true
+        case .active:
+            ["queued", "dispatching", "running", "reviewing"].contains(run.state)
+        case .attention:
+            ["waiting_permission", "waiting_computer", "waiting_dispatch_approval",
+             "paused", "interrupted", "failed"].contains(run.state)
+        case .finished:
+            TeamRunState(rawValue: run.state)?.isTerminal == true
+        }
     }
 }
 
 struct InspectorRunsTab: View {
     @EnvironmentObject private var model: AppModel
+    @State private var scope: RunScope = .all
+    @State private var statusFilter: RunsStatusFilter = .all
+    @State private var runSearch = ""
+    @State private var showingRunDetail = false
+    @State private var detailRunID: String?
     @State private var viewMode = "overview"
     @State private var filter = ""
     @State private var draftPlan: DispatchPlan?
@@ -487,15 +552,16 @@ struct InspectorRunsTab: View {
             header
             if let plan = draftPlan, model.pendingDispatchPlan != nil {
                 dispatchEditor(plan)
-            } else if let run = model.selectedOrchestrationRun {
+            } else if showingRunDetail,
+                      let detailRunID,
+                      let run = model.runRecord(for: detailRunID) {
                 runBody(run)
+            } else if showingRunDetail {
+                ProgressView("Loading run…")
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                InspectorPlaceholder(
-                    symbol: "point.3.connected.trianglepath.dotted",
-                    title: "No run selected",
-                    message: "Runs shows each chat or team execution, its live timeline, result, and any available recovery action.",
-                    identifier: "runs.empty"
-                )
+                runList
             }
         }
         .task(id: model.currentSessionID) {
@@ -504,6 +570,19 @@ struct InspectorRunsTab: View {
             }
         }
         .onChange(of: model.pendingDispatchPlan) { _, value in draftPlan = value }
+        .task(id: model.runsNavigationRequest?.id) {
+            guard let request = model.runsNavigationRequest else {
+                showingRunDetail = false
+                detailRunID = nil
+                return
+            }
+            detailRunID = request.runID
+            await model.loadOrchestrationRun(request.runID)
+            if let run = model.runRecord(for: request.runID) {
+                scope = run.isSoloSwarm ? .soloSwarm : (run.runKind == "team" ? .teams : .all)
+                showingRunDetail = true
+            }
+        }
         .onAppear { draftPlan = model.pendingDispatchPlan }
         .confirmationDialog(
             "Include visible content in this trace?",
@@ -534,37 +613,62 @@ struct InspectorRunsTab: View {
     }
 
     private var header: some View {
-        VStack(spacing: 9) {
+        VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
                 Image(systemName: "point.3.connected.trianglepath.dotted")
                     .foregroundStyle(LocusTheme.signalDeep)
                 Text("RUNS")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.locus(size: 8, weight: .bold))
                     .tracking(0.7)
                 Spacer()
                 Button {
                     Task { await model.refreshOrchestrationRuns() }
                 } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.locus())
                     .help("Refresh run history")
             }
-            if !runPickerRuns.isEmpty || model.isLoadingOrchestrationRuns {
-                Picker("Run", selection: Binding(
-                    get: { model.selectedOrchestrationRun?.id },
-                    set: { id in
-                        guard let id else { return }
-                        Task { await model.loadOrchestrationRun(id) }
-                    }
-                )) {
-                    Text(model.isLoadingOrchestrationRuns ? "Loading runs…" : "Select a run")
-                        .tag(nil as String?)
-                    ForEach(runPickerRuns) { run in
-                        Text("\(run.teamName ?? (run.runKind == "solo" ? "Chat" : "Team")) · \(run.state.replacingOccurrences(of: "_", with: " "))")
-                            .tag(Optional(run.id))
-                    }
+            Picker("Run type", selection: Binding(
+                get: { scope },
+                set: { newScope in
+                    scope = newScope
+                    showingRunDetail = false
+                    detailRunID = nil
                 }
-                .labelsHidden()
-                .accessibilityIdentifier("runs.picker")
+            )) {
+                ForEach(RunScope.allCases) { item in
+                    Text(item.title).tag(item)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("runs.scope")
+
+            if scope == .soloSwarm {
+                soloSwarmControl
+            }
+
+            if !showingRunDetail {
+                HStack(spacing: 7) {
+                    TextField("Search runs", text: $runSearch)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("runs.search")
+                    Menu {
+                        ForEach(RunsStatusFilter.allCases) { item in
+                            Button {
+                                statusFilter = item
+                            } label: {
+                                Label(item.title, systemImage: statusFilter == item ? "checkmark" : "circle")
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .help(statusFilter.title)
+                    .accessibilityLabel("Filter by status")
+                    .accessibilityValue(statusFilter.title)
+                    .accessibilityIdentifier("runs.statusFilter")
+                }
             }
         }
         .padding(13)
@@ -578,8 +682,208 @@ struct InspectorRunsTab: View {
         )
     }
 
+    private func runTitle(_ run: OrchestrationRun) -> String {
+        if let name = run.teamName?.nilIfEmpty { return name }
+        if run.isSoloSwarm { return "Solo Swarm" }
+        switch run.runKind {
+        case "solo": return "Solo run"
+        case "evaluation": return "Evaluation"
+        case "verification": return "Verification"
+        case "memory_review": return "Memory review"
+        default: return "Team run"
+        }
+    }
+
+    private func runCategoryTitle(_ run: OrchestrationRun) -> String {
+        if run.isSoloSwarm { return "Solo Swarm" }
+        if run.runKind == "team" { return "Team" }
+        return (run.runKind ?? "solo")
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
+    }
+
+    private func runSymbol(_ run: OrchestrationRun) -> String {
+        if run.isSoloSwarm { return "circle.hexagongrid.fill" }
+        if run.runKind == "team" { return "person.2.fill" }
+        return "person.fill"
+    }
+
+    private func runStateColor(_ run: OrchestrationRun) -> Color {
+        switch TeamRunState(rawValue: run.state) {
+        case .completed: LocusTheme.success
+        case .failed, .interrupted, .cancelled, .discarded: LocusTheme.coral
+        case .paused, .waitingComputer, .waitingPermission, .waitingDispatchApproval:
+            LocusTheme.warning
+        default: LocusTheme.signalDeep
+        }
+    }
+
+    private func runProgress(_ run: OrchestrationRun) -> String? {
+        let total = run.jobCount ?? 0
+        guard total > 0 else { return nil }
+        let unit = run.isSoloSwarm ? "workers" : "jobs"
+        return "\(run.completedJobCount ?? 0)/\(total) \(unit)"
+    }
+
+    private var filteredRuns: [OrchestrationRun] {
+        let query = runSearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return runPickerRuns
+            .filter { scope.includes($0) && statusFilter.includes($0) }
+            .filter { run in
+                query.isEmpty || [runTitle(run), run.request, run.state, run.runKind ?? ""]
+                    .joined(separator: " ").lowercased().contains(query)
+            }
+            .sorted {
+                if $0.pinned != $1.pinned { return $0.pinned }
+                return $0.updatedAt > $1.updatedAt
+            }
+    }
+
+    private var soloSwarmControl: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("Use Solo Swarm for the next turn", isOn: Binding(
+                get: { model.soloSwarmEnabled },
+                set: { model.selectSoloRoute(swarm: $0) }
+            ))
+            .font(.locus(size: 9, weight: .semibold))
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .accessibilityIdentifier("runs.soloSwarm.toggle")
+            Text("Temporary read-only workers share the selected model and fixed safety limits.")
+                .font(.locus(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(LocusTheme.signal.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(LocusTheme.signalDeep.opacity(0.24), lineWidth: 1)
+        }
+    }
+
+    private var runList: some View {
+        Group {
+            if model.isLoadingOrchestrationRuns && runPickerRuns.isEmpty {
+                ProgressView("Loading runs…")
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if filteredRuns.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: scope == .soloSwarm
+                        ? "circle.hexagongrid" : "clock.arrow.circlepath")
+                        .font(.locus(size: 24))
+                        .foregroundStyle(LocusTheme.muted)
+                    Text(scope == .soloSwarm ? "No Solo Swarm runs yet" : "No matching runs")
+                        .font(.locus(size: 11, weight: .bold))
+                    Text(scope == .soloSwarm
+                        ? "Turn on Solo Swarm above, then send a Work, Plan, or Build request. The run appears even if no workers are delegated."
+                        : "Try another run type, status, or search term.")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityIdentifier(scope == .soloSwarm
+                    ? "runs.soloSwarm.empty" : "runs.empty")
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(filteredRuns) { run in
+                            runListRow(run)
+                        }
+                    }
+                    .padding(12)
+                }
+                .accessibilityIdentifier("runs.list")
+            }
+        }
+    }
+
+    private func runListRow(_ run: OrchestrationRun) -> some View {
+        Button {
+            detailRunID = run.id
+            viewMode = "overview"
+            filter = ""
+            showingRunDetail = true
+            Task { await model.loadOrchestrationRun(run.id) }
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: runSymbol(run))
+                        .foregroundStyle(runStateColor(run))
+                        .frame(width: 16)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 5) {
+                            Text(runTitle(run))
+                                .font(.locus(size: 10, weight: .bold))
+                                .lineLimit(1)
+                            if run.pinned {
+                                Image(systemName: "pin.fill")
+                                    .font(.locus(size: 7))
+                                    .foregroundStyle(LocusTheme.muted)
+                            }
+                        }
+                        Text(run.request.isEmpty ? "No request was recorded." : run.request)
+                            .font(.locus(size: 8))
+                            .foregroundStyle(LocusTheme.inkSoft)
+                            .lineLimit(2)
+                    }
+                    Spacer(minLength: 4)
+                    Text(run.state.replacingOccurrences(of: "_", with: " ").uppercased())
+                        .font(.locus(size: 7, weight: .bold, design: .monospaced))
+                        .foregroundStyle(runStateColor(run))
+                }
+                HStack(spacing: 5) {
+                    Text(runCategoryTitle(run))
+                    Text("·")
+                    Text(Date(timeIntervalSince1970: run.updatedAt), style: .relative)
+                    if let progress = runProgress(run) {
+                        Text("·")
+                        Text(progress)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                }
+                .font(.locus(size: 7, design: .monospaced))
+                .foregroundStyle(LocusTheme.muted)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(LocusTheme.white.opacity(0.58))
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay { RoundedRectangle(cornerRadius: 9).stroke(LocusTheme.line) }
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.locus())
+        .accessibilityIdentifier("runs.row.\(run.id)")
+    }
+
     private func runBody(_ run: OrchestrationRun) -> some View {
         VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Button {
+                    showingRunDetail = false
+                    detailRunID = nil
+                } label: {
+                    Label(scope.title, systemImage: "chevron.left")
+                }
+                .buttonStyle(.locus())
+                .font(.locus(size: 8, weight: .semibold))
+                .accessibilityIdentifier("runs.back")
+                Spacer()
+                Text(runCategoryTitle(run).uppercased())
+                    .font(.locus(size: 7, weight: .bold))
+                    .tracking(0.5)
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 31)
+            .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
             runSummary(run)
             Picker("View", selection: $viewMode) {
                 Text("Overview")
@@ -592,7 +896,17 @@ struct InspectorRunsTab: View {
             .pickerStyle(.segmented)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            if viewMode == "overview" { overview(run) } else { activity(run) }
+            if viewMode == "overview" {
+                if run.isSoloSwarm {
+                    soloSwarmOverview(run)
+                } else if run.runKind == "team" {
+                    overview(run)
+                } else {
+                    soloOverview(run)
+                }
+            } else {
+                activity(run)
+            }
         }
     }
 
@@ -600,20 +914,21 @@ struct InspectorRunsTab: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(run.teamName ?? (run.runKind == "solo" ? "Chat run" : "Team run"))
-                        .font(.system(size: 11, weight: .bold))
+                    Text(runTitle(run))
+                        .font(.locus(size: 11, weight: .bold))
                     Text(runStateTitle(run))
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.locus(size: 8, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
                         .accessibilityIdentifier("runs.state")
                 }
                 Spacer()
+                runPrimaryAction(run)
                 runActions(run)
             }
             let presentation = model.teamRunPresentation(for: run.id, durable: run)
             if let reason = run.recoveryReason, presentation.canRecover {
                 Label(reason, systemImage: "arrow.clockwise.circle.fill")
-                    .font(.system(size: 8))
+                    .font(.locus(size: 8))
                     .foregroundStyle(LocusTheme.warning)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -630,12 +945,47 @@ struct InspectorRunsTab: View {
                         .menuStyle(.borderlessButton)
                         .menuIndicator(.hidden)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.locus())
                 .controlSize(.small)
             }
         }
         .padding(12)
         .background(LocusTheme.paperDeep.opacity(0.5))
+    }
+
+    @ViewBuilder
+    private func runPrimaryAction(_ run: OrchestrationRun) -> some View {
+        let presentation = model.teamRunPresentation(for: run.id, durable: run)
+        if presentation.canStop, run.runKind == "solo" {
+            Button("Stop") { model.cancelOrchestration(run.id) }
+                .buttonStyle(.locus())
+                .font(.locus(size: 8, weight: .semibold))
+                .foregroundStyle(LocusTheme.coral)
+                .accessibilityIdentifier("runs.stop")
+        } else if run.runKind == "solo",
+                  ["failed", "interrupted", "cancelled", "paused"].contains(run.state) {
+            Button("Retry") { model.retryRun(run) }
+                .buttonStyle(.locus())
+                .font(.locus(size: 8, weight: .semibold))
+                .accessibilityIdentifier("runs.retry")
+        } else if presentation.canRecover, run.runKind == "team" {
+            if run.checkpoint?.state["fallback_action"]?.string == "run_with_locus" {
+                Button("Run with Locus") { model.runOrchestrationWithLocus(run) }
+                    .buttonStyle(.locus())
+                    .font(.locus(size: 8, weight: .semibold))
+                    .accessibilityIdentifier("runs.runWithLocus")
+            } else {
+                Button("Resume") { model.resumeOrchestration(run) }
+                    .buttonStyle(.locus())
+                    .font(.locus(size: 8, weight: .semibold))
+                    .accessibilityIdentifier("runs.resume")
+            }
+        } else if presentation.canPause, run.runKind == "team" {
+            Button("Pause") { model.pauseOrchestration(run.id) }
+                .buttonStyle(.locus())
+                .font(.locus(size: 8, weight: .semibold))
+                .accessibilityIdentifier("runs.pause")
+        }
     }
 
     @ViewBuilder
@@ -651,6 +1001,10 @@ struct InspectorRunsTab: View {
                 } else {
                     Button("Resume") { model.resumeOrchestration(run) }
                 }
+            }
+            if run.runKind == "solo",
+               ["failed", "interrupted", "cancelled", "paused"].contains(run.state) {
+                Button("Retry Run") { model.retryRun(run) }
             }
             if run.taskID != nil && !run.legacy {
                 Button("Replay Same Baseline") { model.replayOrchestration(run) }
@@ -710,7 +1064,7 @@ struct InspectorRunsTab: View {
             VStack(alignment: .leading, spacing: 12) {
                 overviewCard("REQUEST", symbol: "text.bubble") {
                     Text(run.request.isEmpty ? "No request was recorded." : run.request)
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.inkSoft)
                         .lineLimit(8)
                 }
@@ -727,11 +1081,11 @@ struct InspectorRunsTab: View {
                                         : phase.active ? LocusTheme.signalDeep : LocusTheme.lineStrong)
                                     .frame(width: 13)
                                 Text(phase.title)
-                                    .font(.system(size: 9, weight: phase.active ? .bold : .regular))
+                                    .font(.locus(size: 9, weight: phase.active ? .bold : .regular))
                                 Spacer()
                                 if phase.active {
                                     Text("Current")
-                                        .font(.system(size: 7, weight: .semibold))
+                                        .font(.locus(size: 7, weight: .semibold))
                                         .foregroundStyle(LocusTheme.signalDeep)
                                 }
                             }
@@ -744,108 +1098,7 @@ struct InspectorRunsTab: View {
                     }
                 }
 
-                if let jobs = run.plan?.jobs, !jobs.isEmpty {
-                    overviewCard("PLAN AND ASSIGNMENTS", symbol: "list.bullet.clipboard") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            if let summary = run.plan?.summary, !summary.isEmpty {
-                                Text(summary)
-                                    .font(.system(size: 9, weight: .medium))
-                            }
-                            ForEach(Array(jobs.enumerated()), id: \.element.id) { index, job in
-                                let attempt = run.attempts?.last(where: { $0.jobID == job.id })
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HStack(spacing: 5) {
-                                        Text("\(index + 1). \(friendlyJobKind(job.kind))")
-                                            .font(.system(size: 8, weight: .bold))
-                                        Text("· \(attempt?.agentName ?? job.agentID)")
-                                            .font(.system(size: 8))
-                                            .foregroundStyle(LocusTheme.muted)
-                                    }
-                                    Text(job.goal)
-                                        .font(.system(size: 8))
-                                        .foregroundStyle(LocusTheme.inkSoft)
-                                        .lineLimit(4)
-                                    if let provider = attempt?.provider, !provider.isEmpty {
-                                        Text("\(provider) · \(attempt?.model ?? "")")
-                                            .font(.system(size: 7, design: .monospaced))
-                                            .foregroundStyle(LocusTheme.muted)
-                                    }
-                                    if !job.dependencies.isEmpty {
-                                        Text("Runs after: \(job.dependencies.joined(separator: ", "))")
-                                            .font(.system(size: 7))
-                                            .foregroundStyle(LocusTheme.muted)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if !agentTreeAttempts(run).isEmpty {
-                    overviewCard("AGENT TREE", symbol: "point.3.connected.trianglepath.dotted") {
-                        VStack(alignment: .leading, spacing: 7) {
-                            ForEach(agentTreeAttempts(run)) { attempt in
-                                agentTreeRow(attempt, run: run)
-                            }
-                        }
-                        .accessibilityIdentifier("runs.agentTree")
-                    }
-                }
-
-                if let attempts = run.attempts, !attempts.isEmpty {
-                    overviewCard("JOB RESULTS", symbol: "person.3.fill") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(attempts) { attempt in
-                                VStack(alignment: .leading, spacing: 3) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: attempt.state == "completed"
-                                            ? "checkmark.circle.fill"
-                                            : attempt.state == "paused" ? "pause.circle.fill" : "circle.dotted")
-                                            .foregroundStyle(attempt.state == "completed"
-                                                ? LocusTheme.success
-                                                : attempt.state == "paused" ? LocusTheme.warning : LocusTheme.signalDeep)
-                                        Text(attempt.agentName ?? attempt.agentID ?? "Agent")
-                                            .font(.system(size: 8, weight: .bold))
-                                        Text(attempt.state.replacingOccurrences(of: "_", with: " "))
-                                            .font(.system(size: 7, design: .monospaced))
-                                            .foregroundStyle(LocusTheme.muted)
-                                        Spacer()
-                                        if model.teamRunPresentation(
-                                            for: run.id, durable: run
-                                        ).canRecover,
-                                           attempt.state != "running"
-                                            && !model.isCodingAttempt(attempt, in: run) {
-                                            Menu {
-                                                Button("Retry with Same Agent") {
-                                                    model.retryOrchestrationJob(attempt, in: run)
-                                                }
-                                                let candidates = model.reassignmentCandidates(for: attempt, in: run)
-                                                if !candidates.isEmpty {
-                                                    Menu("Reassign") {
-                                                        ForEach(candidates) { profile in
-                                                            Button(profile.name) {
-                                                                model.reassignOrchestrationJob(attempt, in: run, to: profile)
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            } label: { Image(systemName: "arrow.clockwise.circle") }
-                                                .menuStyle(.borderlessButton)
-                                                .menuIndicator(.hidden)
-                                        }
-                                    }
-                                    if let output = attempt.output, !output.isEmpty {
-                                        Text(output)
-                                            .font(.system(size: 8))
-                                            .foregroundStyle(LocusTheme.inkSoft)
-                                            .lineLimit(5)
-                                            .textSelection(.enabled)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                teamAgentsAndJobs(run)
 
                 overviewCard("RESULTS", symbol: "checkmark.seal") {
                     VStack(alignment: .leading, spacing: 6) {
@@ -857,16 +1110,16 @@ struct InspectorRunsTab: View {
                         if run.id == model.orchestrationRunID, !model.gitChanges.isEmpty {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Changed files")
-                                    .font(.system(size: 8))
+                                    .font(.locus(size: 8))
                                     .foregroundStyle(LocusTheme.muted)
                                 ForEach(model.gitChanges.prefix(8)) { change in
                                     Text("\(change.status.marker)  \(change.path)")
-                                        .font(.system(size: 7, design: .monospaced))
+                                        .font(.locus(size: 7, design: .monospaced))
                                         .lineLimit(1)
                                 }
                                 if model.gitChanges.count > 8 {
                                     Text("+ \(model.gitChanges.count - 8) more")
-                                        .font(.system(size: 7))
+                                        .font(.locus(size: 7))
                                         .foregroundStyle(LocusTheme.muted)
                                 }
                             }
@@ -878,7 +1131,7 @@ struct InspectorRunsTab: View {
                         {
                             Label(reason, systemImage: presentation.canRecover
                                 ? "arrow.clockwise.circle.fill" : "exclamationmark.circle.fill")
-                                .font(.system(size: 8))
+                                .font(.locus(size: 8))
                                 .foregroundStyle(presentation.canRecover
                                     ? LocusTheme.warning : LocusTheme.coral)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -894,11 +1147,11 @@ struct InspectorRunsTab: View {
                             Text("Checkpoint · \(checkpoint.kind.replacingOccurrences(of: "_", with: " "))")
                         }
                     }
-                    .font(.system(size: 7, design: .monospaced))
+                    .font(.locus(size: 7, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
                     .padding(.top, 6)
                 }
-                .font(.system(size: 8, weight: .semibold))
+                .font(.locus(size: 8, weight: .semibold))
             }
             .padding(12)
         }
@@ -906,15 +1159,336 @@ struct InspectorRunsTab: View {
         .accessibilityIdentifier("runs.overview")
     }
 
+    private func teamAgentsAndJobs(_ run: OrchestrationRun) -> some View {
+        let attempts = agentTreeAttempts(run)
+        let attemptedJobIDs = Set(attempts.map(\.jobID))
+        let waitingJobs = (run.plan?.jobs ?? []).filter { !attemptedJobIDs.contains($0.id) }
+        return overviewCard("AGENTS & JOBS", symbol: "person.2.fill") {
+            VStack(alignment: .leading, spacing: 8) {
+                if let summary = run.plan?.summary, !summary.isEmpty {
+                    Text(summary)
+                        .font(.locus(size: 9, weight: .medium))
+                }
+                if attempts.isEmpty && waitingJobs.isEmpty {
+                    Text("No jobs were assigned for this run.")
+                        .font(.locus(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                } else {
+                    ForEach(attempts) { attempt in
+                        agentTreeRow(attempt, run: run)
+                    }
+                    ForEach(waitingJobs) { job in
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "circle")
+                                    .foregroundStyle(LocusTheme.lineStrong)
+                                Text(job.agentID.isEmpty ? friendlyJobKind(job.kind) : job.agentID)
+                                    .font(.locus(size: 8, weight: .bold))
+                                Text("· waiting")
+                                    .font(.locus(size: 7, design: .monospaced))
+                                    .foregroundStyle(LocusTheme.muted)
+                            }
+                            Text(job.goal)
+                                .font(.locus(size: 8))
+                                .foregroundStyle(LocusTheme.inkSoft)
+                                .lineLimit(3)
+                            if !job.dependencies.isEmpty {
+                                Text("Runs after: \(job.dependencies.joined(separator: ", "))")
+                                    .font(.locus(size: 7))
+                                    .foregroundStyle(LocusTheme.muted)
+                            }
+                        }
+                        .padding(.leading, 3)
+                    }
+                }
+            }
+            .accessibilityIdentifier("runs.agentTree")
+        }
+    }
+
+    private func soloSwarmOverview(_ run: OrchestrationRun) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                overviewCard("REQUEST", symbol: "text.bubble") {
+                    Text(run.request.isEmpty ? "No request was recorded." : run.request)
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.inkSoft)
+                        .lineLimit(8)
+                }
+
+                overviewCard("SWARM STATUS", symbol: "circle.hexagongrid.fill") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        metricRow("State", run.state.replacingOccurrences(of: "_", with: " ").capitalized)
+                        metricRow("Workers", "\(swarmCompletedCount(run)) of \(swarmWorkerCount(run)) completed")
+                        metricRow("Duration", runDuration(run))
+                        if let calls = swarmModelCalls(run) {
+                            metricRow("Model calls", calls.formatted())
+                        }
+                        if let tokens = swarmTotalTokens(run) {
+                            metricRow("Total tokens", tokens.formatted())
+                        }
+                    }
+                }
+
+                overviewCard("WORKERS", symbol: "person.fill") {
+                    if usesLiveSwarmWorkers(run) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(model.agentActivities.filter { $0.depth == 1 }) { activity in
+                                liveSwarmWorkerRow(activity)
+                            }
+                        }
+                    } else if !agentTreeAttempts(run).isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(agentTreeAttempts(run)) { attempt in
+                                swarmAttemptRow(attempt)
+                            }
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(run.state == "running"
+                                ? "No workers delegated yet"
+                                : "This run did not delegate any workers")
+                                .font(.locus(size: 9, weight: .semibold))
+                            Text("The primary agent can finish a Solo Swarm request itself when parallel investigation would not help.")
+                                .font(.locus(size: 8))
+                                .foregroundStyle(LocusTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .accessibilityIdentifier("runs.soloSwarm.noWorkers")
+                    }
+                }
+
+                if swarmHasUsageBreakdown(run) {
+                    overviewCard("USAGE", symbol: "gauge") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            metricRow(
+                                "Primary agent",
+                                "\(swarmRootTokens(run).formatted()) tokens"
+                            )
+                            metricRow(
+                                "Read-only workers",
+                                "\(swarmWorkerTokens(run).formatted()) tokens"
+                            )
+                            if let calls = run.usage?["worker_model_calls"]?.integer {
+                                metricRow("Worker model calls", calls.formatted())
+                            }
+                        }
+                    }
+                }
+
+                technicalDetails(run)
+            }
+            .padding(12)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("runs.soloSwarm.overview")
+    }
+
+    private func soloOverview(_ run: OrchestrationRun) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                overviewCard("REQUEST", symbol: "text.bubble") {
+                    Text(run.request.isEmpty ? "No request was recorded." : run.request)
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.inkSoft)
+                        .lineLimit(8)
+                }
+                overviewCard("RESULT", symbol: "checkmark.seal") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        metricRow("State", run.state.replacingOccurrences(of: "_", with: " ").capitalized)
+                        metricRow("Duration", runDuration(run))
+                        if let calls = run.usage?["model_calls"]?.integer {
+                            metricRow("Model calls", calls.formatted())
+                        }
+                        if let prompt = run.usage?["prompt_tokens"]?.integer,
+                           let completion = run.usage?["completion_tokens"]?.integer {
+                            metricRow("Tokens", (prompt + completion).formatted())
+                        }
+                    }
+                }
+                technicalDetails(run)
+            }
+            .padding(12)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("runs.solo.overview")
+    }
+
+    private func technicalDetails(_ run: OrchestrationRun) -> some View {
+        DisclosureGroup("Technical details") {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Run ID · \(run.id)")
+                Text("Saved events · \(run.lastSequence)")
+                if let checkpoint = run.checkpoint {
+                    Text("Checkpoint · \(checkpoint.kind.replacingOccurrences(of: "_", with: " "))")
+                }
+            }
+            .font(.locus(size: 7, design: .monospaced))
+            .foregroundStyle(LocusTheme.muted)
+            .padding(.top, 6)
+        }
+        .font(.locus(size: 8, weight: .semibold))
+    }
+
+    private func usesLiveSwarmWorkers(_ run: OrchestrationRun) -> Bool {
+        run.id == model.orchestrationRunID
+            && model.isBusy
+            && model.agentActivities.contains { $0.depth == 1 }
+    }
+
+    private func liveSwarmWorkerRow(_ activity: AgentActivity) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: activity.state == .completed
+                    ? "checkmark.circle.fill" : "circle.dotted")
+                    .foregroundStyle(activity.state == .completed
+                        ? LocusTheme.success : LocusTheme.signalDeep)
+                Text(activity.agentName)
+                    .font(.locus(size: 9, weight: .semibold))
+                Spacer()
+                Text(activity.state.title)
+                    .font(.locus(size: 7, design: .monospaced))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            Text(activity.goal)
+                .font(.locus(size: 8))
+                .foregroundStyle(LocusTheme.inkSoft)
+                .lineLimit(3)
+            Text([activity.provider, activity.model,
+                  activity.executionEngine.replacingOccurrences(of: "_", with: " ")]
+                .filter { !$0.isEmpty }.joined(separator: " · "))
+                .font(.locus(size: 7, design: .monospaced))
+                .foregroundStyle(LocusTheme.muted)
+                .lineLimit(1)
+            if !activity.output.isEmpty, activity.output != "Branch started" {
+                Text(activity.output)
+                    .font(.locus(size: 8))
+                    .foregroundStyle(LocusTheme.inkSoft)
+                    .lineLimit(5)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(8)
+        .background(LocusTheme.white.opacity(0.55))
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+
+    private func swarmAttemptRow(_ attempt: AgentJobAttempt) -> some View {
+        let accessibleDetails = [
+            attempt.output,
+            attempt.evidence.isEmpty ? nil : "Evidence: \(attempt.evidence.joined(separator: ", "))",
+            attempt.uncertainties.isEmpty ? nil : "Uncertainties: \(attempt.uncertainties.joined(separator: ", "))",
+            "\(attempt.modelCalls) calls, \(attempt.promptTokens + attempt.completionTokens) tokens"
+        ]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: ". ")
+
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: attempt.state == "completed"
+                    ? "checkmark.circle.fill"
+                    : attempt.state == "failed" ? "exclamationmark.circle.fill" : "circle.dotted")
+                    .foregroundStyle(attempt.state == "completed"
+                        ? LocusTheme.success
+                        : attempt.state == "failed" ? LocusTheme.coral : LocusTheme.signalDeep)
+                Text(attempt.agentName ?? attempt.agentID ?? "Worker")
+                    .font(.locus(size: 9, weight: .semibold))
+                Spacer()
+                Text(attempt.state.replacingOccurrences(of: "_", with: " "))
+                    .font(.locus(size: 7, design: .monospaced))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            Text(attempt.goal)
+                .font(.locus(size: 8))
+                .foregroundStyle(LocusTheme.inkSoft)
+                .lineLimit(3)
+            Text([attempt.provider, attempt.model,
+                  attempt.resolvedExecutionEngine.replacingOccurrences(of: "_", with: " ")]
+                .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                .font(.locus(size: 7, design: .monospaced))
+                .foregroundStyle(LocusTheme.muted)
+                .lineLimit(1)
+            if let output = attempt.output, !output.isEmpty {
+                Text(output)
+                    .font(.locus(size: 8))
+                    .foregroundStyle(LocusTheme.inkSoft)
+                    .lineLimit(6)
+                    .textSelection(.enabled)
+            }
+            if !attempt.evidence.isEmpty {
+                Text("Evidence · \(attempt.evidence.joined(separator: ", "))")
+                    .font(.locus(size: 7))
+                    .foregroundStyle(LocusTheme.muted)
+                    .lineLimit(4)
+            }
+            if !attempt.uncertainties.isEmpty {
+                Text("Uncertainties · \(attempt.uncertainties.joined(separator: ", "))")
+                    .font(.locus(size: 7))
+                    .foregroundStyle(LocusTheme.warning)
+                    .lineLimit(4)
+            }
+            Text("\(attempt.modelCalls) calls · \((attempt.promptTokens + attempt.completionTokens).formatted()) tokens")
+                .font(.locus(size: 7, design: .monospaced))
+                .foregroundStyle(LocusTheme.muted)
+        }
+        .padding(8)
+        .background(LocusTheme.white.opacity(0.55))
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .accessibilityValue(accessibleDetails)
+        .accessibilityIdentifier("runs.soloSwarm.worker.\(attempt.resolvedNodeID)")
+    }
+
+    private func swarmWorkerCount(_ run: OrchestrationRun) -> Int {
+        if usesLiveSwarmWorkers(run) {
+            return Set(model.agentActivities.filter { $0.depth == 1 }.map { $0.nodeID ?? $0.id }).count
+        }
+        return agentTreeAttempts(run).count
+    }
+
+    private func swarmCompletedCount(_ run: OrchestrationRun) -> Int {
+        if usesLiveSwarmWorkers(run) {
+            return model.agentActivities.filter { $0.depth == 1 && $0.state == .completed }.count
+        }
+        return agentTreeAttempts(run).filter { $0.state == "completed" }.count
+    }
+
+    private func swarmModelCalls(_ run: OrchestrationRun) -> Int? {
+        if usesLiveSwarmWorkers(run), model.teamModelCalls > 0 { return model.teamModelCalls }
+        return run.usage?["model_calls"]?.integer
+    }
+
+    private func swarmTotalTokens(_ run: OrchestrationRun) -> Int? {
+        if usesLiveSwarmWorkers(run), model.teamMeteredTokens > 0 { return model.teamMeteredTokens }
+        if let total = run.usage?["metered_tokens"]?.integer { return total }
+        guard let prompt = run.usage?["prompt_tokens"]?.integer,
+              let completion = run.usage?["completion_tokens"]?.integer else { return nil }
+        return prompt + completion
+    }
+
+    private func swarmRootTokens(_ run: OrchestrationRun) -> Int {
+        (run.usage?["root_prompt_tokens"]?.integer ?? 0)
+            + (run.usage?["root_completion_tokens"]?.integer ?? 0)
+    }
+
+    private func swarmWorkerTokens(_ run: OrchestrationRun) -> Int {
+        (run.usage?["worker_prompt_tokens"]?.integer ?? 0)
+            + (run.usage?["worker_completion_tokens"]?.integer ?? 0)
+    }
+
+    private func swarmHasUsageBreakdown(_ run: OrchestrationRun) -> Bool {
+        run.usage?["root_prompt_tokens"] != nil || run.usage?["worker_prompt_tokens"] != nil
+    }
+
     private func activity(_ run: OrchestrationRun) -> some View {
         VStack(spacing: 0) {
             HStack {
-                TextField("Filter team activity", text: $filter)
+                TextField("Filter run activity", text: $filter)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("runs.filter")
                 Toggle("Technical log", isOn: $showTechnicalLog)
                     .toggleStyle(.checkbox)
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.locus(size: 8, weight: .semibold))
                     .accessibilityIdentifier("runs.technicalLog")
             }
             .padding(.horizontal, 12)
@@ -923,33 +1497,51 @@ struct InspectorRunsTab: View {
                 timeline(run, showsFilter: false)
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(activityGroups) { group in
-                            Text(group.title.uppercased())
-                                .font(.system(size: 7, weight: .bold))
-                                .tracking(0.6)
+                    if activityGroups.isEmpty {
+                        VStack(spacing: 8) {
+                            Image(systemName: "clock")
+                                .font(.locus(size: 20))
                                 .foregroundStyle(LocusTheme.muted)
-                                .padding(.horizontal, 12)
-                                .padding(.top, 10)
-                                .padding(.bottom, 4)
-                            ForEach(group.events) { event in
-                                HStack(alignment: .top, spacing: 8) {
-                                    Image(systemName: friendlyEventSymbol(event))
-                                        .foregroundStyle(color(for: event.type))
-                                        .frame(width: 14)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(friendlyEventTitle(event))
-                                            .font(.system(size: 9, weight: .semibold))
-                                        Text(friendlyEventDetail(event))
-                                            .font(.system(size: 8))
-                                            .foregroundStyle(LocusTheme.inkSoft)
-                                            .lineLimit(6)
+                            Text(filter.isEmpty ? "No activity recorded" : "No matching activity")
+                                .font(.locus(size: 9, weight: .semibold))
+                            Text(filter.isEmpty
+                                ? "Events will appear here as this run progresses."
+                                : "Try a different search term or open the technical log.")
+                                .font(.locus(size: 8))
+                                .foregroundStyle(LocusTheme.muted)
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(24)
+                        .frame(maxWidth: .infinity)
+                    } else {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(activityGroups) { group in
+                                Text(group.title.uppercased())
+                                    .font(.locus(size: 7, weight: .bold))
+                                    .tracking(0.6)
+                                    .foregroundStyle(LocusTheme.muted)
+                                    .padding(.horizontal, 12)
+                                    .padding(.top, 10)
+                                    .padding(.bottom, 4)
+                                ForEach(group.events) { event in
+                                    HStack(alignment: .top, spacing: 8) {
+                                        Image(systemName: friendlyEventSymbol(event))
+                                            .foregroundStyle(color(for: event.type))
+                                            .frame(width: 14)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(friendlyEventTitle(event))
+                                                .font(.locus(size: 9, weight: .semibold))
+                                            Text(friendlyEventDetail(event))
+                                                .font(.locus(size: 8))
+                                                .foregroundStyle(LocusTheme.inkSoft)
+                                                .lineLimit(6)
+                                        }
+                                        Spacer(minLength: 0)
                                     }
-                                    Spacer(minLength: 0)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    Divider().padding(.leading, 34)
                                 }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                Divider().padding(.leading, 34)
                             }
                         }
                     }
@@ -967,7 +1559,7 @@ struct InspectorRunsTab: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(title, systemImage: symbol)
-                .font(.system(size: 8, weight: .bold))
+                .font(.locus(size: 8, weight: .bold))
                 .tracking(0.5)
                 .foregroundStyle(LocusTheme.muted)
             content()
@@ -985,7 +1577,7 @@ struct InspectorRunsTab: View {
             Spacer()
             Text(value).fontWeight(.semibold)
         }
-        .font(.system(size: 8))
+        .font(.locus(size: 8))
     }
 
     private func agentTreeAttempts(_ run: OrchestrationRun) -> [AgentJobAttempt] {
@@ -1017,7 +1609,7 @@ struct InspectorRunsTab: View {
                         .fill(LocusTheme.lineStrong)
                         .frame(width: 1, height: 20)
                     Image(systemName: "arrow.turn.down.right")
-                        .font(.system(size: 7))
+                        .font(.locus(size: 7))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 Image(systemName: attempt.state == "completed"
@@ -1035,48 +1627,50 @@ struct InspectorRunsTab: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
                     Text(attempt.agentName ?? attempt.agentID ?? "Agent")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.locus(size: 8, weight: .bold))
                     Text("· \(attempt.state.replacingOccurrences(of: "_", with: " "))")
-                        .font(.system(size: 7, design: .monospaced))
+                        .font(.locus(size: 7, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 Text("\(attempt.provider ?? "Unknown provider") · \(attempt.model ?? "Unknown model") · \(attempt.resolvedExecutionEngine.replacingOccurrences(of: "_", with: " "))")
-                    .font(.system(size: 7, design: .monospaced))
+                    .font(.locus(size: 7, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
                     .lineLimit(1)
                 Text(attempt.goal)
-                    .font(.system(size: 8))
+                    .font(.locus(size: 8))
                     .foregroundStyle(LocusTheme.inkSoft)
                     .lineLimit(3)
                 if let branchError, !branchError.isEmpty {
                     Text(branchError)
-                        .font(.system(size: 7))
+                        .font(.locus(size: 7))
                         .foregroundStyle(LocusTheme.coral)
                         .lineLimit(3)
                 }
                 if !attempt.evidence.isEmpty {
                     Text("Evidence · \(attempt.evidence.joined(separator: ", "))")
-                        .font(.system(size: 7))
+                        .font(.locus(size: 7))
                         .foregroundStyle(LocusTheme.muted)
                         .lineLimit(3)
                 }
                 Text("\(attempt.modelCalls) calls · \(attempt.promptTokens + attempt.completionTokens) tokens · \(attempt.elapsedMilliseconds) ms")
-                    .font(.system(size: 7, design: .monospaced))
+                    .font(.locus(size: 7, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
             }
             Spacer(minLength: 0)
-            if presentation.isActivelyOwned, attempt.state == "running", !isCoding {
+            if !run.isSoloSwarm,
+               presentation.isActivelyOwned, attempt.state == "running", !isCoding {
                 Button("Stop") { model.stopOrchestrationBranch(attempt, in: run) }
-                    .buttonStyle(.borderless)
-                    .font(.system(size: 7, weight: .semibold))
+                    .buttonStyle(.locus())
+                    .font(.locus(size: 7, weight: .semibold))
                     .foregroundStyle(LocusTheme.coral)
                     .accessibilityIdentifier("runs.agentTree.stop.\(attempt.resolvedNodeID)")
-            } else if presentation.canRecover,
+            } else if !run.isSoloSwarm,
+                      presentation.canRecover,
                       ["failed", "stopped", "paused"].contains(attempt.state),
                       !isCoding {
                 Button("Retry") { model.retryOrchestrationBranch(attempt, in: run) }
-                    .buttonStyle(.borderless)
-                    .font(.system(size: 7, weight: .semibold))
+                    .buttonStyle(.locus())
+                    .font(.locus(size: 7, weight: .semibold))
                     .accessibilityIdentifier("runs.agentTree.retry.\(attempt.resolvedNodeID)")
             }
         }
@@ -1098,27 +1692,27 @@ struct InspectorRunsTab: View {
                     ForEach(filteredEvents) { event in
                         HStack(alignment: .top, spacing: 8) {
                             Text("\(event.sequence)")
-                                .font(.system(size: 7, design: .monospaced))
+                                .font(.locus(size: 7, design: .monospaced))
                                 .foregroundStyle(LocusTheme.muted)
                                 .frame(width: 30, alignment: .trailing)
                             Circle().fill(color(for: event.type)).frame(width: 6, height: 6).padding(.top, 3)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(event.type.replacingOccurrences(of: "_", with: " "))
-                                    .font(.system(size: 8, weight: .bold))
+                                    .font(.locus(size: 8, weight: .bold))
                                 Text(event.title)
-                                    .font(.system(size: 8))
+                                    .font(.locus(size: 8))
                                     .foregroundStyle(LocusTheme.inkSoft)
                                     .lineLimit(4)
                                 if let detail = event.detail, detail != event.title {
                                     Text(detail)
-                                        .font(.system(size: 7, design: .monospaced))
+                                        .font(.locus(size: 7, design: .monospaced))
                                         .foregroundStyle(LocusTheme.muted)
                                         .lineLimit(12)
                                         .textSelection(.enabled)
                                 }
                                 if let job = event.jobID {
                                     Text("job \(job)\(event.attemptID.map { " · \($0)" } ?? "")")
-                                        .font(.system(size: 7, design: .monospaced))
+                                        .font(.locus(size: 7, design: .monospaced))
                                         .foregroundStyle(LocusTheme.muted)
                                 }
                             }
@@ -1143,9 +1737,9 @@ struct InspectorRunsTab: View {
                         VStack(alignment: .leading, spacing: 3) {
                             HStack {
                                 Text(attempt.agentName ?? attempt.agentID ?? "Agent")
-                                    .font(.system(size: 9, weight: .bold))
+                                    .font(.locus(size: 9, weight: .bold))
                                 Text("attempt \(attempt.attempt)")
-                                    .font(.system(size: 7, design: .monospaced))
+                                    .font(.locus(size: 7, design: .monospaced))
                                     .foregroundStyle(LocusTheme.muted)
                                 Spacer()
                                 if model.teamRunPresentation(
@@ -1178,18 +1772,18 @@ struct InspectorRunsTab: View {
                                     .menuIndicator(.hidden)
                                 }
                             }
-                            Text(attempt.goal).font(.system(size: 8)).lineLimit(4)
+                            Text(attempt.goal).font(.locus(size: 8)).lineLimit(4)
                             Text("\(attempt.role ?? "specialist") · \(attempt.state)")
-                                .font(.system(size: 7, design: .monospaced))
+                                .font(.locus(size: 7, design: .monospaced))
                                 .foregroundStyle(LocusTheme.muted)
                             if let provider = attempt.provider, !provider.isEmpty {
                                 Text("\(provider) · \(attempt.model ?? "")")
-                                    .font(.system(size: 7, design: .monospaced))
+                                    .font(.locus(size: 7, design: .monospaced))
                                     .foregroundStyle(LocusTheme.muted)
                             }
                             if let output = attempt.output, !output.isEmpty {
                                 Text(output)
-                                    .font(.system(size: 8))
+                                    .font(.locus(size: 8))
                                     .lineLimit(12)
                                     .textSelection(.enabled)
                             }
@@ -1199,20 +1793,20 @@ struct InspectorRunsTab: View {
                             {
                                 DisclosureGroup("Reasoning") {
                                     Text(reasoning)
-                                        .font(.system(size: 8))
+                                        .font(.locus(size: 8))
                                         .foregroundStyle(LocusTheme.inkSoft)
                                         .textSelection(.enabled)
                                 }
-                                .font(.system(size: 8, weight: .semibold))
+                                .font(.locus(size: 8, weight: .semibold))
                             }
                             if !attempt.evidence.isEmpty {
                                 Text("Evidence · \(attempt.evidence.joined(separator: ", "))")
-                                    .font(.system(size: 7))
+                                    .font(.locus(size: 7))
                                     .foregroundStyle(LocusTheme.muted)
                                     .lineLimit(4)
                             }
                             Text("\(attempt.elapsedMilliseconds) ms · \(attempt.promptTokens + attempt.completionTokens) tokens")
-                                .font(.system(size: 7, design: .monospaced))
+                                .font(.locus(size: 7, design: .monospaced))
                                 .foregroundStyle(LocusTheme.muted)
                         }
                     }
@@ -1230,9 +1824,9 @@ struct InspectorRunsTab: View {
         return VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 5) {
                 Label("Review dispatch plan", systemImage: "checkmark.shield")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.locus(size: 11, weight: .bold))
                 Text("Edit goals, assignments, and dependencies. Coding jobs must form an explicit order; Locus runs them one at a time in the shared checkout.")
-                    .font(.system(size: 8))
+                    .font(.locus(size: 8))
                     .foregroundStyle(LocusTheme.muted)
             }
             .padding(12)
@@ -1242,7 +1836,7 @@ struct InspectorRunsTab: View {
                     if draftPlan?.budget != nil {
                         VStack(alignment: .leading, spacing: 5) {
                             Text("RUN BUDGET")
-                                .font(.system(size: 7, weight: .bold))
+                                .font(.locus(size: 7, weight: .bold))
                                 .tracking(0.6)
                                 .foregroundStyle(LocusTheme.muted)
                             Stepper(
@@ -1280,7 +1874,7 @@ struct InspectorRunsTab: View {
                                 format: .number.precision(.fractionLength(0...4))
                             )
                         }
-                        .font(.system(size: 8))
+                        .font(.locus(size: 8))
                         .padding(9)
                         .background(LocusTheme.white.opacity(0.6))
                         .clipShape(RoundedRectangle(cornerRadius: 7))
@@ -1289,12 +1883,12 @@ struct InspectorRunsTab: View {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 Text(job.kind == "writer" ? "Coding" : job.kind.capitalized)
-                                    .font(.system(size: 8, weight: .bold))
+                                    .font(.locus(size: 8, weight: .bold))
                                 Spacer()
                                 Button(role: .destructive) {
                                     draftPlan?.jobs.remove(at: index)
                                 } label: { Image(systemName: "trash") }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.locus())
                             }
                             TextField("Goal", text: jobBinding(index, \.goal), axis: .vertical)
                             Picker("Agent", selection: jobBinding(index, \.agentID)) {
@@ -1312,11 +1906,11 @@ struct InspectorRunsTab: View {
                         Button {
                             addJob(kind: "specialist")
                         } label: { Label("Add Specialist Job", systemImage: "plus") }
-                            .buttonStyle(.borderless)
+                            .buttonStyle(.locus())
                         Button {
                             addJob(kind: "writer")
                         } label: { Label("Add Coding Job", systemImage: "hammer") }
-                            .buttonStyle(.borderless)
+                            .buttonStyle(.locus())
                             .accessibilityIdentifier("runs.addCodingJob")
                     }
                 }
@@ -1325,7 +1919,7 @@ struct InspectorRunsTab: View {
             HStack {
                 if let error = validationErrors.first {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(size: 8))
+                        .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.coral)
                         .lineLimit(2)
                 }
@@ -1485,7 +2079,7 @@ struct InspectorRunsTab: View {
 
     private var activityGroups: [ActivityGroup] {
         let visible = filteredEvents.filter(isUserFacingEvent)
-        let order = ["Planning", "Approval", "Specialists", "Coding jobs", "Review", "Complete"]
+        let order = ["Solo Swarm", "Planning", "Approval", "Specialists", "Coding jobs", "Review", "Complete"]
         let grouped = Dictionary(grouping: visible, by: activityPhase)
         return order.compactMap { title in
             guard let events = grouped[title], !events.isEmpty else { return nil }
@@ -1528,7 +2122,8 @@ struct InspectorRunsTab: View {
         let state = model.teamRunPresentation(for: run.id, durable: run).state.title
         let total = run.jobCount ?? 0
         guard total > 0 else { return state }
-        return "\(state) · \(run.completedJobCount ?? 0) of \(total) jobs"
+        let unit = run.isSoloSwarm ? "workers" : "jobs"
+        return "\(state) · \(run.completedJobCount ?? 0) of \(total) \(unit)"
     }
 
     private func runDuration(_ run: OrchestrationRun) -> String {
@@ -1547,6 +2142,8 @@ struct InspectorRunsTab: View {
 
     private func isUserFacingEvent(_ event: OrchestrationEvent) -> Bool {
         event.type == "error"
+            || ["run_started", "agent_spawned", "agent_branch_stopped",
+                "swarm_telemetry", "turn_done", "note"].contains(event.type)
             || event.type == "permission_request"
             || event.type == "dispatch_plan_ready"
             || event.type == "dispatcher_plan_rejected"
@@ -1556,6 +2153,13 @@ struct InspectorRunsTab: View {
     }
 
     private func activityPhase(_ event: OrchestrationEvent) -> String {
+        let isSoloSwarm = model.selectedOrchestrationRun?.isSoloSwarm == true
+        if isSoloSwarm,
+           ["run_started", "agent_spawned", "agent_branch_stopped",
+            "swarm_telemetry", "turn_done", "note"].contains(event.type)
+                || event.type.hasPrefix("agent_job_") {
+            return "Solo Swarm"
+        }
         switch event.type {
         case "dispatch_plan_ready", "dispatch_plan", "dispatch_decision":
             return "Approval"
@@ -1583,7 +2187,14 @@ struct InspectorRunsTab: View {
     }
 
     private func friendlyEventTitle(_ event: OrchestrationEvent) -> String {
-        switch event.type {
+        let isSoloSwarm = model.selectedOrchestrationRun?.isSoloSwarm == true
+        return switch event.type {
+        case "run_started": isSoloSwarm ? "Solo Swarm run started" : "Run started"
+        case "agent_spawned": isSoloSwarm ? "Read-only worker started" : "Agent started"
+        case "agent_branch_stopped": isSoloSwarm ? "Read-only worker stopped" : "Agent branch stopped"
+        case "swarm_telemetry": "Worker batch completed"
+        case "turn_done": isSoloSwarm ? "Solo Swarm run completed" : "Run completed"
+        case "note": "Run note"
         case "orchestration_started": "Team run started"
         case "orchestration_state": event.text("state") == "reviewing" ? "Review started" : "Team progressed"
         case "dispatch_plan_ready": "Plan ready for your approval"
@@ -1609,6 +2220,8 @@ struct InspectorRunsTab: View {
         let model = event.text("model")
         let route = [agent, model].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
         return event.text("message")?.nilIfEmpty
+            ?? event.text("text")?.nilIfEmpty
+            ?? event.text("goal")?.nilIfEmpty
             ?? event.text("reason")?.nilIfEmpty
             ?? event.detail?.nilIfEmpty
             ?? route.nilIfEmpty

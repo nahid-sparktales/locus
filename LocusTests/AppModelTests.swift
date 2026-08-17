@@ -2393,6 +2393,18 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRunsDeepLinksSelectDetailWhileGeneralNavigationReturnsToList() {
+        let model = AppModel(startImmediately: false)
+
+        model.selectInspectorTab(.runs, selecting: "solo-swarm-1")
+        XCTAssertEqual(model.runsNavigationRequest?.runID, "solo-swarm-1")
+        XCTAssertFalse(model.inspectorCollapsed)
+
+        model.selectInspectorTab(.runs)
+        XCTAssertNil(model.runsNavigationRequest)
+    }
+
+    @MainActor
     func testDecliningSoloInspectorStillAsksAboutTeamRuns() {
         let model = AppModel(startImmediately: false)
         model.inspectorCollapsed = true
@@ -2426,7 +2438,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertNotEqual(solo.title, team.title)
         XCTAssertNotEqual(solo.message, team.message)
         XCTAssertTrue(solo.title.contains("Context & Plan"))
-        XCTAssertTrue(team.title.contains("Team Runs"))
+        XCTAssertTrue(team.title.contains("Solo Swarm"))
         XCTAssertTrue(solo.message.contains("Settings → General → Conversation"))
         XCTAssertTrue(team.message.contains("Settings → General → Conversation"))
     }

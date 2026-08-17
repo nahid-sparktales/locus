@@ -930,7 +930,7 @@ class RunStore:
         team_id: str = "", team_name: str = "",
         workspace_root: str = "", execution_path: str = "", request: str = "",
         run_kind: str = "solo", execution_environment: str = "local",
-        retry_parent_id: str = "",
+        retry_parent_id: str = "", manifest: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Reserve one durable FIFO slot before a chat worker is admitted."""
         with self._lock:
@@ -946,6 +946,7 @@ class RunStore:
                 workspace_root=workspace_root,
                 execution_path=execution_path, request=request, state="queued",
                 run_kind=run_kind, execution_environment=execution_environment,
+                manifest=manifest,
             )
             if not self.read_only:
                 with self._connect() as connection:

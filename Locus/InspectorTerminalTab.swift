@@ -63,12 +63,12 @@ private struct TerminalPanel: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Label("Managed services", systemImage: "server.rack")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.locus(size: 8, weight: .semibold))
                 Spacer()
                 Button { model.refreshBackgroundServices() } label: {
                     Image(systemName: "arrow.clockwise")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .help("Refresh managed services")
             }
             ForEach(model.backgroundServices) { service in
@@ -78,10 +78,10 @@ private struct TerminalPanel: View {
                         .frame(width: 6, height: 6)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(service.name)
-                            .font(.system(size: 8, weight: .semibold))
+                            .font(.locus(size: 8, weight: .semibold))
                         Text(service.port.map { "localhost:\($0) · pid \(service.pid ?? 0)" }
                             ?? "pid \(service.pid ?? 0)")
-                            .font(.system(size: 7, design: .monospaced))
+                            .font(.locus(size: 7, design: .monospaced))
                             .foregroundStyle(LocusTheme.muted)
                     }
                     Spacer()
@@ -89,25 +89,25 @@ private struct TerminalPanel: View {
                         Button("Stop", role: .destructive) {
                             model.stopBackgroundService(service)
                         }
-                        .buttonStyle(.borderless)
-                        .font(.system(size: 8))
+                        .buttonStyle(.locus())
+                        .font(.locus(size: 8))
                     } else {
                         HStack(spacing: 6) {
                             Text("Exited \(service.exitCode ?? 0)")
-                                .font(.system(size: 7, design: .monospaced))
+                                .font(.locus(size: 7, design: .monospaced))
                                 .foregroundStyle(LocusTheme.warning)
                             Button("Dismiss") {
                                 model.stopBackgroundService(service)
                             }
-                            .buttonStyle(.borderless)
-                            .font(.system(size: 8))
+                            .buttonStyle(.locus())
+                            .font(.locus(size: 8))
                         }
                     }
                 }
             }
             if model.backgroundServices.isEmpty {
                 Text("No managed services. Agents use these for servers and watchers that should survive Stop.")
-                    .font(.system(size: 7))
+                    .font(.locus(size: 7))
                     .foregroundStyle(LocusTheme.muted)
             }
         }
@@ -127,10 +127,10 @@ private struct TerminalPanel: View {
                 .frame(width: 6, height: 6)
             VStack(alignment: .leading, spacing: 1) {
                 Text(terminal.title)
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.locus(size: 9, weight: .semibold))
                     .lineLimit(1)
                 Text(terminal.currentDirectory.isEmpty ? model.workspacePath : terminal.currentDirectory)
-                    .font(.system(size: 8, design: .monospaced))
+                    .font(.locus(size: 8, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -138,7 +138,7 @@ private struct TerminalPanel: View {
             Spacer(minLength: 4)
             if TerminalSession.isSandboxedBuild {
                 Label("Sandboxed", systemImage: "lock.fill")
-                    .font(.system(size: 7, weight: .semibold))
+                    .font(.locus(size: 7, weight: .semibold))
                     .foregroundStyle(LocusTheme.warning)
                     .help("This terminal inherits the App Store sandbox and can access only approved locations.")
             }
@@ -168,11 +168,11 @@ private struct TerminalPanel: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.locus(size: 9, weight: .semibold))
                 .foregroundStyle(destructive ? LocusTheme.coral : LocusTheme.muted)
                 .frame(width: 22, height: 22)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .help(help)
         .accessibilityLabel(help)
     }

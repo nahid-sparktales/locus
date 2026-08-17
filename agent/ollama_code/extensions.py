@@ -41,7 +41,7 @@ def _load_mcp_catalog() -> tuple[int, tuple[dict[str, Any], ...]]:
     value = _read_json(path, 256 * 1024)
     version = value.get("version")
     presets = value.get("presets")
-    if version != 1 or not isinstance(presets, list) or len(presets) != 5 \
+    if version != 2 or not isinstance(presets, list) or len(presets) != 5 \
             or any(not isinstance(item, dict) for item in presets):
         raise RuntimeError("the bundled MCP preset catalog is invalid")
     return version, tuple(dict(item) for item in presets)
@@ -212,6 +212,7 @@ def parse_skill(path: Path, *, source: str, plugin_id: str | None = None) -> dic
         "source": source,
         "plugin_id": plugin_id,
         "allow_implicit_invocation": implicit,
+        "activation": "automatic" if implicit else "explicit",
         "openai_metadata": openai,
         "enabled": True,
         "error": None,
@@ -472,13 +473,15 @@ class ExtensionManager:
         # Before _load_state, which reports a degraded read through it.
         self._errors: list[str] = []
         self._state = self._load_state()
+        if self._migrate_state():
+            self._save()
         self._credential_values: dict[str, dict[str, Any]] = {}
         self.discover_workspace_marketplaces()
 
     @staticmethod
     def _defaults() -> dict[str, Any]:
         return {
-            "version": 2,
+            "version": 3,
             "marketplaces": [],
             "plugins": [],
             "standalone_skills": [],
@@ -521,6 +524,38 @@ class ExtensionManager:
         if isinstance(value.get("mcp_policies"), dict):
             defaults["mcp_policies"] = value["mcp_policies"]
         return defaults
+
+    def _migrate_state(self) -> bool:
+        """Restore preset provenance without touching auth material or user scope."""
+        changed = self._state.get("version") != 3
+        self._state["version"] = 3
+        github = next(item for item in MCP_PRESETS if item.get("id") == "github")
+        canonical_url = str(github["url"]).rstrip("/")
+        for record in self._state.get("mcp_servers") or []:
+            if not isinstance(record, dict):
+                continue
+            is_github_preset = record.get("preset_id") == "github"
+            is_canonical_github = (
+                str(record.get("name") or "").lower() == "github"
+                and str(record.get("url") or "").rstrip("/") == canonical_url
+            )
+            if not (is_github_preset or is_canonical_github):
+                continue
+            restored = {
+                "preset_id": "github",
+                "oauth_strategy": "github_device",
+                "auth_fallback": github.get("fallback"),
+                "preset_provenance": {
+                    "catalog_version": MCP_CATALOG_VERSION,
+                    "template_url": github["url"],
+                    "source_url": github.get("source_url"),
+                },
+            }
+            for key, value in restored.items():
+                if record.get(key) != value:
+                    record[key] = value
+                    changed = True
+        return changed
 
     def _save(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -1169,8 +1204,18 @@ class ExtensionManager:
                 parsed["builtin"] = True
                 parsed["shadowed"] = parsed["name"] in user_names
                 metadata_path = skill_file.parent / "SOURCE.json"
-                parsed["provenance"] = _read_json(metadata_path, 64_000) \
+                provenance = _read_json(metadata_path, 64_000) \
                     if metadata_path.is_file() else {}
+                parsed["provenance"] = provenance
+                # Startup activation is a trusted built-in capability. User,
+                # workspace, and plugin skills may shadow a built-in but never
+                # inherit the right to enter every development prompt.
+                activation = str(provenance.get("activation") or parsed["activation"])
+                parsed["activation"] = activation \
+                    if activation in {"startup", "automatic", "explicit"} \
+                    else parsed["activation"]
+                if parsed["activation"] == "explicit":
+                    parsed["allow_implicit_invocation"] = False
                 records.append(parsed)
             except ExtensionError as exc:
                 errors.append(self._skill_error(skill_file.parent.name, "builtin", str(exc)))
@@ -1199,6 +1244,7 @@ class ExtensionManager:
             "source": source,
             "plugin_id": None,
             "allow_implicit_invocation": False,
+            "activation": "explicit",
             "enabled": False,
             "error": message,
         }
@@ -1233,6 +1279,10 @@ class ExtensionManager:
         for skill in self.skills(workspace):
             if not skill.get("enabled") or skill.get("error"):
                 continue
+            if skill.get("activation") == "startup":
+                # Already present in the turn context; do not spend eager-index
+                # tokens advertising startup skills a second time.
+                continue
             policy = " [explicit invocation only]" if not skill.get("allow_implicit_invocation", True) else ""
             path = str(skill.get("path") or "")
             location = f" ({path})" if path else ""
@@ -1243,6 +1293,22 @@ class ExtensionManager:
                 break
             lines.append(line)
         return "\n".join(lines) if len(lines) > 1 else ""
+
+    def startup_skills(self, workspace: str = "") -> list[dict[str, Any]]:
+        """Return enabled trusted startup skills in deterministic policy order."""
+        return sorted(
+            (
+                item for item in self.skills(workspace)
+                if item.get("enabled")
+                and not item.get("error")
+                and item.get("builtin") is True
+                and item.get("activation") == "startup"
+            ),
+            key=lambda item: (
+                int((item.get("provenance") or {}).get("startup_order") or 1_000),
+                str(item.get("id") or ""),
+            ),
+        )
 
     def explicit_skill_ids(self, text: str, workspace: str = "") -> list[str]:
         enabled = [item for item in self.skills(workspace) if item.get("enabled")]
@@ -1391,6 +1457,7 @@ class ExtensionManager:
             "enabled_prompts": [],
             "preset_id": preset_id,
             "auth_fallback": preset.get("fallback"),
+            "oauth_strategy": preset.get("oauth_strategy"),
             "fallback_header": preset.get("fallback_header"),
             "optional_header": preset.get("optional_header"),
             "preset_provenance": {
@@ -1450,6 +1517,7 @@ class ExtensionManager:
             "disabled_workspaces": [str(value) for value in raw.get("disabled_workspaces", [])]
             if isinstance(raw.get("disabled_workspaces"), list) else [],
             "preset_id": str(raw.get("preset_id") or "") or None,
+            "oauth_strategy": str(raw.get("oauth_strategy") or "") or None,
             "auth_fallback": str(raw.get("auth_fallback") or "") or None,
             "fallback_header": str(raw.get("fallback_header") or "") or None,
             "optional_header": str(raw.get("optional_header") or "") or None,
