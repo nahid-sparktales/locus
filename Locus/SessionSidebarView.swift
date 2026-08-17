@@ -635,7 +635,7 @@ struct SessionSidebarView: View {
                 .lineLimit(1)
         }
         .font(.locus(size: 8))
-        .foregroundStyle(LocusTheme.muted)
+        .foregroundStyle(LocusTheme.ink)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("sidebar.agentStatus")
     }
@@ -696,23 +696,24 @@ private struct SidebarResizeHandle: View {
         .onTapGesture(count: 2) {
             model.resetSidebarWidth()
         }
-        .accessibilityElement()
-        .accessibilityLabel("Sidebar width")
-        .accessibilityValue("\(Int(model.sidebarWidth)) points")
-        .accessibilityHint("Drag to resize. Double-click to reset.")
-        .accessibilityAdjustableAction { direction in
-            let step: CGFloat = 10
-            switch direction {
-            case .increment:
-                model.setSidebarWidth(model.sidebarWidth + step)
-            case .decrement:
-                model.setSidebarWidth(model.sidebarWidth - step)
-            @unknown default:
-                return
+        .accessibilityRepresentation {
+            Slider(
+                value: Binding(
+                    get: { model.sidebarWidth },
+                    set: { width in
+                        model.setSidebarWidth(width)
+                        model.commitSidebarWidth()
+                    }
+                ),
+                in: CGFloat(AppSettings.minimumSidebarWidth)...CGFloat(AppSettings.maximumSidebarWidth),
+                step: 10
+            ) {
+                Text("Sidebar width")
             }
-            model.commitSidebarWidth()
+            .accessibilityValue("\(Int(model.sidebarWidth)) points")
+            .accessibilityHint("Drag to resize. Double-click to reset.")
+            .accessibilityIdentifier("sidebar.resize")
         }
-        .accessibilityIdentifier("sidebar.resize")
     }
 }
 

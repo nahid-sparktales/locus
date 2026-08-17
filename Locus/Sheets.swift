@@ -1283,7 +1283,8 @@ struct SettingsView: View {
                         .font(.locus(size: 16, weight: .bold))
                     Text("Local agent, models, browser, and account configuration")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(LocusTheme.ink)
+                        .accessibilityIdentifier("settings.subtitle")
                 }
                 Spacer()
                 Button {
@@ -1558,8 +1559,9 @@ struct SettingsView: View {
 
                 Text("Leave empty and Locus asks Ollama for the largest window the model was built for, up to 32,768 tokens — Ollama's own default is 4,096, most of which a turn spends on tools before the conversation starts. Bigger windows cost memory for the KV cache, and a model that ends up partly on the CPU is backed off automatically. Set a value to pin one exactly; it is requested as num_ctx and is what compaction budgets against.")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(LocusTheme.inkSoft)
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("settings.localContextDescription")
             }
 
             Section("Agent") {

@@ -2235,7 +2235,6 @@ private struct MessageBlockView: View, Equatable {
                     }
             }
         }
-        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(blockAccessibilityIdentifier)
         .contextMenu {
             if block.kind == .user || block.kind == .assistant {
@@ -2294,8 +2293,12 @@ private struct MessageBlockView: View, Equatable {
                     // Keep message actions visible and in a stable region so
                     // they remain discoverable without pointer hover and do
                     // not change row geometry during scrolling.
-                    messageActions
-                        .accessibilityHidden(false)
+                    HStack(spacing: 0) {
+                        messageActions
+                    }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("\(name) message actions")
+                    .accessibilityIdentifier("message.\(block.id.uuidString).actions")
                 }
                 .frame(minHeight: 22)
                 content()
