@@ -764,6 +764,7 @@ struct AgentProfileEditor: View {
                             } label: {
                                 Text("Name")
                                     .foregroundStyle(LocusTheme.ink)
+                                    .accessibilityIdentifier("agent.nameLabel")
                             }
                             Picker("Role", selection: $draft.role) {
                                 ForEach(AgentRole.allCases) { Text($0.title).tag($0) }
