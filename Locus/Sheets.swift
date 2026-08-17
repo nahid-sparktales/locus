@@ -1283,7 +1283,7 @@ struct SettingsView: View {
                         .font(.locus(size: 16, weight: .bold))
                     Text("Local agent, models, browser, and account configuration")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.inkSoft)
+                        .foregroundStyle(LocusTheme.ink)
                         .accessibilityIdentifier("settings.subtitle")
                 }
                 Spacer()

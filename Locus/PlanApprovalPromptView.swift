@@ -1098,6 +1098,8 @@ struct PlanApprovalPromptView: View {
         }
         .onTapGesture { panelFocused = true }
         .onAppear { panelFocused = true }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Plan approval")
         .accessibilityIdentifier("planApproval.panel")
     }
 

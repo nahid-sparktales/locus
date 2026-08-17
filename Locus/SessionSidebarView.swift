@@ -635,7 +635,7 @@ struct SessionSidebarView: View {
                 .lineLimit(1)
         }
         .font(.locus(size: 8))
-        .foregroundStyle(LocusTheme.inkSoft)
+        .foregroundStyle(LocusTheme.ink)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("sidebar.agentStatus")
     }

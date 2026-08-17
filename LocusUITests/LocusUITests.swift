@@ -100,6 +100,16 @@ final class LocusUITests: XCTestCase {
                issue.element?.elementType == .touchBar {
                 return true
             }
+            // Older XCTest releases audit the system-owned Emoji & Symbols
+            // popup inside the Touch Bar separately from its container. It is
+            // outside the app's window and has no app-controlled description.
+            if issue.auditType == .sufficientElementDescription,
+               let element = issue.element,
+               element.elementType == .popUpButton,
+               element.identifier.isEmpty,
+               element.label.localizedCaseInsensitiveCompare("emoji & symbols") == .orderedSame {
+                return true
+            }
             if issue.auditType == .sufficientElementDescription,
                let element = issue.element,
                element.frame.maxY <= self.app.windows.firstMatch.frame.minY {
