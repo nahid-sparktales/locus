@@ -8,6 +8,15 @@ final class LocusUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchEnvironment["LOCUS_UI_TESTING"] = "1"
+        // The window is clamped to the screen, so a CI runner's display can
+        // leave far less of a panel visible than a developer's. Forwarding an
+        // explicit size makes that geometry reproducible locally with
+        // TEST_RUNNER_LOCUS_UI_TESTING_WINDOW_HEIGHT=<points>.
+        for key in ["LOCUS_UI_TESTING_WINDOW_WIDTH", "LOCUS_UI_TESTING_WINDOW_HEIGHT"] {
+            if let value = ProcessInfo.processInfo.environment[key] {
+                app.launchEnvironment[key] = value
+            }
+        }
         // Stale window-restoration state can suppress the main window at
         // launch; tests must not depend on the machine's saved state.
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
@@ -1094,32 +1103,31 @@ final class LocusUITests: XCTestCase {
 
         // ⌘1 — back to the idle Overview.
         app.typeKey("1", modifierFlags: .command)
-        XCTAssertTrue(anyElement("plan.status").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("plan.summary").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("plan.section.outputs").exists)
         XCTAssertTrue(anyElement("plan.context").exists)
-        XCTAssertFalse(anyElement("plan.identity").exists)
-        XCTAssertTrue(anyElement("plan.quickActions").exists)
         XCTAssertTrue(anyElement("inspector.tab.plan").label.contains("Overview"))
     }
 
-    func testIdleOverviewShowsQuickAccessAndKeepsContextPinned() {
+    func testIdleOverviewShowsEmptySummaryAndKeepsContextPinned() {
         let tabBar = anyElement("inspector.tabBar")
-        let overview = anyElement("plan.status")
+        let summary = anyElement("plan.summary")
         let context = anyElement("plan.context")
         let window = app.windows.firstMatch
 
         XCTAssertTrue(tabBar.waitForExistence(timeout: 3))
-        XCTAssertTrue(overview.exists)
+        XCTAssertTrue(summary.waitForExistence(timeout: 3))
         XCTAssertTrue(context.exists)
-        XCTAssertFalse(anyElement("plan.identity").exists)
-        XCTAssertFalse(anyElement("plan.processes").exists)
-        XCTAssertFalse(anyElement("plan.lastRun").exists)
-        XCTAssertFalse(anyElement("plan.suggestions").exists)
-        XCTAssertTrue(anyElement("plan.quickActions").exists)
-        for action in ["agents", "skills", "browser", "files", "changes", "terminal"] {
-            XCTAssertTrue(anyElement("plan.quickAction.\(action)").exists)
-        }
-        XCTAssertFalse(anyElement("plan.livePlan").exists)
-        XCTAssertFalse(anyElement("plan.activity").exists)
+        // Outputs and Sources always show so their "+" actions stay
+        // discoverable; every other section appears only with content.
+        XCTAssertTrue(anyElement("plan.section.outputs").exists)
+        XCTAssertTrue(anyElement("plan.section.sources").exists)
+        XCTAssertTrue(anyElement("plan.outputs.empty").exists)
+        XCTAssertTrue(anyElement("plan.sources.empty").exists)
+        XCTAssertFalse(anyElement("plan.section.plan").exists)
+        XCTAssertFalse(anyElement("plan.section.subagents").exists)
+        XCTAssertFalse(anyElement("plan.section.processes").exists)
+        XCTAssertFalse(anyElement("plan.plan.row").exists)
         XCTAssertLessThanOrEqual(
             window.frame.maxY - context.frame.maxY,
             30,
@@ -1133,32 +1141,87 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(anyElement("checkpointTab.content").exists)
     }
 
-    func testOverviewQuickAccessOpensInspectorAndSettingsDestinations() {
-        let browser = anyElement("plan.quickAction.browser")
-        XCTAssertTrue(browser.waitForExistence(timeout: 3))
-        browser.click()
-        XCTAssertTrue(anyElement("browser.url").waitForExistence(timeout: 3))
+    func testOverviewSourcesMenuOpensSkillsAndMCP() {
+        let empty = anyElement("plan.sources.empty")
+        XCTAssertTrue(empty.waitForExistence(timeout: 3))
+        empty.click()
 
-        app.typeKey("1", modifierFlags: .command)
-        let agents = anyElement("plan.quickAction.agents")
-        XCTAssertTrue(agents.waitForExistence(timeout: 3))
-        agents.click()
-        XCTAssertTrue(app.staticTexts["GLOBAL SCHEDULER"].waitForExistence(timeout: 5))
+        let attach = app.menuItems["Attach files or folders"]
+        let skills = app.menuItems["Skills & MCP"]
+        XCTAssertTrue(attach.waitForExistence(timeout: 3))
+        XCTAssertTrue(skills.exists)
+        skills.click()
+
+        // "Skills & MCP" lands Settings directly on the Extensions page.
+        XCTAssertTrue(anyElement("settings.page.extensions").waitForExistence(timeout: 5))
+        XCTAssertTrue(anyElement("extensions.tab.installed").waitForExistence(timeout: 3))
+
+        // The Extensions page has no Cancel/Save bar; the header close control
+        // is the way out.
+        let close = anyElement("settings.close")
+        XCTAssertTrue(close.exists)
+        close.click()
+        XCTAssertTrue(waitUntil { !self.anyElement("settings.page.extensions").exists })
     }
 
-    func testOverviewShowsAnAlreadyLoadedRunningProcess() {
+    func testOverviewShowsAnAlreadyLoadedSubagentRun() {
         relaunchWithRunFixture("swarm-live")
         app.typeKey("1", modifierFlags: .command)
 
-        XCTAssertTrue(anyElement("plan.processes").waitForExistence(timeout: 3))
-        let process = anyElement("plan.process.seed-run")
-        XCTAssertTrue(process.waitForExistence(timeout: 3))
-        XCTAssertTrue(process.label.localizedCaseInsensitiveContains("running"))
+        XCTAssertTrue(anyElement("plan.section.subagents").waitForExistence(timeout: 3))
+        let subagent = anyElement("plan.subagents.row.seed-run")
+        XCTAssertTrue(subagent.waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            subagent.label.localizedCaseInsensitiveContains("working"),
+            "Expected the running team to read as working; got: \(subagent.label)"
+        )
     }
 
-    private func relaunchWithPlanOverview(_ fixture: String) {
+    func testOverviewOutputsMenuOffersCreationActions() {
+        let creationItems = [
+            "Create document", "Create presentation", "Create spreadsheet", "Create site",
+        ]
+
+        // Idle: the empty-state row is the section's own "+" menu.
+        let empty = anyElement("plan.outputs.empty")
+        XCTAssertTrue(empty.waitForExistence(timeout: 3))
+        empty.click()
+        XCTAssertTrue(app.menuItems["Create document"].waitForExistence(timeout: 3))
+        for item in creationItems {
+            XCTAssertTrue(app.menuItems[item].exists, "Missing \(item) menu item")
+        }
+        app.menuItems["Create document"].click()
+
+        // The prompt lands in the composer while the summary stays on screen.
+        let composer = app.textViews["composer.input"]
+        XCTAssertTrue(waitUntil {
+            (composer.value as? String)?.localizedCaseInsensitiveContains("document") == true
+        })
+        XCTAssertTrue(
+            anyElement("plan.context").exists,
+            "prefilling the composer from the summary must not collapse the inspector"
+        )
+        XCTAssertTrue(anyElement("plan.summary").exists)
+
+        // Running: the header "+" offers the same actions above real rows.
+        relaunchWithPlanOverview("running")
+        let add = anyElement("plan.section.outputs.add")
+        XCTAssertTrue(add.waitForExistence(timeout: 3))
+        add.click()
+        XCTAssertTrue(app.menuItems["Create document"].waitForExistence(timeout: 3))
+        for item in creationItems {
+            XCTAssertTrue(app.menuItems[item].exists, "Missing \(item) menu item")
+        }
+        app.typeKey(.escape, modifierFlags: [])
+    }
+
+    private func relaunchWithPlanOverview(_ fixture: String, preserveSections: Bool = false) {
         app.terminate()
         app.launchEnvironment["LOCUS_UI_TESTING_PLAN_OVERVIEW"] = fixture
+        // Section collapse state is @AppStorage; the seed resets it on every
+        // launch unless a test opts in to carrying it across a relaunch.
+        app.launchEnvironment["LOCUS_UI_TESTING_PRESERVE_SUMMARY_SECTIONS"] =
+            preserveSections ? "1" : nil
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }
@@ -1277,7 +1340,7 @@ final class LocusUITests: XCTestCase {
         let captures = [
             (surface: "workspace", anchor: "files.search", name: "locus-workspace"),
             (surface: "files", anchor: "files.search", name: "locus-files"),
-            (surface: "plan", anchor: "plan.status", name: "locus-plan"),
+            (surface: "plan", anchor: "plan.summary", name: "locus-plan"),
         ]
 
         for capture in captures {
@@ -1309,44 +1372,235 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(details.waitForExistence(timeout: 3))
     }
 
-    func testRunningOverviewShowsLiveChecklistActivityAndOverflowActions() {
-        relaunchWithPlanOverview("running")
-
-        let status = anyElement("plan.status")
-        XCTAssertTrue(status.waitForExistence(timeout: 3))
-        let statusText = "\(status.label) \((status.value as? String) ?? "")"
-        XCTAssertTrue(
-            statusText.contains("Running"),
-            "Expected the running status text; got: \(statusText)"
-        )
-        XCTAssertTrue(anyElement("plan.livePlan").exists)
-        XCTAssertTrue(anyElement("plan.activity").exists)
-        XCTAssertTrue(anyElement("plan.files").exists)
-        XCTAssertTrue(anyElement("plan.runningActions").exists)
-        XCTAssertTrue(anyElement("plan.quickActions").exists)
-        XCTAssertTrue(app.staticTexts["Refactor retry logic with backoff"].exists)
-
-        anyElement("plan.runningActions").click()
-        app.menuItems["New session"].click()
-        XCTAssertTrue(staticTextWithValue(containing: "Start a new session?").waitForExistence(timeout: 3))
-        cancelConfirmation()
+    /// The running fixture's summary card is taller than the inspector
+    /// viewport, so the lower sections (Subagents, Background processes,
+    /// Sources) can sit under the fold — and how much sits there depends on
+    /// the window height, which the screen clamps.
+    ///
+    /// A clipped SwiftUI row still publishes an accessibility frame, so
+    /// `isHittable` stays true for a row scrolled out of sight and a
+    /// synthesized click lands on the pinned context card instead, silently
+    /// doing nothing. Scroll until the target's frame is provably inside the
+    /// scroll viewport: below the inspector tab bar and above the context
+    /// card that is pinned to the bottom of the tab.
+    private func scrollSummary(toReveal target: XCUIElement) {
+        let summary = anyElement("plan.summary")
+        guard summary.exists else { return }
+        let window = app.windows.firstMatch
+        let tabBar = anyElement("inspector.tabBar")
+        let context = anyElement("plan.context")
+        for _ in 0..<10 {
+            guard target.exists else { return }
+            let top = tabBar.exists ? tabBar.frame.maxY : window.frame.minY
+            let fold = context.exists ? context.frame.minY : window.frame.maxY
+            let frame = target.frame
+            if frame.minY >= top, frame.maxY <= fold, target.isHittable { return }
+            summary.scroll(byDeltaX: 0, deltaY: frame.maxY > fold ? -120 : 120)
+        }
     }
 
-    func testErrorOverviewKeepsStoppedWorkVisibleWithRecoveryActions() {
+    /// Scrolls `target` fully into view, clicks it, and confirms the click
+    /// actually took. A click that lands under the fold is synthesized
+    /// successfully and changes nothing, so the outcome is the only reliable
+    /// signal that the control was reached.
+    @discardableResult
+    private func clickInSummary(
+        _ target: XCUIElement,
+        until reached: @escaping () -> Bool
+    ) -> Bool {
+        for _ in 0..<3 {
+            scrollSummary(toReveal: target)
+            guard waitUntilHittable(target) else { continue }
+            target.click()
+            if waitUntil(condition: reached) { return true }
+        }
+        return false
+    }
+
+    func testRunningOverviewShowsAllSummarySections() {
+        relaunchWithPlanOverview("running")
+
+        XCTAssertTrue(anyElement("plan.summary").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("plan.section.plan").exists)
+        XCTAssertTrue(anyElement("plan.section.outputs").exists)
+        XCTAssertTrue(anyElement("plan.plan.row").exists)
+        for index in 0...5 {
+            XCTAssertTrue(
+                anyElement("plan.outputs.row.\(index)").exists,
+                "Missing output row \(index)"
+            )
+        }
+        XCTAssertFalse(anyElement("plan.outputs.row.6").exists)
+        let showMore = anyElement("plan.outputs.showMore")
+        XCTAssertTrue(showMore.exists)
+        XCTAssertTrue(
+            showMore.label.contains("2 more"),
+            "Expected two hidden outputs; got: \(showMore.label)"
+        )
+
+        let viewAll = anyElement("plan.sources.viewAll")
+        scrollSummary(toReveal: viewAll)
+        XCTAssertTrue(viewAll.waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("plan.section.subagents").exists)
+        XCTAssertTrue(anyElement("plan.section.processes").exists)
+        XCTAssertTrue(anyElement("plan.section.sources").exists)
+        for index in 0...2 {
+            XCTAssertTrue(
+                anyElement("plan.sources.row.\(index)").exists,
+                "Missing source row \(index)"
+            )
+        }
+        XCTAssertFalse(anyElement("plan.sources.row.3").exists)
+
+        let process = anyElement("plan.processes.row.0")
+        XCTAssertTrue(process.exists)
+        XCTAssertTrue(
+            process.label.contains("npm run dev"),
+            "Expected the seeded dev server; got: \(process.label)"
+        )
+        XCTAssertTrue(anyElement("plan.processes.stopAll").exists)
+
+        let subagent = anyElement("plan.subagents.row.seed-subagent")
+        XCTAssertTrue(subagent.exists)
+        XCTAssertTrue(
+            subagent.label.contains("Working"),
+            "Expected the running subagent to read as working; got: \(subagent.label)"
+        )
+    }
+
+    func testOverviewOutputsShowMoreRevealsRemainingRows() {
+        relaunchWithPlanOverview("running")
+
+        let showMore = anyElement("plan.outputs.showMore")
+        let sixth = anyElement("plan.outputs.row.6")
+        let seventh = anyElement("plan.outputs.row.7")
+        XCTAssertTrue(showMore.waitForExistence(timeout: 3))
+        XCTAssertFalse(sixth.exists)
+
+        XCTAssertTrue(
+            clickInSummary(showMore) { seventh.exists },
+            "Show more should reveal the remaining outputs"
+        )
+        XCTAssertTrue(sixth.exists)
+        XCTAssertTrue(
+            waitUntil { showMore.label.localizedCaseInsensitiveContains("show less") },
+            "Once everything is out the control should offer to show less; got: \(showMore.label)"
+        )
+
+        XCTAssertTrue(
+            clickInSummary(showMore) { !sixth.exists },
+            "Show less should collapse back to the first six outputs"
+        )
+        XCTAssertTrue(waitUntil { showMore.label.contains("2 more") })
+    }
+
+    func testOverviewSourcesViewAllOpensDetailAndBackReturns() {
+        relaunchWithPlanOverview("running")
+
+        let summary = anyElement("plan.summary")
+        let context = anyElement("plan.context")
+        XCTAssertTrue(summary.waitForExistence(timeout: 3))
+        let viewAll = anyElement("plan.sources.viewAll")
+        let panel = anyElement("plan.sources.panel")
+        XCTAssertTrue(
+            clickInSummary(viewAll) { panel.exists },
+            "View all should open the complete source list"
+        )
+        for index in 0...4 {
+            XCTAssertTrue(
+                anyElement("plan.sources.panel.row.\(index)").exists,
+                "Missing source detail row \(index)"
+            )
+        }
+        XCTAssertTrue(waitUntil { !summary.exists })
+        XCTAssertTrue(context.exists, "the context card stays pinned under the detail page")
+
+        let back = anyElement("plan.summary.back")
+        XCTAssertTrue(back.waitForExistence(timeout: 3))
+        back.click()
+        XCTAssertTrue(summary.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntil { !panel.exists })
+        XCTAssertTrue(context.exists)
+    }
+
+    func testOverviewPlanRowOpensPlanDetailAndBackReturns() {
+        relaunchWithPlanOverview("running")
+
+        let summary = anyElement("plan.summary")
+        let planRow = anyElement("plan.plan.row")
+        XCTAssertTrue(planRow.waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            planRow.label.contains("2 of 4 steps done"),
+            "Expected the seeded progress; got: \(planRow.label)"
+        )
+        planRow.click()
+
+        XCTAssertTrue(anyElement("plan.plan.detail").waitForExistence(timeout: 3))
+        let refactor = anyElement("plan.plan.detail.step.refactor")
+        XCTAssertTrue(refactor.waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            refactor.label.contains("running"),
+            "Expected the refactor step to be running; got: \(refactor.label)"
+        )
+        // The step row combines its children into one element, so the label
+        // text is read from the row rather than a standalone static text.
+        XCTAssertTrue(refactor.label.contains("Refactor retry logic with backoff"))
+        XCTAssertTrue(waitUntil { !summary.exists })
+        XCTAssertTrue(anyElement("plan.context").exists)
+
+        let back = anyElement("plan.summary.back")
+        XCTAssertTrue(back.waitForExistence(timeout: 3))
+        back.click()
+        XCTAssertTrue(summary.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntil { !self.anyElement("plan.plan.detail").exists })
+    }
+
+    func testErrorOverviewKeepsPlanVisibleWithFailedStep() {
         relaunchWithPlanOverview("error")
 
-        let status = anyElement("plan.status")
-        XCTAssertTrue(status.waitForExistence(timeout: 3))
-        let statusText = "\(status.label) \((status.value as? String) ?? "")"
+        let planRow = anyElement("plan.plan.row")
+        XCTAssertTrue(planRow.waitForExistence(timeout: 3))
+        planRow.click()
+
+        XCTAssertTrue(anyElement("plan.plan.detail").waitForExistence(timeout: 3))
+        let refactor = anyElement("plan.plan.detail.step.refactor")
+        XCTAssertTrue(refactor.waitForExistence(timeout: 3))
         XCTAssertTrue(
-            statusText.contains("Error"),
-            "Expected the error status text; got: \(statusText)"
+            refactor.label.contains("failed"),
+            "Expected the stopped step to read as failed; got: \(refactor.label)"
         )
-        XCTAssertTrue(anyElement("plan.error").exists)
-        XCTAssertTrue(anyElement("plan.livePlan").exists)
-        XCTAssertTrue(anyElement("plan.activity").exists)
-        XCTAssertTrue(app.buttons["Retry"].exists)
-        XCTAssertTrue(app.buttons["View logs"].exists)
+    }
+
+    func testOverviewSectionCollapseStatePersistsAcrossRelaunch() {
+        relaunchWithPlanOverview("running")
+        // Collapse state is @AppStorage. Leave Outputs expanded even when an
+        // assertion fails between the collapse and the final expand below.
+        addTeardownBlock { [self] in
+            guard app.state == .runningForeground else { return }
+            let toggle = anyElement("plan.section.outputs.toggle")
+            if toggle.exists, toggle.label.contains("Expand") {
+                toggle.click()
+            }
+        }
+
+        let firstRow = anyElement("plan.outputs.row.0")
+        let toggle = anyElement("plan.section.outputs.toggle")
+        XCTAssertTrue(firstRow.waitForExistence(timeout: 3))
+        XCTAssertTrue(toggle.exists)
+        XCTAssertTrue(toggle.label.contains("Collapse"), "Unexpected toggle label: \(toggle.label)")
+
+        toggle.click()
+        XCTAssertTrue(waitUntil { !firstRow.exists })
+        XCTAssertTrue(waitUntil { toggle.label.contains("Expand") })
+
+        relaunchWithPlanOverview("running", preserveSections: true)
+        XCTAssertTrue(anyElement("plan.section.outputs").waitForExistence(timeout: 3))
+        XCTAssertFalse(firstRow.exists, "a collapsed section must stay collapsed across launches")
+        XCTAssertTrue(toggle.label.contains("Expand"), "Unexpected toggle label: \(toggle.label)")
+
+        toggle.click()
+        XCTAssertTrue(firstRow.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntil { toggle.label.contains("Collapse") })
     }
 
     func testOverflowingInspectorTabsStillSwitchBrowserAndTerminal() {
@@ -1521,7 +1775,7 @@ final class LocusUITests: XCTestCase {
 
         // Exercise controls after the 1,200-event timeline has laid out.
         app.typeKey("1", modifierFlags: .command)
-        XCTAssertTrue(anyElement("plan.status").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("plan.summary").waitForExistence(timeout: 3))
         app.typeKey("7", modifierFlags: .command)
         XCTAssertTrue(anyElement("runs.list").waitForExistence(timeout: 3))
         XCTAssertTrue(app.textFields["runs.search"].exists)

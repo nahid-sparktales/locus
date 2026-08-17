@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Overview is now a pinned summary.** The Overview tab mirrors Codex's
+  pinned summary: collapsible Plan, Outputs, Subagents, Background processes,
+  and Sources sections, each present only while it has something to show, with
+  the Context window card pinned beneath. Outputs lists files the agent
+  created and local previews it started, with a "+" that inserts a
+  document/presentation/spreadsheet/site prompt into the composer; Sources
+  lists attached files, fetched links, MCP servers, and web search — first
+  three plus "View all" — with a "+" for attaching files or opening Skills &
+  MCP. The old status pill, activity feed, running-processes card, error
+  banner, and quick-access grid are gone, so nothing lingers after a run.
+
 ## 1.15.0 — 2026-08-16
 
 ### Added
