@@ -379,6 +379,9 @@ struct SessionOverviewView: View {
                     model.openTerminal()
                 }
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Quick access destinations")
+            .accessibilityIdentifier("plan.quickAccessGrid")
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Quick Access")

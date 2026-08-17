@@ -285,7 +285,8 @@ struct ModelLibraryView: View {
                 Spacer()
                 Text("\(library.results.count)")
                     .font(.locus(size: 9, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(LocusTheme.inkSoft)
+                    .accessibilityIdentifier("modelLibrary.resultCount")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 11)

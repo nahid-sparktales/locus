@@ -758,6 +758,8 @@ struct AgentProfileEditor: View {
                 ScrollView {
                     Form {
                             TextField("Name", text: $draft.name)
+                                .foregroundStyle(LocusTheme.ink)
+                                .accessibilityIdentifier("agent.name")
                             Picker("Role", selection: $draft.role) {
                                 ForEach(AgentRole.allCases) { Text($0.title).tag($0) }
                             }
