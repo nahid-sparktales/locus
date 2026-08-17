@@ -2,19 +2,12 @@ import Foundation
 import SwiftUI
 
 /// The always-visible right rail. Collapsing the inspector no longer empties
-/// the window edge: Overview, Terminal, Browser, Notes, and an ellipsis holding the rest
-/// stay within reach, and the panel opens to the rail's left. Attention badges
+/// the window edge: Overview, Terminal, Browser, and Notes stay within reach,
+/// and the panel opens to the rail's left. Attention badges
 /// live on the icons, so a run can ask for eyes without the panel being open.
 struct InspectorRail: View {
     @EnvironmentObject private var model: AppModel
     @State private var hoveredTab: InspectorTab?
-
-    /// Destinations that live behind the ellipsis rather than on the rail
-    /// itself. The inspector's dynamic tab bar is driven by open state, not
-    /// this fixed menu inventory.
-    static let menuTabs = InspectorTab.workspaceTabs.filter {
-        $0 != .terminal && $0 != .notes
-    }
 
     var body: some View {
         VStack(spacing: 4) {
@@ -24,11 +17,6 @@ struct InspectorRail: View {
             railTab(.terminal)
             railTab(.preview)
             railTab(.notes)
-            Rectangle()
-                .fill(LocusTheme.line)
-                .frame(width: 20, height: 1)
-                .padding(.vertical, 3)
-            moreMenu
             Spacer(minLength: 0)
             zoomButton
         }
@@ -105,48 +93,6 @@ struct InspectorRail: View {
         .accessibilityIdentifier("inspector.rail.\(tab.rawValue)")
     }
 
-    private var moreMenu: some View {
-        Menu {
-            ForEach(Self.menuTabs) { tab in
-                Button(menuTitle(for: tab)) {
-                    withAnimation(LocusMotion.spatial) {
-                        model.selectInspectorTab(tab)
-                    }
-                }
-                .accessibilityIdentifier("inspector.rail.menu.\(tab.rawValue)")
-            }
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.locus(size: 12, weight: .semibold))
-                .rotationEffect(.degrees(90))
-                .foregroundStyle(LocusTheme.muted)
-                .overlay(alignment: .topTrailing) {
-                    // Changes lives in this menu, so its unseen dot surfaces
-                    // here — the count itself waits in the menu title.
-                    if model.changesHaveUnseenUpdate {
-                        Circle()
-                            .fill(LocusTheme.coral)
-                            .frame(width: 5, height: 5)
-                            .offset(x: 5, y: -3)
-                    }
-                }
-                .frame(width: 34, height: 32)
-                .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .frame(width: 34, height: 32)
-        .help("More panels")
-        .accessibilityLabel("More panels")
-        .accessibilityIdentifier("inspector.rail.more")
-    }
-
-    private func menuTitle(for tab: InspectorTab) -> String {
-        if tab == .changes, model.changedFileCount > 0 {
-            return "\(tab.title) (\(model.changedFileCount))"
-        }
-        return tab.title
-    }
 }
 
 /// Workspace-level actions live at the top of the right rail, immediately

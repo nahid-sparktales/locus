@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.15.0 — 2026-08-16
+
+### Added
+
+- **A built-in development workflow suite.** Task Observer and Superpowers now
+  start automatically in Work, Plan, and Build chats, with global and
+  workspace controls in Skills settings. Locus also bundles six lightweight
+  GSD workflow routers, Matt Pocock's Grill Me and Grilling methods, pinned
+  upstream provenance, and complete third-party notices. Just Chat keeps its
+  existing no-tools privacy boundary.
+- **Private continuity across development chats.** Encrypted, workspace-local
+  rolling snapshots preserve goals, plans, checkpoints, changed files, final
+  outcomes, and pending work without another model call. Settings can inspect,
+  remove, or disable snapshots, and `$context-handoff` captures one explicitly.
+- **Per-chat Notes.** Every chat has its own focused writing space in the right
+  rail, directly below Browser, with a quick-tab shortcut and automatic local
+  saving.
+- **Local-model management.** Models can be removed from Locus without touching
+  their files, or deleted from the Mac when their provider supports local
+  removal. Browser preferences now live in their own Settings tab.
+
+### Changed
+
+- **GitHub MCP authentication is ready for GitHub App device flow.** Locus no
+  longer attempts unsupported dynamic client registration against GitHub's
+  remote MCP. Account connection uses GitHub's device flow when the release
+  app is configured, validates the signed-in account, stores credentials in
+  Keychain, refreshes expiring tokens, and retains personal-token fallback
+  with clearer organization and permission errors.
+- **Workspace navigation is calmer and more predictable.** Quick-tab hit areas,
+  hover treatment, and selection affordances were refined. Settings is back in
+  the bottom-left navigation, the duplicate menu beneath Notes is gone, and
+  the vertical workspace actions menu sits above Overview.
+
 ## 1.14.0 — 2026-08-13
 
 ### Added
