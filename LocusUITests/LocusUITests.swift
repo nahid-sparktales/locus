@@ -8,6 +8,15 @@ final class LocusUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchEnvironment["LOCUS_UI_TESTING"] = "1"
+        // The window is clamped to the screen, so a CI runner's display can
+        // leave far less of a panel visible than a developer's. Forwarding an
+        // explicit size makes that geometry reproducible locally with
+        // TEST_RUNNER_LOCUS_UI_TESTING_WINDOW_HEIGHT=<points>.
+        for key in ["LOCUS_UI_TESTING_WINDOW_WIDTH", "LOCUS_UI_TESTING_WINDOW_HEIGHT"] {
+            if let value = ProcessInfo.processInfo.environment[key] {
+                app.launchEnvironment[key] = value
+            }
+        }
         // Stale window-restoration state can suppress the main window at
         // launch; tests must not depend on the machine's saved state.
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
@@ -1365,15 +1374,47 @@ final class LocusUITests: XCTestCase {
 
     /// The running fixture's summary card is taller than the inspector
     /// viewport, so the lower sections (Subagents, Background processes,
-    /// Sources) can sit under the fold. Wheel the summary's own scroll view
-    /// until the target is hittable; the card's midpoint stays on screen, so
-    /// it is a safe anchor for the synthetic scroll.
+    /// Sources) can sit under the fold — and how much sits there depends on
+    /// the window height, which the screen clamps.
+    ///
+    /// A clipped SwiftUI row still publishes an accessibility frame, so
+    /// `isHittable` stays true for a row scrolled out of sight and a
+    /// synthesized click lands on the pinned context card instead, silently
+    /// doing nothing. Scroll until the target's frame is provably inside the
+    /// scroll viewport: below the inspector tab bar and above the context
+    /// card that is pinned to the bottom of the tab.
     private func scrollSummary(toReveal target: XCUIElement) {
         let summary = anyElement("plan.summary")
-        for _ in 0..<4 {
-            if target.exists, target.isHittable { break }
-            summary.scroll(byDeltaX: 0, deltaY: -240)
+        guard summary.exists else { return }
+        let window = app.windows.firstMatch
+        let tabBar = anyElement("inspector.tabBar")
+        let context = anyElement("plan.context")
+        for _ in 0..<10 {
+            guard target.exists else { return }
+            let top = tabBar.exists ? tabBar.frame.maxY : window.frame.minY
+            let fold = context.exists ? context.frame.minY : window.frame.maxY
+            let frame = target.frame
+            if frame.minY >= top, frame.maxY <= fold, target.isHittable { return }
+            summary.scroll(byDeltaX: 0, deltaY: frame.maxY > fold ? -120 : 120)
         }
+    }
+
+    /// Scrolls `target` fully into view, clicks it, and confirms the click
+    /// actually took. A click that lands under the fold is synthesized
+    /// successfully and changes nothing, so the outcome is the only reliable
+    /// signal that the control was reached.
+    @discardableResult
+    private func clickInSummary(
+        _ target: XCUIElement,
+        until reached: @escaping () -> Bool
+    ) -> Bool {
+        for _ in 0..<3 {
+            scrollSummary(toReveal: target)
+            guard waitUntilHittable(target) else { continue }
+            target.click()
+            if waitUntil(condition: reached) { return true }
+        }
+        return false
     }
 
     func testRunningOverviewShowsAllSummarySections() {
@@ -1436,16 +1477,20 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(showMore.waitForExistence(timeout: 3))
         XCTAssertFalse(sixth.exists)
 
-        showMore.click()
-        XCTAssertTrue(seventh.waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            clickInSummary(showMore) { seventh.exists },
+            "Show more should reveal the remaining outputs"
+        )
         XCTAssertTrue(sixth.exists)
         XCTAssertTrue(
             waitUntil { showMore.label.localizedCaseInsensitiveContains("show less") },
             "Once everything is out the control should offer to show less; got: \(showMore.label)"
         )
 
-        showMore.click()
-        XCTAssertTrue(waitUntil { !sixth.exists })
+        XCTAssertTrue(
+            clickInSummary(showMore) { !sixth.exists },
+            "Show less should collapse back to the first six outputs"
+        )
         XCTAssertTrue(waitUntil { showMore.label.contains("2 more") })
     }
 
@@ -1456,12 +1501,11 @@ final class LocusUITests: XCTestCase {
         let context = anyElement("plan.context")
         XCTAssertTrue(summary.waitForExistence(timeout: 3))
         let viewAll = anyElement("plan.sources.viewAll")
-        scrollSummary(toReveal: viewAll)
-        XCTAssertTrue(waitUntilHittable(viewAll))
-        viewAll.click()
-
         let panel = anyElement("plan.sources.panel")
-        XCTAssertTrue(panel.waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            clickInSummary(viewAll) { panel.exists },
+            "View all should open the complete source list"
+        )
         for index in 0...4 {
             XCTAssertTrue(
                 anyElement("plan.sources.panel.row.\(index)").exists,
