@@ -113,7 +113,7 @@ for notice in \
     "Sparkle 2.9.4" \
     "Anthropic Frontend Design" \
     "Vercel React Best Practices" \
-    "Superpowers Systematic Debugging"
+    "Superpowers (complete 14-skill suite)"
 do
     /usr/bin/grep -Fq -- "${notice}" "${resources}/ThirdPartyNotices.md" || {
         echo "error: runtime notice is missing the pinned component: ${notice}" >&2
@@ -151,7 +151,10 @@ done
 for pin in \
     f17010c9bb483898c1d9c9f42dde2b3a98889434 \
     7c180d9044c9ae2b442b567aad4e42a28dd5ed62 \
-    44c9b2d6e889982ac18c27d05a19fefe335194e1
+    b36e0829c6d0140e93cfef2ca599b1b07d4a7797 \
+    281f13466cd3a73e9ebc9d210907748e1941a3dd \
+    bdcaab2c752d9a33a1a1ca9acf3a3c81fb991815 \
+    068b6e0c62393147daf03530149cdce209c93da8
 do
     /usr/bin/grep -Rq -- "${pin}" "${skills_root}" || {
         echo "error: built-in skill provenance is missing commit ${pin}" >&2
@@ -164,8 +167,8 @@ mcp_catalog="${runtime}/source/ollama_code/catalogs/mcp-presets-v1.json"
     echo "error: missing bundled MCP preset catalog" >&2
     exit 1
 }
-/usr/bin/grep -Fq -- '"version": 1' "${mcp_catalog}" || {
-    echo "error: bundled MCP preset catalog is not version 1" >&2
+/usr/bin/grep -Fq -- '"version": 2' "${mcp_catalog}" || {
+    echo "error: bundled MCP preset catalog is not version 2" >&2
     exit 1
 }
 
