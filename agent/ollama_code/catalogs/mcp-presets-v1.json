@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "presets": [
     {
       "id": "context7",
@@ -21,6 +21,7 @@
       "url": "https://api.githubcopilot.com/mcp/",
       "source_url": "https://docs.github.com/en/copilot/how-tos/provide-context/use-mcp-in-your-ide/set-up-the-github-mcp-server",
       "auth": "auto",
+      "oauth_strategy": "github_device",
       "fallback": "bearer",
       "scopes": [],
       "warning": "GitHub access follows the account and repositories approved during sign-in."

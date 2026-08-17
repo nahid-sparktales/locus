@@ -87,20 +87,25 @@ struct AutomaticInspectorPrompt: Equatable {
 
     var title: String {
         isTeamRun
-            ? "Open Team Runs for team requests?"
+            ? "Open Runs for team and Solo Swarm requests?"
             : "Open Context & Plan for solo requests?"
     }
 
     var message: String {
         if isTeamRun {
-            return "Locus can open Team Runs whenever you send a team request so you can follow its agents and progress. You can change this anytime in Settings → General → Conversation."
+            return "Locus can open Runs whenever you send a team or Solo Swarm request so you can follow its agents and progress. You can change this anytime in Settings → General → Conversation."
         }
         return "Locus can open Context & Plan whenever you send a solo Work request so you can follow context use and the current plan. You can change this anytime in Settings → General → Conversation."
     }
 
     var confirmationTitle: String {
-        isTeamRun ? "Open Team Runs Every Time" : "Open Context & Plan Every Time"
+        isTeamRun ? "Open Runs Every Time" : "Open Context & Plan Every Time"
     }
+}
+
+struct RunsNavigationRequest: Equatable, Identifiable {
+    let id = UUID()
+    let runID: String
 }
 
 @MainActor
@@ -121,6 +126,9 @@ final class AppModel: ObservableObject {
     /// whichever provider the agent is currently pointed at — with an account
     /// active it holds that account's list, not the local one.
     @Published private(set) var localModels: [ModelInfo] = []
+    /// Ollama's complete installed list, including models the user has hidden
+    /// from Locus. Settings uses this to make hiding reversible.
+    @Published private(set) var installedLocalModels: [ModelInfo] = []
     @Published private(set) var providerAccounts: [ProviderAccount] = []
     @Published private(set) var accountModels: [UUID: [String]] = [:]
     @Published private(set) var accountStatus: [UUID: ProviderAccountStatus] = [:]
@@ -174,6 +182,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var taskHasChanges = false
     @Published private(set) var taskPatchBytes = 0
     @Published private(set) var orchestrationRuns: [OrchestrationRun] = []
+    @Published private(set) var runsNavigationRequest: RunsNavigationRequest?
     @Published private(set) var selectedOrchestrationRun: OrchestrationRun?
     @Published private(set) var runDetailsByID: [String: OrchestrationRun] = [:]
     @Published private(set) var orchestrationEvents: [OrchestrationEvent] = []
@@ -187,6 +196,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var memoryCandidates: [WorkspaceMemory] = []
     @Published private(set) var memoryVaultStatus: MemoryVaultStatus?
     @Published private(set) var memoryDiagnosticReport: MemoryDiagnosticReport?
+    @Published private(set) var contextSnapshots: [ContextSnapshot] = []
+    @Published private(set) var skillObservations: [SkillObservation] = []
     @Published private(set) var landingPreflight: LandingPreflight?
     @Published private(set) var landingCheckRun: LandingCheckRun?
     @Published private(set) var landingPatch = ""
@@ -200,6 +211,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var backgroundServices: [BackgroundServiceRecord] = []
     private var backgroundServicesRefreshGeneration = 0
     @Published var mcpInputRequest: MCPInputRequest?
+    @Published var mcpDeviceAuthorization: MCPDeviceAuthorizationPrompt?
     private var orchestrationEventIDs: Set<String> = []
     @Published var sessions: [SessionSummary] = []
     @Published var currentSessionID = ""
@@ -275,6 +287,7 @@ final class AppModel: ObservableObject {
         }
     }
     @Published private(set) var inspectorWidth: CGFloat = CGFloat(AppSettings.defaultInspectorWidth)
+    @Published private(set) var sidebarWidth: CGFloat = CGFloat(AppSettings.defaultSidebarWidth)
     /// The panel filling the window with chat squeezed to a column. A focus
     /// mode, deliberately not persisted — relaunch returns to the normal
     /// layout. Only `setInspectorZoomed(_:)` may change it.
@@ -383,6 +396,7 @@ final class AppModel: ObservableObject {
     @Published var isSearchingTranscripts = false
     @Published var transcriptSearchIndexing = false
     @Published var sidebarSearchFocusToken = UUID()
+    @Published var composerFocusToken = UUID()
     private var transcriptHitsTask: Task<Void, Never>?
     private var pendingSearchHit: TranscriptSearchHit?
     @Published var expandedWorkspaceIDs: Set<String> = []
@@ -415,7 +429,7 @@ final class AppModel: ObservableObject {
     /// progress change far too often to republish AppModel over.
     let browser = BrowserService()
     let streamingReply = StreamingReplyState()
-    /// Provider-neutral, event-sourced state consumed by the Plan inspector.
+    /// Provider-neutral, event-sourced state consumed by the Overview inspector.
     let sessionOverview = SessionStateEmitter()
 
     private let backend: BackendService
@@ -788,6 +802,7 @@ final class AppModel: ObservableObject {
         // Seeded here rather than in a didSet: assignments inside init skip
         // property observers, so this cannot echo back into persistence.
         inspectorWidth = CGFloat(loadedSettings.inspectorWidth)
+        sidebarWidth = isUITesting ? 240 : CGFloat(loadedSettings.sidebarWidth)
         zoomedChatWidth = CGFloat(loadedSettings.inspectorZoomedChatWidth)
         inspectorCollapsed = loadedSettings.inspectorCollapsed
         sidebarCollapsed = loadedSettings.sidebarCollapsed
@@ -970,6 +985,12 @@ final class AppModel: ObservableObject {
             accountModels: accountModels,
             accountStatus: accountStatus
         )
+    }
+
+    func isLocalModelHidden(_ name: String) -> Bool {
+        settings.hiddenLocalModels.contains {
+            $0.caseInsensitiveCompare(name) == .orderedSame
+        }
     }
 
     var filteredSessions: [SessionSummary] {
@@ -2008,10 +2029,15 @@ final class AppModel: ObservableObject {
 
         do {
             let response = try await backend.get("/api/models", as: ModelsResponse.self)
-            models = response.models
             // `/api/models` describes the active provider. Only trust it as the
             // local list when local is what is active.
-            if activeAccount == nil { localModels = response.models }
+            if activeAccount == nil {
+                installedLocalModels = response.models
+                localModels = visibleLocalModels(in: response.models)
+                models = localModels
+            } else {
+                models = response.models
+            }
         } catch {
             // Connection state communicates backend failures.
         }
@@ -2065,7 +2091,7 @@ final class AppModel: ObservableObject {
             // unreadable state file would present as "no servers" and this
             // would delete live third-party refresh tokens rather than orphans.
             if response.errors.isEmpty {
-                CredentialStore.removeOrphanedMCPCredentials(
+                MCPCredentialStore.removeOrphaned(
                     keeping: Set(response.mcpServers.map(\.id))
                 )
             }
@@ -2347,7 +2373,7 @@ final class AppModel: ObservableObject {
             showToast(response.status?.state == "connected" ? "MCP server connected" : "MCP test finished")
             return response.status?.state == "connected"
         } catch {
-            extensionErrorMessage = error.localizedDescription
+            extensionErrorMessage = mcpConnectionError(error, serverID: id)
             return false
         }
     }
@@ -2363,8 +2389,25 @@ final class AppModel: ObservableObject {
             await refreshExtensions()
             showToast(response.status?.state == "connected" ? "MCP server reconnected" : "MCP reconnect finished")
         } catch {
-            extensionErrorMessage = error.localizedDescription
+            extensionErrorMessage = mcpConnectionError(error, serverID: id)
         }
+    }
+
+    private func mcpConnectionError(_ error: Error, serverID: String) -> String {
+        let original = error.localizedDescription
+        guard extensions.mcpServers.first(where: { $0.id == serverID })?.presetID == "github"
+        else { return original }
+        let lower = original.lowercased()
+        if lower.contains("401") || lower.contains("unauthorized") || lower.contains("expired") {
+            return "GitHub credentials expired or were revoked. Choose Reconnect account, or update the personal token fallback."
+        }
+        if lower.contains("403") || lower.contains("forbidden") || lower.contains("organization") {
+            return "GitHub or an organization blocked this connection. Ask an organization owner to install or approve the Locus GitHub App for the needed repositories, or use an allowed personal token."
+        }
+        if lower.contains("permission") || lower.contains("scope") {
+            return "The GitHub connection lacks permission for that repository or action. Update the app installation's repository selection, or use a personal token with the required access."
+        }
+        return original
     }
 
     func setMCPPolicy(serverID: String, tool: String? = nil, mode: String) async {
@@ -2444,8 +2487,16 @@ final class AppModel: ObservableObject {
         _ server: ExtensionMCPServer,
         completion: ((Bool) -> Void)? = nil
     ) {
-        mcpAuthCoordinator.authorize(server: server) { [weak self] result in
+        mcpAuthCoordinator.authorize(
+            server: server,
+            onDeviceCode: { [weak self] prompt in
+                guard let self else { return }
+                mcpDeviceAuthorization = prompt
+                NSWorkspace.shared.open(prompt.verificationURL)
+            }
+        ) { [weak self] result in
             guard let self else { return }
+            mcpDeviceAuthorization = nil
             switch result {
             case .success(let values):
                 Task {
@@ -2457,6 +2508,11 @@ final class AppModel: ObservableObject {
                 completion?(false)
             }
         }
+    }
+
+    func cancelMCPDeviceAuthorization() {
+        mcpAuthCoordinator.cancel()
+        mcpDeviceAuthorization = nil
     }
 
     private func restoreExtensionCredentials(for servers: [ExtensionMCPServer]) async {
@@ -2527,10 +2583,10 @@ final class AppModel: ObservableObject {
               let entries = root["models"] as? [[String: Any]]
         else { return }  // Ollama not running is normal; keep the last list.
         let knownWindows = Dictionary(
-            models.map { ($0.name, $0.contextLength) },
+            (installedLocalModels + models).map { ($0.name, $0.contextLength) },
             uniquingKeysWith: { first, _ in first }
         )
-        localModels = entries.compactMap { entry in
+        installedLocalModels = entries.compactMap { entry in
             guard let name = entry["name"] as? String else { return nil }
             return ModelInfo(
                 name: name,
@@ -2543,6 +2599,11 @@ final class AppModel: ObservableObject {
                 contextLength: knownWindows[name] ?? 0
             )
         }
+        localModels = visibleLocalModels(in: installedLocalModels)
+    }
+
+    private func visibleLocalModels(in models: [ModelInfo]) -> [ModelInfo] {
+        models.filter { !isLocalModelHidden($0.name) }
     }
 
     /// Refreshes every account's model list, unless it was fetched recently.
@@ -2737,7 +2798,11 @@ final class AppModel: ObservableObject {
         if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
             draftText = ""
         }
-        presentInspectorForSentRequest(isTeam: dispatchedTeam != nil, runID: teamRunID)
+        let opensRuns = dispatchedTeam != nil || dispatchedSoloSwarm
+        presentInspectorForSentRequest(
+            isTeam: opensRuns,
+            runID: opensRuns ? reservedRunID : nil
+        )
         let previousRuntimeState = taskConversationStates[dispatchedSessionID]
         taskConversationStates[dispatchedSessionID] = TaskConversationState(
             sessionID: dispatchedSessionID,
@@ -2774,6 +2839,7 @@ final class AppModel: ObservableObject {
                         "team_id": queuedTeam?["id"] as? String ?? "",
                         "team_name": queuedTeam?["name"] as? String ?? "",
                         "execution_environment": dispatchedEnvironment.rawValue,
+                        "solo_swarm": dispatchedSoloSwarm,
                     ],
                     as: OrchestrationRun.self
                 )
@@ -4793,13 +4859,134 @@ final class AppModel: ObservableObject {
                 "/api/memory/diagnostics", query: memoryQuery,
                 as: MemoryDiagnosticReport.self
             )
+            async let snapshots: ContextSnapshotsResponse = backend.get(
+                "/api/context-snapshots",
+                query: [URLQueryItem(name: "workspace", value: workspacePath)],
+                as: ContextSnapshotsResponse.self
+            )
+            async let observations: SkillObservationsResponse = backend.get(
+                "/api/skill-observations",
+                query: [URLQueryItem(name: "workspace", value: workspacePath)],
+                as: SkillObservationsResponse.self
+            )
             knowledgeStatus = try await status
             workspaceMemories = try await memories.memories
             memoryCandidates = try await candidates.memories
             memoryVaultStatus = try await vaultStatus
             memoryDiagnosticReport = try await diagnostics
+            contextSnapshots = try await snapshots.snapshots
+            skillObservations = try await observations.observations
         } catch {
             showToast("Could not load workspace knowledge: \(error.localizedDescription)")
+        }
+    }
+
+    func setContextSnapshotPinned(_ snapshot: ContextSnapshot, pinned: Bool) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response: ContextSnapshotResponse = try await backend.put(
+                    "/api/context-snapshots/\(snapshot.id)",
+                    body: ["workspace": workspacePath, "pinned": pinned],
+                    as: ContextSnapshotResponse.self
+                )
+                if let index = contextSnapshots.firstIndex(where: { $0.id == snapshot.id }) {
+                    contextSnapshots[index] = response.snapshot
+                }
+            } catch {
+                showToast("Could not update session context: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func deleteContextSnapshot(_ snapshot: ContextSnapshot) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let _: SimpleActionResponse = try await backend.delete(
+                    "/api/context-snapshots/\(snapshot.id)",
+                    query: [URLQueryItem(name: "workspace", value: workspacePath)],
+                    as: SimpleActionResponse.self
+                )
+                contextSnapshots.removeAll { $0.id == snapshot.id }
+            } catch {
+                showToast("Could not delete session context: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func clearContextSnapshots() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let _: SimpleActionResponse = try await backend.delete(
+                    "/api/context-snapshots",
+                    query: [URLQueryItem(name: "workspace", value: workspacePath)],
+                    as: SimpleActionResponse.self
+                )
+                contextSnapshots = []
+                showToast("Cleared cross-chat session context")
+            } catch {
+                showToast("Could not clear session context: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func setSkillObservationStatus(_ observation: SkillObservation, status: String) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response: SkillObservationResponse = try await backend.put(
+                    "/api/skill-observations/\(observation.id)",
+                    body: ["workspace": workspacePath, "status": status],
+                    as: SkillObservationResponse.self
+                )
+                if let index = skillObservations.firstIndex(where: { $0.id == observation.id }) {
+                    skillObservations[index] = response.observation
+                }
+            } catch {
+                showToast("Could not update observation: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func deleteSkillObservation(_ observation: SkillObservation) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let _: SimpleActionResponse = try await backend.delete(
+                    "/api/skill-observations/\(observation.id)",
+                    query: [URLQueryItem(name: "workspace", value: workspacePath)],
+                    as: SimpleActionResponse.self
+                )
+                skillObservations.removeAll { $0.id == observation.id }
+            } catch {
+                showToast("Could not delete observation: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func exportSkillObservations() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let document: SkillObservationsExport = try await backend.get(
+                    "/api/skill-observations/export",
+                    query: [URLQueryItem(name: "workspace", value: workspacePath)],
+                    as: SkillObservationsExport.self
+                )
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                let data = try encoder.encode(document)
+                let panel = NSSavePanel()
+                panel.allowedContentTypes = [.json]
+                panel.nameFieldStringValue = "Locus Skill Observations.json"
+                guard panel.runModal() == .OK, let url = panel.url else { return }
+                try data.write(to: url, options: .atomic)
+                showToast("Skill observations exported")
+            } catch {
+                showToast("Could not export observations: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -5532,6 +5719,9 @@ final class AppModel: ObservableObject {
                     worker.executionState = .dispatching
                 } else {
                     worker.executionState = .running
+                    if retry.isSoloSwarm {
+                        request["solo_swarm"] = ["enabled": true]
+                    }
                 }
                 guard worker.service.send(request) else {
                     finishChatRuntime(worker, state: .failed, error: "The retry could not be delivered")
@@ -5610,6 +5800,9 @@ final class AppModel: ObservableObject {
                 worker.executionState = .dispatching
             } else {
                 worker.executionState = .running
+                if run.isSoloSwarm {
+                    request["solo_swarm"] = ["enabled": true]
+                }
             }
             guard worker.service.send(request) else {
                 finishChatRuntime(worker, state: .interrupted, error: "The saved run could not be delivered")
@@ -6106,6 +6299,54 @@ final class AppModel: ObservableObject {
         case .exceeds:
             showToast("Installed \(match.name) — likely too large for this Mac")
         }
+    }
+
+    /// Hides an Ollama model from Locus without touching its downloaded files.
+    /// The complete Ollama list stays in memory so Settings can restore it.
+    func removeLocalModelFromLocus(_ model: ModelInfo) {
+        guard !isLocalModelHidden(model.name) else { return }
+        settings.hiddenLocalModels.append(model.name)
+        settings.hiddenLocalModels.sort { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        localModels = visibleLocalModels(in: installedLocalModels)
+        if activeAccount == nil { models = localModels }
+        showToast("Removed \(model.name) from Locus — it is still installed")
+    }
+
+    func restoreLocalModelToLocus(_ model: ModelInfo) {
+        settings.hiddenLocalModels.removeAll {
+            $0.caseInsensitiveCompare(model.name) == .orderedSame
+        }
+        localModels = visibleLocalModels(in: installedLocalModels)
+        if activeAccount == nil { models = localModels }
+        showToast("Restored \(model.name) to Locus")
+    }
+
+    /// Permanently asks Ollama to remove the model's downloaded data. The UI
+    /// owns the confirmation because this operation cannot be undone by Locus.
+    func deleteLocalModelFromComputer(_ model: ModelInfo) async {
+        do {
+            try await LocalModelManagement.delete(ollamaHost: ollamaHost, model: model.name)
+        } catch {
+            showToast("Could not delete \(model.name): \(error.localizedDescription)")
+            return
+        }
+
+        installedLocalModels.removeAll {
+            $0.name.caseInsensitiveCompare(model.name) == .orderedSame
+        }
+        settings.hiddenLocalModels.removeAll {
+            $0.caseInsensitiveCompare(model.name) == .orderedSame
+        }
+        localModels = visibleLocalModels(in: installedLocalModels)
+        if activeAccount == nil {
+            models = localModels
+            if selectedModel.caseInsensitiveCompare(model.name) == .orderedSame,
+               let replacement = localModels.first
+            {
+                selectModel(replacement.name)
+            }
+        }
+        showToast("Deleted \(model.name) from this Mac")
     }
 
     func requestClearChat() {
@@ -7017,6 +7258,9 @@ final class AppModel: ObservableObject {
         // Permissions are live controls, not part of the editable settings
         // draft. Preserve a choice made while this sheet was open.
         newSettings.permissionModeRaw = settings.permissionModeRaw
+        // Local-model visibility is also managed immediately. A later Save on
+        // General or Browser must not resurrect a model hidden moments ago.
+        newSettings.hiddenLocalModels = settings.hiddenLocalModels
         let backendChanged = settings.backendURL != newSettings.backendURL
             || settings.backendRoot != newSettings.backendRoot
         // Accounts are applied as they are edited, so the only routing change
@@ -7029,6 +7273,9 @@ final class AppModel: ObservableObject {
         let iterationLimitChanged = settings.maxIterations != newSettings.maxIterations
         let terminalChanged = settings.terminalShell != newSettings.terminalShell
             || settings.terminalLoginShell != newSettings.terminalLoginShell
+        let browserEnabledChanged = settings.browserEnabled != newSettings.browserEnabled
+        let browserProfileChanged = settings.browserPersistProfile
+            != newSettings.browserPersistProfile
         let proxyChanged = proxyCredentialChanged
             || settings.proxyModeRaw != newSettings.proxyModeRaw
             || settings.proxyTypeRaw != newSettings.proxyTypeRaw
@@ -7041,6 +7288,12 @@ final class AppModel: ObservableObject {
         persistSettings()
         settingsPresented = false
         browser.defaultViewport = newSettings.resolvedBrowserViewport.size
+
+        if browserEnabledChanged {
+            announceBrowserCapability()
+            if !newSettings.browserEnabled { browser.cancelPendingActions() }
+        }
+        if browserProfileChanged { syncBrowserProfile() }
 
         if proxyChanged {
             // Before any restart, so the relaunched agent and every rebuilt
@@ -7925,8 +8178,85 @@ final class AppModel: ObservableObject {
     }
 
     func prefillSessionSuggestion(_ suggestion: String) {
-        draftText = suggestion
+        prefillComposer(with: suggestion)
+    }
+
+    var locusRecommendations: [LocusRecommendation] {
+        RecommendationEngine.recommendations(for: recommendationContext)
+    }
+
+    var recommendationContext: RecommendationContext {
+        let state = sessionOverview.state
+        return RecommendationContext(
+            runtimeUnavailable: agentRuntimePhase.isUnavailable,
+            modelUnavailable: modelRuntimePhase.isUnavailable,
+            lastRunFailed: state.lastRun?.outcome == .failed,
+            changedFileCount: changedFileCount,
+            hasPendingPlanSteps: state.plan.contains { $0.state != .done },
+            hasTestFiles: workspaceContainsTests,
+            projectKind: workspaceProjectKind,
+            memoryConflictCount: memoryCandidates.filter(\.hasConflicts).count,
+            legacySuggestions: state.suggestions
+        )
+    }
+
+    func activateRecommendation(_ recommendation: LocusRecommendation) {
+        switch recommendation.intent {
+        case .prefill(let prompt):
+            prefillComposer(with: prompt)
+        case .openInspector(let tab):
+            selectInspectorTab(tab)
+        case .openSettings(let page):
+            settingsPage = page
+            settingsPresented = true
+        case .openModelLibrary:
+            modelLibraryPresented = true
+        }
+    }
+
+    /// AppKit may commit the TextEditor's pre-layout buffer while the
+    /// inspector is collapsing. Re-applying after one main-actor turn makes
+    /// the editable prefill deterministic without ever submitting it.
+    private func prefillComposer(with prompt: String) {
         inspectorCollapsed = true
+        draftText = prompt
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self else { return }
+            self.draftText = prompt
+            self.composerFocusToken = UUID()
+        }
+    }
+
+    private var workspaceProjectKind: LocusProjectKind {
+        let names = workspaceFileIndex.map { $0.lastPathComponent.lowercased() }
+        let paths = workspaceFileIndex.map { $0.path.lowercased() }
+        if names.contains("package.swift") || paths.contains(where: { $0.hasSuffix(".swift") }) {
+            return .swift
+        }
+        if names.contains("package.json")
+            || paths.contains(where: { $0.hasSuffix(".tsx") || $0.hasSuffix(".jsx") }) {
+            return .web
+        }
+        if names.contains("pyproject.toml") || names.contains("requirements.txt")
+            || paths.contains(where: { $0.hasSuffix(".py") }) {
+            return .python
+        }
+        return .general
+    }
+
+    private var workspaceContainsTests: Bool {
+        workspaceFileIndex.contains { url in
+            let path = url.path.lowercased()
+            let name = url.lastPathComponent.lowercased()
+            return path.contains("/tests/")
+                || path.contains("/uitests/")
+                || name.hasPrefix("test_")
+                || name.contains("tests.")
+                || name.hasSuffix("test.swift")
+                || name.hasSuffix("spec.ts")
+                || name.hasSuffix("spec.tsx")
+        }
     }
 
     func viewSessionTranscript() {
@@ -8021,6 +8351,7 @@ final class AppModel: ObservableObject {
             }
         }
         if tab == .runs {
+            runsNavigationRequest = runID.map(RunsNavigationRequest.init(runID:))
             Task { @MainActor [weak self] in
                 await self?.refreshOrchestrationRuns(select: runID)
             }
@@ -8181,6 +8512,21 @@ final class AppModel: ObservableObject {
 
     func toggleSidebar() {
         sidebarCollapsed.toggle()
+    }
+
+    /// Live width during a drag. Persistence waits for release so the settings
+    /// writer is not restarted on every pointer movement.
+    func setSidebarWidth(_ width: CGFloat) {
+        sidebarWidth = CGFloat(AppSettings.clampSidebarWidth(Double(width)))
+    }
+
+    func commitSidebarWidth() {
+        settings.sidebarWidth = Double(sidebarWidth)
+    }
+
+    func resetSidebarWidth() {
+        setSidebarWidth(CGFloat(AppSettings.defaultSidebarWidth))
+        commitSidebarWidth()
     }
 
     /// Live width during a drag. Deliberately does not persist — see
@@ -9227,15 +9573,11 @@ final class AppModel: ObservableObject {
             summary: summary,
             outcome: outcome
         )
-        var suggestions: [String] = []
-        if outcome == .failed { suggestions.append("Review the error and retry the failed step") }
-        if !state.files.isEmpty { suggestions.append("Review the diff before committing") }
-        if state.plan.contains(where: { $0.state == .pending }) {
-            suggestions.append("Continue the remaining plan steps")
-        } else {
-            suggestions.append("Run the relevant tests")
-        }
-        sessionOverview.emit(.runFinished(summary: run, suggestions: suggestions, at: now))
+        // Recommendations are derived locally from the complete state snapshot
+        // so their ranking stays current as git, tests, plans, or runtime state
+        // changes. Keep the legacy payload slot nil for wire/persistence
+        // compatibility rather than storing a second stale source of truth.
+        sessionOverview.emit(.runFinished(summary: run, suggestions: nil, at: now))
         if outcome == .failed {
             sessionOverview.emit(.status(
                 status: .error,
@@ -10437,6 +10779,9 @@ final class AppModel: ObservableObject {
                 backend.send(["type": "set_model", "model": profile.model])
             }
         } else {
+            // A model deliberately removed from Locus must not return merely
+            // because an older workspace profile still remembers it.
+            guard localModels.contains(where: { $0.name == profile.model }) else { return }
             selectModel(account: nil, model: profile.model)
         }
     }
@@ -10626,6 +10971,7 @@ final class AppModel: ObservableObject {
         ]
         // The picker reads the local list, which a live refresh would normally
         // fill in.
+        installedLocalModels = models
         localModels = models
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_LONG_MODEL"] == "1" {
             let account = ProviderAccount(
@@ -10785,6 +11131,7 @@ final class AppModel: ObservableObject {
                     url: "https://api.githubcopilot.com/mcp/",
                     sourceURL: nil,
                     auth: "oauth",
+                    oauthStrategy: "github_device",
                     fallback: nil,
                     fallbackHeader: nil,
                     optionalHeader: nil,
@@ -10796,7 +11143,7 @@ final class AppModel: ObservableObject {
                     defaultToolsApprovalMode: "annotations",
                     resourcesDiscoverable: true,
                     promptsEnabled: false,
-                    catalogVersion: 1
+                    catalogVersion: 2
                 ),
             ],
             errors: [],
@@ -10842,6 +11189,11 @@ final class AppModel: ObservableObject {
                 unstaged: true
             ),
         ]
+        if ProcessInfo.processInfo.environment[
+            "LOCUS_UI_TESTING_PREFILL_RECOMMENDATION"
+        ] == "1" {
+            gitChanges = []
+        }
         indexedWorkspacePath = workspace
         workspaceFileIndex = [
             "README.md",
@@ -10915,7 +11267,38 @@ final class AppModel: ObservableObject {
                 )
             ))
         }
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_PLAN_APPROVAL"] == "1" {
+            selectedMode = .plan
+            activePlan = PlanDocument(
+                id: "seed-plan-approval",
+                title: "Improve retry reliability",
+                summary: "Make retries bounded, observable, and covered by tests.",
+                steps: [
+                    "Extract the retry policy",
+                    "Add bounded exponential backoff",
+                    "Add integration tests for timeout paths",
+                ],
+                tests: ["Run the retry integration suite"]
+            )
+            todos = activePlan?.steps.map { TodoItem(content: $0, status: .pending) } ?? []
+            planApprovalPending = true
+        }
         seedUITestRunFixtureIfNeeded()
+
+        // Documentation captures use the same deterministic app state as UI
+        // tests, but start at the calm empty workspace shown to new users.
+        // This is test-only state and never runs in a normal app launch.
+        if let documentationSurface = ProcessInfo.processInfo.environment[
+            "LOCUS_UI_TESTING_DOCUMENTATION_SURFACE"
+        ] {
+            blocks = []
+            selectedMode = .plan
+            inspectorCollapsed = false
+            inspectorZoomed = documentationSurface == "files"
+            let tab: InspectorTab = documentationSurface == "plan" ? .plan : .files
+            openInspectorTabs = [tab]
+            inspectorTab = tab
+        }
     }
 
     private func seedSessionOverviewUITest(workspace: String) {
@@ -11010,18 +11393,51 @@ final class AppModel: ObservableObject {
               [
                 "completed", "recoverable", "dispatcher-repair", "dispatch-plan",
                 "activity", "swarm-live", "swarm-recoverable",
+                "solo-swarm-live", "solo-swarm-completed", "solo-swarm-empty",
               ].contains(fixture)
         else { return }
+        let isSoloSwarmFixture = fixture.hasPrefix("solo-swarm-")
         let state: TeamRunState = switch fixture {
-        case "completed": .completed
+        case "completed", "solo-swarm-completed", "solo-swarm-empty": .completed
         case "recoverable", "swarm-recoverable": .interrupted
         case "dispatch-plan": .waitingDispatchApproval
         case "activity": .failed
-        case "swarm-live": .running
+        case "swarm-live", "solo-swarm-live": .running
         default: .dispatching
         }
         let lastSequence = ["dispatcher-repair", "dispatch-plan"].contains(fixture) ? 1 : 1_200
-        let swarmAttempts: [AgentJobAttempt]? = if fixture.hasPrefix("swarm-") {
+        let swarmAttempts: [AgentJobAttempt]? = if isSoloSwarmFixture && fixture != "solo-swarm-empty" {
+            [
+                AgentJobAttempt(
+                    runID: "seed-run",
+                    jobID: "inventory-api",
+                    attempt: 1,
+                    attemptID: "seed-run:inventory-api:1",
+                    agentID: "inventory-api",
+                    agentName: "Inventory API reader",
+                    role: "researcher",
+                    provider: "OpenAI API",
+                    model: "gpt-5.6",
+                    nodeID: "/root/inventory-api",
+                    parentNodeID: "/root",
+                    depth: 1,
+                    executionEngine: "openai_responses",
+                    state: fixture == "solo-swarm-live" ? "running" : "completed",
+                    goal: "Verify the inventory API contract",
+                    result: fixture == "solo-swarm-live" ? nil : [
+                        "output": .string("The endpoint returns stock by store and SKU."),
+                        "evidence": .array([.string("InventoryService.swift:42")]),
+                        "uncertainties": .array([.string("Rate-limit headers are undocumented.")]),
+                        "model_calls": .number(2),
+                        "prompt_tokens": .number(180),
+                        "completion_tokens": .number(60),
+                    ],
+                    startedAt: Date().addingTimeInterval(-18).timeIntervalSince1970,
+                    completedAt: fixture == "solo-swarm-live"
+                        ? nil : Date().addingTimeInterval(-5).timeIntervalSince1970
+                ),
+            ]
+        } else if fixture.hasPrefix("swarm-") {
             [
                 AgentJobAttempt(
                     runID: "seed-run",
@@ -11078,8 +11494,8 @@ final class AppModel: ObservableObject {
         let run = OrchestrationRun(
             id: "seed-run",
             sessionID: "seed-current",
-            teamID: "seed-team",
-            teamName: "Codex Team",
+            teamID: isSoloSwarmFixture ? nil : "seed-team",
+            teamName: isSoloSwarmFixture ? nil : "Codex Team",
             workerID: "seed-worker",
             workspaceRoot: "/tmp",
             executionPath: "/tmp",
@@ -11088,7 +11504,7 @@ final class AppModel: ObservableObject {
             request: "Build a Pokémon Center stock checker",
             createdAt: Date().addingTimeInterval(-300).timeIntervalSince1970,
             updatedAt: Date().timeIntervalSince1970,
-            completedAt: fixture == "completed" ? Date().timeIntervalSince1970 : nil,
+            completedAt: state == .completed ? Date().timeIntervalSince1970 : nil,
             lastSequence: lastSequence,
             pinned: false,
             legacy: false,
@@ -11098,10 +11514,20 @@ final class AppModel: ObservableObject {
             checkpoint: nil,
             attempts: swarmAttempts,
             plan: nil,
-            usage: ["model_calls": .number(12)],
-            jobCount: 4,
-            completedJobCount: fixture == "completed" ? 4 : 2,
-            runKind: "team",
+            usage: isSoloSwarmFixture ? [
+                "model_calls": .number(3),
+                "root_prompt_tokens": .number(260),
+                "root_completion_tokens": .number(90),
+                "worker_prompt_tokens": .number(fixture == "solo-swarm-empty" ? 0 : 180),
+                "worker_completion_tokens": .number(fixture == "solo-swarm-empty" ? 0 : 60),
+                "worker_model_calls": .number(fixture == "solo-swarm-empty" ? 0 : 2),
+            ] : ["model_calls": .number(12)],
+            manifest: isSoloSwarmFixture ? ["solo_swarm": .bool(true)] : nil,
+            jobCount: isSoloSwarmFixture ? (swarmAttempts?.count ?? 0) : 4,
+            completedJobCount: isSoloSwarmFixture
+                ? (fixture == "solo-swarm-completed" ? (swarmAttempts?.count ?? 0) : 0)
+                : (fixture == "completed" ? 4 : 2),
+            runKind: isSoloSwarmFixture ? "solo" : "team",
             traceID: nil,
             contentPolicy: "metadata",
             executionEnvironment: "local",
@@ -11116,13 +11542,37 @@ final class AppModel: ObservableObject {
         selectedOrchestrationRun = run
         orchestrationRunID = run.id
         orchestrationState = state
-        if fixture == "swarm-live" { isBusy = true }
-        if fixture == "activity" {
+        if fixture == "swarm-live" || fixture == "solo-swarm-live" { isBusy = true }
+        if fixture == "activity" || fixture == "swarm-live" || fixture == "solo-swarm-live" {
             activityRuns = [run]
+        }
+        if fixture == "activity" {
             return
         }
         let rawEvents: [[String: Any]]
-        if fixture.hasPrefix("swarm-") {
+        if isSoloSwarmFixture {
+            rawEvents = [
+                [
+                    "event_id": "seed-event-1",
+                    "run_id": run.id,
+                    "seq": 1,
+                    "type": "run_started",
+                    "solo_swarm": true,
+                    "state": "running",
+                ],
+                [
+                    "event_id": "seed-event-2",
+                    "run_id": run.id,
+                    "seq": 2,
+                    "type": fixture == "solo-swarm-empty" ? "turn_done" : "agent_spawned",
+                    "node_id": "/root/inventory-api",
+                    "parent_node_id": "/root",
+                    "depth": 1,
+                    "agent_name": "Inventory API reader",
+                    "goal": "Verify the inventory API contract",
+                ],
+            ]
+        } else if fixture.hasPrefix("swarm-") {
             rawEvents = [[
                 "event_id": "seed-event-1",
                 "run_id": run.id,
@@ -11276,6 +11726,7 @@ final class AppModel: ObservableObject {
         }
         inspectorTab = .runs
         inspectorCollapsed = false
+        runsNavigationRequest = RunsNavigationRequest(runID: run.id)
         if fixture == "completed",
            ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_STALE_QUIT_STATE"] == "1"
         {

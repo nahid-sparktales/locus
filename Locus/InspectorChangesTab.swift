@@ -38,7 +38,7 @@ struct InspectorChangesTab: View {
                     "Push and pull need your SSH agent, which the App Store sandbox "
                     + "cannot reach — use the direct build or a terminal. Locus never uses Keychain."
                 )
-                .font(.system(size: 8))
+                .font(.locus(size: 8))
                 .foregroundStyle(LocusTheme.muted)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14)
@@ -100,7 +100,7 @@ struct InspectorChangesTab: View {
         VStack(spacing: 8) {
             TextField("Commit message", text: $model.commitMessage, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 10))
+                .font(.locus(size: 10))
                 .lineLimit(1...3)
                 .padding(8)
                 .background(LocusTheme.paperDeep.opacity(0.6))
@@ -120,10 +120,10 @@ struct InspectorChangesTab: View {
                             Text("Draft with AI")
                         }
                     }
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.locus(size: 9, weight: .semibold))
                     .foregroundStyle(LocusTheme.muted)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .disabled(model.stagedChangeCount == 0 && !model.isDraftingCommitMessage)
                 .help("Draft a message from the staged diff with the local model")
                 .accessibilityIdentifier("changes.draftMessage")
@@ -131,7 +131,7 @@ struct InspectorChangesTab: View {
                 Spacer()
 
                 Text("\(model.stagedChangeCount) staged")
-                    .font(.system(size: 8, design: .monospaced))
+                    .font(.locus(size: 8, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
 
                 Button("Commit") {
@@ -161,12 +161,12 @@ struct InspectorChangesTab: View {
                     branchControl
                 } else {
                     Text("WORKING TREE")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.locus(size: 8, weight: .bold))
                         .tracking(0.8)
                         .foregroundStyle(LocusTheme.muted)
                 }
                 Text(model.gitChangeSummary)
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.locus(size: 11, weight: .bold))
                     .lineLimit(1)
                     .accessibilityIdentifier("changes.summary")
             }
@@ -176,7 +176,7 @@ struct InspectorChangesTab: View {
 
             if model.lastGitRefreshFailed {
                 Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.locus(size: 9, weight: .semibold))
                     .foregroundStyle(LocusTheme.warning)
                     .help("The last refresh failed — this list may be stale")
                     .accessibilityLabel("Change list may be stale")
@@ -190,7 +190,7 @@ struct InspectorChangesTab: View {
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .foregroundStyle(LocusTheme.muted)
             .help("Refresh from git")
             .accessibilityLabel("Refresh changes")
@@ -200,8 +200,9 @@ struct InspectorChangesTab: View {
                 model.openWorkspaceInFinder()
             } label: {
                 Image(systemName: "folder")
+                    .accessibilityHidden(true)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .foregroundStyle(LocusTheme.muted)
             .help("Reveal workspace in Finder")
             .accessibilityLabel("Reveal workspace in Finder")
@@ -223,7 +224,7 @@ struct InspectorChangesTab: View {
                 Image(systemName: "arrow.triangle.branch")
                 Text(model.gitBranch ?? "detached HEAD")
             }
-            .font(.system(size: 8, weight: .bold))
+            .font(.locus(size: 8, weight: .bold))
             .foregroundStyle(LocusTheme.muted)
             .help("Detached HEAD — check out a branch from a terminal to switch here")
             .accessibilityIdentifier("changes.branch")
@@ -250,9 +251,9 @@ struct InspectorChangesTab: View {
                     Text(model.gitBranch ?? "no branch")
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 6, weight: .bold))
+                        .font(.locus(size: 6, weight: .bold))
                 }
-                .font(.system(size: 8, weight: .bold))
+                .font(.locus(size: 8, weight: .bold))
                 .foregroundStyle(LocusTheme.muted)
                 .contentShape(Rectangle())
             }
@@ -276,7 +277,7 @@ struct InspectorChangesTab: View {
         if model.isGitRepository, !model.gitDetached {
             if model.gitAhead > 0 || model.gitBehind > 0 {
                 Text("↑\(model.gitAhead) ↓\(model.gitBehind)")
-                    .font(.system(size: 8, design: .monospaced))
+                    .font(.locus(size: 8, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
                     .help("\(model.gitAhead) to push, \(model.gitBehind) to pull")
                     .accessibilityIdentifier("changes.sync.counts")
@@ -324,9 +325,9 @@ struct InspectorChangesTab: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.locus(size: 10, weight: .semibold))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .foregroundStyle(LocusTheme.muted)
         .help(help)
         .accessibilityLabel(help)
@@ -366,19 +367,19 @@ private struct GitChangeRow: View {
                 } label: {
                     HStack(spacing: 8) {
                         Text(change.status.marker)
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .font(.locus(size: 9, weight: .bold, design: .monospaced))
                             .foregroundStyle(markerColor)
                             .frame(width: 14)
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(change.name)
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(.locus(size: 10, weight: .semibold))
                                 .foregroundStyle(LocusTheme.ink)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             if !change.directory.isEmpty {
                                 Text(change.directory)
-                                    .font(.system(size: 8))
+                                    .font(.locus(size: 8))
                                     .foregroundStyle(LocusTheme.muted)
                                     .lineLimit(1)
                                     .truncationMode(.head)
@@ -389,16 +390,16 @@ private struct GitChangeRow: View {
 
                         if !showsActions, let summary = change.changeSummary {
                             Text(summary)
-                                .font(.system(size: 8, design: .monospaced))
+                                .font(.locus(size: 8, design: .monospaced))
                                 .foregroundStyle(LocusTheme.muted)
                         }
                         Image(systemName: isSelected ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 8, weight: .semibold))
+                            .font(.locus(size: 8, weight: .semibold))
                             .foregroundStyle(LocusTheme.muted)
                     }
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .accessibilityLabel("\(change.status.rawValue) \(change.path)")
                 .accessibilityIdentifier("changes.file.\(index)")
 
@@ -430,7 +431,7 @@ private struct GitChangeRow: View {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
                             Text("Reading the diff…")
-                                .font(.system(size: 9))
+                                .font(.locus(size: 9))
                                 .foregroundStyle(LocusTheme.muted)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -486,7 +487,7 @@ private struct GitChangeRow: View {
                 VStack(spacing: 0) {
                     HStack(spacing: 6) {
                         Text(hunk.header)
-                            .font(.system(size: 8, design: .monospaced))
+                            .font(.locus(size: 8, design: .monospaced))
                             .foregroundStyle(LocusTheme.blue)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -545,12 +546,12 @@ private struct GitChangeRow: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.locus(size: 9, weight: .semibold))
                 .foregroundStyle(LocusTheme.muted)
                 .frame(width: 16, height: 16)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .help(help)
         .accessibilityLabel(help)
         .accessibilityIdentifier(identifier)
@@ -589,12 +590,12 @@ private struct GitChangeRow: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.locus(size: 10, weight: .semibold))
                 .foregroundStyle(LocusTheme.muted)
                 .frame(width: 18, height: 18)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .help(help)
         .accessibilityLabel(help)
         .accessibilityIdentifier(identifier)

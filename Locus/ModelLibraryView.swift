@@ -203,16 +203,17 @@ struct ModelLibraryView: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(LocusTheme.signal.opacity(0.15))
                 Image(systemName: "shippingbox.and.arrow.backward.fill")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.locus(size: 17, weight: .semibold))
                     .foregroundStyle(LocusTheme.signalDeep)
             }
             .frame(width: 38, height: 38)
+            .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("Local Model Library")
-                    .font(.system(size: 18, weight: .bold))
+                    .font(.locus(size: 18, weight: .bold))
                 Text("Discover GGUF models on Hugging Face and install them through Ollama.")
-                    .font(.system(size: 10))
+                    .font(.locus(size: 10))
                     .foregroundStyle(LocusTheme.muted)
             }
 
@@ -220,11 +221,11 @@ struct ModelLibraryView: View {
 
             if model.isModelOnline {
                 Label("Ollama ready", systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.locus(size: 10, weight: .semibold))
                     .foregroundStyle(LocusTheme.success)
             } else {
                 Label("Ollama unavailable", systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.locus(size: 10, weight: .semibold))
                     .foregroundStyle(LocusTheme.coral)
             }
 
@@ -234,23 +235,26 @@ struct ModelLibraryView: View {
             } label: {
                 Image(systemName: "xmark")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .accessibilityLabel("Close model library")
             .accessibilityIdentifier("modelLibrary.close")
         }
         .padding(18)
+        .locusSurface(.toolbar)
     }
 
     private var searchBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(LocusTheme.muted)
+                .accessibilityHidden(true)
             TextField(
                 "Search models or paste a huggingface.co model URL",
                 text: $library.query
             )
             .textFieldStyle(.plain)
             .onSubmit { library.search() }
+            .accessibilityLabel("Search models")
             .accessibilityIdentifier("modelLibrary.search")
 
             if library.isSearching {
@@ -269,17 +273,18 @@ struct ModelLibraryView: View {
         }
         .padding(.horizontal, 18)
         .padding(.bottom, 16)
+        .locusSurface(.toolbar)
     }
 
     private var resultList: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(library.query.isEmpty ? "POPULAR GGUF MODELS" : "SEARCH RESULTS")
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .font(.locus(size: 8, weight: .bold, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
                 Spacer()
                 Text("\(library.results.count)")
-                    .font(.system(size: 9, design: .monospaced))
+                    .font(.locus(size: 9, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
             }
             .padding(.horizontal, 14)
@@ -291,13 +296,18 @@ struct ModelLibraryView: View {
                         Button { library.select(item) } label: {
                             modelRow(item)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.locus())
                         .accessibilityIdentifier("modelLibrary.result.\(item.id)")
                     }
                 }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Models")
                 .padding(.horizontal, 8)
                 .padding(.bottom, 10)
             }
+            .accessibilityLabel(
+                library.query.isEmpty ? "Popular GGUF models" : "Model search results"
+            )
         }
         .background(LocusTheme.white.opacity(0.55))
     }
@@ -306,7 +316,7 @@ struct ModelLibraryView: View {
         let selected = library.selectedModel?.id == item.id
         return VStack(alignment: .leading, spacing: 5) {
             Text(item.displayName)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.locus(size: 11, weight: .semibold))
                 .foregroundStyle(LocusTheme.ink)
                 .lineLimit(2)
             HStack(spacing: 8) {
@@ -318,7 +328,7 @@ struct ModelLibraryView: View {
                     Label(likes.formatted(.number.notation(.compactName)), systemImage: "heart")
                 }
             }
-            .font(.system(size: 8))
+            .font(.locus(size: 8))
             .foregroundStyle(LocusTheme.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -338,10 +348,10 @@ struct ModelLibraryView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(selected.displayName)
-                            .font(.system(size: 19, weight: .bold))
+                            .font(.locus(size: 19, weight: .bold))
                             .textSelection(.enabled)
                         Text(selected.id)
-                            .font(.system(size: 9, design: .monospaced))
+                            .font(.locus(size: 9, design: .monospaced))
                             .foregroundStyle(LocusTheme.muted)
                             .textSelection(.enabled)
                     }
@@ -351,7 +361,7 @@ struct ModelLibraryView: View {
                             ProgressView().controlSize(.small)
                             Text("Scanning GGUF files…")
                         }
-                        .font(.system(size: 10))
+                        .font(.locus(size: 10))
                         .foregroundStyle(LocusTheme.muted)
                     } else {
                         variants
@@ -359,7 +369,7 @@ struct ModelLibraryView: View {
 
                     if let error = library.errorMessage {
                         Label(error, systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: 10))
+                            .font(.locus(size: 10))
                             .foregroundStyle(LocusTheme.coral)
                             .padding(12)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -384,32 +394,38 @@ struct ModelLibraryView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("CHOOSE A QUANTIZATION")
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .font(.locus(size: 8, weight: .bold, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
                 Spacer()
                 Text("This Mac has \(Self.memoryLabel) of unified memory")
-                    .font(.system(size: 8))
+                    .font(.locus(size: 8))
                     .foregroundStyle(LocusTheme.muted)
                     .accessibilityIdentifier("modelLibrary.machineMemory")
             }
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 9)], spacing: 9) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 9)], spacing: 9) {
                 ForEach(library.variants) { variant in
                     Button { library.selectedVariant = variant } label: {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 Text(variant.quantization)
-                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                    .font(.locus(size: 11, weight: .bold, design: .monospaced))
                                 Spacer()
                                 fitBadge(for: variant)
                             }
                             Text(variant.sizeLabel)
-                                .font(.system(size: 9))
+                                .font(.locus(size: 9))
                                 .foregroundStyle(LocusTheme.muted)
                             Text(variant.fileName)
-                                .font(.system(size: 7, design: .monospaced))
+                                .font(.locus(size: 7, design: .monospaced))
                                 .foregroundStyle(LocusTheme.muted.opacity(0.75))
                                 .lineLimit(2)
+                            if variant.quantization == library.recommendedQuant {
+                                Text("Fits comfortably while leaving room for the runtime and context window.")
+                                    .font(LocusType.caption)
+                                    .foregroundStyle(LocusTheme.textTertiary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                         .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
                         .padding(10)
@@ -429,10 +445,12 @@ struct ModelLibraryView: View {
                                 )
                         }
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.locus(.card))
                     .accessibilityIdentifier("modelLibrary.variant.\(variant.quantization)")
                 }
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Quantization options")
         }
     }
 
@@ -447,19 +465,23 @@ struct ModelLibraryView: View {
     private func fitBadge(for variant: HuggingFaceVariant) -> some View {
         let fit = variant.fit(physicalMemory: ProcessInfo.processInfo.physicalMemory)
         if fit == .fits, variant.quantization == library.recommendedQuant {
-            Text("RECOMMENDED")
-                .font(.system(size: 6, weight: .bold, design: .monospaced))
-                .foregroundStyle(LocusTheme.signalDeep)
+            Text("Recommended")
+                .font(LocusType.badge)
+                .foregroundStyle(LocusTheme.brandInk)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(LocusTheme.accentFill)
+                .clipShape(Capsule())
                 .accessibilityLabel("Recommended for this Mac")
         } else if fit == .tight {
-            Text("TIGHT FIT")
-                .font(.system(size: 6, weight: .bold, design: .monospaced))
-                .foregroundStyle(LocusTheme.warning)
+            Text("Tight fit")
+                .font(LocusType.badge)
+                .foregroundStyle(LocusTheme.warningForeground)
                 .accessibilityLabel("Tight fit for this Mac's memory")
         } else if fit == .exceeds {
-            Text("TOO LARGE")
-                .font(.system(size: 6, weight: .bold, design: .monospaced))
-                .foregroundStyle(LocusTheme.coral)
+            Text("Too large")
+                .font(LocusType.badge)
+                .foregroundStyle(LocusTheme.dangerForeground)
                 .accessibilityLabel("Too large for this Mac's memory")
         }
     }
@@ -469,11 +491,11 @@ struct ModelLibraryView: View {
             if let progress = library.progress {
                 HStack {
                     Text(progress.status.capitalized)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.locus(size: 10, weight: .semibold))
                     Spacer()
                     if let fraction = progress.fraction {
                         Text(fraction, format: .percent.precision(.fractionLength(0)))
-                            .font(.system(size: 9, design: .monospaced))
+                            .font(.locus(size: 9, design: .monospaced))
                             .foregroundStyle(LocusTheme.muted)
                     }
                 }
@@ -490,10 +512,10 @@ struct ModelLibraryView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(downloadTitle)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.locus(size: 10, weight: .semibold))
                         .foregroundStyle(downloadTitleColor)
                     Text(downloadCaption)
-                        .font(.system(size: 8))
+                        .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }

@@ -1,30 +1,41 @@
+import Foundation
 import SwiftUI
 
 /// The always-visible right rail. Collapsing the inspector no longer empties
-/// the window edge: Terminal, Plan, Browser, and an ellipsis holding the rest
+/// the window edge: Overview, Terminal, Browser, Notes, and an ellipsis holding the rest
 /// stay within reach, and the panel opens to the rail's left. Attention badges
 /// live on the icons, so a run can ask for eyes without the panel being open.
 struct InspectorRail: View {
     @EnvironmentObject private var model: AppModel
+    @State private var hoveredTab: InspectorTab?
 
     /// Destinations that live behind the ellipsis rather than on the rail
     /// itself. The inspector's dynamic tab bar is driven by open state, not
     /// this fixed menu inventory.
-    static let menuTabs = InspectorTab.workspaceTabs.filter { $0 != .terminal }
+    static let menuTabs = InspectorTab.workspaceTabs.filter {
+        $0 != .terminal && $0 != .notes
+    }
 
     var body: some View {
-        VStack(spacing: 6) {
-            moreMenu
-            railTab(.terminal)
+        VStack(spacing: 4) {
+            WorkspaceActionsMenu()
+                .environmentObject(model)
             railTab(.plan)
+            railTab(.terminal)
             railTab(.preview)
+            railTab(.notes)
+            Rectangle()
+                .fill(LocusTheme.line)
+                .frame(width: 20, height: 1)
+                .padding(.vertical, 3)
+            moreMenu
             Spacer(minLength: 0)
             zoomButton
         }
         .padding(.vertical, 8)
         .frame(width: 44)
         .frame(maxHeight: .infinity)
-        .background(LocusTheme.paperDeep)
+        .locusSurface(.structural)
         .overlay(alignment: .leading) {
             Rectangle().fill(LocusTheme.line).frame(width: 1)
         }
@@ -32,7 +43,7 @@ struct InspectorRail: View {
 
     private var zoomButton: some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.18)) {
+            withAnimation(LocusMotion.spatial) {
                 model.toggleInspectorZoom()
             }
         } label: {
@@ -41,12 +52,12 @@ struct InspectorRail: View {
                     ? "arrow.down.right.and.arrow.up.left"
                     : "arrow.up.left.and.arrow.down.right"
             )
-            .font(.system(size: 12, weight: .medium))
+            .font(.locus(size: 12, weight: .medium))
             .foregroundStyle(LocusTheme.muted)
             .frame(width: 32, height: 30)
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .help(model.inspectorZoomed ? "Restore panel (⌘⌥E)" : "Expand panel (⌘⌥E)")
         .accessibilityLabel(model.inspectorZoomed ? "Restore panel" : "Expand panel")
         .accessibilityIdentifier("inspector.zoom")
@@ -54,33 +65,40 @@ struct InspectorRail: View {
 
     private func railTab(_ tab: InspectorTab) -> some View {
         let selected = !model.inspectorCollapsed && model.inspectorTab == tab
+        let hovered = hoveredTab == tab
         return Button {
-            withAnimation(.easeInOut(duration: 0.18)) {
+            withAnimation(LocusMotion.spatial) {
                 model.toggleInspectorTab(tab)
             }
         } label: {
             Image(systemName: tab.symbol)
-                .font(.system(size: 13, weight: .medium))
+                .font(.locus(size: 13, weight: .medium))
                 .foregroundStyle(selected ? LocusTheme.ink : LocusTheme.muted)
                 .overlay(alignment: .topTrailing) {
                     InspectorTabBadge(tab: tab)
                 }
-                .frame(width: 32, height: 30)
+                .frame(width: 34, height: 32)
                 .background {
-                    // The strip's underline idiom has no room at 44pt; the
-                    // app's card shape marks the open tab instead.
                     if selected {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(LocusTheme.white)
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .stroke(LocusTheme.line, lineWidth: 1)
-                            }
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(LocusTheme.ink.opacity(0.09))
+                    } else if hovered {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(LocusTheme.ink.opacity(0.045))
                     }
                 }
-                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(alignment: .leading) {
+                    if selected {
+                        Capsule()
+                            .fill(LocusTheme.signalDeep)
+                            .frame(width: 2, height: 14)
+                            .offset(x: -3)
+                    }
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
+        .onHover { isInside in hoveredTab = isInside ? tab : nil }
         .help(tab.title)
         .accessibilityLabel("\(tab.title) inspector")
         .accessibilityValue(selected ? "Selected" : "Not selected")
@@ -91,7 +109,7 @@ struct InspectorRail: View {
         Menu {
             ForEach(Self.menuTabs) { tab in
                 Button(menuTitle(for: tab)) {
-                    withAnimation(.easeInOut(duration: 0.18)) {
+                    withAnimation(LocusMotion.spatial) {
                         model.selectInspectorTab(tab)
                     }
                 }
@@ -99,7 +117,8 @@ struct InspectorRail: View {
             }
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.locus(size: 12, weight: .semibold))
+                .rotationEffect(.degrees(90))
                 .foregroundStyle(LocusTheme.muted)
                 .overlay(alignment: .topTrailing) {
                     // Changes lives in this menu, so its unseen dot surfaces
@@ -111,12 +130,12 @@ struct InspectorRail: View {
                             .offset(x: 5, y: -3)
                     }
                 }
-                .frame(width: 32, height: 30)
-                .contentShape(Rectangle())
+                .frame(width: 34, height: 32)
+                .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .frame(width: 32, height: 30)
+        .frame(width: 34, height: 32)
         .help("More panels")
         .accessibilityLabel("More panels")
         .accessibilityIdentifier("inspector.rail.more")
@@ -127,5 +146,132 @@ struct InspectorRail: View {
             return "\(tab.title) (\(model.changedFileCount))"
         }
         return tab.title
+    }
+}
+
+/// Workspace-level actions live at the top of the right rail, immediately
+/// above Overview. Keeping the menu here frees the conversation header and
+/// gives the vertical ellipsis a stable location across every inspector state.
+private struct WorkspaceActionsMenu: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var createBranchPresented = false
+    @State private var branchName = ""
+
+    var body: some View {
+        Menu {
+            if model.currentExecutionEnvironment == .worktree {
+                Button("Hand Off to Local") { model.handoffCurrentChat(to: .local) }
+                    .disabled(model.isBusy || model.hasPendingPermission)
+                if model.activeTaskRecord?.branch == nil {
+                    Button("Create Branch Here…") { createBranchPresented = true }
+                        .disabled(model.isBusy || model.hasPendingPermission)
+                }
+                if let task = model.activeTaskRecord,
+                   !FileManager.default.fileExists(atPath: task.executionPath)
+                {
+                    Button("Restore Worktree") { model.restoreActiveTaskCheckout() }
+                }
+            } else if model.isGitRepository {
+                Button("Hand Off to Worktree") { model.handoffCurrentChat(to: .worktree) }
+                    .disabled(model.isBusy || model.hasPendingPermission)
+            }
+            if model.activeTaskRecord != nil {
+                Button("Open Checkout") { model.openActiveTaskCheckout() }
+                Button("Reveal in Finder") { model.revealActiveTaskCheckout() }
+            }
+            Divider()
+            // ⌘⇧K lives on the app menu's Clear Chat only — declaring it here
+            // as well would register the same shortcut twice.
+            Button("Clear Chat…") { model.requestClearChat() }
+                .disabled(model.isBusy || model.hasPendingPermission)
+                .accessibilityIdentifier("workspace.actions.clearChat")
+            Menu("Start Worktree Chat From") {
+                Button("Current HEAD") {
+                    model.newWorktreeSession(in: model.workspacePath, baseRef: "HEAD")
+                }
+                .accessibilityIdentifier("workspace.actions.worktree.head")
+                ForEach(model.localBranches, id: \.self) { branch in
+                    Button(branch) {
+                        model.newWorktreeSession(in: model.workspacePath, baseRef: branch)
+                    }
+                    .accessibilityIdentifier("workspace.actions.worktree.branch.\(branch)")
+                }
+            }
+            .disabled(!model.isGitRepository)
+            .accessibilityIdentifier("workspace.actions.newWorktreeSession")
+            Button("Start New Local Chat") {
+                model.newSession(in: model.workspacePath, environment: .local)
+            }
+            .accessibilityIdentifier("workspace.actions.newLocalSession")
+            Divider()
+            Button("Export Current Session…") { model.exportCurrentSession() }
+                .disabled(!model.sessions.contains { $0.id == model.currentSessionID })
+                .accessibilityIdentifier("workspace.actions.export")
+            Divider()
+            Picker("Tool activity", selection: Binding(
+                get: { model.toolActivityVisibility },
+                set: { model.toolActivityVisibility = $0 }
+            )) {
+                ForEach(ToolActivityVisibility.allCases) { visibility in
+                    Text(visibility.title)
+                        .tag(visibility)
+                        .accessibilityIdentifier(
+                            "workspace.actions.toolActivity.\(visibility.rawValue)"
+                        )
+                }
+            }
+            .pickerStyle(.inline)
+            Picker("Thinking", selection: Binding(
+                get: { model.thinkingVisibility },
+                set: { model.thinkingVisibility = $0 }
+            )) {
+                ForEach(ThinkingVisibility.allCases) { visibility in
+                    Text(visibility.title)
+                        .tag(visibility)
+                        .accessibilityIdentifier(
+                            "workspace.actions.thinking.\(visibility.rawValue)"
+                        )
+                }
+            }
+            .pickerStyle(.inline)
+            Divider()
+            Menu("Header controls") {
+                Toggle("Team progress", isOn: Binding(
+                    get: { model.showTeamProgressInHeader },
+                    set: { model.showTeamProgressInHeader = $0 }
+                ))
+                .accessibilityIdentifier("workspace.actions.showTeamProgress")
+                Toggle("Context window", isOn: Binding(
+                    get: { model.showContextUsageInHeader },
+                    set: { model.showContextUsageInHeader = $0 }
+                ))
+                .accessibilityIdentifier("workspace.actions.showContextUsage")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.locus(size: 12, weight: .semibold))
+                .rotationEffect(.degrees(90))
+                .foregroundStyle(LocusTheme.muted)
+                .frame(width: 34, height: 32)
+                .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 34, height: 32)
+        .help("Workspace actions")
+        .accessibilityLabel("Workspace actions")
+        .accessibilityIdentifier("workspace.actions")
+        .alert("Create Branch in Worktree", isPresented: $createBranchPresented) {
+            TextField("feature/name", text: $branchName)
+                .accessibilityIdentifier("worktree.branchName")
+            Button("Cancel", role: .cancel) { branchName = "" }
+            Button("Create") {
+                model.createBranchForActiveTask(branchName)
+                branchName = ""
+            }
+            .disabled(branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } message: {
+            Text("The worktree is detached until you deliberately create a branch.")
+        }
     }
 }

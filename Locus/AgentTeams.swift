@@ -128,6 +128,9 @@ struct AgentMemoryPolicy: Codable, Hashable {
     var scopes: [AgentMemoryScope] = [.personal, .workspace, .agent]
     var maxAutomaticMemories = 8
     var maxAutomaticTokens = 1_200
+    var crossChatContextEnabled = true
+    var maxAutomaticContextSnapshots = 2
+    var maxAutomaticContextTokens = 1_200
 
     private enum CodingKeys: String, CodingKey {
         case scopes
@@ -136,6 +139,36 @@ struct AgentMemoryPolicy: Codable, Hashable {
         case searchEnabled = "search_enabled"
         case maxAutomaticMemories = "max_automatic_memories"
         case maxAutomaticTokens = "max_automatic_tokens"
+        case crossChatContextEnabled = "cross_chat_context_enabled"
+        case maxAutomaticContextSnapshots = "max_automatic_context_snapshots"
+        case maxAutomaticContextTokens = "max_automatic_context_tokens"
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        recallEnabled = try container.decodeIfPresent(Bool.self, forKey: .recallEnabled) ?? true
+        proposalsEnabled = try container.decodeIfPresent(Bool.self, forKey: .proposalsEnabled) ?? true
+        searchEnabled = try container.decodeIfPresent(Bool.self, forKey: .searchEnabled) ?? true
+        scopes = try container.decodeIfPresent([AgentMemoryScope].self, forKey: .scopes)
+            ?? [.personal, .workspace, .agent]
+        maxAutomaticMemories = try container.decodeIfPresent(
+            Int.self, forKey: .maxAutomaticMemories
+        ) ?? 8
+        maxAutomaticTokens = try container.decodeIfPresent(
+            Int.self, forKey: .maxAutomaticTokens
+        ) ?? 1_200
+        crossChatContextEnabled = try container.decodeIfPresent(
+            Bool.self, forKey: .crossChatContextEnabled
+        ) ?? true
+        maxAutomaticContextSnapshots = try container.decodeIfPresent(
+            Int.self, forKey: .maxAutomaticContextSnapshots
+        ) ?? 2
+        maxAutomaticContextTokens = try container.decodeIfPresent(
+            Int.self, forKey: .maxAutomaticContextTokens
+        ) ?? 1_200
+        clamp()
     }
 
     mutating func clamp() {
@@ -143,6 +176,8 @@ struct AgentMemoryPolicy: Codable, Hashable {
         scopes = scopes.filter { seen.insert($0).inserted }
         maxAutomaticMemories = min(max(maxAutomaticMemories, 0), 20)
         maxAutomaticTokens = min(max(maxAutomaticTokens, 0), 4_000)
+        maxAutomaticContextSnapshots = min(max(maxAutomaticContextSnapshots, 0), 10)
+        maxAutomaticContextTokens = min(max(maxAutomaticContextTokens, 0), 4_000)
     }
 }
 
@@ -1123,6 +1158,11 @@ indirect enum JSONValue: Codable, Hashable {
         if case .number(let value) = self { return Int(value) }
         return nil
     }
+
+    var boolean: Bool? {
+        if case .bool(let value) = self { return value }
+        return nil
+    }
 }
 
 struct OrchestrationEvent: Identifiable, Codable, Hashable {
@@ -1236,6 +1276,35 @@ struct AgentJobAttempt: Identifiable, Codable, Hashable {
         guard case .array(let values) = result?["evidence"] else { return [] }
         return values.compactMap(\.string)
     }
+
+    var uncertainties: [String] {
+        guard case .array(let values) = result?["uncertainties"] else { return [] }
+        return values.compactMap(\.string)
+    }
+}
+
+enum RunScope: String, CaseIterable, Identifiable {
+    case all
+    case teams
+    case soloSwarm
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .teams: "Teams"
+        case .soloSwarm: "Solo Swarm"
+        }
+    }
+
+    func includes(_ run: OrchestrationRun) -> Bool {
+        switch self {
+        case .all: true
+        case .teams: run.runKind == "team"
+        case .soloSwarm: run.isSoloSwarm
+        }
+    }
 }
 
 struct RunCheckpoint: Codable, Hashable {
@@ -1293,6 +1362,7 @@ struct OrchestrationRun: Identifiable, Codable, Hashable {
     let attempts: [AgentJobAttempt]?
     let plan: DispatchPlan?
     let usage: [String: JSONValue]?
+    var manifest: [String: JSONValue]? = nil
     let jobCount: Int?
     let completedJobCount: Int?
     let runKind: String?
@@ -1308,6 +1378,7 @@ struct OrchestrationRun: Identifiable, Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id, state, request, pinned, legacy, recoverable, checkpoint, attempts, plan, usage
+        case manifest
         case sessionID = "session_id"
         case teamID = "team_id"
         case teamName = "team_name"
@@ -1332,6 +1403,18 @@ struct OrchestrationRun: Identifiable, Codable, Hashable {
         case queuedMessageID = "queued_message_id"
         case retryParentID = "retry_parent_id"
         case admittedAt = "admitted_at"
+    }
+
+    var isSoloSwarm: Bool {
+        guard runKind == "solo" else { return false }
+        if manifest?["solo_swarm"]?.boolean == true { return true }
+        return !(attempts ?? []).isEmpty
+    }
+
+    var runScope: RunScope {
+        if isSoloSwarm { return .soloSwarm }
+        if runKind == "team" { return .teams }
+        return .all
     }
 
     var queuedRun: QueuedRun? {
@@ -1630,6 +1713,90 @@ struct WorkspaceKnowledgeStatus: Codable, Hashable {
         case memoryCount = "memory_count"
         case vectorAvailable = "vector_available"
         case vectorBackend = "vector_backend"
+    }
+}
+
+struct ContextSnapshot: Identifiable, Codable, Hashable {
+    let id: String
+    let sessionID: String
+    let goal: String
+    let outcome: String
+    let mode: String
+    let changedFiles: [String]
+    let pending: String
+    let pinned: Bool
+    let createdAt: Double
+    let updatedAt: Double
+    let expiresAt: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case id, goal, outcome, mode, pending, pinned
+        case sessionID = "session_id"
+        case changedFiles = "changed_files"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case expiresAt = "expires_at"
+    }
+}
+
+struct ContextSnapshotsResponse: Codable {
+    let snapshots: [ContextSnapshot]
+}
+
+struct ContextSnapshotResponse: Codable {
+    let ok: Bool
+    let snapshot: ContextSnapshot
+}
+
+struct SkillObservation: Identifiable, Codable, Hashable {
+    let id: String
+    let number: Int
+    let status: String
+    let title: String
+    let sessionContext: String
+    let skill: String
+    let type: String
+    let phaseArea: String
+    let issue: String
+    let suggestedImprovement: String
+    let principle: String
+    let checkpointOnly: Bool
+    let sourceSessionID: String
+    let sourceRunID: String
+    let createdAt: Double
+    let updatedAt: Double
+
+    enum CodingKeys: String, CodingKey {
+        case id, number, status, title, skill, type, issue, principle
+        case sessionContext = "session_context"
+        case phaseArea = "phase_area"
+        case suggestedImprovement = "suggested_improvement"
+        case checkpointOnly = "checkpoint_only"
+        case sourceSessionID = "source_session_id"
+        case sourceRunID = "source_run_id"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct SkillObservationsResponse: Codable {
+    let observations: [SkillObservation]
+}
+
+struct SkillObservationResponse: Codable {
+    let ok: Bool
+    let observation: SkillObservation
+}
+
+struct SkillObservationsExport: Codable {
+    let format: String
+    let version: Int
+    let exportedAt: Double
+    let observations: [SkillObservation]
+
+    enum CodingKeys: String, CodingKey {
+        case format, version, observations
+        case exportedAt = "exported_at"
     }
 }
 
@@ -1939,7 +2106,7 @@ enum TeamMentionTarget: Identifiable, Hashable {
     var symbol: String {
         switch self {
         case .agent: "person.fill"
-        case .team: "person.3.fill"
+        case .team: "person.2.fill"
         }
     }
 }

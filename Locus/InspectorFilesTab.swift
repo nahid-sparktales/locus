@@ -48,11 +48,11 @@ struct InspectorFilesTab: View {
         VStack(spacing: 8) {
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 10))
+                    .font(.locus(size: 10))
                     .foregroundStyle(LocusTheme.muted)
                 TextField("Search files", text: $model.fileQuery)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 11))
+                    .font(.locus(size: 11))
                     .accessibilityIdentifier("files.search")
                 if !model.fileQuery.isEmpty {
                     Button {
@@ -60,7 +60,7 @@ struct InspectorFilesTab: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.locus())
                     .foregroundStyle(LocusTheme.muted)
                     .accessibilityLabel("Clear file search")
                 }
@@ -76,7 +76,7 @@ struct InspectorFilesTab: View {
 
             HStack(spacing: 8) {
                 Text("\(files.count) of \(model.workspaceFileIndex.count) files")
-                    .font(.system(size: 8))
+                    .font(.locus(size: 8))
                     .foregroundStyle(LocusTheme.muted)
                     .accessibilityIdentifier("files.count")
                 Spacer()
@@ -85,7 +85,7 @@ struct InspectorFilesTab: View {
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .foregroundStyle(LocusTheme.muted)
                 .help("Rescan the workspace")
                 .accessibilityLabel("Rescan workspace")
@@ -95,8 +95,9 @@ struct InspectorFilesTab: View {
                     model.openWorkspaceInFinder()
                 } label: {
                     Image(systemName: "folder")
+                        .accessibilityHidden(true)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .foregroundStyle(LocusTheme.muted)
                 .help("Reveal workspace in Finder")
                 .accessibilityLabel("Reveal workspace in Finder")
@@ -114,7 +115,7 @@ struct InspectorFilesTab: View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
                 Text(path)
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .font(.locus(size: 9, weight: .semibold, design: .monospaced))
                     .lineLimit(1)
                     .truncationMode(.head)
                 Spacer()
@@ -122,9 +123,9 @@ struct InspectorFilesTab: View {
                     model.closeFilePreview()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.locus(size: 9, weight: .semibold))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .foregroundStyle(LocusTheme.muted)
                 .accessibilityLabel("Close preview")
                 .accessibilityIdentifier("files.preview.close")
@@ -170,18 +171,18 @@ private struct WorkspaceFileRow: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "doc.text")
-                    .font(.system(size: 10))
+                    .font(.locus(size: 10))
                     .foregroundStyle(LocusTheme.muted)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(url.lastPathComponent)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.locus(size: 10, weight: .semibold))
                         .foregroundStyle(LocusTheme.ink)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     let directory = (relativePath as NSString).deletingLastPathComponent
                     if !directory.isEmpty {
                         Text(directory)
-                            .font(.system(size: 8))
+                            .font(.locus(size: 8))
                             .foregroundStyle(LocusTheme.muted)
                             .lineLimit(1)
                             .truncationMode(.head)
@@ -192,9 +193,9 @@ private struct WorkspaceFileRow: View {
                     model.addWorkspaceFileToContext(relativePath)
                 } label: {
                     Image(systemName: "plus.circle")
-                        .font(.system(size: 10))
+                        .font(.locus(size: 10))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .foregroundStyle(LocusTheme.muted)
                 .help("Add to context")
                 .accessibilityLabel("Add \(url.lastPathComponent) to context")
@@ -206,7 +207,7 @@ private struct WorkspaceFileRow: View {
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .accessibilityLabel(relativePath)
         .accessibilityIdentifier("files.row.\(index)")
         .contextMenu {

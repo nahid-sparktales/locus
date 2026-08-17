@@ -206,17 +206,17 @@ struct ContextWindowInfoCard: View {
                     Text("Context window")
                     Spacer()
                     Text(usageLabel)
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .font(.locus(size: 7, weight: .bold, design: .monospaced))
                         .tracking(0.45)
                         .foregroundStyle(accent)
                     Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 7, weight: .bold))
+                        .font(.locus(size: 7, weight: .bold))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .font(.system(size: 9, weight: .bold))
+            .buttonStyle(.locus())
+            .font(.locus(size: 9, weight: .bold))
             .foregroundStyle(LocusTheme.inkSoft)
             .accessibilityLabel(isCollapsed ? "Expand context window" : "Collapse context window")
             .accessibilityIdentifier("plan.contextWindow.toggle")
@@ -259,7 +259,7 @@ struct ContextWindowInfoCard: View {
                     }
 
                     Text("Locus compacts the conversation when it reaches the usable limit, preserving room for tools and the next response.")
-                        .font(.system(size: 8))
+                        .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.muted)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -278,18 +278,18 @@ struct ContextWindowInfoCard: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Context window information")
         .accessibilityIdentifier("plan.contextWindow")
-        .animation(.easeInOut(duration: 0.16), value: isCollapsed)
+        .animation(LocusMotion.spatial, value: isCollapsed)
     }
 
     private func statRow(_ label: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(label)
-                .font(.system(size: 8))
+                .font(.locus(size: 8))
                 .foregroundStyle(LocusTheme.muted)
                 .lineLimit(1)
             Spacer(minLength: 4)
             Text(value)
-                .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                .font(.locus(size: 8, weight: .semibold, design: .monospaced))
                 .foregroundStyle(LocusTheme.inkSoft)
                 .multilineTextAlignment(.trailing)
                 .lineLimit(1)
@@ -307,13 +307,13 @@ struct InspectorCheckpointsTab: View {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("SESSION CHECKPOINTS")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.locus(size: 8, weight: .bold))
                         .tracking(0.8)
                         .foregroundStyle(LocusTheme.muted)
                     Text("Save and restore this session")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.locus(size: 11, weight: .bold))
                     Text("Checkpoints preserve the conversation, active plan, workspace, model, and context pack.")
-                        .font(.system(size: 8))
+                        .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.muted)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -341,12 +341,12 @@ struct InspectorCheckpointsTab: View {
                 if model.checkpoints.isEmpty {
                     VStack(spacing: 10) {
                         Image(systemName: "clock.badge.questionmark")
-                            .font(.system(size: 25))
+                            .font(.locus(size: 25))
                             .foregroundStyle(LocusTheme.muted)
                         Text("No checkpoints yet")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.locus(size: 10, weight: .semibold))
                         Text("Create one before a risky or exploratory turn.")
-                            .font(.system(size: 9))
+                            .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.muted)
                             .multilineTextAlignment(.center)
                     }
@@ -370,17 +370,17 @@ struct InspectorCheckpointsTab: View {
     private func checkpointRow(_ checkpoint: SessionCheckpoint) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.locus(size: 14, weight: .semibold))
                 .foregroundStyle(LocusTheme.signal)
                 .frame(width: 34, height: 34)
                 .background(LocusTheme.ink)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             VStack(alignment: .leading, spacing: 3) {
                 Text(checkpoint.title)
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.locus(size: 9, weight: .bold))
                     .lineLimit(1)
                 Text(checkpoint.createdAt.formatted(date: .abbreviated, time: .shortened))
-                    .font(.system(size: 7))
+                    .font(.locus(size: 7))
                     .foregroundStyle(LocusTheme.muted)
             }
             Spacer(minLength: 4)
@@ -389,7 +389,7 @@ struct InspectorCheckpointsTab: View {
             } label: {
                 Image(systemName: "arrow.counterclockwise")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .disabled(model.isBusy || model.hasPendingPermission)
             .help("Restore this session checkpoint")
             .accessibilityLabel("Restore \(checkpoint.title)")
@@ -400,7 +400,7 @@ struct InspectorCheckpointsTab: View {
                 Image(systemName: "trash")
                     .foregroundStyle(LocusTheme.coral)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .disabled(model.isBusy || model.hasPendingPermission)
             .help("Delete this checkpoint")
             .accessibilityLabel("Delete \(checkpoint.title)")

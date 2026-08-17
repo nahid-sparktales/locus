@@ -35,7 +35,7 @@ private let shortcutReferenceGroups: [ShortcutReferenceGroup] = [
     ]),
     ShortcutReferenceGroup(name: "Panels", shortcuts: [
         ShortcutReference(keys: "⌘0", title: "Show/hide sidebar"),
-        ShortcutReference(keys: "⌘1–⌘8", title: "Open inspector tabs"),
+        ShortcutReference(keys: "⌘1–⌘9", title: "Open inspector tabs"),
         ShortcutReference(keys: "⌘⌥I", title: "Show/hide inspector"),
     ]),
     ShortcutReferenceGroup(name: "Browser (while the panel is showing)", shortcuts: [
@@ -56,17 +56,17 @@ private struct KeyboardShortcutsReference: View {
             ForEach(shortcutReferenceGroups) { group in
                 VStack(alignment: .leading, spacing: 7) {
                     Text(group.name.uppercased())
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.locus(size: 8, weight: .bold))
                         .tracking(0.9)
                         .foregroundStyle(LocusTheme.muted)
                     VStack(spacing: 0) {
                         ForEach(Array(group.shortcuts.enumerated()), id: \.element.id) { index, shortcut in
                             HStack {
                                 Text(shortcut.title)
-                                    .font(.system(size: 10, weight: .medium))
+                                    .font(.locus(size: 10, weight: .medium))
                                 Spacer()
                                 Text(shortcut.keys)
-                                    .font(.system(size: 9, design: .monospaced))
+                                    .font(.locus(size: 9, design: .monospaced))
                                     .foregroundStyle(LocusTheme.muted)
                                     .padding(.horizontal, 7)
                                     .frame(height: 20)
@@ -94,9 +94,9 @@ struct KeyboardShortcutsSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Keyboard shortcuts")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.locus(size: 15, weight: .bold))
                 Text("Everything in Locus remains reachable from the keyboard, including the command palette with ⌘K.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .padding(.bottom, 14)
                 KeyboardShortcutsReference()
@@ -117,9 +117,9 @@ struct ShortcutsSheet: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Keyboard shortcuts")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(.locus(size: 15, weight: .bold))
                     Text("Everything in Locus is reachable from the keyboard.")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 Spacer()
@@ -128,7 +128,7 @@ struct ShortcutsSheet: View {
                 } label: {
                     Image(systemName: "xmark")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .accessibilityLabel("Close shortcuts")
                 .accessibilityIdentifier("shortcuts.close")
             }

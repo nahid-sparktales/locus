@@ -161,7 +161,7 @@ struct ChatAttachmentDropTarget: ViewModifier {
                         )
                         .overlay {
                             Label("Drop to attach", systemImage: "paperclip")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(.locus(size: 11, weight: .semibold))
                                 .foregroundStyle(LocusTheme.signal)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)

@@ -375,8 +375,10 @@ class ToolRegistry:
         self._active_mcp: set[str] = set()
         self._recent_mcp: list[str] = []
         self._explicit_skill_context = ""
+        self._startup_skill_context = ""
         self._loaded_skill_context: dict[str, str] = {}
         self._explicit_skill_ids: set[str] = set()
+        self._startup_skill_ids: set[str] = set()
         self._workspace = extensions.cwd
         self._mcp_agent_policy: dict[str, Any] | None = None
         self._agent_access_ceiling = "workspace_write"
@@ -429,10 +431,25 @@ class ToolRegistry:
         self._active_mcp.update(
             name for name in self._mcp_by_qualified if name in user_text
         )
+        startup_contexts: list[str] = []
+        startup_skills = self.extensions.startup_skills(workspace)
+        self._startup_skill_ids = {str(item["id"]) for item in startup_skills}
+        for skill in startup_skills:
+            skill_id = str(skill["id"])
+            try:
+                startup_contexts.append(
+                    f"Startup skill ${skill.get('name') or skill_id}:\n"
+                    + self.extensions.load_skill(skill_id, workspace)
+                )
+            except ExtensionError:
+                continue
+        self._startup_skill_context = "\n\n".join(startup_contexts)
         contexts: list[str] = []
         explicit_skill_ids = self.extensions.explicit_skill_ids(user_text, workspace)
         self._explicit_skill_ids = set(explicit_skill_ids)
         for skill_id in explicit_skill_ids:
+            if skill_id in self._startup_skill_ids:
+                continue
             try:
                 contexts.append(
                     f"Explicitly activated skill ${skill_id}:\n"
@@ -501,8 +518,10 @@ class ToolRegistry:
 
     def end_turn(self) -> None:
         self._active_mcp.clear()
+        self._startup_skill_context = ""
         self._explicit_skill_context = ""
         self._explicit_skill_ids.clear()
+        self._startup_skill_ids.clear()
         self._loaded_skill_context.clear()
 
     @property
@@ -512,7 +531,11 @@ class ToolRegistry:
             for skill_id, text in self._loaded_skill_context.items()
         )
         return "\n\n".join(
-            section for section in (self._explicit_skill_context, loaded) if section
+            section for section in (
+                self._startup_skill_context,
+                self._explicit_skill_context,
+                loaded,
+            ) if section
         )
 
     def skill_index(self, context_window: int) -> str:
@@ -685,7 +708,8 @@ class ToolRegistry:
             )
             resolved_id = str(selected.get("id")) if selected else requested
             if resolved_id not in self._loaded_skill_context \
-                    and resolved_id not in self._explicit_skill_ids:
+                    and resolved_id not in self._explicit_skill_ids \
+                    and resolved_id not in self._startup_skill_ids:
                 return f"Error: load skill ${resolved_id} before reading its supporting files."
             try:
                 return self.extensions.read_skill_file(

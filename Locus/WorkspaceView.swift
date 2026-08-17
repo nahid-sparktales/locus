@@ -4,10 +4,11 @@ import SwiftUI
 
 struct WorkspaceView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var modelPickerPresented = false
     @State private var teamProgressPresented = false
-    @State private var createBranchPresented = false
-    @State private var branchName = ""
+    let sidebarVisible: Bool
+    let showSidebar: () -> Void
 
     private var sessionTitle: String {
         model.sessions.first(where: { $0.id == model.currentSessionID })?.displayTitle
@@ -20,18 +21,6 @@ struct WorkspaceView: View {
             contentArea
         }
         .background(LocusTheme.panel)
-        .alert("Create Branch in Worktree", isPresented: $createBranchPresented) {
-            TextField("feature/name", text: $branchName)
-                .accessibilityIdentifier("worktree.branchName")
-            Button("Cancel", role: .cancel) { branchName = "" }
-            Button("Create") {
-                model.createBranchForActiveTask(branchName)
-                branchName = ""
-            }
-            .disabled(branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        } message: {
-            Text("The worktree is detached until you deliberately create a branch.")
-        }
     }
 
     private var contentArea: some View {
@@ -47,7 +36,7 @@ struct WorkspaceView: View {
                             width: max(280, min(440, proxy.size.width - 24)),
                             height: max(0, proxy.size.height - 24)
                         )
-                        .background(LocusTheme.panel)
+                        .locusSurface(.floating, radius: 12)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .overlay {
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -55,7 +44,7 @@ struct WorkspaceView: View {
                         }
                         .shadow(color: .black.opacity(0.18), radius: 18, x: 0, y: 8)
                         .padding(12)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                        .transition(LocusMotion.transition(edge: .trailing, reduceMotion: reduceMotion))
                         .zIndex(2)
                 }
             }
@@ -91,14 +80,14 @@ struct WorkspaceView: View {
 
     private var header: some View {
         HStack(spacing: 16) {
-            if model.sidebarCollapsed {
+            if !sidebarVisible {
                 HeaderIconButton(
                     symbol: "sidebar.left",
                     label: "Show sidebar",
                     identifier: "workspace.showSidebar"
                 ) {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        model.sidebarCollapsed = false
+                    withAnimation(LocusMotion.spatial) {
+                        showSidebar()
                     }
                 }
             }
@@ -106,28 +95,34 @@ struct WorkspaceView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 5) {
                     Image(systemName: "folder.fill")
-                        .font(.system(size: 8, weight: .medium))
-                        .foregroundStyle(LocusTheme.muted)
+                        .font(.locus(size: 8, weight: .medium))
+                        .foregroundStyle(LocusTheme.ink)
+                        .accessibilityHidden(true)
                     Text(URL(fileURLWithPath: model.workspacePath).lastPathComponent)
+                        .accessibilityIdentifier("workspace.breadcrumb.path")
                     if let branch = model.gitBranch {
                         HStack(spacing: 3) {
                             Image(systemName: "arrow.triangle.branch")
-                                .font(.system(size: 7))
+                                .font(.locus(size: 7))
+                                .accessibilityHidden(true)
                             Text(branch)
+                                .accessibilityLabel("Git branch \(branch)")
+                                .accessibilityIdentifier("workspace.breadcrumb.gitBranch")
                         }
-                        .foregroundStyle(LocusTheme.muted)
-                        .accessibilityLabel("Git branch \(branch)")
+                        .foregroundStyle(LocusTheme.ink)
                     }
                     Text("/")
+                        .accessibilityHidden(true)
                     Text("sessions")
+                        .accessibilityIdentifier("workspace.breadcrumb.scope")
                 }
-                .font(.system(size: 8, design: .monospaced))
-                .foregroundStyle(LocusTheme.muted.opacity(0.8))
+                .font(.locus(size: 8, design: .monospaced))
+                .foregroundStyle(LocusTheme.ink)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("workspace.breadcrumb")
 
                 Text(sessionTitle)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.locus(size: 14, weight: .bold))
                     .lineLimit(1)
                     .accessibilityIdentifier("workspace.sessionTitle")
             }
@@ -140,7 +135,7 @@ struct WorkspaceView: View {
                 } label: {
                     ZStack(alignment: .topTrailing) {
                         Image(systemName: "waveform.path.ecg")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.locus(size: 13, weight: .medium))
                             .foregroundStyle(LocusTheme.inkSoft)
                             .frame(width: 32, height: 32)
                         Circle()
@@ -158,7 +153,7 @@ struct WorkspaceView: View {
                             .stroke(LocusTheme.line, lineWidth: 1)
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .frame(width: 32, height: 32)
                 .help("Team progress · \(teamProgressTitle)")
                 .accessibilityLabel("Team progress, \(teamProgressTitle)")
@@ -191,15 +186,15 @@ struct WorkspaceView: View {
             } label: {
                 HStack(spacing: 7) {
                     Image(systemName: model.teamModeEnabled
-                        ? "person.3.sequence.fill"
+                        ? "person.2.fill"
                         : (model.activeAccount == nil ? "bolt.fill" : "cloud.fill"))
-                        .font(.system(size: 11))
+                        .font(.locus(size: 11))
                         .foregroundStyle(LocusTheme.signalDeep)
                     Text(model.modelPickerLabel)
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.locus(size: 9, weight: .semibold))
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .semibold))
+                        .font(.locus(size: 8, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 .padding(.horizontal, 10)
@@ -212,7 +207,7 @@ struct WorkspaceView: View {
                 }
                 .frame(maxWidth: 190)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .help(model.teamModeEnabled
                 ? "Active team: \(model.selectedTeamModelNames.joined(separator: ", "))"
                 : "Select model")
@@ -228,117 +223,13 @@ struct WorkspaceView: View {
                 .environmentObject(model)
             }
 
-            Menu {
-                if model.currentExecutionEnvironment == .worktree {
-                    Button("Hand Off to Local") { model.handoffCurrentChat(to: .local) }
-                        .disabled(model.isBusy || model.hasPendingPermission)
-                    if model.activeTaskRecord?.branch == nil {
-                        Button("Create Branch Here…") { createBranchPresented = true }
-                            .disabled(model.isBusy || model.hasPendingPermission)
-                    }
-                    if let task = model.activeTaskRecord,
-                       !FileManager.default.fileExists(atPath: task.executionPath) {
-                        Button("Restore Worktree") { model.restoreActiveTaskCheckout() }
-                    }
-                } else if model.isGitRepository {
-                    Button("Hand Off to Worktree") { model.handoffCurrentChat(to: .worktree) }
-                        .disabled(model.isBusy || model.hasPendingPermission)
-                }
-                if model.activeTaskRecord != nil {
-                    Button("Open Checkout") { model.openActiveTaskCheckout() }
-                    Button("Reveal in Finder") { model.revealActiveTaskCheckout() }
-                }
-                Divider()
-                // ⌘⇧K lives on the app menu's Clear Chat only — declaring it
-                // here as well would register the same shortcut twice.
-                Button("Clear Chat…") { model.requestClearChat() }
-                    .disabled(model.isBusy || model.hasPendingPermission)
-                    .accessibilityIdentifier("workspace.actions.clearChat")
-                Menu("Start Worktree Chat From") {
-                    Button("Current HEAD") {
-                        model.newWorktreeSession(in: model.workspacePath, baseRef: "HEAD")
-                    }
-                    .accessibilityIdentifier("workspace.actions.worktree.head")
-                    ForEach(model.localBranches, id: \.self) { branch in
-                        Button(branch) {
-                            model.newWorktreeSession(in: model.workspacePath, baseRef: branch)
-                        }
-                        .accessibilityIdentifier("workspace.actions.worktree.branch.\(branch)")
-                    }
-                }
-                .disabled(!model.isGitRepository)
-                .accessibilityIdentifier("workspace.actions.newWorktreeSession")
-                Button("Start New Local Chat") {
-                    model.newSession(in: model.workspacePath, environment: .local)
-                }
-                .accessibilityIdentifier("workspace.actions.newLocalSession")
-                Divider()
-                Button("Export Current Session…") {
-                    model.exportCurrentSession()
-                }
-                .disabled(!model.sessions.contains(where: { $0.id == model.currentSessionID }))
-                .accessibilityIdentifier("workspace.actions.export")
-                Divider()
-                Picker("Tool activity", selection: Binding(
-                    get: { model.toolActivityVisibility },
-                    set: { model.toolActivityVisibility = $0 }
-                )) {
-                    ForEach(ToolActivityVisibility.allCases) { visibility in
-                        Text(visibility.title)
-                            .tag(visibility)
-                            .accessibilityIdentifier(
-                                "workspace.actions.toolActivity.\(visibility.rawValue)"
-                            )
-                    }
-                }
-                .pickerStyle(.inline)
-                Picker("Thinking", selection: Binding(
-                    get: { model.thinkingVisibility },
-                    set: { model.thinkingVisibility = $0 }
-                )) {
-                    ForEach(ThinkingVisibility.allCases) { visibility in
-                        Text(visibility.title)
-                            .tag(visibility)
-                            .accessibilityIdentifier("workspace.actions.thinking.\(visibility.rawValue)")
-                    }
-                }
-                .pickerStyle(.inline)
-                Divider()
-                Menu("Header controls") {
-                    Toggle("Team progress", isOn: Binding(
-                        get: { model.showTeamProgressInHeader },
-                        set: { model.showTeamProgressInHeader = $0 }
-                    ))
-                    .accessibilityIdentifier("workspace.actions.showTeamProgress")
-                    Toggle("Context window", isOn: Binding(
-                        get: { model.showContextUsageInHeader },
-                        set: { model.showContextUsageInHeader = $0 }
-                    ))
-                    .accessibilityIdentifier("workspace.actions.showContextUsage")
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(LocusTheme.muted)
-                    .frame(width: 32, height: 32)
-                    .background(LocusTheme.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(LocusTheme.line, lineWidth: 1)
-                    }
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .frame(width: 32, height: 32)
-            .accessibilityLabel("Workspace actions")
-            .accessibilityIdentifier("workspace.actions")
-            // The inspector-restore button lived here; the always-visible
-            // rail's toggle owns that job now.
         }
-        .padding(.horizontal, 22)
+        // When the sidebar is absent this column begins at the window edge.
+        // Keep its restore control beyond the native traffic-light cluster.
+        .padding(.leading, sidebarVisible ? 22 : 76)
+        .padding(.trailing, 22)
         .frame(height: 62)
-        .background(LocusTheme.panel)
+        .locusSurface(.toolbar)
         .overlay(alignment: .bottom) {
             Rectangle().fill(LocusTheme.line).frame(height: 1)
         }
@@ -366,18 +257,18 @@ struct WorkspaceView: View {
             Image(systemName: recovering ? "arrow.clockwise" : "exclamationmark.triangle.fill")
                 .foregroundStyle(recovering ? LocusTheme.warning : LocusTheme.coral)
             Text(message)
-                .font(.system(size: 10, weight: .medium))
+                .font(.locus(size: 10, weight: .medium))
                 .lineLimit(1)
             Spacer()
             Button("Settings") { model.settingsPresented = true }
-                .buttonStyle(.plain)
-                .font(.system(size: 9, weight: .semibold))
+                .buttonStyle(.locus())
+                .font(.locus(size: 9, weight: .semibold))
                 .underline()
                 .accessibilityIdentifier("banner.settings")
             Button("Retry") {
                 model.retryLocalServices()
             }
-            .font(.system(size: 9, weight: .semibold))
+            .font(.locus(size: 9, weight: .semibold))
             .accessibilityIdentifier("banner.retry")
         }
         .padding(.horizontal, 18)
@@ -430,9 +321,9 @@ struct ReviewAndLandView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Review & Land")
-                        .font(.system(size: 17, weight: .bold))
+                        .font(.locus(size: 17, weight: .bold))
                     Text("Review the complete worktree delta, verify it, then choose its destination.")
-                        .font(.system(size: 10))
+                        .font(.locus(size: 10))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 Spacer()
@@ -457,12 +348,12 @@ struct ReviewAndLandView: View {
                                 Button("Copy Patch") { model.copyActiveTaskPatch() }
                                 Button("Open Checkout") { model.openActiveTaskCheckout() }
                             }
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.locus(size: 9, weight: .semibold))
                             .foregroundStyle(LocusTheme.muted)
 
                             ScrollView([.horizontal, .vertical]) {
                                 Text(model.landingPatch.isEmpty ? "No changes." : model.landingPatch)
-                                    .font(.system(size: 9, design: .monospaced))
+                                    .font(.locus(size: 9, design: .monospaced))
                                     .textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(10)
@@ -477,10 +368,10 @@ struct ReviewAndLandView: View {
                         Divider()
                         stageHeader("2", "Review test evidence")
                         Text("Enter one explicit check per line. Locus runs up to eight sequentially in this chat’s worktree; each has a ten-minute limit.")
-                            .font(.system(size: 9))
+                            .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.muted)
                         TextEditor(text: $commandsText)
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(.locus(size: 10, design: .monospaced))
                             .scrollContentBackground(.hidden)
                             .padding(6)
                             .frame(height: 78)
@@ -492,7 +383,7 @@ struct ReviewAndLandView: View {
                             if model.activeLandingCheckRunID != nil {
                                 ProgressView().controlSize(.small)
                                 Text("Running checks…")
-                                    .font(.system(size: 9))
+                                    .font(.locus(size: 9))
                                 Button("Stop") { model.stopLandingChecks() }
                                     .accessibilityIdentifier("landing.stopChecks")
                             } else {
@@ -516,7 +407,7 @@ struct ReviewAndLandView: View {
                                     .foregroundStyle(LocusTheme.muted)
                             }
                         }
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.locus(size: 9, weight: .semibold))
 
                         if let run = model.landingCheckRun {
                             VStack(alignment: .leading, spacing: 6) {
@@ -524,7 +415,7 @@ struct ReviewAndLandView: View {
                                     DisclosureGroup {
                                         if !result.output.isEmpty {
                                             Text(result.output)
-                                                .font(.system(size: 8, design: .monospaced))
+                                                .font(.locus(size: 8, design: .monospaced))
                                                 .textSelection(.enabled)
                                                 .frame(maxWidth: .infinity, alignment: .leading)
                                         }
@@ -537,7 +428,7 @@ struct ReviewAndLandView: View {
                                             Text(result.state.replacingOccurrences(of: "_", with: " "))
                                             Text("\(result.durationMilliseconds) ms")
                                         }
-                                        .font(.system(size: 8, design: .monospaced))
+                                        .font(.locus(size: 8, design: .monospaced))
                                         .foregroundStyle(result.state == "passed"
                                             ? LocusTheme.success : LocusTheme.warning)
                                     }
@@ -555,7 +446,7 @@ struct ReviewAndLandView: View {
                         if destination == "local" {
                             if model.landingPreflight?.canApplyLocal == true {
                                 Text("The complete patch will be applied unstaged to Local. This chat remains in its worktree.")
-                                    .font(.system(size: 9))
+                                    .font(.locus(size: 9))
                                     .foregroundStyle(LocusTheme.muted)
                             } else {
                                 Label(
@@ -563,7 +454,7 @@ struct ReviewAndLandView: View {
                                         ?? "The patch conflicts with Local. Both checkouts are unchanged.",
                                     systemImage: "exclamationmark.triangle.fill"
                                 )
-                                .font(.system(size: 9))
+                                .font(.locus(size: 9))
                                 .foregroundStyle(LocusTheme.coral)
                             }
                         } else if let task = model.activeTaskRecord, task.landingCommit != nil {
@@ -575,7 +466,7 @@ struct ReviewAndLandView: View {
                                         .disabled(model.isLandingOperationRunning)
                                     Button("Open Pull Request") { model.openLandedPullRequest() }
                                     Text(task.landingCommit?.prefix(10) ?? "")
-                                        .font(.system(size: 8, design: .monospaced))
+                                        .font(.locus(size: 8, design: .monospaced))
                                         .foregroundStyle(LocusTheme.muted)
                                 }
                             }
@@ -583,13 +474,13 @@ struct ReviewAndLandView: View {
                             TextField("Branch name", text: $branchName)
                                 .accessibilityIdentifier("landing.branch")
                             if let branchProblem {
-                                Text(branchProblem).font(.system(size: 8)).foregroundStyle(LocusTheme.coral)
+                                Text(branchProblem).font(.locus(size: 8)).foregroundStyle(LocusTheme.coral)
                             }
                             TextField("Commit message", text: $commitMessage, axis: .vertical)
                                 .lineLimit(2...5)
                                 .accessibilityIdentifier("landing.commitMessage")
                             Text("A failed commit hook leaves the new branch and staged index ready to inspect and retry.")
-                                .font(.system(size: 8))
+                                .font(.locus(size: 8))
                                 .foregroundStyle(LocusTheme.muted)
                         }
                         Color.clear
@@ -610,7 +501,7 @@ struct ReviewAndLandView: View {
                 Text(checksAreCurrentAndPassing
                     ? "Current checks passed."
                     : "Landing without passing current checks requires an explicit confirmation.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(checksAreCurrentAndPassing ? LocusTheme.success : LocusTheme.warning)
                 Spacer()
                 if model.activeTaskRecord?.landingCommit != nil && destination == "branch" {
@@ -672,7 +563,7 @@ struct ReviewAndLandView: View {
             destination = value
         } label: {
             Text(title)
-                .font(.system(size: 10, weight: .medium))
+                .font(.locus(size: 10, weight: .medium))
                 .foregroundStyle(selected ? LocusTheme.ink : LocusTheme.muted)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
@@ -680,19 +571,19 @@ struct ReviewAndLandView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.locus())
         .accessibilityValue(selected ? "Selected" : "Not selected")
     }
 
     private func stageHeader(_ number: String, _ title: String) -> some View {
         HStack(spacing: 8) {
             Text(number)
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(.locus(size: 9, weight: .bold, design: .monospaced))
                 .foregroundStyle(LocusTheme.brandInk)
                 .frame(width: 22, height: 22)
                 .background(LocusTheme.signal)
                 .clipShape(Circle())
-            Text(title).font(.system(size: 12, weight: .bold))
+            Text(title).font(.locus(size: 12, weight: .bold))
         }
     }
 
@@ -738,9 +629,9 @@ struct ActivityCenterView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Background Activity")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(.locus(size: 15, weight: .bold))
                     Text("Work keeps running when you move between chats.")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 Spacer()
@@ -761,14 +652,14 @@ struct ActivityCenterView: View {
                 }
                 .accessibilityIdentifier("activity.refresh")
                 Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
+                    withAnimation(LocusMotion.spatial) {
                         model.toggleActivityCenter()
                     }
                 } label: {
                     Image(systemName: "xmark")
                         .frame(width: 22, height: 22)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .help("Close Activities")
                 .accessibilityLabel("Close Activities")
                 .accessibilityIdentifier("activity.close")
@@ -795,12 +686,12 @@ struct ActivityCenterView: View {
                                     VStack(alignment: .leading, spacing: 7) {
                                         HStack {
                                             Text(group.rawValue.uppercased())
-                                                .font(.system(size: 8, weight: .bold))
+                                                .font(.locus(size: 8, weight: .bold))
                                                 .tracking(0.8)
                                                 .foregroundStyle(group == .attention
                                                     ? LocusTheme.warning : LocusTheme.muted)
                                             Text("\(runs.count)")
-                                                .font(.system(size: 8, design: .monospaced))
+                                                .font(.locus(size: 8, design: .monospaced))
                                                 .foregroundStyle(LocusTheme.muted)
                                         }
                                         ForEach(runs) { run in
@@ -853,20 +744,20 @@ struct ActivityCenterView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: symbol(for: run))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.locus(size: 13, weight: .semibold))
                     .foregroundStyle(color(for: run))
                     .frame(width: 20)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 7) {
                         Text(chatTitle(for: run))
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.locus(size: 11, weight: .bold))
                             .lineLimit(1)
                         Text(run.state.replacingOccurrences(of: "_", with: " ").uppercased())
-                            .font(.system(size: 7, weight: .bold, design: .monospaced))
+                            .font(.locus(size: 7, weight: .bold, design: .monospaced))
                             .foregroundStyle(color(for: run))
                         if model.activityIsUnseen(run) {
                             Text("NEW")
-                                .font(.system(size: 7, weight: .bold, design: .monospaced))
+                                .font(.locus(size: 7, weight: .bold, design: .monospaced))
                                 .foregroundStyle(LocusTheme.brandInk)
                                 .padding(.horizontal, 5)
                                 .frame(height: 16)
@@ -885,10 +776,10 @@ struct ActivityCenterView: View {
                         }
                         Text("· \(elapsed(run, now: now))")
                     }
-                    .font(.system(size: 8, design: .monospaced))
+                    .font(.locus(size: 8, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
                     Text(run.recoveryReason?.nilIfEmpty ?? meaningfulStatus(for: run))
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.inkSoft)
                         .lineLimit(2)
                 }
@@ -937,7 +828,7 @@ struct ActivityCenterView: View {
                 }
                 Spacer()
             }
-            .font(.system(size: 8, weight: .semibold))
+            .font(.locus(size: 8, weight: .semibold))
             .buttonStyle(ActivityActionButtonStyle())
         }
         .padding(12)
@@ -1013,16 +904,16 @@ private struct ModelPickerPopover: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("Model")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.locus(size: 12, weight: .bold))
                     .accessibilityIdentifier("workspace.modelPicker.popover")
                 Spacer()
                 Button {
                     dismiss()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.locus(size: 9, weight: .bold))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .accessibilityLabel("Close model picker")
                 .accessibilityIdentifier("workspace.modelPicker.close")
             }
@@ -1095,15 +986,15 @@ private struct ModelPickerPopover: View {
         VStack(alignment: .leading, spacing: 8) {
             sectionLabel("ACTIVE TEAM")
             Text(team.name)
-                .font(.system(size: 11, weight: .bold))
+                .font(.locus(size: 11, weight: .bold))
             ForEach(model.selectedTeamModelNames, id: \.self) { name in
                 HStack(alignment: .top, spacing: 7) {
                     Image(systemName: "cpu")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.signalDeep)
                         .frame(width: 13)
                     Text(name)
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.locus(size: 8, design: .monospaced))
                         .lineLimit(2)
                         .truncationMode(.middle)
                 }
@@ -1121,8 +1012,8 @@ private struct ModelPickerPopover: View {
                 }
                 .accessibilityIdentifier("workspace.modelPicker.switchToSolo")
             }
-            .buttonStyle(.borderless)
-            .font(.system(size: 9, weight: .semibold))
+            .buttonStyle(.locus())
+            .font(.locus(size: 9, weight: .semibold))
         }
     }
 
@@ -1131,7 +1022,7 @@ private struct ModelPickerPopover: View {
             sectionLabel(model.teamModeEnabled ? "SOLO · \(section.title)" : section.title.uppercased())
             if let message = section.emptyMessage {
                 Text(message)
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
             }
             ForEach(section.models, id: \.self) { name in
@@ -1144,20 +1035,20 @@ private struct ModelPickerPopover: View {
                         Image(systemName: model.isCurrentRoute(account: section.account, model: name)
                             ? "checkmark.circle.fill"
                             : "circle")
-                            .font(.system(size: 9))
+                            .font(.locus(size: 9))
                             .foregroundStyle(model.isCurrentRoute(account: section.account, model: name)
                                 ? LocusTheme.signalDeep
                                 : LocusTheme.muted)
                             .frame(width: 13)
                         Text(name)
-                            .font(.system(size: 9, design: .monospaced))
+                            .font(.locus(size: 9, design: .monospaced))
                             .lineLimit(2)
                             .truncationMode(.middle)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .accessibilityLabel("Use \(name) from \(section.title)")
             }
         }
@@ -1171,11 +1062,11 @@ private struct ModelPickerPopover: View {
     ) -> some View {
         Button(action: action) {
             Label(title, systemImage: symbol)
-                .font(.system(size: 9, weight: .medium))
+                .font(.locus(size: 9, weight: .medium))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .padding(.horizontal, 4)
         .frame(height: 26)
         .accessibilityIdentifier(identifier)
@@ -1183,7 +1074,7 @@ private struct ModelPickerPopover: View {
 
     private func sectionLabel(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 8, weight: .bold))
+            .font(.locus(size: 8, weight: .bold))
             .tracking(0.7)
             .foregroundStyle(LocusTheme.muted)
     }
@@ -1196,25 +1087,25 @@ private struct TeamActivityPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             Button {
-                withAnimation(.easeInOut(duration: 0.16)) { expanded.toggle() }
+                withAnimation(LocusMotion.spatial) { expanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 8, weight: .bold))
-                    Image(systemName: "person.3.sequence.fill")
+                        .font(.locus(size: 8, weight: .bold))
+                    Image(systemName: "person.2.fill")
                         .foregroundStyle(LocusTheme.signalDeep)
                     Text("TEAM ACTIVITY")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.locus(size: 8, weight: .bold))
                         .tracking(0.7)
                     if let state = model.orchestrationState {
                         Text(state.title)
-                            .font(.system(size: 8, design: .monospaced))
+                            .font(.locus(size: 8, design: .monospaced))
                             .foregroundStyle(LocusTheme.muted)
                     }
                     Spacer()
                     if let task = model.activeTaskRecord {
                         Text(URL(fileURLWithPath: task.executionPath).lastPathComponent)
-                            .font(.system(size: 8, design: .monospaced))
+                            .font(.locus(size: 8, design: .monospaced))
                             .foregroundStyle(LocusTheme.muted)
                     }
                 }
@@ -1223,7 +1114,7 @@ private struct TeamActivityPanel: View {
                 .frame(height: 31)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .accessibilityIdentifier("teamActivity.toggle")
 
             if expanded {
@@ -1258,7 +1149,7 @@ private struct TeamActivityPanel: View {
                     : "Private checkout",
                 systemImage: "arrow.triangle.branch"
             )
-            .font(.system(size: 8, design: .monospaced))
+            .font(.locus(size: 8, design: .monospaced))
             .foregroundStyle(LocusTheme.muted)
             Spacer()
             Button("Review & Land") { model.prepareReviewAndLand() }
@@ -1274,7 +1165,7 @@ private struct TeamActivityPanel: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.locus())
         .controlSize(.small)
         .padding(.top, 3)
         .accessibilityIdentifier("teamActivity.taskActions")
@@ -1297,31 +1188,31 @@ private struct AgentActivityRow: View {
                         .foregroundStyle(stateColor)
                         .frame(width: 13)
                     Text(activity.agentName)
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.locus(size: 9, weight: .semibold))
                     if let position = activity.writerPosition, let total = activity.writerTotal {
                         Text("Coding \(position)/\(total)")
-                            .font(.system(size: 7, weight: .semibold, design: .monospaced))
+                            .font(.locus(size: 7, weight: .semibold, design: .monospaced))
                             .foregroundStyle(LocusTheme.signalDeep)
                     }
                     Text("\(activity.provider) · \(activity.model)")
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.locus(size: 8, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
                         .lineLimit(1)
                     Spacer()
                     Text("\(activity.elapsedMilliseconds / 1_000)s · \((activity.promptTokens + activity.completionTokens).formatted()) tok")
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.locus(size: 8, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             Text(activity.goal)
-                .font(.system(size: 8))
+                .font(.locus(size: 8))
                 .foregroundStyle(LocusTheme.inkSoft)
                 .lineLimit(2)
             if outputExpanded, !activity.output.isEmpty {
                 Text(activity.output)
-                    .font(.system(size: 8, design: .monospaced))
+                    .font(.locus(size: 8, design: .monospaced))
                     .foregroundStyle(LocusTheme.inkSoft)
                     .textSelection(.enabled)
                     .padding(7)
@@ -1338,13 +1229,13 @@ private struct AgentActivityRow: View {
                         reasoningExpanded.toggle()
                     } label: {
                         Label(reasoningExpanded ? "Hide reasoning" : "Show reasoning", systemImage: "brain")
-                            .font(.system(size: 8, weight: .semibold))
+                            .font(.locus(size: 8, weight: .semibold))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.locus())
                 }
                 if reasoningExpanded || thinkingVisibility == .expanded {
                     Text(reasoning)
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.locus(size: 8, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
                         .textSelection(.enabled)
                         .padding(7)
@@ -1410,10 +1301,11 @@ private struct WorkStatusStrip: View {
                     }
                     if let info = model.sessionInfo {
                         Text("provider · \(info.promptTokens.formatted()) in / \(info.completionTokens.formatted()) out")
+                            .accessibilityIdentifier("workspace.tokenStatus")
                     }
                 }
-                .font(.system(size: 8, design: .monospaced))
-                .foregroundStyle(LocusTheme.muted)
+                .font(.locus(size: 8, design: .monospaced))
+                .foregroundStyle(LocusTheme.inkSoft)
                 .frame(maxWidth: 740)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("workspace.workStatus")
@@ -1490,7 +1382,7 @@ struct JustChatControl: View {
         }
         .shadow(color: LocusTheme.ink.opacity(0.08), radius: 2, y: 1)
         .layoutPriority(2)
-        .animation(.easeInOut(duration: 0.16), value: isChatSelected)
+        .animation(LocusMotion.spatial, value: isChatSelected)
         .help(
             isChatSelected
                 ? "Just Chat is on — no workspace files, commands, skills, or MCP tools"
@@ -1510,7 +1402,7 @@ struct JustChatControl: View {
     ) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 12, weight: .medium))
+                .font(.locus(size: 12, weight: .medium))
                 .foregroundStyle(selected ? LocusTheme.white : LocusTheme.muted)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background {
@@ -1522,7 +1414,7 @@ struct JustChatControl: View {
                 }
                 .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .accessibilityLabel(title)
         .accessibilityValue(selected ? "Selected" : "Not selected")
         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -1585,6 +1477,8 @@ private struct ConversationView: View {
                         .frame(height: 1)
                         .id(bottomID)
                 }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Conversation transcript")
                 .frame(maxWidth: 740)
                 .padding(.horizontal, 28)
                 .padding(.top, model.blocks.isEmpty ? 0 : 26)
@@ -1602,7 +1496,7 @@ private struct ConversationView: View {
                         scrollCoordinator.jumpToLatest(animated: true)
                     } label: {
                         Label("Jump to Latest", systemImage: "arrow.down")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.locus(size: 9, weight: .semibold))
                             .foregroundStyle(LocusTheme.ink)
                             .padding(.horizontal, 12)
                             .frame(height: 30)
@@ -1611,7 +1505,7 @@ private struct ConversationView: View {
                             .overlay { Capsule().stroke(LocusTheme.line, lineWidth: 1) }
                             .shadow(color: .black.opacity(0.08), radius: 12, y: 5)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.locus())
                     .padding(.bottom, 12)
                     .accessibilityIdentifier("conversation.jumpToLatest")
                 }
@@ -1722,7 +1616,7 @@ private struct ConversationView: View {
 
     private func scrollToCurrentMatch(_ proxy: ScrollViewProxy) {
         guard let match = model.currentTranscriptMatch else { return }
-        withAnimation(.easeOut(duration: 0.14)) {
+        withAnimation(LocusMotion.scroll) {
             proxy.scrollTo(match, anchor: .center)
         }
     }
@@ -1742,7 +1636,7 @@ private struct ConversationView: View {
             }
         })?.id
         guard let destination else { return }
-        withAnimation(.easeOut(duration: 0.14)) {
+        withAnimation(LocusMotion.scroll) {
             proxy.scrollTo(destination, anchor: .center)
         }
     }
@@ -2100,12 +1994,12 @@ private struct TranscriptSearchBar: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.locus(size: 10, weight: .semibold))
                 .foregroundStyle(LocusTheme.muted)
 
             TextField("Find in conversation", text: $model.transcriptSearchQuery)
                 .textFieldStyle(.plain)
-                .font(.system(size: 11))
+                .font(.locus(size: 11))
                 .focused($focused)
                 .accessibilityIdentifier("search.field")
                 .onKeyPress(keys: [.return]) { press in
@@ -2119,7 +2013,7 @@ private struct TranscriptSearchBar: View {
 
             if !countText.isEmpty {
                 Text(countText)
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .font(.locus(size: 9, weight: .semibold, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
                     .accessibilityIdentifier("search.count")
             }
@@ -2128,9 +2022,9 @@ private struct TranscriptSearchBar: View {
                 model.advanceTranscriptSearch(-1)
             } label: {
                 Image(systemName: "chevron.up")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.locus(size: 9, weight: .semibold))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .foregroundStyle(LocusTheme.muted)
             .disabled(model.transcriptSearchMatches.isEmpty)
             .help("Previous match (⇧↵)")
@@ -2141,9 +2035,9 @@ private struct TranscriptSearchBar: View {
                 model.advanceTranscriptSearch(1)
             } label: {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.locus(size: 9, weight: .semibold))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .foregroundStyle(LocusTheme.muted)
             .disabled(model.transcriptSearchMatches.isEmpty)
             .help("Next match (↵)")
@@ -2154,9 +2048,9 @@ private struct TranscriptSearchBar: View {
                 model.closeTranscriptSearch()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.locus(size: 9, weight: .semibold))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .foregroundStyle(LocusTheme.muted)
             .help("Close search (esc)")
             .accessibilityLabel("Close search")
@@ -2175,12 +2069,6 @@ private struct TranscriptSearchBar: View {
 private struct EmptyConversationView: View {
     @EnvironmentObject private var model: AppModel
 
-    private let suggestions = [
-        ("sparkles", "Polish an existing interface without changing its behavior"),
-        ("doc.text.magnifyingglass", "Audit this project and identify the three highest-risk areas"),
-        ("checklist", "Find every TODO and turn them into an implementation plan"),
-    ]
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
@@ -2188,61 +2076,30 @@ private struct EmptyConversationView: View {
                     .fill(runtimeColor)
                     .frame(width: 7, height: 7)
                 Text(runtimeStatus)
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.locus(size: 8, weight: .bold))
                     .tracking(0.9)
                     .foregroundStyle(LocusTheme.muted)
             }
             .padding(.top, 48)
 
             Text("What are we making\nbetter today?")
-                .font(.system(size: 40, weight: .medium))
+                .font(.locus(size: 40, weight: .medium))
                 .tracking(-1.8)
                 .foregroundStyle(LocusTheme.ink)
                 .padding(.top, 15)
 
             Text("Locus works inside your selected workspace with local Ollama models. You stay in control of every file change and command.")
-                .font(.system(size: 11))
+                .font(.locus(size: 11))
                 .foregroundStyle(LocusTheme.muted)
                 .lineSpacing(4)
                 .frame(maxWidth: 520, alignment: .leading)
                 .padding(.top, 15)
 
-            Rectangle()
-                .fill(LocusTheme.line)
-                .frame(height: 1)
-                .padding(.vertical, 30)
-
-            VStack(spacing: 8) {
-                ForEach(Array(suggestions.enumerated()), id: \.offset) { index, item in
-                    Button {
-                        model.send(item.1)
-                    } label: {
-                        HStack(spacing: 11) {
-                            Image(systemName: item.0)
-                                .font(.system(size: 13))
-                                .foregroundStyle(index == 0 ? LocusTheme.ink : LocusTheme.muted)
-                                .frame(width: 28, height: 28)
-                                .background(index == 0 ? LocusTheme.signal : LocusTheme.paperDeep)
-                                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                            Text(item.1)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(LocusTheme.inkSoft)
-                                .multilineTextAlignment(.leading)
-                            Spacer()
-                            Image(systemName: "arrow.up.right")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(LocusTheme.muted.opacity(0.7))
-                        }
-                        .padding(.horizontal, 10)
-                        .frame(minHeight: 46)
-                        .locusCard(radius: 9)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("suggestion.\(index)")
-                }
-            }
         }
         .frame(maxWidth: 700, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Welcome to Locus")
+        .accessibilityIdentifier("conversation.welcome")
     }
 
     private var activeRuntimePhase: RuntimePhase {
@@ -2279,7 +2136,7 @@ private struct ActiveAssistantBlockView: View {
             BrandMark(compact: true)
             VStack(alignment: .leading, spacing: 8) {
                 Text("Locus")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.locus(size: 10, weight: .bold))
                 StreamingMessageContentView(
                     reply: reply,
                     thinkingVisibility: thinkingVisibility
@@ -2301,7 +2158,6 @@ private struct MessageBlockView: View, Equatable {
     let onUseAsDraft: () -> Void
     let onRewind: () -> Void
     let onRegenerate: () -> Void
-    @State private var isHovering = false
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.block == rhs.block
@@ -2317,7 +2173,7 @@ private struct MessageBlockView: View, Equatable {
             case .user:
                 conversationRow(name: "You", avatar: userAvatar) {
                     Text(block.text)
-                        .font(.system(size: 12))
+                        .font(.locus(size: 12))
                         .foregroundStyle(LocusTheme.inkSoft)
                         .lineSpacing(4)
                         .textSelection(.enabled)
@@ -2357,7 +2213,7 @@ private struct MessageBlockView: View, Equatable {
                     TurnCompletionMarker(completion: completion)
                 } else {
                     Label(block.text, systemImage: "info.circle")
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.locus(size: 10, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -2367,7 +2223,7 @@ private struct MessageBlockView: View, Equatable {
 
             case .error:
                 Label(block.text, systemImage: "xmark.octagon.fill")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.locus(size: 10, weight: .medium))
                     .foregroundStyle(LocusTheme.coral)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -2379,6 +2235,7 @@ private struct MessageBlockView: View, Equatable {
                     }
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(blockAccessibilityIdentifier)
         .contextMenu {
             if block.kind == .user || block.kind == .assistant {
@@ -2409,7 +2266,7 @@ private struct MessageBlockView: View, Equatable {
     private var userAvatar: AnyView {
         AnyView(
             Image(systemName: "person.fill")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.locus(size: 10, weight: .semibold))
                 .foregroundStyle(LocusTheme.muted)
                 .frame(width: 30, height: 30)
                 .background(LocusTheme.paperDeep)
@@ -2432,24 +2289,18 @@ private struct MessageBlockView: View, Equatable {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
                     Text(name)
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.locus(size: 10, weight: .bold))
                     Spacer()
-                    // Keep this region in the layout even while hidden. If
-                    // hover inserts the buttons as rows pass beneath a fixed
-                    // pointer, their height changes during a wheel gesture and
-                    // makes the transcript visibly jump.
+                    // Keep message actions visible and in a stable region so
+                    // they remain discoverable without pointer hover and do
+                    // not change row geometry during scrolling.
                     messageActions
-                        .opacity(isHovering ? 1 : 0)
-                        .allowsHitTesting(isHovering)
-                        .accessibilityHidden(!isHovering)
+                        .accessibilityHidden(false)
                 }
                 .frame(minHeight: 22)
                 content()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .onHover { hovering in
-            if hovering != isHovering { isHovering = hovering }
         }
     }
 
@@ -2485,13 +2336,13 @@ private struct MessageBlockView: View, Equatable {
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.locus(size: 9, weight: .semibold))
                 .foregroundStyle(LocusTheme.muted)
                 .frame(width: 24, height: 22)
                 .background(LocusTheme.paperDeep.opacity(0.8))
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .help(help)
         .accessibilityLabel(help)
         .accessibilityIdentifier("message.\(block.id.uuidString).\(identifier)")
@@ -2525,16 +2376,16 @@ private struct TurnCompletionMarker: View {
                 .frame(height: 1)
 
             Image(systemName: symbol)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.locus(size: 10, weight: .semibold))
                 .foregroundStyle(color)
 
             Text(completion.title)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.locus(size: 9, weight: .semibold))
                 .foregroundStyle(LocusTheme.inkSoft)
                 .fixedSize()
 
             Text("· Worked for \(completion.durationText)")
-                .font(.system(size: 8, design: .monospaced))
+                .font(.locus(size: 8, design: .monospaced))
                 .foregroundStyle(LocusTheme.muted)
                 .fixedSize()
 
@@ -2545,6 +2396,7 @@ private struct TurnCompletionMarker: View {
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(completion.title). Worked for \(completion.durationText).")
+        .accessibilityIdentifier("turnCompletion.content")
     }
 }
 
@@ -2559,7 +2411,7 @@ private struct HeaderIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 13, weight: .medium))
+                .font(.locus(size: 13, weight: .medium))
                 .foregroundStyle(LocusTheme.muted)
                 .frame(width: 30, height: 30)
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -2568,7 +2420,7 @@ private struct HeaderIconButton: View {
                         .stroke(LocusTheme.line, lineWidth: 1)
                 }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .help(label)
         .accessibilityLabel(label)
         .accessibilityIdentifier(identifier)
@@ -2629,7 +2481,7 @@ private struct ContextUsageChip: View {
                     }
                     .frame(width: 12, height: 12)
                 Text(chipText)
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .font(.locus(size: 9, weight: .semibold, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
             }
             .padding(.horizontal, 9)
@@ -2641,7 +2493,7 @@ private struct ContextUsageChip: View {
                     .stroke(LocusTheme.line, lineWidth: 1)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .help(helpText)
         .accessibilityLabel(
             fraction == nil
@@ -2652,7 +2504,7 @@ private struct ContextUsageChip: View {
         .popover(isPresented: $detailPresented, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("CONTEXT WINDOW")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.locus(size: 8, weight: .bold))
                     .tracking(0.8)
                     .foregroundStyle(LocusTheme.muted)
                 statRow(
@@ -2690,16 +2542,17 @@ private struct ContextUsageChip: View {
     private func statRow(_ label: String, _ value: String) -> some View {
         HStack {
             Text(label)
-                .font(.system(size: 9))
+                .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.muted)
             Spacer()
             Text(value)
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .font(.locus(size: 9, weight: .semibold, design: .monospaced))
         }
     }
 }
 
 private struct ThinkingDots: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var active = false
 
     var body: some View {
@@ -2708,15 +2561,21 @@ private struct ThinkingDots: View {
                 Circle()
                     .fill(LocusTheme.muted)
                     .frame(width: 4, height: 4)
-                    .offset(y: active ? (index == 1 ? -3 : 0) : (index == 1 ? 0 : -2))
+                    // A quiet luminance pulse communicates activity without
+                    // the vestibular cost of endlessly moving dots.
+                    .opacity(
+                        reduceMotion
+                            ? (index == 1 ? 0.9 : 0.48)
+                            : (active == (index == 1) ? 0.95 : 0.42)
+                    )
             }
             Text("Thinking")
-                .font(.system(size: 9))
+                .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.muted)
                 .padding(.leading, 3)
         }
-        .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: active)
-        .onAppear { active = true }
+        .animation(reduceMotion ? nil : LocusMotion.activityPulse, value: active)
+        .onAppear { if !reduceMotion { active = true } }
     }
 }
 
@@ -2742,17 +2601,17 @@ private struct ThinkingActivityView: View {
                 HStack(spacing: 8) {
                     if visibility != .expanded {
                         Image(systemName: isOpen ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.locus(size: 9, weight: .semibold))
                             .foregroundStyle(LocusTheme.muted)
                     }
                     Image(systemName: "brain")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.locus(size: 12, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
                     Text("Thought process")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .font(.locus(size: 9, weight: .bold, design: .monospaced))
                     Spacer()
                     Text("DONE")
-                        .font(.system(size: 7, weight: .bold))
+                        .font(.locus(size: 7, weight: .bold))
                         .tracking(0.6)
                         .foregroundStyle(LocusTheme.muted)
                 }
@@ -2760,7 +2619,7 @@ private struct ThinkingActivityView: View {
                 .frame(height: 39)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .disabled(visibility == .expanded)
             .accessibilityLabel(
                 "Thought process, \(entries.count) update\(entries.count == 1 ? "" : "s"), "
@@ -2772,7 +2631,7 @@ private struct ThinkingActivityView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                         Text(entry.text)
-                            .font(.system(size: 10))
+                            .font(.locus(size: 10))
                             .foregroundStyle(LocusTheme.muted)
                             .lineSpacing(3)
                             .textSelection(.enabled)
@@ -2828,16 +2687,18 @@ private struct ToolActivityView: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.locus(size: 9, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
+                        .accessibilityHidden(true)
                     Image(systemName: statusSymbol)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.locus(size: 12, weight: .semibold))
                         .foregroundStyle(statusColor)
+                        .accessibilityHidden(true)
                     Text("\(tools.count) tool call\(tools.count == 1 ? "" : "s")")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .font(.locus(size: 9, weight: .bold, design: .monospaced))
                     Spacer()
                     Text(collapsedStatusLabel.uppercased())
-                        .font(.system(size: 7, weight: .bold))
+                        .font(.locus(size: 7, weight: .bold))
                         .tracking(0.6)
                         .foregroundStyle(LocusTheme.muted)
                 }
@@ -2845,7 +2706,7 @@ private struct ToolActivityView: View {
                 .frame(height: 39)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .accessibilityLabel(
                 "\(tools.count) tool call\(tools.count == 1 ? "" : "s"), "
                     + "\(collapsedStatusLabel), \(expanded ? "collapse" : "expand")"
@@ -2873,10 +2734,10 @@ private struct ToolActivityView: View {
                 .fill(LocusTheme.line)
                 .frame(height: 1)
             Image(systemName: statusSymbol)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.locus(size: 10, weight: .semibold))
                 .foregroundStyle(statusColor)
             Text(hiddenStatusLabel)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.locus(size: 9, weight: .semibold))
                 .foregroundStyle(LocusTheme.inkSoft)
                 .fixedSize()
             Rectangle()
@@ -2941,27 +2802,27 @@ private struct ToolCardView: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.locus(size: 9, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
                     Image(systemName: statusSymbol)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.locus(size: 12, weight: .semibold))
                         .foregroundStyle(statusColor)
                     Text(tool.tool)
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .font(.locus(size: 9, weight: .bold, design: .monospaced))
                     Text(tool.summary)
-                        .font(.system(size: 9, design: .monospaced))
+                        .font(.locus(size: 9, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
                         .lineLimit(1)
                     Spacer()
                     Text(statusLabel.uppercased())
-                        .font(.system(size: 7, weight: .bold))
+                        .font(.locus(size: 7, weight: .bold))
                         .tracking(0.6)
                         .foregroundStyle(LocusTheme.muted)
                 }
                 .padding(.horizontal, 12)
                 .frame(height: 39)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .accessibilityLabel("\(tool.tool), \(statusLabel), \(expanded ? "collapse" : "expand")")
             .accessibilityIdentifier("tool.\(tool.toolID).toggle")
 
@@ -2980,7 +2841,7 @@ private struct ToolCardView: View {
                             DiffTextView(text: result)
                         } else {
                             Text(result)
-                                .font(.system(size: 9, design: .monospaced))
+                                .font(.locus(size: 9, design: .monospaced))
                                 .foregroundStyle(LocusTheme.muted)
                                 .lineLimit(14)
                                 .textSelection(.enabled)
@@ -2994,7 +2855,7 @@ private struct ToolCardView: View {
                             "Waiting for your decision in the composer below",
                             systemImage: "arrow.down.to.line"
                         )
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.locus(size: 9, weight: .semibold))
                         .foregroundStyle(LocusTheme.warning)
                     }
                 }

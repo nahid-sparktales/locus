@@ -1,0 +1,10 @@
+{
+  "provider": "Eoghan Henn / rebelytics.com",
+  "repository": "https://github.com/rebelytics/one-skill-to-rule-them-all",
+  "commit": "281f13466cd3a73e9ebc9d210907748e1941a3dd",
+  "upstream_path": "SKILL.md",
+  "license": "CC BY 4.0",
+  "license_file": "LICENSE.txt",
+  "activation": "startup",
+  "startup_order": 20
+}

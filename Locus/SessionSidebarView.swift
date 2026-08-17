@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The sidebar's shared rail. Every leading glyph — plus, magnifying glass,
@@ -15,13 +16,11 @@ private enum SidebarMetrics {
     static let iconGap: CGFloat = 8
 }
 
-/// Workspace groups are the parent object, so their folder is the larger
-/// anchor; individual chats use the former compact workspace footprint.
+/// Workspace groups are the parent object, so their folder remains the visual
+/// anchor while the child chat rows rely on indentation and text hierarchy.
 enum SidebarIconMetrics {
     static let workspaceIconSize: CGFloat = 27
     static let workspaceSymbolSize: CGFloat = 12
-    static let chatIconSize: CGFloat = 20
-    static let chatSymbolSize: CGFloat = 10
 }
 
 struct SessionSidebarView: View {
@@ -37,7 +36,7 @@ struct SessionSidebarView: View {
             controls
 
             ScrollView {
-                LazyVStack(spacing: 4) {
+                LazyVStack(spacing: 2) {
                     if model.workspaceChatGroups.isEmpty {
                         emptyState
                     } else {
@@ -62,7 +61,7 @@ struct SessionSidebarView: View {
                             if model.isWorkspaceExpanded(group.id) {
                                 if group.chats.isEmpty {
                                     Text("No chats yet")
-                                        .font(.system(size: 9))
+                                        .font(.locus(size: 9))
                                         .foregroundStyle(LocusTheme.muted)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .padding(.leading, 42)
@@ -70,7 +69,7 @@ struct SessionSidebarView: View {
                                 } else {
                                     ForEach(group.chats) { session in
                                         sessionRow(session)
-                                            .padding(.leading, 14)
+                                            .padding(.leading, 18)
                                     }
                                 }
                             }
@@ -78,6 +77,8 @@ struct SessionSidebarView: View {
                     }
                     transcriptHitsSection
                 }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Workspaces and chats")
                 .padding(.horizontal, 10)
                 .padding(.bottom, 12)
             }
@@ -86,11 +87,15 @@ struct SessionSidebarView: View {
             footer
         }
         .frame(maxHeight: .infinity)
-        .background(LocusTheme.paperDeep)
+        .locusSurface(.structural)
+        .background {
+            // Content remains below the traffic lights, while its structural
+            // material fills the otherwise mismatched title-bar corner.
+            LocusTheme.surfaceStructural
+                .ignoresSafeArea(.container, edges: .top)
+        }
         .overlay(alignment: .trailing) {
-            Rectangle()
-                .fill(LocusTheme.line)
-                .frame(width: 1)
+            SidebarResizeHandle()
                 // The sidebar content stays below the traffic lights, but its
                 // column boundary should meet the top of the window chrome.
                 .ignoresSafeArea(.container, edges: .top)
@@ -122,24 +127,24 @@ struct SessionSidebarView: View {
             BrandMark(compact: true)
 
             Text("Locus")
-                .font(.system(size: 14, weight: .bold))
+                .font(.locus(size: 14, weight: .bold))
                 .foregroundStyle(LocusTheme.ink)
                 .accessibilityIdentifier("sidebar.brand")
 
             Spacer(minLength: 4)
 
             Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
+                withAnimation(LocusMotion.spatial) {
                     model.sidebarCollapsed.toggle()
                 }
             } label: {
                 Image(systemName: "sidebar.left")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.locus(size: 13, weight: .medium))
                     .foregroundStyle(LocusTheme.muted)
                     .frame(width: 28, height: 28)
                     .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .help("Hide sidebar")
             .accessibilityLabel("Hide sidebar")
             .accessibilityIdentifier("sidebar.collapse")
@@ -151,7 +156,7 @@ struct SessionSidebarView: View {
     private var primaryNavigation: some View {
         VStack(spacing: 6) {
             JustChatControl(isChatSelected: model.justChatEnabled) { enabled in
-                withAnimation(.easeInOut(duration: 0.18)) {
+                withAnimation(LocusMotion.spatial) {
                     model.setJustChatEnabled(enabled)
                 }
             }
@@ -205,10 +210,10 @@ struct SessionSidebarView: View {
         Button(action: action) {
             HStack(spacing: SidebarMetrics.iconGap) {
                 Image(systemName: symbol)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.locus(size: 12, weight: .medium))
                     .frame(width: SidebarMetrics.iconColumn)
                 Text(title)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.locus(size: 10, weight: .semibold))
                 Spacer(minLength: 4)
             }
             .foregroundStyle(LocusTheme.inkSoft)
@@ -216,7 +221,7 @@ struct SessionSidebarView: View {
             .frame(height: 30)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .help(help)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier(identifier)
@@ -236,10 +241,10 @@ struct SessionSidebarView: View {
                         Text("New chat")
                         Spacer(minLength: 4)
                         Text("⌘N")
-                            .font(.system(size: 8, design: .monospaced))
+                            .font(.locus(size: 8, design: .monospaced))
                             .foregroundStyle(LocusTheme.paper.opacity(0.45))
                     }
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.locus(size: 11, weight: .semibold))
                     .foregroundStyle(LocusTheme.paper)
                     .padding(.horizontal, SidebarMetrics.rowInset)
                     .frame(maxWidth: .infinity)
@@ -247,16 +252,16 @@ struct SessionSidebarView: View {
                     .background(LocusTheme.ink)
                     .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .accessibilityIdentifier("sidebar.newSession")
 
                 Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
+                    withAnimation(LocusMotion.spatial) {
                         model.toggleActivityCenter()
                     }
                 } label: {
                     Image(systemName: model.activityCenterPresented ? "bell.fill" : "bell")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.locus(size: 12, weight: .semibold))
                         .foregroundStyle(model.activityCenterPresented
                             ? LocusTheme.ink : LocusTheme.inkSoft)
                         .frame(width: 36, height: 36)
@@ -271,7 +276,7 @@ struct SessionSidebarView: View {
                         .overlay(alignment: .topTrailing) {
                             if model.activityNeedsAttentionCount > 0 {
                                 Text("\(model.activityNeedsAttentionCount)")
-                                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                                    .font(.locus(size: 7, weight: .bold, design: .monospaced))
                                     .foregroundStyle(Color.white)
                                     .frame(minWidth: 14, minHeight: 14)
                                     .background(LocusTheme.danger)
@@ -281,7 +286,7 @@ struct SessionSidebarView: View {
                             }
                         }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .help("Activities")
                 .accessibilityLabel("Activities")
                 .accessibilityIdentifier("sidebar.activity")
@@ -294,12 +299,12 @@ struct SessionSidebarView: View {
 
             HStack(spacing: SidebarMetrics.iconGap) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.locus(size: 11, weight: .medium))
                     .frame(width: SidebarMetrics.iconColumn)
                     .foregroundStyle(LocusTheme.muted)
                 TextField("Search sessions", text: $model.searchQuery)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 11))
+                    .font(.locus(size: 11))
                     .focused($searchFocused)
                     .onChange(of: model.sidebarSearchFocusToken) {
                         searchFocused = true
@@ -310,7 +315,7 @@ struct SessionSidebarView: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.locus())
                     .foregroundStyle(LocusTheme.muted)
                     .accessibilityLabel("Clear session search")
                 }
@@ -392,7 +397,7 @@ struct SessionSidebarView: View {
                         .controlSize(.mini)
                     Text(model.transcriptSearchIndexing
                         ? "Indexing conversations…" : "Searching…")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -403,7 +408,7 @@ struct SessionSidebarView: View {
             if model.transcriptHits.isEmpty,
                !model.isSearchingTranscripts, !model.transcriptSearchIndexing {
                 Text("No matching messages")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, SidebarMetrics.rowInset)
@@ -422,21 +427,21 @@ struct SessionSidebarView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
                     Image(systemName: hit.role == "user" ? "person" : "sparkle")
-                        .font(.system(size: 8))
+                        .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.muted)
                     Text(hit.title?.nilIfEmpty ?? "Untitled chat")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.locus(size: 9, weight: .semibold))
                         .lineLimit(1)
                     Spacer()
                     Text(
                         Date(timeIntervalSince1970: hit.mtime)
                             .formatted(.relative(presentation: .named))
                     )
-                    .font(.system(size: 7))
+                    .font(.locus(size: 7))
                     .foregroundStyle(LocusTheme.muted)
                 }
                 Text(highlightedSnippet(hit))
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
@@ -448,7 +453,7 @@ struct SessionSidebarView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .disabled(model.chatNavigationDisabled)
         .accessibilityIdentifier("sidebar.hit.\(hit.id)")
     }
@@ -470,13 +475,13 @@ struct SessionSidebarView: View {
     private var emptyState: some View {
         VStack(spacing: 9) {
             Image(systemName: "bubble.left")
-                .font(.system(size: 18))
+                .font(.locus(size: 18))
                 .foregroundStyle(LocusTheme.muted)
             Text(model.searchQuery.isEmpty ? "No saved sessions yet" : "No matching sessions")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.locus(size: 10, weight: .semibold))
             if model.searchQuery.isEmpty {
                 Text("Start a conversation and it will appear here.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .multilineTextAlignment(.center)
             }
@@ -535,7 +540,7 @@ struct SessionSidebarView: View {
             .accessibilityIdentifier("sidebar.reconnect")
         } label: {
             Image(systemName: "gearshape")
-                .font(.system(size: 12, weight: .medium))
+                .font(.locus(size: 12, weight: .medium))
                 .foregroundStyle(LocusTheme.muted)
                 .frame(width: 24, height: 22)
                 .contentShape(Rectangle())
@@ -582,22 +587,23 @@ struct SessionSidebarView: View {
         } label: {
             HStack(spacing: SidebarMetrics.iconGap) {
                 Image(systemName: "folder")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.locus(size: 11, weight: .medium))
                     .frame(width: SidebarMetrics.iconColumn)
                     .foregroundStyle(LocusTheme.muted)
+                    .accessibilityHidden(true)
                     .accessibilityIdentifier("sidebar.workspaceIcon")
                 VStack(alignment: .leading, spacing: 1) {
                     Text(URL(fileURLWithPath: model.workspacePath).lastPathComponent)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.locus(size: 10, weight: .semibold))
                         .foregroundStyle(LocusTheme.ink)
                         .lineLimit(1)
                     Text("Workspace")
-                        .font(.system(size: 8))
+                        .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.locus(size: 8, weight: .semibold))
                     .foregroundStyle(LocusTheme.muted)
             }
             .padding(.horizontal, SidebarMetrics.rowInset)
@@ -614,7 +620,7 @@ struct SessionSidebarView: View {
         // which pushed the folder glyph off the rail the New chat and search
         // icons sit on. The plain button style lays the label out verbatim.
         .menuStyle(.button)
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .menuIndicator(.hidden)
         .accessibilityLabel("Workspace menu")
         .accessibilityIdentifier("sidebar.workspaceMenu")
@@ -628,7 +634,7 @@ struct SessionSidebarView: View {
             Text(agentStatusText)
                 .lineLimit(1)
         }
-        .font(.system(size: 8))
+        .font(.locus(size: 8))
         .foregroundStyle(LocusTheme.muted)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("sidebar.agentStatus")
@@ -651,6 +657,63 @@ struct SessionSidebarView: View {
         }
     }
 
+}
+
+private struct SidebarResizeHandle: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var dragStartWidth: CGFloat?
+    @State private var hovering = false
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(LocusTheme.line)
+                .frame(width: 1)
+            Rectangle()
+                .fill(Color.clear)
+                .frame(width: 14)
+                .contentShape(Rectangle())
+        }
+        .frame(width: 14)
+        .onHover { inside in
+            hovering = inside
+            (inside ? NSCursor.resizeLeftRight : NSCursor.arrow).set()
+        }
+        .onDisappear {
+            if hovering { NSCursor.arrow.set() }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { value in
+                    if dragStartWidth == nil { dragStartWidth = model.sidebarWidth }
+                    model.setSidebarWidth((dragStartWidth ?? model.sidebarWidth) + value.translation.width)
+                }
+                .onEnded { _ in
+                    dragStartWidth = nil
+                    model.commitSidebarWidth()
+                }
+        )
+        .onTapGesture(count: 2) {
+            model.resetSidebarWidth()
+        }
+        .accessibilityElement()
+        .accessibilityLabel("Sidebar width")
+        .accessibilityValue("\(Int(model.sidebarWidth)) points")
+        .accessibilityHint("Drag to resize. Double-click to reset.")
+        .accessibilityAdjustableAction { direction in
+            let step: CGFloat = 10
+            switch direction {
+            case .increment:
+                model.setSidebarWidth(model.sidebarWidth + step)
+            case .decrement:
+                model.setSidebarWidth(model.sidebarWidth - step)
+            @unknown default:
+                return
+            }
+            model.commitSidebarWidth()
+        }
+        .accessibilityIdentifier("sidebar.resize")
+    }
 }
 
 struct TeamProgressPopover: View {
@@ -679,7 +742,7 @@ struct TeamProgressPopover: View {
                 VStack(alignment: .leading, spacing: 12) {
                     if let issue = model.selectedTeamRouteIssue {
                         Label(issue, systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: 9, weight: .medium))
+                            .font(.locus(size: 9, weight: .medium))
                             .foregroundStyle(LocusTheme.coral)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(10)
@@ -706,13 +769,13 @@ struct TeamProgressPopover: View {
 
     private var header: some View {
         HStack(spacing: 9) {
-            Image(systemName: "person.3.sequence.fill")
+            Image(systemName: "person.2.fill")
                 .foregroundStyle(LocusTheme.signalDeep)
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.selectedAgentTeam?.name ?? "Team")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.locus(size: 12, weight: .bold))
                 Text(progressStateTitle)
-                    .font(.system(size: 8, design: .monospaced))
+                    .font(.locus(size: 8, design: .monospaced))
                     .foregroundStyle(progressStateColor)
             }
             Spacer()
@@ -740,20 +803,20 @@ struct TeamProgressPopover: View {
                     .frame(width: 14)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(activity?.agentName ?? dispatcher?.name ?? "Dispatcher")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.locus(size: 10, weight: .semibold))
                     Text(dispatcherRouteLine(activity: activity, profile: dispatcher))
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.locus(size: 8, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(dispatcherDetail(activity: activity))
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.inkSoft)
                         .lineLimit(4)
                 }
                 Spacer(minLength: 6)
                 if startedAt != nil && runIsActive {
                     Text(duration(elapsed))
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.locus(size: 8, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
                 }
             }
@@ -765,7 +828,7 @@ struct TeamProgressPopover: View {
                     "Still waiting for the dispatcher. No plan or delegated jobs have started.",
                     systemImage: "clock.badge.exclamationmark"
                 )
-                .font(.system(size: 8, weight: .medium))
+                .font(.locus(size: 8, weight: .medium))
                 .foregroundStyle(LocusTheme.warning)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("teamProgress.dispatcherSlow")
@@ -787,14 +850,14 @@ struct TeamProgressPopover: View {
                 sectionLabel("DELEGATED JOBS")
                 Spacer()
                 Text("\(completedJobs)/\(model.agentActivities.count)")
-                    .font(.system(size: 8, design: .monospaced))
+                    .font(.locus(size: 8, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
             }
             if model.agentActivities.isEmpty {
                 Text(model.orchestrationState == nil
                     ? "No run yet. Send a task with this team selected."
                     : "Jobs appear here after the dispatcher returns a plan.")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -805,15 +868,15 @@ struct TeamProgressPopover: View {
                             .frame(width: 13)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(activityTitle(activity))
-                                .font(.system(size: 9, weight: .semibold))
+                                .font(.locus(size: 9, weight: .semibold))
                             Text("\(activity.provider) · \(activity.model)")
-                                .font(.system(size: 8, design: .monospaced))
+                                .font(.locus(size: 8, design: .monospaced))
                                 .foregroundStyle(LocusTheme.muted)
                                 .lineLimit(1)
                         }
                         Spacer()
                         Text(activity.state.title)
-                            .font(.system(size: 8))
+                            .font(.locus(size: 8))
                             .foregroundStyle(LocusTheme.muted)
                     }
                 }
@@ -828,11 +891,11 @@ struct TeamProgressPopover: View {
             ForEach(teamProfiles) { profile in
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
                     Text(profile.role.title)
-                        .font(.system(size: 8, weight: .semibold))
+                        .font(.locus(size: 8, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
                         .frame(width: 72, alignment: .leading)
                     Text(profile.model)
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.locus(size: 8, design: .monospaced))
                         .lineLimit(2)
                     Spacer(minLength: 0)
                 }
@@ -850,8 +913,8 @@ struct TeamProgressPopover: View {
                 Button("Stop", role: .destructive) {
                     model.cancelOrchestration(runID)
                 }
-                .buttonStyle(.borderless)
-                .font(.system(size: 9, weight: .semibold))
+                .buttonStyle(.locus())
+                .font(.locus(size: 9, weight: .semibold))
                 .foregroundStyle(LocusTheme.coral)
                 .accessibilityIdentifier("teamProgress.stop")
             }
@@ -863,11 +926,11 @@ struct TeamProgressPopover: View {
                 }
                 dismiss()
             }
-            .buttonStyle(.borderless)
-            .font(.system(size: 9, weight: .semibold))
+            .buttonStyle(.locus())
+            .font(.locus(size: 9, weight: .semibold))
             .accessibilityIdentifier("teamProgress.openRuns")
         }
-        .font(.system(size: 8, design: .monospaced))
+        .font(.locus(size: 8, design: .monospaced))
         .foregroundStyle(LocusTheme.muted)
         .padding(12)
     }
@@ -943,7 +1006,7 @@ struct TeamProgressPopover: View {
 
     private func sectionLabel(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 8, weight: .bold))
+            .font(.locus(size: 8, weight: .bold))
             .tracking(0.7)
             .foregroundStyle(LocusTheme.muted)
     }
@@ -990,18 +1053,18 @@ private struct WorkspaceGroupRow: View {
         HStack(spacing: 5) {
             Button(action: onToggle) {
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.locus(size: 8, weight: .bold))
                     .foregroundStyle(LocusTheme.muted)
                     .frame(width: 18, height: 30)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .accessibilityLabel(expanded ? "Collapse \(group.title)" : "Expand \(group.title)")
 
             Button(action: onOpen) {
                 HStack(spacing: 7) {
                     Image(systemName: group.isOther ? "tray.full" : "folder.fill")
-                        .font(.system(size: SidebarIconMetrics.workspaceSymbolSize, weight: .medium))
+                        .font(.locus(size: SidebarIconMetrics.workspaceSymbolSize, weight: .medium))
                         .foregroundStyle(active ? LocusTheme.signalDeep : LocusTheme.muted)
                         .frame(
                             width: SidebarIconMetrics.workspaceIconSize,
@@ -1010,24 +1073,24 @@ private struct WorkspaceGroupRow: View {
                         .accessibilityIdentifier("workspace.group.icon.\(group.id)")
                     VStack(alignment: .leading, spacing: 1) {
                         Text(group.title)
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.locus(size: 10, weight: .semibold))
                             .foregroundStyle(LocusTheme.ink)
                             .lineLimit(1)
                         Text("\(group.chats.count) \(group.chats.count == 1 ? "chat" : "chats")")
-                            .font(.system(size: 8))
+                            .font(.locus(size: 8))
                             .foregroundStyle(LocusTheme.muted)
                     }
                     Spacer(minLength: 3)
                     if !group.isAvailable {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 8))
+                            .font(.locus(size: 8))
                             .foregroundStyle(LocusTheme.warning)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .disabled(actionsDisabled || (group.path != nil && !group.isAvailable))
             .help(group.path ?? "Chats without saved workspace information")
             .accessibilityIdentifier("workspace.group.\(group.id)")
@@ -1035,12 +1098,12 @@ private struct WorkspaceGroupRow: View {
             if group.path != nil {
                 Button(action: onNewChat) {
                     Image(systemName: "plus")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.locus(size: 9, weight: .bold))
                         .foregroundStyle(LocusTheme.muted)
                         .frame(width: 24, height: 28)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .disabled(actionsDisabled || !group.isAvailable)
                 .help("New chat in \(group.title)")
                 .accessibilityLabel("New chat in \(group.title)")
@@ -1060,9 +1123,9 @@ private struct SectionLabel: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(.system(size: 8, weight: .bold))
+            .font(.locus(size: 8, weight: .bold))
             .tracking(1.2)
-            .foregroundStyle(LocusTheme.muted.opacity(0.8))
+            .foregroundStyle(LocusTheme.muted)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 8)
             .padding(.top, 8)
@@ -1078,23 +1141,14 @@ private struct SessionRow: View {
     let startedAt: Date?
     let action: () -> Void
 
+    private var showsActivity: Bool { isRunning || teamState != nil }
+
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 9) {
-                Image(systemName: sessionSymbol)
-                    .font(.system(size: SidebarIconMetrics.chatSymbolSize, weight: .medium))
-                    .foregroundStyle(isActive ? LocusTheme.ink : LocusTheme.muted)
-                    .frame(
-                        width: SidebarIconMetrics.chatIconSize,
-                        height: SidebarIconMetrics.chatIconSize
-                    )
-                    .background(isActive ? LocusTheme.signal : LocusTheme.line.opacity(0.55))
-                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                    .accessibilityIdentifier("session.\(session.id).icon")
-
-                VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 7) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(session.displayTitle)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.locus(size: 10, weight: .semibold))
                         .foregroundStyle(LocusTheme.ink)
                         .lineLimit(1)
                     if isRunning || teamState != nil {
@@ -1115,7 +1169,7 @@ private struct SessionRow: View {
                                 Text(sidebarStatusTitle(teamState))
                             }
                         }
-                        .font(.system(size: 8))
+                        .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.muted)
                         .accessibilityIdentifier("session.\(session.id).activity")
                     }
@@ -1123,12 +1177,12 @@ private struct SessionRow: View {
                 Spacer(minLength: 4)
                 if session.isPinned {
                     Image(systemName: "pin.fill")
-                        .font(.system(size: 8))
+                        .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 if session.isArchived {
                     Image(systemName: "archivebox.fill")
-                        .font(.system(size: 8))
+                        .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 if isActive {
@@ -1138,7 +1192,7 @@ private struct SessionRow: View {
                 }
             }
             .padding(.horizontal, 8)
-            .frame(height: 49)
+            .frame(height: showsActivity ? 42 : 34)
             .background(isActive ? LocusTheme.panel : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay {
@@ -1146,19 +1200,9 @@ private struct SessionRow: View {
                     .stroke(isActive ? LocusTheme.line : Color.clear, lineWidth: 1)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .accessibilityLabel("Resume \(session.displayTitle)")
         .accessibilityIdentifier("session.\(session.id)")
-    }
-
-    /// The icon describes the conversation, while fill and the green tile
-    /// describe selection. The previous sparkle/network pair made active and
-    /// inactive rows look like unrelated features.
-    private var sessionSymbol: String {
-        if teamState != nil {
-            return isActive ? "person.3.fill" : "person.3"
-        }
-        return isActive ? "bubble.left.fill" : "bubble.left"
     }
 
     private func statusColor(_ state: TeamRunState) -> Color {

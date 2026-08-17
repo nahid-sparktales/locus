@@ -343,6 +343,7 @@ class AgentCore:
         self.agent_mode = "work"
         self.agent_role_contract = ""
         self.memory_context = ""
+        self.continuity_context = ""
         self.prompt_layers: list[dict[str, str]] = []
         self.messages: list[dict[str, Any]] = []
         self.session = self._new_session_store()
@@ -501,6 +502,7 @@ class AgentCore:
         *,
         mode: str = "work",
         memory_context: str = "",
+        continuity_context: str = "",
         fallback_name: str = "Locus",
         fallback_instructions: str = "",
         role_contract: str = "",
@@ -516,6 +518,9 @@ class AgentCore:
         self.agent_mode = mode if mode in {"ask", "work", "plan", "build"} else "work"
         self.agent_role_contract = str(role_contract or "")[:8_000]
         self.memory_context = str(memory_context or "")[:24_000]
+        self.continuity_context = (
+            "" if self.agent_mode == "ask" else str(continuity_context or "")[:24_000]
+        )
         memory_policy = self.agent_configuration.memory_policy
         scopes = tuple(memory_policy.scopes)
         if self.agent_mode == "ask":
@@ -525,6 +530,9 @@ class AgentCore:
         self.tool_ctx.memory_scopes = scopes
         self.tool_ctx.memory_search_enabled = memory_policy.search_enabled
         self.tool_ctx.memory_proposals_enabled = memory_policy.proposals_enabled
+        self.tool_ctx.cross_chat_context_enabled = (
+            self.agent_mode != "ask" and memory_policy.cross_chat_context_enabled
+        )
         self.tool_registry.set_user_capability_policy(
             self.agent_configuration.capability_policy.__dict__
         )
@@ -556,6 +564,7 @@ class AgentCore:
             role_contract=self.agent_role_contract,
             project_context=project_context,
             memory_context=self.memory_context,
+            continuity_context=self.continuity_context,
         )
         if self.tool_ctx.delegate_read_only is not None and resolved_mode != "ask":
             solo_swarm_contract = (

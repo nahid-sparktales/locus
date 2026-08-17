@@ -1,0 +1,9 @@
+{
+  "provider": "Superpowers",
+  "repository": "https://github.com/obra/superpowers",
+  "commit": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+  "upstream_path": "skills/receiving-code-review",
+  "license": "MIT",
+  "license_file": "LICENSE",
+  "activation": "automatic"
+}

@@ -74,21 +74,22 @@ struct PermissionPromptView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text("PERMISSION REQUIRED")
-                .font(.system(size: 8, weight: .bold))
+                .font(.locus(size: 8, weight: .bold))
                 .tracking(0.8)
                 .foregroundStyle(LocusTheme.warning)
             HStack(spacing: 7) {
                 Image(systemName: "shield.lefthalf.filled.badge.checkmark")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.locus(size: 12, weight: .semibold))
                     .foregroundStyle(LocusTheme.warning)
+                    .accessibilityHidden(true)
                 Text(request.tool)
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .font(.locus(size: 9, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 6)
                     .frame(height: 18)
                     .background(LocusTheme.paperDeep)
                     .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                 Text(question)
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.locus(size: 12, weight: .bold))
                     .foregroundStyle(LocusTheme.ink)
             }
         }
@@ -101,7 +102,7 @@ struct PermissionPromptView: View {
         VStack(alignment: .leading, spacing: 6) {
             if !summary.isEmpty, summary != detail {
                 Text(summary)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .font(.locus(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(LocusTheme.ink)
                     .textSelection(.enabled)
                     .lineLimit(2)
@@ -110,6 +111,7 @@ struct PermissionPromptView: View {
                 ScrollView {
                     ToolOutputText(text: detail)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("permission.preview.detail")
                 }
                 .frame(maxHeight: 132)
             }
@@ -154,20 +156,20 @@ struct PermissionPromptView: View {
         } label: {
             HStack(spacing: 8) {
                 Text(isSelected ? "❯" : " ")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .font(.locus(size: 10, weight: .bold, design: .monospaced))
                     .foregroundStyle(LocusTheme.signalDeep)
                     .frame(width: 10)
                 Text("\(index + 1).")
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.locus(size: 10, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
                 Text(title)
-                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                    .font(.locus(size: 11, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(LocusTheme.ink)
                     .lineLimit(1)
                 Spacer()
                 if let keyCap {
                     Text(keyCap)
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.locus(size: 8, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
                         .padding(.horizontal, 5)
                         .frame(height: 15)
@@ -178,7 +180,7 @@ struct PermissionPromptView: View {
                 }
                 if isSelected {
                     Text("↵")
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.locus(size: 8, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
                 }
             }
@@ -188,7 +190,7 @@ struct PermissionPromptView: View {
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .onHover { hovering in
             if hovering { selection = index }
         }

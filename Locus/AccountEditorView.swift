@@ -57,7 +57,7 @@ struct AccountEditorView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(isNew ? "Add \(kind.marketingName) Account" : "Edit \(account.displayName)")
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.locus(size: 16, weight: .bold))
                     Text(
                         kind == .chatGPT
                             ? "Use included usage from your ChatGPT plan"
@@ -65,7 +65,7 @@ struct AccountEditorView: View {
                             ? "An OpenAI-compatible endpoint"
                             : "Models served by \(kind.vendorName)"
                     )
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                 }
                 Spacer()
@@ -74,7 +74,7 @@ struct AccountEditorView: View {
                 } label: {
                     Image(systemName: "xmark")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .accessibilityLabel("Close account editor")
                 .accessibilityIdentifier("accountEditor.close")
             }
@@ -93,7 +93,7 @@ struct AccountEditorView: View {
                     )
 
                     Text("Names tell two accounts for the same provider apart in the model picker.")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
 
                     if kind == .chatGPT {
@@ -118,20 +118,20 @@ struct AccountEditorView: View {
 
                     if !kind.keyDocsURL.isEmpty, let url = URL(string: kind.keyDocsURL) {
                         Link("Get an API key from \(kind.vendorName)", destination: url)
-                            .font(.system(size: 9))
+                            .font(.locus(size: 9))
                     }
 
                     // Why this key and not a subscription — read before the
                     // user tries a key that was never going to work here.
                     if let note = kind.note {
                         Text(note.text)
-                            .font(.system(size: 9))
+                            .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.muted)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("accountEditor.note")
                         if note.hasLink, let noteURL = URL(string: note.linkURL) {
                             Link(note.linkTitle, destination: noteURL)
-                                .font(.system(size: 9))
+                                .font(.locus(size: 9))
                         }
                     }
 
@@ -143,7 +143,7 @@ struct AccountEditorView: View {
                     )
 
                     Text(windowHelp)
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -168,13 +168,13 @@ struct AccountEditorView: View {
 
                     if let testResult {
                         Text(testResult)
-                            .font(.system(size: 9))
+                            .font(.locus(size: 9))
                             .foregroundStyle(testFailed ? LocusTheme.coral : LocusTheme.success)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
                     Text("The key is written to \(CredentialStore.displayPath), readable only by your macOS user account, and passed to the local agent in memory. It is only ever sent to this provider. Anything else running as you can read that file.")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                     }
@@ -218,11 +218,11 @@ struct AccountEditorView: View {
                 Label("Signed in", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(LocusTheme.success)
                 if let email = status.email, !email.isEmpty {
-                    Text(email).font(.system(size: 10, weight: .semibold))
+                    Text(email).font(.locus(size: 10, weight: .semibold))
                 }
                 if let plan = status.planType, !plan.isEmpty {
                     Text("\(plan.replacingOccurrences(of: "_", with: " ").capitalized) plan")
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 HStack {
@@ -235,7 +235,7 @@ struct AccountEditorView: View {
                 }
             } else if model.chatGPTLoginID != nil {
                 Label("Finish signing in in your browser", systemImage: "safari")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.locus(size: 10, weight: .semibold))
                 HStack {
                     Button("Refresh Status") {
                         Task { await model.refreshChatGPTAccount() }
@@ -247,7 +247,7 @@ struct AccountEditorView: View {
             } else {
                 if let message = status?.message, !message.isEmpty {
                     Text(message)
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -262,7 +262,7 @@ struct AccountEditorView: View {
                 "Authentication is managed by OpenAI's bundled agent runtime. "
                 + "Locus never reads or stores its OAuth tokens, and this route never falls back to paid API usage."
             )
-            .font(.system(size: 9))
+            .font(.locus(size: 9))
             .foregroundStyle(LocusTheme.muted)
             .fixedSize(horizontal: false, vertical: true)
         }

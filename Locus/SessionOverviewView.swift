@@ -8,6 +8,7 @@ struct SessionOverviewView: View {
 
     @AppStorage("Locus.sessionOverview.planCollapsed") private var planCollapsed = false
     @AppStorage("Locus.sessionOverview.activityCollapsed") private var activityCollapsed = false
+    @AppStorage("Locus.sessionOverview.processesCollapsed") private var processesCollapsed = false
     @AppStorage("Locus.sessionOverview.filesCollapsed") private var filesCollapsed = true
     @State private var activityExpanded = false
     @State private var confirmsNewSession = false
@@ -22,16 +23,20 @@ struct SessionOverviewView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     header
-                    identityStrip
-                    Divider().overlay(LocusTheme.line)
+
+                    if processCount > 0 {
+                        Divider().overlay(LocusTheme.line)
+                        processesSection
+                    }
 
                     if state.status == .error { errorBanner }
 
-                    if state.status == .idle {
-                        idleContent
-                    } else {
+                    if state.status != .idle {
                         activeContent
                     }
+
+                    Divider().overlay(LocusTheme.line)
+                    quickAccessSection
                 }
                 .padding(.horizontal, 14)
                 .padding(.top, 14)
@@ -51,7 +56,7 @@ struct SessionOverviewView: View {
         }
         .background(LocusTheme.paperDeep)
         .foregroundStyle(LocusTheme.ink)
-        .font(.system(size: 11))
+        .font(.locus(size: 11))
         .onReceive(timestampTimer) { now = $0 }
         .alert("Start a new session?", isPresented: $confirmsNewSession) {
             Button("Cancel", role: .cancel) {}
@@ -59,17 +64,17 @@ struct SessionOverviewView: View {
         } message: {
             Text("The current run is still active. Starting a new session will stop following this run here.")
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.16), value: state.status)
+        .animation(reduceMotion ? nil : LocusMotion.spatial, value: state.status)
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("Plan")
-                    .font(.system(size: 9, weight: .semibold))
+                Text("Overview")
+                    .font(.locus(size: 9, weight: .semibold))
                     .foregroundStyle(LocusTheme.muted)
                 Text("Session overview")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.locus(size: 15, weight: .bold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                     .layoutPriority(1)
@@ -89,7 +94,7 @@ struct SessionOverviewView: View {
             Circle().fill(presentation.1).frame(width: 7, height: 7)
                 .accessibilityHidden(true)
             Text(presentation.0)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.locus(size: 9, weight: .semibold))
                 .foregroundStyle(state.status == .idle ? LocusTheme.muted : presentation.1)
                 .accessibilityLabel("Session status: \(presentation.0)")
                 .accessibilityAddTraits(.updatesFrequently)
@@ -108,98 +113,13 @@ struct SessionOverviewView: View {
         )
     }
 
-    private var identityStrip: some View {
-        HStack(spacing: 8) {
-            identityButton(
-                state.workspace.name.nilIfEmpty ?? "Workspace",
-                symbol: "folder",
-                help: state.workspace.path,
-                accessibilityIdentifier: "plan.identity.workspace",
-                action: model.revealSessionWorkspace
-            )
-            .frame(maxWidth: .infinity)
-            identityChip(
-                gitIdentity,
-                symbol: "arrow.triangle.branch",
-                help: gitIdentity,
-                accessibilityIdentifier: "plan.identity.git"
-            )
-                .frame(maxWidth: .infinity)
-            identityButton(
-                state.model.id.nilIfEmpty ?? "Unknown model",
-                symbol: "cpu",
-                help: [state.model.provider, state.model.id].filter { !$0.isEmpty }.joined(separator: " · "),
-                accessibilityIdentifier: "plan.identity.model",
-                action: model.openSessionModelSettings
-            )
-            .frame(maxWidth: .infinity)
-        }
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Session identity")
-        .accessibilityIdentifier("plan.identity")
-    }
-
-    private var gitIdentity: String {
-        guard let git = state.workspace.git else { return "no git" }
-        var detail = "\(git.branch) · \(git.dirty) dirty"
-        if let ahead = git.ahead, ahead > 0 { detail += " · ↑\(ahead)" }
-        if let behind = git.behind, behind > 0 { detail += " · ↓\(behind)" }
-        return detail
-    }
-
-    private func identityButton(
-        _ title: String,
-        symbol: String,
-        help: String,
-        accessibilityIdentifier: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) { identityChipLabel(title, symbol: symbol) }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity)
-            .help(help)
-            .accessibilityLabel(title)
-            .accessibilityIdentifier(accessibilityIdentifier)
-    }
-
-    private func identityChip(
-        _ title: String,
-        symbol: String,
-        help: String,
-        accessibilityIdentifier: String
-    ) -> some View {
-        identityChipLabel(title, symbol: symbol)
-            .help(help)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(title)
-            .accessibilityIdentifier(accessibilityIdentifier)
-    }
-
-    private func identityChipLabel(_ title: String, symbol: String) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: symbol).font(.system(size: 10))
-            Text(title).lineLimit(1).truncationMode(.middle)
-        }
-        .font(.system(size: 9.5, weight: .medium))
-        .foregroundStyle(LocusTheme.inkSoft)
-        .padding(.horizontal, 8)
-        .frame(maxWidth: .infinity, minHeight: 30)
-        .background(LocusTheme.white.opacity(0.72))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(LocusTheme.line, lineWidth: 1)
-        }
-    }
-
     private var errorBanner: some View {
         VStack(alignment: .leading, spacing: 11) {
             HStack(alignment: .top, spacing: 9) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(LocusTheme.danger)
                 Text(state.statusReason?.nilIfEmpty ?? "The run stopped with an error.")
-                    .font(.system(size: 10))
+                    .font(.locus(size: 10))
                     .foregroundStyle(LocusTheme.ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -277,7 +197,7 @@ struct SessionOverviewView: View {
 
     private func scrollToRunningStep(_ proxy: ScrollViewProxy) {
         guard let id = state.plan.first(where: { $0.state == .running })?.id else { return }
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
+        withAnimation(reduceMotion ? nil : LocusMotion.scroll) {
             proxy.scrollTo(id, anchor: .center)
         }
     }
@@ -315,8 +235,8 @@ struct SessionOverviewView: View {
                         Button(activityExpanded ? "Show recent" : "View all") {
                             activityExpanded.toggle()
                         }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 9, weight: .semibold))
+                        .buttonStyle(.locus())
+                        .font(.locus(size: 9, weight: .semibold))
                         .foregroundStyle(LocusTheme.signalDeep)
                     }
                 }
@@ -351,15 +271,15 @@ struct SessionOverviewView: View {
             } label: {
                 HStack(spacing: 7) {
                     Image(systemName: filesCollapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.locus(size: 9, weight: .semibold))
                     Text(fileSummary)
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.locus(size: 9, weight: .semibold))
                     Spacer()
                 }
                 .foregroundStyle(LocusTheme.inkSoft)
                 .padding(.vertical, 7)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus())
             .accessibilityLabel(filesCollapsed ? "Expand files touched" : "Collapse files touched")
             .accessibilityIdentifier("plan.files")
 
@@ -386,103 +306,230 @@ struct SessionOverviewView: View {
         return "\(state.files.count) \(noun) · +\(added) −\(removed)"
     }
 
-    @ViewBuilder
-    private var idleContent: some View {
-        lastRunSection
-        suggestionsSection
-        quickActions
-    }
-
-    private var lastRunSection: some View {
+    private var processesSection: some View {
         VStack(alignment: .leading, spacing: 9) {
-            sectionLabel("Last run").accessibilityIdentifier("plan.lastRun")
-            if let run = state.lastRun {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Image(systemName: run.outcome == .completed
-                            ? "checkmark" : run.outcome == .failed ? "xmark" : "circle.lefthalf.filled")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(run.outcome == .failed
-                                ? LocusTheme.danger : LocusTheme.success)
-                        Text(runOutcomeTitle(run))
-                            .font(.system(size: 11, weight: .bold))
-                        Spacer(minLength: 6)
-                        Text(relativeTime(run.endedAt))
-                            .font(.system(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+            sectionToggle(
+                title: "Running processes",
+                detail: processCount == 0 ? "None" : "\(processCount) active",
+                collapsed: $processesCollapsed
+            )
+            .accessibilityIdentifier("plan.processes")
+
+            if !processesCollapsed {
+                VStack(spacing: 5) {
+                    if showsCurrentSessionProcess {
+                        currentSessionProcessRow
                     }
-                    Text(run.summary)
-                        .font(.system(size: 10))
-                        .foregroundStyle(LocusTheme.inkSoft)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Button("View transcript →") { model.viewSessionTranscript() }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(LocusTheme.signalDeep)
+                    ForEach(Array(runningProcesses.prefix(3))) { run in
+                        processRow(run)
+                    }
+                    if processCount == 0 {
+                        designedEmptyState(
+                            symbol: "waveform.path.ecg",
+                            text: "No processes are running. Active and queued work will appear here."
+                        )
+                    }
                 }
-                .padding(13)
-                .locusCard(radius: 9)
-            } else {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("No runs yet").fontWeight(.semibold)
-                    Text("Describe a task in the message box to start this session.")
-                        .font(.system(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+
+                Button {
+                    model.openActivityCenter()
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(runningProcesses.count > 3 ? "View all processes" : "Open Activity Center")
+                        Image(systemName: "arrow.up.right")
+                            .accessibilityHidden(true)
+                    }
+                    .font(.locus(size: 9, weight: .semibold))
+                    .foregroundStyle(LocusTheme.signalDeep)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(13)
-                .locusCard(radius: 9)
+                .buttonStyle(.locus())
+                .accessibilityIdentifier("plan.processes.viewAll")
             }
         }
     }
 
-    @ViewBuilder
-    private var suggestionsSection: some View {
-        if !state.suggestions.isEmpty {
-            VStack(alignment: .leading, spacing: 9) {
-                sectionLabel("Suggested next steps").accessibilityIdentifier("plan.suggestions")
-                ForEach(state.suggestions.prefix(3), id: \.self) { suggestion in
-                    Button { model.prefillSessionSuggestion(suggestion) } label: {
-                        HStack(spacing: 9) {
-                            Text(suggestion)
-                                .lineLimit(2)
-                                .multilineTextAlignment(.leading)
-                            Spacer()
-                            Image(systemName: "arrow.up.right")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(LocusTheme.muted)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(LocusTheme.white.opacity(0.72))
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(LocusTheme.line, lineWidth: 1)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier(
-                        "plan.suggestion." + String(state.suggestions.firstIndex(of: suggestion) ?? 0)
-                    )
-                }
-            }
-        }
-    }
-
-    private var quickActions: some View {
+    private var quickAccessSection: some View {
         VStack(alignment: .leading, spacing: 9) {
-            sectionLabel("Quick actions").accessibilityIdentifier("plan.quickActions")
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 78), spacing: 8)], spacing: 8) {
-                quickAction("Finder", symbol: "folder") { model.revealSessionWorkspace() }
-                quickAction("Proxy config", symbol: "slider.horizontal.3") {
-                    model.revealSessionProxyConfig()
+            Text("Quick Access")
+                .font(.locus(size: 11, weight: .bold))
+                .foregroundStyle(LocusTheme.muted)
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 78), spacing: 8)],
+                spacing: 8
+            ) {
+                quickAccessButton("Agents", symbol: "person.3") {
+                    model.settingsPage = .agents
+                    model.settingsPresented = true
                 }
-                quickAction("Logs", symbol: "doc.text") { model.revealSessionLogs() }
-                quickAction("New session", symbol: "plus") { requestNewSession() }
+                quickAccessButton("Skills & MCP", symbol: "puzzlepiece.extension") {
+                    model.settingsPage = .extensions
+                    model.settingsPresented = true
+                }
+                quickAccessButton("Browser", symbol: "globe") {
+                    model.selectInspectorTab(.preview)
+                }
+                quickAccessButton("Files", symbol: "folder") {
+                    model.selectInspectorTab(.files)
+                }
+                quickAccessButton("Changes", symbol: "plusminus.circle") {
+                    model.selectInspectorTab(.changes)
+                }
+                quickAccessButton("Terminal", symbol: "terminal") {
+                    model.openTerminal()
+                }
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Quick Access")
+        .accessibilityIdentifier("plan.quickActions")
+    }
+
+    private func quickAccessButton(
+        _ title: String,
+        symbol: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 7) {
+                Image(systemName: symbol)
+                    .font(.locus(size: 17, weight: .medium))
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(.locus(size: 11, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            .foregroundStyle(LocusTheme.inkSoft)
+            .frame(maxWidth: .infinity, minHeight: 62)
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.locus(.card))
+        .help(title)
+        .accessibilityLabel(title)
+        .accessibilityIdentifier(
+            "plan.quickAction."
+                + title.lowercased()
+                    .replacingOccurrences(of: " & mcp", with: "")
+                    .replacingOccurrences(of: " ", with: "-")
+        )
+    }
+
+    private var activeProcessStates: Set<String> {
+        [
+            "queued", "running", "dispatching", "reviewing", "paused",
+            "waiting_permission", "waiting_computer", "waiting_dispatch_approval",
+        ]
+    }
+
+    private var runningProcesses: [OrchestrationRun] {
+        model.visibleActivityRuns
+            .filter { activeProcessStates.contains($0.state) }
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private var showsCurrentSessionProcess: Bool {
+        state.status == .running
+            && !runningProcesses.contains { $0.sessionID == model.currentSessionID }
+    }
+
+    private var processCount: Int {
+        runningProcesses.count + (showsCurrentSessionProcess ? 1 : 0)
+    }
+
+    private var currentSessionProcessRow: some View {
+        Button { model.openActivityCenter() } label: {
+            processLabel(
+                title: model.currentWorkPhase.nilIfEmpty ?? "Current session",
+                detail: "RUNNING · this chat",
+                color: LocusTheme.success,
+                elapsed: nil
+            )
+        }
+        .buttonStyle(.locus(.card))
+        .accessibilityLabel("Current session process, running")
+        .accessibilityIdentifier("plan.process.current")
+    }
+
+    private func processRow(_ run: OrchestrationRun) -> some View {
+        Button {
+            model.selectInspectorTab(.runs, selecting: run.id)
+        } label: {
+            processLabel(
+                title: run.request.nilIfEmpty ?? run.teamName?.nilIfEmpty ?? "Background task",
+                detail: processStateTitle(run.state),
+                color: processColor(run.state),
+                elapsed: processElapsed(run)
+            )
+        }
+        .buttonStyle(.locus(.card))
+        .accessibilityLabel(
+            "\(run.request.nilIfEmpty ?? run.teamName?.nilIfEmpty ?? "Background task"), "
+                + "\(processStateTitle(run.state)), \(processElapsed(run))"
+        )
+        .accessibilityIdentifier("plan.process.\(run.id)")
+    }
+
+    private func processLabel(
+        title: String,
+        detail: String,
+        color: Color,
+        elapsed: String?
+    ) -> some View {
+        HStack(spacing: 9) {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.locus(size: 10, weight: .semibold))
+                    .foregroundStyle(LocusTheme.ink)
+                    .lineLimit(1)
+                Text(detail)
+                    .font(.locus(size: 8.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            if let elapsed {
+                Text(elapsed)
+                    .font(.locus(size: 8.5, design: .monospaced))
+                    .foregroundStyle(LocusTheme.inkSoft)
+            }
+            Image(systemName: "chevron.right")
+                .font(.locus(size: 8, weight: .semibold))
+                .foregroundStyle(LocusTheme.muted)
+                .accessibilityHidden(true)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+    }
+
+    private func processStateTitle(_ state: String) -> String {
+        switch state {
+        case "waiting_permission": "NEEDS PERMISSION"
+        case "waiting_computer": "WAITING FOR COMPUTER"
+        case "waiting_dispatch_approval": "PLAN READY"
+        default: state.replacingOccurrences(of: "_", with: " ").uppercased()
+        }
+    }
+
+    private func processColor(_ state: String) -> Color {
+        switch state {
+        case "running", "dispatching", "reviewing": LocusTheme.success
+        case "queued", "paused", "waiting_permission", "waiting_computer",
+             "waiting_dispatch_approval": LocusTheme.warning
+        default: LocusTheme.muted
+        }
+    }
+
+    private func processElapsed(_ run: OrchestrationRun) -> String {
+        let seconds = max(Int(now.timeIntervalSince1970 - run.createdAt), 0)
+        if seconds >= 3_600 { return "\(seconds / 3_600)h \((seconds % 3_600) / 60)m" }
+        if seconds >= 60 { return "\(seconds / 60)m \(seconds % 60)s" }
+        return "\(seconds)s"
     }
 
     private var runningActionsMenu: some View {
@@ -503,7 +550,7 @@ struct SessionOverviewView: View {
             Button("Settings", systemImage: "gearshape") { model.openSessionModelSettings() }
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.locus(size: 10, weight: .semibold))
                 .frame(width: 24, height: 24)
                 .background(LocusTheme.white.opacity(0.72))
                 .clipShape(Circle())
@@ -519,31 +566,6 @@ struct SessionOverviewView: View {
         if state.status == .running { confirmsNewSession = true } else { model.newSession() }
     }
 
-    private func runOutcomeTitle(_ run: SessionRunSummary) -> String {
-        let outcome = switch run.outcome {
-        case .completed: "Completed"
-        case .partial: "Partial"
-        case .failed: "Failed"
-        }
-        return "\(outcome) · \(run.completedSteps) of \(run.totalSteps) steps"
-    }
-
-    private func relativeTime(_ milliseconds: Int) -> String {
-        let elapsed = max(Int(now.timeIntervalSince1970) - milliseconds / 1_000, 0)
-        if elapsed < 60 { return "\(elapsed)s ago" }
-        let minutes = elapsed / 60
-        let seconds = elapsed % 60
-        if minutes < 60 { return seconds == 0 ? "\(minutes)m ago" : "\(minutes)m \(seconds)s ago" }
-        let hours = minutes / 60
-        return "\(hours)h \(minutes % 60)m ago"
-    }
-
-    private func sectionLabel(_ title: String) -> some View {
-        Text(title)
-            .font(.system(size: 9, weight: .bold))
-            .foregroundStyle(LocusTheme.muted)
-    }
-
     private func sectionToggle(
         title: String,
         detail: String?,
@@ -552,56 +574,34 @@ struct SessionOverviewView: View {
         Button { collapsed.wrappedValue.toggle() } label: {
             HStack(spacing: 7) {
                 Text(title)
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.locus(size: 9, weight: .bold))
                     .foregroundStyle(LocusTheme.muted)
                 Spacer()
                 if let detail {
                     Text(detail)
-                        .font(.system(size: 9))
+                        .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.inkSoft)
                 }
                 Image(systemName: collapsed.wrappedValue ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.locus(size: 9, weight: .semibold))
                     .foregroundStyle(LocusTheme.muted)
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .accessibilityLabel("\(collapsed.wrappedValue ? "Expand" : "Collapse") \(title)")
-    }
-
-    private func quickAction(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 6) {
-                Image(systemName: symbol).font(.system(size: 17))
-                Text(title).font(.system(size: 9)).lineLimit(1)
-            }
-            .foregroundStyle(LocusTheme.inkSoft)
-            .frame(maxWidth: .infinity, minHeight: 57)
-            .background(LocusTheme.white.opacity(0.72))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(LocusTheme.line, lineWidth: 1)
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(title)
-        .accessibilityIdentifier(
-            "plan.quickAction." + title.lowercased().replacingOccurrences(of: " ", with: "-")
-        )
     }
 
     private func overviewButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: symbol)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.locus(size: 9, weight: .semibold))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
                 .background(LocusTheme.white.opacity(0.72))
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
     }
 
     private func designedEmptyState(symbol: String, text: String) -> some View {
@@ -609,8 +609,9 @@ struct SessionOverviewView: View {
             Image(systemName: symbol)
                 .foregroundStyle(LocusTheme.muted)
                 .frame(width: 16)
+                .accessibilityHidden(true)
             Text(text)
-                .font(.system(size: 9))
+                .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.inkSoft)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -629,14 +630,14 @@ private struct SessionPlanStepRow: View {
         HStack(spacing: 9) {
             stepIcon.frame(width: 17)
             Text(step.label)
-                .font(.system(size: 10, weight: step.state == .running ? .semibold : .regular))
+                .font(.locus(size: 10, weight: step.state == .running ? .semibold : .regular))
                 .strikethrough(step.state == .done)
                 .foregroundStyle(labelColor)
                 .lineLimit(2)
             Spacer(minLength: 8)
             if step.state == .running, let started = step.startedAt {
                 Text(elapsed(from: started))
-                    .font(.system(size: 8.5, design: .monospaced))
+                    .font(.locus(size: 8.5, design: .monospaced))
                     .foregroundStyle(LocusTheme.signalDeep)
             }
         }
@@ -684,18 +685,18 @@ private struct SessionActivityRow: View {
         Button(action: action) {
             HStack(spacing: 9) {
                 Image(systemName: icon)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.locus(size: 9, weight: .medium))
                     .foregroundStyle(iconColor)
                     .frame(width: 16)
                 Text(subject)
-                    .font(.system(size: 9.5, design: .monospaced))
+                    .font(.locus(size: 9.5, design: .monospaced))
                     .foregroundStyle(LocusTheme.ink)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 5)
                 metadata
                 Text(relativeTime)
-                    .font(.system(size: 8, design: .monospaced))
+                    .font(.locus(size: 8, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
                     .frame(minWidth: 30, alignment: .trailing)
             }
@@ -703,7 +704,7 @@ private struct SessionActivityRow: View {
             .padding(.vertical, 6)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .accessibilityLabel("\(subject), \(relativeTime)")
     }
 
@@ -750,17 +751,17 @@ private struct SessionActivityRow: View {
                 Text("+\(added)").foregroundStyle(LocusTheme.success)
                 Text("−\(removed)").foregroundStyle(LocusTheme.danger)
             }
-            .font(.system(size: 8.5, design: .monospaced))
+            .font(.locus(size: 8.5, design: .monospaced))
         case .fileRead:
             Text("read").foregroundStyle(LocusTheme.muted)
-                .font(.system(size: 8.5))
+                .font(.locus(size: 8.5))
         case .fileCreate:
             Text("created").foregroundStyle(LocusTheme.success)
-                .font(.system(size: 8.5))
+                .font(.locus(size: 8.5))
         case .command(_, let code, _):
             if let code, code != 0 {
                 Text("\(code) failed").foregroundStyle(LocusTheme.danger)
-                    .font(.system(size: 8.5))
+                    .font(.locus(size: 8.5))
             }
         default:
             EmptyView()
@@ -783,21 +784,21 @@ private struct SessionFileRow: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: file.kind == .create ? "doc.badge.plus" : "doc.text")
-                    .font(.system(size: 9))
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                 Text(file.path)
-                    .font(.system(size: 9, design: .monospaced))
+                    .font(.locus(size: 9, design: .monospaced))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
                 Text("+\(file.added)").foregroundStyle(LocusTheme.success)
                 Text("−\(file.removed)").foregroundStyle(LocusTheme.danger)
             }
-            .font(.system(size: 8.5, design: .monospaced))
+            .font(.locus(size: 8.5, design: .monospaced))
             .padding(.horizontal, 7)
             .padding(.vertical, 5)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .help(file.path)
     }
 }
