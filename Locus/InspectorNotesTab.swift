@@ -86,7 +86,7 @@ struct InspectorNotesTab: View {
             get: { store.text },
             set: { store.update($0) }
         ))
-        .font(.system(size: 13))
+        .font(.locus(size: 13))
         .scrollContentBackground(.hidden)
         .padding(10)
         .background(LocusTheme.paper)
