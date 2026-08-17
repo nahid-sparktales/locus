@@ -237,6 +237,7 @@ final class LocusUITests: XCTestCase {
             if issue.auditType == .contrast,
                let identifier = issue.element?.identifier,
                [
+                   "plan.contextWindow.details",
                    "planApproval.steps",
                    "sidebar.agentStatus",
                ].contains(identifier) {
