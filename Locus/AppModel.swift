@@ -2794,6 +2794,16 @@ final class AppModel: ObservableObject {
             reason: nil,
             at: Self.sessionTimestamp
         ))
+        // Agent-side slash commands go out as raw text: no context pack, so
+        // none of it counts as provided.
+        let providedItems = Self.providedSourceItems(
+            attachments: dispatchedAttachments,
+            contextFiles: isSlashPassthrough ? [] : dispatchedContextFiles,
+            mode: dispatchedMode
+        )
+        if !providedItems.isEmpty {
+            sessionOverview.emit(.sourceProvided(items: providedItems, at: Self.sessionTimestamp))
+        }
         if !text.isEmpty { recordPrompt(text) }
         if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
             draftText = ""
@@ -4990,10 +5000,16 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func refreshBackgroundServices() {
+    /// - Parameter recordingOutputs: when the refresh follows a service start
+    ///   in this session, dev servers that were not running before and expose
+    ///   a port become website outputs of the session that was active when
+    ///   the start happened.
+    func refreshBackgroundServices(recordingOutputs: Bool = false) {
         backgroundServicesRefreshGeneration += 1
         let generation = backgroundServicesRefreshGeneration
         let transport = conversationBackend
+        let recordingSessionID = recordingOutputs ? sessionOverview.activeSessionID : ""
+        let alreadyRunning = Set(backgroundServices.filter(\.running).map(\.name))
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -5002,11 +5018,61 @@ final class AppModel: ObservableObject {
                 )
                 guard generation == backgroundServicesRefreshGeneration else { return }
                 backgroundServices = response.services
+                guard !recordingSessionID.isEmpty else { return }
+                for service in response.services
+                where service.running && !alreadyRunning.contains(service.name) {
+                    guard let port = service.port,
+                          let url = URL(string: "http://localhost:\(port)")
+                    else { continue }
+                    emitWebsiteOutput(url, sessionID: recordingSessionID)
+                }
             } catch {
                 guard generation == backgroundServicesRefreshGeneration else { return }
                 backgroundServices = []
             }
         }
+    }
+
+    /// Stops every running background process from the Overview's
+    /// "Stop all" action. Rows disappear immediately; the refresh afterwards
+    /// restores anything the backend could not stop.
+    func stopAllBackgroundServices() {
+        let running = backgroundServices.filter(\.running)
+        guard !running.isEmpty else { return }
+        backgroundServicesRefreshGeneration += 1
+        let runningNames = Set(running.map(\.name))
+        backgroundServices.removeAll { runningNames.contains($0.name) }
+        let transport = conversationBackend
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            var failed = 0
+            for service in running {
+                guard let encoded = service.name.addingPercentEncoding(
+                    withAllowedCharacters: .urlPathAllowed
+                ) else { continue }
+                do {
+                    _ = try await transport.delete(
+                        "/api/services/\(encoded)", as: BackgroundServiceStopResponse.self
+                    )
+                } catch {
+                    failed += 1
+                }
+            }
+            let noun = running.count == 1 ? "background process" : "background processes"
+            showToast(
+                failed == 0
+                    ? "Stopped \(running.count) \(noun)"
+                    : "Could not stop \(failed) of \(running.count) \(noun)"
+            )
+            refreshBackgroundServices()
+        }
+    }
+
+    /// Test seam: the Overview derives its Background processes rows from
+    /// this list, and unit tests have no backend to refresh from.
+    func applyBackgroundServicesForTesting(_ services: [BackgroundServiceRecord]) {
+        backgroundServicesRefreshGeneration += 1
+        backgroundServices = services
     }
 
     func stopBackgroundService(_ service: BackgroundServiceRecord) {
@@ -8104,8 +8170,7 @@ final class AppModel: ObservableObject {
 
     /// Reveals a workspace-relative path in Finder.
     func revealInFinder(_ relativePath: String) {
-        let url = URL(fileURLWithPath: workspacePath).appending(path: relativePath)
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+        NSWorkspace.shared.activateFileViewerSelecting([sessionFileURL(relativePath)])
     }
 
     func revealSessionWorkspace() {
@@ -8168,7 +8233,7 @@ final class AppModel: ObservableObject {
     }
 
     func openSessionFile(_ relativePath: String) {
-        let url = URL(fileURLWithPath: workspacePath).appending(path: relativePath)
+        let url = sessionFileURL(relativePath)
         guard FileManager.default.fileExists(atPath: url.path) else {
             showToast("That file is no longer on disk")
             return
@@ -8217,8 +8282,8 @@ final class AppModel: ObservableObject {
     /// AppKit may commit the TextEditor's pre-layout buffer while the
     /// inspector is collapsing. Re-applying after one main-actor turn makes
     /// the editable prefill deterministic without ever submitting it.
-    private func prefillComposer(with prompt: String) {
-        inspectorCollapsed = true
+    private func prefillComposer(with prompt: String, collapsingInspector: Bool = true) {
+        if collapsingInspector { inspectorCollapsed = true }
         draftText = prompt
         Task { @MainActor [weak self] in
             await Task.yield()
@@ -8226,6 +8291,75 @@ final class AppModel: ObservableObject {
             self.draftText = prompt
             self.composerFocusToken = UUID()
         }
+    }
+
+    // MARK: - Pinned summary (Overview tab)
+
+    /// Codex's Outputs "+" menu inserts a creation prompt and focuses the
+    /// composer while the summary stays on screen.
+    func insertCreationPrompt(_ kind: SummaryCreationKind) {
+        prefillComposerFromSummary(kind.prompt)
+    }
+
+    func prefillComposerFromSummary(_ prompt: String) {
+        prefillComposer(with: prompt, collapsingInspector: false)
+    }
+
+    /// Opens a URL in the in-app Browser tab, toasting when the preview
+    /// refuses the scheme.
+    func openURLInBrowserTab(_ url: URL) {
+        selectInspectorTab(.preview)
+        if !browser.userNavigate(url.absoluteString, sessionID: currentSessionID) {
+            showToast("That address can't be opened in the browser tab")
+        }
+    }
+
+    func openSummaryOutput(_ row: PinnedSummary.OutputRow) {
+        switch row.kind {
+        case .file:
+            openSessionFile(row.target)
+        case .localSite:
+            // The in-app browser only serves http(s); a local site renders in
+            // the default browser, the way Codex previews a produced site.
+            let url = sessionFileURL(row.target)
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                showToast("That file is no longer on disk")
+                return
+            }
+            NSWorkspace.shared.open(url)
+        case .website:
+            guard let url = BrowserScheme.normalize(row.target) else { return }
+            openURLInBrowserTab(url)
+        }
+    }
+
+    func openSummarySource(_ source: SessionSource) {
+        switch source.kind {
+        case .file, .image:
+            guard let target = source.target else { return }
+            let root = workspacePath.hasSuffix("/") ? workspacePath : workspacePath + "/"
+            if source.kind == .file, target.hasPrefix(root) {
+                openSessionFile(String(target.dropFirst(root.count)))
+            } else if FileManager.default.fileExists(atPath: target) {
+                NSWorkspace.shared.open(URL(fileURLWithPath: target))
+            } else {
+                showToast("That file is no longer on disk")
+            }
+        case .url:
+            guard let target = source.target, let url = BrowserScheme.normalize(target) else { return }
+            openURLInBrowserTab(url)
+        case .tool:
+            settingsPage = .extensions
+            settingsPresented = true
+        case .webSearch:
+            break
+        }
+    }
+
+    /// Opens a subagent row: live agents surface in the Runs tab of this
+    /// session; a finished run selects itself there.
+    func openSummarySubagent(_ row: PinnedSummary.SubagentRow) {
+        selectInspectorTab(.runs, selecting: row.runID)
     }
 
     private var workspaceProjectKind: LocusProjectKind {
@@ -8284,6 +8418,17 @@ final class AppModel: ObservableObject {
         case .message(let role, _):
             let kind: ChatBlock.Kind = role == .user ? .user : .assistant
             target = blocks.reversed().first(where: { $0.kind == kind })
+        case .websiteOutput(let url, _):
+            target = blocks.reversed().first(where: {
+                $0.tool.map { $0.detail.contains(url) || ($0.result?.contains(url) == true) } == true
+            })
+        case .sourceUsed(_, let label, let urlTarget, _):
+            let needle = urlTarget ?? label
+            target = blocks.reversed().first(where: {
+                $0.tool.map { $0.summary.contains(needle) || $0.detail.contains(needle) } == true
+            })
+        case .sourceProvided:
+            target = blocks.reversed().first(where: { $0.kind == .user })
         case .runFinished, .status, .tokens, .planCreated, .stepState:
             target = blocks.reversed().first(where: {
                 $0.kind == .assistant || $0.kind == .error || $0.completion != nil
@@ -8301,7 +8446,7 @@ final class AppModel: ObservableObject {
 
     /// Adds a workspace-relative path to the context pack.
     func addWorkspaceFileToContext(_ relativePath: String) {
-        let url = URL(fileURLWithPath: workspacePath).appending(path: relativePath)
+        let url = sessionFileURL(relativePath)
         guard FileManager.default.fileExists(atPath: url.path) else {
             showToast("That file is no longer on disk")
             return
@@ -9506,6 +9651,43 @@ final class AppModel: ObservableObject {
         let detail = event["detail"] as? String ?? payload?.detail ?? ""
         let result = event["result"] as? String ?? payload?.result ?? ""
         let now = Self.sessionTimestamp
+        let succeeded = (event["ok"] as? Bool) == true && (event["denied"] as? Bool) != true
+        switch SessionSourceClassifier.classify(tool: tool) {
+        case .webFetch:
+            let raw = detail.nilIfEmpty
+                ?? (summary.hasPrefix("fetch ") ? String(summary.dropFirst("fetch ".count)) : summary)
+            guard succeeded, let url = Self.recordableWebURL(raw) else { return }
+            recordURLSource(url, at: now)
+            return
+        case .browserNavigate:
+            // "browser back" and friends carry an empty detail, and about:blank
+            // is a reset, not a source — nothing to record for either.
+            guard succeeded, let url = Self.recordableWebURL(detail) else { return }
+            if BrowserScheme.isLoopback(url) {
+                emitWebsiteOutput(url)
+            } else {
+                recordURLSource(url, at: now)
+            }
+            return
+        case .backgroundService:
+            // Only a start is this session's output. A status listing echoes
+            // every managed server in the backend (other chats' and exited
+            // ones, tails included), and a stop produces nothing.
+            if succeeded, result.hasPrefix("Started "),
+               let url = SessionSourceClassifier.loopbackURL(in: result) {
+                emitWebsiteOutput(url)
+            }
+            return
+        case .mcp(let server, let toolName):
+            guard succeeded else { return }
+            if SessionSourceClassifier.isWebSearchTool(toolName) {
+                sessionOverview.emit(.sourceUsed(kind: .webSearch, label: "Web search", target: nil, at: now))
+            }
+            sessionOverview.emit(.sourceUsed(kind: .tool, label: server, target: nil, at: now))
+            return
+        case .other:
+            break
+        }
         if tool.contains("command") || tool.contains("shell") || tool.contains("terminal")
             || tool == "bash" || tool == "exec" {
             let command = summary.nilIfEmpty ?? detail.nilIfEmpty ?? tool
@@ -9524,6 +9706,74 @@ final class AppModel: ObservableObject {
         } else if tool.contains("edit") || tool.contains("patch") {
             sessionOverview.emit(.fileEdit(path: path, added: 0, removed: 0, at: now))
         }
+    }
+
+    /// An http(s) URL with a real host — the only kind worth listing as a
+    /// link source or website output.
+    static func recordableWebURL(_ raw: String) -> URL? {
+        guard let url = BrowserScheme.normalize(raw),
+              let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = url.host, !host.isEmpty
+        else { return nil }
+        return url
+    }
+
+    /// Resolves a path the way session events store them: workspace-relative
+    /// normally, absolute when a tool named a file outside the workspace.
+    func sessionFileURL(_ path: String) -> URL {
+        path.hasPrefix("/")
+            ? URL(fileURLWithPath: path)
+            : URL(fileURLWithPath: workspacePath).appending(path: path)
+    }
+
+    private func recordURLSource(_ url: URL, at timestamp: Int) {
+        let target = url.absoluteString
+        sessionOverview.emit(.sourceUsed(
+            kind: .url,
+            label: SessionSource.urlLabel(target),
+            target: target,
+            at: timestamp
+        ))
+    }
+
+    /// Records a dev-server URL as a website output exactly once per session;
+    /// refreshes and repeated navigations must not duplicate it.
+    private func emitWebsiteOutput(_ url: URL, sessionID: String? = nil) {
+        let id = sessionID ?? sessionOverview.activeSessionID
+        let target = SessionOutput.normalize(url.absoluteString)
+        guard !id.isEmpty, !target.isEmpty,
+              sessionOverview.states[id]?.outputs.contains(where: { $0.target == target }) != true
+        else { return }
+        sessionOverview.emit(.websiteOutput(url: target, at: Self.sessionTimestamp), sessionID: id)
+    }
+
+    /// What a send hands the agent as user-provided material: the attachments
+    /// dispatched with the message plus the context pack — the latter only
+    /// when the mode actually forwards it (see `decoratedPrompt`).
+    static func providedSourceItems(
+        attachments: [ChatAttachment],
+        contextFiles: [ContextFile],
+        mode: WorkMode
+    ) -> [SessionProvidedItem] {
+        var items: [SessionProvidedItem] = []
+        var seen: Set<String> = []
+        for attachment in attachments {
+            let onDisk = attachment.overrideName == nil
+            let path = onDisk ? attachment.url.path(percentEncoded: false) : nil
+            let kind: SessionSource.Kind = attachment.kind == .image ? .image : .file
+            let key = SessionSource.key(kind: kind, label: attachment.name, target: path)
+            guard seen.insert(key).inserted else { continue }
+            items.append(SessionProvidedItem(name: attachment.name, path: path, kind: kind))
+        }
+        if mode != .ask {
+            for file in contextFiles where file.isIncluded && file.isAvailable {
+                let path = file.displayPath
+                let key = SessionSource.key(kind: .file, label: file.name, target: path)
+                guard seen.insert(key).inserted else { continue }
+                items.append(SessionProvidedItem(name: file.name, path: path, kind: .file))
+            }
+        }
+        return items
     }
 
     private func sessionActivityPath(in values: [String]) -> String? {
@@ -10289,7 +10539,7 @@ final class AppModel: ObservableObject {
             }
 
         case "background_services_changed":
-            refreshBackgroundServices()
+            refreshBackgroundServices(recordingOutputs: (event["action"] as? String) == "start")
 
         case "turn_done":
             flushPendingTokens()
@@ -10961,6 +11211,13 @@ final class AppModel: ObservableObject {
         openInspectorTabs = [.plan]
         inspectorTab = .plan
         inspectorCollapsed = false
+        // Section collapse state lives in @AppStorage, which UI tests share
+        // across launches; start each launch expanded unless a test opts in.
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_PRESERVE_SUMMARY_SECTIONS"] != "1" {
+            for key in SummarySectionKey.allCases {
+                UserDefaults.standard.removeObject(forKey: key.storageKey)
+            }
+        }
         models = [
             ModelInfo(
                 name: "qwen3:8b",
@@ -11313,8 +11570,10 @@ final class AppModel: ObservableObject {
         initial.resources = SessionResources(tokensUsed: 24_100, costUsd: 0.42, messages: 4)
         sessionOverview.reset(sessionID: currentSessionID, initial: initial)
 
-        let fixture = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_PLAN_OVERVIEW"]
-            ?? "idle"
+        let environment = ProcessInfo.processInfo.environment
+        // The README's Overview screenshot should show a populated summary.
+        let fixture = environment["LOCUS_UI_TESTING_PLAN_OVERVIEW"]
+            ?? (environment["LOCUS_UI_TESTING_DOCUMENTATION_SURFACE"] == "plan" ? "running" : "idle")
         if fixture == "running" || fixture == "error" {
             let steps = [
                 SessionPlanStep(id: "scan", label: "Scan checkout flow for parsing bugs", state: .pending),
@@ -11337,6 +11596,84 @@ final class AppModel: ObservableObject {
                 at: now - 12_000
             ))
             sessionOverview.emit(.status(status: .running, reason: nil, at: now - 190_000))
+            // Outputs: seven created files plus one dev server — eight rows,
+            // so the pinned summary shows six and offers "Show 2 more".
+            let createdFiles = [
+                "notes/retry.txt", "site/index.html", "assets/backoff-curve.png",
+                "scripts/run-retries.sh", "reports/retry-metrics.csv", "docs/retry-plan.md",
+                "scraper/retry.ts",
+            ]
+            for (offset, path) in createdFiles.enumerated() {
+                sessionOverview.emit(.fileCreate(path: path, at: now - 100_000 + offset * 5_000))
+            }
+            sessionOverview.emit(.websiteOutput(url: "http://localhost:5173", at: now - 40_000))
+            // Sources: two provided files, one link, one MCP server, web search —
+            // five rows, so the summary shows three and "View all".
+            sessionOverview.emit(.sourceProvided(
+                items: [
+                    SessionProvidedItem(name: "README.md", path: workspace + "/README.md", kind: .file),
+                    SessionProvidedItem(name: "spec.md", path: workspace + "/checkout/spec.md", kind: .file),
+                ],
+                at: now - 180_000
+            ))
+            sessionOverview.emit(.fileRead(path: "checkout/spec.md", at: now - 150_000))
+            sessionOverview.emit(.sourceUsed(
+                kind: .url,
+                label: "developer.mozilla.org/en-US/docs/Web/API/fetch",
+                target: "https://developer.mozilla.org/en-US/docs/Web/API/fetch",
+                at: now - 140_000
+            ))
+            sessionOverview.emit(.sourceUsed(kind: .tool, label: "context7", target: nil, at: now - 130_000))
+            sessionOverview.emit(.sourceUsed(kind: .tool, label: "context7", target: nil, at: now - 125_000))
+            sessionOverview.emit(.sourceUsed(kind: .webSearch, label: "Web search", target: nil, at: now - 120_000))
+            sessionOverview.emit(.sourceUsed(kind: .webSearch, label: "Web search", target: nil, at: now - 110_000))
+            applyBackgroundServicesForTesting([
+                BackgroundServiceRecord(
+                    name: "vite",
+                    command: "npm run dev",
+                    cwd: workspace,
+                    port: 5173,
+                    pid: 4242,
+                    running: true,
+                    exitCode: nil,
+                    startedAt: ISO8601DateFormatter().string(from: Date().addingTimeInterval(-42)),
+                    uptimeSeconds: 42,
+                    tail: nil
+                ),
+            ])
+            activityRuns.append(OrchestrationRun(
+                id: "seed-subagent",
+                sessionID: currentSessionID,
+                teamID: "seed-team",
+                teamName: "Inventory checkers",
+                workerID: "seed-worker",
+                workspaceRoot: workspace,
+                executionPath: workspace,
+                taskID: nil,
+                state: TeamRunState.running.rawValue,
+                request: "Verify the inventory API contract",
+                createdAt: Date().addingTimeInterval(-90).timeIntervalSince1970,
+                updatedAt: Date().timeIntervalSince1970,
+                completedAt: nil,
+                lastSequence: 12,
+                pinned: false,
+                legacy: false,
+                recoverable: false,
+                recoveryReason: nil,
+                checkpoint: nil,
+                attempts: nil,
+                plan: nil,
+                usage: ["model_calls": .number(3)],
+                manifest: nil,
+                jobCount: 2,
+                completedJobCount: 1,
+                runKind: "team",
+                traceID: nil,
+                contentPolicy: "metadata",
+                executionEnvironment: "local",
+                exportState: "pending",
+                exportAttempts: 0
+            ))
             if fixture == "error" {
                 sessionOverview.emit(.stepState(stepID: "refactor", state: .failed, at: now))
                 sessionOverview.emit(.status(
