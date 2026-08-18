@@ -954,7 +954,21 @@ final class AppModel: ObservableObject {
         guard let account = activeAccount else {
             return localModels.isEmpty && models.isEmpty ? "Auto" : selectedModel
         }
-        return "\(account.shortName) · \(selectedModel)"
+        return "\(account.shortName) · \(routedModel(for: account))"
+    }
+
+    /// What an account actually routes to. `selectedModel` is whatever the
+    /// agent last reported, which is still the *previous* provider's model
+    /// until this account connects — pairing the two names then advertises a
+    /// route that does not exist ("Kimi · gpt-5.6-sol"). Fall back to the
+    /// model this account is configured to run.
+    func routedModel(for account: ProviderAccount) -> String {
+        if modelBelongsToAccount(selectedModel, account: account) { return selectedModel }
+        if let preferred = account.preferredModel
+            .trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty {
+            return preferred
+        }
+        return account.kind.curatedModels.first ?? selectedModel
     }
 
     var selectedTeamModelNames: [String] {
@@ -3625,6 +3639,10 @@ final class AppModel: ObservableObject {
     }
 
     private func applyProviderSwitch(accountID: UUID?, model: String) {
+        // The route is committed before the agent has accepted it, because the
+        // request body is built from these fields.
+        let previousAccountID = settings.activeAccountID
+        let previousProvider = settings.provider
         if let accountID, let account = providerAccounts.first(where: { $0.id == accountID }) {
             rememberPreferredModel(model, for: account)
             settings.activeAccountID = accountID.uuidString
@@ -3635,7 +3653,17 @@ final class AppModel: ObservableObject {
         }
         persistSettings()
         Task {
-            await applyProvider()
+            guard await applyProvider() else {
+                // The agent kept the provider it had. Leaving the new account
+                // committed would leave the app pointing at an account that
+                // never connected while every turn still runs on the old
+                // route — visible as an account paired with another
+                // provider's model.
+                settings.activeAccountID = previousAccountID
+                settings.provider = previousProvider
+                persistSettings()
+                return
+            }
             // The remote provider adopts its configured model as it connects;
             // the local runtime keeps whatever it had, so name it explicitly.
             if accountID == nil, !model.isEmpty, model != selectedModel {
