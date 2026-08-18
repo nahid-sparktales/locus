@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## 1.16.0 — 2026-08-17
+
+### Fixed
+
+- **A provider account no longer sticks when the agent never took it.**
+  Switching accounts committed the route before the agent accepted it, so a
+  failed switch left the app pointing at the new account while every turn
+  still ran on the old one — visible in the model picker as an account paired
+  with another provider's model, such as "Kimi · gpt-5.6-sol". The setting is
+  restored when the switch fails, and the picker resolves its model against
+  the active account.
 
 ### Changed
 
