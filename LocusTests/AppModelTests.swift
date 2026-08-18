@@ -1693,6 +1693,58 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testAProviderSwitchTheAgentRejectsDoesNotLeaveTheAccountSelected() async {
+        let model = AppModel(startImmediately: false)
+        let account = seedAccount(model, kind: .kimiCode, name: "Kimi", preferredModel: "k3")
+
+        model.selectModel(account: account, model: "k3")
+        // The route is committed up front because the provider request body is
+        // built from it.
+        XCTAssertEqual(model.settings.activeAccountID, account.id.uuidString)
+
+        // No agent is listening, so the provider call fails. The app must fall
+        // back to the route that is still live rather than claim this one.
+        for _ in 0..<80 where model.settings.activeAccountID != nil {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertNil(
+            model.settings.activeAccountID,
+            "an account the agent never adopted must not stay selected"
+        )
+        XCTAssertEqual(model.settings.provider, .ollama)
+    }
+
+    @MainActor
+    func testTheClosedPickerNeverPairsAnAccountWithAnotherProvidersModel() {
+        let model = AppModel(startImmediately: false)
+        let account = seedAccount(model, kind: .kimiCode, name: "Kimi", preferredModel: "k3")
+        model.settings.activeAccountID = account.id.uuidString
+        model.settings.provider = .remote
+        // What the agent reports while it is still on the previous route.
+        model.sessionInfo = SessionInfo(
+            model: "gpt-5.6-sol", host: "h", cwd: "/tmp", session: "s", sessionID: "s",
+            messages: 1, approxTokens: 0, promptTokens: 0, completionTokens: 0,
+            contextLimit: 0, maxIterations: 40, hasProjectContext: false,
+            permissions: SessionPermissions(skipAll: false, allowed: [])
+        )
+
+        XCTAssertEqual(
+            model.modelPickerLabel, "Kimi · k3",
+            "the chip must not advertise a route that does not exist"
+        )
+        XCTAssertEqual(model.routedModel(for: account), "k3")
+
+        // Once the agent is really on this account, its own report wins.
+        model.sessionInfo = SessionInfo(
+            model: "kimi-for-coding", host: "h", cwd: "/tmp", session: "s", sessionID: "s",
+            messages: 1, approxTokens: 0, promptTokens: 0, completionTokens: 0,
+            contextLimit: 0, maxIterations: 40, hasProjectContext: false,
+            permissions: SessionPermissions(skipAll: false, allowed: [])
+        )
+        XCTAssertEqual(model.modelPickerLabel, "Kimi · kimi-for-coding")
+    }
+
+    @MainActor
     func testChoosingAnAccountWithNoKeyOpensSettingsInsteadOfSwitching() {
         let model = AppModel(startImmediately: false)
         let account = ProviderAccount(kind: .codex, name: "Unconfigured")
