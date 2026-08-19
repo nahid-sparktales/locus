@@ -1810,6 +1810,20 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            Section("Highlighted text") {
+                Picker("Search in Google opens in", selection: $draft.webSearchDestinationRaw) {
+                    ForEach(WebSearchDestination.allCases) { destination in
+                        Text(destination.title).tag(destination.rawValue)
+                    }
+                }
+                .accessibilityIdentifier("settings.browser.webSearchDestination")
+
+                Text("Right-clicking highlighted text in a conversation offers Copy and Search in Google. The Browser tab is used only while the agent’s browser is on.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Section("Privacy & data") {
                 Picker("Browsing profile", selection: $draft.browserPersistProfile) {
                     Text("Forget when Locus quits").tag(false)

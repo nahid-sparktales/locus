@@ -1800,6 +1800,9 @@ struct AppSettings: Codable, Hashable {
     /// default forgets everything when the app quits, because an agent that
     /// can browse anywhere should not quietly accumulate a signed-in profile.
     var browserPersistProfile = false
+    /// Where "Search in Google" on highlighted conversation text opens. Raw
+    /// string for the same forward-compatibility reason as the viewport.
+    var webSearchDestinationRaw = WebSearchDestination.defaultBrowser.rawValue
     /// Every executing chat owns a worker. This bounds active turns, not idle
     /// worker processes, and intentionally differs from per-team model calls.
     var maximumActiveChats = 2
@@ -1939,6 +1942,10 @@ struct AppSettings: Codable, Hashable {
         BrowserViewport(rawValue: browserViewportRaw) ?? .desktop
     }
 
+    var resolvedWebSearchDestination: WebSearchDestination {
+        WebSearchDestination(rawValue: webSearchDestinationRaw) ?? .defaultBrowser
+    }
+
     var resolvedProxyMode: ProxyMode {
         ProxyMode(rawValue: proxyModeRaw) ?? .off
     }
@@ -2072,6 +2079,10 @@ struct AppSettings: Codable, Hashable {
             Bool.self,
             forKey: .browserPersistProfile
         ) ?? defaults.browserPersistProfile
+        webSearchDestinationRaw = try container.decodeIfPresent(
+            String.self,
+            forKey: .webSearchDestinationRaw
+        ) ?? defaults.webSearchDestinationRaw
         maximumActiveChats = Self.clampMaximumActiveChats(
             try container.decodeIfPresent(Int.self, forKey: .maximumActiveChats)
                 ?? defaults.maximumActiveChats

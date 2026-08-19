@@ -1479,6 +1479,7 @@ private struct ConversationView: View {
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Conversation transcript")
+                .background { TranscriptSelectionScope() }
                 .frame(maxWidth: 740)
                 .padding(.horizontal, 28)
                 .padding(.top, model.blocks.isEmpty ? 0 : 26)

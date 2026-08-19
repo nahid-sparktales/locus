@@ -8342,6 +8342,20 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// "Search in Google" on highlighted conversation text. A Locus Browser
+    /// tab is not used when the user has turned browsing off, or in Ask mode
+    /// where the inspector refuses to open one — the search still has to land
+    /// somewhere, so it falls back to the default browser.
+    func searchWebForSelection(_ selection: String) {
+        guard let url = WebSearchQuery.url(for: selection) else { return }
+        let wantsBrowserTab = settings.resolvedWebSearchDestination == .locusBrowser
+        if wantsBrowserTab, settings.browserEnabled, !justChatEnabled {
+            openURLInBrowserTab(url)
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     func openSummaryOutput(_ row: PinnedSummary.OutputRow) {
         switch row.kind {
         case .file:
