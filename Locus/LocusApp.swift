@@ -230,6 +230,9 @@ final class LocusApplicationDelegate: NSObject, NSApplicationDelegate,
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        TranscriptSelectionMenu.shared.start { [weak self] selection in
+            self?.model?.searchWebForSelection(selection)
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(windowWillClose(_:)),

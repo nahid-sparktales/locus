@@ -3671,4 +3671,74 @@ final class FeatureLogicTests: XCTestCase {
             ChatPasteboardClassifier.imagePayload(pngData: Data(), tiffData: Data([0x00]))
         )
     }
+
+    // MARK: - Highlighted-text search
+
+    func testWebSearchQueryCollapsesMultiLineSelections() {
+        XCTAssertEqual(
+            WebSearchQuery.normalize("  swift\n  actor   isolation \n"),
+            "swift actor isolation"
+        )
+        XCTAssertEqual(WebSearchQuery.normalize("   \n\t "), "")
+    }
+
+    func testWebSearchQueryTruncatesOnAWordBoundary() {
+        let query = String(repeating: "alpha ", count: 40).trimmingCharacters(in: .whitespaces)
+        let truncated = WebSearchQuery.truncate(query, limit: 12)
+        XCTAssertEqual(truncated, "alpha alpha")
+        // A single word longer than the limit has no boundary to cut on, so it
+        // is cut where the limit falls rather than dropped entirely.
+        XCTAssertEqual(WebSearchQuery.truncate("abcdefghij", limit: 4), "abcd")
+        XCTAssertEqual(WebSearchQuery.truncate("short", limit: 64), "short")
+    }
+
+    func testWebSearchURLEncodesTheSelectionItself() {
+        let url = WebSearchQuery.url(for: "swift c++ & rust")
+        XCTAssertEqual(
+            url?.absoluteString,
+            "https://www.google.com/search?q=swift%20c%2B%2B%20%26%20rust"
+        )
+        // Round-tripping matters more than the exact escaping: a literal "+"
+        // decoded back as a space would search for something else.
+        XCTAssertEqual(
+            URLComponents(url: url!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "q" })?.value,
+            "swift c++ & rust"
+        )
+    }
+
+    func testWebSearchURLRefusesASelectionWithNoQueryInIt() {
+        XCTAssertNil(WebSearchQuery.url(for: "   \n  "))
+        XCTAssertNil(WebSearchQuery.url(for: ""))
+    }
+
+    func testWebSearchURLStaysWithinTheQueryLimit() {
+        let selection = String(repeating: "locus ", count: 400)
+        let url = WebSearchQuery.url(for: selection)
+        let query = URLComponents(url: url!, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "q" })?.value
+        XCTAssertNotNil(query)
+        XCTAssertLessThanOrEqual(query!.count, WebSearchQuery.characterLimit)
+        XCTAssertTrue(query!.hasPrefix("locus locus"))
+    }
+
+    func testWebSearchDestinationDefaultsToTheDefaultBrowser() throws {
+        XCTAssertEqual(AppSettings().resolvedWebSearchDestination, .defaultBrowser)
+
+        // Settings written before this preference existed must decode without
+        // losing the rest of the file.
+        let legacy = Data(#"{"browserEnabled":false}"#.utf8)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: legacy)
+        XCTAssertEqual(decoded.resolvedWebSearchDestination, .defaultBrowser)
+        XCTAssertFalse(decoded.browserEnabled)
+
+        var settings = AppSettings()
+        settings.webSearchDestinationRaw = WebSearchDestination.locusBrowser.rawValue
+        XCTAssertEqual(settings.resolvedWebSearchDestination, .locusBrowser)
+
+        // An unknown destination from a future version falls back rather than
+        // failing the decode.
+        settings.webSearchDestinationRaw = "quantumBrowser"
+        XCTAssertEqual(settings.resolvedWebSearchDestination, .defaultBrowser)
+    }
 }
