@@ -278,9 +278,18 @@ final class BrowserInputTests: XCTestCase {
         _ = await host.deliverText("x")
 
         if window.isKeyWindow {
+            // Identity is the wrong test: a focused NSTextField is represented
+            // by its field editor, and AppKit is free to install or swap that
+            // between capture and restore. What has to hold is that focus came
+            // back to the person's control rather than staying on the page.
+            let responder = window.firstResponder
+            let edits = (responder as? NSTextView)?.delegate as? NSResponder
+            let landed = responder.map { String(describing: type(of: $0)) } ?? "nothing"
             XCTAssertTrue(
-                window.firstResponder === composer,
-                "the agent typing left focus on the page, which would swallow the next thing the user typed"
+                responder !== host.webView
+                    && (responder === composer || responder === field || edits === field),
+                "the agent typing left focus on \(landed), not the text field; "
+                    + "the next thing the user typed would go to the page"
             )
         }
         host.park()
