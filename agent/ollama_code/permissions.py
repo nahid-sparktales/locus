@@ -487,6 +487,8 @@ def build_preview(
     if name == "browser_input":
         action = str(args.get("action") or "click")
         target = str(args.get("ref") or args.get("from_ref") or args.get("key") or "")
+        if not target and args.get("x") is not None and args.get("y") is not None:
+            target = f"({args.get('x')}, {args.get('y')})"
         typed = str(args.get("text") or args.get("value") or "")
         summary = f"{action.replace('_', ' ')}{f' {target}' if target else ''}"
         return summary, typed or target

@@ -312,9 +312,17 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
     /// endpoint that existed before accounts: it keeps pointing at the old
     /// credential entry so the key never has to be re-entered.
     var legacyCredentialAccount: String?
+    /// Which isolated `CODEX_HOME` holds this ChatGPT account's sign-in.
+    ///
+    /// nil means the single home that existed before Locus supported more than
+    /// one ChatGPT account — so the account already signed in stays signed in
+    /// across the upgrade. Accounts added afterwards carry their own id, which
+    /// is what keeps two ChatGPT plans from sharing one set of tokens.
+    var codexHomeID: String?
 
     private enum CodingKeys: String, CodingKey {
         case id, kindRaw, name, baseURLOverride, preferredModel, contextWindow, createdAt
+        case codexHomeID
         // Preserve the stored field name written by earlier versions without
         // carrying Keychain terminology into new code or behavior.
         case legacyCredentialAccount = "legacyKeychainAccount"
@@ -327,7 +335,8 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
         baseURLOverride: String? = nil,
         preferredModel: String = "",
         contextWindow: Int? = nil,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        codexHomeID: String? = nil
     ) {
         self.id = id
         self.kindRaw = kind.rawValue
@@ -336,6 +345,15 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
         self.preferredModel = preferredModel
         self.contextWindow = contextWindow
         self.createdAt = createdAt
+        // A ChatGPT account built in code is a new one, and a new one signs in
+        // to a home of its own. Decoding bypasses this initialiser, so an
+        // account stored before multi-account support keeps its nil and goes
+        // on using the original home rather than being signed out.
+        if kind == .chatGPT, codexHomeID == nil {
+            self.codexHomeID = id.uuidString
+        } else {
+            self.codexHomeID = codexHomeID
+        }
     }
 
     /// An unknown kind resolves to `.custom`, which keeps the account usable:
@@ -363,6 +381,10 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
     var credentialAccount: String {
         legacyCredentialAccount ?? CredentialStore.providerAccountKey(id)
     }
+
+    /// The value the agent uses to pick this account's credential home. Empty
+    /// is the pre-multi-account home, which is exactly what nil should mean.
+    var codexHomeIdentifier: String { codexHomeID ?? "" }
 
     var hasKey: Bool {
         kind.usesManagedChatGPTAuthentication

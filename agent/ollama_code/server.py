@@ -43,8 +43,8 @@ from .capabilities import enabled as capability_enabled
 from .capabilities import snapshot as capability_snapshot
 from .codex_app_server import (
     CodexAppServerError,
-    CodexAppServerManager,
     CodexBrokerClient,
+    CodexManagerRegistry,
     CodexProtocolMismatch,
 )
 from .config import (
@@ -86,6 +86,7 @@ from .orchestration import (
     configure_chatgpt_manager,
     orchestration_fingerprint,
     parse_manifest,
+    set_chatgpt_manager,
     writer_prompt_for_job,
 )
 from .runstore import ACTIVE_NONRECOVERABLE_STATES, RunStore, RunStoreError
@@ -162,13 +163,21 @@ class ChatService:
         self.core = core
         broker_url = os.environ.pop("LOCUS_CODEX_BROKER_URL", "").strip()
         broker_token = os.environ.pop("LOCUS_CODEX_BROKER_TOKEN", "").strip()
-        self.codex = (
-            CodexBrokerClient(broker_url, broker_token)
-            if broker_url else CodexAppServerManager(client_version=__version__)
+        # A worker proxies to the primary backend's helper and must never own
+        # credential homes of its own, so only the primary keeps a registry.
+        self._codex_pinned: Any = (
+            CodexBrokerClient(broker_url, broker_token) if broker_url else None
         )
+        self._codex_registry: CodexManagerRegistry | None = (
+            None if broker_url else CodexManagerRegistry(client_version=__version__)
+        )
+        self._codex_home_id = ""
+        if self._codex_registry is not None:
+            self._codex_registry.add_listener(self._on_codex_event)
+        else:
+            self._codex_pinned.add_listener(self._on_codex_event)
         configure_chatgpt_manager(self.codex)
         self.core.codex_manager = self.codex
-        self.codex.add_listener(self._on_codex_event)
         self.worker_id = uuid.uuid4().hex
         self.loop: asyncio.AbstractEventLoop | None = None
         self.queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -215,6 +224,53 @@ class ChatService:
         # alive until explicitly stopped — see devserver.py's docstring.
         self.dev_servers = DevServerManager(perms=core.perms, config=core.config)
         self.core.tool_ctx.background_service = self._execute_background_service
+
+    @property
+    def codex(self) -> Any:
+        """The helper for the ChatGPT account currently in use."""
+        if self._codex_pinned is not None:
+            return self._codex_pinned
+        assert self._codex_registry is not None
+        return self._codex_registry.manager(self._codex_home_id)
+
+    @codex.setter
+    def codex(self, manager: Any) -> None:
+        """Pin one helper, bypassing the registry.
+
+        Evaluations run inside a worker and share that worker's already
+        authenticated proxy rather than launching a second helper.
+        """
+        self._codex_pinned = manager
+
+    def codex_for(self, home_id: str) -> Any:
+        """The helper for one account, without making it the active one.
+
+        Reading or signing into an account must not disturb the account the
+        agent may be mid-turn against, so this deliberately does not switch.
+        """
+        if self._codex_pinned is not None:
+            return self._codex_pinned
+        assert self._codex_registry is not None
+        return self._codex_registry.manager(home_id)
+
+    def use_chatgpt_home(self, home_id: str) -> Any:
+        """Point the agent, its teams, and its workers at one account's helper."""
+        if self._codex_pinned is not None:
+            return self._codex_pinned
+        assert self._codex_registry is not None
+        # Resolve first: an invalid id must raise before anything is rebound.
+        manager = self._codex_registry.manager(home_id)
+        self._codex_home_id = (home_id or "").strip()
+        self.core.codex_manager = manager
+        set_chatgpt_manager(manager)
+        return manager
+
+    def close_codex(self) -> None:
+        """Shut down every helper this service started."""
+        if self._codex_registry is not None:
+            self._codex_registry.close_all()
+        elif self._codex_pinned is not None:
+            self._codex_pinned.close()
 
     def _on_codex_event(self, event: dict[str, Any]) -> None:
         """Expose only account/limit invalidations, never helper payloads."""
@@ -566,21 +622,76 @@ class ChatService:
 
     def _execute_background_service(self, arguments: dict[str, Any]) -> str:
         action = str(arguments.get("action") or "status").lower()
+        workspace = self.core.execution_path
         try:
+            if action == "configurations":
+                found = self.dev_servers.configurations(workspace)
+                if not found:
+                    return (
+                        "This workspace has no .locus/launch.json. Start a server by "
+                        "passing a command, or add configurations to that file to name them."
+                    )
+                lines = []
+                for entry in found:
+                    where = f" (port {entry['port']})" if entry.get("port") else ""
+                    how = entry["command"] or f"attach to {entry['url'] or 'a running server'}"
+                    lines.append(f"{entry['name']}{where}: {how}")
+                return "\n".join(lines)
+
             if action == "start":
                 port = arguments.get("port")
+                port = int(port) if port is not None else None
+                command = str(arguments.get("command") or "").strip()
+                name = str(arguments.get("name") or "").strip()
+                cwd = str(arguments.get("cwd") or "").strip()
+                url = ""
+
+                # A bare name means "run the configuration called that", which
+                # is the whole point of keeping one: the agent should not have
+                # to rediscover the command every session.
+                if name and not command:
+                    entry = self.dev_servers.configuration(workspace, name)
+                    if entry is None:
+                        known = [e["name"] for e in self.dev_servers.configurations(workspace)]
+                        listing = ", ".join(known) if known else "none are defined"
+                        return (
+                            f"Error: no configuration called '{name}' in .locus/launch.json "
+                            f"({listing}). Pass a command instead."
+                        )
+                    command = entry["command"]
+                    port = port if port is not None else entry["port"]
+                    cwd = cwd or entry["cwd"]
+                    url = entry["url"]
+                    if not command:
+                        result = self.dev_servers.attach(
+                            name=entry["name"], url=url, port=port, cwd=cwd or workspace
+                        )
+                        self.emit({"type": "background_services_changed", "action": "start"})
+                        where = result["url"] or (
+                            f"port {port}" if port else "wherever it is listening"
+                        )
+                        return (
+                            f"'{result['name']}' {result['reason']} — {where}. "
+                            "Nothing new was spawned; open it with browser_navigate."
+                        )
+
                 result = self.dev_servers.start(
-                    command=str(arguments.get("command") or ""),
-                    cwd=str(arguments.get("cwd") or "") or self.core.execution_path,
-                    port=int(port) if port is not None else None,
-                    name=str(arguments.get("name") or ""),
+                    command=command,
+                    cwd=cwd or workspace,
+                    port=port,
+                    name=name,
                     should_stop=self.core.tool_ctx.stopped,
                 )
                 self.emit({"type": "background_services_changed", "action": "start"})
                 tail = str(result.get("tail") or "").strip()
                 suffix = f"\n\nRecent output:\n{tail}" if tail else ""
                 if result.get("ready"):
-                    where = f"http://localhost:{result['port']}" if result.get("port") else "no port was given"
+                    if url:
+                        where = url
+                    elif result.get("port"):
+                        where = f"http://localhost:{result['port']}"
+                    else:
+                        where = "no port was given"
                     return (
                         f"Started '{result['name']}' (pid {result['pid']}); {result['reason']} — "
                         f"{where}. A port accepting connections is not proof the app is healthy; "
@@ -597,9 +708,20 @@ class ChatService:
                     return "No matching server is running."
                 self.emit({"type": "background_services_changed", "action": "stop"})
                 return f"Stopped {', '.join(stopped)}."
-            runs = self.dev_servers.status()
+
+            requested_lines = arguments.get("lines")
+            runs = self.dev_servers.status(
+                lines=int(requested_lines) if isinstance(requested_lines, int) else 40,
+                level=str(arguments.get("level") or "all").lower(),
+                search=str(arguments.get("search") or ""),
+            )
             if not runs:
                 return "No managed background services are running."
+            wanted = str(arguments.get("name") or "").strip()
+            if wanted:
+                runs = [run for run in runs if run["name"] == wanted]
+                if not runs:
+                    return f"No managed service called '{wanted}' is running."
             lines = []
             for run in runs:
                 state = "running" if run["running"] else f"exited ({run['exit_code']})"
@@ -611,6 +733,8 @@ class ChatService:
                 tail = str(run.get("tail") or "").strip()
                 if tail:
                     lines.append(truncate_output(tail, 4_000))
+                elif arguments.get("level") or arguments.get("search"):
+                    lines.append("(no output matched the filter)")
             return "\n".join(lines)
         except (DevServerError, ValueError) as e:
             return f"Error: {e}"
@@ -830,7 +954,7 @@ async def lifespan(app: FastAPI):
             # Dev servers deliberately have no deadline; shutdown is the one
             # guaranteed reaper.
             svc.dev_servers.stop_all()
-            svc.codex.close()
+            svc.close_codex()
             svc.core.close()
 
 
@@ -1733,7 +1857,7 @@ def _run_evaluation_suite(
                 evaluation_service = ChatService(evaluation_core)
                 # Evaluations in a dedicated worker share that worker's
                 # authenticated proxy; they never launch another App Server.
-                evaluation_service.codex.close()
+                evaluation_service.close_codex()
                 evaluation_service.codex = parent.codex
                 evaluation_service.core.codex_manager = parent.codex
                 evaluation_service.run_store = parent.run_store
@@ -1997,9 +2121,20 @@ def _evaluation_changed_paths(task: TaskCheckout, current_tree: str) -> list[str
     ]
 
 
-def _chatgpt_account_payload(svc: ChatService, *, refresh: bool = False) -> dict[str, Any]:
+def _chatgpt_manager(svc: ChatService, home_id: str) -> Any:
+    """The helper for a requested account, or a 422 if the id is malformed."""
+    try:
+        return svc.codex_for(home_id)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+
+
+def _chatgpt_account_payload(
+    svc: ChatService, *, refresh: bool = False, home_id: str = ""
+) -> dict[str, Any]:
     """Stable, secret-free account shape for native clients."""
-    if not svc.codex.available:
+    manager = _chatgpt_manager(svc, home_id)
+    if not manager.available:
         return {
             "status": "runtime_unavailable",
             "runtime_available": False,
@@ -2008,7 +2143,7 @@ def _chatgpt_account_payload(svc: ChatService, *, refresh: bool = False) -> dict
             "plan_type": None,
         }
     try:
-        raw = svc.codex.account(refresh=refresh)
+        raw = manager.account(refresh=refresh)
     except CodexAppServerError as error:
         return {
             "status": "runtime_unavailable",
@@ -2030,15 +2165,19 @@ def _chatgpt_account_payload(svc: ChatService, *, refresh: bool = False) -> dict
 
 
 @app.get("/api/chatgpt/account")
-def chatgpt_account(refresh: bool = Query(default=False)) -> dict[str, Any]:
-    return _chatgpt_account_payload(service(), refresh=refresh)
+def chatgpt_account(
+    refresh: bool = Query(default=False),
+    account_id: str = Query(default=""),
+) -> dict[str, Any]:
+    return _chatgpt_account_payload(service(), refresh=refresh, home_id=account_id)
 
 
 @app.post("/api/chatgpt/login/start")
-def chatgpt_login_start() -> dict[str, Any]:
+def chatgpt_login_start(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
+    manager = _chatgpt_manager(svc, str(body.get("account_id") or ""))
     try:
-        result = svc.codex.start_login()
+        result = manager.start_login()
     except CodexAppServerError as error:
         raise HTTPException(503, str(error)) from error
     return {
@@ -2053,36 +2192,43 @@ def chatgpt_login_cancel(body: dict[str, Any] = Body(default_factory=dict)) -> d
     login_id = str(body.get("login_id") or "").strip()
     if not login_id:
         raise HTTPException(422, "login_id is required")
+    home_id = str(body.get("account_id") or "")
+    svc = service()
     try:
-        service().codex.cancel_login(login_id)
+        _chatgpt_manager(svc, home_id).cancel_login(login_id)
     except CodexAppServerError as error:
         raise HTTPException(409, str(error)) from error
-    return _chatgpt_account_payload(service())
+    return _chatgpt_account_payload(svc, home_id=home_id)
 
 
 @app.post("/api/chatgpt/logout")
-def chatgpt_logout() -> dict[str, Any]:
+def chatgpt_logout(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
+    home_id = str(body.get("account_id") or "")
+    manager = _chatgpt_manager(svc, home_id)
     try:
         with svc.state_mutation():
-            svc.codex.logout()
-            if svc.core.provider == "chatgpt":
+            manager.logout()
+            # Only the account actually in use costs the agent its provider.
+            # Signing out of a second plan must not interrupt a turn running
+            # on the first.
+            if svc.core.provider == "chatgpt" and manager is svc.codex:
                 svc.core.use_ollama()
     except AgentBusyError as error:
         raise _busy_http() from error
     except CodexAppServerError as error:
         raise HTTPException(409, str(error)) from error
-    return _chatgpt_account_payload(svc)
+    return _chatgpt_account_payload(svc, home_id=home_id)
 
 
 @app.get("/api/chatgpt/models")
-def chatgpt_models() -> dict[str, Any]:
+def chatgpt_models(account_id: str = Query(default="")) -> dict[str, Any]:
     svc = service()
-    account = _chatgpt_account_payload(svc)
+    account = _chatgpt_account_payload(svc, home_id=account_id)
     if account["status"] != "signed_in":
         return {"models": [], "status": account["status"], "message": account["message"]}
     try:
-        rows = svc.codex.models()
+        rows = _chatgpt_manager(svc, account_id).models()
     except CodexAppServerError as error:
         raise HTTPException(503, str(error)) from error
     return {
@@ -2100,9 +2246,9 @@ def chatgpt_models() -> dict[str, Any]:
 
 
 @app.get("/api/chatgpt/usage")
-def chatgpt_usage() -> dict[str, Any]:
+def chatgpt_usage(account_id: str = Query(default="")) -> dict[str, Any]:
     svc = service()
-    account = _chatgpt_account_payload(svc)
+    account = _chatgpt_account_payload(svc, home_id=account_id)
     if account["status"] != "signed_in":
         return {
             "status": account["status"],
@@ -2112,7 +2258,7 @@ def chatgpt_usage() -> dict[str, Any]:
             "message": account["message"],
         }
     try:
-        raw = svc.codex.usage()
+        raw = _chatgpt_manager(svc, account_id).usage()
     except CodexAppServerError as error:
         raise HTTPException(503, str(error)) from error
     return {
@@ -2167,11 +2313,15 @@ def _apply_provider(svc: ChatService, body: dict[str, Any]) -> dict[str, Any]:
         if not account_id:
             raise HTTPException(422, "account_id is required for the ChatGPT provider")
         try:
+            # The home id, not the account id, selects the credentials: an
+            # account created before multi-account support has no home of its
+            # own and keeps using the original one.
+            manager = svc.use_chatgpt_home(str(body.get("codex_home_id") or ""))
             svc.core.use_chatgpt(
                 account_id=account_id,
                 model=str(body.get("model") or ""),
                 account_label=str(body.get("account_label") or "ChatGPT plan"),
-                manager=svc.codex,
+                manager=manager,
             )
         except (ValueError, CodexAppServerError) as error:
             raise HTTPException(409, str(error)) from error

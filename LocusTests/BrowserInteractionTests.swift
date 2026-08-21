@@ -130,6 +130,89 @@ final class BrowserInteractionTests: XCTestCase {
         XCTAssertEqual(result["checked"] as? Bool, true)
     }
 
+    func testASelectIsMatchedByItsVisibleLabelAsWellAsItsValue() async throws {
+        try await load("""
+        <body>
+          <select id="s">
+            <option value="ca">Canada</option>
+            <option value="uk">United Kingdom</option>
+          </select>
+        </body>
+        """)
+        // A model reads options off the page by their labels; matching only the
+        // value attribute fails on every select whose values are codes.
+        let byLabel = try await object(
+            "return __locus.setValue(ref, value)",
+            ["ref": "ref_1", "value": "United Kingdom"]
+        )
+        XCTAssertEqual(byLabel["ok"] as? Bool, true)
+        let chosen = try await evaluate("return document.getElementById('s').value") as? String
+        XCTAssertEqual(chosen, "uk")
+
+        let byValue = try await object(
+            "return __locus.setValue(ref, value)", ["ref": "ref_1", "value": "ca"]
+        )
+        XCTAssertEqual(byValue["ok"] as? Bool, true)
+
+        let missing = try await object(
+            "return __locus.setValue(ref, value)", ["ref": "ref_1", "value": "Atlantis"]
+        )
+        XCTAssertEqual(missing["blocked"] as? Bool, true)
+        // The reply lists what was actually on offer, so the next attempt is
+        // informed rather than another guess.
+        XCTAssertEqual(missing["options"] as? [String], ["Canada", "United Kingdom"])
+    }
+
+    func testWhatSitsAtAPointCanBeDescribedForTheCredentialGate() async throws {
+        try await load("""
+        <body style="margin:0">
+          <form>
+            <input id="p" type="password"
+                   style="position:absolute;left:0;top:0;width:200px;height:40px">
+          </form>
+        </body>
+        """)
+        let described = try await object(
+            "return __locus.describeAt(x, y)", ["x": 100, "y": 20]
+        )
+        // A click carrying pixels names no element, so this is the only way to
+        // know those pixels are a password field.
+        XCTAssertEqual(described["secure"] as? Bool, true)
+        // Plain page furniture is described, not refused — only the field
+        // itself is secure.
+        let body = try await object("return __locus.describeAt(x, y)", ["x": 100, "y": 300])
+        XCTAssertEqual(body["secure"] as? Bool, false)
+        // Past the viewport there is nothing to describe, which the caller has
+        // to be able to tell apart from "nothing sensitive here".
+        let empty = try await object("return __locus.describeAt(x, y)", ["x": 100, "y": 50_000])
+        XCTAssertEqual(empty["missing"] as? Bool, true)
+    }
+
+    func testLocatingARefReportsThePointAndWhatIsCoveringIt() async throws {
+        try await load("""
+        <body style="margin:0">
+          <button id="b" style="position:absolute;left:100px;top:50px;width:200px;height:100px">Go</button>
+        </body>
+        """)
+        let located = try await object("return __locus.locate(ref)", ["ref": "ref_1"])
+        XCTAssertEqual(located["ok"] as? Bool, true)
+        XCTAssertEqual(located["x"] as? Double, 200)
+        XCTAssertEqual(located["y"] as? Double, 100)
+
+        try await evaluate("""
+        const cover = document.createElement('div');
+        cover.id = 'cover';
+        cover.style.cssText = 'position:absolute;left:0;top:0;width:400px;height:400px';
+        document.body.appendChild(cover);
+        return true;
+        """)
+        let blocked = try await object("return __locus.locate(ref)", ["ref": "ref_1"])
+        // The hit test is the one thing a coordinate cannot do for itself: it
+        // is what catches a cookie banner over the control.
+        XCTAssertEqual(blocked["blocked"] as? Bool, true)
+        XCTAssertEqual(blocked["by"] as? String, "DIV#cover")
+    }
+
     func testFindNarrowsTheSnapshotWithoutRewalking() async throws {
         try await load("""
         <body>

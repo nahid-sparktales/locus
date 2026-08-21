@@ -53,7 +53,21 @@ struct BrowserPanel: View {
     @State private var drawerOpen = false
     @State private var screenshotDraft: BrowserScreenshotDraft?
     @State private var isCapturing = false
+    @State private var findOpen = false
+    @State private var findQuery = ""
+    /// nil until a search has run, so the field does not accuse the user of
+    /// finding nothing before they have typed anything.
+    @State private var findMatched: Bool?
+    @State private var colorScheme = "light"
     @FocusState private var addressFocused: Bool
+    @FocusState private var findFocused: Bool
+
+    /// The menu's own label: the preset name, plus a marker when the tab is
+    /// also pretending to be a phone.
+    private var viewportLabel: String {
+        let name = BrowserViewport(rawValue: viewportRaw)?.title ?? "Desktop"
+        return snapshot?.emulatesDevice == true ? "\(name) · device" : name
+    }
 
     private var snapshot: BrowserService.TabSnapshot? {
         browser.activeSnapshot(for: sessionID)
@@ -68,6 +82,7 @@ struct BrowserPanel: View {
             controlsBar
             tabChips
             toolbar
+            if findOpen { findBar }
             progressLine
             content
             if drawerOpen, let log = browser.activeLog(for: sessionID) {
@@ -131,6 +146,15 @@ struct BrowserPanel: View {
             Button("") { browser.userCycleTab(sessionID: sessionID, forward: false) }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
                 .disabled(sessionTabs.count < 2)
+            Button("") { openFind() }
+                .keyboardShortcut("f", modifiers: .command)
+                .disabled(snapshot?.url.isEmpty != false)
+            Button("") { stepZoom(by: 0.1) }
+                .keyboardShortcut("+", modifiers: .command)
+            Button("") { stepZoom(by: -0.1) }
+                .keyboardShortcut("-", modifiers: .command)
+            Button("") { browser.userSetPageZoom(1, sessionID: sessionID) }
+                .keyboardShortcut("0", modifiers: .command)
         }
         .buttonStyle(.locus())
         .frame(width: 0, height: 0)
@@ -149,7 +173,96 @@ struct BrowserPanel: View {
         browser.userCloseTab(active.id, sessionID: sessionID)
     }
 
+    private func openFind() {
+        guard snapshot?.url.isEmpty == false else { return }
+        findOpen = true
+        findFocused = true
+    }
+
+    private func closeFind() {
+        findOpen = false
+        findQuery = ""
+        findMatched = nil
+        browser.userClearFind(sessionID: sessionID)
+    }
+
+    private func runFind(forward: Bool) {
+        let query = findQuery
+        guard !query.isEmpty else {
+            findMatched = nil
+            return
+        }
+        Task {
+            findMatched = await browser.userFind(query, sessionID: sessionID, forward: forward)
+        }
+    }
+
+    private func stepZoom(by delta: CGFloat) {
+        let current = snapshot?.pageZoom ?? 1
+        browser.userSetPageZoom(current + delta, sessionID: sessionID)
+    }
+
     // MARK: - Chrome
+
+    /// ⌘F, in the panel rather than the window: WebKit owns the highlight, and
+    /// the person searching a page is looking at this pane, not the transcript.
+    private var findBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.locus(size: 9))
+                .foregroundStyle(LocusTheme.muted)
+
+            TextField("Find on page", text: $findQuery)
+                .textFieldStyle(.plain)
+                .font(.locus(size: 9))
+                .focused($findFocused)
+                .onSubmit { runFind(forward: true) }
+                .onChange(of: findQuery) { _, _ in runFind(forward: true) }
+                .accessibilityLabel("Find on page")
+                .accessibilityIdentifier("browser.find.query")
+
+            // WebKit's find API reports only whether something matched, so this
+            // says exactly that rather than inventing "1 of 12".
+            if findMatched == false, !findQuery.isEmpty {
+                Text("Not found")
+                    .font(.locus(size: 8, weight: .semibold))
+                    .foregroundStyle(LocusTheme.coral)
+                    .accessibilityIdentifier("browser.find.empty")
+            }
+
+            Button { runFind(forward: false) } label: {
+                Image(systemName: "chevron.up").font(.locus(size: 9, weight: .semibold))
+            }
+            .buttonStyle(.locus())
+            .disabled(findQuery.isEmpty)
+            .help("Previous match (⇧↩)")
+            .accessibilityLabel("Previous match")
+
+            Button { runFind(forward: true) } label: {
+                Image(systemName: "chevron.down").font(.locus(size: 9, weight: .semibold))
+            }
+            .buttonStyle(.locus())
+            .disabled(findQuery.isEmpty)
+            .help("Next match (↩)")
+            .accessibilityLabel("Next match")
+
+            Button(action: closeFind) {
+                Image(systemName: "xmark").font(.locus(size: 8, weight: .bold))
+            }
+            .buttonStyle(.locus())
+            .keyboardShortcut(.escape, modifiers: [])
+            .help("Close find bar")
+            .accessibilityLabel("Close find bar")
+        }
+        .foregroundStyle(LocusTheme.muted)
+        .padding(.horizontal, 10)
+        .frame(height: 28)
+        .background(LocusTheme.paperDeep)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LocusTheme.line).frame(height: 1)
+        }
+        .accessibilityIdentifier("browser.find")
+    }
 
     private var tabChips: some View {
         ScrollViewReader { proxy in
@@ -398,27 +511,73 @@ struct BrowserPanel: View {
                     Button {
                         viewportRaw = preset.rawValue
                         browser.defaultViewport = preset.size
-                        browser.activeHost(for: sessionID)?.setViewport(preset.size)
+                        browser.userSetViewport(preset.size, sessionID: sessionID)
                     } label: {
+                        let size = preset.size
+                        let label = "\(preset.title)  \(Int(size.width))×\(Int(size.height))"
                         if viewportRaw == preset.rawValue {
-                            Label(preset.title, systemImage: "checkmark")
+                            Label(label, systemImage: "checkmark")
                         } else {
-                            Text(preset.title)
+                            Text(label)
                         }
                     }
                 }
-            } label: {
-                Label(
-                    BrowserViewport(rawValue: viewportRaw)?.title ?? "Desktop",
-                    systemImage: "rectangle.ratio.3.to.4"
+
+                Divider()
+
+                // The agent can turn this on by itself through browser_resize;
+                // showing it here is what stops a spoofed user agent from being
+                // an invisible difference between what the page serves the
+                // person and what it serves the screenshot.
+                Toggle(
+                    "Emulate mobile device",
+                    isOn: Binding(
+                        get: { snapshot?.emulatesDevice ?? false },
+                        set: { browser.userSetDeviceEmulation($0, sessionID: sessionID) }
+                    )
                 )
-                .font(.locus(size: 8, weight: .semibold))
+                .accessibilityIdentifier("browser.device")
+
+                Divider()
+
+                Picker(
+                    "Appearance",
+                    selection: Binding(
+                        get: { colorScheme },
+                        set: { scheme in
+                            colorScheme = scheme
+                            browser.userSetColorScheme(scheme, sessionID: sessionID)
+                        }
+                    )
+                ) {
+                    Text("Light").tag("light")
+                    Text("Dark").tag("dark")
+                }
+                .pickerStyle(.inline)
+                .accessibilityIdentifier("browser.colorScheme")
+            } label: {
+                Label(viewportLabel, systemImage: "rectangle.ratio.3.to.4")
+                    .font(.locus(size: 8, weight: .semibold))
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
             .foregroundStyle(LocusTheme.muted)
-            .help("Emulated viewport for the agent's screenshots")
+            .help("Emulated viewport and device for the agent's screenshots")
             .accessibilityIdentifier("browser.viewport")
+
+            if let zoom = snapshot?.pageZoom, abs(zoom - 1) > 0.001 {
+                Button {
+                    browser.userSetPageZoom(1, sessionID: sessionID)
+                } label: {
+                    Text("\(Int((zoom * 100).rounded()))%")
+                        .font(.locus(size: 8, weight: .semibold))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                .buttonStyle(.locus())
+                .help("Page zoom — click to reset (⌘0)")
+                .accessibilityLabel("Page zoom \(Int((zoom * 100).rounded())) percent")
+                .accessibilityIdentifier("browser.zoom")
+            }
 
             Spacer()
 

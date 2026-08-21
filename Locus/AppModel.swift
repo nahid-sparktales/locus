@@ -132,9 +132,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var providerAccounts: [ProviderAccount] = []
     @Published private(set) var accountModels: [UUID: [String]] = [:]
     @Published private(set) var accountStatus: [UUID: ProviderAccountStatus] = [:]
-    @Published private(set) var chatGPTAccount: ChatGPTAccountResponse?
-    @Published private(set) var chatGPTUsage: ChatGPTUsageResponse?
-    @Published private(set) var chatGPTLoginID: String?
+    /// ChatGPT plan state is per account: each one signs in to its own
+    /// isolated credential home, so a single set of these would report the
+    /// account that happened to refresh last.
+    @Published private(set) var chatGPTAccounts: [UUID: ChatGPTAccountResponse] = [:]
+    @Published private(set) var chatGPTUsageByAccount: [UUID: ChatGPTUsageResponse] = [:]
+    @Published private(set) var chatGPTLoginIDs: [UUID: String] = [:]
     @Published private(set) var primaryAgentBehavior = AgentBehavior.primaryDefault()
     @Published private(set) var agentProfiles: [AgentProfile] = []
     @Published private(set) var agentTeams: [AgentTeam] = []
@@ -821,6 +824,7 @@ final class AppModel: ObservableObject {
                     self.runtimeRecoveryAttempt = 0
                     self.sendComputerControlCapability()
                     self.browser.defaultViewport = self.settings.resolvedBrowserViewport.size
+                    self.applyBrowserSettings(self.settings)
                     self.announceBrowserCapability()
                     self.syncPreferredPermissionMode(to: self.backend)
                     if let runID = self.orchestrationRunID {
@@ -2634,11 +2638,12 @@ final class AppModel: ObservableObject {
             do {
                 let response = try await backend.get(
                     "/api/chatgpt/models",
+                    query: [URLQueryItem(name: "account_id", value: account.codexHomeIdentifier)],
                     as: ChatGPTModelsResponse.self
                 )
                 let names = response.models.map(\.id)
                 accountModels[account.id] = names.isEmpty ? account.kind.curatedModels : names
-                await refreshChatGPTAccount()
+                await refreshChatGPTAccount(for: account)
             } catch {
                 accountModels[account.id] = account.kind.curatedModels
                 accountStatus[account.id] = .runtimeUnavailable(error.localizedDescription)
@@ -3950,6 +3955,7 @@ final class AppModel: ObservableObject {
                     route = [
                         "provider": "chatgpt",
                         "account_id": account.id.uuidString,
+                        "codex_home_id": account.codexHomeIdentifier,
                         "account_label": account.displayName,
                     ]
                 } else {
@@ -6146,12 +6152,7 @@ final class AppModel: ObservableObject {
     /// "keep the saved one".
     @discardableResult
     func saveProviderAccount(_ account: ProviderAccount, apiKey: String?) -> Bool {
-        if account.kind == .chatGPT {
-            if providerAccounts.contains(where: { $0.kind == .chatGPT && $0.id != account.id }) {
-                showToast("Only one ChatGPT plan account can be added")
-                return false
-            }
-        } else {
+        if account.kind != .chatGPT {
             let effectiveKey = apiKey ?? CredentialStore.get(account: account.credentialAccount) ?? ""
             if let error = RemoteEndpointTester.securityError(
                 baseURL: account.resolvedBaseURL,
@@ -6197,89 +6198,96 @@ final class AppModel: ObservableObject {
         return true
     }
 
-    func refreshChatGPTAccount(forceTokenRefresh: Bool = false) async {
-        let query = forceTokenRefresh
-            ? [URLQueryItem(name: "refresh", value: "true")]
-            : []
+    /// Refreshes every ChatGPT account, each against its own credential home.
+    func refreshChatGPTAccounts(forceTokenRefresh: Bool = false) async {
+        for account in providerAccounts where account.kind == .chatGPT {
+            await refreshChatGPTAccount(for: account, forceTokenRefresh: forceTokenRefresh)
+        }
+    }
+
+    func refreshChatGPTAccount(
+        for account: ProviderAccount,
+        forceTokenRefresh: Bool = false
+    ) async {
+        var query = [URLQueryItem(name: "account_id", value: account.codexHomeIdentifier)]
+        if forceTokenRefresh {
+            query.append(URLQueryItem(name: "refresh", value: "true"))
+        }
         do {
             let state = try await backend.get(
                 "/api/chatgpt/account",
                 query: query,
                 as: ChatGPTAccountResponse.self
             )
-            chatGPTAccount = state
-            let status: ProviderAccountStatus = switch state.status {
+            chatGPTAccounts[account.id] = state
+            accountStatus[account.id] = switch state.status {
             case "signed_in": .signedIn(email: state.email, plan: state.planType)
             case "runtime_unavailable":
                 .runtimeUnavailable(state.message ?? "The ChatGPT runtime is unavailable")
             case "signing_in": .signingIn
             default: .signedOut
             }
-            for account in providerAccounts where account.kind == .chatGPT {
-                accountStatus[account.id] = status
-            }
             if state.status == "signed_in" {
-                chatGPTLoginID = nil
-                await refreshChatGPTUsage()
+                chatGPTLoginIDs[account.id] = nil
+                await refreshChatGPTUsage(for: account)
             }
         } catch {
-            let status = ProviderAccountStatus.runtimeUnavailable(error.localizedDescription)
-            for account in providerAccounts where account.kind == .chatGPT {
-                accountStatus[account.id] = status
-            }
+            accountStatus[account.id] = .runtimeUnavailable(error.localizedDescription)
         }
     }
 
-    func startChatGPTLogin() async {
+    func startChatGPTLogin(for account: ProviderAccount) async {
         do {
             let response = try await backend.post(
                 "/api/chatgpt/login/start",
-                body: [:],
+                body: ["account_id": account.codexHomeIdentifier],
                 as: ChatGPTLoginResponse.self
             )
-            chatGPTLoginID = response.loginID
-            for account in providerAccounts where account.kind == .chatGPT {
-                accountStatus[account.id] = .signingIn
-            }
+            chatGPTLoginIDs[account.id] = response.loginID
+            accountStatus[account.id] = .signingIn
             guard let url = URL(string: response.authURL), NSWorkspace.shared.open(url) else {
                 showToast("Could not open the ChatGPT sign-in page")
                 return
             }
         } catch {
             showToast("Could not start ChatGPT sign-in: \(error.localizedDescription)")
-            await refreshChatGPTAccount()
+            await refreshChatGPTAccount(for: account)
         }
     }
 
-    func cancelChatGPTLogin() async {
-        guard let loginID = chatGPTLoginID else { return }
+    func cancelChatGPTLogin(for account: ProviderAccount) async {
+        guard let loginID = chatGPTLoginIDs[account.id] else { return }
         do {
             let state = try await backend.post(
                 "/api/chatgpt/login/cancel",
-                body: ["login_id": loginID],
+                body: [
+                    "login_id": loginID,
+                    "account_id": account.codexHomeIdentifier,
+                ],
                 as: ChatGPTAccountResponse.self
             )
-            chatGPTLoginID = nil
-            chatGPTAccount = state
-            await refreshChatGPTAccount()
+            chatGPTLoginIDs[account.id] = nil
+            chatGPTAccounts[account.id] = state
+            await refreshChatGPTAccount(for: account)
         } catch {
             showToast("Could not cancel ChatGPT sign-in: \(error.localizedDescription)")
         }
     }
 
-    func signOutChatGPT() async {
+    func signOutChatGPT(from account: ProviderAccount) async {
         do {
             let state = try await backend.post(
                 "/api/chatgpt/logout",
-                body: [:],
+                body: ["account_id": account.codexHomeIdentifier],
                 as: ChatGPTAccountResponse.self
             )
-            chatGPTAccount = state
-            chatGPTLoginID = nil
-            for account in providerAccounts where account.kind == .chatGPT {
-                accountStatus[account.id] = .signedOut
-            }
-            if activeAccount?.kind == .chatGPT {
+            chatGPTAccounts[account.id] = state
+            chatGPTLoginIDs[account.id] = nil
+            chatGPTUsageByAccount[account.id] = nil
+            accountStatus[account.id] = .signedOut
+            // Only the account in use costs the app its provider. Signing out
+            // of a second plan must leave a chat running on the first alone.
+            if settings.activeAccountID == account.id.uuidString {
                 settings.activeAccountID = nil
                 await applyProvider(announce: false)
             }
@@ -6288,24 +6296,35 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func refreshChatGPTUsage() async {
-        guard providerAccounts.contains(where: { $0.kind == .chatGPT }) else {
-            chatGPTUsage = nil
+    /// The plan usage of the ChatGPT account currently routing requests, which
+    /// is the only one the usage dashboard's plan section can be about.
+    var activeChatGPTUsage: ChatGPTUsageResponse? {
+        guard let account = activeAccount, account.kind == .chatGPT else { return nil }
+        return chatGPTUsageByAccount[account.id]
+    }
+
+    func refreshActiveChatGPTUsage() async {
+        guard let account = activeAccount, account.kind == .chatGPT else { return }
+        await refreshChatGPTUsage(for: account)
+    }
+
+    func refreshChatGPTUsage(for account: ProviderAccount) async {
+        guard providerAccounts.contains(where: { $0.id == account.id }) else {
+            chatGPTUsageByAccount[account.id] = nil
             return
         }
         do {
             let usage = try await backend.get(
                 "/api/chatgpt/usage",
+                query: [URLQueryItem(name: "account_id", value: account.codexHomeIdentifier)],
                 as: ChatGPTUsageResponse.self
             )
-            chatGPTUsage = usage
+            chatGPTUsageByAccount[account.id] = usage
             if let window = usage.rateLimits.rateLimits?.primary,
                window.usedPercent >= 100
             {
                 let reset = window.resetsAt.map { Date(timeIntervalSince1970: Double($0)) }
-                for account in providerAccounts where account.kind == .chatGPT {
-                    accountStatus[account.id] = .rateLimited(resetAt: reset)
-                }
+                accountStatus[account.id] = .rateLimited(resetAt: reset)
             }
         } catch {
             // Usage is supplementary; the account and working providers stay
@@ -7382,6 +7401,7 @@ final class AppModel: ObservableObject {
         persistSettings()
         settingsPresented = false
         browser.defaultViewport = newSettings.resolvedBrowserViewport.size
+        applyBrowserSettings(newSettings)
 
         if browserEnabledChanged {
             announceBrowserCapability()
@@ -7516,6 +7536,7 @@ final class AppModel: ObservableObject {
             return [
                 "provider": "chatgpt",
                 "account_id": account.id.uuidString,
+                "codex_home_id": account.codexHomeIdentifier,
                 "account_label": account.displayName,
                 "model": account.preferredModel,
             ]
@@ -9302,6 +9323,16 @@ final class AppModel: ObservableObject {
         browser.setProtectedSessions(Set(taskWorkers.values.map(\.sessionID)))
     }
 
+    /// Hand the browser the settings it enforces itself.
+    ///
+    /// Separate from the profile sync because these take effect on the next
+    /// action or the next tab rather than needing the data store rebuilt.
+    func applyBrowserSettings(_ settings: AppSettings) {
+        browser.realInputEnabled = settings.browserRealInput
+        browser.deviceEmulationEnabled = settings.browserEmulateDevice
+        browser.webInspectorEnabled = settings.browserWebInspector
+    }
+
     /// Keep the browsing profile pointed at the open workspace.
     func syncBrowserProfile() {
         browser.configureProfile(
@@ -9895,12 +9926,12 @@ final class AppModel: ObservableObject {
         switch type {
         case "chatgpt_account_updated":
             Task {
-                await refreshChatGPTAccount()
+                await refreshChatGPTAccounts()
                 await refreshAccountCatalogs(force: true)
             }
 
         case "chatgpt_usage_updated":
-            Task { await refreshChatGPTUsage() }
+            Task { await refreshActiveChatGPTUsage() }
 
         case "worker_identity":
             activeWorkerID = event["worker_id"] as? String

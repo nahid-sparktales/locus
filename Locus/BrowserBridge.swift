@@ -43,6 +43,25 @@ enum BrowserBridge {
         )
     }
 
+    /// The mobile device profile.
+    ///
+    /// Runs in the **page** world for the same reason the capture layer does:
+    /// feature detection is the page's own code, and a patch it cannot see
+    /// changes nothing. Resizing alone only tests layout; what a responsive
+    /// site actually branches on is the user agent, whether there is a touch
+    /// point, and whether the pointer is coarse — so a page can look right at
+    /// 390 pixels wide and still serve the desktop experience.
+    ///
+    /// Installed and removed per tab, which is why it is a separate script
+    /// rather than part of the always-on capture layer.
+    static func deviceScript() -> WKUserScript {
+        WKUserScript(
+            source: deviceSource,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        )
+    }
+
     /// Message the model gets when it acts on an element the page has moved on
     /// from. Mirrored verbatim in the `browser_read_page` tool description, and
     /// asserted in both test suites, so the model's instructions and the
@@ -376,9 +395,7 @@ enum BrowserBridge {
         return element;
       }
 
-      function describe(id) {
-        const element = resolve(id);
-        if (!element) { return { stale: true }; }
+      function describeElement(element) {
         const role = roleOf(element);
         const form = element.form || (element.closest ? element.closest('form') : null);
         const formHasSecure = !!(form && form.querySelector(
@@ -394,6 +411,60 @@ enum BrowserBridge {
           formHasSecure: formHasSecure,
           tag: element.tagName,
         };
+      }
+
+      function describe(id) {
+        const element = resolve(id);
+        if (!element) { return { stale: true }; }
+        return describeElement(element);
+      }
+
+      // The coordinate half of the credential gate. A click carrying pixels
+      // names no element, so the only way to know whether those pixels are a
+      // password field is to ask the page what is under them.
+      function describeAt(x, y) {
+        const element = document.elementFromPoint(x, y);
+        if (!element) { return { missing: true }; }
+        return describeElement(element);
+      }
+
+      // Typing with no ref goes wherever focus already is, so that is what has
+      // to be vetted before the keystrokes are delivered.
+      function describeActive() {
+        const element = document.activeElement;
+        if (!element || element === document.body) { return { missing: true }; }
+        return describeElement(element);
+      }
+
+      // Where a ref sits, in the viewport coordinates real input is aimed in.
+      // Scrolls it into view first, because a point outside the viewport
+      // belongs to no element and cannot be clicked.
+      function locate(id) {
+        const element = resolve(id);
+        if (!element) { return { stale: true }; }
+        element.scrollIntoView({ block: 'center', inline: 'center' });
+        const rect = element.getBoundingClientRect();
+        const role = roleOf(element);
+        const name = nameOf(element, role);
+        if (!rect.width && !rect.height) {
+          return { blocked: true, by: 'a zero-sized element', role: role, name: name };
+        }
+        const point = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        const top = document.elementFromPoint(point.x, point.y);
+        if (!top) {
+          return { blocked: true, by: 'something off-screen', role: role, name: name };
+        }
+        // Hit-testing before aiming catches what the model cannot see: a cookie
+        // banner or modal sitting over the control it asked for.
+        if (top !== element && !element.contains(top) && !top.contains(element)) {
+          return {
+            blocked: true,
+            by: (top.tagName || '') + (top.id ? '#' + top.id : ''),
+            role: role,
+            name: name,
+          };
+        }
+        return { ok: true, x: point.x, y: point.y, role: role, name: name };
       }
 
       function getText(maxChars) {
@@ -494,6 +565,24 @@ enum BrowserBridge {
         }
         if (element.isContentEditable) {
           element.textContent = String(value);
+        } else if (element instanceof HTMLSelectElement) {
+          // A model reads options off the page by their labels, so matching
+          // only the value attribute fails on every select whose values are
+          // ids or codes.
+          const wanted = String(value);
+          const options = Array.from(element.options);
+          const match = options.find((option) => option.value === wanted)
+            || options.find((option) => (option.text || '').trim() === wanted.trim())
+            || options.find((option) => (option.text || '').trim().toLowerCase()
+              === wanted.trim().toLowerCase());
+          if (!match) {
+            return {
+              blocked: true,
+              by: 'no option called "' + wanted + '"',
+              options: options.slice(0, 20).map((option) => (option.text || '').trim()),
+            };
+          }
+          nativeSetValue(element, match.value);
         } else {
           nativeSetValue(element, String(value));
         }
@@ -579,6 +668,65 @@ enum BrowserBridge {
         return { ok: true };
       }
 
+      // Coordinate variants of the pointer verbs, used when real input is
+      // turned off or cannot be delivered. Same dispatch as the ref-based ones
+      // — and the same limitation: `isTrusted` is false, so a page that checks
+      // it ignores these too.
+      function clickAt(x, y, options) {
+        const element = document.elementFromPoint(x, y);
+        if (!element) { return { blocked: true, by: 'nothing at that point' }; }
+        const settings = options || {};
+        const point = { x: x, y: y };
+        const button = settings.button === 'right' ? 2 : 0;
+        dispatchMouse(element, 'pointerdown', point, { ...settings, button: button });
+        dispatchMouse(element, 'mousedown', point, { ...settings, button: button });
+        if (element.focus) { element.focus(); }
+        dispatchMouse(element, 'mouseup', point, { ...settings, button: button });
+        if (button === 2) {
+          dispatchMouse(element, 'contextmenu', point, { ...settings, button: button });
+        } else {
+          dispatchMouse(element, 'click', point, settings);
+          if (settings.detail === 2) { dispatchMouse(element, 'dblclick', point, settings); }
+        }
+        const role = roleOf(element);
+        return { ok: true, role: role, name: nameOf(element, role) };
+      }
+
+      function hoverAt(x, y) {
+        const element = document.elementFromPoint(x, y);
+        if (!element) { return { blocked: true, by: 'nothing at that point' }; }
+        const point = { x: x, y: y };
+        for (const type of ['pointerover', 'mouseover', 'pointermove', 'mousemove']) {
+          dispatchMouse(element, type, point, {});
+        }
+        const role = roleOf(element);
+        return { ok: true, role: role, name: nameOf(element, role) };
+      }
+
+      function dragBetween(from, to) {
+        const start = document.elementFromPoint(from.x, from.y);
+        const end = document.elementFromPoint(to.x, to.y);
+        if (!start || !end) { return { blocked: true, by: 'nothing at that point' }; }
+        dispatchMouse(start, 'pointerdown', from, {});
+        dispatchMouse(start, 'mousedown', from, {});
+        dispatchMouse(start, 'pointermove', to, {});
+        dispatchMouse(end, 'mousemove', to, {});
+        dispatchMouse(end, 'pointerup', to, {});
+        dispatchMouse(end, 'mouseup', to, {});
+        const role = roleOf(end);
+        return { ok: true, role: role, name: nameOf(end, role) };
+      }
+
+      // Focus without clicking, so real typing has somewhere to land without a
+      // press that might navigate first.
+      function focus(id) {
+        const element = resolve(id);
+        if (!element) { return { stale: true }; }
+        element.scrollIntoView({ block: 'center' });
+        if (element.focus) { element.focus(); }
+        return { ok: true };
+      }
+
       function find(query, limit) {
         const needle = String(query || '').toLowerCase().trim();
         if (!needle) { return { matches: [] }; }
@@ -638,10 +786,17 @@ enum BrowserBridge {
       globalThis.__locus = {
         readPage: readPage,
         describe: describe,
+        describeAt: describeAt,
+        describeActive: describeActive,
+        locate: locate,
         getText: getText,
         resolve: resolve,
         currentToken: () => token,
         click: click,
+        clickAt: clickAt,
+        hoverAt: hoverAt,
+        dragBetween: dragBetween,
+        focus: focus,
         setValue: setValue,
         typeText: typeText,
         pressKey: pressKey,
@@ -652,6 +807,97 @@ enum BrowserBridge {
         find: find,
         waitFor: waitFor,
       };
+    })();
+    """#
+
+    private static let deviceSource = #"""
+    (() => {
+      if (globalThis.__locusDevice) { return; }
+      globalThis.__locusDevice = true;
+
+      function define(object, name, value) {
+        try {
+          Object.defineProperty(object, name, { get: () => value, configurable: true });
+        } catch (error) { /* a frozen global is not worth failing the page over */ }
+      }
+
+      // A phone reports touch points and answers to `'ontouchstart' in window`,
+      // which is still the most common capability test on the web.
+      define(navigator, 'maxTouchPoints', 5);
+      try { window.ontouchstart = null; } catch (error) { /* see above */ }
+
+      // Coarse pointer and absent hover are the media features a responsive
+      // site branches on; width it can measure for itself, so it is left alone.
+      const COARSE = /(any-)?pointer\s*:\s*coarse|hover\s*:\s*none/;
+      const FINE = /(any-)?pointer\s*:\s*fine|hover\s*:\s*hover/;
+      const nativeMatchMedia = window.matchMedia.bind(window);
+      window.matchMedia = (query) => {
+        const text = String(query || '');
+        const list = nativeMatchMedia(text);
+        let forced = null;
+        if (COARSE.test(text)) { forced = true; }
+        if (FINE.test(text)) { forced = false; }
+        if (forced === null) { return list; }
+        // Proxied rather than rebuilt: a MediaQueryList carries listener
+        // plumbing the page may well use, and only `matches` is a lie.
+        return new Proxy(list, {
+          get(target, property) {
+            if (property === 'matches') { return forced; }
+            const value = target[property];
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
+      };
+
+      // Mouse-to-touch translation, so a site that only binds touch handlers
+      // responds to input aimed at it. Silently skipped where WebKit does not
+      // expose the touch constructors, which is why the resize reply says
+      // whether it is on.
+      if (typeof window.TouchEvent === 'function' && typeof window.Touch === 'function') {
+        const PAIRS = {
+          mousedown: 'touchstart',
+          mousemove: 'touchmove',
+          mouseup: 'touchend',
+        };
+        let pressed = false;
+        for (const [from, to] of Object.entries(PAIRS)) {
+          window.addEventListener(from, (event) => {
+            if (event.__locusTouch) { return; }
+            if (from === 'mousedown') { pressed = true; }
+            if (from === 'mousemove' && !pressed) { return; }
+            const target = event.target || document.body;
+            if (!target) { return; }
+            let touch;
+            try {
+              touch = new Touch({
+                identifier: 1,
+                target: target,
+                clientX: event.clientX,
+                clientY: event.clientY,
+                pageX: event.pageX,
+                pageY: event.pageY,
+                screenX: event.screenX,
+                screenY: event.screenY,
+              });
+            } catch (error) { return; }
+            const ending = to === 'touchend';
+            const touches = ending ? [] : [touch];
+            try {
+              const touchEvent = new TouchEvent(to, {
+                touches: touches,
+                targetTouches: touches,
+                changedTouches: [touch],
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+              });
+              touchEvent.__locusTouch = true;
+              target.dispatchEvent(touchEvent);
+            } catch (error) { /* nothing to do but leave the mouse event alone */ }
+            if (ending) { pressed = false; }
+          }, true);
+        }
+      }
     })();
     """#
 

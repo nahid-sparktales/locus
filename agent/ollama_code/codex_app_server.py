@@ -56,6 +56,33 @@ def codex_home_from_environment() -> Path:
     return Path(configured).expanduser() if configured else APP_DIR / "codex"
 
 
+_HOME_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def codex_home_for_account(home_id: str) -> Path:
+    """The CODEX_HOME holding one ChatGPT account's credentials.
+
+    Each account gets its own home because that directory *is* the identity:
+    the helper keeps one signed-in account per home, so isolated homes are what
+    make several ChatGPT plans usable side by side without either one's tokens
+    being visible to the other.
+
+    An empty id means the single pre-multi-account home. Keeping that mapping
+    is what stops an upgrade from silently signing the existing user out.
+    """
+    base = codex_home_from_environment()
+    slug = (home_id or "").strip()
+    if not slug:
+        return base
+    # The id reaches here from the app over HTTP, and it is about to become a
+    # path component. Anything that is not a plain identifier — a separator, a
+    # traversal, a leading dot — is refused rather than sanitised into
+    # something that silently points at a different account's credentials.
+    if not _HOME_ID.match(slug):
+        raise ValueError(f"invalid ChatGPT account home id: {slug!r}")
+    return base.parent / f"{base.name}-accounts" / slug
+
+
 def _thread_id(message: dict[str, Any]) -> str:
     params = message.get("params")
     if not isinstance(params, dict):
@@ -897,3 +924,67 @@ class CodexBrokerClient:
 
     def close(self) -> None:
         return
+
+
+class CodexManagerRegistry:
+    """The helper processes backing the signed-in ChatGPT accounts.
+
+    One manager per account home, created on first use and kept afterwards.
+    Laziness is the point: a user with three ChatGPT accounts pays for one
+    helper process until they actually touch the others, and an account that is
+    only ever listed in settings never launches anything.
+    """
+
+    def __init__(self, *, client_version: str = "0") -> None:
+        self.client_version = client_version
+        self._managers: dict[str, CodexAppServerManager] = {}
+        self._listeners: list[Callable[[dict[str, Any]], None]] = []
+        self._lock = threading.RLock()
+
+    def add_listener(self, listener: Callable[[dict[str, Any]], None]) -> None:
+        """Register a listener on every manager, including ones not yet built."""
+        with self._lock:
+            self._listeners.append(listener)
+            managers = list(self._managers.values())
+        for manager in managers:
+            manager.add_listener(listener)
+
+    def manager(self, home_id: str = "") -> CodexAppServerManager:
+        key = (home_id or "").strip()
+        # Resolve the path outside the lock so an invalid id raises before any
+        # state is touched.
+        home = codex_home_for_account(key)
+        with self._lock:
+            existing = self._managers.get(key)
+            if existing is not None:
+                return existing
+            manager = CodexAppServerManager(
+                codex_home=home,
+                client_version=self.client_version,
+            )
+            for listener in self._listeners:
+                manager.add_listener(listener)
+            self._managers[key] = manager
+            return manager
+
+    def existing(self, home_id: str = "") -> CodexAppServerManager | None:
+        """The manager for an account, but only if one has already been built.
+
+        Callers that merely report status use this: asking about an account
+        must not be what launches its helper.
+        """
+        with self._lock:
+            return self._managers.get((home_id or "").strip())
+
+    def close(self, home_id: str = "") -> None:
+        with self._lock:
+            manager = self._managers.pop((home_id or "").strip(), None)
+        if manager is not None:
+            manager.close()
+
+    def close_all(self) -> None:
+        with self._lock:
+            managers = list(self._managers.values())
+            self._managers.clear()
+        for manager in managers:
+            manager.close()

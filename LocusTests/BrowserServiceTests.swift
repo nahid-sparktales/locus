@@ -142,6 +142,284 @@ final class BrowserServiceTests: XCTestCase {
         XCTAssertEqual(result["error"] as? String, "no page is open; call browser_navigate first")
     }
 
+    // MARK: - Parity with what a browser pane can do
+
+    /// Load a fixture into a tab and hand navigation back to the service.
+    private func load(_ html: String, into tab: BrowserService.Tab) async throws {
+        let waiter = LoadWaiter()
+        tab.webView.navigationDelegate = waiter
+        tab.webView.loadHTMLString(html, baseURL: URL(string: "https://fixture.test"))
+        try await waiter.wait()
+        tab.webView.navigationDelegate = service
+    }
+
+    func testANewTabOpensInTheBackgroundWithoutStealingTheView() async throws {
+        let first = service.tab(for: "session-tabs")
+        try await load("<title>First</title><body>one</body>", into: first)
+
+        let opened = await service.perform(
+            tool: "browser_tabs",
+            arguments: ["action": "new"],
+            sessionID: "session-tabs",
+            timeoutMilliseconds: 5_000
+        )
+        let text = try XCTUnwrap(opened["text"] as? String)
+        // The id has to come back: a background tab nothing can name is useless.
+        XCTAssertTrue(text.contains("tab_"), text)
+        XCTAssertTrue(text.contains("background"), text)
+        XCTAssertEqual(service.activeSnapshot(for: "session-tabs")?.id, first.id)
+        XCTAssertEqual(service.snapshots(for: "session-tabs").count, 2)
+    }
+
+    func testAToolCanDriveANamedTabWithoutMakingItActive() async throws {
+        let first = service.tab(for: "session-target")
+        try await load("<title>First</title><body><h1>one</h1></body>", into: first)
+        let second = try service.tab(for: "session-target", tabID: nil)
+        XCTAssertEqual(first.id, second.id)
+
+        let opened = await service.perform(
+            tool: "browser_tabs",
+            arguments: ["action": "new"],
+            sessionID: "session-target",
+            timeoutMilliseconds: 5_000
+        )
+        let openedText = try XCTUnwrap(opened["text"] as? String)
+        let backgroundID = try XCTUnwrap(
+            openedText.split(separator: " ").first(where: { $0.hasPrefix("tab_") }).map(String.init)
+        )
+        let background = try service.tab(for: "session-target", tabID: backgroundID)
+        try await load("<title>Second</title><body><h1>two</h1></body>", into: background)
+
+        let read = await service.perform(
+            tool: "browser_read_page",
+            arguments: ["tab_id": backgroundID],
+            sessionID: "session-target",
+            timeoutMilliseconds: 10_000
+        )
+        let text = try XCTUnwrap(read["text"] as? String)
+        XCTAssertTrue(text.contains("two"), text)
+        // Reading a background tab must not pull the view onto it.
+        XCTAssertEqual(service.activeSnapshot(for: "session-target")?.id, first.id)
+    }
+
+    func testAnotherSessionsTabIdIsRefusedRatherThanBorrowed() async throws {
+        let mine = service.tab(for: "session-mine")
+        try await load("<body>mine</body>", into: mine)
+        let theirs = service.tab(for: "session-theirs")
+        try await load("<body>theirs</body>", into: theirs)
+
+        let result = await service.perform(
+            tool: "browser_read_page",
+            arguments: ["tab_id": theirs.id],
+            sessionID: "session-mine",
+            timeoutMilliseconds: 5_000
+        )
+        // Concurrent workers share this service; one steering another's tab
+        // would be indistinguishable from the page navigating itself.
+        XCTAssertNil(result["text"])
+        XCTAssertTrue(
+            (result["error"] as? String)?.contains(theirs.id) == true,
+            result.description
+        )
+    }
+
+    func testScreenshotSaysWhichCoordinateFrameTheImageIsIn() async throws {
+        let tab = service.tab(for: "session-shot")
+        try await load("<body style='margin:0'><div style='height:900px'>tall</div></body>", into: tab)
+
+        let full = await service.perform(
+            tool: "browser_screenshot",
+            arguments: [:],
+            sessionID: "session-shot",
+            timeoutMilliseconds: 15_000
+        )
+        let fullText = try XCTUnwrap(full["text"] as? String)
+        XCTAssertNotNil(full["screenshot"])
+        // Without the frame, a coordinate read off the picture is a guess.
+        XCTAssertTrue(fullText.contains("pixels covering"), fullText)
+        XCTAssertTrue(fullText.contains("browser_input"), fullText)
+
+        let region = await service.perform(
+            tool: "browser_screenshot",
+            arguments: ["region": [10, 20, 200, 100]],
+            sessionID: "session-shot",
+            timeoutMilliseconds: 15_000
+        )
+        let regionText = try XCTUnwrap(region["text"] as? String)
+        XCTAssertNotNil(region["screenshot"])
+        XCTAssertTrue(regionText.contains("200×100"), regionText)
+        XCTAssertTrue(regionText.contains("(10, 20)"), regionText)
+    }
+
+    func testAMalformedRegionIsExplainedRatherThanCaptured() async throws {
+        let tab = service.tab(for: "session-region")
+        try await load("<body>x</body>", into: tab)
+        let result = await service.perform(
+            tool: "browser_screenshot",
+            arguments: ["region": [10, 20, 0, 100]],
+            sessionID: "session-region",
+            timeoutMilliseconds: 10_000
+        )
+        XCTAssertNil(result["screenshot"])
+        XCTAssertTrue(
+            (result["error"] as? String)?.contains("width and height") == true,
+            result.description
+        )
+    }
+
+    func testTheMobilePresetPresentsAPhoneAndSaysToReload() async throws {
+        let tab = service.tab(for: "session-device")
+        try await load("<body>x</body>", into: tab)
+
+        let result = await service.perform(
+            tool: "browser_resize",
+            arguments: ["preset": "mobile"],
+            sessionID: "session-device",
+            timeoutMilliseconds: 5_000
+        )
+        let text = try XCTUnwrap(result["text"] as? String)
+        XCTAssertTrue(text.contains("390×844"), text)
+        XCTAssertTrue(text.contains("mobile user agent"), text)
+        // A site chooses what to serve at load time, so a profile change that
+        // did not say this would leave the model reading the desktop document.
+        XCTAssertTrue(text.contains("Reload"), text)
+
+        try await load("<body>reloaded</body>", into: tab)
+        let agent = try await tab.webView.evaluateJavaScript("navigator.userAgent") as? String
+        XCTAssertTrue(agent?.contains("iPhone") == true, agent ?? "no user agent")
+        let touch = try await tab.webView.evaluateJavaScript("navigator.maxTouchPoints") as? Int
+        XCTAssertEqual(touch, 5)
+        let coarse = try await tab.webView.evaluateJavaScript(
+            "matchMedia('(pointer: coarse)').matches"
+        ) as? Bool
+        XCTAssertEqual(coarse, true, "feature detection still sees a desktop pointer")
+        let hover = try await tab.webView.evaluateJavaScript(
+            "matchMedia('(hover: hover)').matches"
+        ) as? Bool
+        XCTAssertEqual(hover, false)
+    }
+
+    func testGoingBackToDesktopStopsPretendingToBeAPhone() async throws {
+        let tab = service.tab(for: "session-undevice")
+        try await load("<body>x</body>", into: tab)
+        _ = await service.perform(
+            tool: "browser_resize",
+            arguments: ["preset": "mobile"],
+            sessionID: "session-undevice",
+            timeoutMilliseconds: 5_000
+        )
+        _ = await service.perform(
+            tool: "browser_resize",
+            arguments: ["preset": "desktop"],
+            sessionID: "session-undevice",
+            timeoutMilliseconds: 5_000
+        )
+        try await load("<body>x</body>", into: tab)
+        let agent = try await tab.webView.evaluateJavaScript("navigator.userAgent") as? String
+        XCTAssertFalse(agent?.contains("iPhone") == true, agent ?? "no user agent")
+        let coarse = try await tab.webView.evaluateJavaScript(
+            "matchMedia('(pointer: coarse)').matches"
+        ) as? Bool
+        XCTAssertEqual(coarse, false)
+    }
+
+    func testDeviceEmulationCanBeTurnedOffEntirely() async throws {
+        service.deviceEmulationEnabled = false
+        let tab = service.tab(for: "session-nodevice")
+        try await load("<body>x</body>", into: tab)
+        let result = await service.perform(
+            tool: "browser_resize",
+            arguments: ["preset": "mobile"],
+            sessionID: "session-nodevice",
+            timeoutMilliseconds: 5_000
+        )
+        let text = try XCTUnwrap(result["text"] as? String)
+        XCTAssertTrue(text.contains("390×844"), text)
+        XCTAssertFalse(text.contains("mobile user agent"), text)
+        XCTAssertFalse(tab.emulatesDevice)
+    }
+
+    func testTypingIntoAFocusedPasswordFieldIsRefusedWithoutARef() async throws {
+        let tab = service.tab(for: "session-secure")
+        try await load("""
+        <body>
+          <form>
+            <input id="p" type="password">
+          </form>
+          <script>document.getElementById('p').focus();</script>
+        </body>
+        """, into: tab)
+
+        // Aiming by coordinate rather than by ref must not route around the
+        // credential gate: with no ref there is no element in the arguments to
+        // vet, so the focused element is what gets checked.
+        let result = await service.perform(
+            tool: "browser_input",
+            arguments: ["action": "type", "text": "hunter2"],
+            sessionID: "session-secure",
+            timeoutMilliseconds: 10_000
+        )
+        XCTAssertNil(result["text"])
+        XCTAssertTrue(
+            (result["error"] as? String)?.contains("password") == true,
+            result.description
+        )
+        let value = try await tab.webView.evaluateJavaScript("document.getElementById('p').value") as? String
+        XCTAssertEqual(value, "")
+    }
+
+    func testCoordinatesStillWorkWithRealInputTurnedOff() async throws {
+        service.realInputEnabled = false
+        let tab = service.tab(for: "session-synthetic")
+        try await load("""
+        <body style="margin:0">
+          <button id="b" style="position:absolute;left:0;top:0;width:300px;height:120px">Go</button>
+          <script>
+            window.hits = 0;
+            document.getElementById('b').addEventListener('click', () => { window.hits += 1; });
+          </script>
+        </body>
+        """, into: tab)
+
+        let result = await service.perform(
+            tool: "browser_input",
+            arguments: ["action": "click", "at": [100, 60]],
+            sessionID: "session-synthetic",
+            timeoutMilliseconds: 10_000
+        )
+        XCTAssertNotNil(result["text"], result.description)
+        let hits = try await tab.webView.evaluateJavaScript("window.hits") as? Int
+        XCTAssertEqual(hits, 1, "the synthetic fallback did not reach the element under the point")
+    }
+
+    func testAClickOnNothingIsReportedRatherThanCountedAsSuccess() async throws {
+        service.realInputEnabled = false
+        let tab = service.tab(for: "session-empty")
+        try await load("<body style='margin:0'></body>", into: tab)
+        let result = await service.perform(
+            tool: "browser_input",
+            arguments: ["action": "click", "at": [50, 50_000]],
+            sessionID: "session-empty",
+            timeoutMilliseconds: 10_000
+        )
+        XCTAssertNil(result["text"], result.description)
+        XCTAssertNotNil(result["error"])
+    }
+
+    func testWaitingForNothingInParticularJustWaits() async {
+        let started = ContinuousClock.now
+        let result = await service.perform(
+            tool: "browser_wait_for",
+            arguments: ["seconds": 0.2],
+            sessionID: "session-wait",
+            timeoutMilliseconds: 10_000
+        )
+        // No page needed: asking the model to navigate somewhere before it may
+        // pause would be absurd.
+        XCTAssertTrue((result["text"] as? String)?.contains("Waited") == true, result.description)
+        XCTAssertGreaterThanOrEqual(started.duration(to: .now), .milliseconds(150))
+    }
+
     // MARK: - The real round trip
 
     func testNavigateThenReadPageDescribesTheDocument() async throws {

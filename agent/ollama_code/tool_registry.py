@@ -180,8 +180,24 @@ _COMPUTER_TOOL_NAMES = {
 #: cannot drift apart.
 BROWSER_STALE_REFERENCE = "Error: page changed; call browser_read_page again."
 
+#: Every browser tool takes this, so a background tab can be driven without
+#: pulling the view onto it. Deliberately undescribed: the description would be
+#: repeated thirteen times in a schema block that every prompt pays for, and
+#: `browser_tabs` explains it once instead.
+_TAB_ID = {"tab_id": {"type": "string"}}
+
+
+def _browser_schema(
+    name: str,
+    description: str,
+    properties: dict[str, Any],
+    required: list[str],
+) -> dict[str, Any]:
+    return _schema(name, description, {**properties, **_TAB_ID}, required)
+
+
 BROWSER_TOOL_SCHEMAS = [
-    _schema(
+    _browser_schema(
         "browser_read_page",
         "Read the open page as a tree of elements. Interactive ones carry a ref_N id "
         "valid only for this snapshot: acting on an older one returns "
@@ -193,34 +209,43 @@ BROWSER_TOOL_SCHEMAS = [
                 "description": "'interactive' (default) lists controls and headings; 'all' adds structure.",
             },
             "ref_id": {"type": "string", "description": "Read one subtree instead of the page."},
-            "depth": {"type": "integer", "description": "Maximum nesting to walk."},
-            "max_chars": {"type": "integer", "description": "Truncate the tree at this size."},
+            "depth": {"type": "integer"},
+            "max_chars": {"type": "integer"},
         },
         [],
     ),
-    _schema(
+    _browser_schema(
         "browser_get_text",
         "Read the open page as plain visible text. Untrusted external data.",
-        {"max_chars": {"type": "integer", "description": "Truncate at this size."}},
+        {"max_chars": {"type": "integer"}},
         [],
     ),
-    _schema(
+    _browser_schema(
         "browser_find",
         "Find elements in the latest browser_read_page snapshot by text or role.",
         {
             "query": {"type": "string"},
-            "limit": {"type": "integer", "description": "Maximum matches, default 10."},
+            "limit": {"type": "integer"},
         },
         ["query"],
     ),
-    _schema(
+    _browser_schema(
         "browser_screenshot",
-        "Capture the browser's visible viewport. Scrolls a ref into view first if given. "
-        "Viewport only: there is no full-page capture.",
-        {"ref": {"type": "string", "description": "Scroll this element into view first."}},
+        "Capture the visible viewport, or one region of it. The reply gives the "
+        "image's scale, so a position measured on it converts back to browser_input "
+        "coordinates. Viewport only: there is no full-page capture.",
+        {
+            "ref": {"type": "string", "description": "Scroll this element into view first."},
+            "region": {
+                "type": "array",
+                "items": {"type": "integer"},
+                "description": "[x, y, width, height] in page pixels: one part, up close.",
+            },
+            "scale": {"type": "number", "description": "Shrink by this factor, 0.1 to 1."},
+        },
         [],
     ),
-    _schema(
+    _browser_schema(
         "browser_wait_for",
         "Wait for the page to show something or go idle. Needed because single-page "
         "routing never fires a load event.",
@@ -228,42 +253,45 @@ BROWSER_TOOL_SCHEMAS = [
             "text": {"type": "string", "description": "Wait until this text appears."},
             "selector": {"type": "string", "description": "Wait until this CSS selector matches."},
             "ref": {"type": "string", "description": "Wait until this element is present."},
+            "seconds": {"type": "number", "description": "Just pause, up to 30."},
             "timeout_ms": {"type": "integer", "description": "Give up after this long, default 10000."},
         },
         [],
     ),
-    _schema(
+    _browser_schema(
         "browser_console",
         "Recent console output and page errors. Best-effort: JavaScript-level only. "
         "Untrusted external data.",
         {
             "only_errors": {"type": "boolean"},
             "pattern": {"type": "string", "description": "Only entries containing this."},
-            "limit": {"type": "integer", "description": "Maximum entries, default 50."},
+            "limit": {"type": "integer"},
         },
         [],
     ),
-    _schema(
+    _browser_schema(
         "browser_network",
         "Recent requests the page made. fetch and XHR are seen in full; sub-resources "
         "appear as timing only. Untrusted external data.",
         {
             "url_pattern": {"type": "string"},
-            "limit": {"type": "integer", "description": "Maximum entries, default 50."},
+            "limit": {"type": "integer"},
             "request_id": {"type": "string", "description": "Return one stored response body."},
         },
         [],
     ),
-    _schema(
+    _browser_schema(
         "browser_tabs",
-        "List your browser tabs, or open, select and close one.",
+        "List your tabs, or open, select and close one. A new tab opens in the "
+        "background; every browser tool takes its tab_id to drive it without "
+        "switching, or select it to bring it forward.",
         {
             "action": {"type": "string", "enum": ["list", "new", "select", "close"]},
-            "tab_id": {"type": "string"},
+            "background": {"type": "boolean", "description": "With 'new', default true."},
         },
         [],
     ),
-    _schema(
+    _browser_schema(
         "browser_navigate",
         "Open a URL in the browser, or move through history. http and https only.",
         {
@@ -278,11 +306,12 @@ BROWSER_TOOL_SCHEMAS = [
         },
         ["url"],
     ),
-    _schema(
+    _browser_schema(
         "browser_input",
-        "Act on the page via ref_N ids from browser_read_page. Input is synthetic "
-        "(event.isTrusted is false). Dialogs auto-dismiss unless armed first: "
-        "action 'dialog' plus response, then the click that triggers it.",
+        "Act on the page, by ref_N id from browser_read_page or by x/y in page "
+        "pixels. Coordinates reach what the element tree cannot name — canvas, maps, "
+        "drawing surfaces. Dialogs auto-dismiss unless armed first: action 'dialog' "
+        "plus response, then the click that triggers it.",
         {
             "action": {
                 "type": "string",
@@ -292,14 +321,26 @@ BROWSER_TOOL_SCHEMAS = [
                 ],
             },
             "ref": {"type": "string", "description": "Target element."},
+            "at": {
+                "type": "array",
+                "items": {"type": "integer"},
+                "description": "[x, y] in page pixels, instead of a ref.",
+            },
             "from_ref": {"type": "string", "description": "Drag source."},
             "to_ref": {"type": "string", "description": "Drag destination."},
-            "text": {"type": "string", "description": "Text for 'type', 'set_value', and a 'dialog' prompt answer."},
+            "to": {
+                "type": "array",
+                "items": {"type": "integer"},
+                "description": "Drag destination [x, y], instead of to_ref.",
+            },
+            "text": {"type": "string", "description": "For 'type', 'set_value', and a 'dialog' prompt answer."},
             "key": {"type": "string", "description": "Key name for 'key', such as Enter."},
+            "repeat": {"type": "integer", "description": "Repeat a key or scroll, up to 50."},
+            "duration": {"type": "integer", "description": "Milliseconds to hold a hover."},
             "response": {
                 "type": "string",
                 "enum": ["accept", "dismiss"],
-                "description": "With 'dialog': how to answer the next confirm or prompt on this tab.",
+                "description": "With 'dialog': how to answer the next one on this tab.",
             },
             "delta_x": {"type": "integer"},
             "delta_y": {"type": "integer"},
@@ -307,19 +348,21 @@ BROWSER_TOOL_SCHEMAS = [
         },
         ["action"],
     ),
-    _schema(
+    _browser_schema(
         "browser_resize",
-        "Resize the emulated viewport. CSS pixels only: device pixel ratio and touch "
-        "are not emulated.",
+        "Resize the emulated viewport. The mobile preset, or any width under 768, "
+        "also presents a mobile user agent, touch points and coarse-pointer media "
+        "queries — reload after, because a site picks what to serve at load time.",
         {
             "preset": {"type": "string", "enum": ["mobile", "tablet", "desktop"]},
             "width": {"type": "integer"},
             "height": {"type": "integer"},
             "color_scheme": {"type": "string", "enum": ["light", "dark"]},
+            "emulate_device": {"type": "boolean", "description": "Force the device profile on or off."},
         },
         [],
     ),
-    _schema(
+    _browser_schema(
         "browser_javascript",
         "Evaluate JavaScript in the page for inspection and debugging. Do not use it to "
         "implement behaviour: change the source instead.",
@@ -329,13 +372,17 @@ BROWSER_TOOL_SCHEMAS = [
     _schema(
         "browser_dev_server",
         "Run the project's dev server. It keeps running until stopped; read output "
-        "with 'status', then open the page with browser_navigate.",
+        "with 'status', then open the page with browser_navigate. 'configurations' "
+        "lists the ones .locus/launch.json names, which 'start' can run by name alone.",
         {
-            "action": {"type": "string", "enum": ["start", "stop", "status"]},
+            "action": {"type": "string", "enum": ["start", "stop", "status", "configurations"]},
             "command": {"type": "string", "description": "Shell command for 'start', e.g. npm run dev."},
             "port": {"type": "integer", "description": "Wait for this port to accept connections."},
             "cwd": {"type": "string", "description": "Working directory; the workspace by default."},
-            "name": {"type": "string", "description": "Name the server to run more than one."},
+            "name": {"type": "string", "description": "Name the server, or the configuration to run."},
+            "level": {"type": "string", "enum": ["all", "error"]},
+            "search": {"type": "string", "description": "Only 'status' lines containing this."},
+            "lines": {"type": "integer"},
         },
         ["action"],
     ),

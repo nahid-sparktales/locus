@@ -160,12 +160,72 @@ final class OffscreenWebHost {
         }
     }
 
+    // MARK: - Real input
+
+    /// Run `body` with the web view in a state that can actually receive input.
+    ///
+    /// A throttled background tab is ordered out and has no drawing area, so
+    /// events delivered to it land nowhere. Bring the parked panel forward for
+    /// the duration and put it back after — re-reading `isKeptLive` rather than
+    /// trusting the entry value, for the same reason `snapshotPNG` does: a tab
+    /// switch mid-delivery flips it, and ordering out a tab that just became
+    /// live again would strand it throttled.
+    ///
+    /// Returns nil when input cannot be delivered at all, which is the caller's
+    /// signal to fall back to the bridge rather than report a click it never
+    /// made.
+    func withInputDelivery<T>(_ body: () async -> T) async -> T? {
+        guard canDeliverRealInput else { return nil }
+        let broughtForward = !isKeptLive && isParked
+        if broughtForward { panel.orderFront(nil) }
+        let result = await body()
+        if broughtForward, !isKeptLive { panel.orderOut(nil) }
+        return result
+    }
+
+    /// The same, plus first-responder status, which key events need and mouse
+    /// events do not.
+    func withKeyboardFocus<T>(_ body: () async -> T) async -> T? {
+        await withInputDelivery { [self] () async -> T? in
+            guard let window = webView.window else { return nil }
+            let previous = window.firstResponder
+            window.makeFirstResponder(webView)
+            let result = await body()
+            // Only hand focus back in a window the person is using. While the
+            // view is lent to the app's key window, leaving focus parked on the
+            // page would swallow the next thing they typed into the composer;
+            // in the off-screen panel there is nothing to give it back to.
+            if window.isKeyWindow, let previous, previous !== webView {
+                window.makeFirstResponder(previous)
+            }
+            return result
+        } ?? nil
+    }
+
     /// A PNG of the current viewport.
     ///
     /// Viewport-only by construction: `WKSnapshotConfiguration.rect` is in view
     /// coordinates and clipped to what is laid out, and WebKit has no
     /// capture-beyond-viewport equivalent.
     func snapshotPNG(maximumWidth: CGFloat = 1_600) async throws -> Data {
+        try await snapshotPNG(region: nil, maximumWidth: maximumWidth).data
+    }
+
+    /// A PNG of the viewport, or of one region of it, with the pixel size it
+    /// actually came back at.
+    ///
+    /// The size is not a detail: a capture that was scaled down is a different
+    /// coordinate frame from the page, and a model reading a position off the
+    /// picture has to be told which frame it is looking at before it can aim
+    /// input back at the page.
+    ///
+    /// `region` is in page CSS pixels, the frame the rest of the browser tools
+    /// speak; `WKSnapshotConfiguration.rect` wants view points, which differ
+    /// only by the page zoom because `WKWebView` is flipped.
+    func snapshotPNG(
+        region: CGRect?,
+        maximumWidth: CGFloat = 1_600
+    ) async throws -> (data: Data, pixels: CGSize) {
         // A backgrounded panel is ordered out and has no drawing area; bring
         // it back for the capture and restore the throttled state after. The
         // defer re-reads `isKeptLive` rather than trusting the entry value:
@@ -178,10 +238,25 @@ final class OffscreenWebHost {
         defer { if broughtForward, !isKeptLive { panel.orderOut(nil) } }
         let configuration = WKSnapshotConfiguration()
         configuration.afterScreenUpdates = true
-        let width = min(webView.bounds.width, maximumWidth)
+
+        var sourceWidth = webView.bounds.width
+        if let region {
+            let zoom = webView.pageZoom
+            let rect = CGRect(
+                x: region.origin.x * zoom,
+                y: region.origin.y * zoom,
+                width: region.width * zoom,
+                height: region.height * zoom
+            ).intersection(webView.bounds)
+            guard !rect.isEmpty else { throw BrowserHostError.regionOffscreen }
+            configuration.rect = rect
+            sourceWidth = rect.width
+        }
+        let width = min(sourceWidth, maximumWidth)
         if width > 0 {
             configuration.snapshotWidth = NSNumber(value: Double(width))
         }
+
         let image: NSImage = try await withCheckedThrowingContinuation { continuation in
             webView.takeSnapshot(with: configuration) { image, error in
                 if let image {
@@ -193,27 +268,38 @@ final class OffscreenWebHost {
                 }
             }
         }
-        guard let data = image.pngData else { throw BrowserHostError.snapshotUnavailable }
-        return data
+        guard let representation = image.bitmapRepresentation,
+              let data = representation.representation(using: .png, properties: [:])
+        else { throw BrowserHostError.snapshotUnavailable }
+        return (
+            data,
+            CGSize(width: representation.pixelsWide, height: representation.pixelsHigh)
+        )
     }
 }
 
 enum BrowserHostError: LocalizedError {
     case snapshotUnavailable
+    case regionOffscreen
 
     var errorDescription: String? {
         switch self {
         case .snapshotUnavailable: "the page could not be captured"
+        case .regionOffscreen: "that region is outside the viewport"
         }
     }
 }
 
 extension NSImage {
+    /// The image's own pixels, kept separate from the PNG encoding so callers
+    /// that need the dimensions do not have to decode the bytes again.
+    var bitmapRepresentation: NSBitmapImageRep? {
+        guard let tiff = tiffRepresentation else { return nil }
+        return NSBitmapImageRep(data: tiff)
+    }
+
     /// PNG bytes at the image's own pixel dimensions.
     var pngData: Data? {
-        guard let tiff = tiffRepresentation,
-              let representation = NSBitmapImageRep(data: tiff)
-        else { return nil }
-        return representation.representation(using: .png, properties: [:])
+        bitmapRepresentation?.representation(using: .png, properties: [:])
     }
 }

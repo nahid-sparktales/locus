@@ -1633,13 +1633,47 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testOnlyOneChatGPTPlanAccountCanBeSaved() {
+    func testSeveralChatGPTPlanAccountsEachGetTheirOwnCredentialHome() {
         let model = AppModel(startImmediately: false)
-        model.saveProviderAccount(ProviderAccount(kind: .chatGPT, name: "First"), apiKey: nil)
-        model.saveProviderAccount(ProviderAccount(kind: .chatGPT, name: "Second"), apiKey: nil)
+        model.saveProviderAccount(ProviderAccount(kind: .chatGPT, name: "Work"), apiKey: nil)
+        model.saveProviderAccount(ProviderAccount(kind: .chatGPT, name: "Personal"), apiKey: nil)
 
-        XCTAssertEqual(model.providerAccounts.filter { $0.kind == .chatGPT }.count, 1)
-        XCTAssertEqual(model.providerAccounts.first?.name, "First")
+        let accounts = model.providerAccounts.filter { $0.kind == .chatGPT }
+        XCTAssertEqual(accounts.map(\.name), ["Work", "Personal"])
+        // The home is the identity. Two plans sharing one would mean signing
+        // into the second silently replaced the first.
+        let homes = accounts.map(\.codexHomeIdentifier)
+        XCTAssertEqual(Set(homes).count, 2)
+        XCTAssertFalse(homes.contains(""), "a new account must not claim the legacy home")
+    }
+
+    @MainActor
+    func testAChatGPTAccountStoredBeforeMultiAccountKeepsTheOriginalHome() throws {
+        // Decoding deliberately bypasses the initialiser that hands out homes:
+        // an account written by an older build has no home of its own, and
+        // moving it would sign the user out on upgrade.
+        let stored = Data(#"""
+        [{"id":"11111111-2222-3333-4444-555555555555","kindRaw":"chatgpt","name":"Existing",
+          "preferredModel":"gpt-5","createdAt":0}]
+        """#.utf8)
+        let accounts = ProviderAccountStore.decode(stored)
+
+        XCTAssertEqual(accounts.count, 1)
+        XCTAssertNil(accounts.first?.codexHomeID)
+        XCTAssertEqual(accounts.first?.codexHomeIdentifier, "")
+    }
+
+    @MainActor
+    func testChatGPTRoutingNamesTheAccountsOwnCredentialHome() {
+        let model = AppModel(startImmediately: false)
+        model.saveProviderAccount(ProviderAccount(kind: .chatGPT, name: "Work"), apiKey: nil)
+        let account = try! XCTUnwrap(model.providerAccounts.first)
+        model.settings.activeAccountID = account.id.uuidString
+
+        let body = model.providerRequestBody()
+        XCTAssertEqual(body["provider"] as? String, "chatgpt")
+        XCTAssertEqual(body["account_id"] as? String, account.id.uuidString)
+        XCTAssertEqual(body["codex_home_id"] as? String, account.codexHomeIdentifier)
     }
 
     @MainActor

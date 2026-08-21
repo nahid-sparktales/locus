@@ -3075,6 +3075,28 @@ def test_browser_permission_preview_leads_with_the_destination():
     assert build_preview("browser_navigate", {"url": "back"})[0] == "browser back"
 
 
+def test_browser_permission_preview_names_a_coordinate_target():
+    summary, _ = build_preview("browser_input", {"action": "click", "at": [1, 2], "x": 120, "y": 340})
+    assert summary == "click (120, 340)"
+    # A ref still wins, because it says more than a pair of numbers.
+    assert build_preview("browser_input", {"action": "click", "ref": "ref_4"})[0] == "click ref_4"
+
+
+def test_coordinate_input_still_meets_the_credential_gate():
+    from ollama_code.permissions import PermissionManager as Manager
+
+    manager = Manager(mode="bypass")
+    # Aiming by pixels rather than by ref must not route around the block on
+    # typing credentials, which reads the typed text, not the target.
+    assert manager.blocked_reason(
+        "browser_input",
+        {"action": "type", "x": 10, "y": 20, "text": "my password is hunter2"},
+    )
+    assert not manager.blocked_reason(
+        "browser_input", {"action": "click", "x": 10, "y": 20}
+    )
+
+
 def test_browser_schema_budget_stays_small_enough_for_local_models(tmp_path):
     core = _core(tmp_path, [ChatResponse(content_parts=["ok"], done=True)])
     baseline = core.tool_registry.schema_tokens()
@@ -3086,9 +3108,96 @@ def test_browser_schema_budget_stays_small_enough_for_local_models(tmp_path):
     # with its own parameter block — measured 2500-3500 here; folding them into
     # `browser_input` is what buys the difference. The ceiling exists so that
     # shape cannot creep back in unnoticed.
-    assert cost < 1_600, f"browser schemas cost {cost} tokens"
+    #
+    # Raised from 1600 when the browser gained coordinate input, region capture,
+    # per-tab targeting and device emulation. That is roughly 350 tokens of new
+    # surface that no amount of rewording removes; what it bought is in the
+    # changelog. Descriptions were trimmed to pay for as much of it as possible,
+    # and the explosion this guard was written for is still well outside it.
+    assert cost < 2_000, f"browser schemas cost {cost} tokens"
     names = {schema["function"]["name"] for schema in core.tool_registry.browser_schemas()}
     assert len(names) <= 15, sorted(names)
+
+
+def test_launch_configurations_are_read_by_name(tmp_path):
+    import json as json_mod
+
+    from ollama_code.devserver import DevServerManager
+
+    (tmp_path / ".locus").mkdir()
+    (tmp_path / ".locus" / "launch.json").write_text(json_mod.dumps({
+        "version": "0.0.1",
+        "configurations": [
+            {
+                "name": "web",
+                "runtimeExecutable": "npm",
+                "runtimeArgs": ["run", "dev"],
+                "port": 5173,
+            },
+            {"name": "already-up", "url": "http://localhost:4000", "port": 4000},
+            {"nameless": True},
+        ],
+    }))
+
+    manager = DevServerManager(perms=PermissionManager(mode="ask"))
+    found = manager.configurations(str(tmp_path))
+    assert [entry["name"] for entry in found] == ["web", "already-up"]
+    assert found[0]["command"] == "npm run dev"
+    assert found[0]["port"] == 5173
+    # An entry with a URL and no executable is something to attach to, not to
+    # start a second copy of.
+    assert found[1]["command"] == ""
+    assert found[1]["url"] == "http://localhost:4000"
+    assert manager.configuration(str(tmp_path), "WEB")["command"] == "npm run dev"
+    assert manager.configuration(str(tmp_path), "missing") is None
+
+
+def test_a_broken_launch_file_is_not_a_broken_workspace(tmp_path):
+    from ollama_code.devserver import DevServerManager
+
+    (tmp_path / ".locus").mkdir()
+    (tmp_path / ".locus" / "launch.json").write_text("{ this is not json")
+    manager = DevServerManager(perms=PermissionManager(mode="ask"))
+    # Degrades to "no named configurations" rather than failing every call.
+    assert manager.configurations(str(tmp_path)) == []
+    assert manager.configurations(str(tmp_path / "nowhere")) == []
+
+
+def test_attaching_refuses_a_port_nothing_is_listening_on(tmp_path):
+    import socket as socket_mod
+
+    from ollama_code.devserver import DevServerError, DevServerManager
+
+    with socket_mod.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        free_port = probe.getsockname()[1]
+
+    manager = DevServerManager(perms=PermissionManager(mode="ask"))
+    with pytest.raises(DevServerError, match="nothing is listening"):
+        manager.attach(
+            name="already-up",
+            url="http://localhost:1",
+            port=free_port,
+            cwd=str(tmp_path),
+        )
+
+
+def test_server_output_can_be_narrowed_to_errors(tmp_path):
+    from ollama_code.devserver import DevServerRun
+
+    run = DevServerRun(name="web", command="npm run dev", cwd=str(tmp_path), port=None)
+    run.ring.extend([
+        "ready in 300ms",
+        "GET /index.html 200",
+        "ERROR  Failed to resolve import './missing'",
+        "GET /app.js 200",
+    ])
+    assert "Failed to resolve" in run.tail(level="error")
+    assert "GET /index.html" not in run.tail(level="error")
+    assert run.tail(search="app.js").strip() == "GET /app.js 200"
+    # The ring keeps everything: a line that looks dull while it scrolls past is
+    # often the one that explains the crash below it.
+    assert len(run.tail().splitlines()) == 4
 
 
 def test_dev_server_starts_probes_and_stops(tmp_path):
@@ -6214,3 +6323,93 @@ def test_windows_measured_before_host_scoping_are_kept_not_discarded(tmp_path, m
     assert windows["http://192.168.50.99:11434|qwen3:8b"] == 8192
     assert windows["http://192.168.50.99:11434|already-scoped"] == 4096
     assert "qwen3:8b" not in windows, "the bare key should have been migrated"
+
+
+class _FakeCodexHelper:
+    """Stands in for one account's helper process."""
+
+    def __init__(self, home_id: str, *, signed_in: bool = True) -> None:
+        self.home_id = home_id
+        self.signed_in = signed_in
+        self.available = True
+        self.logouts = 0
+
+    def account(self, *, refresh: bool = False) -> dict:
+        return {
+            "account": (
+                {"type": "chatgpt", "email": f"{self.home_id}@example.com", "planType": "plus"}
+                if self.signed_in else None
+            ),
+            "runtimeVersion": "0.147.0",
+        }
+
+    def logout(self) -> None:
+        self.logouts += 1
+        self.signed_in = False
+
+    def add_listener(self, listener) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def _install_fake_helpers(client, monkeypatch):
+    """Give the service a helper per account without launching processes."""
+    svc = client.app.state.service
+    helpers: dict[str, _FakeCodexHelper] = {}
+
+    def codex_for(home_id: str):
+        key = (home_id or "").strip()
+        return helpers.setdefault(key, _FakeCodexHelper(key or "legacy"))
+
+    monkeypatch.setattr(svc, "codex_for", codex_for)
+    return svc, helpers
+
+
+def test_chatgpt_account_reads_the_requested_account(client, monkeypatch):
+    _, helpers = _install_fake_helpers(client, monkeypatch)
+
+    work = client.get("/api/chatgpt/account", params={"account_id": "work-1"}).json()
+    personal = client.get("/api/chatgpt/account", params={"account_id": "home-2"}).json()
+
+    assert work["email"] == "work-1@example.com"
+    assert personal["email"] == "home-2@example.com"
+    # Each account answers from its own helper, so one signing out cannot make
+    # the other look signed out.
+    helpers["work-1"].signed_in = False
+    assert client.get(
+        "/api/chatgpt/account", params={"account_id": "work-1"}
+    ).json()["status"] == "signed_out"
+    assert client.get(
+        "/api/chatgpt/account", params={"account_id": "home-2"}
+    ).json()["status"] == "signed_in"
+
+
+def test_signing_out_of_an_idle_account_leaves_the_active_provider_alone(
+    client, monkeypatch
+):
+    svc, helpers = _install_fake_helpers(client, monkeypatch)
+    # The agent is running on the "work" account.
+    svc.core.provider = "chatgpt"
+    monkeypatch.setattr(type(svc), "codex", property(lambda _self: helpers.setdefault(
+        "work-1", _FakeCodexHelper("work-1")
+    )))
+
+    response = client.post("/api/chatgpt/logout", json={"account_id": "home-2"})
+
+    assert response.status_code == 200
+    assert helpers["home-2"].logouts == 1
+    # Signing out of the other plan must not knock a running chat back to the
+    # local runtime.
+    assert svc.core.provider == "chatgpt"
+
+
+def test_chatgpt_routes_refuse_an_account_id_that_could_escape_its_home(client):
+    for hostile in ("../escape", "a/b"):
+        assert client.get(
+            "/api/chatgpt/account", params={"account_id": hostile}
+        ).status_code == 422
+        assert client.post(
+            "/api/chatgpt/login/start", json={"account_id": hostile}
+        ).status_code == 422
