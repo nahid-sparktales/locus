@@ -1987,6 +1987,45 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(model.draftText.isEmpty)
     }
 
+    /// A `CADisplayLink` goes quiet whenever its display does — asleep,
+    /// unplugged, or a Mac running with the lid shut — without cancelling
+    /// itself or reporting anything. A flush that only waited for the next
+    /// frame would then wait forever, and since a pending request suppresses
+    /// further ones, streamed text stopped appearing until something flushed
+    /// directly. This is that machine, which no test host can otherwise be.
+    @MainActor
+    func testStreamStillFlushesWhenNoDisplayFrameEverArrives() async throws {
+        var flushes = 0
+        let driver = DisplaySynchronizedFlushDriver(synchronizesWithDisplay: false) {
+            flushes += 1
+        }
+        driver.request()
+        XCTAssertEqual(flushes, 0, "the flush must still coalesce, not run per request")
+
+        try await Task.sleep(
+            for: .milliseconds(DisplaySynchronizedFlushDriver.frameDeadlineMilliseconds * 3)
+        )
+        XCTAssertEqual(flushes, 1, "a dark display left the flush waiting for a frame forever")
+
+        // And it keeps working: the watchdog is re-armed per request rather
+        // than being a one-shot that leaves the next flush stranded.
+        driver.request()
+        try await Task.sleep(
+            for: .milliseconds(DisplaySynchronizedFlushDriver.frameDeadlineMilliseconds * 3)
+        )
+        XCTAssertEqual(flushes, 2)
+
+        // A cancelled request must not fire late and flush a stream that has
+        // already been committed.
+        driver.request()
+        driver.cancelPending()
+        try await Task.sleep(
+            for: .milliseconds(DisplaySynchronizedFlushDriver.frameDeadlineMilliseconds * 3)
+        )
+        XCTAssertEqual(flushes, 2)
+        driver.invalidate()
+    }
+
     @MainActor
     func testTwoThousandStreamTokensAreBuffered() async throws {
         let model = AppModel(startImmediately: false)

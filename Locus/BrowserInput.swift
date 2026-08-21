@@ -336,9 +336,12 @@ extension OffscreenWebHost {
                 (Self.scrollPhaseChanged, deltaX, deltaY),
                 (Self.scrollPhaseEnded, 0, 0),
             ]
+            guard let flipBase = windowFlipBase() else { return false }
             for step in steps {
-                guard deliverWheel(at: point, phase: step.phase, deltaX: step.x, deltaY: step.y)
-                else { return false }
+                guard deliverWheel(
+                    at: point, flipBase: flipBase,
+                    phase: step.phase, deltaX: step.x, deltaY: step.y
+                ) else { return false }
                 try? await Task.sleep(for: BrowserInput.stepDelay)
             }
             return true
@@ -351,29 +354,47 @@ extension OffscreenWebHost {
     private static let scrollPhaseChanged: Int64 = 2
     private static let scrollPhaseEnded: Int64 = 4
 
+    /// Where AppKit puts y = 0 when it bridges a windowless `CGEvent`.
+    ///
+    /// A wheel event has to be built as a `CGEvent` — `NSEvent.mouseEvent`
+    /// cannot make one — and the bridged `NSEvent` belongs to no window, so it
+    /// reports its location straight back out of the `CGEvent`, flipped about
+    /// the primary display. Aiming *that* at a window point is what puts a
+    /// scroll under the right element.
+    ///
+    /// The flip is measured rather than looked up. Asking `NSScreen` for the
+    /// height would make scrolling depend on a display existing, and a Mac with
+    /// the lid shut and nothing attached has none; probing reads the axis back
+    /// out of AppKit itself and stays correct whatever the display arrangement
+    /// — or absence — happens to be. It is measured on a throwaway event,
+    /// because bridging one `CGEvent` twice yields a second `NSEvent` that
+    /// WebKit will not act on.
+    private func windowFlipBase() -> CGFloat? {
+        guard let probeEvent = CGEvent(
+            scrollWheelEvent2Source: CGEventSource(stateID: .privateState),
+            units: .pixel, wheelCount: 1, wheel1: 0, wheel2: 0, wheel3: 0
+        ) else { return nil }
+        probeEvent.location = .zero
+        return NSEvent(cgEvent: probeEvent)?.locationInWindow.y
+    }
+
     private func deliverWheel(
         at point: NSPoint,
+        flipBase: CGFloat,
         phase: Int64,
         deltaX: CGFloat,
         deltaY: CGFloat
     ) -> Bool {
-        guard let screen = webView.window?.screen ?? NSScreen.screens.first,
-              let scroll = CGEvent(
-                  scrollWheelEvent2Source: CGEventSource(stateID: .privateState),
-                  units: .pixel,
-                  wheelCount: deltaX == 0 ? 1 : 2,
-                  wheel1: Int32(clamping: Int(-deltaY)),
-                  wheel2: Int32(clamping: Int(-deltaX)),
-                  wheel3: 0
-              )
-        else { return false }
+        guard let scroll = CGEvent(
+            scrollWheelEvent2Source: CGEventSource(stateID: .privateState),
+            units: .pixel,
+            wheelCount: deltaX == 0 ? 1 : 2,
+            wheel1: Int32(clamping: Int(-deltaY)),
+            wheel2: Int32(clamping: Int(-deltaX)),
+            wheel3: 0
+        ) else { return false }
         scroll.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
-        // A wheel event has to be built as a CGEvent — `NSEvent.mouseEvent`
-        // cannot make one — and the bridged `NSEvent` reports no window, so it
-        // reads its location straight back out of the CGEvent, unflipped
-        // against the screen. Aiming *that* at the window point is what puts
-        // the scroll under the right element.
-        scroll.location = CGPoint(x: point.x, y: screen.frame.maxY - point.y)
+        scroll.location = CGPoint(x: point.x, y: flipBase - point.y)
         guard let event = NSEvent(cgEvent: scroll) else { return false }
         webView.scrollWheel(with: event)
         return true
