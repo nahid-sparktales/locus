@@ -223,6 +223,47 @@ final class BrowserInputTests: XCTestCase {
 
     // MARK: - Where events can and cannot go
 
+    func testScrollLandsOnTheTargetWhateverTheDisplayArrangement() async throws {
+        try await load("""
+        <body style="margin:0">
+          <div id="box" style="position:absolute;left:0;top:0;width:400px;height:200px;overflow:auto">
+            <div style="height:3000px">tall</div>
+          </div>
+        </body>
+        """)
+
+        // The wheel event's location is computed by measuring AppKit's own flip
+        // rather than reading a screen height. Prove the measurement lands where
+        // it was aimed: if it were off by a screen height, the scroll would go
+        // to whatever is at some other coordinate, or to nothing at all.
+        let target = CGPoint(x: 200, y: 100)
+        let expected = try XCTUnwrap(host.windowPoint(forPageCSS: target))
+
+        func wheelEvent() throws -> CGEvent {
+            try XCTUnwrap(CGEvent(
+                scrollWheelEvent2Source: CGEventSource(stateID: .privateState),
+                units: .pixel, wheelCount: 1, wheel1: -120, wheel2: 0, wheel3: 0
+            ))
+        }
+        // Measured on a throwaway event, as the code does: bridging one CGEvent
+        // twice yields a second NSEvent that WebKit will not act on.
+        let probeEvent = try wheelEvent()
+        probeEvent.location = .zero
+        let flipBase = try XCTUnwrap(NSEvent(cgEvent: probeEvent)).locationInWindow.y
+
+        let aimedEvent = try wheelEvent()
+        aimedEvent.location = CGPoint(x: expected.x, y: flipBase - expected.y)
+        let aimed = try XCTUnwrap(NSEvent(cgEvent: aimedEvent))
+        XCTAssertEqual(aimed.locationInWindow.x, expected.x, accuracy: 0.5)
+        XCTAssertEqual(aimed.locationInWindow.y, expected.y, accuracy: 0.5)
+
+        // And end to end, through the code that does the same thing.
+        let scrolled = await host.deliverScroll(at: target, deltaX: 0, deltaY: 120)
+        XCTAssertTrue(scrolled)
+        let moved = try await settled("document.getElementById('box').scrollTop || null") as? Int
+        XCTAssertNotNil(moved, "the scroll did not reach the container under the point")
+    }
+
     func testInputIsRefusedRatherThanDroppedWhenThereIsNoWindow() async {
         let orphan = WKWebView(frame: .zero)
         XCTAssertNil(orphan.window)

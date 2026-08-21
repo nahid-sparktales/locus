@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Streaming no longer stalls when the display sleeps.** Replies were flushed
+  to the screen on the display's own refresh, which is the right clock for
+  keeping text growth and scroll anchoring on one frame — but a `CADisplayLink`
+  simply goes quiet when its display sleeps, is unplugged, or never existed,
+  without cancelling itself or reporting anything. A flush waiting on the next
+  frame then waited forever, and because a pending flush suppresses further
+  requests, streamed text stopped appearing until something flushed directly.
+  Every request now also arms a watchdog: whichever arrives first wins, the
+  frame on a live display or the watchdog on a dark one. A link that has gone
+  quiet is dropped and rebuilt against whatever display exists next, so the app
+  recovers on its own when a screen comes back.
+- **The browser can scroll on a Mac with no display attached.** Aiming a wheel
+  event needed the height of the primary screen, so with the lid shut and
+  nothing plugged in there was no screen to ask and the scroll silently fell
+  back to the synthetic path. The coordinate flip is now measured out of AppKit
+  itself rather than looked up, which is correct for any display arrangement,
+  including none.
+
+## Unreleased
+
 ### Added
 
 - **The agent's clicks are now real input.** Actions were dispatched as
