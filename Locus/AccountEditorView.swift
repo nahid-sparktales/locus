@@ -205,14 +205,14 @@ struct AccountEditorView: View {
             keyStored = account.hasKey
             contextWindow = account.contextWindow.map(String.init) ?? ""
             if kind == .chatGPT {
-                Task { await model.refreshChatGPTAccount() }
+                Task { await model.refreshChatGPTAccount(for: account) }
             }
         }
     }
 
     @ViewBuilder
     private var chatGPTControls: some View {
-        let status = model.chatGPTAccount
+        let status = model.chatGPTAccounts[account.id]
         VStack(alignment: .leading, spacing: 10) {
             if let status, status.status == "signed_in" {
                 Label("Signed in", systemImage: "checkmark.circle.fill")
@@ -227,21 +227,26 @@ struct AccountEditorView: View {
                 }
                 HStack {
                     Button("Refresh") {
-                        Task { await model.refreshChatGPTAccount(forceTokenRefresh: true) }
+                        Task {
+                            await model.refreshChatGPTAccount(
+                                for: account,
+                                forceTokenRefresh: true
+                            )
+                        }
                     }
                     Button("Sign Out") {
-                        Task { await model.signOutChatGPT() }
+                        Task { await model.signOutChatGPT(from: account) }
                     }
                 }
-            } else if model.chatGPTLoginID != nil {
+            } else if model.chatGPTLoginIDs[account.id] != nil {
                 Label("Finish signing in in your browser", systemImage: "safari")
                     .font(.locus(size: 10, weight: .semibold))
                 HStack {
                     Button("Refresh Status") {
-                        Task { await model.refreshChatGPTAccount() }
+                        Task { await model.refreshChatGPTAccount(for: account) }
                     }
                     Button("Cancel Login") {
-                        Task { await model.cancelChatGPTLogin() }
+                        Task { await model.cancelChatGPTLogin(for: account) }
                     }
                 }
             } else {
@@ -252,7 +257,7 @@ struct AccountEditorView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Button("Sign in with ChatGPT") {
-                    Task { await model.startChatGPTLogin() }
+                    Task { await model.startChatGPTLogin(for: account) }
                 }
                 .disabled(status?.runtimeAvailable == false)
                 .accessibilityIdentifier("accountEditor.chatGPT.signIn")

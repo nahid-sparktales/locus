@@ -1520,50 +1520,6 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Section("Local model") {
-                Label(
-                    "Local Ollama — manage which downloaded models appear in Locus.",
-                    systemImage: "bolt.fill"
-                )
-                .font(.locus(size: 10))
-                .foregroundStyle(LocusTheme.muted)
-
-                if model.installedLocalModels.isEmpty {
-                    Text(model.isModelOnline
-                        ? "No local models are installed."
-                        : "Connect to Ollama to see installed models.")
-                        .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                } else {
-                    ForEach(model.installedLocalModels) { localModel in
-                        localModelRow(localModel)
-                    }
-                }
-
-                HStack {
-                    Button("Browse Models…") {
-                        model.openModelLibraryFromSettings()
-                        dismiss()
-                    }
-                    .accessibilityIdentifier("settings.localModels.browse")
-
-                    Button("Refresh") {
-                        Task { await model.refreshMetadata() }
-                    }
-                    .disabled(deletingLocalModelName != nil)
-                    .accessibilityIdentifier("settings.localModels.refresh")
-                }
-
-                TextField("Local context window in tokens (optional)", text: $localWindow)
-                    .accessibilityIdentifier("settings.localContextWindow")
-
-                Text("Leave empty and Locus asks Ollama for the largest window the model was built for, up to 32,768 tokens — Ollama's own default is 4,096, most of which a turn spends on tools before the conversation starts. Bigger windows cost memory for the KV cache, and a model that ends up partly on the CPU is backed off automatically. Set a value to pin one exactly; it is requested as num_ctx and is what compaction budgets against.")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.inkSoft)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("settings.localContextDescription")
-            }
-
             Section("Agent") {
                 TextField("Maximum tool steps per request — all models (optional)", text: $iterationLimit)
                     .accessibilityIdentifier("settings.maxIterations")
@@ -1819,6 +1775,37 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.browser.webSearchDestination")
 
                 Text("Right-clicking highlighted text in a conversation offers Copy and Search in Google. The Browser tab is used only while the agent’s browser is on.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("Input") {
+                Picker("The agent acts on pages with", selection: $draft.browserRealInput) {
+                    Text("Real input").tag(true)
+                    Text("Synthetic events only").tag(false)
+                }
+                .accessibilityIdentifier("settings.browser.realInput")
+
+                Text("Real input is delivered the way your own clicks and keystrokes are, so pages see trusted input carrying a user gesture. That is what makes canvases, maps and drag surfaces reachable — and equally what lets a page the agent clicks open a popup or start playback. Synthetic events cannot do either, and a page that checks for trusted input ignores them.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Toggle("Emulate a mobile device at phone widths", isOn: $draft.browserEmulateDevice)
+                    .accessibilityIdentifier("settings.browser.emulateDevice")
+
+                Text("A mobile viewport also presents a mobile user agent, touch points and coarse-pointer media queries, so a site serves what it would serve a phone rather than a narrow desktop.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("Developer") {
+                Toggle("Allow the Web Inspector to attach", isOn: $draft.browserWebInspector)
+                    .accessibilityIdentifier("settings.browser.webInspector")
+
+                Text("Lets Safari's Web Inspector open the agent's pages. Any local process can attach and read the cookies and storage of whatever has been browsed, so leave this off unless you are debugging. Dev servers named in .locus/launch.json can be started by name; the agent lists them for you.")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2140,10 +2127,6 @@ struct SettingsView: View {
                         Button(kind.title) {
                             addingAccount = ProviderAccount(kind: kind)
                         }
-                        .disabled(
-                            kind == .chatGPT
-                                && model.providerAccounts.contains { $0.kind == .chatGPT }
-                        )
                     }
                 }
                 .accessibilityIdentifier("settings.accounts.add")
@@ -2162,11 +2145,40 @@ struct SettingsView: View {
                 .font(.locus(size: 10))
                 .foregroundStyle(LocusTheme.muted)
 
-                Button("Browse Hugging Face Models…") {
-                    model.openModelLibraryFromSettings()
-                    dismiss()
+                if model.installedLocalModels.isEmpty {
+                    Text(model.isModelOnline
+                        ? "No local models are installed."
+                        : "Connect to Ollama to see installed models.")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                } else {
+                    ForEach(model.installedLocalModels) { localModel in
+                        localModelRow(localModel)
+                    }
                 }
-                .accessibilityIdentifier("settings.accounts.browseHuggingFace")
+
+                HStack {
+                    Button("Browse Hugging Face Models…") {
+                        model.openModelLibraryFromSettings()
+                        dismiss()
+                    }
+                    .accessibilityIdentifier("settings.accounts.browseHuggingFace")
+
+                    Button("Refresh") {
+                        Task { await model.refreshMetadata() }
+                    }
+                    .disabled(deletingLocalModelName != nil)
+                    .accessibilityIdentifier("settings.localModels.refresh")
+                }
+
+                TextField("Local context window in tokens (optional)", text: $localWindow)
+                    .accessibilityIdentifier("settings.localContextWindow")
+
+                Text("Leave empty and Locus asks Ollama for the largest window the model was built for, up to 32,768 tokens — Ollama's own default is 4,096, most of which a turn spends on tools before the conversation starts. Bigger windows cost memory for the KV cache, and a model that ends up partly on the CPU is backed off automatically. Set a value to pin one exactly; it is requested as num_ctx and is what compaction budgets against.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.inkSoft)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("settings.localContextDescription")
             }
         }
         .formStyle(.grouped)
@@ -2290,13 +2302,14 @@ struct SettingsView: View {
         let status = model.accountStatus[account.id]
             ?? (account.hasKey ? .keySaved : .noKey)
         if account.kind == .chatGPT,
-           let window = model.chatGPTUsage?.rateLimits.rateLimits?.primary
+           let window = model.chatGPTUsageByAccount[account.id]?.rateLimits.rateLimits?.primary
         {
             let reset = window.resetsAt.map {
                 "resets " + Date(timeIntervalSince1970: Double($0))
                     .formatted(.relative(presentation: .named))
             }
-            let activity = model.chatGPTUsage?.activity.summary?.lifetimeTokens.map {
+            let activity = model.chatGPTUsageByAccount[account.id]?
+                .activity.summary?.lifetimeTokens.map {
                 $0.formatted(.number.notation(.compactName)) + " activity tokens"
             }
             return [status.summary, "\(window.usedPercent)% used", reset, activity]

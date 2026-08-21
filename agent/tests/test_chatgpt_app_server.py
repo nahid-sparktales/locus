@@ -5,7 +5,9 @@ import pytest
 from ollama_code.codex_app_server import (
     CodexAppServerError,
     CodexAppServerManager,
+    CodexManagerRegistry,
     CodexProtocolMismatch,
+    codex_home_for_account,
     dynamic_tools,
 )
 from ollama_code.core import AgentCore
@@ -211,3 +213,70 @@ def test_missing_managed_history_rebuilds_from_canonical_transcript(tmp_path):
     assert runtime.started == ["thread-1", "thread-2"]
     assert "Canonical Locus transcript" in runtime.turn_texts[-1]
     assert "first request" in runtime.turn_texts[-1]
+
+
+def test_account_homes_are_separate_directories(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOCUS_CODEX_HOME", str(tmp_path / "codex"))
+    legacy = codex_home_for_account("")
+    first = codex_home_for_account("11111111-2222-3333-4444-555555555555")
+    second = codex_home_for_account("66666666-7777-8888-9999-000000000000")
+
+    # The empty id keeps the pre-multi-account home, so upgrading does not sign
+    # the existing user out.
+    assert legacy == tmp_path / "codex"
+    assert first != second
+    assert first != legacy and second != legacy
+    # Per-account homes live beside the legacy one, never inside it: nesting
+    # would make one account's credentials part of another's home.
+    assert legacy not in first.parents
+
+
+def test_account_home_ids_that_could_escape_are_refused(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOCUS_CODEX_HOME", str(tmp_path / "codex"))
+    for hostile in ("../escape", "a/b", ".hidden", "with space", "x" * 65, "/abs"):
+        with pytest.raises(ValueError, match="invalid ChatGPT account home id"):
+            codex_home_for_account(hostile)
+
+
+def test_registry_keeps_one_helper_per_account(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOCUS_CODEX_HOME", str(tmp_path / "codex"))
+    registry = CodexManagerRegistry(client_version="1")
+
+    first = registry.manager("aaaa1111")
+    second = registry.manager("bbbb2222")
+
+    assert first is registry.manager("aaaa1111")
+    assert first is not second
+    assert first.codex_home != second.codex_home
+    # Listing an account must not be what launches its helper.
+    assert registry.existing("cccc3333") is None
+    assert not first.is_running and not second.is_running
+
+
+def test_registry_listeners_reach_accounts_added_later(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOCUS_CODEX_HOME", str(tmp_path / "codex"))
+    registry = CodexManagerRegistry()
+    seen: list[dict] = []
+    early = registry.manager("aaaa1111")
+    registry.add_listener(seen.append)
+    late = registry.manager("bbbb2222")
+
+    for manager in (early, late):
+        for listener in manager._global_listeners:
+            listener({"method": "account/updated"})
+
+    assert len(seen) == 2
+
+
+def test_registry_close_forgets_the_helper_it_closed(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOCUS_CODEX_HOME", str(tmp_path / "codex"))
+    registry = CodexManagerRegistry()
+    first = registry.manager("aaaa1111")
+    registry.close("aaaa1111")
+    assert registry.existing("aaaa1111") is None
+    assert registry.manager("aaaa1111") is not first
+
+    registry.manager("bbbb2222")
+    registry.close_all()
+    assert registry.existing("aaaa1111") is None
+    assert registry.existing("bbbb2222") is None

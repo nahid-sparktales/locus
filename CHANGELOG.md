@@ -1,5 +1,70 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **The agent's clicks are now real input.** Actions were dispatched as
+  JavaScript events the browser built itself, which carry `isTrusted: false`
+  and no user gesture — so pages were free to ignore them, and many did. They
+  are now delivered as the same `NSEvent`s AppKit hands the web view for your
+  own clicks and keystrokes, hit-tested by WebKit rather than by us. Drag
+  surfaces, gesture-gated controls and anything drawn into a `<canvas>` respond
+  the way they do for a person. Scrolling arrives as a phased gesture aimed at a
+  point, so the container under the pointer moves rather than always the
+  document. Where real delivery is impossible the old path still runs, and the
+  result says so rather than reporting a click that never landed. Settings ▸
+  Browser can switch back to synthetic events, which cannot open a popup or
+  start playback either.
+- **Anything on the page can be aimed at by coordinate.** `browser_input` takes
+  `at: [x, y]` in page pixels wherever it took a ref, and `browser_screenshot`
+  takes a `region` to capture one part of the viewport up close. Every capture
+  now reports the frame it is in — image pixels, the page pixels they cover, and
+  the origin — so a position measured on a picture converts back into an action.
+  Together these reach what the element tree cannot name: canvases, maps,
+  drawing tools, custom widgets. A coordinate meets the same credential gate a
+  ref does; the page is asked what sits under those pixels, and a password field
+  is refused either way.
+- **Every browser tool takes a `tab_id`.** A tab can be read, screenshotted and
+  driven without pulling the view onto it, and a new tab opens in the background
+  by default with its id in the reply. Naming a tab reaches only the calling
+  session's own, so concurrent workers still cannot steer each other's pages.
+- **A mobile viewport now presents a mobile device.** The phone preset — or any
+  width under 768 — also serves a mobile user agent, five touch points,
+  coarse-pointer and no-hover media queries, and translates mouse input to touch
+  where WebKit allows it, so feature detection sees a phone instead of a narrow
+  desktop. The reply says to reload, because a site decides what to serve at
+  load time. The Browser toolbar shows when a tab is presenting itself this way,
+  and Settings ▸ Browser can turn it off.
+- **Dev servers can be named in `.locus/launch.json`.** A workspace lists its
+  servers once — name, executable, arguments, port — and the agent starts one by
+  name instead of rediscovering the command every session; `configurations`
+  lists what is on offer. An entry with a `url` and no executable attaches to a
+  server you already have running rather than fighting it for the port. Server
+  output can be narrowed with `level`, `search` and `lines` instead of reading
+  the whole ring.
+- **Find in page and page zoom.** ⌘F searches the page WebKit's own way, with
+  next and previous and an honest "Not found" rather than an invented match
+  count; ⌘+, ⌘− and ⌘0 zoom the page, with the current percentage in the toolbar
+  while it is not 100%. The viewport control is now a device menu carrying pixel
+  dimensions, the mobile-device toggle and a light/dark switch that was
+  previously only reachable by the agent.
+
+### Changed
+
+- **`browser_input`'s `type` now types.** It sends real keystrokes into the
+  focused element, so search-as-you-type and key handlers see each character
+  arrive; `set_value` still replaces a field's value in one step, and still
+  matches a `<select>` option by its visible label as well as by its value.
+- **Web Inspector is a setting rather than a build flag.** Debug builds are
+  unchanged; a release build can now opt in from Settings ▸ Browser, with the
+  warning that any local process can then attach and read whatever has been
+  browsed. It stays off by default.
+- **The browser tool schemas cost about 350 more tokens.** Coordinates, region
+  capture, per-tab targeting and device emulation are not free, and every prompt
+  pays for them. Descriptions were trimmed to claw back as much as possible; the
+  budget guard that keeps this from creeping was raised to match.
+
 ## 1.16.0 — 2026-08-17
 
 ### Fixed

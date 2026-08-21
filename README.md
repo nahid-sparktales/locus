@@ -11,6 +11,7 @@ Local Ollama is the default. ChatGPT plans and API-backed providers are used onl
 ## What Locus does
 
 - **Works in your project.** Add files and folders to context, search the workspace, review diffs, use a retained terminal, and preview sites without leaving the conversation.
+- **Browses like a browser.** The agent shares your tabs: it reads pages as addressable elements, clicks and types with real input rather than synthetic events, aims at coordinates for canvases and maps, captures regions of the viewport, watches the console and network, and presents itself as a phone when you ask for a mobile viewport. Find in page, page zoom and per-tab device settings are there for you too.
 - **Plans before it changes things.** Use Chat, Plan, or Build mode and choose how often file, command, browser, Computer Control, and MCP actions require approval.
 - **Runs solo or as a team.** Adaptive Work can route tasks to specialists, or you can define explicit agent teams with model, tool, memory, and runtime limits.
 - **Keeps runs inspectable.** Timelines, evidence, costs, checkpoints, pause/resume state, and recovery actions stay available in the Runs inspector.

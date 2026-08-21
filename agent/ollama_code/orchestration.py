@@ -2735,6 +2735,18 @@ def configure_chatgpt_manager(manager: Any) -> None:
         _TEAM_CODEX_BROKER = manager
 
 
+def set_chatgpt_manager(manager: Any) -> None:
+    """Rebind team routing after the active ChatGPT account changes.
+
+    Unlike ``configure_chatgpt_manager`` this always replaces the manager: with
+    several ChatGPT accounts, a team started after a switch must talk to the
+    account the user actually selected, not whichever one happened to be
+    installed first.
+    """
+    global _TEAM_CODEX_BROKER
+    _TEAM_CODEX_BROKER = manager
+
+
 def _client(profile: AgentProfile):
     route = profile.route
     if route.get("provider") == "ollama":

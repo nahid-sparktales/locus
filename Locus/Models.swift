@@ -1800,6 +1800,19 @@ struct AppSettings: Codable, Hashable {
     /// default forgets everything when the app quits, because an agent that
     /// can browse anywhere should not quietly accumulate a signed-in profile.
     var browserPersistProfile = false
+    /// Real input is delivered as `NSEvent`s, so the page sees `isTrusted`
+    /// input carrying a user gesture — which is what makes canvas surfaces and
+    /// gesture-gated controls reachable, and equally what lets a clicked page
+    /// open a popup or start playback. Off falls back to the synthetic bridge,
+    /// which cannot do either.
+    var browserRealInput = true
+    /// Whether the mobile viewport also presents a mobile device: user agent,
+    /// touch points, and coarse-pointer media queries. Resizing alone tests
+    /// layout; this tests what the site actually serves a phone.
+    var browserEmulateDevice = true
+    /// Web Inspector lets any local process attach to the agent's pages and
+    /// read their cookies and storage, so it is opt-in and off by default.
+    var browserWebInspector = false
     /// Where "Search in Google" on highlighted conversation text opens. Raw
     /// string for the same forward-compatibility reason as the viewport.
     var webSearchDestinationRaw = WebSearchDestination.defaultBrowser.rawValue
@@ -2079,6 +2092,16 @@ struct AppSettings: Codable, Hashable {
             Bool.self,
             forKey: .browserPersistProfile
         ) ?? defaults.browserPersistProfile
+        browserRealInput = try container.decodeIfPresent(Bool.self, forKey: .browserRealInput)
+            ?? defaults.browserRealInput
+        browserEmulateDevice = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .browserEmulateDevice
+        ) ?? defaults.browserEmulateDevice
+        browserWebInspector = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .browserWebInspector
+        ) ?? defaults.browserWebInspector
         webSearchDestinationRaw = try container.decodeIfPresent(
             String.self,
             forKey: .webSearchDestinationRaw

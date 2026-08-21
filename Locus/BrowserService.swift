@@ -104,6 +104,8 @@ final class BrowserService: NSObject, ObservableObject {
         /// KVO tokens feeding the published snapshots. Held here so closing
         /// the tab tears them down with it.
         fileprivate var observations: [NSKeyValueObservation] = []
+        /// Whether this tab presents itself to pages as a mobile device.
+        fileprivate(set) var emulatesDevice = false
 
         init(id: String, host: OffscreenWebHost, ownerSessionID: String) {
             self.id = id
@@ -156,6 +158,11 @@ final class BrowserService: NSObject, ObservableObject {
         var canGoBack: Bool
         var canGoForward: Bool
         var ownerSessionID: String
+        /// Surfaced so the toolbar can show when a tab is no longer at 100% or
+        /// is presenting itself as a phone — both change what a screenshot
+        /// means, and neither is visible in the page itself.
+        var pageZoom: CGFloat
+        var emulatesDevice: Bool
     }
 
     @Published private(set) var tabs: [TabSnapshot] = []
@@ -191,6 +198,14 @@ final class BrowserService: NSObject, ObservableObject {
     private var protectedSessionIDs: Set<String> = []
     /// The emulated size new tabs start at; follows the settings preset.
     var defaultViewport: CGSize = BrowserViewport.desktop.size
+    /// Whether actions are delivered as real `NSEvent`s rather than through the
+    /// bridge's synthetic events. Follows the setting; the bridge remains the
+    /// fallback whenever real delivery is impossible.
+    var realInputEnabled = true
+    /// Whether a mobile viewport also presents a mobile device to the page.
+    var deviceEmulationEnabled = true
+    /// Whether new tabs allow the Web Inspector to attach.
+    var webInspectorEnabled = false
     /// Surfaced as a toast by AppModel — download completions and the like.
     var onUserNotice: ((String) -> Void)?
 
@@ -454,7 +469,7 @@ final class BrowserService: NSObject, ObservableObject {
         sessionID: String,
         budget: Duration
     ) async throws -> [String: Any] {
-        let tab = tab(for: sessionID)
+        let tab = try tab(for: sessionID, tabID: arguments["tab_id"] as? String)
         let action = (arguments["url"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !action.isEmpty else {
@@ -532,7 +547,7 @@ final class BrowserService: NSObject, ObservableObject {
         _ arguments: [String: Any],
         sessionID: String
     ) async throws -> [String: Any] {
-        let tab = try openTab(for: sessionID)
+        let tab = try openTab(for: sessionID, tabID: arguments["tab_id"] as? String)
 
         var options: [String: Any] = [
             "filter": (arguments["filter"] as? String) ?? "interactive",
@@ -571,7 +586,7 @@ final class BrowserService: NSObject, ObservableObject {
         _ arguments: [String: Any],
         sessionID: String
     ) async throws -> [String: Any] {
-        let tab = try openTab(for: sessionID)
+        let tab = try openTab(for: sessionID, tabID: arguments["tab_id"] as? String)
         let maxChars = (arguments["max_chars"] as? Int) ?? 20_000
         let raw = try await callBridge(tab, "return __locus.getText(limit)", ["limit": maxChars])
         guard let payload = raw as? [String: Any] else {
@@ -589,7 +604,7 @@ final class BrowserService: NSObject, ObservableObject {
         _ arguments: [String: Any],
         sessionID: String
     ) async throws -> [String: Any] {
-        let tab = try openTab(for: sessionID)
+        let tab = try openTab(for: sessionID, tabID: arguments["tab_id"] as? String)
         guard let query = (arguments["query"] as? String)?.nilIfBlank else {
             throw BrowserToolError("'query' is required")
         }
@@ -620,7 +635,7 @@ final class BrowserService: NSObject, ObservableObject {
         sessionID: String,
         provider: String?
     ) async throws -> [String: Any] {
-        let tab = try openTab(for: sessionID)
+        let tab = try openTab(for: sessionID, tabID: arguments["tab_id"] as? String)
         // The same gate and the same consent set computer control uses: a
         // picture of a logged-in page is no less sensitive than one of Notes.
         guard HostedScreenshotConsent.shared.isAllowed(provider: provider) else {
@@ -637,22 +652,78 @@ final class BrowserService: NSObject, ObservableObject {
                 throw BrowserToolError(BrowserBridge.staleReferenceMessage.droppingErrorPrefix)
             }
         }
-        let data = try await tab.host.snapshotPNG()
-        guard data.count <= Self.maximumScreenshotBytes else {
+
+        let region = try Self.captureRegion(arguments["region"])
+        let requested = Self.coordinate(arguments["scale"]).map { max(0.1, min($0, 1.0)) } ?? 1.0
+        // The live page area, not the emulated viewport: while the view is lent
+        // to the visible panel it takes the panel's size, and a frame described
+        // in terms of the viewport would not match the picture.
+        let visible = tab.host.visibleSizeInCSSPixels
+        let full = region?.width ?? visible.width
+
+        // Shrink and retry rather than refuse. A capture that overruns the cap
+        // is nearly always a large viewport, and telling the model to resize
+        // costs it a round trip to learn something we can just do.
+        var scale = requested
+        var capture: (data: Data, pixels: CGSize)?
+        for attempt in 0..<4 {
+            let width = max(160, full * scale)
+            let taken = try await tab.host.snapshotPNG(region: region, maximumWidth: width)
+            if taken.data.count <= Self.maximumScreenshotBytes {
+                capture = taken
+                break
+            }
+            if attempt == 3 { capture = nil } else { scale *= 0.6 }
+        }
+        guard let capture else {
             throw BrowserToolError(
-                "the capture came back too large (\(data.count / 1_024) KB); "
-                + "try a smaller viewport with browser_resize"
+                "the capture is still over \(Self.maximumScreenshotBytes / 1_024 / 1_024) MB "
+                + "at the smallest scale; capture a 'region' instead of the whole viewport"
             )
         }
+
         let location = tab.webView.url?.absoluteString ?? "the page"
+        let origin = region?.origin ?? .zero
+        let covered = region ?? CGRect(origin: .zero, size: visible)
+        var text = region == nil
+            ? "Captured the visible viewport of \(location)."
+            : "Captured a \(Int(covered.width))×\(Int(covered.height)) region of \(location) "
+                + "at (\(Int(origin.x)), \(Int(origin.y)))."
+        // Whatever the model measures on this image has to be translated back
+        // before browser_input can use it, so say how.
+        text += "\n\nThe image is \(Int(capture.pixels.width))×\(Int(capture.pixels.height)) pixels "
+            + "covering \(Int(covered.width))×\(Int(covered.height)) page pixels from "
+            + "(\(Int(origin.x)), \(Int(origin.y))). To act on something in it, pass "
+            + "browser_input x = \(Int(origin.x)) + imageX × \(Self.ratio(covered.width, capture.pixels.width)), "
+            + "y = \(Int(origin.y)) + imageY × \(Self.ratio(covered.height, capture.pixels.height))."
         return [
-            "text": "Captured the visible viewport of \(location).",
+            "text": text,
             "screenshot": [
                 "mime_type": "image/png",
-                "data": data.base64EncodedString(),
+                "data": capture.data.base64EncodedString(),
                 "description": "Newest browser viewport for \(location)",
             ],
         ]
+    }
+
+    /// Ratio of page pixels to image pixels, rounded to something a model can
+    /// multiply by without it reading as false precision.
+    private static func ratio(_ page: CGFloat, _ image: CGFloat) -> String {
+        guard image > 0 else { return "1" }
+        return String(format: "%.3g", Double(page / image))
+    }
+
+    /// `[x, y, width, height]` in page pixels.
+    private static func captureRegion(_ raw: Any?) throws -> CGRect? {
+        guard let raw, !(raw is NSNull) else { return nil }
+        guard let values = raw as? [Any], values.count == 4 else {
+            throw BrowserToolError("'region' must be [x, y, width, height] in page pixels")
+        }
+        let numbers = values.compactMap(coordinate)
+        guard numbers.count == 4, numbers[2] > 0, numbers[3] > 0 else {
+            throw BrowserToolError("'region' needs four numbers and a positive width and height")
+        }
+        return CGRect(x: numbers[0], y: numbers[1], width: numbers[2], height: numbers[3])
     }
 
     private func waitFor(
@@ -660,7 +731,12 @@ final class BrowserService: NSObject, ObservableObject {
         sessionID: String,
         budget: Duration
     ) async throws -> [String: Any] {
-        let tab = try openTab(for: sessionID)
+        if let seconds = Self.coordinate(arguments["seconds"]) {
+            let capped = max(0, min(seconds, 30))
+            try await Task.sleep(for: .milliseconds(Int(capped * 1_000)))
+            return ["text": String(format: "Waited %.1f seconds.", Double(capped))]
+        }
+        let tab = try openTab(for: sessionID, tabID: arguments["tab_id"] as? String)
         var options: [String: Any] = [:]
         for key in ["text", "selector", "ref"] {
             if let value = (arguments[key] as? String)?.nilIfBlank { options[key] = value }
@@ -676,33 +752,189 @@ final class BrowserService: NSObject, ObservableObject {
         return ["text": "Still waiting when the timeout ran out; the page may not reach that state."]
     }
 
+    /// Where a pointer action lands, in page CSS pixels.
+    private struct PointerTarget {
+        let point: CGPoint
+        /// Accessible name, when the target came from a ref; empty for raw
+        /// coordinates, which name nothing.
+        let name: String
+        let fromRef: Bool
+    }
+
+    private static func coordinate(_ value: Any?) -> CGFloat? {
+        if let int = value as? Int { return CGFloat(int) }
+        if let double = value as? Double { return CGFloat(double) }
+        if let number = value as? NSNumber { return CGFloat(number.doubleValue) }
+        return nil
+    }
+
+    /// Resolve `ref`, or a raw `x`/`y` pair, to a point in the page.
+    ///
+    /// A ref goes through the bridge so the element is scrolled into view and
+    /// hit-tested first — that pre-flight is the only thing that catches a
+    /// cookie banner sitting over the control, and it has no coordinate
+    /// equivalent, because pixels are exactly what a person would aim at too.
+    /// A coordinate pair, written either as `at: [x, y]` or as loose `x`/`y`
+    /// keys. The array is what the schema advertises; the scalars are accepted
+    /// because a model that has not read it closely reaches for them, and
+    /// refusing a well-aimed click over its spelling helps nobody.
+    private static func point(
+        _ arguments: [String: Any],
+        pairKey: String,
+        xKey: String,
+        yKey: String
+    ) -> CGPoint? {
+        if let pair = arguments[pairKey] as? [Any], pair.count >= 2,
+           let x = coordinate(pair[0]), let y = coordinate(pair[1])
+        {
+            return CGPoint(x: x, y: y)
+        }
+        guard let x = coordinate(arguments[xKey]), let y = coordinate(arguments[yKey]) else {
+            return nil
+        }
+        return CGPoint(x: x, y: y)
+    }
+
+    private func pointerTarget(
+        _ tab: Tab,
+        arguments: [String: Any],
+        ref: String?,
+        pairKey: String = "at",
+        xKey: String = "x",
+        yKey: String = "y"
+    ) async throws -> PointerTarget {
+        if let ref {
+            let raw = try await callBridge(tab, "return __locus.locate(ref)", ["ref": ref])
+            let payload = (raw as? [String: Any]) ?? [:]
+            if payload["stale"] as? Bool == true {
+                throw BrowserToolError(BrowserBridge.staleReferenceMessage.droppingErrorPrefix)
+            }
+            if payload["blocked"] as? Bool == true {
+                let by = (payload["by"] as? String)?.nilIfBlank ?? "something else"
+                throw BrowserToolError("\(by) is covering that element; scroll or dismiss it first")
+            }
+            guard let x = Self.coordinate(payload["x"]), let y = Self.coordinate(payload["y"]) else {
+                throw BrowserToolError("that element has no position on the page")
+            }
+            return PointerTarget(
+                point: CGPoint(x: x, y: y),
+                name: (payload["name"] as? String)?.nilIfBlank ?? "",
+                fromRef: true
+            )
+        }
+        guard let point = Self.point(arguments, pairKey: pairKey, xKey: xKey, yKey: yKey) else {
+            throw BrowserToolError(
+                "pass 'ref' from browser_read_page, or '\(pairKey)' as [x, y] in page pixels"
+            )
+        }
+        return PointerTarget(point: point, name: "", fromRef: false)
+    }
+
+    /// Whether this tab should be driven with real events right now.
+    private func prefersRealInput(_ tab: Tab) -> Bool {
+        realInputEnabled && tab.host.canDeliverRealInput
+    }
+
+    /// Appended when real input was wanted and could not be delivered, so a
+    /// page that ignores untrusted events fails legibly instead of silently.
+    private static let syntheticFallbackNotice = """
+    Delivered as synthetic events because real input was unavailable; a page \
+    that checks event.isTrusted will have ignored it.
+    """
+
+    /// Round-trip to the page after real input.
+    ///
+    /// An `NSEvent` is handled asynchronously in the web process, so the page's
+    /// own handler — and any dialog it opens — may not have run by the time
+    /// delivery returns. A trivial evaluation queues behind the event, so
+    /// awaiting it is what lets the action's result report what the action
+    /// actually caused. The bridge path never needed this: its call *was* the
+    /// handler running.
+    private func settleAfterRealInput(_ tab: Tab) async {
+        _ = try? await callBridge(tab, "return 1", [:])
+    }
+
+    private func describeInput(
+        verb: String,
+        target: PointerTarget,
+        real: Bool
+    ) -> [String: Any] {
+        let named = target.name.isEmpty
+            ? " at (\(Int(target.point.x)), \(Int(target.point.y)))"
+            : " \"\(target.name)\""
+        var text = "\(verb)\(named). Call browser_read_page to see what changed."
+        if !real, realInputEnabled { text += "\n\n\(Self.syntheticFallbackNotice)" }
+        return ["text": text]
+    }
+
     private func input(
         _ arguments: [String: Any],
         sessionID: String
     ) async throws -> [String: Any] {
-        let tab = try openTab(for: sessionID)
         let action = (arguments["action"] as? String)?.lowercased() ?? "click"
+        let tab = try openTab(for: sessionID, tabID: arguments["tab_id"] as? String)
         let ref = (arguments["ref"] as? String)?.nilIfBlank
+        let modifierNames = (arguments["modifiers"] as? [String]) ?? []
+        let repeatCount = max(1, min((arguments["repeat"] as? Int) ?? 1, 50))
 
         switch action {
         case "click", "double_click", "right_click", "triple_click":
-            guard let ref else {
-                throw BrowserToolError("'ref' is required; call browser_read_page for one")
+            let target = try await pointerTarget(tab, arguments: arguments, ref: ref)
+            let clickCount = action == "double_click" ? 2 : (action == "triple_click" ? 3 : 1)
+            let button: BrowserInput.MouseButton = action == "right_click" ? .right : .left
+
+            if prefersRealInput(tab) {
+                let delivered = await tab.host.deliverClick(
+                    at: target.point,
+                    button: button,
+                    clickCount: clickCount,
+                    modifiers: BrowserInput.modifiers(from: modifierNames)
+                )
+                if delivered {
+                    await settleAfterRealInput(tab)
+                    return describeInput(verb: "Clicked", target: target, real: true)
+                }
             }
+
             var options: [String: Any] = [:]
-            if action == "double_click" { options["detail"] = 2 }
-            if action == "triple_click" { options["detail"] = 3 }
-            if action == "right_click" { options["button"] = "right" }
+            if clickCount > 1 { options["detail"] = clickCount }
+            if button == .right { options["button"] = "right" }
             applyModifiers(arguments, to: &options)
-            let raw = try await callBridge(
-                tab, "return __locus.click(ref, options)", ["ref": ref, "options": options]
-            )
-            return try describeAction(raw, verb: "Clicked")
+            let raw: Any?
+            if let ref {
+                raw = try await callBridge(
+                    tab, "return __locus.click(ref, options)", ["ref": ref, "options": options]
+                )
+            } else {
+                raw = try await callBridge(
+                    tab,
+                    "return __locus.clickAt(x, y, options)",
+                    ["x": target.point.x, "y": target.point.y, "options": options]
+                )
+            }
+            _ = try describeAction(raw, verb: "Clicked")
+            return describeInput(verb: "Clicked", target: target, real: false)
 
         case "hover":
-            guard let ref else { throw BrowserToolError("'ref' is required") }
-            let raw = try await callBridge(tab, "return __locus.hover(ref)", ["ref": ref])
-            return try describeAction(raw, verb: "Hovered")
+            let target = try await pointerTarget(tab, arguments: arguments, ref: ref)
+            let hold = Duration.milliseconds(max(0, min((arguments["duration"] as? Int) ?? 0, 5_000)))
+            if prefersRealInput(tab),
+               await tab.host.deliverHover(at: target.point, holding: hold)
+            {
+                await settleAfterRealInput(tab)
+                    return describeInput(verb: "Hovered over", target: target, real: true)
+            }
+            let raw: Any?
+            if let ref {
+                raw = try await callBridge(tab, "return __locus.hover(ref)", ["ref": ref])
+            } else {
+                raw = try await callBridge(
+                    tab, "return __locus.hoverAt(x, y)",
+                    ["x": target.point.x, "y": target.point.y]
+                )
+            }
+            _ = try describeAction(raw, verb: "Hovered over")
+            return describeInput(verb: "Hovered over", target: target, real: false)
 
         case "scroll_to":
             guard let ref else { throw BrowserToolError("'ref' is required") }
@@ -710,34 +942,111 @@ final class BrowserService: NSObject, ObservableObject {
             return try describeAction(raw, verb: "Scrolled to")
 
         case "drag":
-            guard let from = (arguments["from_ref"] as? String)?.nilIfBlank,
-                  let to = (arguments["to_ref"] as? String)?.nilIfBlank
-            else { throw BrowserToolError("'from_ref' and 'to_ref' are required for a drag") }
-            let raw = try await callBridge(
-                tab, "return __locus.drag(from, to)", ["from": from, "to": to]
+            let from = try await pointerTarget(
+                tab,
+                arguments: arguments,
+                ref: (arguments["from_ref"] as? String)?.nilIfBlank
             )
-            return try describeAction(raw, verb: "Dragged")
-
-        case "scroll":
+            let to = try await pointerTarget(
+                tab,
+                arguments: arguments,
+                ref: (arguments["to_ref"] as? String)?.nilIfBlank,
+                pairKey: "to",
+                xKey: "x2",
+                yKey: "y2"
+            )
+            if prefersRealInput(tab),
+               await tab.host.deliverDrag(
+                   from: from.point,
+                   to: to.point,
+                   modifiers: BrowserInput.modifiers(from: modifierNames)
+               )
+            {
+                await settleAfterRealInput(tab)
+                    return describeInput(verb: "Dragged to", target: to, real: true)
+            }
             let raw = try await callBridge(
                 tab,
-                "return __locus.scrollBy(dx, dy)",
-                ["dx": arguments["delta_x"] as? Int ?? 0, "dy": arguments["delta_y"] as? Int ?? 600]
+                "return __locus.dragBetween(from, to)",
+                [
+                    "from": ["x": from.point.x, "y": from.point.y],
+                    "to": ["x": to.point.x, "y": to.point.y],
+                ]
             )
-            let payload = (raw as? [String: Any]) ?? [:]
-            let y = (payload["y"] as? Int) ?? Int((payload["y"] as? Double) ?? 0)
-            return ["text": "Scrolled; the page is now at y=\(y)."]
+            _ = try describeAction(raw, verb: "Dragged to")
+            return describeInput(verb: "Dragged to", target: to, real: false)
+
+        case "scroll":
+            let deltaX = CGFloat(arguments["delta_x"] as? Int ?? 0)
+            let deltaY = CGFloat(arguments["delta_y"] as? Int ?? 600)
+            // Scrolling at a point is what reaches an inner container; with no
+            // point given, the middle of the viewport is what a person would
+            // have the pointer over.
+            let point: CGPoint
+            if ref != nil || arguments["at"] != nil || arguments["x"] != nil {
+                point = try await pointerTarget(tab, arguments: arguments, ref: ref).point
+            } else {
+                let visible = tab.host.visibleSizeInCSSPixels
+                point = CGPoint(x: visible.width / 2, y: visible.height / 2)
+            }
+            if prefersRealInput(tab) {
+                var delivered = true
+                for _ in 0..<repeatCount {
+                    delivered = await tab.host.deliverScroll(
+                        at: point, deltaX: deltaX, deltaY: deltaY
+                    )
+                    if !delivered { break }
+                }
+                if delivered {
+                    // Doubles as the settle round trip: the page has run its
+                    // scroll handlers by the time this answers.
+                    let raw = try? await callBridge(tab, "return __locus.scrollBy(0, 0)", [:])
+                    let y = Self.coordinate((raw as? [String: Any])?["y"]) ?? 0
+                    return ["text": "Scrolled at (\(Int(point.x)), \(Int(point.y))); the page is now at y=\(Int(y))."]
+                }
+            }
+            var y: CGFloat = 0
+            for _ in 0..<repeatCount {
+                let raw = try await callBridge(
+                    tab,
+                    "return __locus.scrollBy(dx, dy)",
+                    ["dx": deltaX, "dy": deltaY]
+                )
+                y = Self.coordinate((raw as? [String: Any])?["y"]) ?? y
+            }
+            return ["text": "Scrolled; the page is now at y=\(Int(y))."]
 
         case "key":
-            guard let key = (arguments["key"] as? String)?.nilIfBlank else {
+            guard let name = (arguments["key"] as? String)?.nilIfBlank else {
                 throw BrowserToolError("'key' is required")
+            }
+            if prefersRealInput(tab) {
+                guard let key = BrowserInput.Key(name: name) else {
+                    throw BrowserToolError(
+                        "no key called '\(name)'; use a single character or a name "
+                        + "like Enter, Tab, Escape, Backspace, ArrowDown, Home or PageUp"
+                    )
+                }
+                if await tab.host.deliverKey(
+                    key,
+                    modifiers: BrowserInput.modifiers(from: modifierNames),
+                    repeatCount: repeatCount
+                ) {
+                    await settleAfterRealInput(tab)
+                    let times = repeatCount > 1 ? " \(repeatCount) times" : ""
+                    return ["text": "Pressed \(name)\(times). Call browser_read_page to see what changed."]
+                }
             }
             var modifiers: [String: Any] = [:]
             applyModifiers(arguments, to: &modifiers)
-            _ = try await callBridge(
-                tab, "return __locus.pressKey(key, modifiers)", ["key": key, "modifiers": modifiers]
-            )
-            return ["text": "Pressed \(key). Call browser_read_page to see what changed."]
+            for _ in 0..<repeatCount {
+                _ = try await callBridge(
+                    tab, "return __locus.pressKey(key, modifiers)",
+                    ["key": name, "modifiers": modifiers]
+                )
+            }
+            let times = repeatCount > 1 ? " \(repeatCount) times" : ""
+            return ["text": "Pressed \(name)\(times). Call browser_read_page to see what changed."]
 
         case "dialog":
             let response = (arguments["response"] as? String)?.lowercased() ?? "dismiss"
@@ -754,7 +1063,23 @@ final class BrowserService: NSObject, ObservableObject {
             action that triggers it.
             """]
 
-        case "type", "set_value":
+        case "type":
+            let value = (arguments["text"] as? String) ?? (arguments["value"] as? String) ?? ""
+            guard !value.isEmpty else { throw BrowserToolError("'text' is required") }
+            if let ref {
+                try await refuseSecureField(tab, ref: ref)
+                _ = try await callBridge(tab, "return __locus.focus(ref)", ["ref": ref])
+            } else {
+                try await refuseSecureFocus(tab)
+            }
+            if prefersRealInput(tab), await tab.host.deliverText(value) {
+                await settleAfterRealInput(tab)
+                return ["text": "Typed. Call browser_read_page to see what changed."]
+            }
+            let raw = try await callBridge(tab, "return __locus.typeText(text)", ["text": value])
+            return try describeAction(raw, verb: "Typed into")
+
+        case "set_value":
             let value = (arguments["text"] as? String) ?? (arguments["value"] as? String) ?? ""
             if let ref {
                 try await refuseSecureField(tab, ref: ref)
@@ -763,6 +1088,7 @@ final class BrowserService: NSObject, ObservableObject {
                 )
                 return try describeAction(raw, verb: "Set the value of")
             }
+            try await refuseSecureFocus(tab)
             let raw = try await callBridge(tab, "return __locus.typeText(text)", ["text": value])
             return try describeAction(raw, verb: "Typed into")
 
@@ -789,11 +1115,24 @@ final class BrowserService: NSObject, ObservableObject {
         }
     }
 
+    /// The same gate for typing that names no element. Real input goes wherever
+    /// focus already is, so the focused element is what has to be vetted.
+    private func refuseSecureFocus(_ tab: Tab) async throws {
+        let raw = try? await callBridge(tab, "return __locus.describeActive()", [:])
+        guard let described = raw as? [String: Any] else { return }
+        if described["secure"] as? Bool == true {
+            throw BrowserToolError(
+                "the focused field is a password or one-time-code field; "
+                + "the user has to type it themselves"
+            )
+        }
+    }
+
     private func runJavaScript(
         _ arguments: [String: Any],
         sessionID: String
     ) async throws -> [String: Any] {
-        let tab = try openTab(for: sessionID)
+        let tab = try openTab(for: sessionID, tabID: arguments["tab_id"] as? String)
         guard let code = (arguments["code"] as? String)?.nilIfBlank else {
             throw BrowserToolError("'code' is required")
         }
@@ -812,9 +1151,10 @@ final class BrowserService: NSObject, ObservableObject {
         _ arguments: [String: Any],
         sessionID: String
     ) throws -> [String: Any] {
-        let tab = tab(for: sessionID)
+        let tab = try tab(for: sessionID, tabID: arguments["tab_id"] as? String)
         var size = tab.host.viewport
-        if let preset = (arguments["preset"] as? String).flatMap(BrowserViewport.init(rawValue:)) {
+        let preset = (arguments["preset"] as? String).flatMap(BrowserViewport.init(rawValue:))
+        if let preset {
             size = preset.size
         }
         if let width = arguments["width"] as? Int { size.width = CGFloat(width) }
@@ -823,17 +1163,41 @@ final class BrowserService: NSObject, ObservableObject {
         if let scheme = (arguments["color_scheme"] as? String)?.lowercased() {
             tab.webView.appearance = NSAppearance(named: scheme == "dark" ? .darkAqua : .aqua)
         }
-        return ["text": """
-        Viewport is now \(Int(tab.host.viewport.width))×\(Int(tab.host.viewport.height)) CSS pixels. \
-        This resizes the view: device pixel ratio and touch support are not emulated.
-        """]
+
+        // The same rule Claude's browser uses, and the one that matches what a
+        // site means by "mobile": the phone preset, or anything narrower than
+        // the usual tablet breakpoint.
+        let narrow = preset == .mobile || tab.host.viewport.width < 768
+        let emulate = (arguments["emulate_device"] as? Bool) ?? (deviceEmulationEnabled && narrow)
+        let changed = setDeviceEmulation(emulate, on: tab)
+
+        var text = """
+        Viewport is now \(Int(tab.host.viewport.width))×\(Int(tab.host.viewport.height)) CSS pixels.
+        """
+        if emulate {
+            text += """
+            \n\nThe page is also being presented with a mobile user agent, five touch \
+            points and coarse-pointer media queries, so feature detection sees a phone.
+            """
+        }
+        if changed {
+            text += """
+            \n\nReload before reading the page: a site decides what to serve at load \
+            time, so the document currently open was built for the previous profile.
+            """
+        }
+        text += """
+        \n\nStill not emulated: the hardware pixel ratio, and real touch hardware — \
+        input is delivered as mouse events\(emulate ? ", translated to touch where WebKit allows it" : "").
+        """
+        return ["text": text]
     }
 
     private func consoleLog(
         _ arguments: [String: Any],
         sessionID: String
     ) -> [String: Any] {
-        guard let tab = existingTab(for: sessionID) else {
+        guard let tab = existingTab(for: sessionID, tabID: arguments["tab_id"] as? String) else {
             return ["text": "No page has been opened, so there is nothing in the console."]
         }
         var entries = tab.log.console
@@ -858,7 +1222,7 @@ final class BrowserService: NSObject, ObservableObject {
         _ arguments: [String: Any],
         sessionID: String
     ) -> [String: Any] {
-        guard let tab = existingTab(for: sessionID) else {
+        guard let tab = existingTab(for: sessionID, tabID: arguments["tab_id"] as? String) else {
             return ["text": "No page has been opened, so no requests have been seen."]
         }
         if let requestID = (arguments["request_id"] as? String)?.nilIfBlank {
@@ -890,7 +1254,18 @@ final class BrowserService: NSObject, ObservableObject {
     ) -> [String: Any] {
         switch (arguments["action"] as? String)?.lowercased() ?? "list" {
         case "new":
-            let tab = makeTab(ownerSessionID: sessionID)
+            // Background by default: opening a tab is usually preparation, and
+            // yanking the view away from the page being worked on is rarely
+            // what was wanted. The id in the reply is how the agent reaches it.
+            let background = (arguments["background"] as? Bool) ?? true
+            let tab = makeTab(ownerSessionID: sessionID, activate: !background)
+            let isActive = activeTabBySession[sessionID] == tab.id
+            if background, !isActive {
+                return ["text": """
+                Opened \(tab.id) in the background. Pass tab_id: "\(tab.id)" to any \
+                browser tool to drive it, or select it to bring it forward.
+                """]
+            }
             return ["text": "Opened \(tab.id). It is now the active tab."]
         case "select":
             guard let id = arguments["tab_id"] as? String,
@@ -916,7 +1291,13 @@ final class BrowserService: NSObject, ObservableObject {
                 let title = tab.webView.title?.nilIfBlank ?? "Untitled"
                 return "\(marker)\(tab.id) \(title) — \(tab.webView.url?.absoluteString ?? "about:blank")"
             }
-            return ["text": lines.joined(separator: "\n")]
+            return ["text": """
+            \(lines.joined(separator: "\n"))
+
+            * marks the active tab. Titles are written by the pages themselves \
+            and are untrusted; the URL is the only part of a row this browser \
+            vouches for.
+            """]
         }
     }
 
@@ -971,15 +1352,18 @@ final class BrowserService: NSObject, ObservableObject {
         return ["text": "\(verb)\(target). Call browser_read_page to see what changed."]
     }
 
-    private func openTab(for sessionID: String) throws -> Tab {
-        let tab = tab(for: sessionID)
+    private func openTab(for sessionID: String, tabID: String? = nil) throws -> Tab {
+        let tab = try tab(for: sessionID, tabID: tabID)
         guard tab.webView.url != nil else {
             throw BrowserToolError("no page is open; call browser_navigate first")
         }
         return tab
     }
 
-    private func existingTab(for sessionID: String) -> Tab? {
+    private func existingTab(for sessionID: String, tabID: String? = nil) -> Tab? {
+        if let tabID {
+            return openTabs.first { $0.id == tabID && $0.ownerSessionID == sessionID }
+        }
         guard let id = activeTabBySession[sessionID] else { return nil }
         return openTabs.first { $0.id == id }
     }
@@ -995,10 +1379,29 @@ final class BrowserService: NSObject, ObservableObject {
         return makeTab(ownerSessionID: sessionID)
     }
 
+    /// A named tab, or the session's active one.
+    ///
+    /// Naming a tab reaches only the calling session's own — the same
+    /// ownership rule `browser_tabs` enforces, and for the same reason:
+    /// concurrent chat workers share this service, and one steering another's
+    /// tab out from under it would be indistinguishable from the page
+    /// navigating itself. Acting on a named tab deliberately does not make it
+    /// active, so a background tab can be driven without stealing the view.
+    func tab(for sessionID: String, tabID: String?) throws -> Tab {
+        guard let tabID = tabID?.nilIfBlank else { return tab(for: sessionID) }
+        guard let named = openTabs.first(
+            where: { $0.id == tabID && $0.ownerSessionID == sessionID }
+        ) else {
+            throw BrowserToolError("no tab of yours has the id '\(tabID)'")
+        }
+        return named
+    }
+
     @discardableResult
     private func makeTab(
         ownerSessionID: String,
-        adopting adopted: WKWebViewConfiguration? = nil
+        adopting adopted: WKWebViewConfiguration? = nil,
+        activate: Bool = true
     ) -> Tab {
         tabCounter += 1
         let configuration: WKWebViewConfiguration
@@ -1015,11 +1418,13 @@ final class BrowserService: NSObject, ObservableObject {
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.underPageBackgroundColor = .clear
-        #if DEBUG
         // Web Inspector lets any local process attach and read cookies and
-        // localStorage for whatever the agent browsed, so it stays out of
-        // shipping builds.
+        // localStorage for whatever the agent browsed. On in debug builds, and
+        // in a shipping build only where the user has asked for it.
+        #if DEBUG
         webView.isInspectable = true
+        #else
+        webView.isInspectable = webInspectorEnabled
         #endif
 
         let host = OffscreenWebHost(webView: webView, viewport: defaultViewport)
@@ -1052,7 +1457,11 @@ final class BrowserService: NSObject, ObservableObject {
         ]
 
         openTabs.append(tab)
-        activeTabBySession[ownerSessionID] = tab.id
+        // A background tab must not steal the view: the session keeps looking
+        // at whatever it was, and the agent reaches the new one by id.
+        if activate || activeTabBySession[ownerSessionID] == nil {
+            activeTabBySession[ownerSessionID] = tab.id
+        }
         evictIfOverCap()
         applyProxyIfNeeded()
         publishTabs()
@@ -1065,8 +1474,7 @@ final class BrowserService: NSObject, ObservableObject {
     private func makeConfiguration() -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore
-        configuration.userContentController.addUserScript(BrowserBridge.readerScript())
-        configuration.userContentController.addUserScript(BrowserBridge.captureScript())
+        installUserScripts(on: configuration.userContentController, emulatingDevice: false)
         // Weak, because the content controller retains its handlers
         // strongly and the cycle would keep every closed tab's buffers
         // alive for good.
@@ -1085,6 +1493,45 @@ final class BrowserService: NSObject, ObservableObject {
         // the Safari this WebKit actually is.
         configuration.applicationNameForUserAgent = "Version/17.4 Safari/605.1.15"
         return configuration
+    }
+
+    /// (Re)install the injected scripts.
+    ///
+    /// `WKUserContentController` can only drop *all* user scripts, so turning
+    /// the device profile on or off means rebuilding the set. The message
+    /// handler is registered separately and survives this.
+    private func installUserScripts(
+        on controller: WKUserContentController,
+        emulatingDevice: Bool
+    ) {
+        controller.removeAllUserScripts()
+        controller.addUserScript(BrowserBridge.readerScript())
+        controller.addUserScript(BrowserBridge.captureScript())
+        if emulatingDevice {
+            controller.addUserScript(BrowserBridge.deviceScript())
+        }
+    }
+
+    /// A Safari that really is an iPhone's. WebKit is the engine here, so an
+    /// iOS user agent is the honest way to be served the mobile site rather
+    /// than claiming to be a browser this is not.
+    static let mobileUserAgent = """
+    Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 \
+    (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1
+    """.replacingOccurrences(of: "\n", with: "")
+
+    /// Present a tab as a phone, or stop. Takes effect on the next load, which
+    /// is why the caller tells the model to reload.
+    @discardableResult
+    func setDeviceEmulation(_ emulate: Bool, on tab: Tab) -> Bool {
+        guard tab.emulatesDevice != emulate else { return false }
+        tab.emulatesDevice = emulate
+        installUserScripts(
+            on: tab.webView.configuration.userContentController,
+            emulatingDevice: emulate
+        )
+        tab.webView.customUserAgent = emulate ? Self.mobileUserAgent : nil
+        return true
     }
 
     /// Keep the live web-view count bounded. Victims are the oldest tabs from
@@ -1166,7 +1613,9 @@ final class BrowserService: NSObject, ObservableObject {
                 progress: (tab.webView.estimatedProgress * 20).rounded() / 20,
                 canGoBack: tab.webView.canGoBack,
                 canGoForward: tab.webView.canGoForward,
-                ownerSessionID: tab.ownerSessionID
+                ownerSessionID: tab.ownerSessionID,
+                pageZoom: tab.webView.pageZoom,
+                emulatesDevice: tab.emulatesDevice
             )
         }
         // KVO fires for every progress tick; only real changes republish.
@@ -1285,6 +1734,78 @@ final class BrowserService: NSObject, ObservableObject {
     }
 
     /// What the chrome should draw for this session right now.
+    /// Find on the page, the way ⌘F does everywhere else.
+    ///
+    /// WebKit's public find API reports only whether there was a match — there
+    /// is no match count to show — so the interface says found or not found
+    /// rather than inventing a number.
+    func userFind(
+        _ query: String,
+        sessionID: String,
+        forward: Bool = true
+    ) async -> Bool {
+        guard let tab = existingTab(for: sessionID), !query.isEmpty else { return false }
+        let configuration = WKFindConfiguration()
+        configuration.backwards = !forward
+        configuration.wraps = true
+        configuration.caseSensitive = false
+        // Throws when the web view has nothing loaded to search, which is a
+        // "no match" for the person, not an error worth surfacing.
+        return (try? await tab.webView.find(query, configuration: configuration))?
+            .matchFound ?? false
+    }
+
+    /// Drop the highlight. Searching for nothing is how WebKit clears it.
+    func userClearFind(sessionID: String) {
+        guard let tab = existingTab(for: sessionID) else { return }
+        Task { _ = try? await tab.webView.find("", configuration: WKFindConfiguration()) }
+    }
+
+    func userPageZoom(sessionID: String) -> CGFloat {
+        existingTab(for: sessionID)?.webView.pageZoom ?? 1
+    }
+
+    /// Zoom the page itself, not the window. Clamped to the range a browser
+    /// offers, because past either end the page stops being usable and the
+    /// agent's coordinates stop being legible.
+    func userSetPageZoom(_ zoom: CGFloat, sessionID: String) {
+        guard let tab = existingTab(for: sessionID) else { return }
+        tab.webView.pageZoom = max(0.25, min(zoom, 3.0))
+        schedulePublish()
+    }
+
+    func userDeviceEmulation(sessionID: String) -> Bool {
+        existingTab(for: sessionID)?.emulatesDevice ?? false
+    }
+
+    /// Turn the phone profile on or off from the interface, and reload — a
+    /// site decides what to serve at load time, so the open document was built
+    /// for the profile being replaced.
+    func userSetDeviceEmulation(_ emulate: Bool, sessionID: String) {
+        guard let tab = existingTab(for: sessionID) else { return }
+        guard setDeviceEmulation(emulate, on: tab) else { return }
+        if tab.webView.url != nil { tab.webView.reload() }
+        schedulePublish()
+    }
+
+    /// Light or dark, for the person as well as the agent — `browser_resize`
+    /// could already do this and the interface could not.
+    func userSetColorScheme(_ scheme: String, sessionID: String) {
+        guard let tab = existingTab(for: sessionID) else { return }
+        tab.webView.appearance = NSAppearance(named: scheme == "dark" ? .darkAqua : .aqua)
+    }
+
+    /// Point one tab's emulated viewport at a size, from the interface.
+    func userSetViewport(_ size: CGSize, sessionID: String) {
+        guard let tab = existingTab(for: sessionID) else { return }
+        tab.host.setViewport(size)
+        // The width is what decides whether a phone profile makes sense, so the
+        // toolbar's preset and the agent's `browser_resize` agree on the rule.
+        if deviceEmulationEnabled {
+            userSetDeviceEmulation(size.width < 768, sessionID: sessionID)
+        }
+    }
+
     func activeSnapshot(for sessionID: String) -> TabSnapshot? {
         guard let id = activeTabBySession[sessionID] else { return nil }
         return tabs.first { $0.id == id }
@@ -1538,6 +2059,14 @@ extension BrowserService: WKUIDelegate {
             return nil
         }
         let popup = makeTab(ownerSessionID: opener.ownerSessionID, adopting: configuration)
+        // A popup opened from a page being viewed as a phone has to stay a
+        // phone. The adopted configuration already carries the opener's scripts;
+        // the user agent is per-web-view and would otherwise revert to desktop
+        // halfway through a mobile flow.
+        if opener.emulatesDevice {
+            popup.emulatesDevice = true
+            popup.webView.customUserAgent = Self.mobileUserAgent
+        }
         return popup.webView
     }
 

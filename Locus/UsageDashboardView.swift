@@ -185,7 +185,7 @@ struct UsageDashboardView: View {
         .background(LocusTheme.panel)
         .onAppear {
             model.refreshUsageSummary(since: window.since)
-            Task { await model.refreshChatGPTUsage() }
+            Task { await model.refreshActiveChatGPTUsage() }
         }
         .onChange(of: window) {
             model.refreshUsageSummary(since: window.since)
@@ -231,7 +231,7 @@ struct UsageDashboardView: View {
     private func content(_ summary: UsageSummary) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                if let usage = model.chatGPTUsage, usage.status == "signed_in" {
+                if let usage = model.activeChatGPTUsage, usage.status == "signed_in" {
                     chatGPTPlanUsage(usage)
                 }
                 totals(summary)
