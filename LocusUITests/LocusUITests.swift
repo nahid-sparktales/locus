@@ -310,15 +310,20 @@ final class LocusUITests: XCTestCase {
         XCTAssertEqual(search.value as? String, "keep this state")
     }
 
-    func testClosingTheUniqueMainWindowTerminatesLocus() {
+    func testClosingTheUniqueMainWindowKeepsLocusRunningAndDockActivationRestoresIt() {
         XCTAssertEqual(app.windows.count, 1)
 
         app.typeKey("w", modifierFlags: .command)
 
-        XCTAssertTrue(
-            app.wait(for: .notRunning, timeout: 5),
-            "closing the main Window scene should terminate Locus and its backend owner"
+        XCTAssertNotEqual(
+            app.state, .notRunning,
+            "closing the main window should leave Locus and its workers running"
         )
+        XCTAssertEqual(app.windows.count, 0)
+
+        app.activate()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.windows.count, 1)
     }
 
     func testClearChatControlShowsNonDestructiveConfirmation() {

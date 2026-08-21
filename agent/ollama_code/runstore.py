@@ -20,8 +20,15 @@ from pathlib import Path
 from typing import Any
 
 from . import paths
+from .schedules import (
+    ScheduleValidationError,
+    latest_due_occurrence,
+    next_occurrence,
+    normalize_schedule,
+    timezone,
+)
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 DEFAULT_RETENTION_DAYS = 90
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EVENT_JSON_BYTES = 512 * 1024
@@ -374,6 +381,67 @@ class RunStore:
                 )
                 connection.execute("UPDATE schema_meta SET version=7 WHERE singleton=1")
                 connection.commit()
+            if version < 8:
+                connection.execute("BEGIN IMMEDIATE")
+                columns = {
+                    str(row[1]) for row in connection.execute("PRAGMA table_info(runs)")
+                }
+                for statement in (
+                    "ALTER TABLE runs ADD COLUMN schedule_id TEXT",
+                    "ALTER TABLE runs ADD COLUMN occurrence_id TEXT",
+                    "ALTER TABLE runs ADD COLUMN scheduled_for REAL",
+                ):
+                    column = statement.split("ADD COLUMN ", 1)[1].split(" ", 1)[0]
+                    if column not in columns:
+                        connection.execute(statement)
+                connection.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS schedules (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        prompt TEXT NOT NULL,
+                        workspace_root TEXT NOT NULL,
+                        mode TEXT NOT NULL,
+                        execution_environment TEXT NOT NULL,
+                        runner TEXT NOT NULL,
+                        team_id TEXT,
+                        team_name TEXT,
+                        provider TEXT NOT NULL,
+                        provider_account_id TEXT,
+                        model TEXT NOT NULL,
+                        timezone TEXT NOT NULL,
+                        rule_json TEXT NOT NULL,
+                        enabled INTEGER NOT NULL DEFAULT 1,
+                        next_run_at REAL,
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL,
+                        last_run_at REAL,
+                        last_run_id TEXT,
+                        last_error TEXT
+                    );
+                    CREATE INDEX IF NOT EXISTS schedules_due_idx
+                        ON schedules(enabled, next_run_at);
+                    CREATE TABLE IF NOT EXISTS schedule_occurrences (
+                        id TEXT PRIMARY KEY,
+                        schedule_id TEXT NOT NULL,
+                        schedule_name TEXT NOT NULL,
+                        scheduled_for REAL NOT NULL,
+                        trigger TEXT NOT NULL,
+                        state TEXT NOT NULL,
+                        session_id TEXT,
+                        run_id TEXT,
+                        error TEXT,
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS schedule_occurrences_schedule_idx
+                        ON schedule_occurrences(schedule_id, scheduled_for DESC);
+                    CREATE INDEX IF NOT EXISTS runs_schedule_idx
+                        ON runs(schedule_id, scheduled_for DESC);
+                    """
+                )
+                connection.execute("UPDATE schema_meta SET version=8 WHERE singleton=1")
+                connection.commit()
 
     def upsert_mcp_task(
         self,
@@ -461,6 +529,9 @@ class RunStore:
         root_span_id: str = "",
         content_policy: str = "metadata",
         execution_environment: str = "local",
+        schedule_id: str = "",
+        occurrence_id: str = "",
+        scheduled_for: float | None = None,
     ) -> None:
         if self.read_only:
             return
@@ -485,8 +556,9 @@ class RunStore:
                     id, session_id, team_id, team_name, worker_id, owner_pid,
                     workspace_root, execution_path, task_id, state, request,
                     manifest_json, created_at, updated_at, run_kind, trace_id,
-                    root_span_id, content_policy, execution_environment
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    root_span_id, content_policy, execution_environment,
+                    schedule_id, occurrence_id, scheduled_for
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     session_id=COALESCE(NULLIF(excluded.session_id, ''), runs.session_id),
                     team_id=COALESCE(NULLIF(excluded.team_id, ''), runs.team_id),
@@ -506,13 +578,17 @@ class RunStore:
                         ELSE runs.root_span_id END,
                     content_policy=excluded.content_policy,
                     execution_environment=excluded.execution_environment,
+                    schedule_id=COALESCE(NULLIF(excluded.schedule_id, ''), runs.schedule_id),
+                    occurrence_id=COALESCE(NULLIF(excluded.occurrence_id, ''), runs.occurrence_id),
+                    scheduled_for=COALESCE(excluded.scheduled_for, runs.scheduled_for),
                     recoverable=0, recovery_reason=NULL
                 """,
                 (
                     run_id, session_id, team_id, team_name, worker_id, os.getpid(),
                     workspace_root, execution_path, task_id, state, request[:240_000],
                     _json(safe_manifest), now, now, run_kind, trace_id, root_span_id,
-                    content_policy, execution_environment,
+                    content_policy, execution_environment, schedule_id, occurrence_id,
+                    scheduled_for,
                 ),
             )
 
@@ -883,6 +959,358 @@ class RunStore:
             "completed_job_count": int(row["completed_job_count"] or 0),
         } for row in rows]
 
+    # ---------------------------------------------------------- scheduled work
+
+    @staticmethod
+    def _schedule_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "prompt": row["prompt"],
+            "workspace_root": row["workspace_root"],
+            "mode": row["mode"],
+            "execution_environment": row["execution_environment"],
+            "runner": row["runner"],
+            "team_id": row["team_id"],
+            "team_name": row["team_name"],
+            "provider": row["provider"],
+            "provider_account_id": row["provider_account_id"],
+            "model": row["model"],
+            "timezone": row["timezone"],
+            "rule": json.loads(row["rule_json"] or "{}"),
+            "enabled": bool(row["enabled"]),
+            "next_run_at": row["next_run_at"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "last_run_at": row["last_run_at"],
+            "last_run_id": row["last_run_id"],
+            "last_error": row["last_error"],
+        }
+
+    @staticmethod
+    def _occurrence_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "schedule_id": row["schedule_id"],
+            "schedule_name": row["schedule_name"],
+            "scheduled_for": row["scheduled_for"],
+            "trigger": row["trigger"],
+            "state": row["state"],
+            "session_id": row["session_id"],
+            "run_id": row["run_id"],
+            "error": row["error"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def schedules(self) -> list[dict[str, Any]]:
+        with self._lock, self._connect(readonly=True) as connection:
+            rows = connection.execute(
+                "SELECT * FROM schedules ORDER BY enabled DESC,"
+                " COALESCE(next_run_at, 1e30), name COLLATE NOCASE"
+            ).fetchall()
+        return [self._schedule_row(row) for row in rows]
+
+    def schedule(self, schedule_id: str) -> dict[str, Any] | None:
+        with self._lock, self._connect(readonly=True) as connection:
+            row = connection.execute(
+                "SELECT * FROM schedules WHERE id=?", (schedule_id,)
+            ).fetchone()
+        return self._schedule_row(row) if row is not None else None
+
+    def schedule_occurrences(
+        self, schedule_id: str, *, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        bounded = max(1, min(int(limit), 100))
+        with self._lock, self._connect(readonly=True) as connection:
+            rows = connection.execute(
+                "SELECT * FROM schedule_occurrences WHERE schedule_id=?"
+                " ORDER BY scheduled_for DESC, created_at DESC LIMIT ?",
+                (schedule_id, bounded),
+            ).fetchall()
+        return [self._occurrence_row(row) for row in rows]
+
+    def create_schedule(
+        self, value: dict[str, Any], *, now: float | None = None
+    ) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        created = float(now if now is not None else time.time())
+        try:
+            schedule = normalize_schedule(value, now=created)
+        except ScheduleValidationError as exc:
+            raise RunStoreError(str(exc)) from exc
+        schedule_id = str(value.get("id") or uuid.uuid4().hex)
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,159}", schedule_id):
+            raise RunStoreError("schedule id is invalid")
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO schedules(
+                        id, name, prompt, workspace_root, mode,
+                        execution_environment, runner, team_id, team_name,
+                        provider, provider_account_id, model, timezone,
+                        rule_json, enabled, next_run_at, created_at, updated_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        schedule_id, schedule["name"], schedule["prompt"],
+                        schedule["workspace_root"], schedule["mode"],
+                        schedule["execution_environment"], schedule["runner"],
+                        schedule["team_id"] or None, schedule["team_name"] or None,
+                        schedule["provider"], schedule["provider_account_id"] or None,
+                        schedule["model"], schedule["timezone"],
+                        _json(schedule["rule"]), int(schedule["enabled"]),
+                        schedule["next_run_at"], created, created,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise RunStoreError("a schedule with that id already exists") from exc
+        return self.schedule(schedule_id) or {"id": schedule_id, **schedule}
+
+    def update_schedule(
+        self, schedule_id: str, updates: dict[str, Any], *, now: float | None = None
+    ) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        existing = self.schedule(schedule_id)
+        if existing is None:
+            raise RunStoreError("schedule not found")
+        allowed = {
+            "name", "prompt", "workspace_root", "mode", "execution_environment",
+            "runner", "team_id", "team_name", "provider", "provider_account_id",
+            "model", "timezone", "rule", "enabled",
+        }
+        unknown = set(updates) - allowed
+        if unknown:
+            raise RunStoreError(f"unknown schedule field: {sorted(unknown)[0]}")
+        merged = {key: existing[key] for key in allowed}
+        merged.update(updates)
+        changed_timing = bool({"rule", "timezone"} & set(updates))
+        reenabled = updates.get("enabled") is True and not existing["enabled"]
+        disabled = updates.get("enabled") is False
+        current = float(now if now is not None else time.time())
+        validation_value = dict(merged)
+        if not changed_timing and not reenabled and not disabled:
+            # An overdue schedule must remain overdue when only its name or prompt
+            # changes. Temporarily disabling it lets validation inspect the past
+            # one-time rule without treating the edit as a new schedule.
+            validation_value["enabled"] = False
+        try:
+            schedule = normalize_schedule(validation_value, now=current)
+        except ScheduleValidationError as exc:
+            raise RunStoreError(str(exc)) from exc
+        if not changed_timing and not reenabled and not disabled:
+            schedule["enabled"] = existing["enabled"]
+            schedule["next_run_at"] = existing["next_run_at"]
+        elif disabled:
+            schedule["enabled"] = False
+            schedule["next_run_at"] = existing["next_run_at"]
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE schedules SET
+                    name=?, prompt=?, workspace_root=?, mode=?,
+                    execution_environment=?, runner=?, team_id=?, team_name=?,
+                    provider=?, provider_account_id=?, model=?, timezone=?,
+                    rule_json=?, enabled=?, next_run_at=?, updated_at=?,
+                    last_error=CASE WHEN ? THEN NULL ELSE last_error END
+                WHERE id=?
+                """,
+                (
+                    schedule["name"], schedule["prompt"], schedule["workspace_root"],
+                    schedule["mode"], schedule["execution_environment"],
+                    schedule["runner"], schedule["team_id"] or None,
+                    schedule["team_name"] or None, schedule["provider"],
+                    schedule["provider_account_id"] or None, schedule["model"],
+                    schedule["timezone"], _json(schedule["rule"]),
+                    int(schedule["enabled"]), schedule["next_run_at"], current,
+                    int(reenabled), schedule_id,
+                ),
+            )
+        return self.schedule(schedule_id) or existing
+
+    def delete_schedule(self, schedule_id: str) -> None:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute("DELETE FROM schedules WHERE id=?", (schedule_id,))
+            if cursor.rowcount != 1:
+                raise RunStoreError("schedule not found")
+
+    def pause_schedule(self, schedule_id: str, reason: str) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE schedules SET enabled=0, last_error=?, updated_at=? WHERE id=?",
+                (reason.strip()[:4_000] or "The schedule needs attention.", time.time(), schedule_id),
+            )
+            if cursor.rowcount != 1:
+                raise RunStoreError("schedule not found")
+        return self.schedule(schedule_id) or {}
+
+    def claim_schedule_occurrence(
+        self, schedule_id: str, *, trigger: str = "due",
+        request_id: str = "", now: float | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any], bool]:
+        """Claim one occurrence and advance cadence before outside work begins.
+
+        The returned boolean is true only for the caller that inserted the claim.
+        A duplicate due dispatch receives the same deterministic occurrence.
+        """
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        if trigger not in {"due", "manual"}:
+            raise RunStoreError("trigger must be due or manual")
+        current = float(now if now is not None else time.time())
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM schedules WHERE id=?", (schedule_id,)
+            ).fetchone()
+            if row is None:
+                raise RunStoreError("schedule not found")
+            schedule = self._schedule_row(row)
+            if trigger == "due":
+                scheduled_for = None
+                zone = timezone(str(schedule["timezone"]))
+                if schedule["enabled"] and schedule["next_run_at"] is not None:
+                    scheduled_for = latest_due_occurrence(
+                        schedule["rule"], zone,
+                        earliest=float(schedule["next_run_at"]), now=current,
+                    )
+                if scheduled_for is None:
+                    # A retry of the same dispatch may arrive after the first
+                    # caller already advanced next_run_at. Return the durable
+                    # occurrence instead of creating a second run or reporting
+                    # a misleading not-due error.
+                    recent = connection.execute(
+                        "SELECT * FROM schedule_occurrences"
+                        " WHERE schedule_id=? AND trigger='due'"
+                        " ORDER BY scheduled_for DESC LIMIT 1",
+                        (schedule_id,),
+                    ).fetchone()
+                    if recent is not None and float(recent["scheduled_for"]) <= current:
+                        occurrence = self._occurrence_row(recent)
+                        stale = (
+                            occurrence["state"] == "claiming"
+                            and float(occurrence["updated_at"]) < current - 300
+                        )
+                        if stale:
+                            connection.execute(
+                                "UPDATE schedule_occurrences SET updated_at=? WHERE id=?",
+                                (current, occurrence["id"]),
+                            )
+                            connection.commit()
+                            occurrence["updated_at"] = current
+                        else:
+                            connection.commit()
+                        return schedule, occurrence, stale
+                    if not schedule["enabled"] or schedule["next_run_at"] is None:
+                        raise RunStoreError("schedule is paused")
+                    raise RunStoreError("schedule is not due")
+                occurrence_id = uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"locus:schedule:{schedule_id}:{scheduled_for:.6f}",
+                ).hex
+            else:
+                scheduled_for = current
+                clean_request_id = request_id.strip()
+                if clean_request_id and not re.fullmatch(
+                    r"[A-Za-z0-9][A-Za-z0-9._-]{0,159}", clean_request_id
+                ):
+                    raise RunStoreError("request id is invalid")
+                occurrence_id = (
+                    uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"locus:schedule:{schedule_id}:manual:{clean_request_id}",
+                    ).hex
+                    if clean_request_id else uuid.uuid4().hex
+                )
+            existing = connection.execute(
+                "SELECT * FROM schedule_occurrences WHERE id=?", (occurrence_id,)
+            ).fetchone()
+            if existing is not None:
+                connection.commit()
+                return schedule, self._occurrence_row(existing), False
+            connection.execute(
+                """
+                INSERT INTO schedule_occurrences(
+                    id, schedule_id, schedule_name, scheduled_for, trigger,
+                    state, created_at, updated_at
+                ) VALUES(?, ?, ?, ?, ?, 'claiming', ?, ?)
+                """,
+                (
+                    occurrence_id, schedule_id, schedule["name"], scheduled_for,
+                    trigger, current, current,
+                ),
+            )
+            if trigger == "due":
+                following = next_occurrence(schedule["rule"], zone, after=current)
+                enabled = following is not None
+                connection.execute(
+                    """
+                    UPDATE schedules SET enabled=?, next_run_at=?, last_run_at=?,
+                        last_error=NULL, updated_at=? WHERE id=?
+                    """,
+                    (int(enabled), following, current, current, schedule_id),
+                )
+            else:
+                connection.execute(
+                    "UPDATE schedules SET last_run_at=?, last_error=NULL, updated_at=? WHERE id=?",
+                    (current, current, schedule_id),
+                )
+            connection.commit()
+            updated = connection.execute(
+                "SELECT * FROM schedules WHERE id=?", (schedule_id,)
+            ).fetchone()
+            occurrence = connection.execute(
+                "SELECT * FROM schedule_occurrences WHERE id=?", (occurrence_id,)
+            ).fetchone()
+        assert updated is not None and occurrence is not None
+        return self._schedule_row(updated), self._occurrence_row(occurrence), True
+
+    def finish_schedule_occurrence(
+        self, occurrence_id: str, *, state: str, session_id: str = "",
+        run_id: str = "", error: str = "",
+    ) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        if state not in {"queued", "failed"}:
+            raise RunStoreError("occurrence state must be queued or failed")
+        current = time.time()
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM schedule_occurrences WHERE id=?", (occurrence_id,)
+            ).fetchone()
+            if row is None:
+                raise RunStoreError("schedule occurrence not found")
+            occurrence = self._occurrence_row(row)
+            connection.execute(
+                """
+                UPDATE schedule_occurrences SET state=?, session_id=?, run_id=?,
+                    error=?, updated_at=? WHERE id=?
+                """,
+                (
+                    state, session_id or None, run_id or None, error[:4_000] or None,
+                    current, occurrence_id,
+                ),
+            )
+            connection.execute(
+                "UPDATE schedules SET last_run_id=?, last_error=?, updated_at=? WHERE id=?",
+                (
+                    run_id or None, error[:4_000] or None, current,
+                    occurrence["schedule_id"],
+                ),
+            )
+            updated = connection.execute(
+                "SELECT * FROM schedule_occurrences WHERE id=?", (occurrence_id,)
+            ).fetchone()
+        assert updated is not None
+        return self._occurrence_row(updated)
+
     @staticmethod
     def _job_summary(attempts: list[dict[str, Any]]) -> dict[str, int]:
         latest: dict[str, dict[str, Any]] = {}
@@ -923,6 +1351,9 @@ class RunStore:
             "queued_message_id": row["queued_message_id"],
             "retry_parent_id": row["retry_parent_id"],
             "admitted_at": row["admitted_at"],
+            "schedule_id": row["schedule_id"],
+            "occurrence_id": row["occurrence_id"],
+            "scheduled_for": row["scheduled_for"],
         }
 
     def queue_run(
@@ -931,6 +1362,8 @@ class RunStore:
         workspace_root: str = "", execution_path: str = "", request: str = "",
         run_kind: str = "solo", execution_environment: str = "local",
         retry_parent_id: str = "", manifest: dict[str, Any] | None = None,
+        schedule_id: str = "", occurrence_id: str = "",
+        scheduled_for: float | None = None,
     ) -> dict[str, Any]:
         """Reserve one durable FIFO slot before a chat worker is admitted."""
         with self._lock:
@@ -946,7 +1379,8 @@ class RunStore:
                 workspace_root=workspace_root,
                 execution_path=execution_path, request=request, state="queued",
                 run_kind=run_kind, execution_environment=execution_environment,
-                manifest=manifest,
+                manifest=manifest, schedule_id=schedule_id,
+                occurrence_id=occurrence_id, scheduled_for=scheduled_for,
             )
             if not self.read_only:
                 with self._connect() as connection:

@@ -3,6 +3,7 @@ import Combine
 import Foundation
 import PDFKit
 import QuartzCore
+import ServiceManagement
 import UniformTypeIdentifiers
 import UserNotifications
 
@@ -208,7 +209,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var isLandingOperationRunning = false
     @Published var reviewAndLandPresented = false
     @Published var activityCenterPresented = false
+    @Published var activityCenterSection: ActivityCenterSection = .activity
     @Published private(set) var activityRuns: [OrchestrationRun] = []
+    @Published private(set) var scheduledTasks: [ScheduledTask] = []
+    @Published var scheduleEditorDraft: ScheduleEditorDraft?
+    @Published private(set) var isSavingSchedule = false
+    @Published private(set) var isRefreshingSchedules = false
     @Published private(set) var activitySeenUpdates: [String: Double] = [:]
     @Published private(set) var dismissedActivityRunIDs: Set<String> = []
     @Published private(set) var backgroundServices: [BackgroundServiceRecord] = []
@@ -379,6 +385,7 @@ final class AppModel: ObservableObject {
         appearancePreview ?? settings.resolvedAppearance
     }
     @Published var settingsPresented = false
+    @Published private(set) var launchAtLoginError: String?
     @Published private(set) var automaticInspectorPrompt: AutomaticInspectorPrompt?
     @Published var usageDashboardPresented = false
     @Published var usageSummary: UsageSummary?
@@ -605,6 +612,9 @@ final class AppModel: ObservableObject {
     private var indexedWorkspacePath: String?
     private var terminationObserver: NSObjectProtocol?
     private var activationObserver: NSObjectProtocol?
+    private var wakeObserver: NSObjectProtocol?
+    private var scheduleCoordinatorTask: Task<Void, Never>?
+    private var isDispatchingSchedules = false
     /// False for unit and UI tests. Views check it before touching the
     /// credential file: a test must not read — or delete — the secrets of
     /// whoever is running the suite.
@@ -893,14 +903,22 @@ final class AppModel: ObservableObject {
                 queue: .main
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    guard let self,
-                          !self.agentRuntimePhase.isOnline || !self.modelRuntimePhase.isOnline
-                    else { return }
-                    self.scheduleRuntimeRecovery(
-                        reason: "Checking local services after Locus became active.",
-                        immediate: true
-                    )
+                    guard let self else { return }
+                    Task { await self.processDueSchedules() }
+                    if !self.agentRuntimePhase.isOnline || !self.modelRuntimePhase.isOnline {
+                        self.scheduleRuntimeRecovery(
+                            reason: "Checking local services after Locus became active.",
+                            immediate: true
+                        )
+                    }
                 }
+            }
+            wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in await self?.processDueSchedules() }
             }
             Task { await bootstrap() }
         }
@@ -1448,8 +1466,11 @@ final class AppModel: ObservableObject {
         )
         await recovery?.value
         await restoreAfterUncleanExitIfNeeded()
-        await refreshActivityRuns()
+        await refreshActivityRuns(announceFailure: false)
         restorePersistedQueuedRuns()
+        await refreshScheduledTasks(announceFailure: false)
+        await processDueSchedules()
+        startScheduleCoordinator()
         requestNotificationAuthorization()
         startRuntimeMonitor()
     }
@@ -1724,6 +1745,8 @@ final class AppModel: ObservableObject {
         orchestrationRunsTasks.removeAll()
         orchestrationDetailTasks.removeAll()
         orchestrationEventTasks.removeAll()
+        scheduleCoordinatorTask?.cancel()
+        scheduleCoordinatorTask = nil
         backend.disconnect()
         backendProcess.stop()
         taskWorkers.values.forEach { $0.stop() }
@@ -1732,6 +1755,10 @@ final class AppModel: ObservableObject {
         if let activationObserver {
             NotificationCenter.default.removeObserver(activationObserver)
             self.activationObserver = nil
+        }
+        if let wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
+            self.wakeObserver = nil
         }
     }
 
@@ -5665,7 +5692,338 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func refreshActivityRuns() async {
+    var nextScheduledTask: ScheduledTask? {
+        scheduledTasks
+            .filter { $0.enabled && $0.nextRunAt != nil }
+            .min { ($0.nextRunAt ?? .greatestFiniteMagnitude) < ($1.nextRunAt ?? .greatestFiniteMagnitude) }
+    }
+
+    func presentScheduleEditor(task: ScheduledTask? = nil, prompt: String? = nil) {
+        if let task {
+            scheduleEditorDraft = ScheduleEditorDraft(task: task)
+            return
+        }
+        var draft = ScheduleEditorDraft()
+        draft.prompt = prompt ?? draftText
+        draft.workspaceRoot = sessionInfo?.workspaceRoot ?? workspacePath
+        draft.mode = selectedMode
+        draft.executionEnvironment = sessionInfo?.environment?["type"] == "worktree"
+            ? .worktree : .local
+        if let team = selectedAgentTeam {
+            draft.runner = .team
+            draft.teamID = team.id.uuidString
+            draft.teamName = team.name
+        } else if soloSwarmEnabled {
+            draft.runner = .soloSwarm
+        }
+        if let account = activeAccount {
+            draft.provider = account.kind == .chatGPT ? "chatgpt" : "remote"
+            draft.providerAccountID = account.id.uuidString
+            draft.model = routedModel(for: account)
+        } else {
+            draft.provider = "ollama"
+            draft.model = selectedModel
+        }
+        scheduleEditorDraft = draft
+    }
+
+    func rememberScheduleWorkspace(_ url: URL) -> String? {
+        guard workspaceAccess.rememberAndActivate(url) else { return nil }
+        return url.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    func openSchedules() {
+        activityCenterSection = .schedules
+        activityCenterPresented = true
+        Task { @MainActor [weak self] in
+            await self?.refreshScheduledTasks()
+        }
+    }
+
+    func refreshScheduledTasks(announceFailure: Bool = true) async {
+        guard !isRefreshingSchedules else { return }
+        isRefreshingSchedules = true
+        defer { isRefreshingSchedules = false }
+        do {
+            let response: SchedulesResponse = try await backend.get(
+                "/api/schedules", as: SchedulesResponse.self
+            )
+            scheduledTasks = response.schedules
+        } catch {
+            if announceFailure {
+                showToast("Could not load schedules: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func saveSchedule(_ draft: ScheduleEditorDraft) async -> Bool {
+        guard let rule = encodedJSONObject(draft.rule()) else {
+            showToast("The schedule rule could not be saved")
+            return false
+        }
+        if let issue = scheduleConfigurationIssue(for: draft) {
+            showToast(issue)
+            return false
+        }
+        var body: [String: Any] = [
+            "name": draft.name,
+            "prompt": draft.prompt,
+            "workspace_root": draft.workspaceRoot,
+            "mode": draft.mode.rawValue,
+            "execution_environment": draft.executionEnvironment.rawValue,
+            "runner": draft.runner.rawValue,
+            "provider": draft.provider,
+            "model": draft.model,
+            "timezone": draft.timezone,
+            "rule": rule,
+        ]
+        if draft.runner == .team {
+            body["team_id"] = draft.teamID ?? ""
+            body["team_name"] = draft.teamName
+        }
+        if draft.provider != "ollama" {
+            body["provider_account_id"] = draft.providerAccountID ?? ""
+        }
+        if draft.id == nil { body["enabled"] = true }
+        isSavingSchedule = true
+        defer { isSavingSchedule = false }
+        do {
+            let saved: ScheduledTask
+            if let id = draft.id {
+                saved = try await backend.patch(
+                    "/api/schedules/\(id)", body: body, as: ScheduledTask.self
+                )
+            } else {
+                saved = try await backend.post(
+                    "/api/schedules", body: body, as: ScheduledTask.self
+                )
+            }
+            scheduledTasks.removeAll { $0.id == saved.id }
+            scheduledTasks.append(saved)
+            scheduledTasks.sort {
+                ($0.nextRunAt ?? .greatestFiniteMagnitude) < ($1.nextRunAt ?? .greatestFiniteMagnitude)
+            }
+            scheduleEditorDraft = nil
+            showToast(draft.id == nil ? "Schedule created" : "Schedule updated")
+            return true
+        } catch {
+            showToast("Could not save schedule: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    func setScheduleEnabled(_ task: ScheduledTask, enabled: Bool) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let updated: ScheduledTask = try await backend.patch(
+                    "/api/schedules/\(task.id)", body: ["enabled": enabled],
+                    as: ScheduledTask.self
+                )
+                replaceScheduledTask(updated)
+                showToast(enabled ? "Schedule resumed" : "Schedule paused")
+            } catch {
+                showToast("Could not update schedule: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func deleteSchedule(_ task: ScheduledTask) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let _: DeleteScheduleResponse = try await backend.delete(
+                    "/api/schedules/\(task.id)", as: DeleteScheduleResponse.self
+                )
+                scheduledTasks.removeAll { $0.id == task.id }
+                showToast("Schedule deleted; its chats were kept")
+            } catch {
+                showToast("Could not delete schedule: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func runScheduleNow(_ task: ScheduledTask) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await dispatchSchedule(
+                task, trigger: "manual", requestID: UUID().uuidString,
+                announceFailure: true
+            )
+        }
+    }
+
+    func openLatestRun(for task: ScheduledTask) {
+        guard let runID = task.lastRunID else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let run: OrchestrationRun = try await backend.get(
+                    "/api/runs/\(runID)", as: OrchestrationRun.self
+                )
+                await refreshMetadata()
+                openActivityRun(run)
+            } catch {
+                showToast("That scheduled result is no longer available")
+            }
+        }
+    }
+
+    private func startScheduleCoordinator() {
+        guard persistenceEnabled, scheduleCoordinatorTask == nil else { return }
+        scheduleCoordinatorTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled, let self else { return }
+                await self.processDueSchedules()
+            }
+        }
+    }
+
+    func processDueSchedules(now: Date = Date()) async {
+        guard persistenceEnabled, !isDispatchingSchedules, !isShuttingDown else { return }
+        isDispatchingSchedules = true
+        defer { isDispatchingSchedules = false }
+        await refreshScheduledTasks(announceFailure: false)
+        let due = scheduledTasks
+            .filter { $0.enabled && ($0.nextRunAt ?? .greatestFiniteMagnitude) <= now.timeIntervalSince1970 }
+            .sorted { ($0.nextRunAt ?? 0) < ($1.nextRunAt ?? 0) }
+        for task in due {
+            if let issue = scheduleConfigurationIssue(for: task) {
+                await pauseScheduledTask(task, reason: issue)
+                continue
+            }
+            await dispatchSchedule(task, trigger: "due", requestID: "", announceFailure: false)
+        }
+        await refreshScheduledTasks(announceFailure: false)
+        await refreshActivityRuns(announceFailure: false)
+        restorePersistedQueuedRuns()
+    }
+
+    private func dispatchSchedule(
+        _ task: ScheduledTask, trigger: String, requestID: String,
+        announceFailure: Bool
+    ) async {
+        if let issue = scheduleConfigurationIssue(for: task) {
+            await pauseScheduledTask(task, reason: issue)
+            if announceFailure { showToast(issue) }
+            return
+        }
+        do {
+            let response: ScheduleDispatchResponse = try await backend.post(
+                "/api/schedules/\(task.id)/dispatch",
+                body: ["trigger": trigger, "request_id": requestID],
+                timeout: 30,
+                as: ScheduleDispatchResponse.self
+            )
+            if let schedule = response.schedule { replaceScheduledTask(schedule) }
+            await refreshMetadata()
+            await refreshActivityRuns()
+            if response.run.state == "queued",
+               restoredQueuedRunIDs.insert(response.run.id).inserted {
+                await dispatchPersistedQueuedRun(response.run)
+            }
+            if announceFailure {
+                showToast(response.claimed ? "Scheduled task queued" : "That run is already queued")
+            }
+        } catch {
+            if announceFailure {
+                showToast("Could not run schedule: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func pauseScheduledTask(_ task: ScheduledTask, reason: String) async {
+        do {
+            let updated: ScheduledTask = try await backend.post(
+                "/api/schedules/\(task.id)/pause", body: ["reason": reason],
+                as: ScheduledTask.self
+            )
+            replaceScheduledTask(updated)
+            notifyNeedsAttentionIfInactive(
+                body: "\(task.name) was paused: \(reason)"
+            )
+        } catch {
+            // Keep the due item in memory so a later refresh can retry the
+            // durable pause after a temporary service outage.
+        }
+    }
+
+    private func replaceScheduledTask(_ task: ScheduledTask) {
+        if let index = scheduledTasks.firstIndex(where: { $0.id == task.id }) {
+            scheduledTasks[index] = task
+        } else {
+            scheduledTasks.append(task)
+        }
+    }
+
+    private func scheduleConfigurationIssue(for draft: ScheduleEditorDraft) -> String? {
+        let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return "Add a schedule name" }
+        guard !prompt.isEmpty else { return "Add a prompt" }
+        guard FileManager.default.fileExists(atPath: draft.workspaceRoot),
+              workspaceAccess.activateStored(path: draft.workspaceRoot)
+        else { return "Choose an available workspace folder" }
+        guard !draft.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              draft.model != "No model"
+        else { return "Choose an available model" }
+        if draft.ruleKind == .once, draft.oneTimeDate <= Date() {
+            return "Choose a future date and time"
+        }
+        if draft.ruleKind == .interval {
+            let seconds = draft.intervalEvery * [
+                .minutes: 60, .hours: 3_600, .days: 86_400, .weeks: 604_800,
+            ][draft.intervalUnit, default: 0]
+            guard seconds >= 900 else { return "Custom intervals must be at least 15 minutes" }
+        }
+        if draft.runner == .team {
+            guard let id = draft.teamID.flatMap(UUID.init(uuidString:)),
+                  agentTeams.contains(where: { $0.id == id })
+            else { return "Choose an available team" }
+        }
+        if draft.provider != "ollama" {
+            guard let id = draft.providerAccountID.flatMap(UUID.init(uuidString:)),
+                  let account = providerAccounts.first(where: { $0.id == id })
+            else { return "Choose an available model account" }
+            let expected = account.kind == .chatGPT ? "chatgpt" : "remote"
+            guard draft.provider == expected else { return "The selected model account changed" }
+        }
+        return nil
+    }
+
+    private func scheduleConfigurationIssue(for task: ScheduledTask) -> String? {
+        guard FileManager.default.fileExists(atPath: task.workspaceRoot),
+              workspaceAccess.activateStored(path: task.workspaceRoot)
+        else { return "The workspace bookmark is no longer available" }
+        guard !task.model.isEmpty else { return "The configured model is no longer available" }
+        if task.runner == .team {
+            guard let id = task.teamID.flatMap(UUID.init(uuidString:)),
+                  let team = agentTeams.first(where: { $0.id == id })
+            else { return "The configured team no longer exists" }
+            if let issue = AgentTeamValidation.errors(team: team, profiles: agentProfiles).first {
+                return issue
+            }
+        }
+        if task.provider == "ollama" {
+            if !installedLocalModels.isEmpty,
+               !installedLocalModels.contains(where: { $0.name == task.model }) {
+                return "The configured local model is no longer installed"
+            }
+        } else {
+            guard let id = task.providerAccountID.flatMap(UUID.init(uuidString:)),
+                  let account = providerAccounts.first(where: { $0.id == id })
+            else { return "The configured model account no longer exists" }
+            let expected = account.kind == .chatGPT ? "chatgpt" : "remote"
+            guard task.provider == expected else { return "The configured model account changed" }
+            if let catalog = accountModels[id], !catalog.isEmpty, !catalog.contains(task.model) {
+                return "The configured model is no longer offered by this account"
+            }
+        }
+        return nil
+    }
+
+    func refreshActivityRuns(announceFailure: Bool = true) async {
         do {
             let response: OrchestrationRunsResponse = try await backend.get(
                 "/api/runs", query: [URLQueryItem(name: "limit", value: "200")],
@@ -5673,8 +6031,11 @@ final class AppModel: ObservableObject {
             )
             activityRuns = response.runs
             if activityCenterPresented { markAllActivitySeen() }
-        } catch {
+        } catch where announceFailure {
             showToast("Could not load activity: \(error.localizedDescription)")
+        } catch {
+            // Coordinator refreshes are best-effort. Runtime recovery owns
+            // persistent service errors so a hidden app never repeats toasts.
         }
     }
 
@@ -5773,13 +6134,19 @@ final class AppModel: ObservableObject {
                     return
                 }
                 guard let worker = await ensureChatWorker(
-                    for: sessionID, workspaceRoot: workspace
+                    for: sessionID,
+                    workspaceRoot: workspace,
+                    provider: retry.manifest?["provider"]?.string,
+                    providerAccountID: retry.manifest?["provider_account_id"]?.string,
+                    model: retry.manifest?["model"]?.string
                 ) else {
                     showToast("The original chat worker could not be started")
                     return
                 }
+                let retryMode = retry.manifest?["mode"]?.string
+                    .flatMap(WorkMode.init(rawValue:)) ?? .work
                 worker.reservedRunID = retry.id
-                worker.dispatchedMode = .work
+                worker.dispatchedMode = retryMode
                 worker.executionState = .queued
                 taskConversationStates[sessionID] = TaskConversationState(
                     sessionID: sessionID,
@@ -5799,12 +6166,12 @@ final class AppModel: ObservableObject {
                     "type": "user_message",
                     "text": Self.decoratedPrompt(
                         retry.request,
-                        mode: .work,
+                        mode: retryMode,
                         chatAttachments: [],
                         contextFiles: [],
                         restoredTranscriptContext: nil
                     ),
-                    "mode": WorkMode.work.rawValue,
+                    "mode": retryMode.rawValue,
                     "run_id": retry.id,
                 ]
                 if let config = encodedJSONObject(primaryAgentBehavior) {
@@ -5848,15 +6215,22 @@ final class AppModel: ObservableObject {
 
     private func dispatchPersistedQueuedRun(_ run: OrchestrationRun) async {
         guard let sessionID = run.sessionID,
-              let session = sessions.first(where: { $0.id == sessionID }),
-              let workspace = run.workspaceRoot ?? session.workspacePath,
-              let worker = await ensureChatWorker(for: sessionID, workspaceRoot: workspace)
+              let workspace = run.workspaceRoot,
+              let worker = await ensureChatWorker(
+                for: sessionID,
+                workspaceRoot: workspace,
+                provider: run.manifest?["provider"]?.string,
+                providerAccountID: run.manifest?["provider_account_id"]?.string,
+                model: run.manifest?["model"]?.string
+              )
         else {
+            restoredQueuedRunIDs.remove(run.id)
             showToast("A saved queued run needs its original chat and workspace")
             return
         }
+        let mode = run.manifest?["mode"]?.string.flatMap(WorkMode.init(rawValue:)) ?? .work
         worker.reservedRunID = run.id
-        worker.dispatchedMode = .work
+        worker.dispatchedMode = mode
         worker.executionState = .queued
         taskConversationStates[sessionID] = TaskConversationState(
             sessionID: sessionID,
@@ -5876,10 +6250,10 @@ final class AppModel: ObservableObject {
             var request: [String: Any] = [
                 "type": "user_message",
                 "text": Self.decoratedPrompt(
-                    run.request, mode: .work, chatAttachments: [], contextFiles: [],
+                    run.request, mode: mode, chatAttachments: [], contextFiles: [],
                     restoredTranscriptContext: nil
                 ),
-                "mode": WorkMode.work.rawValue,
+                "mode": mode.rawValue,
                 "run_id": run.id,
             ]
             if let config = encodedJSONObject(primaryAgentBehavior) {
@@ -7396,6 +7770,16 @@ final class AppModel: ObservableObject {
             || settings.proxyPort != newSettings.proxyPort
             || settings.proxyBypass != newSettings.proxyBypass
             || settings.proxyUsername != newSettings.proxyUsername
+        let launchAtLoginChanged = settings.launchAtLogin != newSettings.launchAtLogin
+        if launchAtLoginChanged {
+            do {
+                try updateLaunchAtLogin(enabled: newSettings.launchAtLogin)
+                launchAtLoginError = nil
+            } catch {
+                newSettings.launchAtLogin = settings.launchAtLogin
+                launchAtLoginError = error.localizedDescription
+            }
+        }
         settings = newSettings
         appearancePreview = nil
         persistSettings()
@@ -7449,7 +7833,20 @@ final class AppModel: ObservableObject {
             )
             Task { await applyTerminalSettings() }
         }
-        showToast("Settings saved")
+        if let launchAtLoginError {
+            showToast("Settings saved, but launch at login could not change: \(launchAtLoginError)")
+        } else {
+            showToast("Settings saved")
+        }
+    }
+
+    private func updateLaunchAtLogin(enabled: Bool) throws {
+        let service = SMAppService.mainApp
+        if enabled {
+            if service.status == .notRegistered { try service.register() }
+        } else if service.status != .notRegistered {
+            try service.unregister()
+        }
     }
 
     /// Preview never mutates `settings`, so Cancel can restore the committed
@@ -9092,7 +9489,10 @@ final class AppModel: ObservableObject {
 
     private func ensureChatWorker(
         for requestedSessionID: String,
-        workspaceRoot: String
+        workspaceRoot: String,
+        provider: String? = nil,
+        providerAccountID: String? = nil,
+        model: String? = nil
     ) async -> ChatWorkerRuntime? {
         if let existing = taskWorkers[requestedSessionID] {
             for _ in 0..<60 where existing.isAttaching && existing.process.isRunning {
@@ -9240,7 +9640,12 @@ final class AppModel: ObservableObject {
         // accepts a message, then ask the worker itself whether that provider is
         // usable. An HTTP 200 from /health only means the local server answered;
         // `ollama` is the compatibility field that reports model readiness.
-        if let failure = await prepareChatWorkerProvider(using: runtime.service) {
+        if let failure = await prepareChatWorkerProvider(
+            using: runtime.service,
+            provider: provider,
+            providerAccountID: providerAccountID,
+            model: model
+        ) {
             taskWorkers.removeValue(forKey: requestedSessionID)
             runtime.stop()
             if !Task.isCancelled {
@@ -9299,14 +9704,36 @@ final class AppModel: ObservableObject {
     /// Restores the active provider to a newly launched conversation worker.
     /// Internal for regression tests; callers receive the provider's useful
     /// explanation instead of a bool so startup failures remain actionable.
-    func prepareChatWorkerProvider(using service: BackendService) async -> String? {
-        let body = providerRequestBody(verify: false)
+    func prepareChatWorkerProvider(
+        using service: BackendService,
+        provider: String? = nil,
+        providerAccountID: String? = nil,
+        model: String? = nil
+    ) async -> String? {
+        let body: [String: Any]
+        if let provider {
+            guard let scheduled = scheduledProviderRequestBody(
+                provider: provider,
+                accountID: providerAccountID,
+                model: model ?? ""
+            ) else {
+                return "The scheduled model account is no longer available."
+            }
+            body = scheduled
+        } else {
+            body = providerRequestBody(verify: false)
+        }
         do {
             let state = try await service.post(
                 "/api/provider",
                 body: body,
                 as: ProviderStateResponse.self
             )
+            if provider == "ollama", let model, !model.isEmpty {
+                let _: ConfigStateResponse = try await service.post(
+                    "/api/config", body: ["model": model], as: ConfigStateResponse.self
+                )
+            }
             let health = try await service.get("/api/health", as: HealthResponse.self)
             guard health.ollama else {
                 return health.error ?? "\(shortHost(state.host)) is not ready."
@@ -9315,6 +9742,42 @@ final class AppModel: ObservableObject {
         } catch {
             return error.localizedDescription
         }
+    }
+
+    private func scheduledProviderRequestBody(
+        provider: String, accountID: String?, model: String
+    ) -> [String: Any]? {
+        if provider == "ollama" {
+            return [
+                "provider": "ollama",
+                "context_window": settings.localContextWindow ?? 0,
+            ]
+        }
+        guard let id = accountID.flatMap(UUID.init(uuidString:)),
+              let account = providerAccounts.first(where: { $0.id == id })
+        else { return nil }
+        if provider == "chatgpt", account.kind == .chatGPT {
+            return [
+                "provider": "chatgpt",
+                "account_id": account.id.uuidString,
+                "codex_home_id": account.codexHomeIdentifier,
+                "account_label": account.displayName,
+                "model": model,
+            ]
+        }
+        guard provider == "remote", account.kind != .chatGPT else { return nil }
+        return [
+            "provider": "remote",
+            "base_url": account.resolvedBaseURL,
+            "model": model,
+            "api_key": CredentialStore.get(account: account.credentialAccount) ?? "",
+            "auth_style": account.kind.authStyle,
+            "account_label": account.displayName,
+            "lists_models": account.kind.listsModels,
+            "context_window": account.contextWindow ?? 0,
+            "published_context_window": account.kind.publishedContextWindow(for: model) ?? 0,
+            "verify": false,
+        ]
     }
 
     /// Mirror the live worker set into the browser so tab eviction never
@@ -12829,6 +13292,29 @@ private struct OrchestrationRunsResponse: Codable {
         case runs
         case readOnly = "read_only"
     }
+}
+
+private struct SchedulesResponse: Codable {
+    let schedules: [ScheduledTask]
+    let readOnly: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case schedules
+        case readOnly = "read_only"
+    }
+}
+
+private struct ScheduleDispatchResponse: Codable {
+    let ok: Bool
+    let claimed: Bool
+    let schedule: ScheduledTask?
+    let occurrence: ScheduleOccurrence
+    let run: OrchestrationRun
+}
+
+private struct DeleteScheduleResponse: Codable {
+    let ok: Bool
+    let id: String
 }
 
 private struct OrchestrationEventsResponse: Codable {

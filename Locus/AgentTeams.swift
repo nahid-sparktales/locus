@@ -1375,6 +1375,9 @@ struct OrchestrationRun: Identifiable, Codable, Hashable {
     var queuedMessageID: String? = nil
     var retryParentID: String? = nil
     var admittedAt: Double? = nil
+    var scheduleID: String? = nil
+    var occurrenceID: String? = nil
+    var scheduledFor: Double? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, state, request, pinned, legacy, recoverable, checkpoint, attempts, plan, usage
@@ -1403,6 +1406,9 @@ struct OrchestrationRun: Identifiable, Codable, Hashable {
         case queuedMessageID = "queued_message_id"
         case retryParentID = "retry_parent_id"
         case admittedAt = "admitted_at"
+        case scheduleID = "schedule_id"
+        case occurrenceID = "occurrence_id"
+        case scheduledFor = "scheduled_for"
     }
 
     var isSoloSwarm: Bool {
