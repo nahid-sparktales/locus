@@ -1749,6 +1749,97 @@ def test_health_and_models(client):
     assert models["current"] == "test-model"
 
 
+def test_schedule_crud_and_manual_dispatch_preserve_foreground_chat(client, tmp_path):
+    foreground = client.app.state.service.core.session.session_id
+    now = time.time()
+    payload = {
+        "name": "Dependency audit",
+        "prompt": "Inspect dependencies and report outdated packages.",
+        "workspace_root": str(tmp_path),
+        "mode": "plan",
+        "execution_environment": "local",
+        "runner": "solo",
+        "provider": "ollama",
+        "model": "test-model",
+        "timezone": "America/Toronto",
+        "rule": {
+            "kind": "interval", "every": 15, "unit": "minutes",
+            "anchor": now + 3_600,
+        },
+    }
+    created = client.post("/api/schedules", json=payload)
+    assert created.status_code == 200
+    schedule = created.json()
+    schedule_id = schedule["id"]
+    assert schedule["mode"] == "plan"
+    assert client.get("/api/schedules").json()["schedules"][0]["id"] == schedule_id
+
+    renamed = client.patch(
+        f"/api/schedules/{schedule_id}", json={"name": "Weekly dependency audit"},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "Weekly dependency audit"
+
+    first = client.post(
+        f"/api/schedules/{schedule_id}/dispatch",
+        json={"trigger": "manual", "request_id": "run-now-1"},
+    )
+    assert first.status_code == 200
+    result = first.json()
+    assert result["claimed"] is True
+    assert result["run"]["state"] == "queued"
+    assert result["run"]["manifest"]["mode"] == "plan"
+    assert result["run"]["manifest"]["model"] == "test-model"
+    assert result["run"]["schedule_id"] == schedule_id
+    assert result["run"]["occurrence_id"] == result["occurrence"]["id"]
+    assert result["run"]["session_id"] != foreground
+    assert client.app.state.service.core.session.session_id == foreground
+    scheduled_session = result["run"]["session_id"]
+    assert SessionStore.path_for(scheduled_session) is not None
+    metadata = SessionMeta.get(scheduled_session)
+    assert metadata["title"].startswith("Weekly dependency audit · ")
+
+    duplicate = client.post(
+        f"/api/schedules/{schedule_id}/dispatch",
+        json={"trigger": "manual", "request_id": "run-now-1"},
+    )
+    assert duplicate.status_code == 200
+    assert duplicate.json()["claimed"] is False
+    assert duplicate.json()["run"]["id"] == result["run"]["id"]
+
+    paused = client.post(
+        f"/api/schedules/{schedule_id}/pause", json={"reason": "Model removed"},
+    )
+    assert paused.status_code == 200
+    assert paused.json()["enabled"] is False
+    resumed = client.patch(
+        f"/api/schedules/{schedule_id}", json={"enabled": True},
+    )
+    assert resumed.status_code == 200
+    assert resumed.json()["enabled"] is True
+
+    assert client.delete(f"/api/schedules/{schedule_id}").status_code == 200
+    assert client.app.state.service.run_store.run(result["run"]["id"]) is not None
+    assert SessionStore.path_for(scheduled_session) is not None
+
+
+def test_schedule_editor_validation_rejects_unusable_worktree(client, tmp_path):
+    response = client.post("/api/schedules", json={
+        "name": "Worktree task",
+        "prompt": "Make a change",
+        "workspace_root": str(tmp_path),
+        "mode": "work",
+        "execution_environment": "worktree",
+        "runner": "solo",
+        "provider": "ollama",
+        "model": "test-model",
+        "timezone": "UTC",
+        "rule": {"kind": "once", "at": time.time() + 3_600},
+    })
+    assert response.status_code == 422
+    assert "Git repository" in response.json()["detail"]
+
+
 def test_cancel_rejects_a_run_owned_by_another_worker(client, tmp_path):
     svc = client.app.state.service
     svc.run_store.start_run(

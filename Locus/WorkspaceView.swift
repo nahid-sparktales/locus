@@ -628,25 +628,43 @@ struct ActivityCenterView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Background Activity")
+                    Text("Activity Center")
                         .font(.locus(size: 15, weight: .bold))
-                    Text("Work keeps running when you move between chats.")
+                    Text(model.activityCenterSection == .activity
+                        ? "Work keeps running when you move between chats."
+                        : "Create recurring work that starts in a fresh chat.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
+                Picker("Section", selection: $model.activityCenterSection) {
+                    ForEach(ActivityCenterSection.allCases) { section in
+                        Text(section.title).tag(section)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 180)
                 Spacer()
-                if model.visibleActivityRuns.contains(where: { model.activityIsUnseen($0) }) {
+                if model.activityCenterSection == .activity,
+                   model.visibleActivityRuns.contains(where: { model.activityIsUnseen($0) }) {
                     Button("Mark All Seen") { model.markAllActivitySeen() }
                         .accessibilityIdentifier("activity.markAllSeen")
                 }
-                if model.visibleActivityRuns.contains(where: {
+                if model.activityCenterSection == .activity,
+                   model.visibleActivityRuns.contains(where: {
                     TeamRunState(rawValue: $0.state)?.isTerminal == true
                 }) {
                     Button("Clear Finished") { model.clearFinishedActivityRuns() }
                         .accessibilityIdentifier("activity.clearFinished")
                 }
                 Button {
-                    Task { await model.refreshActivityRuns() }
+                    Task {
+                        if model.activityCenterSection == .activity {
+                            await model.refreshActivityRuns()
+                        } else {
+                            await model.refreshScheduledTasks()
+                        }
+                    }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
@@ -668,7 +686,9 @@ struct ActivityCenterView: View {
             .padding(.vertical, 14)
             .background(LocusTheme.paperDeep.opacity(0.55))
 
-            if model.visibleActivityRuns.isEmpty {
+            if model.activityCenterSection == .schedules {
+                schedulesView
+            } else if model.visibleActivityRuns.isEmpty {
                 ContentUnavailableView(
                     "No Activity Yet",
                     systemImage: "waveform.path.ecg.rectangle",
@@ -708,11 +728,55 @@ struct ActivityCenterView: View {
         }
         .task {
             while !Task.isCancelled {
-                await model.refreshActivityRuns()
+                if model.activityCenterSection == .activity {
+                    await model.refreshActivityRuns()
+                } else {
+                    await model.refreshScheduledTasks(announceFailure: false)
+                }
                 try? await Task.sleep(for: .seconds(2))
             }
         }
         .accessibilityIdentifier("activity.center")
+    }
+
+    private var schedulesView: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Schedules")
+                    .font(.locus(size: 11, weight: .bold))
+                Spacer()
+                Button {
+                    model.presentScheduleEditor()
+                } label: {
+                    Label("New Schedule", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("schedules.new")
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+
+            if model.scheduledTasks.isEmpty {
+                ContentUnavailableView(
+                    "No Scheduled Tasks",
+                    systemImage: "calendar.badge.clock",
+                    description: Text("Schedule a prompt once or repeat it on your own cadence.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityIdentifier("schedules.empty")
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(model.scheduledTasks) { task in
+                            ScheduleRow(task: task)
+                                .environmentObject(model)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 20)
+                }
+            }
+        }
     }
 
     private func runs(in group: ActivityGroup) -> [OrchestrationRun] {
@@ -888,6 +952,315 @@ struct ActivityCenterView: View {
         case .queued: LocusTheme.blue
         case .recent: run.state == "completed" ? LocusTheme.success : LocusTheme.muted
         }
+    }
+}
+
+private struct ScheduleRow: View {
+    @EnvironmentObject private var model: AppModel
+    let task: ScheduledTask
+    @State private var confirmsDelete = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: task.enabled ? "calendar.badge.clock" : "pause.circle")
+                    .font(.locus(size: 13, weight: .semibold))
+                    .foregroundStyle(task.lastError == nil
+                        ? (task.enabled ? LocusTheme.signalDeep : LocusTheme.muted)
+                        : LocusTheme.warning)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 7) {
+                        Text(task.name)
+                            .font(.locus(size: 11, weight: .bold))
+                            .lineLimit(1)
+                        Text(status.uppercased())
+                            .font(.locus(size: 7, weight: .bold, design: .monospaced))
+                            .foregroundStyle(task.lastError == nil
+                                ? LocusTheme.muted : LocusTheme.warning)
+                    }
+                    Text(nextRunDescription)
+                        .font(.locus(size: 9, design: .monospaced))
+                        .foregroundStyle(LocusTheme.inkSoft)
+                    Text("\(ruleDescription) · \(task.mode.rawValue.capitalized) · \(task.runner.title) · \(task.executionEnvironment.title)")
+                        .font(.locus(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                        .lineLimit(2)
+                    if let error = task.lastError?.nilIfEmpty {
+                        Text(error)
+                            .font(.locus(size: 9, weight: .semibold))
+                            .foregroundStyle(LocusTheme.warning)
+                            .lineLimit(3)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 7) {
+                Button("Run Now") { model.runScheduleNow(task) }
+                Button("Edit") { model.presentScheduleEditor(task: task) }
+                if task.enabled {
+                    Button("Pause") { model.setScheduleEnabled(task, enabled: false) }
+                } else if task.rule.kind != .once || task.nextRunAt != nil {
+                    Button("Resume") { model.setScheduleEnabled(task, enabled: true) }
+                }
+                if task.lastRunID != nil {
+                    Button("Latest Result") { model.openLatestRun(for: task) }
+                }
+                Spacer()
+                Button("Delete", role: .destructive) { confirmsDelete = true }
+            }
+            .font(.locus(size: 8, weight: .semibold))
+            .buttonStyle(ActivityActionButtonStyle())
+        }
+        .padding(12)
+        .background(LocusTheme.white.opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay { RoundedRectangle(cornerRadius: 10).stroke(LocusTheme.line) }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("schedule.row.\(task.id)")
+        .alert("Delete \(task.name)?", isPresented: $confirmsDelete) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) { model.deleteSchedule(task) }
+        } message: {
+            Text("Its generated chats and run history will be kept.")
+        }
+    }
+
+    private var status: String {
+        if task.lastError != nil { return "Needs attention" }
+        if task.enabled { return "Active" }
+        if task.rule.kind == .once && task.nextRunAt == nil { return "Completed" }
+        return "Paused"
+    }
+
+    private var nextRunDescription: String {
+        guard let date = task.nextRunDate else {
+            return task.rule.kind == .once ? "One-time run finished" : "No next run"
+        }
+        return "Next \(date.formatted(date: .abbreviated, time: .shortened)) (\(task.timezone))"
+    }
+
+    private var ruleDescription: String {
+        switch task.rule.kind {
+        case .once: return "Once"
+        case .daily: return "Daily"
+        case .weekdays: return "Weekdays"
+        case .weekly: return "Weekly"
+        case .interval:
+            return "Every \(task.rule.every ?? 1) \((task.rule.unit ?? .hours).rawValue)"
+        }
+    }
+}
+
+struct ScheduleEditorView: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var draft: ScheduleEditorDraft
+    @State private var routeSelection: String
+
+    init(draft: ScheduleEditorDraft) {
+        _draft = State(initialValue: draft)
+        _routeSelection = State(initialValue: draft.providerAccountID ?? "ollama")
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(draft.id == nil ? "New Scheduled Task" : "Edit Scheduled Task")
+                        .font(.locus(size: 16, weight: .bold))
+                    Text("Each run starts in a fresh background chat.")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                Spacer()
+                Button("Cancel") { model.scheduleEditorDraft = nil }
+                Button(draft.id == nil ? "Create" : "Save") {
+                    Task { _ = await model.saveSchedule(draft) }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.isSavingSchedule)
+                .accessibilityIdentifier("scheduleEditor.save")
+            }
+            .padding(18)
+            .background(LocusTheme.paperDeep.opacity(0.55))
+
+            Form {
+                Section("Task") {
+                    TextField("Name", text: $draft.name)
+                        .accessibilityIdentifier("scheduleEditor.name")
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Prompt")
+                            .font(.locus(size: 9, weight: .semibold))
+                            .foregroundStyle(LocusTheme.muted)
+                        TextEditor(text: $draft.prompt)
+                            .font(.locus(size: 11))
+                            .frame(minHeight: 100)
+                            .padding(5)
+                            .background(LocusTheme.white.opacity(0.72))
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                            .overlay { RoundedRectangle(cornerRadius: 7).stroke(LocusTheme.line) }
+                            .accessibilityIdentifier("scheduleEditor.prompt")
+                        Text("Attachments and temporary context chips are not included.")
+                            .font(.locus(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                    }
+                }
+
+                Section("Where and how") {
+                    HStack {
+                        TextField("Workspace", text: $draft.workspaceRoot)
+                        Button("Choose…") { chooseWorkspace() }
+                    }
+                    Picker("Mode", selection: $draft.mode) {
+                        ForEach(WorkMode.allCases) { mode in
+                            Text(mode.rawValue.capitalized).tag(mode)
+                        }
+                    }
+                    Picker("Environment", selection: $draft.executionEnvironment) {
+                        ForEach(ChatExecutionEnvironment.allCases) { environment in
+                            Text(environment.title).tag(environment)
+                        }
+                    }
+                    Picker("Runner", selection: $draft.runner) {
+                        ForEach(ScheduleRunner.allCases) { runner in
+                            Text(runner.title).tag(runner)
+                        }
+                    }
+                    if draft.runner == .team {
+                        Picker("Team", selection: $draft.teamID) {
+                            Text("Choose a team").tag(String?.none)
+                            ForEach(model.agentTeams) { team in
+                                Text(team.name).tag(Optional(team.id.uuidString))
+                            }
+                        }
+                        .onChange(of: draft.teamID) { _, value in
+                            draft.teamName = value.flatMap { id in
+                                model.agentTeams.first(where: { $0.id.uuidString == id })?.name
+                            } ?? ""
+                        }
+                    }
+                    Picker("Model account", selection: $routeSelection) {
+                        Text("Local Ollama").tag("ollama")
+                        ForEach(model.providerAccounts) { account in
+                            Text(account.displayName).tag(account.id.uuidString)
+                        }
+                    }
+                    .onChange(of: routeSelection) { _, value in updateRoute(value) }
+                    Picker("Model", selection: $draft.model) {
+                        ForEach(availableModels, id: \.self) { modelName in
+                            Text(modelName).tag(modelName)
+                        }
+                    }
+                    TextField("Time zone", text: $draft.timezone)
+                        .help("IANA time zone, for example America/Toronto")
+                }
+
+                Section("When") {
+                    Picker("Repeat", selection: $draft.ruleKind) {
+                        ForEach(ScheduleRuleKind.allCases) { kind in
+                            Text(kind.title).tag(kind)
+                        }
+                    }
+                    scheduleFields
+                }
+
+                Section {
+                    Label(
+                        "Scheduled work uses the current app permission policy. Permission and plan-approval questions pause and notify you.",
+                        systemImage: "hand.raised.fill"
+                    )
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.inkSoft)
+                }
+            }
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+        }
+        .frame(width: 620, height: 690)
+        .background(LocusTheme.paper)
+        .onAppear {
+            if draft.model.isEmpty { draft.model = availableModels.first ?? "" }
+        }
+        .accessibilityIdentifier("scheduleEditor")
+    }
+
+    @ViewBuilder
+    private var scheduleFields: some View {
+        switch draft.ruleKind {
+        case .once:
+            DatePicker(
+                "Run at", selection: $draft.oneTimeDate,
+                in: Date().addingTimeInterval(60)...,
+                displayedComponents: [.date, .hourAndMinute]
+            )
+        case .daily, .weekdays:
+            DatePicker("Time", selection: $draft.clockTime, displayedComponents: .hourAndMinute)
+        case .weekly:
+            Picker("Day", selection: $draft.weekday) {
+                ForEach(Array(weekdayNames.enumerated()), id: \.offset) { index, name in
+                    Text(name).tag(index)
+                }
+            }
+            DatePicker("Time", selection: $draft.clockTime, displayedComponents: .hourAndMinute)
+        case .interval:
+            HStack {
+                Stepper("Every \(draft.intervalEvery)", value: $draft.intervalEvery, in: 1...100_000)
+                Picker("Unit", selection: $draft.intervalUnit) {
+                    ForEach(ScheduleIntervalUnit.allCases) { unit in
+                        Text(unit.title).tag(unit)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 120)
+            }
+            DatePicker(
+                "Starting", selection: $draft.oneTimeDate,
+                displayedComponents: [.date, .hourAndMinute]
+            )
+        }
+    }
+
+    private var weekdayNames: [String] {
+        ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    }
+
+    private var availableModels: [String] {
+        if routeSelection == "ollama" {
+            let names = model.installedLocalModels.map(\.name)
+            return names.isEmpty ? [draft.model].filter { !$0.isEmpty } : names
+        }
+        guard let id = UUID(uuidString: routeSelection),
+              let account = model.providerAccounts.first(where: { $0.id == id })
+        else { return [draft.model].filter { !$0.isEmpty } }
+        let names = model.accountModels[id] ?? account.kind.curatedModels
+        return names.isEmpty ? [draft.model].filter { !$0.isEmpty } : names
+    }
+
+    private func updateRoute(_ value: String) {
+        if value == "ollama" {
+            draft.provider = "ollama"
+            draft.providerAccountID = nil
+        } else if let id = UUID(uuidString: value),
+                  let account = model.providerAccounts.first(where: { $0.id == id }) {
+            draft.provider = account.kind == .chatGPT ? "chatgpt" : "remote"
+            draft.providerAccountID = value
+        }
+        if !availableModels.contains(draft.model) {
+            draft.model = availableModels.first ?? ""
+        }
+    }
+
+    private func chooseWorkspace() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose Workspace"
+        guard panel.runModal() == .OK, let url = panel.url,
+              let path = model.rememberScheduleWorkspace(url)
+        else { return }
+        draft.workspaceRoot = path
     }
 }
 

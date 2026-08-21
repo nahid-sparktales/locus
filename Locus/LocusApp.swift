@@ -167,6 +167,16 @@ struct LocusApp: App {
                 .environmentObject(updates)
                 .preferredColorScheme(model.effectiveAppearance.colorScheme)
         }
+
+        MenuBarExtra {
+            LocusMenuBarView()
+                .environmentObject(model)
+        } label: {
+            Image("MenuBarIcon")
+                .renderingMode(.template)
+                .accessibilityLabel("Locus")
+        }
+        .menuBarExtraStyle(.menu)
     }
 
     /// Accessibility fixtures render one surface as the window root. This
@@ -233,12 +243,6 @@ final class LocusApplicationDelegate: NSObject, NSApplicationDelegate,
         TranscriptSelectionMenu.shared.start { [weak self] selection in
             self?.model?.searchWebForSelection(selection)
         }
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(windowWillClose(_:)),
-            name: NSWindow.willCloseNotification,
-            object: nil
-        )
     }
 
     nonisolated func userNotificationCenter(
@@ -276,7 +280,7 @@ final class LocusApplicationDelegate: NSObject, NSApplicationDelegate,
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        false
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -303,12 +307,51 @@ final class LocusApplicationDelegate: NSObject, NSApplicationDelegate,
         return .terminateLater
     }
 
-    @objc private func windowWillClose(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow,
-              window.identifier == Self.mainWindowIdentifier else {
-            return
+}
+
+private struct LocusMenuBarView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Open Locus") { revealMainWindow() }
+            .keyboardShortcut("o")
+        Button("Schedules…") {
+            revealMainWindow()
+            model.openSchedules()
         }
-        NSApp.terminate(nil)
+        Divider()
+        if runningCount > 0 {
+            Text("\(runningCount) \(runningCount == 1 ? "task" : "tasks") running")
+        } else {
+            Text("No work running")
+        }
+        if let next = model.nextScheduledTask, let date = next.nextRunDate {
+            Text("Next: \(next.name) · \(date.formatted(date: .omitted, time: .shortened))")
+        } else {
+            Text("No upcoming schedules")
+        }
+        Divider()
+        Button("Quit Locus") { NSApp.terminate(nil) }
+            .keyboardShortcut("q")
+    }
+
+    private var runningCount: Int {
+        model.visibleActivityRuns.filter {
+            ["queued", "dispatching", "running", "reviewing", "waiting_permission",
+             "waiting_computer", "waiting_dispatch_approval", "paused"].contains($0.state)
+        }.count
+    }
+
+    private func revealMainWindow() {
+        openWindow(id: "main")
+        DispatchQueue.main.async {
+            if let window = LocusApplicationDelegate.mainWindow(in: NSApp.windows) {
+                if window.isMiniaturized { window.deminiaturize(nil) }
+                window.makeKeyAndOrderFront(nil)
+            }
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 }
 
@@ -589,6 +632,15 @@ struct RootView: View {
         }
         .sheet(isPresented: $model.shortcutsPresented) {
             ShortcutsSheet()
+        }
+        .sheet(isPresented: Binding(
+            get: { model.scheduleEditorDraft != nil },
+            set: { if !$0 { model.scheduleEditorDraft = nil } }
+        )) {
+            if let draft = model.scheduleEditorDraft {
+                ScheduleEditorView(draft: draft)
+                    .environmentObject(model)
+            }
         }
         .sheet(item: Binding(
             get: { model.mcpInputRequest },

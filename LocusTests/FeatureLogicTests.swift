@@ -182,9 +182,80 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertTrue(
             LocusApplicationDelegate.mainWindow(in: [settings, main]) === main
         )
-        XCTAssertTrue(
+        XCTAssertFalse(
             LocusApplicationDelegate().applicationShouldTerminateAfterLastWindowClosed(.shared)
         )
+    }
+
+    func testScheduledTaskDecodesDurableConfigurationAndDates() throws {
+        let json = #"""
+        {
+          "id":"schedule-1","name":"Morning review","prompt":"Inspect changes",
+          "workspace_root":"/tmp/project","mode":"plan",
+          "execution_environment":"worktree","runner":"solo_swarm",
+          "provider":"ollama","model":"qwen3:8b","timezone":"America/Toronto",
+          "rule":{"kind":"weekdays","hour":9,"minute":30},
+          "enabled":true,"next_run_at":1787322600,
+          "created_at":1,"updated_at":2,"last_run_at":null,
+          "last_run_id":null,"last_error":null
+        }
+        """#
+        let task = try JSONDecoder().decode(ScheduledTask.self, from: Data(json.utf8))
+
+        XCTAssertEqual(task.mode, .plan)
+        XCTAssertEqual(task.executionEnvironment, .worktree)
+        XCTAssertEqual(task.runner, .soloSwarm)
+        XCTAssertEqual(task.rule.kind, .weekdays)
+        XCTAssertEqual(task.rule.hour, 9)
+        XCTAssertEqual(task.nextRunDate?.timeIntervalSince1970, 1_787_322_600)
+    }
+
+    func testScheduleDraftBuildsOneTimeAndMinimumIntervalRules() {
+        var once = ScheduleEditorDraft()
+        once.ruleKind = .once
+        once.oneTimeDate = Date(timeIntervalSince1970: 2_000)
+        XCTAssertEqual(once.rule(now: Date(timeIntervalSince1970: 1_000)).at, 2_000)
+
+        var interval = ScheduleEditorDraft()
+        interval.ruleKind = .interval
+        interval.intervalEvery = 15
+        interval.intervalUnit = .minutes
+        interval.oneTimeDate = Date(timeIntervalSince1970: 900)
+        let rule = interval.rule(now: Date(timeIntervalSince1970: 1_000))
+        XCTAssertEqual(rule.every, 15)
+        XCTAssertEqual(rule.unit, .minutes)
+        XCTAssertEqual(rule.anchor, 1_000)
+    }
+
+    func testLaunchAtLoginDefaultsOffAndRoundTrips() throws {
+        XCTAssertFalse(AppSettings().launchAtLogin)
+        XCTAssertFalse(
+            try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8)).launchAtLogin
+        )
+        var settings = AppSettings()
+        settings.launchAtLogin = true
+        XCTAssertTrue(
+            try JSONDecoder().decode(
+                AppSettings.self, from: JSONEncoder().encode(settings)
+            ).launchAtLogin
+        )
+    }
+
+    func testRunDecodesScheduleProvenanceAndSavedMode() throws {
+        let json = #"""
+        {
+          "id":"occurrence-1","session_id":"chat-1","state":"queued",
+          "request":"Inspect","created_at":1,"updated_at":2,"last_seq":0,
+          "pinned":false,"legacy":false,"recoverable":false,"run_kind":"solo",
+          "schedule_id":"schedule-1","occurrence_id":"occurrence-1",
+          "scheduled_for":1787322600,
+          "manifest":{"scheduled":true,"mode":"plan","provider":"ollama","model":"qwen3:8b"}
+        }
+        """#
+        let run = try JSONDecoder().decode(OrchestrationRun.self, from: Data(json.utf8))
+        XCTAssertEqual(run.scheduleID, "schedule-1")
+        XCTAssertEqual(run.occurrenceID, "occurrence-1")
+        XCTAssertEqual(run.manifest?["mode"]?.string, "plan")
     }
 
     func testLifecycleJournalDistinguishesCleanAndUncleanTermination() throws {

@@ -1585,6 +1585,20 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            Section("Startup") {
+                Toggle("Launch Locus at login", isOn: $draft.launchAtLogin)
+                    .accessibilityIdentifier("settings.launchAtLogin")
+                Text("Locus starts in the menu bar so schedules can run even when no window is open.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let error = model.launchAtLoginError {
+                    Text(error)
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.warning)
+                }
+            }
+
             Section("Terminal") {
                 TextField("Shell executable (optional)", text: $draft.terminalShell)
                     .accessibilityIdentifier("settings.terminalShell")
