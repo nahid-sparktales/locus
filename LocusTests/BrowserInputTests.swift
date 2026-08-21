@@ -38,9 +38,14 @@ final class BrowserInputTests: XCTestCase {
 
     /// Poll rather than sleep: WebKit hands events to the web process
     /// asynchronously, and a fixed wait is either flaky or slow.
+    ///
+    /// The expression must evaluate to null until the state under test has
+    /// fully arrived. Returning on the first non-null value would accept a
+    /// half-typed field — which is exactly the intermediate state a slower
+    /// machine catches and a fast one hides.
     private func settled(
         _ expression: String,
-        timeout: Duration = .seconds(3)
+        timeout: Duration = .seconds(5)
     ) async throws -> Any? {
         let deadline = ContinuousClock.now.advanced(by: timeout)
         while ContinuousClock.now < deadline {
@@ -97,9 +102,12 @@ final class BrowserInputTests: XCTestCase {
         let typed = await host.deliverText("hi")
         XCTAssertTrue(typed)
 
-        let value = try await settled("document.getElementById('f').value") as? String
+        let value = try await settled(
+            "document.getElementById('f').value === 'hi' ? 'hi' : null"
+        ) as? String
         XCTAssertEqual(value, "hi", "the keystrokes never became text")
-        let rawKeys = try await settled("window.keys") as? [[String: Any]]
+        let rawKeys = try await settled("window.keys.length === 2 ? window.keys : null")
+            as? [[String: Any]]
         let keys = try XCTUnwrap(rawKeys)
         XCTAssertEqual(keys.map { $0["key"] as? String }, ["h", "i"])
         XCTAssertEqual(keys.first?["trusted"] as? Bool, true)
@@ -124,7 +132,7 @@ final class BrowserInputTests: XCTestCase {
         let pressedEnter = await host.deliverKey(enter)
         XCTAssertTrue(pressedEnter)
 
-        let rawKeys = try await settled("window.keys.length ? window.keys : null") as? [String]
+        let rawKeys = try await settled("window.keys.length === 4 ? window.keys : null") as? [String]
         let keys = try XCTUnwrap(rawKeys)
         // `repeat` really repeats, rather than pressing once and reporting three.
         XCTAssertEqual(keys, ["ArrowDown", "ArrowDown", "ArrowDown", "Enter"])
@@ -168,7 +176,10 @@ final class BrowserInputTests: XCTestCase {
         )
         XCTAssertTrue(dragged)
 
-        let rawPath = try await settled("window.path.length ? window.path : null") as? [[String: Any]]
+        // Press, the moves, and the release: anything less is a partial drag.
+        let rawPath = try await settled(
+            "window.path.some(e => e.type === 'pointerup') ? window.path : null"
+        ) as? [[String: Any]]
         let path = try XCTUnwrap(rawPath)
         XCTAssertEqual(path.first?["type"] as? String, "pointerdown")
         XCTAssertEqual(path.first?["x"] as? Int, 40)

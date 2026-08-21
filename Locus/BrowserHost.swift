@@ -196,7 +196,14 @@ final class OffscreenWebHost {
             // page would swallow the next thing they typed into the composer;
             // in the off-screen panel there is nothing to give it back to.
             if window.isKeyWindow, let previous, previous !== webView {
-                window.makeFirstResponder(previous)
+                // A focused text field is not itself the first responder — its
+                // field editor is, and AppKit refuses to hand that back
+                // directly. Aiming at the control the editor serves is what
+                // actually restores the caret.
+                let target = (previous as? NSTextView)?.delegate as? NSResponder ?? previous
+                if !window.makeFirstResponder(target), target !== previous {
+                    window.makeFirstResponder(previous)
+                }
             }
             return result
         } ?? nil

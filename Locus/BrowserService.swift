@@ -842,6 +842,18 @@ final class BrowserService: NSObject, ObservableObject {
     that checks event.isTrusted will have ignored it.
     """
 
+    /// Round-trip to the page after real input.
+    ///
+    /// An `NSEvent` is handled asynchronously in the web process, so the page's
+    /// own handler — and any dialog it opens — may not have run by the time
+    /// delivery returns. A trivial evaluation queues behind the event, so
+    /// awaiting it is what lets the action's result report what the action
+    /// actually caused. The bridge path never needed this: its call *was* the
+    /// handler running.
+    private func settleAfterRealInput(_ tab: Tab) async {
+        _ = try? await callBridge(tab, "return 1", [:])
+    }
+
     private func describeInput(
         verb: String,
         target: PointerTarget,
@@ -879,6 +891,7 @@ final class BrowserService: NSObject, ObservableObject {
                     modifiers: BrowserInput.modifiers(from: modifierNames)
                 )
                 if delivered {
+                    await settleAfterRealInput(tab)
                     return describeInput(verb: "Clicked", target: target, real: true)
                 }
             }
@@ -908,7 +921,8 @@ final class BrowserService: NSObject, ObservableObject {
             if prefersRealInput(tab),
                await tab.host.deliverHover(at: target.point, holding: hold)
             {
-                return describeInput(verb: "Hovered over", target: target, real: true)
+                await settleAfterRealInput(tab)
+                    return describeInput(verb: "Hovered over", target: target, real: true)
             }
             let raw: Any?
             if let ref {
@@ -948,7 +962,8 @@ final class BrowserService: NSObject, ObservableObject {
                    modifiers: BrowserInput.modifiers(from: modifierNames)
                )
             {
-                return describeInput(verb: "Dragged to", target: to, real: true)
+                await settleAfterRealInput(tab)
+                    return describeInput(verb: "Dragged to", target: to, real: true)
             }
             let raw = try await callBridge(
                 tab,
@@ -983,6 +998,8 @@ final class BrowserService: NSObject, ObservableObject {
                     if !delivered { break }
                 }
                 if delivered {
+                    // Doubles as the settle round trip: the page has run its
+                    // scroll handlers by the time this answers.
                     let raw = try? await callBridge(tab, "return __locus.scrollBy(0, 0)", [:])
                     let y = Self.coordinate((raw as? [String: Any])?["y"]) ?? 0
                     return ["text": "Scrolled at (\(Int(point.x)), \(Int(point.y))); the page is now at y=\(Int(y))."]
@@ -1015,6 +1032,7 @@ final class BrowserService: NSObject, ObservableObject {
                     modifiers: BrowserInput.modifiers(from: modifierNames),
                     repeatCount: repeatCount
                 ) {
+                    await settleAfterRealInput(tab)
                     let times = repeatCount > 1 ? " \(repeatCount) times" : ""
                     return ["text": "Pressed \(name)\(times). Call browser_read_page to see what changed."]
                 }
@@ -1055,6 +1073,7 @@ final class BrowserService: NSObject, ObservableObject {
                 try await refuseSecureFocus(tab)
             }
             if prefersRealInput(tab), await tab.host.deliverText(value) {
+                await settleAfterRealInput(tab)
                 return ["text": "Typed. Call browser_read_page to see what changed."]
             }
             let raw = try await callBridge(tab, "return __locus.typeText(text)", ["text": value])
