@@ -47,5 +47,11 @@
 	<string>Locus needs access when you choose files or projects from Downloads.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 SparkTales Inc.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Locus uses your private network only when you enable Mobile Access and pair a phone.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_locus-remote._tcp</string>
+	</array>
 </dict>
 </plist>

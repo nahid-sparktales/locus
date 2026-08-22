@@ -1599,6 +1599,9 @@ struct SettingsView: View {
                 }
             }
 
+            CompanionAccessSettingsSection(enabled: $draft.mobileAccessEnabled)
+                .environmentObject(model)
+
             Section("Terminal") {
                 TextField("Shell executable (optional)", text: $draft.terminalShell)
                     .accessibilityIdentifier("settings.terminalShell")

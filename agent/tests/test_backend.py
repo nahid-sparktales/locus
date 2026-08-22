@@ -1840,6 +1840,34 @@ def test_schedule_editor_validation_rejects_unusable_worktree(client, tmp_path):
     assert "Git repository" in response.json()["detail"]
 
 
+def test_companion_chat_dispatch_is_background_and_idempotent(client, tmp_path):
+    foreground = client.app.state.service.core.session.session_id
+    payload = {
+        "request_id": "phone-request-1",
+        "prompt": "Review the current workspace",
+        "workspace_root": str(tmp_path),
+        "execution_environment": "local",
+        "mode": "work",
+        "provider": "ollama",
+        "model": "test-model",
+    }
+
+    first = client.post("/api/companion/chats", json=payload)
+    assert first.status_code == 200
+    created = first.json()
+    assert created["claimed"] is True
+    assert created["run"]["state"] == "queued"
+    assert created["run"]["manifest"]["companion"] is True
+    assert created["run"]["manifest"]["mode"] == "work"
+    assert created["run"]["session_id"] != foreground
+    assert client.app.state.service.core.session.session_id == foreground
+
+    repeated = client.post("/api/companion/chats", json=payload)
+    assert repeated.status_code == 200
+    assert repeated.json()["claimed"] is False
+    assert repeated.json()["run"]["id"] == created["run"]["id"]
+
+
 def test_cancel_rejects_a_run_owned_by_another_worker(client, tmp_path):
     svc = client.app.state.service
     svc.run_store.start_run(

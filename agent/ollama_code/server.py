@@ -2744,6 +2744,115 @@ def _scheduled_chat_title(schedule: dict[str, Any], scheduled_for: float) -> str
     return f"{schedule['name']} · {value.replace(' 0', ' ')}"
 
 
+def _companion_chat_title(prompt: str) -> str:
+    first_line = " ".join(prompt.split())
+    return (first_line[:72].rstrip() or "Mobile chat") + " · Mobile"
+
+
+def _dispatch_companion_chat(body: dict[str, Any]) -> dict[str, Any]:
+    """Create a durable mobile run without changing the desktop's active session."""
+    store = service().run_store
+    request_id = str(body.get("request_id") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}", request_id):
+        raise HTTPException(422, "request_id is required")
+    run_id = uuid.uuid5(uuid.NAMESPACE_URL, f"locus:companion:{request_id}").hex
+    existing = store.run(run_id)
+    if existing is not None:
+        return {"ok": True, "claimed": False, "run": existing}
+
+    prompt = str(body.get("prompt") or "").strip()
+    if not prompt:
+        raise HTTPException(422, "prompt is required")
+    if len(prompt) > 240_000:
+        raise HTTPException(413, "prompt is too large")
+    mode = str(body.get("mode") or "work").strip().lower()
+    if mode not in {"ask", "work", "plan", "build"}:
+        raise HTTPException(422, "mode must be ask, work, plan, or build")
+
+    requested_session_id = str(body.get("session_id") or "").strip()
+    task: TaskCheckout | None = None
+    if requested_session_id:
+        path = SessionStore.path_for(requested_session_id)
+        if path is None:
+            raise HTTPException(404, "chat not found")
+        session_id = requested_session_id
+        header = SessionStore.header(path)
+        meta = SessionMeta.get(session_id)
+        workspace_root = str(meta.get("workspace_root") or header.get("cwd") or "")
+        if not workspace_root or not Path(workspace_root).is_dir():
+            raise HTTPException(409, "the chat workspace is unavailable")
+        execution_path = str(meta.get("execution_path") or workspace_root)
+        environment = (
+            "worktree"
+            if str((meta.get("environment") or {}).get("type")) == "worktree"
+            else "local"
+        )
+        provider = str(header.get("provider") or body.get("provider") or "ollama")
+        account = str(header.get("account") or body.get("provider_account_id") or "")
+        model = str(header.get("model") or body.get("model") or "")
+    else:
+        workspace_root = _schedule_workspace(body.get("workspace_root"))
+        environment = str(body.get("execution_environment") or "local")
+        if environment not in {"local", "worktree"}:
+            raise HTTPException(422, "execution_environment must be local or worktree")
+        if environment == "worktree" and not _is_git_workspace(workspace_root):
+            raise HTTPException(422, "mobile worktrees require a Git repository")
+        provider = str(body.get("provider") or "ollama").strip().lower()
+        if provider not in {"ollama", "remote", "chatgpt"}:
+            raise HTTPException(422, "provider is unavailable")
+        account = str(body.get("provider_account_id") or "").strip()
+        model = str(body.get("model") or "").strip()
+        if not model:
+            raise HTTPException(422, "model is required")
+        session = SessionStore(workspace_root, model, provider, account)
+        session_id = session.session_id
+        execution_path = workspace_root
+        metadata: dict[str, Any] = {
+            "title": _companion_chat_title(prompt),
+            "workspace_root": workspace_root,
+            "execution_path": workspace_root,
+            "environment": {"type": "local", "isolation": "local"},
+            "created_by": "companion",
+        }
+        if environment == "worktree":
+            try:
+                task = TaskCheckoutStore.create(
+                    workspace_root, run_id, session_id=session_id,
+                )
+            except WorktreeError as exc:
+                raise HTTPException(409, str(exc)) from exc
+            execution_path = task.execution_path
+            metadata.update({
+                "workspace_root": task.workspace_root,
+                "execution_path": task.execution_path,
+                "task": task.as_dict(),
+                "environment": {
+                    "type": "worktree", "isolation": "managed_worktree",
+                    "worktree_id": task.id, "starting_ref": task.starting_ref,
+                },
+            })
+        SessionMeta.update(session_id, **metadata)
+
+    manifest = {
+        "companion": True, "mode": mode, "runner": "solo",
+        "provider": provider, "provider_account_id": account, "model": model,
+    }
+    try:
+        run = store.queue_run(
+            run_id, session_id=session_id, workspace_root=workspace_root,
+            execution_path=execution_path, request=prompt, run_kind="solo",
+            execution_environment=environment, manifest=manifest,
+        )
+    except (OSError, RunStoreError) as exc:
+        if task is not None:
+            try:
+                TaskCheckoutStore.cleanup(task.id)
+            except WorktreeError:
+                pass
+        raise HTTPException(409, str(exc)) from exc
+    return {"ok": True, "claimed": True, "run": run}
+
+
 def _dispatch_schedule(
     schedule_id: str, *, trigger: str, request_id: str = ""
 ) -> dict[str, Any]:
@@ -2946,6 +3055,15 @@ def schedule_dispatch(
     return _dispatch_schedule(
         schedule_id, trigger=trigger, request_id=str(body.get("request_id") or ""),
     )
+
+
+@app.post("/api/companion/chats")
+def companion_chat_dispatch(
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Internal loopback API used only by the authenticated native gateway."""
+    _require_capability("durable_runs")
+    return _dispatch_companion_chat(body)
 
 
 # ------------------------------------------------------- Durable orchestrations

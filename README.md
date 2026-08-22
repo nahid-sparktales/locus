@@ -6,7 +6,7 @@ Local Ollama is the default. ChatGPT plans and API-backed providers are used onl
 
 [Website](https://locushost.co) · [Download the latest release](https://github.com/nahid-sparktales/locus/releases/latest) · [Changelog](CHANGELOG.md)
 
-![Locus workspace](Docs/locus-workspace.jpg)
+![Locus workspace in dark mode](Docs/locus-workspace-dark.png)
 
 ## What Locus does
 
@@ -15,10 +15,11 @@ Local Ollama is the default. ChatGPT plans and API-backed providers are used onl
 - **Plans before it changes things.** Use Chat, Plan, or Build mode and choose how often file, command, browser, Computer Control, and MCP actions require approval.
 - **Runs solo or as a team.** Adaptive Work can route tasks to specialists, or you can define explicit agent teams with model, tool, memory, and runtime limits.
 - **Keeps runs inspectable.** Timelines, evidence, costs, checkpoints, pause/resume state, and recovery actions stay available in the Runs inspector.
+- **Works from your phone.** The optional [Locus Mobile](https://github.com/nahid-sparktales/locus-mobile) companion for iOS and Android pairs directly over your LAN or Tailscale, with no Locus cloud relay.
 - **Supports local and hosted models.** Use Ollama, a ChatGPT plan, OpenAI, Anthropic Claude, Moonshot Kimi, or an OpenAI-compatible endpoint.
 - **Stores work locally by default.** Sessions, run records, and encrypted memory live on your Mac. Hosted providers receive prompts only when you select them.
 
-![Workspace files in the Locus inspector](Docs/locus-files.jpg)
+![Scheduled tasks in the Locus Activity Center](Docs/locus-schedules-dark.png)
 
 ## Inspector
 
@@ -31,7 +32,17 @@ The right-hand inspector keeps project tools beside the conversation:
 
 Panels open when they are useful and can be collapsed when you want more room.
 
-![Planning a task in the Locus inspector](Docs/locus-plan.jpg)
+![Planning a task in the Locus inspector](Docs/locus-plan-dark.png)
+
+## Mobile companion
+
+Mobile Access is off by default. When enabled, Locus creates a private TLS gateway on your Mac and pairs phones with a five-minute, one-use code. The phone pins the Mac certificate, and no provider credentials, local-agent ports, or cloud relay are exposed.
+
+| Mac setup | iOS and Android pairing |
+| --- | --- |
+| ![Mobile Access settings in dark mode](Docs/locus-mobile-access-dark.png) | ![Locus Mobile manual pairing in dark mode](Docs/locus-mobile-pairing-dark.png) |
+
+The first mobile release can create and continue chats, follow streaming work, stop runs, answer one-time approvals, and run or pause schedules. Terminal, browser, file editing, permanent permissions, account settings, and destructive session actions remain Mac-only. See the [Locus Mobile repository](https://github.com/nahid-sparktales/locus-mobile) for platform setup and development instructions.
 
 ## Models and accounts
 
@@ -78,7 +89,7 @@ Direct-download builds from 1.14.0 onward check the stable release channel and c
 
 ## Build from source
 
-The checked-in Xcode project can be opened directly. Install [XcodeGen](https://github.com/yonaskolb/XcodeGen) only when changing `project.yml` or adding source files.
+The checked-in Xcode project can be opened directly. Clone with `--recurse-submodules` if you also want the pinned Locus Mobile source. Install [XcodeGen](https://github.com/yonaskolb/XcodeGen) only when changing `project.yml` or adding source files.
 
 Source builds require Xcode 26 and Rust 1.95 through [rustup](https://rustup.rs/):
 
@@ -113,6 +124,17 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
+Run the mobile checks and either native debug build:
+
+```bash
+cd mobile
+flutter pub get
+flutter analyze
+flutter test
+flutter build apk --debug
+flutter build ios --simulator --no-codesign
+```
+
 ## Architecture
 
 The SwiftUI app owns the interface, workspace access, native terminal, Keychain integration, and permission surfaces. A bundled Python service owns agent orchestration, model streaming, tools, sessions, and run persistence. They communicate over authenticated REST and WebSocket endpoints bound to `127.0.0.1`.
@@ -124,6 +146,8 @@ Locus/          SwiftUI application
 LocusTests/     Swift unit tests
 LocusUITests/   macOS UI tests
 agent/          Bundled Python agent service
+mobile/         Pinned Locus Mobile repository for iOS and Android
+ProtocolFixtures/ Shared Mac/mobile protocol envelopes
 Tools/          Build, packaging, and audit scripts
 Docs/           Guides and screenshots
 ```

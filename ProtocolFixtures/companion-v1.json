@@ -1,0 +1,53 @@
+{
+  "requests": [
+    {
+      "v": 1,
+      "id": "fixture-status-1",
+      "method": "status.get",
+      "token": "device-token",
+      "payload": {}
+    },
+    {
+      "v": 1,
+      "id": "fixture-chat-1",
+      "method": "chat.create",
+      "token": "device-token",
+      "payload": {
+        "workspace_id": "workspace-1",
+        "mode": "work",
+        "prompt": "Check the current build"
+      }
+    },
+    {
+      "v": 1,
+      "id": "fixture-approval-1",
+      "method": "approval.respond",
+      "token": "device-token",
+      "payload": {
+        "kind": "permission",
+        "run_id": "run-1",
+        "decision": "allow_once"
+      }
+    }
+  ],
+  "response": {
+    "v": 1,
+    "id": "fixture-status-1",
+    "ok": true,
+    "data": {
+      "agent_online": true,
+      "running_count": 1
+    }
+  },
+  "event": {
+    "v": 1,
+    "event": "activity.updated",
+    "sequence": 9,
+    "data": [
+      {
+        "id": "run-1",
+        "state": "running"
+      }
+    ]
+  }
+}

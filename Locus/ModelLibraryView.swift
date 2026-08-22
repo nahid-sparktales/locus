@@ -33,7 +33,13 @@ final class ModelLibraryViewModel: ObservableObject {
 
     func search() {
         searchTask?.cancel()
-        searchTask = Task { await performSearch() }
+        searchGeneration += 1
+        let generation = searchGeneration
+        // Change the visible state before yielding to the task so the result
+        // count can never be audited while an initial search is replacing it.
+        isSearching = true
+        errorMessage = nil
+        searchTask = Task { await performSearch(generation: generation) }
     }
 
     func openRepositoryFromQuery() {
@@ -132,11 +138,7 @@ final class ModelLibraryViewModel: ObservableObject {
         }
     }
 
-    private func performSearch() async {
-        searchGeneration += 1
-        let generation = searchGeneration
-        isSearching = true
-        errorMessage = nil
+    private func performSearch(generation: Int) async {
         do {
             let found = try await service.search(query: query)
             guard generation == searchGeneration else { return }
@@ -283,10 +285,17 @@ struct ModelLibraryView: View {
                     .font(.locus(size: 8, weight: .bold, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
                 Spacer()
-                Text("\(library.results.count)")
-                    .font(.locus(size: 9, design: .monospaced))
-                    .foregroundStyle(LocusTheme.inkSoft)
-                    .accessibilityIdentifier("modelLibrary.resultCount")
+                if library.isSearching {
+                    Text("SEARCHING…")
+                        .font(.locus(size: 8, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(LocusTheme.ink)
+                        .accessibilityIdentifier("modelLibrary.searching")
+                } else {
+                    Text("\(library.results.count)")
+                        .font(.locus(size: 9, design: .monospaced))
+                        .foregroundStyle(LocusTheme.inkSoft)
+                        .accessibilityIdentifier("modelLibrary.resultCount")
+                }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 11)

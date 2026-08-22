@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import Security
 import SwiftTerm
 import SwiftUI
 import XCTest
@@ -239,6 +240,130 @@ final class FeatureLogicTests: XCTestCase {
                 AppSettings.self, from: JSONEncoder().encode(settings)
             ).launchAtLogin
         )
+    }
+
+    func testMobileAccessDefaultsOffAndRoundTrips() throws {
+        XCTAssertFalse(AppSettings().mobileAccessEnabled)
+        XCTAssertFalse(
+            try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8)).mobileAccessEnabled
+        )
+        var settings = AppSettings()
+        settings.mobileAccessEnabled = true
+        XCTAssertTrue(
+            try JSONDecoder().decode(
+                AppSettings.self, from: JSONEncoder().encode(settings)
+            ).mobileAccessEnabled
+        )
+    }
+
+    func testCompanionProtocolFixturesDecodeOnSwift() throws {
+        let fixtureURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("ProtocolFixtures/companion-v1.json")
+        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL))
+            as? [String: Any]
+        let requests = try XCTUnwrap(object?["requests"] as? [[String: Any]])
+        let decoded = try requests.map { request -> CompanionRequest in
+            try JSONDecoder().decode(
+                CompanionRequest.self,
+                from: JSONSerialization.data(withJSONObject: request)
+            )
+        }
+        XCTAssertEqual(decoded.map(\.method), [.statusGet, .chatCreate, .approvalRespond])
+        XCTAssertEqual(decoded[1].payload["mode"]?.string, "work")
+    }
+
+    func testCompanionPairingNonceExpiresAndCannotReplay() throws {
+        var store = CompanionPairingNonceStore()
+        let now = Date(timeIntervalSince1970: 1_000)
+        let first = try store.issue(now: now)
+        XCTAssertTrue(store.consume(first.nonce, now: now.addingTimeInterval(60)))
+        XCTAssertFalse(store.consume(first.nonce, now: now.addingTimeInterval(61)))
+
+        let expired = try store.issue(now: now)
+        XCTAssertFalse(store.consume(
+            expired.nonce,
+            now: now.addingTimeInterval(CompanionProtocolV1.pairingLifetime + 1)
+        ))
+    }
+
+    func testCompanionTokensAreHashedAndRevocable() throws {
+        var registry = CompanionDeviceRegistry(serviceID: "install-1")
+        let paired = try registry.pair(name: "Nahid's iPhone", platform: "iOS")
+        XCTAssertNotEqual(paired.device.tokenHash, paired.token)
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(registry.devices), as: UTF8.self)
+            .contains(paired.token))
+        XCTAssertEqual(registry.authenticate(paired.token)?.id, paired.device.id)
+        XCTAssertTrue(registry.revoke(deviceID: paired.device.id))
+        XCTAssertNil(registry.authenticate(paired.token))
+    }
+
+    func testCompanionCertificateIsValidX509AndUsesAFullFingerprint() throws {
+        let attributes: [CFString: Any] = [
+            kSecAttrKeyType: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrKeySizeInBits: 256,
+        ]
+        var error: Unmanaged<CFError>?
+        let privateKey = try XCTUnwrap(SecKeyCreateRandomKey(attributes as CFDictionary, &error))
+        let publicKey = try XCTUnwrap(SecKeyCopyPublicKey(privateKey))
+        let publicBytes = try XCTUnwrap(
+            SecKeyCopyExternalRepresentation(publicKey, &error) as Data?
+        )
+        let certificateData = try CompanionX509.makeCertificate(
+            publicKey: publicBytes,
+            privateKey: privateKey
+        )
+
+        XCTAssertNotNil(SecCertificateCreateWithData(nil, certificateData as CFData))
+        let fingerprint = CompanionCrypto.fingerprint(certificateData)
+        XCTAssertEqual(fingerprint.split(separator: ":").count, 32)
+    }
+
+    func testCompanionAuthorizationUtilitiesEnforceBounds() {
+        XCTAssertEqual(
+            Set(CompanionMethod.allCases),
+            Set([
+                .pairExchange, .statusGet, .chatsList, .chatGet, .chatSend, .chatCreate,
+                .activityList, .runStop, .approvalRespond, .schedulesList,
+                .scheduleRunNow, .scheduleSetEnabled,
+            ])
+        )
+        XCTAssertEqual(CompanionProtocolV1.maximumConnections, 4)
+        XCTAssertEqual(CompanionProtocolV1.maximumPayloadBytes, 256 * 1_024)
+
+        let now = Date(timeIntervalSince1970: 1_000)
+        var limiter = CompanionRateLimiter(maximumRequests: 2, window: 60)
+        XCTAssertTrue(limiter.allows("phone", now: now))
+        XCTAssertTrue(limiter.allows("phone", now: now.addingTimeInterval(1)))
+        XCTAssertFalse(limiter.allows("phone", now: now.addingTimeInterval(2)))
+        XCTAssertTrue(limiter.allows("phone", now: now.addingTimeInterval(61)))
+
+        var cache = CompanionIdempotencyCache(lifetime: 5, limit: 2)
+        let response = CompanionResponse.success(id: "request-1")
+        cache.insert(response, now: now)
+        XCTAssertEqual(cache.response(for: "request-1", now: now.addingTimeInterval(4)), response)
+        XCTAssertNil(cache.response(for: "request-1", now: now.addingTimeInterval(6)))
+    }
+
+    func testCompanionEventSanitizerDropsPrivateFieldsAndHiddenResults() {
+        let clean = CompanionEventSanitizer.sanitize(.object([
+            "message": .string("Visible answer"),
+            "api_key": .string("secret"),
+            "nested": .object([
+                "system_prompt": .string("private instructions"),
+                "raw_tool_result": .string("filesystem dump"),
+                "state": .string("running"),
+            ]),
+        ]))
+        guard case .object(let root) = clean,
+              case .object(let nested)? = root["nested"] else {
+            return XCTFail("sanitizer should preserve a safe object")
+        }
+        XCTAssertNil(root["api_key"])
+        XCTAssertNil(nested["system_prompt"])
+        XCTAssertNil(nested["raw_tool_result"])
+        XCTAssertEqual(nested["state"]?.string, "running")
     }
 
     func testRunDecodesScheduleProvenanceAndSavedMode() throws {
