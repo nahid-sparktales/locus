@@ -719,6 +719,15 @@ final class FeatureLogicTests: XCTestCase {
         assertColor(dark.permissionInk, hex: 0xD7A77E)
     }
 
+    func testComposerScheduleSymbolExistsOnSupportedMacOS() {
+        XCTAssertNotNil(
+            NSImage(
+                systemSymbolName: ComposerSymbols.schedule,
+                accessibilityDescription: "Schedule"
+            )
+        )
+    }
+
     func testSemanticTextColorsMeetNormalTextContrastAcrossPaperSurfaces() throws {
         let light = LocusTheme.palette(for: try XCTUnwrap(NSAppearance(named: .aqua)))
         let dark = LocusTheme.palette(for: try XCTUnwrap(NSAppearance(named: .darkAqua)))

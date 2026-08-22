@@ -223,6 +223,9 @@ struct WorkspaceView: View {
                 .environmentObject(model)
             }
 
+            WorkspaceActionsMenu()
+                .environmentObject(model)
+
         }
         // When the sidebar is absent this column begins at the window edge.
         // Keep its restore control beyond the native traffic-light cluster.
