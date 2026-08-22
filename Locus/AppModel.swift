@@ -139,6 +139,41 @@ final class AppModel: ObservableObject {
     @Published private(set) var chatGPTAccounts: [UUID: ChatGPTAccountResponse] = [:]
     @Published private(set) var chatGPTUsageByAccount: [UUID: ChatGPTUsageResponse] = [:]
     @Published private(set) var chatGPTLoginIDs: [UUID: String] = [:]
+
+    #if !LOCUS_APP_STORE
+    /// The ChatGPT-plan helpers ship as a downloadable component in the direct
+    /// download. Owned here so the account editor and the settings row observe
+    /// the same install rather than racing two of them.
+    let codexComponent = CodexComponentInstaller()
+    private var codexComponentBridge: AnyCancellable?
+    #endif
+
+    #if !LOCUS_APP_STORE
+    /// Installs the ChatGPT-plan component and then re-reads the account.
+    ///
+    /// The refresh is the point: the backend only reports `runtime_available`
+    /// again once it re-stats the helper path, and without this the user is
+    /// left looking at a sign-in button that is still disabled from the check
+    /// made before the component existed.
+    func installCodexComponent(for account: ProviderAccount) async {
+        codexComponent.install()
+        await codexComponent.waitForCompletion()
+        if case .installed = codexComponent.state {
+            await refreshChatGPTAccount(for: account)
+        }
+    }
+    #endif
+
+    /// True when a ChatGPT-plan sign-in is blocked only because the helper
+    /// component has not been downloaded yet — as opposed to the runtime being
+    /// present but broken, which needs a different message.
+    var chatGPTComponentMissing: Bool {
+        #if LOCUS_APP_STORE
+        false
+        #else
+        CodexComponent.bundledHelper == nil && !CodexComponent.isInstalled
+        #endif
+    }
     @Published private(set) var primaryAgentBehavior = AgentBehavior.primaryDefault()
     @Published private(set) var agentProfiles: [AgentProfile] = []
     @Published private(set) var agentTeams: [AgentTeam] = []
@@ -948,6 +983,17 @@ final class AppModel: ObservableObject {
             }
             Task { await bootstrap() }
         }
+
+        #if !LOCUS_APP_STORE
+        // `codexComponent` is a nested ObservableObject. A view holding
+        // `@EnvironmentObject var model: AppModel` subscribes to AppModel's
+        // publisher only, so without this the installer's progress and its
+        // final state never invalidate anything and the download UI sits
+        // frozen on "Download and Continue" while the work actually happens.
+        codexComponentBridge = codexComponent.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        #endif
     }
 
     var workspacePath: String {

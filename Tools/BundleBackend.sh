@@ -24,6 +24,20 @@ runtime="${resources}/AgentRuntime"
 source_package="${backend_root}/ollama_code"
 codex_cache="${LOCUS_CODEX_CACHE:-${repo_root}/.codex-app-server}"
 
+# Release is the direct download and the only configuration that fetches the
+# Codex helpers at runtime: they are ~270 MB installed and idle unless a
+# ChatGPT-plan account is signed in. Debug keeps them bundled so local ChatGPT
+# work needs no download, and ReleaseMAS must bundle them because the App Store
+# does not permit downloading executable code.
+# Both halves matter. Keying on the configuration alone would also strip the
+# helpers out of a LocusMAS build made with -configuration Release, which would
+# produce a sandboxed app that can neither bundle nor download them.
+if [[ -z "${LOCUS_BUNDLE_CODEX:-}" \
+    && "${CONFIGURATION:-}" == "Release" \
+    && "${TARGET_NAME:-}" == "Locus" ]]; then
+    LOCUS_BUNDLE_CODEX="component"
+fi
+
 if [[ "${mode}" == "skip" ]]; then
     echo "note: LOCUS_BUNDLE_MODE=skip — agent runtime not bundled."
     exit 0
@@ -71,21 +85,43 @@ write_provenance() {
 write_provenance
 
 bundle_codex_helper() {
-    [[ "${LOCUS_BUNDLE_CODEX:-build}" != "skip" ]] || return 0
+    # build      embed the helpers in the app (App Store build, local Debug)
+    # component  ship only the licence + provenance; the binaries are fetched
+    #            at runtime from the signed component published alongside the
+    #            release (direct download)
+    # skip       nothing at all, for fast local builds that never touch ChatGPT
+    local mode="${LOCUS_BUNDLE_CODEX:-build}"
+    [[ "${mode}" != "skip" ]] || return 0
     LOCUS_CODEX_ARCHS="${ARCHS:-$(/usr/bin/uname -m)}" \
         "${script_dir}/PrepareCodexAppServer.sh"
-    local helpers="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers"
-    local helper="${helpers}/codex"
-    local code_mode_host_helper="${helpers}/codex-code-mode-host"
-    /bin/mkdir -p "${helpers}"
-    copy_without_extended_metadata "${codex_cache}/bin/codex" "${helper}"
-    copy_without_extended_metadata "${codex_cache}/bin/codex-code-mode-host" "${code_mode_host_helper}"
+    # The provenance and the Apache-2.0 licence ship in every configuration.
+    # A component build still tells the user — and the distribution audit —
+    # exactly which upstream revision it will fetch and under what terms.
     copy_without_extended_metadata "${codex_cache}/PROVENANCE" "${resources}/CodexAppServerProvenance.txt"
     /bin/mkdir -p "${resources}/ThirdPartyLicenses/openai-codex-0.147.0"
     copy_without_extended_metadata "${codex_cache}/source-rust-v0.147.0/LICENSE" \
         "${resources}/ThirdPartyLicenses/openai-codex-0.147.0/LICENSE"
     copy_without_extended_metadata "${codex_cache}/source-rust-v0.147.0/NOTICE" \
         "${resources}/ThirdPartyLicenses/openai-codex-0.147.0/NOTICE"
+    if [[ "${mode}" == "component" ]]; then
+        echo "delivery=component" >> "${resources}/CodexAppServerProvenance.txt"
+        echo "note: Codex helpers are delivered as a downloadable component;" \
+            "run Tools/PackageComponents.sh to publish them."
+        return 0
+    fi
+    echo "delivery=bundled" >> "${resources}/CodexAppServerProvenance.txt"
+    local helpers="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers"
+    local helper="${helpers}/codex"
+    local code_mode_host_helper="${helpers}/codex-code-mode-host"
+    /bin/mkdir -p "${helpers}"
+    copy_without_extended_metadata "${codex_cache}/bin/codex" "${helper}"
+    copy_without_extended_metadata "${codex_cache}/bin/codex-code-mode-host" "${code_mode_host_helper}"
+    # OpenAI's release profile sets `strip = false` and defers stripping to
+    # packaging (see codex-rs/Cargo.toml). Locus never stripped, so every
+    # download carried ~73 MB of symbol table that nothing at runtime reads —
+    # OpenAI's own ChatGPT.app ships this binary stripped. Strip BEFORE
+    # signing: strip rewrites Mach-O bytes and invalidates a prior signature.
+    /usr/bin/strip -S -x "${helper}" "${code_mode_host_helper}"
     /bin/chmod 755 "${helper}" "${code_mode_host_helper}"
     clear_extended_metadata "${helpers}"
 

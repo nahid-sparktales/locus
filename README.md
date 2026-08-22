@@ -62,7 +62,7 @@ Locus starts with local Ollama and never silently switches to a paid route.
 | Account | Authentication | Notes |
 | --- | --- | --- |
 | Ollama | Local service | Default; model weights stay on your machine |
-| ChatGPT plan | OpenAI-managed browser sign-in | Uses eligible plan access, not an API key |
+| ChatGPT plan | OpenAI-managed browser sign-in | Uses eligible plan access, not an API key; needs a one-time component download |
 | OpenAI API | API key | Separate from ChatGPT plan usage and billing |
 | Claude | Anthropic API key | Native Anthropic messages route |
 | Kimi / Kimi Code | Moonshot API key | Standard and coding endpoints |
@@ -88,15 +88,25 @@ The direct-download build can optionally provide guarded Computer Control. It is
 - macOS 14 or newer
 - One model source: Ollama with a tool-capable model, an eligible ChatGPT plan, or a supported API account
 
-The release bundle includes its Python agent runtime and managed ChatGPT helpers. End users do not need Python, Homebrew, Rust, Codex CLI, the Codex app, or the ChatGPT app.
+The release bundle includes its Python agent runtime. End users do not need Python, Homebrew, Rust, Codex CLI, the Codex app, or the ChatGPT app.
+
+The helpers behind ChatGPT-plan accounts are a separate download. They are large, they are idle unless you sign in to a plan, and most people never need them — so Locus offers them the first time you add a ChatGPT-plan account rather than bundling them for everyone. See [ChatGPT plan support](#chatgpt-plan-support).
 
 ## Install
 
-1. Download `Locus-macOS.zip` from [locushost.co](https://locushost.co) or [GitHub Releases](https://github.com/nahid-sparktales/locus/releases/latest).
+1. Download `Locus-macOS.zip` (about 62 MB) from [locushost.co](https://locushost.co) or [GitHub Releases](https://github.com/nahid-sparktales/locus/releases/latest).
 2. Move Locus to Applications and open it.
 3. Choose a workspace and model, then start in Chat, Plan, or Build mode.
 
 Direct-download builds from 1.14.0 onward check the stable release channel and can install signed updates when Locus quits. Mac App Store installations use the App Store update service.
+
+## ChatGPT plan support
+
+ChatGPT-plan accounts are served by two helpers from OpenAI's Codex project. They come to about 268 MB installed and do nothing unless a plan is signed in, so the direct download does not carry them: Locus offers the component when you add a ChatGPT-plan account, downloads about 104 MB once, and keeps it until you remove it. Ollama, API-key and custom-endpoint accounts never download it.
+
+The component is signed by SparkTales. Because it lands outside the app's notarized seal, Locus verifies the archive's checksum and then checks each binary against SparkTales' code-signing identity before anything is moved into place or run — a payload that fails either check installs nothing and leaves any previous install untouched. Removing the component reclaims the space and can be undone by adding a plan account again.
+
+Mac App Store builds still bundle the helpers, because the App Store does not permit downloading executable code.
 
 ## Build from source
 
@@ -113,6 +123,8 @@ open Locus.xcodeproj
 ```
 
 Select the **Locus** scheme and run **My Mac**. The first build downloads the relocatable Python runtime and pinned Codex dependencies, then compiles the required helpers; later builds reuse those artifacts.
+
+The `Release` configuration deliberately does not embed the Codex helpers; it records in `CodexAppServerProvenance.txt` that they are component-delivered, and `Tools/PackageComponents.sh <output-directory>` builds, strips, signs and publishes them together with the `components.json` feed the app reads. `Debug` and `ReleaseMAS` still embed them, so local ChatGPT work needs no download. Override with `LOCUS_BUNDLE_CODEX=build|component|skip`.
 
 ### Tests
 
@@ -150,7 +162,7 @@ flutter build ios --simulator --no-codesign
 
 The SwiftUI app owns the interface, workspace access, native terminal, Keychain integration, and permission surfaces. A bundled Python service owns agent orchestration, model streaming, tools, sessions, and run persistence. They communicate over authenticated REST and WebSocket endpoints bound to `127.0.0.1`.
 
-ChatGPT-plan requests use a pinned Codex App Server child process over local JSONL/stdio while keeping Locus's permission manager and tool set in control.
+ChatGPT-plan requests use a pinned Codex App Server child process over local JSONL/stdio while keeping Locus's permission manager and tool set in control. In the direct download that child is the downloaded component; in the App Store build it is bundled. Either way the agent resolves it from one path that it re-checks on demand, so installing the component takes effect without restarting the agent or losing a session.
 
 ```text
 Locus/          SwiftUI application

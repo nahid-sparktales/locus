@@ -18,8 +18,6 @@
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
-	<key>CFBundleVersion</key>
-	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -33,14 +31,22 @@
 			</array>
 		</dict>
 	</array>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
-	<key>LocusGitHubOAuthClientID</key>
-	<string>$(LOCUS_GITHUB_OAUTH_CLIENT_ID)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
 	<key>LSMultipleInstancesProhibited</key>
 	<true/>
+	<key>LocusComponentFeedURL</key>
+	<string>https://github.com/nahid-sparktales/locus/releases/latest/download/components.json</string>
+	<key>LocusGitHubOAuthClientID</key>
+	<string>$(LOCUS_GITHUB_OAUTH_CLIENT_ID)</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_locus-remote._tcp</string>
+	</array>
 	<key>NSDocumentsFolderUsageDescription</key>
 	<string>Locus needs access to your Documents folder to open coding workspaces and start the local Ollama agent.</string>
 	<key>NSDownloadsFolderUsageDescription</key>
@@ -49,10 +55,6 @@
 	<string>© 2026 SparkTales Inc.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Locus uses your private network only when you enable Mobile Access and pair a phone.</string>
-	<key>NSBonjourServices</key>
-	<array>
-		<string>_locus-remote._tcp</string>
-	</array>
 	<key>SUAllowsAutomaticUpdates</key>
 	<true/>
 	<key>SUAutomaticallyUpdate</key>

@@ -2008,9 +2008,57 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+
+            componentsSection
         }
         .formStyle(.grouped)
     }
+
+#if LOCUS_APP_STORE
+    /// The App Store build bundles every helper it needs.
+    @ViewBuilder
+    private var componentsSection: some View { EmptyView() }
+#else
+    /// ChatGPT-plan support is the one piece of Locus that is fetched rather
+    /// than shipped. It is surfaced here so it can be reclaimed without hunting
+    /// through the account editor that installed it.
+    @ViewBuilder
+    private var componentsSection: some View {
+        Section("Components") {
+            if CodexComponent.isInstalled {
+                LabeledContent("ChatGPT plan support") {
+                    Text(componentSizeLabel)
+                        .foregroundStyle(LocusTheme.muted)
+                        .accessibilityIdentifier("settings.componentSize")
+                }
+                Button("Remove", role: .destructive) {
+                    Task { await model.codexComponent.remove() }
+                }
+                .accessibilityIdentifier("settings.removeComponent")
+                Text("Removing this frees the space now. Locus offers it again the next time you use a ChatGPT-plan account.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Label("ChatGPT plan support is not installed", systemImage: "shippingbox")
+                    .font(.locus(size: 10))
+                    .accessibilityIdentifier("settings.componentAbsent")
+                Text("Add a ChatGPT-plan account to download it. Ollama, API-key and custom-endpoint accounts do not need it.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var componentSizeLabel: String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowedUnits = [.useMB, .useGB]
+        let version = CodexComponent.installedVersion().map { " · \($0)" } ?? ""
+        return formatter.string(fromByteCount: CodexComponent.installedBytes()) + version
+    }
+#endif
 
     /// Everything a proxy test depends on, so editing any of it retires the
     /// last result rather than leaving it to describe a stale configuration.
