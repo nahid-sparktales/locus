@@ -1531,6 +1531,18 @@ struct SettingsView: View {
             }
 
             Section("Conversation") {
+                Picker("Store notes by", selection: $draft.notesScopeRaw) {
+                    ForEach(NotesScope.allCases) { scope in
+                        Text(scope.title).tag(scope.rawValue)
+                    }
+                }
+                .accessibilityIdentifier("settings.notesScope")
+
+                Text("Workspace notes are shared by every chat in the current project. Choose Each chat for separate scratchpads; existing chat notes remain available when you switch back.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 Picker(
                     "Solo requests — Context & Plan",
                     selection: $draft.soloPlanPresentationRaw

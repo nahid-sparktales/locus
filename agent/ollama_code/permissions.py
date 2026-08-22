@@ -484,6 +484,12 @@ def build_preview(
     if name == "browser_read_page":
         scope = str(args.get("ref_id") or "")
         return f"read the page{f' below {scope}' if scope else ''}", ""
+    if name == "notes_read":
+        return "read Notes", ""
+    if name == "notes_update":
+        action = str(args.get("action") or "replace")
+        content = str(args.get("text") or "")
+        return f"{action} Notes", content
     if name == "browser_input":
         action = str(args.get("action") or "click")
         target = str(args.get("ref") or args.get("from_ref") or args.get("key") or "")

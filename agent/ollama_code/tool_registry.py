@@ -28,9 +28,9 @@ _MODERN_MCP_TOOLS = {
 _KNOWLEDGE_TOOLS = {"search_workspace_knowledge"}
 _WORKSPACE_READ_TOOLS = {
     "read_file", "glob", "grep", "list_dir", "git_status", "git_diff",
-    "search_workspace_knowledge", "load_skill", "read_skill_file",
+    "search_workspace_knowledge", "load_skill", "read_skill_file", "notes_read",
 }
-_WORKSPACE_WRITE_TOOLS = {"write_file", "edit_file", "multi_edit"}
+_WORKSPACE_WRITE_TOOLS = {"write_file", "edit_file", "multi_edit", "notes_update"}
 _SHELL_TOOLS = {"bash", "background_service"}
 
 
@@ -397,6 +397,42 @@ _BROWSER_TOOL_NAMES = {
 }
 
 
+NOTES_TOOL_SCHEMAS = [
+    _schema(
+        "notes_read",
+        "Read the Locus Notes document for this chat. Its owner is selected by the "
+        "app's Workspace or Each chat setting; you cannot choose another workspace or chat.",
+        {
+            "max_chars": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 30_000,
+                "description": "Maximum characters to return; defaults to 30000.",
+            },
+        },
+        [],
+    ),
+    _schema(
+        "notes_update",
+        "Replace or append to the Locus Notes document for this chat. Use append to "
+        "preserve existing notes; use replace only when the requested final document is known.",
+        {
+            "action": {"type": "string", "enum": ["append", "replace"]},
+            "text": {
+                "type": "string",
+                "description": "Text to append or the complete replacement document.",
+            },
+        },
+        ["action", "text"],
+    ),
+]
+
+_READ_ONLY_NOTES_TOOLS = {"notes_read"}
+_NOTES_TOOL_NAMES = {
+    schema["function"]["name"] for schema in NOTES_TOOL_SCHEMAS
+}
+
+
 def _qualified_tool_name(server_name: str, tool_name: str, server_id: str) -> str:
     def clean(value: str) -> str:
         return re.sub(r"[^a-zA-Z0-9_-]+", "_", value).strip("_")[:48] or "tool"
@@ -438,6 +474,9 @@ class ToolRegistry:
         #: settings*, but defaulting it on here would make the headless CLI and
         #: every evaluation core advertise tools whose executor is ``None``.
         self.browser_enabled = False
+        #: Notes live in the native app, so the headless CLI must not advertise
+        #: these schemas until a connected Locus instance announces its broker.
+        self.notes_enabled = False
         self.refresh()
 
     def refresh(self) -> None:
@@ -602,6 +641,10 @@ class ToolRegistry:
             schema for schema in self.browser_schemas()
             if self._user_allows(schema["function"]["name"])
         )
+        schemas.extend(
+            schema for schema in self.notes_schemas()
+            if self._user_allows(schema["function"]["name"])
+        )
         if (
             self._solo_swarm_enabled
             and self._agent_access_ceiling != "read_only"
@@ -655,6 +698,21 @@ class ToolRegistry:
             return False
         if self._agent_access_ceiling == "read_only":
             return name in _READ_ONLY_BROWSER_TOOLS
+        return True
+
+    def notes_schemas(self) -> list[dict[str, Any]]:
+        if not self.notes_enabled:
+            return []
+        return [
+            schema for schema in NOTES_TOOL_SCHEMAS
+            if self.notes_tool_allowed(schema["function"]["name"])
+        ]
+
+    def notes_tool_allowed(self, name: str) -> bool:
+        if not self.notes_enabled or name not in _NOTES_TOOL_NAMES:
+            return False
+        if self._agent_access_ceiling == "read_only":
+            return name in _READ_ONLY_NOTES_TOOLS
         return True
 
     def schema_tokens(self) -> int:
@@ -868,6 +926,8 @@ class ToolRegistry:
             return True
         if self.browser_enabled and name in _READ_ONLY_BROWSER_TOOLS:
             return True
+        if self.notes_enabled and name in _READ_ONLY_NOTES_TOOLS:
+            return True
         if name in _SAFE_EXTENSION_TOOLS and (
             name not in _MODERN_MCP_TOOLS or capability_enabled("modern_mcp")
         ):
@@ -940,6 +1000,11 @@ class ToolRegistry:
                 "origin": "browser",
                 "annotations": {"readOnlyHint": name in _READ_ONLY_BROWSER_TOOLS},
             }
+        if self.notes_enabled and name in _NOTES_TOOL_NAMES:
+            return {
+                "origin": "notes",
+                "annotations": {"readOnlyHint": name in _READ_ONLY_NOTES_TOOLS},
+            }
         if name in _SAFE_EXTENSION_TOOLS:
             return {"origin": "extension", "annotations": {"readOnlyHint": True}}
         tool = self._mcp_by_qualified.get(name)
@@ -963,6 +1028,7 @@ class ToolRegistry:
         if self.computer_enabled and self._agent_access_ceiling != "read_only":
             base_schemas.extend(COMPUTER_TOOL_SCHEMAS)
         base_schemas.extend(self.browser_schemas())
+        base_schemas.extend(self.notes_schemas())
         for schema in base_schemas:
             fn = schema["function"]
             out.append({
@@ -976,6 +1042,7 @@ class ToolRegistry:
                     "builtin" if schema in TOOL_SCHEMAS
                     else "native" if schema in COMPUTER_TOOL_SCHEMAS
                     else "browser" if schema in BROWSER_TOOL_SCHEMAS
+                    else "notes" if schema in NOTES_TOOL_SCHEMAS
                     else "extension"
                 ),
                 "active": True,
@@ -984,6 +1051,7 @@ class ToolRegistry:
                     "readOnlyHint": fn["name"] in _SAFE_EXTENSION_TOOLS
                     or fn["name"] in _READ_ONLY_COMPUTER_TOOLS
                     or fn["name"] in _READ_ONLY_BROWSER_TOOLS
+                    or fn["name"] in _READ_ONLY_NOTES_TOOLS
                 },
             })
         for name, tool in sorted(self._mcp_by_qualified.items()):
@@ -1009,5 +1077,6 @@ __all__ = [
     "BROWSER_TOOL_SCHEMAS",
     "COMPUTER_TOOL_SCHEMAS",
     "EXTENSION_TOOL_SCHEMAS",
+    "NOTES_TOOL_SCHEMAS",
     "ToolRegistry",
 ]

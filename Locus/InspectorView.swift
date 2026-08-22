@@ -33,9 +33,14 @@ struct InspectorView: View {
                 case .notes:
                     InspectorNotesTab(
                         workspacePath: model.workspacePath,
-                        sessionID: model.currentSessionID
+                        sessionID: model.currentSessionID,
+                        scope: model.settings.resolvedNotesScope
                     )
-                    .id(model.workspacePath + "\u{0}" + model.currentSessionID)
+                    .id(NotesStore.storageIdentity(
+                        workspacePath: model.workspacePath,
+                        sessionID: model.currentSessionID,
+                        scope: model.settings.resolvedNotesScope
+                    ))
                 case .checkpoints:
                     InspectorCheckpointsTab()
                 case .runs:

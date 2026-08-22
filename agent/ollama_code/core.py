@@ -387,6 +387,7 @@ class AgentCore:
         self._last_turn_allowed_tools = True
         self.computer_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self.browser_executor: Callable[[str, dict[str, Any], str], str] | None = None
+        self.notes_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self._pending_computer_screenshot: dict[str, str] | None = None
         self._ax_only_routes: set[str] = set()
         self._suppress_turn_done = False
@@ -2592,6 +2593,13 @@ class AgentCore:
                     result = "Error: the browser is unavailable."
                 else:
                     result = self.browser_executor(tc.name, tc.arguments, call_id)
+            elif info.get("origin") == "notes":
+                if not self.tool_registry.notes_tool_allowed(tc.name):
+                    result = "Error: this agent is read-only and cannot update Notes."
+                elif self.notes_executor is None:
+                    result = "Error: Notes are unavailable."
+                else:
+                    result = self.notes_executor(tc.name, tc.arguments, call_id)
             else:
                 result = (
                     execute_tool(tc.name, tc.arguments, self.tool_ctx)

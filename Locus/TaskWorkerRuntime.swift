@@ -37,6 +37,7 @@ struct ChatAdmissionQueue {
 @MainActor
 final class ChatWorkerRuntime {
     let requestedSessionID: String
+    let workspacePath: String
     var sessionID: String
     let process: BackendProcess
     let service: BackendService
@@ -66,8 +67,14 @@ final class ChatWorkerRuntime {
         }
     }
 
-    init(requestedSessionID: String, process: BackendProcess, endpoint: URL) {
+    init(
+        requestedSessionID: String,
+        workspacePath: String,
+        process: BackendProcess,
+        endpoint: URL
+    ) {
         self.requestedSessionID = requestedSessionID
+        self.workspacePath = SessionSummary.canonicalWorkspacePath(workspacePath)
         sessionID = requestedSessionID
         self.process = process
         service = BackendService(baseURL: endpoint)

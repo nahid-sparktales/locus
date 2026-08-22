@@ -840,6 +840,7 @@ final class AppModel: ObservableObject {
                     self.browser.defaultViewport = self.settings.resolvedBrowserViewport.size
                     self.applyBrowserSettings(self.settings)
                     self.announceBrowserCapability()
+                    self.sendNotesCapability(to: self.backend)
                     self.syncPreferredPermissionMode(to: self.backend)
                     if let runID = self.orchestrationRunID {
                         Task { @MainActor [weak self] in
@@ -9316,6 +9317,52 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Read or update the notes document owned by the requesting chat.
+    ///
+    /// Like Browser, requests from background workers are answered on their
+    /// own transport and never switch the foreground conversation. Unlike
+    /// Browser, callers cannot supply a path: the runtime that owns the socket
+    /// supplies the workspace and the app-wide setting supplies the scope.
+    @discardableResult
+    func runNotesAction(
+        _ event: [String: Any],
+        workspacePath requestedWorkspacePath: String? = nil,
+        reply: @escaping @MainActor ([String: Any]) -> Void
+    ) -> Task<Void, Never>? {
+        guard let requestID = event["request_id"] as? String,
+              let tool = event["tool"] as? String,
+              let arguments = event["arguments"] as? [String: Any]
+        else { return nil }
+        let sessionID = (event["session_id"] as? String) ?? currentSessionID
+        let ownerWorkspace = requestedWorkspacePath ?? workspacePath
+        return Task { @MainActor [weak self] in
+            guard let self else { return }
+            if sessionID == self.currentSessionID {
+                self.selectInspectorTab(.notes)
+            }
+            let store = NotesStore.shared(
+                workspacePath: ownerWorkspace,
+                sessionID: sessionID,
+                scope: self.settings.resolvedNotesScope
+            )
+            reply([
+                "type": "notes_action_result",
+                "request_id": requestID,
+                "result": store.perform(tool: tool, arguments: arguments),
+            ])
+        }
+    }
+
+    private func runNotesAction(
+        _ event: [String: Any],
+        workspacePath: String,
+        on transport: BackendService
+    ) {
+        runNotesAction(event, workspacePath: workspacePath) { payload in
+            _ = transport.send(payload)
+        }
+    }
+
     func setComputerControlEnabled(_ enabled: Bool) {
         guard ComputerControlService.isAvailable else {
             settings.computerControlEnabled = false
@@ -9381,6 +9428,16 @@ final class AppModel: ObservableObject {
         if !delivered || isBusy {
             pendingBrowserCapabilityTransports.append(transport)
         }
+    }
+
+    /// Notes are a native app surface, so headless agents should not advertise
+    /// its tools. Every live Locus transport gets this handshake once it is
+    /// connected; the actual workspace and scope stay enforced in Swift.
+    private func sendNotesCapability(to transport: BackendService) {
+        _ = transport.send([
+            "type": "set_notes_control",
+            "enabled": true,
+        ])
     }
 
     /// Re-announce anything the agent refused while it was busy.
@@ -9567,6 +9624,7 @@ final class AppModel: ObservableObject {
         }
         let runtime = ChatWorkerRuntime(
             requestedSessionID: requestedSessionID,
+            workspacePath: workspaceRoot,
             process: process,
             endpoint: endpoint
         )
@@ -9639,6 +9697,7 @@ final class AppModel: ObservableObject {
             // which knows nothing about the capability until it is told again.
             guard connected, let self, let runtime else { return }
             self.sendBrowserCapability(to: runtime.service)
+            self.sendNotesCapability(to: runtime.service)
             self.syncPreferredPermissionMode(to: runtime.service)
         }
         runtime.service.onEvent = { [weak self, weak runtime] event in
@@ -9726,6 +9785,7 @@ final class AppModel: ObservableObject {
         }
         sendComputerControlCapability(to: runtime.service)
         sendBrowserCapability(to: runtime.service)
+        sendNotesCapability(to: runtime.service)
         syncPreferredPermissionMode(to: runtime.service)
         syncBrowserProtectedSessions()
         return runtime
@@ -9899,6 +9959,13 @@ final class AppModel: ObservableObject {
             // way a computer action is parked would leave the worker blocked
             // until somebody opened its conversation.
             runBrowserAction(event, on: runtime.service)
+        }
+        if type == "notes_action_request" {
+            runNotesAction(
+                event,
+                workspacePath: runtime.workspacePath,
+                on: runtime.service
+            )
         }
         if type == "error" {
             state = .failed
@@ -11067,6 +11134,14 @@ final class AppModel: ObservableObject {
         case "browser_control_status":
             if (event["enabled"] as? Bool) != true, settings.browserEnabled {
                 showToast("The browser is unavailable from the native broker")
+            }
+
+        case "notes_action_request":
+            runNotesAction(event, workspacePath: workspacePath, on: conversationBackend)
+
+        case "notes_control_status":
+            if (event["enabled"] as? Bool) != true {
+                showToast("Notes are unavailable from the native broker")
             }
 
         case "todo_update":

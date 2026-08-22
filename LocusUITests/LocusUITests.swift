@@ -619,6 +619,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(anyElement("settings.autoLaunch").exists)
         XCTAssertFalse(anyElement("settings.retryLocalServices").exists)
         XCTAssertFalse(anyElement("settings.enterSendsMessages").exists)
+        XCTAssertTrue(anyElement("settings.notesScope").exists)
         XCTAssertTrue(anyElement("settings.soloPlanPresentation").exists)
         XCTAssertTrue(anyElement("settings.teamRunsPresentation").exists)
     }
