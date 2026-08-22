@@ -3153,6 +3153,103 @@ def test_browser_tools_report_unavailable_rather_than_leaking_the_tool_list(tmp_
     assert results and results[0]["result"] == "Error: the browser is unavailable."
 
 
+def test_notes_tools_require_the_native_broker_and_respect_read_only_agents(tmp_path):
+    core = _core(tmp_path, [ChatResponse(content_parts=["ok"], done=True)])
+
+    def names():
+        return {schema["function"]["name"] for schema in core.tool_registry.schemas()}
+
+    assert core.tool_registry.notes_enabled is False
+    assert "notes_read" not in names()
+
+    core.tool_registry.notes_enabled = True
+    assert {"notes_read", "notes_update"} <= names()
+
+    core.tool_registry.set_mcp_agent_policy({}, access_ceiling="read_only", role="reviewer")
+    assert "notes_read" in names()
+    assert "notes_update" not in names()
+    assert core.tool_registry.notes_tool_allowed("notes_read")
+    assert not core.tool_registry.notes_tool_allowed("notes_update")
+
+
+def test_notes_tool_reaches_the_native_bridge(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(tool_calls=[ToolCall("notes_read", {"max_chars": 1200})], done=True),
+        ChatResponse(content_parts=["done"], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    core.tool_registry.notes_enabled = True
+    calls = []
+    core.notes_executor = lambda name, args, request_id: calls.append((name, args)) or "project note"
+
+    core.run_turn("read my notes")
+
+    assert calls == [("notes_read", {"max_chars": 1200})]
+
+
+def test_notes_updates_follow_the_write_permission_policy(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(
+            tool_calls=[ToolCall(
+                "notes_update", {"action": "append", "text": "Release on Friday"}
+            )],
+            done=True,
+        ),
+        ChatResponse(content_parts=["done"], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    core.tool_registry.notes_enabled = True
+    calls = []
+    core.notes_executor = lambda name, args, request_id: calls.append(name) or "Appended"
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn("remember this", lambda name, summary, detail, request_id: "once")
+
+    assert calls == ["notes_update"]
+    request = next(event for event in events if event["type"] == "permission_request")
+    assert request["summary"] == "append Notes"
+    assert request["detail"] == "Release on Friday"
+
+
+def test_read_only_agent_guessing_notes_update_is_refused(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(
+            tool_calls=[ToolCall("notes_update", {"action": "append", "text": "secret"})],
+            done=True,
+        ),
+        ChatResponse(content_parts=["done"], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    core.tool_registry.notes_enabled = True
+    core.tool_registry.set_mcp_agent_policy({}, access_ceiling="read_only", role="reviewer")
+    core.perms.set_mode("bypass")
+    calls = []
+    core.notes_executor = lambda name, args, request_id: calls.append(name) or "updated"
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn("change my notes")
+
+    assert calls == []
+    result = next(event for event in events if event["type"] == "tool_result")
+    assert "read-only" in result["result"]
+
+
+def test_notes_permission_preview_shows_the_proposed_text():
+    summary, detail = build_preview(
+        "notes_update", {"action": "append", "text": "Remember the release checklist."}
+    )
+    assert summary == "append Notes"
+    assert detail == "Remember the release checklist."
+
+
 def test_browsing_ordinary_urls_is_neither_blocked_nor_confirmation_gated():
     perms = PermissionManager(mode="bypass")
     # Every one of these trips the computer-control vocabulary, and every one is
@@ -3505,6 +3602,46 @@ def test_dev_server_tool_never_crosses_the_socket(client):
     result = svc.execute_browser("browser_dev_server", {"action": "status"}, "req-1")
     assert result == "No managed background services are running."
     assert svc.pending_browser_actions == {}
+
+
+def test_notes_bridge_round_trips_one_result_per_request(client):
+    with client.websocket_connect("/ws/chat") as ws:
+        assert ws.receive_json()["type"] == "session_info"
+        ws.send_json({"type": "set_notes_control", "enabled": True})
+        events = drain(ws)
+        assert {"type": "notes_control_status", "enabled": True} in [
+            {"type": event.get("type"), "enabled": event.get("enabled")}
+            for event in events
+        ]
+
+        service = client.app.state.service
+        completed: list[str] = []
+        thread = threading.Thread(
+            target=lambda: completed.append(
+                service.execute_notes("notes_read", {"max_chars": 500}, "notes-req-1")
+            )
+        )
+        thread.start()
+        request = ws.receive_json()
+        assert request["type"] == "notes_action_request"
+        assert request["session_id"] == service.core.session.session_id
+        assert request["arguments"] == {"max_chars": 500}
+        ws.send_json({
+            "type": "notes_action_result",
+            "request_id": "notes-req-1",
+            "result": {"text": "Shared workspace context"},
+        })
+        thread.join(timeout=3)
+
+        assert completed == ["Shared workspace context"]
+        assert service.pending_notes_actions == {}
+        # A duplicate/late answer is intentionally ignored.
+        ws.send_json({
+            "type": "notes_action_result",
+            "request_id": "notes-req-1",
+            "result": {"text": "duplicate"},
+        })
+        assert drain(ws) == []
 
 
 def test_dev_server_permission_posture():

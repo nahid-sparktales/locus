@@ -635,6 +635,8 @@ Endpoint: `/ws/chat`.
 | `computer_action_result` | `request_id: string`, `result: object` | Completes one pending native broker request. `result` may contain `text`, `error`, and optional `screenshot` metadata/data. Late, duplicate, and unknown IDs are ignored after cancellation or timeout. |
 | `set_browser_control` | `enabled: boolean` | Advertises the native browser broker. Browser tools enter model schemas only while true. Rejected while a turn is busy, so the client re-sends after `turn_done`. Unlike computer control there is no `native_available`: a web view needs no special access and is present in every build. |
 | `browser_action_result` | `request_id: string`, `result: object` | Completes one pending browser request. `result` may contain `text`, `error`, and optional `screenshot` metadata/data. Late, duplicate, and unknown IDs are ignored after cancellation or timeout. |
+| `set_notes_control` | `enabled: boolean` | Advertises the native Notes broker. `notes_read` and `notes_update` enter model schemas only while true; read-only routes receive only `notes_read`. The native app, not the model, resolves the workspace/chat owner and current scope. Rejected while a turn is busy. |
+| `notes_action_result` | `request_id: string`, `result: object` | Completes one pending Notes request. `result` contains `text` or `error`; late, duplicate, and unknown IDs are ignored after cancellation or timeout. |
 | `set_model` | `model: string` | Switches model (substring match allowed). Emits `session_info` on success, `command_error` if rejected. Persisted to config. |
 | `set_cwd` | `path: string` | Changes the agent working directory. Emits `session_info` on success, `command_error` otherwise. |
 | `set_permission_mode` | `mode: "ask" \| "accept_edits" \| "bypass"` | Changes the permission mode while idle and emits `session_info`. |
@@ -805,6 +807,26 @@ Unlike computer control, a browser request from a background team worker is
 served immediately and answered on that worker's own socket rather than being
 held until the user opens its conversation: driving a web view takes nothing
 away from the person at the keyboard.
+
+### `notes_control_status` / `notes_action_request`
+
+`notes_control_status {enabled}` acknowledges the native Notes capability.
+When enabled, a Notes tool call emits:
+
+```json
+{ "type": "notes_action_request", "request_id": "...",
+  "tool": "notes_read", "arguments": {"max_chars": 30000},
+  "timeout_ms": 15000, "session_id": "..." }
+```
+
+The worker accepts exactly one matching `notes_action_result` and times out
+after 15 seconds. Interrupt, orchestration cancellation, and socket teardown
+cancel pending requests. `notes_read` is available to read-only routes;
+`notes_update` follows the normal write permission decision and is omitted from
+read-only schemas. Requests never contain a workspace path or scope. The native
+app derives both from the requesting socket/session and its saved Workspace or
+Each chat setting, then answers background workers without changing the
+foreground chat.
 
 ### Team orchestration and scheduler events
 

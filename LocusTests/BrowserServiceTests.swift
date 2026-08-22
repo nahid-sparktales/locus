@@ -743,3 +743,171 @@ final class BrowserSettingsTests: XCTestCase {
         XCTAssertTrue(decoded.browserEnabled)
     }
 }
+
+@MainActor
+final class NotesStoreTests: XCTestCase {
+    private func temporaryDirectory(_ name: String = UUID().uuidString) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LocusNotesTests", isDirectory: true)
+            .appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: url,
+            withIntermediateDirectories: true
+        )
+        return url
+    }
+
+    func testWorkspaceIsTheDefaultAndScopeSettingsRoundTripSafely() throws {
+        XCTAssertEqual(AppSettings().resolvedNotesScope, .workspace)
+        XCTAssertEqual(
+            try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8)).resolvedNotesScope,
+            .workspace
+        )
+
+        var settings = AppSettings()
+        settings.notesScopeRaw = NotesScope.chat.rawValue
+        let restored = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONEncoder().encode(settings)
+        )
+        XCTAssertEqual(restored.resolvedNotesScope, .chat)
+
+        let future = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data(#"{"notesScopeRaw":"account"}"#.utf8)
+        )
+        XCTAssertEqual(future.resolvedNotesScope, .workspace)
+    }
+
+    func testWorkspaceNotesAreSharedWhileChatNotesRemainSeparateAndLegacyCompatible() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = root.appendingPathComponent("Project", isDirectory: true)
+        let support = root.appendingPathComponent("Application Support", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+
+        let workspaceOne = NotesStore.testingStore(
+            workspacePath: workspace.path,
+            sessionID: "chat-one",
+            scope: .workspace,
+            applicationSupport: support
+        )
+        XCTAssertNil(workspaceOne.perform(
+            tool: "notes_update",
+            arguments: ["action": "replace", "text": "Shared project facts"]
+        )["error"])
+        let workspaceTwo = NotesStore.testingStore(
+            workspacePath: workspace.path,
+            sessionID: "chat-two",
+            scope: .workspace,
+            applicationSupport: support
+        )
+        XCTAssertEqual(workspaceTwo.text, "Shared project facts")
+        XCTAssertEqual(workspaceOne.fileURL, workspaceTwo.fileURL)
+        XCTAssertEqual(workspaceOne.fileURL.deletingLastPathComponent().lastPathComponent, "Workspace Notes")
+
+        let chatOne = NotesStore.testingStore(
+            workspacePath: workspace.path,
+            sessionID: "chat-one",
+            scope: .chat,
+            applicationSupport: support
+        )
+        _ = chatOne.perform(
+            tool: "notes_update",
+            arguments: ["action": "replace", "text": "Private scratchpad"]
+        )
+        let chatTwo = NotesStore.testingStore(
+            workspacePath: workspace.path,
+            sessionID: "chat-two",
+            scope: .chat,
+            applicationSupport: support
+        )
+        XCTAssertEqual(chatTwo.text, "")
+        XCTAssertNotEqual(chatOne.fileURL, chatTwo.fileURL)
+        XCTAssertEqual(chatOne.fileURL.deletingLastPathComponent().lastPathComponent, "Chat Notes")
+    }
+
+    func testModelNotesActionsAppendReadAndEnforceBounds() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = NotesStore.testingStore(
+            workspacePath: root.path,
+            sessionID: "chat",
+            scope: .workspace,
+            applicationSupport: root
+        )
+
+        _ = store.perform(
+            tool: "notes_update",
+            arguments: ["action": "replace", "text": "First"]
+        )
+        let appended = store.perform(
+            tool: "notes_update",
+            arguments: ["action": "append", "text": "Second"]
+        )
+        XCTAssertEqual(store.text, "First\nSecond")
+        XCTAssertEqual(appended["character_count"] as? Int, 12)
+
+        let read = store.perform(tool: "notes_read", arguments: ["max_chars": 5])
+        XCTAssertEqual(read["truncated"] as? Bool, true)
+        XCTAssertTrue((read["text"] as? String)?.hasPrefix("First") == true)
+
+        let tooLarge = store.perform(
+            tool: "notes_update",
+            arguments: [
+                "action": "replace",
+                "text": String(repeating: "x", count: NotesStore.maximumCharacters + 1),
+            ]
+        )
+        XCTAssertNotNil(tooLarge["error"])
+        XCTAssertEqual(store.text, "First\nSecond")
+    }
+}
+
+@MainActor
+final class NotesActionRoutingTests: XCTestCase {
+    func testNotesActionsUseTheRequestingWorkspaceWithoutPullingBackgroundFocus() async throws {
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LocusNotesRouting-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let model = AppModel(startImmediately: false)
+        model.settings.notesScopeRaw = NotesScope.workspace.rawValue
+        model.currentSessionID = "foreground"
+        model.selectInspectorTab(.files)
+        var replies: [[String: Any]] = []
+
+        let foreground = model.runNotesAction([
+            "request_id": "notes-write",
+            "tool": "notes_update",
+            "arguments": ["action": "replace", "text": "Release on Friday"],
+            "session_id": "foreground",
+        ], workspacePath: workspace.path) { replies.append($0) }
+        await foreground?.value
+
+        XCTAssertEqual(model.inspectorTab, .notes)
+        XCTAssertEqual(replies.first?["type"] as? String, "notes_action_result")
+        let liveStore = NotesStore.shared(
+            workspacePath: workspace.path,
+            sessionID: "foreground",
+            scope: .workspace
+        )
+        defer { try? FileManager.default.removeItem(at: liveStore.fileURL) }
+        XCTAssertEqual(liveStore.text, "Release on Friday")
+
+        model.selectInspectorTab(.files)
+        replies.removeAll()
+        let background = model.runNotesAction([
+            "request_id": "notes-read",
+            "tool": "notes_read",
+            "arguments": [:],
+            "session_id": "background",
+        ], workspacePath: workspace.path) { replies.append($0) }
+        await background?.value
+
+        let result = try XCTUnwrap(replies.first?["result"] as? [String: Any])
+        XCTAssertEqual(result["text"] as? String, "Release on Friday")
+        XCTAssertEqual(model.inspectorTab, .files, "background Notes access must not pull focus")
+    }
+}

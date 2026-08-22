@@ -1920,6 +1920,31 @@ enum AutomaticInspectorPresentation: String, CaseIterable, Identifiable {
     }
 }
 
+/// Which conversation context owns the text shown in the Notes inspector.
+///
+/// The raw value is persisted instead of the enum itself so settings written
+/// by a future build can fall back without invalidating every other setting.
+enum NotesScope: String, CaseIterable, Identifiable {
+    case workspace
+    case chat
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .workspace: "Workspace"
+        case .chat: "Each chat"
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .workspace: "Notes for this workspace"
+        case .chat: "Notes for this chat"
+        }
+    }
+}
+
 struct AppSettings: Codable, Hashable {
     var backendURL = "http://127.0.0.1:8791"
     var backendRoot = NSString(string: "~/Documents/locus/agent").expandingTildeInPath
@@ -1997,6 +2022,10 @@ struct AppSettings: Codable, Hashable {
     /// Compact by default so tool-heavy requests do not overwhelm the answer.
     /// Stored raw so a future mode cannot invalidate the rest of the settings.
     var toolActivityVisibilityRaw = ToolActivityVisibility.collapsed.rawValue
+    /// Notes belong to the workspace by default, so useful project context is
+    /// still present in a fresh chat. People who prefer scratchpads can scope
+    /// them back to individual chats from General settings.
+    var notesScopeRaw = NotesScope.workspace.rawValue
     /// Optional status controls stay out of the header until the user asks for
     /// them, leaving the widest possible title and model-selection area.
     var showTeamProgressInHeader = false
@@ -2191,6 +2220,10 @@ struct AppSettings: Codable, Hashable {
         ToolActivityVisibility(rawValue: toolActivityVisibilityRaw) ?? .collapsed
     }
 
+    var resolvedNotesScope: NotesScope {
+        NotesScope(rawValue: notesScopeRaw) ?? .workspace
+    }
+
     var preferredPermissionMode: PermissionMode? {
         PermissionMode(rawValue: permissionModeRaw)
     }
@@ -2289,6 +2322,8 @@ struct AppSettings: Codable, Hashable {
             String.self,
             forKey: .toolActivityVisibilityRaw
         ) ?? defaults.toolActivityVisibilityRaw
+        notesScopeRaw = try container.decodeIfPresent(String.self, forKey: .notesScopeRaw)
+            ?? defaults.notesScopeRaw
         showTeamProgressInHeader = try container.decodeIfPresent(
             Bool.self,
             forKey: .showTeamProgressInHeader
