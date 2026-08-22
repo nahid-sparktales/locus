@@ -1,5 +1,9 @@
 import SwiftUI
 
+enum ComposerSymbols {
+    static let schedule = "calendar.badge.plus"
+}
+
 struct ComposerView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -728,8 +732,9 @@ struct ComposerView: View {
             Button {
                 model.presentScheduleEditor(prompt: model.draftText)
             } label: {
-                Image(systemName: "clock.badge.plus")
+                Image(systemName: ComposerSymbols.schedule)
                     .font(.locus(size: 11, weight: .semibold))
+                    .foregroundStyle(LocusTheme.ink)
                     .frame(width: 29, height: 27)
                     .background(LocusTheme.paperDeep.opacity(0.75))
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -826,10 +831,23 @@ struct ComposerView: View {
                 } label: {
                     Image(systemName: "arrow.up")
                         .font(.locus(size: 13, weight: .bold))
-                        .foregroundStyle(canSubmit ? LocusTheme.signal : LocusTheme.paper)
+                        .foregroundStyle(canSubmit ? LocusTheme.brandInk : LocusTheme.muted)
                         .frame(width: 30, height: 30)
-                        .background(LocusTheme.ink.opacity(canSubmit ? 1 : 0.22))
+                        .background(
+                            canSubmit
+                                ? LocusTheme.signal
+                                : LocusTheme.paperDeep.opacity(0.75)
+                        )
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(
+                                    canSubmit
+                                        ? LocusTheme.signalDeep.opacity(0.45)
+                                        : LocusTheme.line,
+                                    lineWidth: 1
+                                )
+                        }
                 }
                 .buttonStyle(.locus())
                 .disabled(!canSubmit || model.hasPendingPermission)

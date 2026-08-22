@@ -940,11 +940,38 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("inspector.rail.plan").exists, "the rail returns with agentic modes")
     }
 
-    func testRailOmitsDuplicateSettingsAndSidebarSettingsMenuIsAvailable() {
+    func testWorkspaceActionsSitBesideModelPickerAndRailMoreMenuRestoresTabs() {
         XCTAssertTrue(anyElement("inspector.rail.notes").waitForExistence(timeout: 3))
-        XCTAssertFalse(anyElement("inspector.rail.more").exists)
+        let more = anyElement("inspector.rail.more")
+        XCTAssertTrue(more.exists)
         XCTAssertFalse(anyElement("inspector.rail.settings").exists)
         XCTAssertFalse(anyElement("inspector.rail.toggle").exists)
+
+        let modelPicker = anyElement("workspace.modelPicker")
+        let workspaceActions = anyElement("workspace.actions")
+        XCTAssertTrue(modelPicker.exists)
+        XCTAssertTrue(workspaceActions.exists)
+        XCTAssertLessThan(modelPicker.frame.maxX, workspaceActions.frame.minX)
+        XCTAssertLessThanOrEqual(
+            workspaceActions.frame.minX - modelPicker.frame.maxX,
+            24,
+            "workspace actions should stay next to the model picker"
+        )
+        XCTAssertLessThan(
+            more.frame.maxY,
+            anyElement("inspector.rail.plan").frame.minY,
+            "the vertical-dots panel menu belongs at the top of the inspector rail"
+        )
+
+        more.click()
+        for tab in ["changes", "files", "checkpoints", "runs", "agents"] {
+            XCTAssertTrue(
+                app.menuItems["inspector.rail.menu.\(tab)"].exists,
+                "the more-panels menu should restore \(tab)"
+            )
+        }
+        app.menuItems["inspector.rail.menu.checkpoints"].click()
+        XCTAssertTrue(anyElement("inspector.tab.checkpoints").waitForExistence(timeout: 3))
 
         let settingsMenu = anyElement("sidebar.more")
         XCTAssertTrue(settingsMenu.waitForExistence(timeout: 3))
@@ -993,7 +1020,7 @@ final class LocusUITests: XCTestCase {
 
     func testKeyboardShortcutsReachAdditionalInspectorTabs() {
         XCTAssertTrue(anyElement("inspector.rail.plan").waitForExistence(timeout: 3))
-        XCTAssertFalse(anyElement("inspector.rail.more").exists)
+        XCTAssertTrue(anyElement("inspector.rail.more").exists)
         let zoom = anyElement("inspector.zoom")
         XCTAssertTrue(zoom.exists)
         XCTAssertGreaterThan(
@@ -1033,7 +1060,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("inspector.tabBar").waitForNonExistence(timeout: 3))
         XCTAssertFalse(anyElement("files.search").exists)
         XCTAssertTrue(anyElement("inspector.rail.plan").exists)
-        XCTAssertFalse(anyElement("inspector.rail.more").exists)
+        XCTAssertTrue(anyElement("inspector.rail.more").exists)
     }
 
     func testBrowserExpandsInPlaceAndRestores() {
