@@ -292,8 +292,8 @@ struct ModelLibraryView: View {
                         .accessibilityIdentifier("modelLibrary.searching")
                 } else {
                     Text("\(library.results.count)")
-                        .font(.locus(size: 9, design: .monospaced))
-                        .foregroundStyle(LocusTheme.inkSoft)
+                        .font(.locus(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundStyle(LocusTheme.ink)
                         .accessibilityIdentifier("modelLibrary.resultCount")
                 }
             }
