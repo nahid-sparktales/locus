@@ -1,0 +1,10 @@
+{
+  "protocol_revision": 2,
+  "protocol_version": 1,
+  "swift_version": "5.10",
+  "files": {
+    "Locus/CompanionWireTypes.swift": "sha256:78b6932be7cf7608f9886e45fd3679be89579ae53bd79b63ff88b4f2ab588a82",
+    "Locus/JSONValue.swift": "sha256:973d8b4965e9faff6e1c7c277cc3a393270061f0997ec46bce18fc9bd4570350",
+    "ProtocolFixtures/companion-v1.json": "sha256:3e085a03f068de1ad7fde663fa54db35c969752ba7ced570586334882695b0b0"
+  }
+}

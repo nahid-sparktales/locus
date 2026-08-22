@@ -29,6 +29,18 @@ jobs:
         run: git diff --exit-code -- Locus.xcodeproj/project.pbxproj
       - name: Design-system source audit
         run: Tools/AuditDesignSystem.sh
+      - name: Protocol manifest is current
+        run: python3 Tools/ProtocolManifest.py
+      - name: Shared wire types still compile for iOS
+        # The iOS companion vendors these files byte-for-byte and cannot edit
+        # them, so prove here that they build for iOS before any sync happens.
+        run: >-
+          xcrun swiftc -typecheck
+          -sdk "$(xcrun --sdk iphoneos --show-sdk-path)"
+          -target arm64-apple-ios18.0
+          -swift-version 5
+          Locus/CompanionWireTypes.swift
+          Locus/JSONValue.swift
       - name: Swift unit tests
         env:
           LOCUS_BUNDLE_MODE: skip

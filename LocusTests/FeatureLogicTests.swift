@@ -256,22 +256,114 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
-    func testCompanionProtocolFixturesDecodeOnSwift() throws {
+    private func companionFixture() throws -> [String: Any] {
         let fixtureURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("ProtocolFixtures/companion-v1.json")
-        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL))
-            as? [String: Any]
-        let requests = try XCTUnwrap(object?["requests"] as? [[String: Any]])
-        let decoded = try requests.map { request -> CompanionRequest in
-            try JSONDecoder().decode(
-                CompanionRequest.self,
-                from: JSONSerialization.data(withJSONObject: request)
-            )
+        return try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL)) as? [String: Any]
+        )
+    }
+
+    private func decode<T: Decodable>(_ type: T.Type, from value: Any) throws -> T {
+        try JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: value))
+    }
+
+    /// The fixture is the contract the iOS companion is written against, so it
+    /// has to stay exhaustive: a new method or event that nobody adds a golden
+    /// envelope for fails here rather than surfacing as a decode failure on a
+    /// phone months later.
+    func testCompanionProtocolFixturesCoverEveryMethodAndEvent() throws {
+        let fixture = try companionFixture()
+        let requests = try XCTUnwrap(fixture["requests"] as? [String: Any])
+        let responses = try XCTUnwrap(fixture["responses"] as? [String: Any])
+        let expectedMethods = Set(CompanionMethod.allCases.map(\.rawValue))
+
+        XCTAssertEqual(Set(requests.keys), expectedMethods, "every method needs a golden request")
+        XCTAssertEqual(Set(responses.keys), expectedMethods, "every method needs a golden response")
+
+        let expectedEvents: Set<String> = [
+            "connection.status", "chat.updated", "activity.updated",
+            "schedule.updated", "approval.required",
+        ]
+        let events = try XCTUnwrap(fixture["events"] as? [String: Any])
+        XCTAssertEqual(Set(events.keys), expectedEvents)
+    }
+
+    func testCompanionProtocolFixturesDecodeOnSwift() throws {
+        let fixture = try companionFixture()
+
+        for (name, value) in try XCTUnwrap(fixture["requests"] as? [String: Any]) {
+            let request = try decode(CompanionRequest.self, from: value)
+            XCTAssertEqual(request.method.rawValue, name, "request is filed under the wrong method")
+            XCTAssertEqual(request.version, CompanionProtocolV1.version)
+            XCTAssertFalse(request.id.isEmpty)
         }
-        XCTAssertEqual(decoded.map(\.method), [.statusGet, .chatCreate, .approvalRespond])
-        XCTAssertEqual(decoded[1].payload["mode"]?.string, "work")
+
+        for (name, value) in try XCTUnwrap(fixture["responses"] as? [String: Any]) {
+            let response = try decode(CompanionResponse.self, from: value)
+            XCTAssertTrue(response.ok, "\(name) golden response should be a success")
+            XCTAssertNotNil(response.data, "\(name) success carries data")
+            XCTAssertNil(response.error, "\(name) success omits error")
+        }
+
+        // Failures are the half the Dart suite used to cover and nothing does now.
+        for (code, value) in try XCTUnwrap(fixture["errors"] as? [String: Any]) {
+            let response = try decode(CompanionResponse.self, from: value)
+            XCTAssertFalse(response.ok)
+            XCTAssertNil(response.data, "\(code) failure omits data")
+            XCTAssertEqual(response.error?.code, code)
+            XCTAssertFalse(try XCTUnwrap(response.error?.message).isEmpty)
+        }
+
+        for (name, value) in try XCTUnwrap(fixture["events"] as? [String: Any]) {
+            let event = try decode(CompanionEvent.self, from: value)
+            XCTAssertEqual(event.event, name)
+            XCTAssertEqual(event.version, CompanionProtocolV1.version)
+        }
+
+        let pairing = try decode(
+            CompanionPairingPayload.self, from: try XCTUnwrap(fixture["pairing_payload"])
+        )
+        XCTAssertEqual(pairing.version, CompanionProtocolV1.version)
+        XCTAssertFalse(pairing.endpoints.isEmpty)
+
+        // Spot-check the payload accessors the gateway reads requests through.
+        let create = try decode(
+            CompanionRequest.self,
+            from: try XCTUnwrap(
+                (fixture["requests"] as? [String: Any])?[CompanionMethod.chatCreate.rawValue]
+            )
+        )
+        XCTAssertEqual(CompanionPayload.string("mode", in: create.payload), "work")
+        let toggle = try decode(
+            CompanionRequest.self,
+            from: try XCTUnwrap(
+                (fixture["requests"] as? [String: Any])?[CompanionMethod.scheduleSetEnabled.rawValue]
+            )
+        )
+        XCTAssertEqual(CompanionPayload.bool("enabled", in: toggle.payload), false)
+    }
+
+    /// Round-tripping is what catches CodingKeys drift — a one-way decode still
+    /// passes if someone renames `v` back to `version` on one side only.
+    func testCompanionProtocolEnvelopesRoundTrip() throws {
+        let fixture = try companionFixture()
+        for value in try XCTUnwrap(fixture["responses"] as? [String: Any]).values {
+            let decoded = try decode(CompanionResponse.self, from: value)
+            let reencoded = try JSONDecoder().decode(
+                CompanionResponse.self, from: JSONEncoder().encode(decoded)
+            )
+            XCTAssertEqual(decoded, reencoded)
+        }
+        for value in try XCTUnwrap(fixture["events"] as? [String: Any]).values {
+            let decoded = try decode(CompanionEvent.self, from: value)
+            let reencoded = try JSONDecoder().decode(
+                CompanionEvent.self, from: JSONEncoder().encode(decoded)
+            )
+            XCTAssertEqual(decoded, reencoded)
+        }
     }
 
     func testCompanionPairingNonceExpiresAndCannotReplay() throws {

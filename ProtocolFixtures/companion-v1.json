@@ -1,53 +1,403 @@
 {
-  "requests": [
-    {
+  "_comment": "Golden envelopes for companion protocol v1, shared by the Mac gateway and the iOS client. Values are synthetic; the shapes are taken from the live gateway and from AppModel's payload builders. Every method and event must appear here - LocusTests asserts exhaustiveness against CompanionMethod.allCases.",
+  "protocol_version": 1,
+  "requests": {
+    "pair.exchange": {
       "v": 1,
-      "id": "fixture-status-1",
+      "id": "fx-pair-1",
+      "method": "pair.exchange",
+      "payload": { "nonce": "fixture-nonce", "device_name": "Fixture iPhone", "platform": "ios" }
+    },
+    "status.get": {
+      "v": 1,
+      "id": "fx-status-1",
       "method": "status.get",
       "token": "device-token",
       "payload": {}
     },
-    {
+    "chats.list": {
       "v": 1,
-      "id": "fixture-chat-1",
+      "id": "fx-chats-1",
+      "method": "chats.list",
+      "token": "device-token",
+      "payload": {}
+    },
+    "chat.get": {
+      "v": 1,
+      "id": "fx-chat-get-1",
+      "method": "chat.get",
+      "token": "device-token",
+      "payload": { "chat_id": "chat-1" }
+    },
+    "chat.send": {
+      "v": 1,
+      "id": "fx-chat-send-1",
+      "method": "chat.send",
+      "token": "device-token",
+      "payload": { "chat_id": "chat-1", "prompt": "Check the current build", "mode": "work" }
+    },
+    "chat.create": {
+      "v": 1,
+      "id": "fx-chat-1",
       "method": "chat.create",
       "token": "device-token",
-      "payload": {
-        "workspace_id": "workspace-1",
-        "mode": "work",
-        "prompt": "Check the current build"
-      }
+      "payload": { "workspace_id": "workspace-1", "mode": "work", "prompt": "Check the current build" }
     },
-    {
+    "activity.list": {
       "v": 1,
-      "id": "fixture-approval-1",
+      "id": "fx-activity-1",
+      "method": "activity.list",
+      "token": "device-token",
+      "payload": {}
+    },
+    "run.stop": {
+      "v": 1,
+      "id": "fx-run-stop-1",
+      "method": "run.stop",
+      "token": "device-token",
+      "payload": { "run_id": "run-1" }
+    },
+    "approval.respond": {
+      "v": 1,
+      "id": "fx-approval-1",
       "method": "approval.respond",
       "token": "device-token",
-      "payload": {
-        "kind": "permission",
-        "run_id": "run-1",
-        "decision": "allow_once"
-      }
-    }
-  ],
-  "response": {
-    "v": 1,
-    "id": "fixture-status-1",
-    "ok": true,
-    "data": {
-      "agent_online": true,
-      "running_count": 1
+      "payload": { "kind": "permission", "run_id": "run-1", "decision": "allow_once" }
+    },
+    "schedules.list": {
+      "v": 1,
+      "id": "fx-schedules-1",
+      "method": "schedules.list",
+      "token": "device-token",
+      "payload": {}
+    },
+    "schedule.runNow": {
+      "v": 1,
+      "id": "fx-schedule-run-1",
+      "method": "schedule.runNow",
+      "token": "device-token",
+      "payload": { "schedule_id": "schedule-1" }
+    },
+    "schedule.setEnabled": {
+      "v": 1,
+      "id": "fx-schedule-enable-1",
+      "method": "schedule.setEnabled",
+      "token": "device-token",
+      "payload": { "schedule_id": "schedule-1", "enabled": false }
     }
   },
-  "event": {
-    "v": 1,
-    "event": "activity.updated",
-    "sequence": 9,
-    "data": [
-      {
-        "id": "run-1",
-        "state": "running"
+  "responses": {
+    "pair.exchange": {
+      "v": 1,
+      "id": "fx-pair-1",
+      "ok": true,
+      "data": {
+        "device_id": "2A0B083E-4BCC-4216-A21F-68B4AD7E8A70",
+        "device_token": "fixture-device-token-not-a-real-secret",
+        "service_id": "12EBFE67-6BB5-4F2D-9D78-CC8001051585"
       }
-    ]
+    },
+    "status.get": {
+      "v": 1,
+      "id": "fx-status-1",
+      "ok": true,
+      "data": {
+        "mac_name": "Fixture MacBook Pro",
+        "agent_online": true,
+        "model_online": true,
+        "foreground_chat_id": "chat-1",
+        "running_count": 1,
+        "pending_approvals": 1,
+        "approvals": [
+          {
+            "kind": "permission",
+            "run_id": "run-1",
+            "chat_id": "chat-1",
+            "title": "Action needs approval",
+            "detail": "Run a shell command in the workspace",
+            "decisions": ["allow_once", "deny"]
+          }
+        ],
+        "next_schedule": {
+          "id": "schedule-1",
+          "name": "Nightly checks",
+          "enabled": true,
+          "next_run_at": 1787500000.0,
+          "last_run_at": 1787400000.0,
+          "last_run_id": "run-0",
+          "last_error": null
+        },
+        "workspaces": [
+          { "id": "workspace-1", "name": "locus", "environment": "local" },
+          { "id": "workspace-2", "name": "sandbox", "environment": "worktree" }
+        ]
+      }
+    },
+    "chats.list": {
+      "v": 1,
+      "id": "fx-chats-1",
+      "ok": true,
+      "data": [
+        {
+          "id": "chat-1",
+          "title": "Check the current build",
+          "preview": "Looking at the failing target now",
+          "updated_at": 1787413000.0,
+          "workspace": "locus",
+          "environment": "local",
+          "state": "running"
+        },
+        {
+          "id": "chat-2",
+          "title": "Untitled session",
+          "preview": "",
+          "updated_at": 1787412000.0,
+          "workspace": "sandbox",
+          "environment": "worktree",
+          "state": "idle"
+        }
+      ]
+    },
+    "chat.get": {
+      "v": 1,
+      "id": "fx-chat-get-1",
+      "ok": true,
+      "data": {
+        "id": "chat-1",
+        "title": "Check the current build",
+        "messages": [
+          { "role": "user", "content": "Check the current build", "run_id": null },
+          { "role": "assistant", "content": "Looking at the failing target now", "run_id": "run-1" }
+        ]
+      }
+    },
+    "chat.send": {
+      "v": 1,
+      "id": "fx-chat-send-1",
+      "ok": true,
+      "data": { "claimed": true, "chat_id": "chat-1", "run_id": "9f8e7d6c5b4a39281706f5e4d3c2b1a0", "state": "queued" }
+    },
+    "chat.create": {
+      "v": 1,
+      "id": "fx-chat-1",
+      "ok": true,
+      "data": { "claimed": true, "chat_id": "chat-3", "run_id": "0a1b2c3d4e5f60718293a4b5c6d7e8f9", "state": "queued" }
+    },
+    "activity.list": {
+      "v": 1,
+      "id": "fx-activity-1",
+      "ok": true,
+      "data": [
+        {
+          "id": "run-1",
+          "chat_id": "chat-1",
+          "chat_title": "Check the current build",
+          "state": "running",
+          "kind": "solo",
+          "environment": "local",
+          "updated_at": 1787413000.0,
+          "can_stop": true
+        },
+        {
+          "id": "run-2",
+          "chat_id": null,
+          "chat_title": "Saved chat",
+          "state": "waiting_dispatch_approval",
+          "kind": "team",
+          "environment": "worktree",
+          "updated_at": 1787412500.0,
+          "can_stop": false
+        }
+      ]
+    },
+    "run.stop": {
+      "v": 1,
+      "id": "fx-run-stop-1",
+      "ok": true,
+      "data": { "run_id": "run-1", "stopping": true }
+    },
+    "approval.respond": {
+      "v": 1,
+      "id": "fx-approval-1",
+      "ok": true,
+      "data": { "resolved": true }
+    },
+    "schedules.list": {
+      "v": 1,
+      "id": "fx-schedules-1",
+      "ok": true,
+      "data": [
+        {
+          "id": "schedule-1",
+          "name": "Nightly checks",
+          "enabled": true,
+          "next_run_at": 1787500000.0,
+          "last_run_at": 1787400000.0,
+          "last_run_id": "run-0",
+          "last_error": null
+        },
+        {
+          "id": "schedule-2",
+          "name": "Weekly audit",
+          "enabled": false,
+          "next_run_at": null,
+          "last_run_at": null,
+          "last_run_id": null,
+          "last_error": "The workspace could not be reached."
+        }
+      ]
+    },
+    "schedule.runNow": {
+      "v": 1,
+      "id": "fx-schedule-run-1",
+      "ok": true,
+      "data": { "schedule_id": "schedule-1", "queued": true }
+    },
+    "schedule.setEnabled": {
+      "v": 1,
+      "id": "fx-schedule-enable-1",
+      "ok": true,
+      "data": {
+        "id": "schedule-1",
+        "name": "Nightly checks",
+        "enabled": false,
+        "next_run_at": null,
+        "last_run_at": 1787400000.0,
+        "last_run_id": "run-0",
+        "last_error": null
+      }
+    }
+  },
+  "errors": {
+    "invalid_request": {
+      "v": 1,
+      "id": "",
+      "ok": false,
+      "error": { "code": "invalid_request", "message": "Request is not valid JSON.", "retryable": false }
+    },
+    "payload_too_large": {
+      "v": 1,
+      "id": "",
+      "ok": false,
+      "error": { "code": "payload_too_large", "message": "That request was too large.", "retryable": false }
+    },
+    "unsupported_version": {
+      "v": 1,
+      "id": "fx-err-version",
+      "ok": false,
+      "error": { "code": "unsupported_version", "message": "Update Locus Mobile and Locus on your Mac.", "retryable": false }
+    },
+    "unauthorized": {
+      "v": 1,
+      "id": "fx-err-auth",
+      "ok": false,
+      "error": { "code": "unauthorized", "message": "Pair this device again.", "retryable": false }
+    },
+    "pairing_expired": {
+      "v": 1,
+      "id": "fx-err-pairing",
+      "ok": false,
+      "error": { "code": "pairing_expired", "message": "That pairing code expired. Create a new one on the Mac.", "retryable": false }
+    },
+    "rate_limited": {
+      "v": 1,
+      "id": "fx-err-rate",
+      "ok": false,
+      "error": { "code": "rate_limited", "message": "Too many requests. Try again shortly.", "retryable": true }
+    },
+    "runtime_offline": {
+      "v": 1,
+      "id": "fx-err-runtime",
+      "ok": false,
+      "error": { "code": "runtime_offline", "message": "That chat is not running right now.", "retryable": true }
+    },
+    "chat_not_found": {
+      "v": 1,
+      "id": "fx-err-chat",
+      "ok": false,
+      "error": { "code": "chat_not_found", "message": "That chat is no longer on this Mac.", "retryable": false }
+    }
+  },
+  "events": {
+    "connection.status": {
+      "v": 1,
+      "event": "connection.status",
+      "sequence": 1,
+      "data": { "state": "connected" }
+    },
+    "chat.updated": {
+      "v": 1,
+      "event": "chat.updated",
+      "sequence": 7,
+      "data": {
+        "chats": [
+          {
+            "id": "chat-1",
+            "title": "Check the current build",
+            "preview": "Looking at the failing target now",
+            "updated_at": 1787413000.0,
+            "workspace": "locus",
+            "environment": "local",
+            "state": "running"
+          }
+        ],
+        "streams": [{ "chat_id": "chat-1", "text": "Looking at the failing target" }]
+      }
+    },
+    "activity.updated": {
+      "v": 1,
+      "event": "activity.updated",
+      "sequence": 9,
+      "data": [
+        {
+          "id": "run-1",
+          "chat_id": "chat-1",
+          "chat_title": "Check the current build",
+          "state": "running",
+          "kind": "solo",
+          "environment": "local",
+          "updated_at": 1787413000.0,
+          "can_stop": true
+        }
+      ]
+    },
+    "schedule.updated": {
+      "v": 1,
+      "event": "schedule.updated",
+      "sequence": 11,
+      "data": [
+        {
+          "id": "schedule-1",
+          "name": "Nightly checks",
+          "enabled": true,
+          "next_run_at": 1787500000.0,
+          "last_run_at": 1787400000.0,
+          "last_run_id": "run-0",
+          "last_error": null
+        }
+      ]
+    },
+    "approval.required": {
+      "v": 1,
+      "event": "approval.required",
+      "sequence": 13,
+      "data": [
+        {
+          "kind": "plan",
+          "chat_id": "chat-1",
+          "title": "Implementation plan is ready",
+          "detail": "Review the plan before it runs",
+          "decisions": ["approve", "cancel"]
+        }
+      ]
+    }
+  },
+  "pairing_payload": {
+    "v": 1,
+    "service_id": "12EBFE67-6BB5-4F2D-9D78-CC8001051585",
+    "endpoints": ["wss://192.168.1.8:57372", "wss://[fd27:ee3d:eac4:6683::1]:57372"],
+    "certificate_fingerprint": "C3:21:44:81:37:56:CB:1E:45:5C:20:9D:2D:28:C9:89:F8:E5:C9:FB:55:C3:E3:C1:6A:67:0F:BF:8C:46:85:CF",
+    "nonce": "fixture-nonce-not-a-real-secret",
+    "expires_at": 1787413811.361217
   }
 }
