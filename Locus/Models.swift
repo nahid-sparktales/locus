@@ -1929,6 +1929,9 @@ struct AppSettings: Codable, Hashable {
     /// Registers the main application with macOS login items. Off by default;
     /// registration is applied only after Settings is saved successfully.
     var launchAtLogin = false
+    /// A separately authenticated TLS gateway for the iOS/Android companion.
+    /// It never exposes the loopback Python agent and is opt-in on every Mac.
+    var mobileAccessEnabled = false
     /// Stored as a raw string so a preference written by a future version
     /// cannot make the rest of the settings payload fail to decode.
     var appearanceRaw = AppAppearance.system.rawValue
@@ -2209,6 +2212,9 @@ struct AppSettings: Codable, Hashable {
         ) ?? notifyOnCompletion
         launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin)
             ?? defaults.launchAtLogin
+        mobileAccessEnabled = try container.decodeIfPresent(
+            Bool.self, forKey: .mobileAccessEnabled
+        ) ?? defaults.mobileAccessEnabled
         appearanceRaw = try container.decodeIfPresent(String.self, forKey: .appearanceRaw)
             ?? defaults.appearanceRaw
         provider = try container.decodeIfPresent(ModelProvider.self, forKey: .provider)

@@ -54,13 +54,17 @@ struct LocusApp: App {
     @StateObject private var updates = AppUpdateController(
         startImmediately: locusStartsAutomaticUpdater
     )
+    @StateObject private var mainWindowPresenter = MainWindowPresenter()
 
     var body: some Scene {
         Window("Locus", id: "main") {
             sceneContent
                 .environmentObject(model)
                 .environmentObject(updates)
-                .onAppear { appDelegate.model = model }
+                .onAppear {
+                    appDelegate.model = model
+                    appDelegate.windowPresenter = mainWindowPresenter
+                }
                 .preferredColorScheme(model.effectiveAppearance.colorScheme)
                 .frame(
                     // The full three-column layout fits comfortably at the
@@ -70,7 +74,10 @@ struct LocusApp: App {
                     minHeight: 620
                 )
                 .background {
-                    MainWindowMarker()
+                    ZStack {
+                        MainWindowMarker()
+                        MainWindowPresenterInstaller(presenter: mainWindowPresenter)
+                    }
                 }
         }
         .windowStyle(.hiddenTitleBar)
@@ -169,7 +176,7 @@ struct LocusApp: App {
         }
 
         MenuBarExtra {
-            LocusMenuBarView()
+            LocusMenuBarView(presenter: mainWindowPresenter)
                 .environmentObject(model)
         } label: {
             Image("MenuBarIcon")
@@ -227,11 +234,49 @@ struct LocusApp: App {
     }
 }
 
+/// The one route for presenting Locus's unique main scene. Keeping the
+/// environment action alive outside the Window scene lets Dock/Launch Services,
+/// notifications, and the menu-bar item recreate that scene after Command-W.
+@MainActor
+final class MainWindowPresenter: ObservableObject {
+    private var openWindow: OpenWindowAction?
+
+    func install(_ action: OpenWindowAction) {
+        openWindow = action
+    }
+
+    @discardableResult
+    func present(in providedApplication: NSApplication? = nil) -> Bool {
+        let application = providedApplication ?? NSApplication.shared
+        if let window = LocusApplicationDelegate.mainWindow(in: application.windows) {
+            reveal(window, in: application)
+            return false
+        }
+        guard let openWindow else { return false }
+        openWindow(id: "main")
+        application.activate(ignoringOtherApps: true)
+        DispatchQueue.main.async { [weak application] in
+            guard let application,
+                  let window = LocusApplicationDelegate.mainWindow(in: application.windows)
+            else { return }
+            self.reveal(window, in: application)
+        }
+        return true
+    }
+
+    private func reveal(_ window: NSWindow, in application: NSApplication) {
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+        application.activate(ignoringOtherApps: true)
+    }
+}
+
 @MainActor
 final class LocusApplicationDelegate: NSObject, NSApplicationDelegate,
     UNUserNotificationCenterDelegate {
     static let mainWindowIdentifier = NSUserInterfaceItemIdentifier("locus.main")
     weak var model: AppModel?
+    weak var windowPresenter: MainWindowPresenter?
     private var terminationPending = false
 
     static func mainWindow(in windows: [NSWindow]) -> NSWindow? {
@@ -255,7 +300,7 @@ final class LocusApplicationDelegate: NSObject, NSApplicationDelegate,
         let runID = info["run_id"] as? String ?? ""
         Task { @MainActor [weak self] in
             self?.model?.openNotification(sessionID: sessionID, runID: runID)
-            NSApp.activate(ignoringOtherApps: true)
+            self?.windowPresenter?.present()
             completionHandler()
         }
     }
@@ -264,18 +309,13 @@ final class LocusApplicationDelegate: NSObject, NSApplicationDelegate,
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
-        guard let window = Self.mainWindow(in: sender.windows) else {
-            // If reopening races initial scene creation, allow SwiftUI to
-            // finish presenting the unique Window scene normally.
+        guard let windowPresenter else {
+            // During the first launch SwiftUI still owns initial scene creation.
             return true
         }
-        if window.isMiniaturized {
-            window.deminiaturize(nil)
-        }
-        window.makeKeyAndOrderFront(nil)
-        sender.activate(ignoringOtherApps: true)
-        // The existing main window handled the reopen. Returning false keeps
-        // AppKit from asking SwiftUI to create or restore another scene.
+        windowPresenter.present(in: sender)
+        // The presenter either revealed the existing window or explicitly
+        // requested the unique SwiftUI scene, so AppKit must not do it again.
         return false
     }
 
@@ -312,6 +352,7 @@ final class LocusApplicationDelegate: NSObject, NSApplicationDelegate,
 private struct LocusMenuBarView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.openWindow) private var openWindow
+    let presenter: MainWindowPresenter
 
     var body: some View {
         Button("Open Locus") { revealMainWindow() }
@@ -334,6 +375,8 @@ private struct LocusMenuBarView: View {
         Divider()
         Button("Quit Locus") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
+        EmptyView()
+            .onAppear { presenter.install(openWindow) }
     }
 
     private var runningCount: Int {
@@ -344,14 +387,22 @@ private struct LocusMenuBarView: View {
     }
 
     private func revealMainWindow() {
-        openWindow(id: "main")
-        DispatchQueue.main.async {
-            if let window = LocusApplicationDelegate.mainWindow(in: NSApp.windows) {
-                if window.isMiniaturized { window.deminiaturize(nil) }
-                window.makeKeyAndOrderFront(nil)
-            }
-            NSApp.activate(ignoringOtherApps: true)
-        }
+        presenter.install(openWindow)
+        presenter.present()
+    }
+}
+
+/// Captures `openWindow` while the main scene is alive, before the user has
+/// ever opened the menu-bar menu. That makes a first Dock reopen after
+/// Command-W reliable as well as subsequent menu-bar opens.
+private struct MainWindowPresenterInstaller: View {
+    @Environment(\.openWindow) private var openWindow
+    let presenter: MainWindowPresenter
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear { presenter.install(openWindow) }
     }
 }
 

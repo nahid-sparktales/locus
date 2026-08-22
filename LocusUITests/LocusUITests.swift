@@ -310,8 +310,12 @@ final class LocusUITests: XCTestCase {
         XCTAssertEqual(search.value as? String, "keep this state")
     }
 
-    func testClosingTheUniqueMainWindowKeepsLocusRunningAndDockActivationRestoresIt() {
+    func testClosingTheUniqueMainWindowKeepsLocusRunningAndDockActivationRestoresIt() throws {
         XCTAssertEqual(app.windows.count, 1)
+
+        let title = anyElement("workspace.sessionTitle")
+        XCTAssertTrue(title.waitForExistence(timeout: 3))
+        let originalTitle = title.label
 
         app.typeKey("w", modifierFlags: .command)
 
@@ -321,9 +325,26 @@ final class LocusUITests: XCTestCase {
         )
         XCTAssertEqual(app.windows.count, 0)
 
-        app.activate()
+        let running = try XCTUnwrap(
+            NSWorkspace.shared.runningApplications
+                .filter { $0.bundleURL?.lastPathComponent == "Locus.app" }
+                .max {
+                    ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast)
+                }
+        )
+        let appURL = try XCTUnwrap(running.bundleURL)
+        let reopened = expectation(description: "Launch Services reopened Locus")
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, error in
+            XCTAssertNil(error)
+            reopened.fulfill()
+        }
+        wait(for: [reopened], timeout: 5)
+
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
         XCTAssertEqual(app.windows.count, 1)
+        XCTAssertEqual(anyElement("workspace.sessionTitle").label, originalTitle)
     }
 
     func testClearChatControlShowsNonDestructiveConfirmation() {
@@ -1318,6 +1339,10 @@ final class LocusUITests: XCTestCase {
 
     func testModelLibraryPassesAccessibilityAudit() throws {
         relaunchForAccessibilitySurface("model-library", anchor: "modelLibrary.search")
+        XCTAssertTrue(
+            anyElement("modelLibrary.resultCount").waitForExistence(timeout: 15),
+            "the initial model search should settle before auditing its result surface"
+        )
         try auditCurrentSurface()
     }
 
