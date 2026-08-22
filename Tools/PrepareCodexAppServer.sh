@@ -39,7 +39,7 @@ if [[ -x "${binary}" && -x "${code_mode_host_binary}" && -f "${provenance}" ]] \
     && /usr/bin/grep -Fq "v8_aarch64_binding_sha256=${v8_aarch64_binding_sha256}" "${provenance}" \
     && /usr/bin/grep -Fq "v8_x86_64_archive_sha256=${v8_x86_64_archive_sha256}" "${provenance}" \
     && /usr/bin/grep -Fq "v8_x86_64_binding_sha256=${v8_x86_64_binding_sha256}" "${provenance}" \
-    && /usr/bin/grep -Fq "architectures=${normalized_archs}" "${provenance}"; then
+    && /usr/bin/grep -Fqx "architectures=${normalized_archs}" "${provenance}"; then
     exit 0
 fi
 

@@ -1,30 +1,20 @@
 # Changelog
 
-## Unreleased
-
-### Fixed
-
-- **Streaming no longer stalls when the display sleeps.** Replies were flushed
-  to the screen on the display's own refresh, which is the right clock for
-  keeping text growth and scroll anchoring on one frame — but a `CADisplayLink`
-  simply goes quiet when its display sleeps, is unplugged, or never existed,
-  without cancelling itself or reporting anything. A flush waiting on the next
-  frame then waited forever, and because a pending flush suppresses further
-  requests, streamed text stopped appearing until something flushed directly.
-  Every request now also arms a watchdog: whichever arrives first wins, the
-  frame on a live display or the watchdog on a dark one. A link that has gone
-  quiet is dropped and rebuilt against whatever display exists next, so the app
-  recovers on its own when a screen comes back.
-- **The browser can scroll on a Mac with no display attached.** Aiming a wheel
-  event needed the height of the primary screen, so with the lid shut and
-  nothing plugged in there was no screen to ask and the scroll silently fell
-  back to the synthetic path. The coordinate flip is now measured out of AppKit
-  itself rather than looked up, which is correct for any display arrangement,
-  including none.
-
-## Unreleased
+## 2.0.0 — 2026-08-22
 
 ### Added
+
+- **ChatGPT plan support is now a separate download.** The two OpenAI helpers
+  behind ChatGPT-plan accounts are about 270 MB installed and do nothing at all
+  unless you sign in to a plan, so they no longer ship inside the app. Locus
+  offers them at the moment you add a ChatGPT-plan account and installs them
+  once; anyone using Ollama, an API key or a custom endpoint never downloads
+  them. The direct download drops from about 180 MB to about 62 MB. The
+  component is signed by SparkTales and its signature is checked before it is
+  put in place or run, so a payload that is not ours installs nowhere, and it
+  can be removed again to reclaim the space. App Store builds are unchanged and
+  still bundle the helpers, because the App Store does not permit downloading
+  executable code.
 
 - **The agent's clicks are now real input.** Actions were dispatched as
   JavaScript events the browser built itself, which carry `isTrusted: false`
@@ -74,6 +64,12 @@
 
 ### Changed
 
+- **The bundled Codex helpers are stripped.** OpenAI's release profile keeps
+  release binaries symbolicateable and defers stripping to whoever packages
+  them — which Locus never did, so every download carried about 73 MB of symbol
+  table that nothing at runtime reads. They are now stripped before signing,
+  which also shrinks the App Store build.
+
 - **`browser_input`'s `type` now types.** It sends real keystrokes into the
   focused element, so search-as-you-type and key handlers see each character
   arrive; `set_value` still replaces a field's value in one step, and still
@@ -86,6 +82,33 @@
   capture, per-tab targeting and device emulation are not free, and every prompt
   pays for them. Descriptions were trimmed to claw back as much as possible; the
   budget guard that keeps this from creeping was raised to match.
+
+### Fixed
+
+- **Streaming no longer stalls when the display sleeps.** Replies were flushed
+  to the screen on the display's own refresh, which is the right clock for
+  keeping text growth and scroll anchoring on one frame — but a `CADisplayLink`
+  simply goes quiet when its display sleeps, is unplugged, or never existed,
+  without cancelling itself or reporting anything. A flush waiting on the next
+  frame then waited forever, and because a pending flush suppresses further
+  requests, streamed text stopped appearing until something flushed directly.
+  Every request now also arms a watchdog: whichever arrives first wins, the
+  frame on a live display or the watchdog on a dark one. A link that has gone
+  quiet is dropped and rebuilt against whatever display exists next, so the app
+  recovers on its own when a screen comes back.
+- **The browser can scroll on a Mac with no display attached.** Aiming a wheel
+  event needed the height of the primary screen, so with the lid shut and
+  nothing plugged in there was no screen to ask and the scroll silently fell
+  back to the synthetic path. The coordinate flip is now measured out of AppKit
+  itself rather than looked up, which is correct for any display arrangement,
+  including none.
+
+- **The Codex build cache no longer hands back the wrong architectures.** The
+  cache's architecture check matched a substring, so a cache holding a universal
+  `arm64 x86_64` build satisfied a request for `arm64` alone. An Apple-silicon
+  release could therefore embed a helper twice the size it needed, depending
+  only on what the last build had left in the cache. The check now matches the
+  whole line.
 
 ## 1.16.0 — 2026-08-17
 

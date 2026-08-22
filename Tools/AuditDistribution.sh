@@ -39,18 +39,38 @@ resolved="${repo_root}/Locus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
     echo "error: Sparkle is not pinned to the audited 2.9.4 revision" >&2
     exit 1
 }
-[[ -x "${codex_helper}" ]] || {
-    echo "error: bundled Codex App Server helper is missing" >&2
-    exit 1
-}
-[[ -x "${code_mode_host}" ]] || {
-    echo "error: bundled Codex code-mode host is missing" >&2
-    exit 1
-}
 [[ -f "${resources}/CodexAppServerProvenance.txt" ]] || {
     echo "error: Codex App Server provenance is missing" >&2
     exit 1
 }
+# The direct download fetches the Codex helpers as a signed component instead
+# of embedding them. Which shape this bundle is must be stated in provenance,
+# not inferred from a missing file — an accidentally dropped helper would
+# otherwise audit clean as though it were deliberate.
+codex_delivery="$(/usr/bin/awk -F= '$1 == "delivery" { print $2; exit }' \
+    "${resources}/CodexAppServerProvenance.txt")"
+case "${codex_delivery}" in
+    bundled)
+        [[ -x "${codex_helper}" ]] || {
+            echo "error: bundled Codex App Server helper is missing" >&2
+            exit 1
+        }
+        [[ -x "${code_mode_host}" ]] || {
+            echo "error: bundled Codex code-mode host is missing" >&2
+            exit 1
+        }
+        ;;
+    component)
+        [[ ! -e "${codex_helper}" && ! -e "${code_mode_host}" ]] || {
+            echo "error: provenance says delivery=component but a helper is embedded" >&2
+            exit 1
+        }
+        ;;
+    *)
+        echo "error: Codex provenance has no delivery= line (got '${codex_delivery}')" >&2
+        exit 1
+        ;;
+esac
 [[ -f "${resources}/ThirdPartyLicenses/openai-codex-0.147.0/LICENSE" ]] || {
     echo "error: Codex App Server Apache license is missing" >&2
     exit 1
@@ -77,6 +97,7 @@ do
         exit 1
     }
 done
+if [[ "${codex_delivery}" == "bundled" ]]; then
 expected_helper_sha="$(/usr/bin/awk -F= '$1 == "binary_sha256" { print $2 }' \
     "${resources}/CodexAppServerProvenance.txt")"
 actual_helper_sha="$(/usr/bin/shasum -a 256 "${codex_helper}" | /usr/bin/awk '{print $1}')"
@@ -106,6 +127,7 @@ actual_code_mode_host_archs="$(/usr/bin/lipo -archs "${code_mode_host}" | /usr/b
     echo "error: bundled Codex code-mode host architectures do not match provenance" >&2
     exit 1
 }
+fi
 
 for notice in \
     "| websockets | 17.0 |" \
@@ -331,6 +353,7 @@ else
     }
 fi
 
+if [[ "${codex_delivery}" == "bundled" ]]; then
 for sealed_helper in "${codex_helper}" "${code_mode_host}"; do
     helper_entitlements="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-helper-entitlements.XXXXXX")"
     if /usr/bin/codesign -d --entitlements "${helper_entitlements}" --xml \
@@ -360,5 +383,6 @@ for sealed_helper in "${codex_helper}" "${code_mode_host}"; do
     fi
     /bin/rm -f "${helper_entitlements}"
 done
+fi
 
 echo "Distribution audit passed: notices present; gdbm and tkinter absent."

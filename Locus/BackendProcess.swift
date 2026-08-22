@@ -106,9 +106,13 @@ final class BackendProcess {
             }
             environment["LOCUS_CODEX_HOME"] = codexHome.path
         }
-        let helper = Bundle.main.bundleURL.appending(path: "Contents/Helpers/codex")
-        if FileManager.default.isExecutableFile(atPath: helper.path) {
-            environment["LOCUS_CODEX_APP_SERVER_PATH"] = helper.path
+        // Bundled inside the App Store build; downloaded as a signed component
+        // by the direct-download build. The path is exported even when nothing
+        // is installed yet — the backend re-stats it on every availability
+        // check, so installing the component takes effect without restarting
+        // the agent and dropping live sessions.
+        if let helperPath = CodexComponent.helperPathForBackend() {
+            environment["LOCUS_CODEX_APP_SERVER_PATH"] = helperPath
         }
         if let packages = launch.packages {
             environment["PYTHONPATH"] = [

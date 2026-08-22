@@ -249,6 +249,8 @@ struct AccountEditorView: View {
                         Task { await model.cancelChatGPTLogin(for: account) }
                     }
                 }
+            } else if model.chatGPTComponentMissing {
+                componentDownload
             } else {
                 if let message = status?.message, !message.isEmpty {
                     Text(message)
@@ -273,6 +275,81 @@ struct AccountEditorView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+#if LOCUS_APP_STORE
+    /// The App Store build bundles the helpers, so this state is unreachable.
+    @ViewBuilder
+    private var componentDownload: some View { EmptyView() }
+#else
+    /// Offered in place of the sign-in button when the ChatGPT-plan helpers
+    /// have not been fetched yet. The prompt lives at the moment of need rather
+    /// than in a downloads screen nobody would go looking for.
+    @ViewBuilder
+    private var componentDownload: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            switch model.codexComponent.state {
+            case .idle:
+                Text(
+                    "Using a ChatGPT plan needs a one-time component from SparkTales. "
+                    + "It is about 100 MB to download and stays on this Mac until you remove it."
+                )
+                .font(.locus(size: 9))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                Button("Download and Continue") {
+                    Task { await model.installCodexComponent(for: account) }
+                }
+                .accessibilityIdentifier("accountEditor.chatGPT.downloadComponent")
+            case .checking:
+                progressRow("Checking for the component…", fraction: nil)
+            case let .downloading(received, total):
+                progressRow(
+                    "Downloading \(byteLabel(received)) of \(byteLabel(total))…",
+                    fraction: total > 0 ? Double(received) / Double(total) : nil
+                )
+                Button("Cancel") { model.codexComponent.cancel() }
+            case .verifying:
+                progressRow("Verifying the signature…", fraction: nil)
+            case .installing:
+                progressRow("Installing…", fraction: nil)
+            case let .installed(version):
+                Label("ChatGPT plan support \(version) installed", systemImage: "checkmark.circle.fill")
+                    .font(.locus(size: 10, weight: .semibold))
+                    .foregroundStyle(LocusTheme.success)
+            case let .failed(message):
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Try Again") {
+                    Task { await model.installCodexComponent(for: account) }
+                }
+                .accessibilityIdentifier("accountEditor.chatGPT.retryComponent")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func progressRow(_ label: String, fraction: Double?) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.locus(size: 9))
+                .foregroundStyle(LocusTheme.muted)
+            if let fraction {
+                ProgressView(value: fraction)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        }
+    }
+
+    private func byteLabel(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowedUnits = [.useMB]
+        return formatter.string(fromByteCount: bytes)
+    }
+#endif
 
     /// macOS `Form` treats a text field's title as a leading form label and
     /// places the actual editor in the trailing column. Keep the prompt inside
