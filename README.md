@@ -38,9 +38,20 @@ Panels open when they are useful and can be collapsed when you want more room.
 
 Mobile Access is off by default. When enabled, Locus creates a private TLS gateway on your Mac and pairs phones with a five-minute, one-use code. The phone pins the Mac certificate, and no provider credentials, local-agent ports, or cloud relay are exposed.
 
-| Mac setup | iOS and Android pairing |
-| --- | --- |
-| ![Mobile Access settings in dark mode](Docs/locus-mobile-access-dark.png) | ![Locus Mobile manual pairing in dark mode](Docs/locus-mobile-pairing-dark.png) |
+<table>
+  <thead>
+    <tr>
+      <th>Mac setup</th>
+      <th>iOS and Android pairing</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><a href="Docs/locus-mobile-access-dark.png"><img src="Docs/locus-mobile-access-dark.png" alt="Mobile Access settings in dark mode" width="560"></a></td>
+      <td align="center"><a href="Docs/locus-mobile-pairing-dark.png"><img src="Docs/locus-mobile-pairing-dark.png" alt="Locus Mobile manual pairing in dark mode" width="220"></a></td>
+    </tr>
+  </tbody>
+</table>
 
 The first mobile release can create and continue chats, follow streaming work, stop runs, answer one-time approvals, and run or pause schedules. Terminal, browser, file editing, permanent permissions, account settings, and destructive session actions remain Mac-only. See the [Locus Mobile repository](https://github.com/nahid-sparktales/locus-mobile) for platform setup and development instructions.
 
