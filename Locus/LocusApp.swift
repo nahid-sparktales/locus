@@ -163,7 +163,7 @@ struct LocusApp: App {
                     .keyboardShortcut("w", modifiers: .option)
                 Button("Plan Mode") { model.selectedMode = .plan }
                     .keyboardShortcut("p", modifiers: .option)
-                Button("Build Mode") { model.selectedMode = .build }
+                Button("GSD Mode") { model.selectedMode = .build }
                     .keyboardShortcut("b", modifiers: .option)
             }
         }

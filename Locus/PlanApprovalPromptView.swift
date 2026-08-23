@@ -1156,7 +1156,7 @@ struct PlanApprovalPromptView: View {
             optionRow(
                 index: 0,
                 title: "Proceed",
-                detail: "Switch to Build and implement with current permissions",
+                detail: "Switch to GSD and implement with current permissions",
                 identifier: "planApproval.proceed"
             )
             optionRow(

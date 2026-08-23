@@ -784,7 +784,7 @@ struct InspectorRunsTab: View {
                     Text(scope == .soloSwarm ? "No Solo Swarm runs yet" : "No matching runs")
                         .font(.locus(size: 11, weight: .bold))
                     Text(scope == .soloSwarm
-                        ? "Turn on Solo Swarm above, then send a Work, Plan, or Build request. The run appears even if no workers are delegated."
+                        ? "Turn on Solo Swarm above, then send a Work, Plan, or GSD request. The run appears even if no workers are delegated."
                         : "Try another run type, status, or search term.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)

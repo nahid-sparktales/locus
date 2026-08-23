@@ -46,7 +46,7 @@ private let shortcutReferenceGroups: [ShortcutReferenceGroup] = [
     ShortcutReferenceGroup(name: "Modes", shortcuts: [
         ShortcutReference(keys: "⌥A", title: "Just Chat"),
         ShortcutReference(keys: "⌥P", title: "Plan mode"),
-        ShortcutReference(keys: "⌥B", title: "Build mode"),
+        ShortcutReference(keys: "⌥B", title: "GSD mode"),
     ]),
 ]
 

@@ -811,6 +811,12 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(WorkMode.plan.instruction.contains("do not modify"))
         XCTAssertTrue(WorkMode.build.instruction.contains("Implement"))
         XCTAssertTrue(WorkMode.work.instruction.contains("Choose whether"))
+        // The composer shows GSD, but the raw value stays `build` for stored
+        // profiles and the runtime's `[Locus mode:]` header; the `$` mention
+        // is what makes the runtime preload the gsd-workflow skill.
+        XCTAssertEqual(WorkMode.build.title, "GSD")
+        XCTAssertEqual(WorkMode.build.rawValue, "build")
+        XCTAssertTrue(WorkMode.build.instruction.contains("$gsd-workflow"))
     }
 
     @MainActor
@@ -897,6 +903,41 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(model.isWorkspaceExpanded("/tmp/example"))
         model.setWorkspaceExpanded("/tmp/example", expanded: false)
         XCTAssertFalse(model.isWorkspaceExpanded("/tmp/example"))
+    }
+
+    @MainActor
+    func testRemoveWorkspaceFromSidebarDropsProfilesButProtectsTheActiveWorkspace() {
+        let model = AppModel(startImmediately: false)
+        let idlePath = "/tmp/locus-workspace-idle"
+
+        func profile(_ path: String) -> WorkspaceProfile {
+            WorkspaceProfile(
+                path: path,
+                lastOpened: Date(timeIntervalSince1970: 10),
+                model: "",
+                accountID: nil,
+                mode: .work,
+                previewURL: "",
+                contextFiles: [],
+                draft: ""
+            )
+        }
+
+        model.workspaceProfiles = [profile(idlePath)]
+        let idleGroup = model.workspaceChatGroups.first { $0.id == idlePath }
+        XCTAssertNotNil(idleGroup)
+        model.removeWorkspaceFromSidebar(idleGroup!)
+        XCTAssertFalse(model.workspaceProfiles.contains { $0.path == idlePath })
+
+        let activePath = model.activeWorkspaceID
+        model.workspaceProfiles = [profile(activePath)]
+        let activeGroup = model.workspaceChatGroups.first { $0.id == activePath }
+        XCTAssertNotNil(activeGroup)
+        model.removeWorkspaceFromSidebar(activeGroup!)
+        XCTAssertTrue(
+            model.workspaceProfiles.contains { $0.path == activePath },
+            "the active workspace cannot be removed from the sidebar"
+        )
     }
 
     func testOlderSessionSummaryWithoutWorkspaceStillDecodes() throws {

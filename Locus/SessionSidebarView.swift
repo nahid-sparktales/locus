@@ -27,6 +27,7 @@ struct SessionSidebarView: View {
     @EnvironmentObject private var model: AppModel
     @State private var sessionToRename: SessionSummary?
     @State private var renameText = ""
+    @State private var workspaceToRemove: WorkspaceChatGroup?
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -58,6 +59,18 @@ struct SessionSidebarView: View {
                                     if let path = group.path { model.newSession(in: path) }
                                 }
                             )
+                            .contextMenu {
+                                if group.path != nil {
+                                    Button("Remove from Sidebar") {
+                                        requestWorkspaceRemoval(group)
+                                    }
+                                    .disabled(
+                                        group.id == model.activeWorkspaceID
+                                            || model.workspaceHasActiveRun(group)
+                                    )
+                                    .accessibilityIdentifier("workspace.group.\(group.id).remove")
+                                }
+                            }
                             if model.isWorkspaceExpanded(group.id) {
                                 if group.chats.isEmpty {
                                     Text("No chats yet")
@@ -117,6 +130,44 @@ struct SessionSidebarView: View {
             .accessibilityIdentifier("session.rename.save")
         } message: {
             Text("Give this conversation a name that is easy to find later.")
+        }
+        .confirmationDialog(
+            "Remove \(workspaceToRemove?.title ?? "this workspace") from the sidebar?",
+            isPresented: Binding(
+                get: { workspaceToRemove != nil },
+                set: { if !$0 { workspaceToRemove = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Remove and Archive Chats", role: .destructive) {
+                if let group = workspaceToRemove {
+                    model.removeWorkspaceFromSidebar(group)
+                }
+                workspaceToRemove = nil
+            }
+            .accessibilityIdentifier("workspace.remove.confirm")
+            Button("Cancel", role: .cancel) { workspaceToRemove = nil }
+        } message: {
+            Text(
+                "Its \(removableChatCount) \(removableChatCount == 1 ? "chat moves" : "chats move") "
+                    + "to the archive — turn on Show Archived Sessions to restore them. "
+                    + "Files on disk are not touched."
+            )
+        }
+    }
+
+    private var removableChatCount: Int {
+        workspaceToRemove.map { model.removableSidebarChats(for: $0).count } ?? 0
+    }
+
+    /// Groups that still hold unarchived chats deserve a confirmation,
+    /// because removal archives those chats — including ones the current
+    /// search or archive filter is hiding. A chat-free row just disappears.
+    private func requestWorkspaceRemoval(_ group: WorkspaceChatGroup) {
+        if model.removableSidebarChats(for: group).isEmpty {
+            model.removeWorkspaceFromSidebar(group)
+        } else {
+            workspaceToRemove = group
         }
     }
 

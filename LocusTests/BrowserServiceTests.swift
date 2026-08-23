@@ -862,6 +862,153 @@ final class NotesStoreTests: XCTestCase {
         XCTAssertNotNil(tooLarge["error"])
         XCTAssertEqual(store.text, "First\nSecond")
     }
+
+    private func boldDefaultFont() -> NSFont {
+        NSFontManager.shared.convert(NotesTextStyle.defaultFont, toHaveTrait: .boldFontMask)
+    }
+
+    private func isBold(_ attributed: NSAttributedString, at location: Int) throws -> Bool {
+        let font = try XCTUnwrap(
+            attributed.attribute(.font, at: location, effectiveRange: nil) as? NSFont
+        )
+        return NSFontManager.shared.traits(of: font).contains(.boldFontMask)
+    }
+
+    func testRichFormattingPersistsAcrossStoresAndKeepsThePlainMirror() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = NotesStore.testingStore(
+            workspacePath: root.path,
+            sessionID: "chat",
+            scope: .workspace,
+            applicationSupport: root
+        )
+        let styled = NSMutableAttributedString(attributedString: NotesTextStyle.plain("Bold plan"))
+        styled.addAttribute(.font, value: boldDefaultFont(), range: NSRange(location: 0, length: 4))
+        store.updateAttributed(styled)
+        store.flushForTesting()
+
+        XCTAssertEqual(store.text, "Bold plan")
+        XCTAssertEqual(try String(contentsOf: store.fileURL, encoding: .utf8), "Bold plan")
+
+        let restored = NotesStore.testingStore(
+            workspacePath: root.path,
+            sessionID: "chat",
+            scope: .workspace,
+            applicationSupport: root
+        )
+        XCTAssertEqual(restored.text, "Bold plan")
+        XCTAssertEqual(restored.attributedText.string, restored.text)
+        XCTAssertTrue(try isBold(restored.attributedText, at: 0))
+        XCTAssertFalse(try isBold(restored.attributedText, at: 6))
+    }
+
+    func testAgentAppendKeepsUserStylingWhileReplaceResetsIt() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = NotesStore.testingStore(
+            workspacePath: root.path,
+            sessionID: "chat",
+            scope: .workspace,
+            applicationSupport: root
+        )
+
+        let styled = NSMutableAttributedString(attributedString: NotesTextStyle.plain("Keep"))
+        styled.addAttribute(.font, value: boldDefaultFont(), range: NSRange(location: 0, length: 4))
+        store.updateAttributed(styled)
+
+        let appended = store.perform(
+            tool: "notes_update",
+            arguments: ["action": "append", "text": "agent line"]
+        )
+        XCTAssertNil(appended["error"])
+        XCTAssertEqual(store.text, "Keep\nagent line")
+        XCTAssertEqual(store.attributedText.string, store.text)
+        XCTAssertTrue(try isBold(store.attributedText, at: 0))
+        XCTAssertFalse(try isBold(store.attributedText, at: 6))
+
+        _ = store.perform(
+            tool: "notes_update",
+            arguments: ["action": "replace", "text": "Fresh start"]
+        )
+        XCTAssertEqual(store.text, "Fresh start")
+        XCTAssertEqual(store.attributedText.string, store.text)
+        XCTAssertFalse(try isBold(store.attributedText, at: 0))
+    }
+
+    func testAgentAppendKeepsTheMirrorAlignedAfterABareCarriageReturn() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = NotesStore.testingStore(
+            workspacePath: root.path,
+            sessionID: "chat",
+            scope: .workspace,
+            applicationSupport: root
+        )
+
+        // The separator "\n" merges with a trailing "\r" into one "\r\n"
+        // grapheme; the mirror must stay aligned by construction rather than
+        // by character-count arithmetic.
+        store.update("ends in cr\r")
+        let appended = store.perform(
+            tool: "notes_update",
+            arguments: ["action": "append", "text": "next"]
+        )
+        XCTAssertNil(appended["error"])
+        XCTAssertEqual(store.text, "ends in cr\r\nnext")
+        XCTAssertEqual(store.attributedText.string, store.text)
+    }
+
+    func testStyledArchiveIsIgnoredWhenThePlainFileChangedUnderneath() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = NotesStore.testingStore(
+            workspacePath: root.path,
+            sessionID: "chat",
+            scope: .workspace,
+            applicationSupport: root
+        )
+        let styled = NSMutableAttributedString(attributedString: NotesTextStyle.plain("Styled text"))
+        styled.addAttribute(.font, value: boldDefaultFont(), range: NSRange(location: 0, length: 6))
+        store.updateAttributed(styled)
+        store.flushForTesting()
+
+        // An older build (or the agent CLI) rewrites only the plain mirror;
+        // the stale styling archive must not resurrect the old content.
+        try "Plain rewrite".write(to: store.fileURL, atomically: true, encoding: .utf8)
+
+        let reloaded = NotesStore.testingStore(
+            workspacePath: root.path,
+            sessionID: "chat",
+            scope: .workspace,
+            applicationSupport: root
+        )
+        XCTAssertEqual(reloaded.text, "Plain rewrite")
+        XCTAssertEqual(reloaded.attributedText.string, "Plain rewrite")
+        XCTAssertFalse(try isBold(reloaded.attributedText, at: 0))
+    }
+
+    func testExportWritesPlainTextAndRichTextFiles() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = NotesStore.testingStore(
+            workspacePath: root.path,
+            sessionID: "chat",
+            scope: .workspace,
+            applicationSupport: root
+        )
+        store.update("Export me")
+
+        let plainURL = root.appendingPathComponent("Notes.txt")
+        try store.exportPlainText(to: plainURL)
+        XCTAssertEqual(try String(contentsOf: plainURL, encoding: .utf8), "Export me")
+
+        let richURL = root.appendingPathComponent("Notes.rtf")
+        try store.exportRichText(to: richURL)
+        let rich = try Data(contentsOf: richURL)
+        XCTAssertTrue(String(decoding: rich.prefix(5), as: UTF8.self).hasPrefix("{\\rtf"))
+    }
 }
 
 @MainActor
@@ -893,7 +1040,10 @@ final class NotesActionRoutingTests: XCTestCase {
             sessionID: "foreground",
             scope: .workspace
         )
-        defer { try? FileManager.default.removeItem(at: liveStore.fileURL) }
+        defer {
+            try? FileManager.default.removeItem(at: liveStore.fileURL)
+            try? FileManager.default.removeItem(at: liveStore.styledFileURL)
+        }
         XCTAssertEqual(liveStore.text, "Release on Friday")
 
         model.selectInspectorTab(.files)
