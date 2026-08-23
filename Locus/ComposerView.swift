@@ -502,7 +502,7 @@ struct ComposerView: View {
                 Button {
                     model.selectedMode = model.selectedMode == mode ? .work : mode
                 } label: {
-                    Text(mode.rawValue.capitalized)
+                    Text(mode.title)
                         .font(.locus(size: 9, weight: .semibold))
                         .foregroundStyle(model.selectedMode == mode ? LocusTheme.paper : LocusTheme.muted)
                         .padding(.horizontal, 9)
@@ -511,7 +511,7 @@ struct ComposerView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
                 .buttonStyle(.locus())
-                .accessibilityLabel("\(mode.rawValue.capitalized) mode")
+                .accessibilityLabel("\(mode.title) mode")
                 .accessibilityValue(model.selectedMode == mode ? "Selected" : "Not selected")
                 .accessibilityIdentifier("composer.mode.\(mode.rawValue)")
             }
@@ -1055,7 +1055,7 @@ struct ComposerView: View {
         case .ask: "Ask anything…  (attach files or images · no workspace tools)"
         case .work: "What should Locus work on?  ( / commands · @ files · ⌘V images )"
         case .plan: "Describe the change you want to plan…  ( / commands · @ files · ⌘V images )"
-        case .build: "What should we build next?  ( / commands · @ files · ⌘V images )"
+        case .build: "What should we get done next?  ( / commands · @ files · ⌘V images )"
         }
     }
 

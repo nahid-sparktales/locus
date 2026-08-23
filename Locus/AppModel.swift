@@ -3519,7 +3519,7 @@ final class AppModel: ObservableObject {
             requestClearChat()
         case .setMode(let mode):
             selectedMode = mode
-            showToast(mode == .ask ? "Just Chat is on" : "Switched to \(mode.rawValue.capitalized) mode")
+            showToast(mode == .ask ? "Just Chat is on" : "Switched to \(mode.title) mode")
         case .selectModel:
             selectModelMatching(argument)
         case .browseModels:
@@ -7536,6 +7536,71 @@ final class AppModel: ObservableObject {
         expandedWorkspaceIDs.remove(canonical)
         persistExpandedWorkspaces()
         persistWorkspaceProfiles()
+    }
+
+    /// Every unarchived chat that keeps a workspace group alive in the
+    /// sidebar. Deliberately reads the full session list — the group's own
+    /// snapshot is search- and archive-filtered, so it can hide chats that
+    /// would resurrect the row after removal.
+    func removableSidebarChats(for group: WorkspaceChatGroup) -> [SessionSummary] {
+        guard let path = group.path else { return [] }
+        let canonical = SessionSummary.canonicalWorkspacePath(path)
+        return sessions.filter { $0.workspacePath == canonical && !$0.isArchived }
+    }
+
+    func workspaceHasActiveRun(_ group: WorkspaceChatGroup) -> Bool {
+        guard let path = group.path else { return false }
+        let canonical = SessionSummary.canonicalWorkspacePath(path)
+        return sessions.contains { $0.workspacePath == canonical && chatHasActiveRun($0) }
+    }
+
+    /// Remove a workspace group from the sidebar. The profile disappears
+    /// immediately; chats that would resurrect the group move to the archive,
+    /// where the "All Workspaces" view can still restore them. Nothing on
+    /// disk is touched.
+    func removeWorkspaceFromSidebar(_ group: WorkspaceChatGroup) {
+        guard let path = group.path else { return }
+        let canonical = SessionSummary.canonicalWorkspacePath(path)
+        guard canonical != activeWorkspaceID else {
+            showToast("Switch to another workspace before removing this one")
+            return
+        }
+        guard !workspaceHasActiveRun(group) else {
+            showToast("Wait for this workspace's runs to finish first")
+            return
+        }
+        removeWorkspaceProfile(canonical)
+        let toArchive = removableSidebarChats(for: group).filter { $0.id != currentSessionID }
+        guard !toArchive.isEmpty else {
+            showToast("Removed \(group.title) from the sidebar")
+            return
+        }
+        Task {
+            var failures = 0
+            for chat in toArchive {
+                do {
+                    _ = try await backend.patch(
+                        "/api/sessions/\(chat.id)",
+                        body: ["archived": true],
+                        as: SessionMetadataResponse.self
+                    )
+                } catch {
+                    failures += 1
+                }
+            }
+            await refreshMetadata()
+            if failures == 0 {
+                showToast(
+                    "Removed \(group.title) — \(toArchive.count) "
+                        + "\(toArchive.count == 1 ? "chat" : "chats") archived"
+                )
+            } else {
+                showToast(
+                    "Removed \(group.title), but \(failures) "
+                        + "\(failures == 1 ? "chat" : "chats") could not be archived"
+                )
+            }
+        }
     }
 
     func addContext() {
@@ -13391,7 +13456,7 @@ extension AppModel {
         }
         let modeRaw = CompanionPayload.string("mode", in: request.payload) ?? WorkMode.work.rawValue
         guard let mode = WorkMode(rawValue: modeRaw) else {
-            throw CompanionProtocolError(code: "invalid_mode", message: "Choose Ask, Work, Plan, or Build.")
+            throw CompanionProtocolError(code: "invalid_mode", message: "Choose Ask, Work, Plan, or GSD.")
         }
         var body: [String: Any] = [
             "request_id": request.id,
@@ -13677,7 +13742,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .askMode: "Turn on Just Chat"
         case .workMode: "Use adaptive Work mode"
         case .planMode: "Switch to Plan mode"
-        case .buildMode: "Switch to Build mode"
+        case .buildMode: "Switch to GSD mode"
         case .chooseWorkspace: "Choose a workspace"
         case .newWorkspace: "Create a new workspace folder"
         case .browseModels: "Browse Hugging Face models"

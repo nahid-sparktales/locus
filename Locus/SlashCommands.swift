@@ -72,8 +72,8 @@ struct SlashCommand: Identifiable, Hashable {
             argumentHint: nil, symbol: "list.bullet.clipboard", action: .setMode(.plan)
         ),
         SlashCommand(
-            name: "build", aliases: [],
-            summary: "Switch to Build mode",
+            name: "gsd", aliases: ["build"],
+            summary: "Switch to GSD mode",
             argumentHint: nil, symbol: "hammer", action: .setMode(.build)
         ),
         SlashCommand(

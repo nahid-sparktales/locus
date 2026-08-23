@@ -9,12 +9,23 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
 
     var id: String { rawValue }
 
+    /// User-facing name. `build` keeps its raw value for stored profiles and
+    /// the runtime's `[Locus mode:]` header; GSD is its display identity.
+    var title: String {
+        switch self {
+        case .ask: "Ask"
+        case .work: "Work"
+        case .plan: "Plan"
+        case .build: "GSD"
+        }
+    }
+
     var description: String {
         switch self {
         case .ask: "Answers without workspace access"
         case .work: "Chooses the right approach for the request"
         case .plan: "Maps the work before editing"
-        case .build: "Can edit files and run commands"
+        case .build: "Gets it done end-to-end with the GSD workflow"
         }
     }
 
@@ -27,7 +38,7 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
         case .plan:
             "Inspect files if useful, but do not modify anything. Ask clarifying questions when needed. When the plan is final and decision-complete, call submit_plan exactly once with its title, summary, ordered steps, and test scenarios; do not call submit_plan for a question or partial plan."
         case .build:
-            "Implement the request completely. Inspect, edit, and verify the relevant files, asking for permission when required."
+            "Implement the request completely using the Get Shit Done method: follow the activated $gsd-workflow skill — resolve open decisions, plan, execute in bounded steps, and verify against concrete evidence. Inspect, edit, and verify the relevant files, asking for permission when required."
         }
     }
 }

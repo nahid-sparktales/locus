@@ -985,7 +985,7 @@ private struct ScheduleRow: View {
                     Text(nextRunDescription)
                         .font(.locus(size: 9, design: .monospaced))
                         .foregroundStyle(LocusTheme.inkSoft)
-                    Text("\(ruleDescription) · \(task.mode.rawValue.capitalized) · \(task.runner.title) · \(task.executionEnvironment.title)")
+                    Text("\(ruleDescription) · \(task.mode.title) · \(task.runner.title) · \(task.executionEnvironment.title)")
                         .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.muted)
                         .lineLimit(2)
@@ -1117,7 +1117,7 @@ struct ScheduleEditorView: View {
                     }
                     Picker("Mode", selection: $draft.mode) {
                         ForEach(WorkMode.allCases) { mode in
-                            Text(mode.rawValue.capitalized).tag(mode)
+                            Text(mode.title).tag(mode)
                         }
                     }
                     Picker("Environment", selection: $draft.executionEnvironment) {
