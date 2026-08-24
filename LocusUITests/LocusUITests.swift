@@ -886,21 +886,28 @@ final class LocusUITests: XCTestCase {
 
     // MARK: - Inspector
 
-    func testSidebarPlacesChatWorkAndExtensionsBelowTheBrand() {
+    func testSidebarPlacesChatWorkAndScheduleBelowTheBrand() {
         let brand = anyElement("sidebar.brand")
         let chat = app.buttons["workspace.mode.chat"]
         let work = app.buttons["workspace.mode.work"]
-        let extensions = anyElement("sidebar.extensions")
+        let schedule = anyElement("sidebar.schedule")
 
         XCTAssertTrue(brand.waitForExistence(timeout: 3))
         XCTAssertTrue(chat.exists)
         XCTAssertTrue(work.exists)
-        XCTAssertTrue(extensions.exists)
+        XCTAssertTrue(schedule.exists)
         XCTAssertLessThan(brand.frame.maxY, chat.frame.minY)
-        XCTAssertLessThan(chat.frame.maxY, extensions.frame.minY)
+        XCTAssertLessThan(chat.frame.maxY, schedule.frame.minY)
 
-        extensions.click()
-        XCTAssertTrue(anyElement("extensions.tab.installed").waitForExistence(timeout: 3))
+        // Manage Accounts sits above New chat as a quiet row; Plugins & MCP
+        // lives in the Overview shortcut bar now.
+        let accounts = anyElement("sidebar.accounts")
+        XCTAssertTrue(accounts.exists)
+        XCTAssertLessThan(accounts.frame.maxY, schedule.frame.minY)
+        XCTAssertFalse(anyElement("sidebar.extensions").exists)
+
+        schedule.click()
+        XCTAssertTrue(anyElement("scheduleEditor").waitForExistence(timeout: 3))
     }
 
     func testRunAwarenessControlsAreVisibleAndJustChatHidesAgenticWorkspaceUI() {
@@ -1218,6 +1225,77 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(waitUntil { !self.anyElement("settings.page.extensions").exists })
     }
 
+    func testSidebarSearchIsRevealedFromTheWorkspacesHeader() {
+        let toggle = anyElement("sidebar.search.toggle")
+        XCTAssertTrue(toggle.waitForExistence(timeout: 3))
+        // The field is put away until asked for; the sidebar no longer spends
+        // a row on an empty search box.
+        XCTAssertFalse(anyElement("sidebar.search").exists)
+
+        toggle.click()
+        XCTAssertTrue(anyElement("sidebar.search").waitForExistence(timeout: 3))
+
+        toggle.click()
+        XCTAssertTrue(waitUntil { !self.anyElement("sidebar.search").exists })
+
+        // Search All Conversations (⇧⌘F) reveals and focuses it from anywhere.
+        app.typeKey("f", modifierFlags: [.command, .shift])
+        XCTAssertTrue(anyElement("sidebar.search").waitForExistence(timeout: 3))
+    }
+
+    func testNotesHeaderSwitchesScopeAndKeepsToolbarActions() {
+        app.typeKey("9", modifierFlags: .command)
+        let header = anyElement("notes.header")
+        XCTAssertTrue(header.waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("notes.toolbar").exists)
+        XCTAssertTrue(anyElement("notes.toolbar.insert").exists)
+        XCTAssertTrue(anyElement("notes.toolbar.more").exists)
+        XCTAssertTrue(anyElement("notes.saveState").exists)
+
+        let scope = anyElement("notes.scopeMenu")
+        XCTAssertTrue(scope.exists)
+        XCTAssertEqual(scope.value as? String, "Notes for this workspace")
+
+        scope.click()
+        let everywhere = app.menuItems["Everywhere"]
+        XCTAssertTrue(everywhere.waitForExistence(timeout: 3))
+        everywhere.click()
+
+        XCTAssertTrue(waitUntil {
+            self.anyElement("notes.scopeMenu").value as? String
+                == "Notes shared by every chat and workspace"
+        })
+        XCTAssertTrue(anyElement("notes.toolbar").exists)
+    }
+
+    func testOverviewShortcutsOpenSettingsAndStayPinned() {
+        let shortcuts = anyElement("plan.shortcuts")
+        let context = anyElement("plan.context")
+        XCTAssertTrue(shortcuts.waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("plan.shortcuts.finder").exists)
+        XCTAssertTrue(anyElement("plan.shortcuts.accounts").exists)
+        XCTAssertTrue(anyElement("plan.shortcuts.extensions").exists)
+
+        // The bar is pinned with the context card rather than scrolling with
+        // the summary, so it sits directly above it.
+        XCTAssertTrue(context.exists)
+        XCTAssertLessThanOrEqual(shortcuts.frame.maxY, context.frame.minY + 1)
+
+        // Finder is deliberately not clicked: it would open a real Finder
+        // window over the test run.
+        for (identifier, page) in [
+            ("plan.shortcuts.extensions", "settings.page.extensions"),
+            ("plan.shortcuts.accounts", "settings.page.accounts"),
+        ] {
+            let shortcut = anyElement(identifier)
+            XCTAssertTrue(waitUntilHittable(shortcut))
+            shortcut.click()
+            XCTAssertTrue(anyElement(page).waitForExistence(timeout: 5))
+            anyElement("settings.close").click()
+            XCTAssertTrue(waitUntil { !self.anyElement(page).exists })
+        }
+    }
+
     func testOverviewShowsAnAlreadyLoadedSubagentRun() {
         relaunchWithRunFixture("swarm-live")
         app.typeKey("1", modifierFlags: .command)
@@ -1447,10 +1525,17 @@ final class LocusUITests: XCTestCase {
         let window = app.windows.firstMatch
         let tabBar = anyElement("inspector.tabBar")
         let context = anyElement("plan.context")
+        let shortcuts = anyElement("plan.shortcuts")
         for _ in 0..<10 {
             guard target.exists else { return }
             let top = tabBar.exists ? tabBar.frame.maxY : window.frame.minY
-            let fold = context.exists ? context.frame.minY : window.frame.maxY
+            // Everything pinned below the scrolling summary hides content, so
+            // the fold is the topmost pinned element — the shortcut bar sits
+            // above the context card.
+            let fold = [shortcuts, context]
+                .filter(\.exists)
+                .map { $0.frame.minY }
+                .min() ?? window.frame.maxY
             let frame = target.frame
             if frame.minY >= top, frame.maxY <= fold, target.isHittable { return }
             summary.scroll(byDeltaX: 0, deltaY: frame.maxY > fold ? -120 : 120)
@@ -1868,10 +1953,15 @@ final class LocusUITests: XCTestCase {
 
         let destination = anyElement("sidebar.activity")
         let newChat = anyElement("sidebar.newSession")
+        let schedule = anyElement("sidebar.schedule")
         XCTAssertTrue(destination.waitForExistence(timeout: 3))
         XCTAssertTrue(newChat.exists)
-        XCTAssertLessThanOrEqual(abs(destination.frame.midY - newChat.frame.midY), 2)
-        XCTAssertGreaterThan(destination.frame.minX, newChat.frame.maxX)
+        XCTAssertTrue(schedule.exists)
+        // The bell shares the Schedule Task line, under the full-width
+        // New chat button.
+        XCTAssertLessThanOrEqual(abs(destination.frame.midY - schedule.frame.midY), 2)
+        XCTAssertGreaterThan(destination.frame.minX, schedule.frame.maxX)
+        XCTAssertGreaterThan(destination.frame.minY, newChat.frame.maxY)
         XCTAssertTrue("\(destination.value ?? "")".contains("1 needs attention"))
         destination.click()
         XCTAssertTrue(anyElement("activity.center").waitForExistence(timeout: 3))

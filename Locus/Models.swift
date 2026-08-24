@@ -1938,6 +1938,7 @@ enum AutomaticInspectorPresentation: String, CaseIterable, Identifiable {
 enum NotesScope: String, CaseIterable, Identifiable {
     case workspace
     case chat
+    case global
 
     var id: String { rawValue }
 
@@ -1945,6 +1946,7 @@ enum NotesScope: String, CaseIterable, Identifiable {
         switch self {
         case .workspace: "Workspace"
         case .chat: "Each chat"
+        case .global: "Everywhere"
         }
     }
 
@@ -1952,6 +1954,25 @@ enum NotesScope: String, CaseIterable, Identifiable {
         switch self {
         case .workspace: "Notes for this workspace"
         case .chat: "Notes for this chat"
+        case .global: "Notes shared by every chat and workspace"
+        }
+    }
+
+    /// Shown beside the notes editor, where the question is which document is
+    /// open rather than which setting produced it.
+    var documentTitle: String {
+        switch self {
+        case .workspace: "Workspace notes"
+        case .chat: "Chat notes"
+        case .global: "Shared notes"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .workspace: "folder"
+        case .chat: "bubble.left"
+        case .global: "globe"
         }
     }
 }

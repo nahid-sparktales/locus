@@ -48,6 +48,38 @@ enum NotesTextStyle {
     }
 }
 
+/// Line markers the insert menu writes. They are ordinary text so the plain
+/// `.txt` mirror — the copy the agent's notes tools read — keeps its meaning.
+enum NotesListKind {
+    case bullet
+    case numbered
+    case checklist
+}
+
+enum NotesMarkers {
+    static let bullet = "- "
+    static let unchecked = "- [ ] "
+    static let checked = "- [x] "
+    static let divider = "\n———\n"
+
+    /// Splits a line into its list marker, if any, and the rest. Checkbox
+    /// markers are tested before the bullet they start with, and numbering is
+    /// matched at any width so "12. " round-trips like "1. ".
+    static func strippingMarker(_ line: String) -> (rest: String, kind: NotesListKind?) {
+        for marker in [unchecked, checked] where line.hasPrefix(marker) {
+            return (String(line.dropFirst(marker.count)), .checklist)
+        }
+        if line.hasPrefix(bullet) {
+            return (String(line.dropFirst(bullet.count)), .bullet)
+        }
+        let digits = line.prefix(while: \.isNumber)
+        if !digits.isEmpty, line.dropFirst(digits.count).hasPrefix(". ") {
+            return (String(line.dropFirst(digits.count + 2)), .numbered)
+        }
+        return (line, nil)
+    }
+}
+
 /// One durable notes document. Workspace-scoped documents use their own
 /// directory, while chat-scoped documents deliberately keep the original
 /// key and `Chat Notes` location so notes created by older Locus builds remain
@@ -61,6 +93,9 @@ final class NotesStore: ObservableObject {
 
     @Published private(set) var text = ""
     @Published private(set) var attributedText: NSAttributedString = NSAttributedString()
+    /// Drives the editor's saved indicator. Saving is debounced, so without
+    /// this the only feedback for an unwritten edit is the file itself.
+    @Published private(set) var hasUnsavedChanges = false
 
     let scope: NotesScope
     let fileURL: URL
@@ -150,6 +185,10 @@ final class NotesStore: ObservableObject {
             // This is the exact pre-workspace-scope key.
             let legacyKey = canonicalWorkspace + "\u{0}" + canonicalSession
             return ("chat\u{0}" + legacyKey, legacyKey, "Chat Notes")
+        case .global:
+            // One document for the whole app: the key deliberately ignores
+            // both the workspace and the chat.
+            return ("global", "global", "Shared Notes")
         }
     }
 
@@ -268,6 +307,7 @@ final class NotesStore: ObservableObject {
             attributedText = updatedAttributed
             pendingSave?.cancel()
             pendingSave = nil
+            hasUnsavedChanges = true
             if let error = save() {
                 return ["error": "Could not save notes: \(error.localizedDescription)"]
             }
@@ -290,6 +330,7 @@ final class NotesStore: ObservableObject {
 
     private func scheduleSave() {
         pendingSave?.cancel()
+        hasUnsavedChanges = true
         let item = DispatchWorkItem { [weak self] in
             Task { @MainActor in _ = self?.save() }
         }
@@ -323,6 +364,7 @@ final class NotesStore: ObservableObject {
                     ofItemAtPath: styledFileURL.path
                 )
             }
+            hasUnsavedChanges = false
             return nil
         } catch {
             // UI edits retain the latest text in memory and retry next time.
@@ -374,6 +416,106 @@ final class NotesEditorProxy: ObservableObject {
         } typing: { attributes in
             attributes[.foregroundColor] = color
         }
+    }
+
+    /// Insert text at the cursor with the current typing attributes, as if it
+    /// had been typed — so undo, selection, and styling all behave normally.
+    func insert(_ string: String) {
+        guard let textView else { return }
+        if textView.shouldChangeText(in: textView.selectedRange(), replacementString: string) {
+            textView.insertText(string, replacementRange: textView.selectedRange())
+            textView.didChangeText()
+        }
+        refreshState()
+    }
+
+    /// Apply `kind` to every line the selection touches, or strip the markers
+    /// when those lines already are that kind of list. Markers are plain text
+    /// so the `.txt` mirror the agent reads stays meaningful.
+    func toggleList(_ kind: NotesListKind) {
+        guard let textView, let storage = textView.textStorage else { return }
+        let selection = textView.selectedRange()
+        let lineRange = (storage.string as NSString).lineRange(
+            for: NSRange(location: min(selection.location, storage.length), length: selection.length)
+        )
+        let text = (storage.string as NSString).substring(with: lineRange)
+        let hadTrailingNewline = text.hasSuffix("\n")
+        var lines = text.components(separatedBy: "\n")
+        if hadTrailingNewline { lines.removeLast() }
+        guard !lines.isEmpty else { return }
+        let parsed = lines.map(NotesMarkers.strippingMarker)
+        // Already this kind of list, so the same action turns it back off.
+        let isAlreadyKind = parsed.allSatisfy { $0.kind == kind }
+        let rewritten = parsed.enumerated().map { index, line -> String in
+            guard !isAlreadyKind else { return line.rest }
+            switch kind {
+            case .bullet: return NotesMarkers.bullet + line.rest
+            case .numbered: return "\(index + 1). " + line.rest
+            case .checklist: return NotesMarkers.unchecked + line.rest
+            }
+        }
+        let replacement = rewritten.joined(separator: "\n") + (hadTrailingNewline ? "\n" : "")
+        guard textView.shouldChangeText(in: lineRange, replacementString: replacement) else { return }
+        storage.replaceCharacters(in: lineRange, with: replacement)
+        textView.didChangeText()
+        textView.setSelectedRange(
+            NSRange(location: lineRange.location, length: (replacement as NSString).length)
+        )
+        refreshState()
+    }
+
+    /// A checklist line cycles unchecked → checked → plain, which is the
+    /// behaviour people expect from a single button.
+    func toggleChecklist() {
+        guard let textView, let storage = textView.textStorage else { return }
+        let selection = textView.selectedRange()
+        let lineRange = (storage.string as NSString).lineRange(
+            for: NSRange(location: min(selection.location, storage.length), length: selection.length)
+        )
+        let line = (storage.string as NSString).substring(with: lineRange)
+        if line.hasPrefix(NotesMarkers.unchecked) {
+            replaceLinePrefix(
+                NotesMarkers.unchecked,
+                with: NotesMarkers.checked,
+                in: lineRange,
+                textView: textView,
+                storage: storage
+            )
+        } else if line.hasPrefix(NotesMarkers.checked) {
+            replaceLinePrefix(
+                NotesMarkers.checked,
+                with: "",
+                in: lineRange,
+                textView: textView,
+                storage: storage
+            )
+        } else {
+            toggleList(.checklist)
+        }
+    }
+
+    private func replaceLinePrefix(
+        _ prefix: String,
+        with replacement: String,
+        in lineRange: NSRange,
+        textView: NSTextView,
+        storage: NSTextStorage
+    ) {
+        let target = NSRange(location: lineRange.location, length: (prefix as NSString).length)
+        guard textView.shouldChangeText(in: target, replacementString: replacement) else { return }
+        storage.replaceCharacters(in: target, with: replacement)
+        textView.didChangeText()
+        refreshState()
+    }
+
+    /// Opens the text view's own find bar, which the editor already enables.
+    func showFindBar() {
+        guard let textView else { return }
+        textView.window?.makeFirstResponder(textView)
+        // performTextFinderAction reads the action off the sender's tag.
+        let sender = NSMenuItem()
+        sender.tag = NSTextFinder.Action.showFindInterface.rawValue
+        textView.performTextFinderAction(sender)
     }
 
     func clearFormatting() {
@@ -641,23 +783,13 @@ private struct NotesFormatToolbar: View {
             sizeMenu
             colorMenu
 
+            toolbarDivider
+
+            insertMenu
+
             Spacer(minLength: 2)
 
-            Button {
-                proxy.clearFormatting()
-            } label: {
-                Image(systemName: "eraser")
-                    .font(.locus(size: 10, weight: .semibold))
-                    .foregroundStyle(LocusTheme.muted)
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.locus(.icon))
-            .help("Clear formatting in the selection")
-            .accessibilityLabel("Clear formatting")
-            .accessibilityIdentifier("notes.toolbar.clearFormatting")
-
-            exportMenu
+            overflowMenu
         }
         .padding(.horizontal, 7)
         .frame(height: 34)
@@ -739,12 +871,11 @@ private struct NotesFormatToolbar: View {
                 colorItem(name: accent.name, color: accent.color)
             }
         } label: {
-            Circle()
-                .fill(Color(nsColor: proxy.selectionColor))
-                .frame(width: 11, height: 11)
-                .overlay {
-                    Circle().stroke(LocusTheme.lineStrong, lineWidth: 1)
-                }
+            // A symbol, not a bare Circle: AppKit drops shape-only labels from
+            // a borderless menu, which left the swatch invisible.
+            Image(systemName: "circle.fill")
+                .font(.locus(size: 11, weight: .semibold))
+                .foregroundStyle(Color(nsColor: proxy.selectionColor))
                 .frame(width: 24, height: 24)
                 .contentShape(Rectangle())
         }
@@ -776,14 +907,21 @@ private struct NotesFormatToolbar: View {
         }
     }
 
-    private var exportMenu: some View {
+    private var insertMenu: some View {
         Menu {
-            Button("Export as Text File…") { export(rich: false) }
-                .accessibilityIdentifier("notes.export.text")
-            Button("Export as Rich Text…") { export(rich: true) }
-                .accessibilityIdentifier("notes.export.rtf")
+            Button("Checklist Item", systemImage: "checklist") { proxy.toggleChecklist() }
+                .accessibilityIdentifier("notes.insert.checklist")
+            Button("Bulleted List", systemImage: "list.bullet") { proxy.toggleList(.bullet) }
+                .accessibilityIdentifier("notes.insert.bullet")
+            Button("Numbered List", systemImage: "list.number") { proxy.toggleList(.numbered) }
+                .accessibilityIdentifier("notes.insert.numbered")
+            Divider()
+            Button("Date & Time", systemImage: "clock") { proxy.insert(timestamp()) }
+                .accessibilityIdentifier("notes.insert.timestamp")
+            Button("Divider", systemImage: "minus") { proxy.insert(NotesMarkers.divider) }
+                .accessibilityIdentifier("notes.insert.divider")
         } label: {
-            Image(systemName: "square.and.arrow.up")
+            Image(systemName: "list.bullet.indent")
                 .font(.locus(size: 10, weight: .semibold))
                 .foregroundStyle(LocusTheme.muted)
                 .frame(width: 24, height: 24)
@@ -792,10 +930,53 @@ private struct NotesFormatToolbar: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .disabled(store.text.isEmpty)
-        .help("Export notes to a file")
-        .accessibilityLabel("Export notes")
-        .accessibilityIdentifier("notes.toolbar.export")
+        .help("Insert a list, checklist, timestamp, or divider")
+        .accessibilityLabel("Insert")
+        .accessibilityIdentifier("notes.toolbar.insert")
+    }
+
+    /// Everything that acts on the document as a whole. Keeping it behind one
+    /// glyph leaves the formatting controls uncrowded at every panel width.
+    private var overflowMenu: some View {
+        Menu {
+            Button("Clear Formatting", systemImage: "eraser") { proxy.clearFormatting() }
+                .accessibilityIdentifier("notes.toolbar.clearFormatting")
+            Button("Find in Notes…", systemImage: "magnifyingglass") { proxy.showFindBar() }
+                .accessibilityIdentifier("notes.find")
+            Divider()
+            Button("Copy All", systemImage: "doc.on.doc") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(store.text, forType: .string)
+            }
+            .disabled(store.text.isEmpty)
+            .accessibilityIdentifier("notes.copyAll")
+            Button("Export as Text File…", systemImage: "arrow.down.document") {
+                export(rich: false)
+            }
+            .disabled(store.text.isEmpty)
+            .accessibilityIdentifier("notes.export.text")
+            Button("Export as Rich Text…", systemImage: "arrow.down.document") {
+                export(rich: true)
+            }
+            .disabled(store.text.isEmpty)
+            .accessibilityIdentifier("notes.export.rtf")
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.locus(size: 10, weight: .semibold))
+                .foregroundStyle(LocusTheme.muted)
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("More note actions")
+        .accessibilityLabel("More note actions")
+        .accessibilityIdentifier("notes.toolbar.more")
+    }
+
+    private func timestamp() -> String {
+        Date().formatted(date: .abbreviated, time: .shortened) + " — "
     }
 
     private func export(rich: Bool) {
@@ -825,7 +1006,147 @@ private struct NotesFormatToolbar: View {
     }
 }
 
+/// Identity strip above the toolbar: which document is open, whether the last
+/// keystroke has landed on disk, and how much is in it.
+private struct NotesHeaderBar: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject var store: NotesStore
+    let workspaceName: String
+
+    /// List markers are punctuation, not words: counting the raw text would
+    /// report three extra "words" for every checklist line.
+    private var wordCount: Int {
+        store.text
+            .components(separatedBy: "\n")
+            .map { NotesMarkers.strippingMarker($0).rest }
+            .joined(separator: " ")
+            .split(whereSeparator: \.isWhitespace)
+            .count
+    }
+
+    /// Checklists are a first-class insert action, so a note that has them
+    /// gets its progress read back at a glance.
+    private var checklistProgress: (done: Int, total: Int)? {
+        var done = 0
+        var total = 0
+        for line in store.text.components(separatedBy: "\n") {
+            if line.hasPrefix(NotesMarkers.checked) {
+                done += 1
+                total += 1
+            } else if line.hasPrefix(NotesMarkers.unchecked) {
+                total += 1
+            }
+        }
+        return total > 0 ? (done, total) : nil
+    }
+
+    /// Only worth showing as the 100,000-character ceiling comes into view.
+    private var nearsLimit: Bool {
+        store.text.count > Int(Double(NotesStore.maximumCharacters) * 0.8)
+    }
+
+    private var subtitle: String {
+        switch store.scope {
+        case .workspace: workspaceName
+        case .chat: "This chat only"
+        case .global: "Every chat, every workspace"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Menu {
+                ForEach(NotesScope.allCases) { scope in
+                    Button {
+                        model.settings.notesScopeRaw = scope.rawValue
+                    } label: {
+                        Label(
+                            scope.title,
+                            systemImage: scope == store.scope ? "checkmark" : scope.symbol
+                        )
+                    }
+                    .accessibilityIdentifier("notes.scope.\(scope.rawValue)")
+                }
+            } label: {
+                // One line of glyph and text: a borderless menu flattens a
+                // stacked label down to its first row.
+                HStack(spacing: 6) {
+                    Image(systemName: store.scope.symbol)
+                        .font(.locus(size: 10, weight: .medium))
+                        .foregroundStyle(LocusTheme.muted)
+                    Text(store.scope.documentTitle)
+                        .font(.locus(size: 10, weight: .semibold))
+                        .foregroundStyle(LocusTheme.ink)
+                }
+                .frame(minHeight: 28)
+                .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            // A trailing chevron inside the label is dropped along with
+            // everything after the first text, so use the native indicator.
+            .menuIndicator(.visible)
+            .fixedSize()
+            .help("Choose which conversations share these notes")
+            .accessibilityLabel("Notes scope")
+            .accessibilityValue(store.scope.accessibilityLabel)
+            .accessibilityIdentifier("notes.scopeMenu")
+
+            Text(subtitle)
+                .font(.locus(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .layoutPriority(-1)
+                .accessibilityIdentifier("notes.scopeDetail")
+
+            Spacer(minLength: 4)
+
+            if let progress = checklistProgress {
+                HStack(spacing: 4) {
+                    Image(systemName: progress.done == progress.total
+                        ? "checkmark.circle.fill" : "checklist")
+                        .font(.locus(size: 9, weight: .medium))
+                    Text("\(progress.done)/\(progress.total)")
+                        .font(.locus(size: 8, weight: .semibold, design: .monospaced))
+                }
+                .foregroundStyle(progress.done == progress.total
+                    ? LocusTheme.success : LocusTheme.muted)
+                .help("\(progress.done) of \(progress.total) checklist items done")
+                .accessibilityLabel(
+                    "\(progress.done) of \(progress.total) checklist items done"
+                )
+                .accessibilityIdentifier("notes.checklistProgress")
+            }
+
+            if !store.text.isEmpty {
+                Text(nearsLimit
+                    ? "\(store.text.count.formatted()) / \(NotesStore.maximumCharacters.formatted()) characters"
+                    : "\(wordCount.formatted()) \(wordCount == 1 ? "word" : "words")")
+                    .font(.locus(size: 8))
+                    .foregroundStyle(nearsLimit ? LocusTheme.warning : LocusTheme.muted)
+                    .accessibilityIdentifier("notes.wordCount")
+            }
+
+            Image(systemName: store.hasUnsavedChanges ? "arrow.triangle.2.circlepath" : "checkmark.circle")
+                .font(.locus(size: 9, weight: .medium))
+                .foregroundStyle(store.hasUnsavedChanges ? LocusTheme.muted : LocusTheme.success)
+                .help(store.hasUnsavedChanges ? "Saving…" : "Saved")
+                .accessibilityLabel(store.hasUnsavedChanges ? "Saving" : "Saved")
+                .accessibilityIdentifier("notes.saveState")
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 34)
+        .background(LocusTheme.paperDeep.opacity(0.5))
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LocusTheme.line).frame(height: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("notes.header")
+    }
+}
+
 struct InspectorNotesTab: View {
+    @EnvironmentObject private var model: AppModel
     @StateObject private var store: NotesStore
     @StateObject private var proxy = NotesEditorProxy()
     private let workspacePath: String
@@ -839,14 +1160,40 @@ struct InspectorNotesTab: View {
         ))
     }
 
+    private var workspaceName: String {
+        URL(fileURLWithPath: workspacePath).lastPathComponent.nilIfEmpty ?? "This workspace"
+    }
+
     var body: some View {
         VStack(spacing: 0) {
+            NotesHeaderBar(store: store, workspaceName: workspaceName)
             NotesFormatToolbar(store: store, proxy: proxy, workspacePath: workspacePath)
             RichNotesEditor(
                 store: store,
                 proxy: proxy,
                 accessibilityLabel: store.scope.accessibilityLabel
             )
+            .overlay(alignment: .topLeading) {
+                if store.text.isEmpty {
+                    // A hint rather than a placeholder string in the document:
+                    // the editor stays genuinely empty underneath it.
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Nothing here yet")
+                            .font(.locus(size: 11, weight: .semibold))
+                            .foregroundStyle(LocusTheme.inkSoft)
+                        Text("Jot down anything worth keeping. The agent can read and append to these notes when you ask it to.")
+                            .font(.locus(size: 9))
+                            .foregroundStyle(LocusTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 12)
+                    .allowsHitTesting(false)
+                    // The editor's own accessibility label already says which
+                    // notes these are, so the hint is decorative.
+                    .accessibilityHidden(true)
+                }
+            }
         }
         .background(LocusTheme.paper)
     }

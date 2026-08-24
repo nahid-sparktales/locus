@@ -32,10 +32,13 @@ struct SessionOverviewView: View {
             .transition(LocusMotion.transition(edge: .trailing, reduceMotion: reduceMotion))
 
             Divider().overlay(LocusTheme.line)
-            VStack {
-                ContextWindowInfoCard()
+            VStack(spacing: 10) {
+                SummaryShortcutsBar(workspace: state.workspace)
+                VStack {
+                    ContextWindowInfoCard()
+                }
+                    .accessibilityIdentifier("plan.context")
             }
-                .accessibilityIdentifier("plan.context")
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .fixedSize(horizontal: false, vertical: true)
@@ -319,5 +322,138 @@ private struct SessionPlanStepRow: View {
     private func elapsed(from milliseconds: Int) -> String {
         let seconds = max(Int(now.timeIntervalSince1970) - milliseconds / 1_000, 0)
         return seconds < 60 ? "\(seconds)s" : "\(seconds / 60)m \(seconds % 60)s"
+    }
+}
+
+// MARK: - Pinned shortcuts
+
+/// The Overview's pinned shortcuts. They sit beside the context card rather
+/// than inside the summary so they never scroll away and never compete with
+/// the sections, which appear only while they hold live session content.
+private struct SummaryShortcutsBar: View {
+    @EnvironmentObject private var model: AppModel
+    let workspace: SessionWorkspaceIdentity
+
+    private struct Shortcut: Identifiable {
+        let id: String
+        let title: String
+        let symbol: String
+        let help: String
+        var disabled = false
+        let action: () -> Void
+    }
+
+    private var shortcuts: [Shortcut] {
+        [
+            Shortcut(
+                id: "plan.shortcuts.finder",
+                title: "Finder",
+                symbol: "folder",
+                help: workspace.path.isEmpty
+                    ? "This chat has no workspace folder yet"
+                    : "Reveal \(workspace.name) in Finder",
+                disabled: workspace.path.isEmpty
+            ) {
+                model.revealSessionWorkspace()
+            },
+            Shortcut(
+                id: "plan.shortcuts.accounts",
+                title: "Accounts",
+                symbol: "person.crop.circle",
+                help: "Add or edit provider accounts and their API keys"
+            ) {
+                model.settingsPage = .accounts
+                model.settingsPresented = true
+            },
+            Shortcut(
+                id: "plan.shortcuts.extensions",
+                title: "Plugins & MCP",
+                symbol: "puzzlepiece.extension",
+                help: "Manage plugins, MCP servers, and skills"
+            ) {
+                model.settingsPage = .extensions
+                model.settingsPresented = true
+            },
+        ]
+    }
+
+    var body: some View {
+        // Widest layout first. One row while the inspector is wide enough for
+        // three labels, then two rows, and finally glyphs alone — the labels
+        // shrink away rather than truncating "Plugins & MCP" mid-word.
+        ViewThatFits(in: .horizontal) {
+            singleRow
+            stackedRows
+            glyphRow
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Overview shortcuts")
+        .accessibilityIdentifier("plan.shortcuts")
+    }
+
+    /// Buttons hug their text here, so the row's slack goes to the gaps
+    /// between them instead of squeezing the longest label.
+    private var singleRow: some View {
+        HStack(spacing: 6) {
+            ForEach(shortcuts) { shortcut in
+                if shortcut.id != shortcuts.first?.id {
+                    Spacer(minLength: 0)
+                }
+                button(shortcut, showsTitle: true, stretches: false)
+            }
+        }
+    }
+
+    private var stackedRows: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 6) {
+                ForEach(Array(shortcuts.prefix(2))) { shortcut in
+                    button(shortcut, showsTitle: true, stretches: true)
+                }
+            }
+            ForEach(Array(shortcuts.dropFirst(2))) { shortcut in
+                button(shortcut, showsTitle: true, stretches: true)
+            }
+        }
+    }
+
+    private var glyphRow: some View {
+        HStack(spacing: 6) {
+            ForEach(shortcuts) { shortcut in
+                button(shortcut, showsTitle: false, stretches: true)
+            }
+        }
+    }
+
+    private func button(
+        _ shortcut: Shortcut,
+        showsTitle: Bool,
+        stretches: Bool
+    ) -> some View {
+        Button(action: shortcut.action) {
+            HStack(spacing: 6) {
+                Image(systemName: shortcut.symbol)
+                    .font(.locus(size: 11, weight: .medium))
+                    .foregroundStyle(LocusTheme.muted)
+                    .accessibilityHidden(true)
+                if showsTitle {
+                    Text(shortcut.title)
+                        .font(.locus(size: 9, weight: .semibold))
+                        .foregroundStyle(LocusTheme.inkSoft)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(maxWidth: stretches ? .infinity : nil, minHeight: 30)
+            .summaryCardChrome(stretches: stretches)
+        }
+        .buttonStyle(.locus(.card))
+        .disabled(shortcut.disabled)
+        .help(shortcut.help)
+        // Starts with the visible text so Voice Control's "Click Finder"
+        // matches (WCAG label-in-name).
+        .accessibilityLabel(shortcut.title)
+        .accessibilityIdentifier(shortcut.id)
     }
 }

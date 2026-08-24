@@ -729,25 +729,6 @@ struct ComposerView: View {
                 permissionChip
             }
 
-            Button {
-                model.presentScheduleEditor(prompt: model.draftText)
-            } label: {
-                Image(systemName: ComposerSymbols.schedule)
-                    .font(.locus(size: 11, weight: .semibold))
-                    .foregroundStyle(LocusTheme.ink)
-                    .frame(width: 29, height: 27)
-                    .background(LocusTheme.paperDeep.opacity(0.75))
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .stroke(LocusTheme.line, lineWidth: 1)
-                    }
-            }
-            .buttonStyle(.locus())
-            .help("Schedule this draft without sending it")
-            .accessibilityLabel("Schedule this message")
-            .accessibilityIdentifier("composer.schedule")
-
             Spacer()
 
             Text(sendHint)
