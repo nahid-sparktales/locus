@@ -802,9 +802,13 @@ enum SummaryIcon {
 // MARK: - Card chrome
 
 private struct SummaryCardChrome: ViewModifier {
+    /// Cards fill their column; a chrome-wrapped control that sits in a row
+    /// beside others opts out so it can hug its own content instead.
+    var stretches = true
+
     func body(content: Content) -> some View {
         content
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: stretches ? .infinity : nil, alignment: .leading)
             .background(LocusTheme.white.opacity(0.72))
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay {
@@ -817,7 +821,7 @@ private struct SummaryCardChrome: ViewModifier {
 extension View {
     /// The same card treatment as `ContextWindowInfoCard`, so the summary and
     /// the pinned context card read as siblings.
-    func summaryCardChrome() -> some View {
-        modifier(SummaryCardChrome())
+    func summaryCardChrome(stretches: Bool = true) -> some View {
+        modifier(SummaryCardChrome(stretches: stretches))
     }
 }

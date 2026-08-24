@@ -827,6 +827,47 @@ final class NotesStoreTests: XCTestCase {
         XCTAssertEqual(chatOne.fileURL.deletingLastPathComponent().lastPathComponent, "Chat Notes")
     }
 
+    func testGlobalScopeSharesOneDocumentAcrossWorkspacesAndChats() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let support = root.appendingPathComponent("Application Support", isDirectory: true)
+
+        let fromProjectA = NotesStore.testingStore(
+            workspacePath: root.appendingPathComponent("project-a").path,
+            sessionID: "chat-one",
+            scope: .global,
+            applicationSupport: support
+        )
+        XCTAssertNil(fromProjectA.perform(
+            tool: "notes_update",
+            arguments: ["action": "replace", "text": "Everywhere note"]
+        )["error"])
+
+        // A different workspace and a different chat open the same document.
+        let fromProjectB = NotesStore.testingStore(
+            workspacePath: root.appendingPathComponent("project-b").path,
+            sessionID: "chat-two",
+            scope: .global,
+            applicationSupport: support
+        )
+        XCTAssertEqual(fromProjectB.text, "Everywhere note")
+        XCTAssertEqual(fromProjectA.fileURL, fromProjectB.fileURL)
+        XCTAssertEqual(
+            fromProjectA.fileURL.deletingLastPathComponent().lastPathComponent,
+            "Shared Notes"
+        )
+
+        // And it is a document of its own, not either scoped one.
+        let identities = Set([NotesScope.workspace, .chat, .global].map {
+            NotesStore.storageIdentity(
+                workspacePath: root.path,
+                sessionID: "chat-one",
+                scope: $0
+            )
+        })
+        XCTAssertEqual(identities.count, 3)
+    }
+
     func testModelNotesActionsAppendReadAndEnforceBounds() throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1059,5 +1100,77 @@ final class NotesActionRoutingTests: XCTestCase {
         let result = try XCTUnwrap(replies.first?["result"] as? [String: Any])
         XCTAssertEqual(result["text"] as? String, "Release on Friday")
         XCTAssertEqual(model.inspectorTab, .files, "background Notes access must not pull focus")
+    }
+}
+
+@MainActor
+final class NotesEditorProxyTests: XCTestCase {
+    private func proxy(text: String, selecting range: NSRange) -> (NotesEditorProxy, NSTextView) {
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
+        textView.string = text
+        textView.setSelectedRange(range)
+        let proxy = NotesEditorProxy()
+        proxy.textView = textView
+        return (proxy, textView)
+    }
+
+    func testBulletsApplyToEveryTouchedLineAndToggleBackOff() {
+        let (proxy, textView) = proxy(text: "alpha\nbeta", selecting: NSRange(location: 0, length: 10))
+
+        proxy.toggleList(.bullet)
+        XCTAssertEqual(textView.string, "- alpha\n- beta")
+
+        // Every line already carries the marker, so the same action strips it.
+        proxy.toggleList(.bullet)
+        XCTAssertEqual(textView.string, "alpha\nbeta")
+    }
+
+    func testNumberedListReplacesBulletsAndCountsUp() {
+        let (proxy, textView) = proxy(
+            text: "- alpha\n- beta",
+            selecting: NSRange(location: 0, length: 14)
+        )
+
+        proxy.toggleList(.numbered)
+        XCTAssertEqual(textView.string, "1. alpha\n2. beta")
+
+        // Existing numbering is recognised at any width, so this strips it.
+        proxy.toggleList(.numbered)
+        XCTAssertEqual(textView.string, "alpha\nbeta")
+    }
+
+    func testChecklistMarkersAreNotMistakenForBullets() {
+        let (proxy, textView) = proxy(text: "- [x] done", selecting: NSRange(location: 0, length: 0))
+
+        proxy.toggleList(.bullet)
+        XCTAssertEqual(textView.string, "- done", "the checkbox marker should be replaced, not kept")
+    }
+
+    func testChecklistCyclesUncheckedThenCheckedThenPlain() {
+        let (proxy, textView) = proxy(text: "ship it", selecting: NSRange(location: 0, length: 0))
+
+        proxy.toggleChecklist()
+        XCTAssertEqual(textView.string, "- [ ] ship it")
+
+        proxy.toggleChecklist()
+        XCTAssertEqual(textView.string, "- [x] ship it")
+
+        proxy.toggleChecklist()
+        XCTAssertEqual(textView.string, "ship it")
+    }
+
+    func testMarkerParsingIgnoresPunctuationSoWordCountsStayHonest() {
+        XCTAssertEqual(NotesMarkers.strippingMarker("- [ ] cut the branch").rest, "cut the branch")
+        XCTAssertEqual(NotesMarkers.strippingMarker("- [x] cut the branch").rest, "cut the branch")
+        XCTAssertEqual(NotesMarkers.strippingMarker("12. cut the branch").rest, "cut the branch")
+        XCTAssertEqual(NotesMarkers.strippingMarker("plain line").rest, "plain line")
+        XCTAssertNil(NotesMarkers.strippingMarker("plain line").kind)
+    }
+
+    func testInsertPlacesTextAtTheCursor() {
+        let (proxy, textView) = proxy(text: "before after", selecting: NSRange(location: 7, length: 0))
+
+        proxy.insert("NOW ")
+        XCTAssertEqual(textView.string, "before NOW after")
     }
 }

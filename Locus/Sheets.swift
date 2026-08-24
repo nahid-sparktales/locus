@@ -1538,7 +1538,7 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings.notesScope")
 
-                Text("Workspace notes are shared by every chat in the current project. Choose Each chat for separate scratchpads; existing chat notes remain available when you switch back.")
+                Text("Workspace notes are shared by every chat in the current project. Choose Each chat for separate scratchpads, or Everywhere for one document that every chat in every workspace opens. Switching scope leaves the other documents untouched, so you can move back and forth.")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)

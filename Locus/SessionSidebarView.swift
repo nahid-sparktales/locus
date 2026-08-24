@@ -25,23 +25,28 @@ enum SidebarIconMetrics {
 
 struct SessionSidebarView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var sessionToRename: SessionSummary?
     @State private var renameText = ""
     @State private var workspaceToRemove: WorkspaceChatGroup?
+    @State private var searchExpanded = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            primaryNavigation
             controls
 
             ScrollView {
                 LazyVStack(spacing: 2) {
+                    workspacesHeader
+                    if searchExpanded {
+                        searchField
+                            .transition(LocusMotion.transition(edge: .top, reduceMotion: reduceMotion))
+                    }
                     if model.workspaceChatGroups.isEmpty {
                         emptyState
                     } else {
-                        SectionLabel(model.showArchivedSessions ? "All Workspaces" : "Workspaces")
                         ForEach(model.workspaceChatGroups) { group in
                             WorkspaceGroupRow(
                                 group: group,
@@ -112,6 +117,12 @@ struct SessionSidebarView: View {
                 // The sidebar content stays below the traffic lights, but its
                 // column boundary should meet the top of the window chrome.
                 .ignoresSafeArea(.container, edges: .top)
+        }
+        .onChange(of: model.sidebarSearchFocusToken) {
+            withAnimation(LocusMotion.spatial) { searchExpanded = true }
+            // The field is created by this same update, so focus has to wait
+            // one main-actor turn for it to exist.
+            Task { @MainActor in searchFocused = true }
         }
         .alert("Rename Session", isPresented: Binding(
             get: { sessionToRename != nil },
@@ -204,8 +215,10 @@ struct SessionSidebarView: View {
         .frame(height: 60)
     }
 
-    private var primaryNavigation: some View {
-        VStack(spacing: 6) {
+    // MARK: - Controls
+
+    private var controls: some View {
+        VStack(spacing: 8) {
             JustChatControl(isChatSelected: model.justChatEnabled) { enabled in
                 withAnimation(LocusMotion.spatial) {
                     model.setJustChatEnabled(enabled)
@@ -213,43 +226,108 @@ struct SessionSidebarView: View {
             }
 
             navigationRow(
-                symbol: "puzzlepiece.extension",
-                title: "Plugins & MCP",
-                help: "Manage plugins, MCP servers, and skills",
-                accessibilityLabel: "Plugins, MCP servers, and skills",
-                identifier: "sidebar.extensions"
-            ) {
-                model.settingsPage = .extensions
-                model.settingsPresented = true
-            }
-
-            navigationRow(
                 symbol: "person.crop.circle",
                 title: "Manage Accounts",
                 help: "Add or edit provider accounts and their API keys",
-                accessibilityLabel: "Manage provider accounts",
+                accessibilityLabel: "Manage Accounts",
                 identifier: "sidebar.accounts"
             ) {
                 model.settingsPage = .accounts
                 model.settingsPresented = true
             }
 
-            navigationRow(
-                symbol: "shippingbox",
-                title: "Hugging Face",
-                help: "Browse and install GGUF models from Hugging Face",
-                accessibilityLabel: "Browse Hugging Face models",
-                identifier: "sidebar.huggingFace"
-            ) {
-                model.modelLibraryPresented = true
+            newChatButton
+
+            // Schedule Task and Activities share a line: both are secondary to
+            // New chat, and the bell needs only its glyph.
+            HStack(spacing: 7) {
+                secondaryButton(
+                    symbol: ComposerSymbols.schedule,
+                    title: "Schedule Task",
+                    help: "Schedule this draft to run later",
+                    accessibilityLabel: "Schedule Task",
+                    identifier: "sidebar.schedule"
+                ) {
+                    model.presentScheduleEditor(prompt: model.draftText)
+                }
+
+                activityButton
             }
         }
         .padding(.horizontal, SidebarMetrics.gutter)
-        .padding(.bottom, 10)
+        .padding(.bottom, 12)
     }
 
-    /// One row of the nav stack. They share an icon column with the New chat,
-    /// search and workspace controls so every glyph sits on the same rail.
+    private var newChatButton: some View {
+        Button {
+            model.newSession()
+        } label: {
+            HStack(spacing: SidebarMetrics.iconGap) {
+                Image(systemName: "plus")
+                    .frame(width: SidebarMetrics.iconColumn)
+                Text("New chat")
+                Spacer(minLength: 4)
+                Text("⌘N")
+                    .font(.locus(size: 8, design: .monospaced))
+                    .foregroundStyle(LocusTheme.paper.opacity(0.45))
+            }
+            .font(.locus(size: 11, weight: .semibold))
+            .foregroundStyle(LocusTheme.paper)
+            .padding(.horizontal, SidebarMetrics.rowInset)
+            .frame(maxWidth: .infinity)
+            .frame(height: 36)
+            .background(LocusTheme.ink)
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.locus())
+        .accessibilityIdentifier("sidebar.newSession")
+    }
+
+    private var activityButton: some View {
+        Button {
+            withAnimation(LocusMotion.spatial) {
+                model.toggleActivityCenter()
+            }
+        } label: {
+            Image(systemName: model.activityCenterPresented ? "bell.fill" : "bell")
+                .font(.locus(size: 12, weight: .semibold))
+                .foregroundStyle(model.activityCenterPresented
+                    ? LocusTheme.ink : LocusTheme.inkSoft)
+                .frame(width: 36, height: 36)
+                .background(model.activityCenterPresented
+                    ? LocusTheme.signal.opacity(0.9)
+                    : LocusTheme.white.opacity(0.82))
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(LocusTheme.line, lineWidth: 1)
+                }
+                .overlay(alignment: .topTrailing) {
+                    if model.activityNeedsAttentionCount > 0 {
+                        Text("\(model.activityNeedsAttentionCount)")
+                            .font(.locus(size: 7, weight: .bold, design: .monospaced))
+                            .foregroundStyle(Color.white)
+                            .frame(minWidth: 14, minHeight: 14)
+                            .background(LocusTheme.danger)
+                            .clipShape(Capsule())
+                            .offset(x: 4, y: -4)
+                            .accessibilityIdentifier("sidebar.activity.badge")
+                    }
+                }
+        }
+        .buttonStyle(.locus())
+        .help("Activities")
+        .accessibilityLabel("Activities")
+        .accessibilityIdentifier("sidebar.activity")
+        .accessibilityValue(
+            model.activityNeedsAttentionCount > 0
+                ? "\(model.activityNeedsAttentionCount) needs attention"
+                : "No new activity"
+        )
+    }
+
+    /// A quiet destination row. It shares the icon column with New chat and
+    /// the workspace controls, so every glyph sits on the same rail.
     private func navigationRow(
         symbol: String,
         title: String,
@@ -278,111 +356,113 @@ struct SessionSidebarView: View {
         .accessibilityIdentifier(identifier)
     }
 
-    // MARK: - Controls
-
-    private var controls: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 7) {
-                Button {
-                    model.newSession()
-                } label: {
-                    HStack(spacing: SidebarMetrics.iconGap) {
-                        Image(systemName: "plus")
-                            .frame(width: SidebarMetrics.iconColumn)
-                        Text("New chat")
-                        Spacer(minLength: 4)
-                        Text("⌘N")
-                            .font(.locus(size: 8, design: .monospaced))
-                            .foregroundStyle(LocusTheme.paper.opacity(0.45))
-                    }
-                    .font(.locus(size: 11, weight: .semibold))
-                    .foregroundStyle(LocusTheme.paper)
-                    .padding(.horizontal, SidebarMetrics.rowInset)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 36)
-                    .background(LocusTheme.ink)
-                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                }
-                .buttonStyle(.locus())
-                .accessibilityIdentifier("sidebar.newSession")
-
-                Button {
-                    withAnimation(LocusMotion.spatial) {
-                        model.toggleActivityCenter()
-                    }
-                } label: {
-                    Image(systemName: model.activityCenterPresented ? "bell.fill" : "bell")
-                        .font(.locus(size: 12, weight: .semibold))
-                        .foregroundStyle(model.activityCenterPresented
-                            ? LocusTheme.ink : LocusTheme.inkSoft)
-                        .frame(width: 36, height: 36)
-                        .background(model.activityCenterPresented
-                            ? LocusTheme.signal.opacity(0.9)
-                            : LocusTheme.white.opacity(0.82))
-                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .stroke(LocusTheme.line, lineWidth: 1)
-                        }
-                        .overlay(alignment: .topTrailing) {
-                            if model.activityNeedsAttentionCount > 0 {
-                                Text("\(model.activityNeedsAttentionCount)")
-                                    .font(.locus(size: 7, weight: .bold, design: .monospaced))
-                                    .foregroundStyle(Color.white)
-                                    .frame(minWidth: 14, minHeight: 14)
-                                    .background(LocusTheme.danger)
-                                    .clipShape(Capsule())
-                                    .offset(x: 4, y: -4)
-                                    .accessibilityIdentifier("sidebar.activity.badge")
-                            }
-                        }
-                }
-                .buttonStyle(.locus())
-                .help("Activities")
-                .accessibilityLabel("Activities")
-                .accessibilityIdentifier("sidebar.activity")
-                .accessibilityValue(
-                    model.activityNeedsAttentionCount > 0
-                        ? "\(model.activityNeedsAttentionCount) needs attention"
-                        : "No new activity"
-                )
-            }
-
+    /// New chat's shape and weight, one step quieter in fill so the primary
+    /// action still leads its stack.
+    private func secondaryButton(
+        symbol: String,
+        title: String,
+        help: String,
+        accessibilityLabel: String,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
             HStack(spacing: SidebarMetrics.iconGap) {
-                Image(systemName: "magnifyingglass")
-                    .font(.locus(size: 11, weight: .medium))
+                Image(systemName: symbol)
                     .frame(width: SidebarMetrics.iconColumn)
-                    .foregroundStyle(LocusTheme.muted)
-                TextField("Search sessions", text: $model.searchQuery)
-                    .textFieldStyle(.plain)
-                    .font(.locus(size: 11))
-                    .focused($searchFocused)
-                    .onChange(of: model.sidebarSearchFocusToken) {
-                        searchFocused = true
-                    }
-                if !model.searchQuery.isEmpty {
-                    Button {
-                        model.searchQuery = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                    }
-                    .buttonStyle(.locus())
-                    .foregroundStyle(LocusTheme.muted)
-                    .accessibilityLabel("Clear session search")
-                }
+                Text(title)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
             }
+            .font(.locus(size: 11, weight: .semibold))
+            .foregroundStyle(LocusTheme.inkSoft)
             .padding(.horizontal, SidebarMetrics.rowInset)
-            .frame(height: 35)
-            .background(LocusTheme.white.opacity(0.72))
+            .frame(maxWidth: .infinity)
+            .frame(height: 36)
+            .background(LocusTheme.white.opacity(0.82))
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .stroke(LocusTheme.line, lineWidth: 1)
             }
-            .accessibilityIdentifier("sidebar.search")
         }
-        .padding(.horizontal, SidebarMetrics.gutter)
-        .padding(.bottom, 12)
+        .buttonStyle(.locus())
+        .help(help)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityIdentifier(identifier)
+    }
+
+    // MARK: - Search
+
+    /// Search is a section control now: the glyph beside WORKSPACES reveals
+    /// the field, so an unused search box no longer occupies the sidebar.
+    private var workspacesHeader: some View {
+        HStack(spacing: 0) {
+            SectionLabel(model.showArchivedSessions ? "All Workspaces" : "Workspaces")
+            Button {
+                withAnimation(LocusMotion.spatial) {
+                    if searchExpanded, model.searchQuery.isEmpty {
+                        searchExpanded = false
+                    } else {
+                        searchExpanded = true
+                        searchFocused = true
+                    }
+                }
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.locus(size: 10, weight: .semibold))
+                    .foregroundStyle(searchExpanded ? LocusTheme.ink : LocusTheme.muted)
+                    .frame(width: 22, height: 22)
+                    .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+            .buttonStyle(.locus(.icon))
+            .help("Search sessions (⇧⌘F)")
+            .accessibilityLabel("Search sessions")
+            .accessibilityValue(searchExpanded ? "Shown" : "Hidden")
+            .accessibilityIdentifier("sidebar.search.toggle")
+        }
+        .padding(.trailing, 6)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: SidebarMetrics.iconGap) {
+            Image(systemName: "magnifyingglass")
+                .font(.locus(size: 11, weight: .medium))
+                .frame(width: SidebarMetrics.iconColumn)
+                .foregroundStyle(LocusTheme.muted)
+            TextField("Search sessions", text: $model.searchQuery)
+                .textFieldStyle(.plain)
+                .font(.locus(size: 11))
+                .focused($searchFocused)
+            if !model.searchQuery.isEmpty {
+                Button {
+                    model.searchQuery = ""
+                    searchFocused = true
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.locus())
+                .foregroundStyle(LocusTheme.muted)
+                .accessibilityLabel("Clear session search")
+                .accessibilityIdentifier("sidebar.search.clear")
+            }
+        }
+        .padding(.horizontal, SidebarMetrics.rowInset)
+        .frame(height: 32)
+        .background(LocusTheme.white.opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(LocusTheme.line, lineWidth: 1)
+        }
+        .padding(.horizontal, 4)
+        .padding(.bottom, 4)
+        // Escape leaves the way it arrived: empty query, field put away.
+        .onExitCommand {
+            model.searchQuery = ""
+            withAnimation(LocusMotion.spatial) { searchExpanded = false }
+        }
+        .accessibilityIdentifier("sidebar.search")
     }
 
     @ViewBuilder
