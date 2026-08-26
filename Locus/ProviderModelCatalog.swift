@@ -14,6 +14,7 @@ enum ProviderModelCatalog {
     }
 
     private static let session = ProxyAwareSession(
+        scope: .modelAndAgent,
         configuration: { .ephemeral },
         delegate: { NoRedirectSessionDelegate() }
     )

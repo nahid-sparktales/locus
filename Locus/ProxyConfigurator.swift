@@ -13,6 +13,9 @@ struct ResolvedProxy: Equatable {
     var username: String?
     var password: String?
     var bypass: [String]
+    var profileID: UUID? = nil
+    var profileName: String = "Proxy"
+    var isBlocking = false
 }
 
 /// One source of truth for what "the proxy" means, shared by every consumer:
@@ -69,6 +72,16 @@ enum ProxyConfigurator {
     /// never what a proxy setting means, and streaming NDJSON through one
     /// rarely survives anyway.
     static func bypassHosts(settings: AppSettings, ollamaHost: String?) -> [String] {
+        var hosts = mandatoryBypassHosts(settings: settings, ollamaHost: ollamaHost)
+        hosts += parseBypassList(settings.proxyBypass)
+        var seen = Set<String>()
+        return hosts.filter { seen.insert($0).inserted }
+    }
+
+    private static func mandatoryBypassHosts(
+        settings: AppSettings,
+        ollamaHost: String?
+    ) -> [String] {
         var hosts = ["localhost", "127.0.0.1", "::1"]
         for candidate in [settings.backendURL, ollamaHost] {
             guard let candidate,
@@ -78,7 +91,18 @@ enum ProxyConfigurator {
             else { continue }
             hosts.append(host)
         }
-        hosts += parseBypassList(settings.proxyBypass)
+        var seen = Set<String>()
+        return hosts.filter { seen.insert($0).inserted }
+    }
+
+    static func bypassHosts(
+        settings: AppSettings,
+        profile: ProxyProfile,
+        ollamaHost: String?,
+        strict: Bool
+    ) -> [String] {
+        var hosts = mandatoryBypassHosts(settings: settings, ollamaHost: ollamaHost)
+        if !strict { hosts += parseBypassList(profile.bypass) }
         var seen = Set<String>()
         return hosts.filter { seen.insert($0).inserted }
     }
@@ -87,28 +111,121 @@ enum ProxyConfigurator {
 
     /// The manual endpoint, or nil when manual mode is not fully configured.
     static func manualEndpoint(settings: AppSettings) -> (host: String, port: Int)? {
-        guard settings.resolvedProxyMode == .manual else { return nil }
-        let host = normalizedHost(settings.proxyHost)
+        guard let profile = selectedProfile(settings: settings, scope: .app) else { return nil }
+        let host = normalizedHost(profile.host)
         guard !host.isEmpty,
-              let port = AppSettings.clampProxyPort(settings.proxyPort)
+              let port = AppSettings.clampProxyPort(profile.port)
         else { return nil }
         return (host, port)
+    }
+
+    /// Scope is the strongest assignment, then provider, then workspace, then
+    /// the default profile. Invalid or disabled assignments fall back to the
+    /// default instead of turning one typo into a direct-connection leak.
+    static func selectedProfile(
+        settings: AppSettings,
+        scope: ProxyTrafficScope,
+        workspacePath: String? = nil,
+        providerAccountID: String? = nil,
+        preferredProfileID: UUID? = nil
+    ) -> ProxyProfile? {
+        guard settings.resolvedProxyMode == .manual else { return nil }
+        let profiles = settings.allProxyProfiles
+        let configured = profiles.filter(\.isConfigured)
+        guard !configured.isEmpty else { return nil }
+        let byID = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
+        func profile(_ raw: String?) -> ProxyProfile? {
+            guard let raw, let id = UUID(uuidString: raw),
+                  let candidate = byID[id], candidate.isConfigured
+            else { return nil }
+            return candidate
+        }
+        if let preferredProfileID,
+           let preferred = byID[preferredProfileID], preferred.isConfigured {
+            return preferred
+        }
+        if let scoped = profile(settings.proxyScopeProfileIDs[scope.rawValue]) {
+            return scoped
+        }
+        if let providerAccountID,
+           let provider = profile(settings.proxyProviderProfileIDs[providerAccountID]) {
+            return provider
+        }
+        if let workspacePath {
+            let key = SessionSummary.canonicalWorkspacePath(workspacePath)
+            if let workspace = profile(settings.proxyWorkspaceProfileIDs[key]) {
+                return workspace
+            }
+        }
+        return profile(settings.proxyActiveProfileID) ?? configured[0]
+    }
+
+    static func resolved(
+        settings: AppSettings,
+        profile: ProxyProfile,
+        password: String?,
+        ollamaHost: String?
+    ) -> ResolvedProxy? {
+        let host = normalizedHost(profile.host)
+        guard profile.enabled, !host.isEmpty,
+              let port = AppSettings.clampProxyPort(profile.port)
+        else { return nil }
+        let username = profile.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        let strict = settings.proxyStrictModeEnabled && settings.resolvedProxyMode == .manual
+        return ResolvedProxy(
+            type: profile.resolvedType,
+            host: host,
+            port: port,
+            username: username.isEmpty ? nil : username,
+            password: username.isEmpty ? nil : password,
+            bypass: bypassHosts(
+                settings: settings,
+                profile: profile,
+                ollamaHost: ollamaHost,
+                strict: strict
+            ),
+            profileID: profile.id,
+            profileName: profile.name
+        )
     }
 
     static func resolved(
         settings: AppSettings,
         password: String?,
-        ollamaHost: String?
+        ollamaHost: String?,
+        scope: ProxyTrafficScope = .app,
+        workspacePath: String? = nil,
+        providerAccountID: String? = nil,
+        preferredProfileID: UUID? = nil
     ) -> ResolvedProxy? {
-        guard let endpoint = manualEndpoint(settings: settings) else { return nil }
-        let username = settings.proxyUsername.trimmingCharacters(in: .whitespacesAndNewlines)
-        return ResolvedProxy(
-            type: settings.resolvedProxyType,
-            host: endpoint.host,
-            port: endpoint.port,
-            username: username.isEmpty ? nil : username,
-            password: username.isEmpty ? nil : password,
-            bypass: bypassHosts(settings: settings, ollamaHost: ollamaHost)
+        guard let profile = selectedProfile(
+            settings: settings,
+            scope: scope,
+            workspacePath: workspacePath,
+            providerAccountID: providerAccountID,
+            preferredProfileID: preferredProfileID
+        ) else { return nil }
+        return resolved(
+            settings: settings,
+            profile: profile,
+            password: password,
+            ollamaHost: ollamaHost
+        )
+    }
+
+    /// A deliberately unreachable local endpoint. Strict mode and an exhausted
+    /// failover pool use this instead of returning nil, because nil means
+    /// URLSession/WebKit are allowed to connect directly.
+    static func blockingProxy(settings: AppSettings, ollamaHost: String?) -> ResolvedProxy {
+        ResolvedProxy(
+            type: .socks5,
+            host: "127.0.0.1",
+            port: 1,
+            username: nil,
+            password: nil,
+            bypass: mandatoryBypassHosts(settings: settings, ollamaHost: ollamaHost),
+            profileName: "Blocked",
+            isBlocking: true
         )
     }
 
@@ -145,30 +262,47 @@ enum ProxyConfigurator {
     static func childEnvironment(
         settings: AppSettings,
         password: String?,
-        ollamaHost: String?
+        ollamaHost: String?,
+        scope: ProxyTrafficScope = .modelAndAgent,
+        workspacePath: String? = nil,
+        providerAccountID: String? = nil,
+        preferredProfileID: UUID? = nil
     ) -> [String: String] {
-        guard let endpoint = manualEndpoint(settings: settings) else { return [:] }
+        let resolved = resolved(
+            settings: settings,
+            password: password,
+            ollamaHost: ollamaHost,
+            scope: scope,
+            workspacePath: workspacePath,
+            providerAccountID: providerAccountID,
+            preferredProfileID: preferredProfileID
+        ) ?? (settings.proxyStrictModeEnabled && settings.resolvedProxyMode == .manual
+            ? blockingProxy(settings: settings, ollamaHost: ollamaHost) : nil)
+        guard let resolved else { return [:] }
+        return childEnvironment(proxy: resolved)
+    }
+
+    static func childEnvironment(proxy: ResolvedProxy) -> [String: String] {
         // Start every variable tombstoned, then fill in the ones this proxy
         // type uses: whatever the shell had is replaced, not merged with.
         var environment = Dictionary(
             uniqueKeysWithValues: proxyURLVariables.map { ($0, "") }
         )
-        switch settings.resolvedProxyType {
+        switch proxy.type {
         case .http:
-            let url = "http://\(renderedHost(endpoint.host)):\(endpoint.port)"
+            let url = "http://\(renderedHost(proxy.host)):\(proxy.port)"
             for name in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
                 environment[name] = url
             }
         case .socks5:
             // socks5h, not socks5: names resolve at the proxy, so DNS for the
             // hosts being reached through it never touches the local resolver.
-            let url = "socks5h://\(renderedHost(endpoint.host)):\(endpoint.port)"
+            let url = "socks5h://\(renderedHost(proxy.host)):\(proxy.port)"
             for name in ["ALL_PROXY", "all_proxy"] {
                 environment[name] = url
             }
         }
-        let bypass = bypassHosts(settings: settings, ollamaHost: ollamaHost)
-            .joined(separator: ",")
+        let bypass = proxy.bypass.joined(separator: ",")
         environment["NO_PROXY"] = bypass
         environment["no_proxy"] = bypass
         return environment
@@ -177,9 +311,22 @@ enum ProxyConfigurator {
     /// The proxy password, ready for the out-of-band handoff, or nil when the
     /// proxy needs no sign-in. Both halves are percent-encoded, so the first
     /// colon is unambiguously the separator.
-    static func childCredential(settings: AppSettings, password: String?) -> String? {
-        guard manualEndpoint(settings: settings) != nil else { return nil }
-        let username = settings.proxyUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+    static func childCredential(
+        settings: AppSettings,
+        password: String?,
+        scope: ProxyTrafficScope = .modelAndAgent,
+        workspacePath: String? = nil,
+        providerAccountID: String? = nil,
+        preferredProfileID: UUID? = nil
+    ) -> String? {
+        guard let profile = selectedProfile(
+            settings: settings,
+            scope: scope,
+            workspacePath: workspacePath,
+            providerAccountID: providerAccountID,
+            preferredProfileID: preferredProfileID
+        ) else { return nil }
+        let username = profile.username.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !username.isEmpty else { return nil }
         return percentEncoded(username) + ":" + percentEncoded(password ?? "")
     }
@@ -266,7 +413,11 @@ enum ProxyConfigurator {
     /// that travels out of band, and only to the agent.
     static func agentEnvironmentOverlay(
         settings: AppSettings,
-        ollamaHost: String?
+        ollamaHost: String?,
+        scope: ProxyTrafficScope = .modelAndAgent,
+        workspacePath: String? = nil,
+        providerAccountID: String? = nil,
+        preferredProfileID: UUID? = nil
     ) -> [String: String] {
         switch settings.resolvedProxyMode {
         case .off:
@@ -274,7 +425,15 @@ enum ProxyConfigurator {
             // exactly as it was.
             [:]
         case .manual:
-            childEnvironment(settings: settings, password: nil, ollamaHost: ollamaHost)
+            childEnvironment(
+                settings: settings,
+                password: nil,
+                ollamaHost: ollamaHost,
+                scope: scope,
+                workspacePath: workspacePath,
+                providerAccountID: providerAccountID,
+                preferredProfileID: preferredProfileID
+            )
         case .system:
             environmentFromSystemProxies(
                 systemProxyDictionary(),
@@ -325,6 +484,23 @@ enum ProxyProbe {
     struct Outcome {
         let ok: Bool
         let message: String
+        let latencyMilliseconds: Int?
+        let exitIP: String?
+        let location: String?
+
+        init(
+            ok: Bool,
+            message: String,
+            latencyMilliseconds: Int? = nil,
+            exitIP: String? = nil,
+            location: String? = nil
+        ) {
+            self.ok = ok
+            self.message = message
+            self.latencyMilliseconds = latencyMilliseconds
+            self.exitIP = exitIP
+            self.location = location
+        }
     }
 
     static func test(proxy: ResolvedProxy, target: URL) async -> Outcome {
@@ -351,10 +527,59 @@ enum ProxyProbe {
             let elapsed = Int(Date().timeIntervalSince(started) * 1000)
             return Outcome(
                 ok: true,
-                message: "The proxy carried the request — \(target.host ?? "the test host") answered \(status) in \(elapsed) ms."
+                message: "The proxy carried the request — \(target.host ?? "the test host") answered \(status) in \(elapsed) ms.",
+                latencyMilliseconds: elapsed
             )
         } catch {
             return Outcome(ok: false, message: Self.describe(error, proxy: proxy))
+        }
+    }
+
+    /// Health and leak audit used by the failover pool. The response reports
+    /// the exit address observed outside the Mac; SOCKS profiles additionally
+    /// keep DNS remote through `socks5h`. A failed audit is never interpreted
+    /// as permission to connect directly.
+    static func audit(proxy: ResolvedProxy) async -> Outcome {
+        guard let target = URL(string: "https://www.cloudflare.com/cdn-cgi/trace") else {
+            return Outcome(ok: false, message: "The audit target is unavailable.")
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 15
+        var probed = proxy
+        probed.bypass = []
+        ProxyConfigurator.apply(probed, to: configuration)
+        let session = URLSession(configuration: configuration)
+        defer { session.finishTasksAndInvalidate() }
+        var request = URLRequest(url: target)
+        request.httpMethod = "GET"
+        LocusClientIdentity.apply(to: &request)
+        let started = Date()
+        do {
+            let (data, response) = try await session.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            guard (200..<400).contains(status), data.count <= 32_768 else {
+                return Outcome(ok: false, message: "The proxy audit returned HTTP \(status).")
+            }
+            let values = Dictionary(uniqueKeysWithValues: String(decoding: data, as: UTF8.self)
+                .split(separator: "\n")
+                .compactMap { line -> (String, String)? in
+                    let pieces = line.split(separator: "=", maxSplits: 1).map(String.init)
+                    return pieces.count == 2 ? (pieces[0], pieces[1]) : nil
+                })
+            let elapsed = Int(Date().timeIntervalSince(started) * 1_000)
+            let exitIP = values["ip"]
+            let location = values["loc"]
+            let dns = proxy.type == .socks5 ? " · remote DNS" : ""
+            let address = exitIP.map { " · exit \($0)" } ?? ""
+            return Outcome(
+                ok: true,
+                message: "Healthy in \(elapsed) ms\(address)\(dns)",
+                latencyMilliseconds: elapsed,
+                exitIP: exitIP,
+                location: location
+            )
+        } catch {
+            return Outcome(ok: false, message: describe(error, proxy: proxy))
         }
     }
 
@@ -406,11 +631,21 @@ final class ProxyRuntime: @unchecked Sendable {
 
     private let lock = NSLock()
     private var proxy: ResolvedProxy?
+    private var scopedProxies: [ProxyTrafficScope: ResolvedProxy] = [:]
     private var generationValue = 0
     private var lastSettings: AppSettings?
     private var lastPassword: String?
+    private var profilePasswords: [UUID: String] = [:]
     private var lastOllamaHost: String?
-    private let sharedSession = ProxyAwareSession()
+    private var lastWorkspacePath: String?
+    private var lastProviderAccountID: String?
+    private var healthByProfileID: [UUID: ProxyHealthRecord] = [:]
+    private var hasCompletedHealthCheck = false
+    private let appSession = ProxyAwareSession(scope: .app)
+    private let browserSession = ProxyAwareSession(scope: .browser)
+    private let modelSession = ProxyAwareSession(scope: .modelAndAgent)
+    private let downloadSession = ProxyAwareSession(scope: .downloads)
+    private let toolsSession = ProxyAwareSession(scope: .gitAndTools)
 
     var generation: Int {
         lock.lock(); defer { lock.unlock() }
@@ -422,10 +657,51 @@ final class ProxyRuntime: @unchecked Sendable {
         return proxy
     }
 
-    func update(settings: AppSettings, password: String?) {
+    func current(for scope: ProxyTrafficScope) -> ResolvedProxy? {
         lock.lock(); defer { lock.unlock() }
+        return scopedProxies[scope]
+    }
+
+    var healthSnapshot: [ProxyHealthRecord] {
+        lock.lock(); defer { lock.unlock() }
+        return healthByProfileID.values.sorted {
+            if $0.ok != $1.ok { return $0.ok && !$1.ok }
+            return ($0.latencyMilliseconds ?? .max) < ($1.latencyMilliseconds ?? .max)
+        }
+    }
+
+    func update(
+        settings: AppSettings,
+        password: String?,
+        profilePasswords: [UUID: String] = [:],
+        workspacePath: String? = nil,
+        providerAccountID: String? = nil
+    ) {
+        lock.lock(); defer { lock.unlock() }
+        var incomingPasswords = profilePasswords
+        if let password { incomingPasswords[ProxyProfile.primaryID] = password }
+        let healthConfigurationChanged = lastSettings?.allProxyProfiles
+            != settings.allProxyProfiles || self.profilePasswords != incomingPasswords
         lastSettings = settings
         lastPassword = password
+        self.profilePasswords = incomingPasswords
+        if let workspacePath { lastWorkspacePath = workspacePath }
+        lastProviderAccountID = providerAccountID
+        let liveIDs = Set(settings.allProxyProfiles.map(\.id))
+        healthByProfileID = healthByProfileID.filter { liveIDs.contains($0.key) }
+        if healthConfigurationChanged {
+            healthByProfileID = [:]
+            hasCompletedHealthCheck = false
+        } else if !settings.proxyAutoFailoverEnabled {
+            hasCompletedHealthCheck = false
+        }
+        recomputeLocked()
+    }
+
+    func noteRoutingContext(workspacePath: String?, providerAccountID: String?) {
+        lock.lock(); defer { lock.unlock() }
+        lastWorkspacePath = workspacePath
+        lastProviderAccountID = providerAccountID
         recomputeLocked()
     }
 
@@ -437,41 +713,255 @@ final class ProxyRuntime: @unchecked Sendable {
         recomputeLocked()
     }
 
-    private func recomputeLocked() {
-        guard let settings = lastSettings else { return }
-        let resolved = ProxyConfigurator.resolved(
+    @discardableResult
+    private func recomputeLocked() -> Bool {
+        guard let settings = lastSettings else { return false }
+        var next: [ProxyTrafficScope: ResolvedProxy] = [:]
+        for scope in ProxyTrafficScope.allCases {
+            if let resolved = resolvedLocked(
+                settings: settings,
+                scope: scope,
+                workspacePath: lastWorkspacePath,
+                providerAccountID: lastProviderAccountID
+            ) {
+                next[scope] = resolved
+            }
+        }
+        guard next != scopedProxies else { return false }
+        scopedProxies = next
+        proxy = next[.app]
+        generationValue += 1
+        return true
+    }
+
+    private func resolvedLocked(
+        settings: AppSettings,
+        scope: ProxyTrafficScope,
+        workspacePath: String?,
+        providerAccountID: String?
+    ) -> ResolvedProxy? {
+        guard settings.resolvedProxyMode == .manual else { return nil }
+        let preferred = ProxyConfigurator.selectedProfile(
             settings: settings,
-            password: lastPassword,
+            scope: scope,
+            workspacePath: workspacePath,
+            providerAccountID: providerAccountID
+        )
+        var selected = preferred
+        if settings.proxyAutoFailoverEnabled, hasCompletedHealthCheck {
+            if let preferred, healthByProfileID[preferred.id]?.ok == true {
+                selected = preferred
+            } else {
+                selected = settings.allProxyProfiles
+                    .filter { $0.isConfigured && healthByProfileID[$0.id]?.ok == true }
+                    .sorted {
+                        let lhs = healthByProfileID[$0.id]?.latencyMilliseconds ?? .max
+                        let rhs = healthByProfileID[$1.id]?.latencyMilliseconds ?? .max
+                        if lhs != rhs { return lhs < rhs }
+                        return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                    }
+                    .first
+            }
+        }
+        guard let selected else {
+            return settings.proxyStrictModeEnabled
+                || (settings.proxyAutoFailoverEnabled && hasCompletedHealthCheck)
+                ? ProxyConfigurator.blockingProxy(
+                    settings: settings,
+                    ollamaHost: lastOllamaHost
+                ) : nil
+        }
+        return ProxyConfigurator.resolved(
+            settings: settings,
+            profile: selected,
+            password: profilePasswords[selected.id]
+                ?? (selected.id == ProxyProfile.primaryID ? lastPassword : nil),
             ollamaHost: lastOllamaHost
         )
-        guard resolved != proxy else { return }
-        proxy = resolved
-        generationValue += 1
     }
 
     /// A copy of `base` with the active proxy applied. In off and system mode
     /// this is `base` untouched — URLSession follows the OS on its own.
-    func configuration(base: URLSessionConfiguration = .default) -> URLSessionConfiguration {
-        ProxyConfigurator.apply(current, to: base)
+    func configuration(
+        base: URLSessionConfiguration = .default,
+        scope: ProxyTrafficScope = .app
+    ) -> URLSessionConfiguration {
+        ProxyConfigurator.apply(current(for: scope), to: base)
         return base
     }
 
     /// Drop-in for the `URLSession.shared` call sites, which cannot take a
     /// proxy: same default configuration, rebuilt when the proxy changes.
     var urlSession: URLSession {
-        sharedSession.current
+        urlSession(for: .app)
+    }
+
+    func urlSession(for scope: ProxyTrafficScope) -> URLSession {
+        switch scope {
+        case .app: appSession.current
+        case .browser: browserSession.current
+        case .modelAndAgent: modelSession.current
+        case .downloads: downloadSession.current
+        case .gitAndTools: toolsSession.current
+        }
     }
 
     /// Proxy env for helper processes that are not the agent — `ollama serve`
     /// downloads models itself, so it needs the route. Never the credential:
     /// that reaches the agent alone, and only out of band.
     var helperEnvironmentOverlay: [String: String] {
+        environmentOverlay(scope: .downloads)
+    }
+
+    func environmentOverlay(
+        scope: ProxyTrafficScope,
+        workspacePath: String? = nil,
+        providerAccountID: String? = nil
+    ) -> [String: String] {
         lock.lock(); defer { lock.unlock() }
         guard let settings = lastSettings else { return [:] }
-        return ProxyConfigurator.agentEnvironmentOverlay(
+        switch settings.resolvedProxyMode {
+        case .off: return [:]
+        case .system:
+            return ProxyConfigurator.environmentFromSystemProxies(
+                ProxyConfigurator.systemProxyDictionary(),
+                settings: settings,
+                ollamaHost: lastOllamaHost
+            )
+        case .manual:
+            let hasExplicitContext = workspacePath != nil || providerAccountID != nil
+            let resolved = hasExplicitContext
+                ? resolvedLocked(
+                    settings: settings,
+                    scope: scope,
+                    workspacePath: workspacePath ?? lastWorkspacePath,
+                    providerAccountID: providerAccountID
+                )
+                : scopedProxies[scope]
+            guard let resolved else { return [:] }
+            return ProxyConfigurator.childEnvironment(proxy: resolved)
+        }
+    }
+
+    func childCredential(
+        scope: ProxyTrafficScope,
+        workspacePath: String? = nil,
+        providerAccountID: String? = nil
+    ) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        guard let settings = lastSettings else { return nil }
+        let hasExplicitContext = workspacePath != nil || providerAccountID != nil
+        let resolved = hasExplicitContext
+            ? resolvedLocked(
+                settings: settings,
+                scope: scope,
+                workspacePath: workspacePath ?? lastWorkspacePath,
+                providerAccountID: providerAccountID
+            )
+            : scopedProxies[scope]
+        guard let resolved, !resolved.isBlocking,
+              let username = resolved.username
+        else { return nil }
+        return ProxyConfigurator.percentEncoded(username) + ":"
+            + ProxyConfigurator.percentEncoded(resolved.password ?? "")
+    }
+
+    /// Audits every enabled endpoint concurrently and atomically publishes the
+    /// resulting pool. Returns whether any effective route changed, which lets
+    /// AppModel rebuild agent processes only when failover actually moved.
+    func refreshHealth() async -> (records: [ProxyHealthRecord], routingChanged: Bool) {
+        guard let context = healthAuditContext() else { return ([], false) }
+        let settings = context.settings
+        let ollamaHost = context.ollamaHost
+        let passwords = context.passwords
+        let profiles = context.profiles
+
+        let records = await withTaskGroup(of: ProxyHealthRecord.self) { group in
+            for profile in profiles {
+                group.addTask {
+                    guard let resolved = ProxyConfigurator.resolved(
+                        settings: settings,
+                        profile: profile,
+                        password: passwords[profile.id],
+                        ollamaHost: ollamaHost
+                    ) else {
+                        return ProxyHealthRecord(
+                            profileID: profile.id,
+                            profileName: profile.name,
+                            ok: false,
+                            latencyMilliseconds: nil,
+                            exitIP: nil,
+                            location: nil,
+                            message: "The profile is incomplete.",
+                            checkedAt: Date()
+                        )
+                    }
+                    let outcome = await ProxyProbe.audit(proxy: resolved)
+                    return ProxyHealthRecord(
+                        profileID: profile.id,
+                        profileName: profile.name,
+                        ok: outcome.ok,
+                        latencyMilliseconds: outcome.latencyMilliseconds,
+                        exitIP: outcome.exitIP,
+                        location: outcome.location,
+                        message: outcome.message,
+                        checkedAt: Date()
+                    )
+                }
+            }
+            var output: [ProxyHealthRecord] = []
+            for await record in group { output.append(record) }
+            return output
+        }
+
+        return publishHealth(records)
+    }
+
+    private typealias HealthAuditContext = (
+        settings: AppSettings,
+        ollamaHost: String?,
+        passwords: [UUID: String],
+        profiles: [ProxyProfile]
+    )
+
+    private func healthAuditContext() -> HealthAuditContext? {
+        lock.lock()
+        guard let settings = lastSettings, settings.resolvedProxyMode == .manual else {
+            lock.unlock()
+            return nil
+        }
+        let context = (
             settings: settings,
-            ollamaHost: lastOllamaHost
+            ollamaHost: lastOllamaHost,
+            passwords: profilePasswords,
+            profiles: settings.allProxyProfiles.filter(\.isConfigured)
         )
+        lock.unlock()
+        return context
+    }
+
+    private func publishHealth(
+        _ records: [ProxyHealthRecord]
+    ) -> (records: [ProxyHealthRecord], routingChanged: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        healthByProfileID = Dictionary(uniqueKeysWithValues: records.map { ($0.profileID, $0) })
+        hasCompletedHealthCheck = true
+        let changed = recomputeLocked()
+        return (healthSnapshotLocked(), changed)
+    }
+
+    /// Deterministic seam for routing tests; production health records enter
+    /// through `refreshHealth`, which performs the network audit first.
+    @discardableResult
+    func applyHealthSnapshotForTesting(_ records: [ProxyHealthRecord]) -> Bool {
+        publishHealth(records).routingChanged
+    }
+
+    private func healthSnapshotLocked() -> [ProxyHealthRecord] {
+        healthByProfileID.values.sorted {
+            if $0.ok != $1.ok { return $0.ok && !$1.ok }
+            return ($0.latencyMilliseconds ?? .max) < ($1.latencyMilliseconds ?? .max)
+        }
     }
 }
 
@@ -479,15 +969,18 @@ final class ProxyRuntime: @unchecked Sendable {
 /// a `static let` session stops meaning "the proxy settings from launch".
 final class ProxyAwareSession: @unchecked Sendable {
     private let lock = NSLock()
+    private let scope: ProxyTrafficScope
     private let makeConfiguration: @Sendable () -> URLSessionConfiguration
     private let makeDelegate: (@Sendable () -> URLSessionDelegate)?
     private var session: URLSession?
     private var builtGeneration = -1
 
     init(
+        scope: ProxyTrafficScope = .app,
         configuration: @escaping @Sendable () -> URLSessionConfiguration = { .default },
         delegate: (@Sendable () -> URLSessionDelegate)? = nil
     ) {
+        self.scope = scope
         makeConfiguration = configuration
         makeDelegate = delegate
     }
@@ -500,7 +993,10 @@ final class ProxyAwareSession: @unchecked Sendable {
         // old proxy; only new work picks up the change.
         session?.finishTasksAndInvalidate()
         let built = URLSession(
-            configuration: ProxyRuntime.shared.configuration(base: makeConfiguration()),
+            configuration: ProxyRuntime.shared.configuration(
+                base: makeConfiguration(),
+                scope: scope
+            ),
             delegate: makeDelegate?(),
             delegateQueue: nil
         )

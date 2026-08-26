@@ -43,6 +43,17 @@ enum CredentialStore {
     /// cost is re-entering one password.
     static let proxyCredentialKey = "network-proxy"
 
+    /// Additional named proxy profiles keep independent passwords. The legacy
+    /// primary profile intentionally retains `network-proxy` so an upgrade
+    /// never asks the user to re-enter its secret.
+    static let proxyProfileCredentialPrefix = "network-proxy-profile-"
+
+    static func proxyCredentialKey(profileID: UUID) -> String {
+        profileID == ProxyProfile.primaryID
+            ? proxyCredentialKey
+            : "\(proxyProfileCredentialPrefix)\(profileID.uuidString)"
+    }
+
     static var fileURL: URL {
         URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(".locus", isDirectory: true)
@@ -148,7 +159,7 @@ enum CredentialStore {
         for (key, value) in entries {
             if key.hasPrefix(mcpCredentialPrefix) {
                 mcp[key] = value
-            } else if key == proxyCredentialKey {
+            } else if key == proxyCredentialKey || key.hasPrefix(proxyProfileCredentialPrefix) {
                 // Its own section, not the provider fallback: the orphan sweep
                 // walks provider keys, and a proxy password that landed there
                 // would be collected as an account nothing owns.
@@ -262,10 +273,38 @@ enum CredentialStore {
         get(account: proxyCredentialKey)
     }
 
+    static func proxyPassword(profileID: UUID) -> String? {
+        get(account: proxyCredentialKey(profileID: profileID))
+    }
+
     /// An empty value deletes the entry, so switching auth off leaves nothing.
     @discardableResult
     static func setProxyPassword(_ value: String) -> Bool {
         set(value, account: proxyCredentialKey)
+    }
+
+    @discardableResult
+    static func setProxyPassword(_ value: String, profileID: UUID) -> Bool {
+        set(value, account: proxyCredentialKey(profileID: profileID))
+    }
+
+    static func proxyPasswords(for profiles: [ProxyProfile]) -> [UUID: String] {
+        Dictionary(uniqueKeysWithValues: profiles.compactMap { profile in
+            proxyPassword(profileID: profile.id).map { (profile.id, $0) }
+        })
+    }
+
+    static func removeOrphanedProxyProfilePasswords(keeping profileIDs: Set<UUID>) {
+        lock.lock(); defer { lock.unlock() }
+        var entries = loadLocked()
+        guard !readDegraded else { return }
+        let live = Set(profileIDs.map { proxyCredentialKey(profileID: $0) })
+        let doomed = entries.keys.filter {
+            $0.hasPrefix(proxyProfileCredentialPrefix) && !live.contains($0)
+        }
+        guard !doomed.isEmpty else { return }
+        doomed.forEach { entries.removeValue(forKey: $0) }
+        writeLocked(entries)
     }
 
     /// Every account name Locus has stored. Used to sweep up keys whose
@@ -1175,7 +1214,7 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
     private func dataWithoutRedirects(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let delegate = MCPNoRedirectDelegate()
         let configuration = (testConfiguration?.copy() as? URLSessionConfiguration)
-            ?? ProxyRuntime.shared.configuration()
+            ?? ProxyRuntime.shared.configuration(scope: .modelAndAgent)
         let session = URLSession(
             configuration: configuration,
             delegate: delegate,

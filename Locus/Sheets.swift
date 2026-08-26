@@ -1951,6 +1951,10 @@ struct SettingsView: View {
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
+                Text("This page edits the Default profile. Open Proxy Manager in the right inspector for named profiles, split routing, strict tunnel mode, pool health, and automatic failover.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .formStyle(.grouped)

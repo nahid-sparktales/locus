@@ -289,6 +289,10 @@ final class AppModel: ObservableObject {
                 shell: settings.terminalShell,
                 loginShell: settings.terminalLoginShell
             )
+            ProxyRuntime.shared.noteRoutingContext(
+                workspacePath: cwd,
+                providerAccountID: settings.activeAccountID
+            )
         }
     }
     @Published var blocks: [ChatBlock] = []
@@ -433,6 +437,9 @@ final class AppModel: ObservableObject {
     @Published var usageSummary: UsageSummary?
     @Published private(set) var lastModelRoutingDecision: ModelRoutingDecision?
     @Published private(set) var modelRouterMessage = "No scorecard has been run yet."
+    @Published private(set) var proxyHealthRecords: [ProxyHealthRecord] = []
+    @Published private(set) var proxyHealthMessage = "Proxy health has not been checked yet."
+    @Published private(set) var isCheckingProxyHealth = false
     @Published var settingsPage: SettingsPage = .general
     @Published var modelLibraryPresented = false
     private var modelLibraryPendingSettingsDismissal = false
@@ -592,6 +599,8 @@ final class AppModel: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var runtimeRecoveryTask: Task<Void, Never>?
     private var runtimeRecoveryAttempt = 0
+    private var proxyHealthMonitorTask: Task<Void, Never>?
+    private var proxyRouteRestartPending = false
     private var extensionRefreshTask: Task<Void, Never>?
     private var restoredTranscriptContext: String?
     private var toastTask: Task<Void, Never>?
@@ -826,7 +835,10 @@ final class AppModel: ObservableObject {
         // credential file, for the same reason it must not read accounts.
         ProxyRuntime.shared.update(
             settings: loadedSettings,
-            password: persistenceEnabled ? CredentialStore.proxyPassword() : nil
+            password: persistenceEnabled ? CredentialStore.proxyPassword() : nil,
+            profilePasswords: persistenceEnabled
+                ? CredentialStore.proxyPasswords(for: loadedSettings.allProxyProfiles) : [:],
+            providerAccountID: loadedSettings.activeAccountID
         )
 
         if !isUITesting,
@@ -861,6 +873,10 @@ final class AppModel: ObservableObject {
         workspaceAccess = access
         initialWorkspacePath = access.restoreAvailable(paths: restoredWorkspacePaths)
             ?? WorkspaceAccess.sandboxWorkspaceURL()?.path
+        ProxyRuntime.shared.noteRoutingContext(
+            workspacePath: initialWorkspacePath,
+            providerAccountID: loadedSettings.activeAccountID
+        )
         promptHistory = isUITesting ? [] : (defaults.stringArray(forKey: "Locus.promptHistory") ?? [])
 
         // Seeded here rather than in a didSet: assignments inside init skip
@@ -994,6 +1010,7 @@ final class AppModel: ObservableObject {
                 await companionGateway.setEnabled(settings.mobileAccessEnabled)
             }
             Task { await bootstrap() }
+            scheduleProxyHealthMonitoring()
         }
 
         #if !LOCUS_APP_STORE
@@ -1677,13 +1694,15 @@ final class AppModel: ObservableObject {
                 root: settings.backendRoot,
                 port: preferredPort,
                 cwd: workspacePath,
-                environmentOverlay: ProxyConfigurator.agentEnvironmentOverlay(
-                    settings: settings,
-                    ollamaHost: lastOllamaHost
+                environmentOverlay: ProxyRuntime.shared.environmentOverlay(
+                    scope: .modelAndAgent,
+                    workspacePath: workspacePath,
+                    providerAccountID: settings.activeAccountID
                 ),
-                proxyCredential: ProxyConfigurator.childCredential(
-                    settings: settings,
-                    password: persistenceEnabled ? CredentialStore.proxyPassword() : nil
+                proxyCredential: ProxyRuntime.shared.childCredential(
+                    scope: .modelAndAgent,
+                    workspacePath: workspacePath,
+                    providerAccountID: settings.activeAccountID
                 )
             ) {
             case .running(let endpoint):
@@ -1802,6 +1821,87 @@ final class AppModel: ObservableObject {
         scheduleRuntimeRecovery(reason: "Retrying local services…", immediate: true)
     }
 
+    func refreshProxyHealth() {
+        guard !isCheckingProxyHealth else { return }
+        Task { @MainActor [weak self] in
+            await self?.performProxyHealthCheck()
+        }
+    }
+
+    private func performProxyHealthCheck() async {
+        guard settings.resolvedProxyMode == .manual else {
+            proxyHealthRecords = []
+            proxyHealthMessage = "Choose Manual proxy mode to check profiles."
+            return
+        }
+        guard !isCheckingProxyHealth else { return }
+        isCheckingProxyHealth = true
+        proxyHealthMessage = "Checking every enabled proxy…"
+        let result = await ProxyRuntime.shared.refreshHealth()
+        proxyHealthRecords = result.records
+        let healthy = result.records.filter(\.ok).count
+        if result.records.isEmpty {
+            proxyHealthMessage = "No enabled, complete proxy profiles are available."
+        } else if healthy == result.records.count {
+            proxyHealthMessage = "All (healthy) proxy profile\(healthy == 1 ? " is" : "s are") healthy."
+        } else {
+            proxyHealthMessage = "(healthy) of (result.records.count) proxy profiles are healthy."
+        }
+        isCheckingProxyHealth = false
+        if result.routingChanged { requestProxyRouteRestart() }
+    }
+
+    private func scheduleProxyHealthMonitoring() {
+        proxyHealthMonitorTask?.cancel()
+        proxyHealthMonitorTask = nil
+        proxyHealthRecords = ProxyRuntime.shared.healthSnapshot
+        guard persistenceEnabled,
+              settings.resolvedProxyMode == .manual,
+              settings.proxyAutoFailoverEnabled
+        else { return }
+        proxyHealthMonitorTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, !self.isShuttingDown {
+                await self.performProxyHealthCheck()
+                do {
+                    try await Task.sleep(for: .seconds(60))
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    /// URL sessions move immediately because they are rebuilt from the proxy
+    /// generation. Local agent services inherit proxy variables at launch, so
+    /// an idle service is relaunched; active work is allowed to finish first.
+    private func requestProxyRouteRestart() {
+        let hasActiveWorker = taskWorkers.values.contains {
+            $0.occupiesExecutionSlot || $0.startedAt != nil
+        }
+        guard !isBusy, !hasActiveWorker, pendingChatTurns.isEmpty else {
+            proxyRouteRestartPending = true
+            if !proxyHealthMessage.contains("active agent") {
+                proxyHealthMessage += " The active agent will switch routes after its work finishes."
+            }
+            return
+        }
+        proxyRouteRestartPending = false
+        taskWorkers.values.forEach { $0.stop() }
+        taskWorkers.removeAll()
+        syncBrowserProtectedSessions()
+        backend.disconnect()
+        Task { [backendProcess] in
+            await backendProcess.stopAndWait()
+            await self.bootstrap()
+        }
+    }
+
+    private func applyPendingProxyRouteRestartIfPossible() {
+        guard proxyRouteRestartPending else { return }
+        requestProxyRouteRestart()
+    }
+
     func shutdown() {
         isShuttingDown = true
         Task { await companionGateway.setEnabled(false) }
@@ -1816,6 +1916,7 @@ final class AppModel: ObservableObject {
         persistSettings()
         refreshTask?.cancel()
         runtimeRecoveryTask?.cancel()
+        proxyHealthMonitorTask?.cancel()
         streamFlushDriver.invalidate()
         profilePersistenceTask?.cancel()
         settingsPersistenceTask?.cancel()
@@ -8322,6 +8423,13 @@ final class AppModel: ObservableObject {
             || settings.proxyPort != newSettings.proxyPort
             || settings.proxyBypass != newSettings.proxyBypass
             || settings.proxyUsername != newSettings.proxyUsername
+            || settings.proxyProfiles != newSettings.proxyProfiles
+            || settings.proxyActiveProfileID != newSettings.proxyActiveProfileID
+            || settings.proxyStrictModeEnabled != newSettings.proxyStrictModeEnabled
+            || settings.proxyAutoFailoverEnabled != newSettings.proxyAutoFailoverEnabled
+            || settings.proxyScopeProfileIDs != newSettings.proxyScopeProfileIDs
+            || settings.proxyWorkspaceProfileIDs != newSettings.proxyWorkspaceProfileIDs
+            || settings.proxyProviderProfileIDs != newSettings.proxyProviderProfileIDs
         let launchAtLoginChanged = settings.launchAtLogin != newSettings.launchAtLogin
         let mobileAccessChanged = settings.mobileAccessEnabled != newSettings.mobileAccessEnabled
         if launchAtLoginChanged {
@@ -8349,13 +8457,40 @@ final class AppModel: ObservableObject {
         }
         if browserProfileChanged { syncBrowserProfile() }
 
+        if providerChanged, !proxyChanged {
+            ProxyRuntime.shared.noteRoutingContext(
+                workspacePath: workspacePath,
+                providerAccountID: newSettings.activeAccountID
+            )
+        }
+
         if proxyChanged {
             // Before any restart, so the relaunched agent and every rebuilt
             // session see the new configuration, not the one being replaced.
             ProxyRuntime.shared.update(
                 settings: newSettings,
-                password: persistenceEnabled ? CredentialStore.proxyPassword() : nil
+                password: persistenceEnabled ? CredentialStore.proxyPassword() : nil,
+                profilePasswords: persistenceEnabled
+                    ? CredentialStore.proxyPasswords(for: newSettings.allProxyProfiles) : [:],
+                workspacePath: workspacePath,
+                providerAccountID: newSettings.activeAccountID
             )
+            if persistenceEnabled {
+                CredentialStore.removeOrphanedProxyProfilePasswords(
+                    keeping: Set(newSettings.allProxyProfiles.map(\.id))
+                )
+            }
+            scheduleProxyHealthMonitoring()
+            let hasActiveWorker = taskWorkers.values.contains {
+                $0.occupiesExecutionSlot || $0.startedAt != nil
+            }
+            if hasActiveWorker || isBusy {
+                proxyRouteRestartPending = true
+            } else {
+                taskWorkers.values.forEach { $0.stop() }
+                taskWorkers.removeAll()
+                syncBrowserProtectedSessions()
+            }
         }
         // A backend change with an unparseable URL never restarted the agent;
         // keep that, while a proxy change restarts regardless.
@@ -10123,9 +10258,11 @@ final class AppModel: ObservableObject {
         // process for a synthetic session; nil exercises recoverable sending.
         guard persistenceEnabled else { return nil }
         let process = BackendProcess()
-        var workerEnvironment = ProxyConfigurator.agentEnvironmentOverlay(
-            settings: settings,
-            ollamaHost: lastOllamaHost
+        let routedAccountID = providerAccountID ?? settings.activeAccountID
+        var workerEnvironment = ProxyRuntime.shared.environmentOverlay(
+            scope: .modelAndAgent,
+            workspacePath: workspaceRoot,
+            providerAccountID: routedAccountID
         )
         workerEnvironment["LOCUS_MODEL_CALL_LIMIT"] = String(globalAgentConcurrency)
         var brokerComponents = URLComponents(
@@ -10143,9 +10280,10 @@ final class AppModel: ObservableObject {
             port: 0,
             cwd: workspaceRoot,
             environmentOverlay: workerEnvironment,
-            proxyCredential: ProxyConfigurator.childCredential(
-                settings: settings,
-                password: persistenceEnabled ? CredentialStore.proxyPassword() : nil
+            proxyCredential: ProxyRuntime.shared.childCredential(
+                scope: .modelAndAgent,
+                workspacePath: workspaceRoot,
+                providerAccountID: routedAccountID
             )
         )
         guard case .running(let endpoint) = launch else {
@@ -10585,6 +10723,7 @@ final class AppModel: ObservableObject {
                     runID: notificationRunID
                 )
             }
+            applyPendingProxyRouteRestartIfPossible()
         }
     }
 
@@ -11821,6 +11960,7 @@ final class AppModel: ObservableObject {
             }
             Task { @MainActor [weak self] in
                 self?.drainQueuedMessages()
+                self?.applyPendingProxyRouteRestartIfPossible()
             }
 
         case "error":

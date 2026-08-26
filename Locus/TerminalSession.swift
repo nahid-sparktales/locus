@@ -226,7 +226,10 @@ final class TerminalSession: NSObject, ObservableObject {
         view.startProcess(
             executable: shell,
             args: arguments,
-            environment: childEnvironment(shell: shell),
+            environment: childEnvironment(
+                shell: shell,
+                workspacePath: configuration.workspacePath
+            ),
             currentDirectory: configuration.workspacePath
         )
         isRunning = view.process.running
@@ -246,7 +249,7 @@ final class TerminalSession: NSObject, ObservableObject {
         return FileManager.default.isExecutableFile(atPath: "/bin/zsh") ? "/bin/zsh" : "/bin/sh"
     }
 
-    private func childEnvironment(shell: String) -> [String] {
+    private func childEnvironment(shell: String, workspacePath: String) -> [String] {
         var environment = ProcessInfo.processInfo.environment
         for key in environment.keys where key.hasPrefix("LOCUS_")
             || key == "PYTHONPATH"
@@ -258,6 +261,19 @@ final class TerminalSession: NSObject, ObservableObject {
         environment["SHELL"] = shell
         environment["TERM"] = "xterm-256color"
         environment["COLORTERM"] = "truecolor"
+        // The integrated terminal is an explicit user-controlled tool surface.
+        // It receives the selected credential-free route; authenticated proxy
+        // passwords remain unavailable to shell commands by design.
+        for (key, value) in ProxyRuntime.shared.environmentOverlay(
+            scope: .gitAndTools,
+            workspacePath: workspacePath
+        ) {
+            if value.isEmpty {
+                environment.removeValue(forKey: key)
+            } else {
+                environment[key] = value
+            }
+        }
         if environment["LANG"]?.isEmpty ?? true { environment["LANG"] = "en_US.UTF-8" }
         let inheritedPath = (environment["PATH"] ?? "")
             .split(separator: ":").map(String.init).filter { !$0.isEmpty }
