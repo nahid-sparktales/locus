@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 /// The always-visible right rail. Collapsing the inspector no longer empties
-/// the window edge: Overview, Terminal, Browser, and Notes stay within reach,
+/// the window edge: Overview, Terminal, Browser, Notes, Router, and Proxies stay within reach,
 /// while the vertical-ellipsis menu restores every additional workspace panel.
 /// The panel opens to the rail's left. Attention badges
 /// live on the icons, so a run can ask for eyes without the panel being open.
@@ -13,7 +13,7 @@ struct InspectorRail: View {
     /// Direct rail destinations stay one click away. The remaining workspace
     /// panels live in the overflow menu instead of disappearing from the UI.
     static let menuTabs = InspectorTab.workspaceTabs.filter {
-        $0 != .terminal && $0 != .notes
+        $0 != .terminal && $0 != .notes && $0 != .router && $0 != .proxies
     }
 
     var body: some View {
@@ -23,6 +23,8 @@ struct InspectorRail: View {
             railTab(.terminal)
             railTab(.preview)
             railTab(.notes)
+            railTab(.router)
+            railTab(.proxies)
             Spacer(minLength: 0)
             zoomButton
         }

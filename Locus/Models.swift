@@ -392,6 +392,8 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     case checkpoints
     case runs
     case agents
+    case router
+    case proxies
 
     var id: String { rawValue }
 
@@ -400,6 +402,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     /// requested (or when an active request needs them).
     static let workspaceTabs: [InspectorTab] = [
         .changes, .files, .terminal, .notes, .checkpoints, .runs, .agents,
+        .router, .proxies,
     ]
 
     var isWorkspaceTab: Bool { Self.workspaceTabs.contains(self) }
@@ -418,6 +421,8 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .checkpoints: "Checkpoints"
         case .runs: "Runs"
         case .agents: "AGENTS.md"
+        case .router: "Router"
+        case .proxies: "Proxies"
         }
     }
 
@@ -432,11 +437,14 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .checkpoints: "clock.arrow.circlepath"
         case .runs: "point.3.connected.trianglepath.dotted"
         case .agents: "doc.text.fill"
+        case .router: "arrow.triangle.branch"
+        case .proxies: "network.badge.shield.half.filled"
         }
     }
 
-    /// Existing ⌘1…⌘8 bindings remain stable; Notes uses the new ⌘9 binding.
-    var shortcutKey: Character {
+    /// Existing ⌘1…⌘8 bindings remain stable; Notes uses ⌘9. New panels stay
+    /// reachable from the rail without stealing ⌘0 from the sidebar.
+    var shortcutKey: Character? {
         switch self {
         case .plan: "1"
         case .changes: "2"
@@ -447,6 +455,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .runs: "7"
         case .agents: "8"
         case .notes: "9"
+        case .router, .proxies: nil
         }
     }
 }
@@ -1149,6 +1158,94 @@ struct ModelInfo: Codable, Hashable, Identifiable {
     var sizeLabel: String {
         guard size > 0 else { return "Size unavailable" }
         return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
+    }
+}
+
+/// What the solo-message router should optimize. The scorecard remains fully
+/// visible whichever preset is selected; a preset changes weights, not the
+/// eligibility or privacy rules.
+enum ModelRoutingPolicy: String, Codable, CaseIterable, Identifiable {
+    case balanced
+    case bestAnswer = "best_answer"
+    case fast
+    case privateLocal = "private_local"
+    case lowCost = "low_cost"
+    case smallerFootprint = "smaller_footprint"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .balanced: "Balanced"
+        case .bestAnswer: "Best answer"
+        case .fast: "Fast"
+        case .privateLocal: "Private / local"
+        case .lowCost: "Lower cost"
+        case .smallerFootprint: "Smaller footprint"
+        }
+    }
+
+    var weights: [String: Double] {
+        switch self {
+        case .balanced:
+            ["quality": 0.32, "reliability": 0.16, "privacy": 0.14,
+             "latency": 0.14, "cost": 0.12, "efficiency": 0.12]
+        case .bestAnswer:
+            ["quality": 0.52, "reliability": 0.18, "privacy": 0.08,
+             "latency": 0.07, "cost": 0.05, "efficiency": 0.10]
+        case .fast:
+            ["quality": 0.22, "reliability": 0.15, "privacy": 0.08,
+             "latency": 0.38, "cost": 0.07, "efficiency": 0.10]
+        case .privateLocal:
+            ["quality": 0.22, "reliability": 0.13, "privacy": 0.37,
+             "latency": 0.08, "cost": 0.10, "efficiency": 0.10]
+        case .lowCost:
+            ["quality": 0.22, "reliability": 0.13, "privacy": 0.10,
+             "latency": 0.09, "cost": 0.36, "efficiency": 0.10]
+        case .smallerFootprint:
+            ["quality": 0.22, "reliability": 0.13, "privacy": 0.12,
+             "latency": 0.10, "cost": 0.08, "efficiency": 0.35]
+        }
+    }
+}
+
+struct ModelRoutingScorecard: Codable, Hashable, Identifiable {
+    let routeID: String
+    let name: String
+    let model: String
+    let provider: String
+    let local: Bool
+    let current: Bool
+    let selected: Bool
+    let score: Double
+    let components: [String: Double]
+    let weights: [String: Double]
+    let sampleCount: Int
+    let evaluationCount: Int
+    let limitedData: Bool
+
+    var id: String { routeID }
+
+    enum CodingKeys: String, CodingKey {
+        case name, model, provider, local, current, selected, score, components, weights
+        case routeID = "route_id"
+        case sampleCount = "sample_count"
+        case evaluationCount = "evaluation_count"
+        case limitedData = "limited_data"
+    }
+}
+
+struct ModelRoutingDecision: Codable, Hashable {
+    let selectedID: String
+    let limitedData: Bool
+    let reason: String
+    let tags: [String]
+    let candidates: [ModelRoutingScorecard]
+
+    enum CodingKeys: String, CodingKey {
+        case reason, tags, candidates
+        case selectedID = "selected_id"
+        case limitedData = "limited_data"
     }
 }
 
@@ -2015,6 +2112,16 @@ struct AppSettings: Codable, Hashable {
     /// the turn just stops, and until this setting existed the only way to see
     /// or change the number was to hand-edit the agent's config file.
     var maxIterations: Int?
+    /// Solo-message model routing is off until explicitly enabled. Hosted
+    /// accounts require a second opt-in so enabling the router cannot move
+    /// private work off the Mac by surprise.
+    var automaticModelRoutingEnabled = false
+    var automaticModelRoutingAllowHosted = false
+    var modelRoutingPolicyRaw = ModelRoutingPolicy.balanced.rawValue
+    /// The last route the person chose. Automatic choices never overwrite it,
+    /// so disabling the router has a deterministic route to restore.
+    var modelRouterFallbackAccountID: String?
+    var modelRouterFallbackModel = ""
     var inspectorWidth: Double = AppSettings.defaultInspectorWidth
     /// Preferred width of the conversations/workspaces sidebar. Layout may
     /// temporarily render it narrower in a compact window without overwriting
@@ -2244,6 +2351,10 @@ struct AppSettings: Codable, Hashable {
         ProxyType(rawValue: proxyTypeRaw) ?? .http
     }
 
+    var resolvedModelRoutingPolicy: ModelRoutingPolicy {
+        ModelRoutingPolicy(rawValue: modelRoutingPolicyRaw) ?? .balanced
+    }
+
     var resolvedThinkingVisibility: ThinkingVisibility {
         ThinkingVisibility(rawValue: thinkingVisibilityRaw) ?? .collapsed
     }
@@ -2296,6 +2407,21 @@ struct AppSettings: Codable, Hashable {
             forKey: .hiddenLocalModels
         ) ?? defaults.hiddenLocalModels
         maxIterations = try container.decodeIfPresent(Int.self, forKey: .maxIterations)
+        automaticModelRoutingEnabled = try container.decodeIfPresent(
+            Bool.self, forKey: .automaticModelRoutingEnabled
+        ) ?? defaults.automaticModelRoutingEnabled
+        automaticModelRoutingAllowHosted = try container.decodeIfPresent(
+            Bool.self, forKey: .automaticModelRoutingAllowHosted
+        ) ?? defaults.automaticModelRoutingAllowHosted
+        modelRoutingPolicyRaw = try container.decodeIfPresent(
+            String.self, forKey: .modelRoutingPolicyRaw
+        ) ?? defaults.modelRoutingPolicyRaw
+        modelRouterFallbackAccountID = try container.decodeIfPresent(
+            String.self, forKey: .modelRouterFallbackAccountID
+        ) ?? defaults.modelRouterFallbackAccountID
+        modelRouterFallbackModel = try container.decodeIfPresent(
+            String.self, forKey: .modelRouterFallbackModel
+        ) ?? defaults.modelRouterFallbackModel
         // Clamped on the way in as well as on the way out: a corrupt or
         // out-of-range stored value must not produce an unusable panel.
         inspectorWidth = Self.clampInspectorWidth(

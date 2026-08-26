@@ -2934,6 +2934,56 @@ def _core(tmp_path, responses):
     return core
 
 
+def test_model_router_endpoints_score_and_record_solo_outcomes(client):
+    candidates = [{
+        "id": "model-route:ollama:qwen",
+        "name": "Qwen · Local",
+        "model": "qwen",
+        "provider": "ollama",
+        "local": True,
+        "current": True,
+        "metering": "self_hosted",
+        "memory_bytes": 8 * 1024**3,
+        "sample_ids": ["model-route:ollama:qwen"],
+    }]
+    first = client.post(
+        "/api/model-router/decision",
+        json={"tags": ["coding"], "candidates": candidates},
+    )
+    assert first.status_code == 200
+    assert first.json()["selected_id"] == "model-route:ollama:qwen"
+    assert first.json()["candidates"][0]["sample_count"] == 0
+
+    recorded = client.post("/api/model-router/sample", json={
+        "route_id": "model-route:ollama:qwen",
+        "tags": ["coding"],
+        "reliable": True,
+        "latency_ms": 1_200,
+        "local": True,
+    })
+    assert recorded.status_code == 200
+
+    second = client.post(
+        "/api/model-router/decision",
+        json={"tags": ["coding"], "candidates": candidates},
+    )
+    assert second.status_code == 200
+    assert second.json()["candidates"][0]["sample_count"] == 1
+    assert second.json()["candidates"][0]["components"]["reliability"] == 100
+
+    malformed_decision = client.post(
+        "/api/model-router/decision",
+        json={"candidates": [{**candidates[0], "memory_bytes": "many"}]},
+    )
+    assert malformed_decision.status_code == 422
+
+    malformed_sample = client.post("/api/model-router/sample", json={
+        "route_id": "model-route:ollama:qwen",
+        "latency_ms": "eventually",
+    })
+    assert malformed_sample.status_code == 422
+
+
 def test_run_turn_emits_streaming_and_turn_done(tmp_path):
     core = _core(tmp_path, [ChatResponse(content_parts=["Hello ", "world"], done=True)])
     events = []

@@ -47,6 +47,10 @@ struct InspectorView: View {
                     InspectorRunsTab()
                 case .agents:
                     InspectorAgentsTab()
+                case .router:
+                    InspectorRouterTab()
+                case .proxies:
+                    InspectorProxiesTab()
                 }
             }
             .environmentObject(model)
@@ -76,6 +80,491 @@ struct InspectorView: View {
         // to the inspector when docked; only expanded mode needs the paper
         // color as a contrasting margin around its rounded panel.
         .background(model.inspectorZoomed ? LocusTheme.paper : Color.clear)
+    }
+}
+
+// MARK: - Model router
+
+struct InspectorRouterTab: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            inspectorHeader
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    controls
+                    statusCard
+                    if let decision = model.lastModelRoutingDecision {
+                        scorecards(decision)
+                    } else {
+                        emptyScorecard
+                    }
+                }
+                .padding(12)
+            }
+        }
+        .onAppear {
+            if model.lastModelRoutingDecision == nil {
+                model.refreshModelRouterScorecard()
+            }
+        }
+        .accessibilityIdentifier("inspector.router")
+    }
+
+    private var inspectorHeader: some View {
+        HStack(spacing: 8) {
+            Image(systemName: InspectorTab.router.symbol)
+                .foregroundStyle(LocusTheme.signalDeep)
+            Text("Model Router")
+                .font(.locus(size: 12, weight: .bold))
+            Spacer()
+            Button {
+                model.refreshModelRouterScorecard()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.locus())
+            .help("Refresh scorecards")
+            .accessibilityLabel("Refresh model scorecards")
+            .accessibilityIdentifier("router.refresh")
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 38)
+        .locusSurface(.toolbar)
+        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+    }
+
+    private var controls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle(
+                "Choose a model for each solo message",
+                isOn: Binding(
+                    get: { model.settings.automaticModelRoutingEnabled },
+                    set: model.setAutomaticModelRoutingEnabled
+                )
+            )
+            .disabled(model.isBusy)
+            .accessibilityIdentifier("router.enabled")
+
+            Toggle(
+                "Allow hosted accounts",
+                isOn: Binding(
+                    get: { model.settings.automaticModelRoutingAllowHosted },
+                    set: model.setAutomaticModelRoutingAllowHosted
+                )
+            )
+            .disabled(!model.settings.automaticModelRoutingEnabled || model.isBusy)
+            .accessibilityIdentifier("router.allowHosted")
+
+            Picker(
+                "Priority",
+                selection: Binding(
+                    get: { model.settings.resolvedModelRoutingPolicy },
+                    set: model.setModelRoutingPolicy
+                )
+            ) {
+                ForEach(ModelRoutingPolicy.allCases) { policy in
+                    Text(policy.title).tag(policy)
+                }
+            }
+            .disabled(model.isBusy)
+            .accessibilityIdentifier("router.policy")
+
+            Text("Hosted models are ineligible until separately allowed. Teams and Solo Swarm keep their own routing rules. Prompt text is never sent to the scorecard endpoint.")
+                .font(.locus(size: 9))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(11)
+        .locusCard(radius: 10)
+    }
+
+    private var statusCard: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Circle()
+                .fill(model.settings.automaticModelRoutingEnabled
+                    ? LocusTheme.success : LocusTheme.muted)
+                .frame(width: 7, height: 7)
+                .padding(.top, 3)
+            Text(model.modelRouterMessage)
+                .font(.locus(size: 9))
+                .foregroundStyle(LocusTheme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .locusCard(radius: 9)
+        .accessibilityIdentifier("router.status")
+    }
+
+    @ViewBuilder
+    private func scorecards(_ decision: ModelRoutingDecision) -> some View {
+        HStack {
+            Text("Scorecards")
+                .font(.locus(size: 11, weight: .bold))
+            Spacer()
+            if decision.limitedData {
+                Label("Learning", systemImage: "chart.dots.scatter")
+                    .font(.locus(size: 8, weight: .semibold))
+                    .foregroundStyle(LocusTheme.warning)
+            }
+        }
+        if !decision.tags.isEmpty {
+            Text("Task: \(decision.tags.joined(separator: " · "))")
+                .font(.locus(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+        }
+        ForEach(decision.candidates) { card in
+            scorecard(card)
+        }
+        Text("Efficiency uses local model download size as a footprint proxy. It is not a measured energy reading; hosted efficiency stays neutral without provider telemetry.")
+            .font(.locus(size: 8))
+            .foregroundStyle(LocusTheme.muted)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func scorecard(_ card: ModelRoutingScorecard) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(card.name)
+                        .font(.locus(size: 10, weight: .bold))
+                        .lineLimit(2)
+                    Text("\(card.sampleCount) samples · \(card.evaluationCount) evaluations")
+                        .font(.locus(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                Spacer(minLength: 6)
+                if card.selected {
+                    Text("Selected")
+                        .font(.locus(size: 8, weight: .bold))
+                        .foregroundStyle(LocusTheme.signalDeep)
+                } else if card.current {
+                    Text("Current")
+                        .font(.locus(size: 8, weight: .semibold))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                Text(String(format: "%.0f", card.score))
+                    .font(.locus(size: 15, weight: .bold))
+            }
+            ForEach(componentOrder, id: \.self) { component in
+                let value = card.components[component] ?? 0
+                HStack(spacing: 6) {
+                    Text(componentTitle(component))
+                        .font(.locus(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                        .frame(width: 57, alignment: .leading)
+                    ProgressView(value: value, total: 100)
+                        .tint(card.selected ? LocusTheme.signalDeep : LocusTheme.muted)
+                    Text(String(format: "%.0f", value))
+                        .font(.locus(size: 8, weight: .semibold))
+                        .monospacedDigit()
+                        .frame(width: 22, alignment: .trailing)
+                }
+            }
+        }
+        .padding(10)
+        .locusCard(radius: 10)
+        .overlay {
+            if card.selected {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(LocusTheme.signalDeep.opacity(0.45), lineWidth: 1)
+            }
+        }
+        .accessibilityIdentifier("router.scorecard.\(card.routeID)")
+    }
+
+    private var emptyScorecard: some View {
+        Text("Scorecards appear here when the local agent is ready.")
+            .font(.locus(size: 9))
+            .foregroundStyle(LocusTheme.muted)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(11)
+            .locusCard(radius: 9)
+    }
+
+    private var componentOrder: [String] {
+        ["quality", "reliability", "privacy", "latency", "cost", "efficiency"]
+    }
+
+    private func componentTitle(_ component: String) -> String {
+        component == "efficiency" ? "Footprint" : component.capitalized
+    }
+}
+
+// MARK: - Proxy manager
+
+struct InspectorProxiesTab: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var modeRaw = ProxyMode.off.rawValue
+    @State private var typeRaw = ProxyType.http.rawValue
+    @State private var host = ""
+    @State private var port = ""
+    @State private var bypass = ""
+    @State private var authEnabled = false
+    @State private var username = ""
+    @State private var password = ""
+    @State private var passwordStored = false
+    @State private var isTesting = false
+    @State private var testOutcome: ProxyProbe.Outcome?
+
+    private var mode: ProxyMode { ProxyMode(rawValue: modeRaw) ?? .off }
+    private var type: ProxyType { ProxyType(rawValue: typeRaw) ?? .http }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            proxyHeader
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    connectionCard
+                    if mode == .manual { manualCard }
+                    coverageCard
+                    actionBar
+                }
+                .padding(12)
+            }
+        }
+        .onAppear(perform: load)
+        .onChange(of: draftSignature) { testOutcome = nil }
+        .accessibilityIdentifier("inspector.proxies")
+    }
+
+    private var proxyHeader: some View {
+        HStack(spacing: 8) {
+            Image(systemName: InspectorTab.proxies.symbol)
+                .foregroundStyle(LocusTheme.signalDeep)
+            Text("Proxy Manager")
+                .font(.locus(size: 12, weight: .bold))
+            Spacer()
+            Circle()
+                .fill(mode == .off ? LocusTheme.muted : LocusTheme.success)
+                .frame(width: 7, height: 7)
+            Text(mode == .off ? "Direct" : (mode == .system ? "System" : type.rawValue.uppercased()))
+                .font(.locus(size: 8, weight: .semibold))
+                .foregroundStyle(LocusTheme.muted)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 38)
+        .locusSurface(.toolbar)
+        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+    }
+
+    private var connectionCard: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("Outbound traffic")
+                .font(.locus(size: 10, weight: .bold))
+            Picker("Route", selection: $modeRaw) {
+                Text("Direct").tag(ProxyMode.off.rawValue)
+                Text("System").tag(ProxyMode.system.rawValue)
+                Text("Manual").tag(ProxyMode.manual.rawValue)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityIdentifier("proxies.mode")
+
+            Text(modeDetail)
+                .font(.locus(size: 9))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if mode == .system, ProxyConfigurator.systemProxyUsesPAC() {
+                Label(
+                    "The app can follow the PAC file, but the Python agent cannot translate it. Use Manual to cover agent traffic.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.locus(size: 9))
+                .foregroundStyle(LocusTheme.warning)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(11)
+        .locusCard(radius: 10)
+    }
+
+    private var manualCard: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Picker("Type", selection: $typeRaw) {
+                Text("HTTP / HTTPS").tag(ProxyType.http.rawValue)
+                Text("SOCKS5").tag(ProxyType.socks5.rawValue)
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("proxies.type")
+
+            TextField("Proxy host", text: $host)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("proxies.host")
+            TextField("Port", text: $port)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("proxies.port")
+            TextField("Bypass hosts (optional)", text: $bypass)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("proxies.bypass")
+
+            Toggle("Proxy requires sign-in", isOn: $authEnabled)
+                .accessibilityIdentifier("proxies.auth")
+            if authEnabled {
+                TextField("Username", text: $username)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("proxies.username")
+                SecureField(
+                    passwordStored ? "Password (saved)" : "Password",
+                    text: $password
+                )
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("proxies.password")
+            }
+
+            if let error = draftError {
+                Text(error)
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.coral)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("proxies.error")
+            }
+        }
+        .padding(11)
+        .locusCard(radius: 10)
+    }
+
+    private var coverageCard: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Coverage")
+                .font(.locus(size: 10, weight: .bold))
+            Label("App requests and model providers", systemImage: "checkmark.circle.fill")
+            Label("Agent web traffic, extensions, and Git", systemImage: "checkmark.circle.fill")
+            Label("Built-in browser and model downloads", systemImage: "checkmark.circle.fill")
+            Label("Local agent, Ollama, and bypass hosts stay direct", systemImage: "arrow.triangle.turn.up.right.circle")
+            Text(type == .socks5 && mode == .manual
+                ? "SOCKS5 uses remote DNS (socks5h). If the proxy fails, Locus reports an error instead of silently connecting directly."
+                : "If a configured proxy fails, Locus reports an error instead of silently connecting directly.")
+                .font(.locus(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.locus(size: 9))
+        .foregroundStyle(LocusTheme.ink)
+        .padding(11)
+        .locusCard(radius: 10)
+    }
+
+    private var actionBar: some View {
+        HStack {
+            Button(isTesting ? "Testing…" : "Test") { testProxy() }
+                .disabled(isTesting || mode != .manual || draftError != nil)
+                .accessibilityIdentifier("proxies.test")
+            if let outcome = testOutcome {
+                Text(outcome.message)
+                    .font(.locus(size: 8))
+                    .foregroundStyle(outcome.ok ? LocusTheme.success : LocusTheme.coral)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 6)
+            Button("Apply") { apply() }
+                .buttonStyle(.borderedProminent)
+                .tint(LocusTheme.ink)
+                .disabled(draftError != nil || model.isBusy)
+                .accessibilityIdentifier("proxies.apply")
+        }
+    }
+
+    private var modeDetail: String {
+        switch mode {
+        case .off: "Connections leave directly."
+        case .system: "The app follows macOS proxy settings; the agent receives settings that can be expressed as proxy environment variables."
+        case .manual: "App and agent outbound traffic use this endpoint, except local plumbing and the bypass list."
+        }
+    }
+
+    private var draftError: String? {
+        guard mode == .manual else { return nil }
+        let normalized = ProxyConfigurator.normalizedHost(host)
+        let number = AppSettings.clampProxyPort(Int(port.trimmingCharacters(in: .whitespacesAndNewlines)))
+        if normalized.isEmpty || number == nil {
+            return "Manual proxy needs a host and a port from 1 to 65535."
+        }
+        if authEnabled && username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Sign-in needs a username."
+        }
+        if authEnabled && !passwordStored
+            && password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Sign-in needs a password."
+        }
+        return nil
+    }
+
+    private var draftSignature: String {
+        [modeRaw, typeRaw, host, port, bypass, username, password, authEnabled ? "1" : "0"]
+            .joined(separator: "\u{1F}")
+    }
+
+    private func load() {
+        let settings = model.settings
+        modeRaw = settings.proxyModeRaw
+        typeRaw = settings.proxyTypeRaw
+        host = settings.proxyHost
+        port = settings.proxyPort.map(String.init) ?? ""
+        bypass = settings.proxyBypass
+        username = settings.proxyUsername
+        authEnabled = !settings.proxyUsername.isEmpty
+        password = ""
+        passwordStored = model.persistenceEnabled
+            && CredentialStore.has(account: CredentialStore.proxyCredentialKey)
+        testOutcome = nil
+    }
+
+    private func proxySettingsCandidate() -> AppSettings {
+        var saved = model.settings
+        saved.proxyModeRaw = modeRaw
+        saved.proxyTypeRaw = typeRaw
+        saved.proxyHost = ProxyConfigurator.normalizedHost(host)
+        saved.proxyPort = AppSettings.clampProxyPort(
+            Int(port.trimmingCharacters(in: .whitespacesAndNewlines))
+        )
+        saved.proxyBypass = bypass
+        saved.proxyUsername = authEnabled
+            ? username.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        return saved
+    }
+
+    private func apply() {
+        let saved = proxySettingsCandidate()
+        var credentialChanged = false
+        if model.persistenceEnabled {
+            if !authEnabled, passwordStored {
+                CredentialStore.setProxyPassword("")
+                credentialChanged = true
+            } else {
+                let typed = password.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !typed.isEmpty, typed != CredentialStore.proxyPassword() {
+                    credentialChanged = CredentialStore.setProxyPassword(typed)
+                }
+            }
+        }
+        model.applySettings(saved, proxyCredentialChanged: credentialChanged)
+        load()
+    }
+
+    private func testProxy() {
+        let candidate = proxySettingsCandidate()
+        let typed = password.trimmingCharacters(in: .whitespacesAndNewlines)
+        let passwordValue = typed.isEmpty ? CredentialStore.proxyPassword() : typed
+        guard let resolved = ProxyConfigurator.resolved(
+            settings: candidate,
+            password: passwordValue,
+            ollamaHost: nil
+        ) else { return }
+        let base = model.activeAccount
+            .map { RemoteEndpointTester.normalizeBaseURL($0.resolvedBaseURL) }
+            .flatMap(URL.init(string:))
+            .flatMap { OllamaRuntime.isLoopback($0) ? nil : $0 }
+        let target = base ?? URL(string: "https://huggingface.co")!
+        isTesting = true
+        testOutcome = nil
+        Task {
+            testOutcome = await ProxyProbe.test(proxy: resolved, target: target)
+            isTesting = false
+        }
     }
 }
 
