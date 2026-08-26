@@ -29,6 +29,7 @@ The right-hand inspector keeps project tools beside the conversation:
 - Terminal and checkpoints
 - Runs and `AGENTS.md`
 - Plans and browser tabs
+- Model Router scorecards and proxy management
 
 Panels open when they are useful and can be collapsed when you want more room.
 
@@ -81,6 +82,12 @@ Locus has three permission modes:
 Credentials are stored in macOS Keychain or user-readable local credential stores and are sent only to the provider you configure. The bundled agent communicates with the app over authenticated loopback connections. Memory is encrypted with AES-256-GCM, with its key stored in Keychain.
 
 The direct-download build can optionally provide guarded Computer Control. It is off by default and is not available in the sandboxed Mac App Store build. The built-in browser remains available in both distributions.
+
+## Proxy routing
+
+Manual HTTP/HTTPS and SOCKS5 proxies can cover Locus app requests, model and agent traffic, the built-in browser, downloads, Git, and the integrated terminal. SOCKS5 routes use remote DNS. Loopback services and Ollama remain direct so the app can reach its own local runtime.
+
+The Proxy Manager in the right inspector adds named profiles, traffic-class, workspace, and provider assignments, strict tunnel mode, and health-ranked failover. Strict mode ignores custom bypass entries and blocks external traffic when no configured route is available. Health checks report latency and the externally observed exit address; when automatic failover is enabled, Locus checks the pool every minute and selects the fastest healthy standby. These controls apply to Locus, not to other Mac apps or the operating system as a whole.
 
 ## Requirements
 

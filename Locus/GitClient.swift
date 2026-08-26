@@ -70,6 +70,16 @@ struct GitClient: Sendable {
         var environment = ProcessInfo.processInfo.environment
         environment["GIT_TERMINAL_PROMPT"] = "0"
         environment["GIT_OPTIONAL_LOCKS"] = "0"
+        // Git is model-adjacent and must use the same credential-free tools
+        // route as the integrated terminal. An authenticated proxy password is
+        // intentionally confined to the agent's out-of-band handoff.
+        for (key, value) in ProxyRuntime.shared.environmentOverlay(
+            scope: .gitAndTools,
+            workspacePath: workspaceRoot
+        ) {
+            if value.isEmpty { environment.removeValue(forKey: key) }
+            else { environment[key] = value }
+        }
         process.environment = environment
 
         let stdoutPipe = Pipe()
@@ -246,7 +256,8 @@ enum CommitMessageDrafter {
             "prompt": prompt,
             "stream": false,
         ])
-        guard let (data, response) = try? await ProxyRuntime.shared.urlSession.data(for: request),
+        guard let (data, response) = try? await ProxyRuntime.shared
+            .urlSession(for: .gitAndTools).data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let text = object["response"] as? String

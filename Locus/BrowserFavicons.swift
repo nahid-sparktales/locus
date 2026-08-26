@@ -81,7 +81,7 @@ extension BrowserService {
     static func proxiedFaviconFetch(_ url: URL) async -> Data? {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 10
-        ProxyConfigurator.apply(ProxyRuntime.shared.current, to: configuration)
+        ProxyConfigurator.apply(ProxyRuntime.shared.current(for: .browser), to: configuration)
         let session = URLSession(configuration: configuration)
         defer { session.finishTasksAndInvalidate() }
         guard let (data, response) = try? await session.data(from: url),

@@ -1229,6 +1229,198 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(restored.proxyUsername, "nahid")
     }
 
+    func testProxyProfilesRoutingAndSafetySettingsSurviveARoundTrip() throws {
+        let standby = ProxyProfile(
+            name: "Toronto standby",
+            type: .socks5,
+            host: "standby.proxy",
+            port: 1080,
+            bypass: "*.internal",
+            username: "proxy-user"
+        )
+        var settings = AppSettings()
+        settings.proxyModeRaw = ProxyMode.manual.rawValue
+        settings.proxyHost = "primary.proxy"
+        settings.proxyPort = 3128
+        settings.proxyProfiles = [standby]
+        settings.proxyActiveProfileID = standby.id.uuidString
+        settings.proxyStrictModeEnabled = true
+        settings.proxyAutoFailoverEnabled = true
+        settings.proxyScopeProfileIDs = [
+            ProxyTrafficScope.browser.rawValue: standby.id.uuidString,
+        ]
+        settings.proxyWorkspaceProfileIDs = ["/tmp/work": standby.id.uuidString]
+        settings.proxyProviderProfileIDs = ["provider-id": standby.id.uuidString]
+
+        let restored = try JSONDecoder().decode(
+            AppSettings.self,
+            from: try JSONEncoder().encode(settings)
+        )
+
+        XCTAssertEqual(restored.proxyProfiles, [standby])
+        XCTAssertEqual(restored.proxyActiveProfileID, standby.id.uuidString)
+        XCTAssertTrue(restored.proxyStrictModeEnabled)
+        XCTAssertTrue(restored.proxyAutoFailoverEnabled)
+        XCTAssertEqual(
+            restored.proxyScopeProfileIDs[ProxyTrafficScope.browser.rawValue],
+            standby.id.uuidString
+        )
+        XCTAssertEqual(restored.proxyWorkspaceProfileIDs["/tmp/work"], standby.id.uuidString)
+        XCTAssertEqual(restored.proxyProviderProfileIDs["provider-id"], standby.id.uuidString)
+    }
+
+    func testProxyProfileSelectionUsesScopeThenProviderThenWorkspaceThenDefault() {
+        let workspace = ProxyProfile(name: "Workspace", host: "workspace.proxy", port: 8001)
+        let provider = ProxyProfile(name: "Provider", host: "provider.proxy", port: 8002)
+        let scope = ProxyProfile(name: "Browser", host: "browser.proxy", port: 8003)
+        var settings = AppSettings()
+        settings.proxyModeRaw = ProxyMode.manual.rawValue
+        settings.proxyHost = "default.proxy"
+        settings.proxyPort = 8000
+        settings.proxyProfiles = [workspace, provider, scope]
+        settings.proxyWorkspaceProfileIDs = ["/tmp/project": workspace.id.uuidString]
+        settings.proxyProviderProfileIDs = ["provider": provider.id.uuidString]
+        settings.proxyScopeProfileIDs = [
+            ProxyTrafficScope.browser.rawValue: scope.id.uuidString,
+        ]
+
+        XCTAssertEqual(
+            ProxyConfigurator.selectedProfile(
+                settings: settings,
+                scope: .browser,
+                workspacePath: "/tmp/project",
+                providerAccountID: "provider"
+            )?.id,
+            scope.id
+        )
+        settings.proxyScopeProfileIDs = [:]
+        XCTAssertEqual(
+            ProxyConfigurator.selectedProfile(
+                settings: settings,
+                scope: .browser,
+                workspacePath: "/tmp/project",
+                providerAccountID: "provider"
+            )?.id,
+            provider.id
+        )
+        settings.proxyProviderProfileIDs = [:]
+        XCTAssertEqual(
+            ProxyConfigurator.selectedProfile(
+                settings: settings,
+                scope: .browser,
+                workspacePath: "/tmp/project"
+            )?.id,
+            workspace.id
+        )
+        settings.proxyWorkspaceProfileIDs = [:]
+        XCTAssertEqual(
+            ProxyConfigurator.selectedProfile(settings: settings, scope: .browser)?.id,
+            ProxyProfile.primaryID
+        )
+    }
+
+    func testStrictTunnelIgnoresCustomBypassAndBlocksAnIncompleteRoute() {
+        var settings = AppSettings()
+        settings.proxyModeRaw = ProxyMode.manual.rawValue
+        settings.proxyHost = "strict.proxy"
+        settings.proxyPort = 3128
+        settings.proxyBypass = "*.example.com, 10.0.0.1"
+        settings.proxyStrictModeEnabled = true
+
+        let resolved = ProxyConfigurator.resolved(
+            settings: settings,
+            password: nil,
+            ollamaHost: "http://192.168.1.30:11434"
+        )
+        XCTAssertEqual(
+            resolved?.bypass,
+            ["localhost", "127.0.0.1", "::1", "192.168.1.30"]
+        )
+
+        settings.proxyHost = ""
+        settings.proxyPort = nil
+        let runtime = ProxyRuntime()
+        runtime.update(settings: settings, password: nil)
+        XCTAssertEqual(runtime.current?.isBlocking, true)
+        XCTAssertEqual(runtime.current?.host, "127.0.0.1")
+        XCTAssertEqual(runtime.current?.port, 1)
+    }
+
+    func testProxyFailoverSelectsTheFastestHealthyProfileAndBlocksWhenExhausted() {
+        let standby = ProxyProfile(
+            name: "Standby", type: .socks5, host: "standby.proxy", port: 1080
+        )
+        var settings = AppSettings()
+        settings.proxyModeRaw = ProxyMode.manual.rawValue
+        settings.proxyHost = "primary.proxy"
+        settings.proxyPort = 3128
+        settings.proxyProfiles = [standby]
+        settings.proxyAutoFailoverEnabled = true
+        let runtime = ProxyRuntime()
+        runtime.update(settings: settings, password: nil)
+
+        runtime.applyHealthSnapshotForTesting([
+            ProxyHealthRecord(
+                profileID: ProxyProfile.primaryID,
+                profileName: "Default",
+                ok: false,
+                latencyMilliseconds: nil,
+                exitIP: nil,
+                location: nil,
+                message: "Down",
+                checkedAt: Date()
+            ),
+            ProxyHealthRecord(
+                profileID: standby.id,
+                profileName: standby.name,
+                ok: true,
+                latencyMilliseconds: 42,
+                exitIP: "203.0.113.7",
+                location: "CA",
+                message: "Healthy",
+                checkedAt: Date()
+            ),
+        ])
+        XCTAssertEqual(runtime.current?.profileID, standby.id)
+        XCTAssertEqual(runtime.current?.type, .socks5)
+
+        runtime.applyHealthSnapshotForTesting([
+            ProxyHealthRecord(
+                profileID: ProxyProfile.primaryID,
+                profileName: "Default",
+                ok: false,
+                latencyMilliseconds: nil,
+                exitIP: nil,
+                location: nil,
+                message: "Down",
+                checkedAt: Date()
+            ),
+            ProxyHealthRecord(
+                profileID: standby.id,
+                profileName: standby.name,
+                ok: false,
+                latencyMilliseconds: nil,
+                exitIP: nil,
+                location: nil,
+                message: "Down",
+                checkedAt: Date()
+            ),
+        ])
+        XCTAssertEqual(runtime.current?.isBlocking, true)
+    }
+
+    func testEveryProxyProfileUsesAnIndependentCredentialEntry() {
+        let additional = UUID()
+        XCTAssertEqual(
+            CredentialStore.proxyCredentialKey(profileID: ProxyProfile.primaryID),
+            CredentialStore.proxyCredentialKey
+        )
+        XCTAssertEqual(
+            CredentialStore.proxyCredentialKey(profileID: additional),
+            "network-proxy-profile-\(additional.uuidString)"
+        )
+    }
+
     func testUnknownProxyModeAndTypeFallBackWithoutTakingTheRest() throws {
         let future = #"{"proxyModeRaw":"quantum","proxyTypeRaw":"socks9","proxyHost":"p.example"}"#
         let restored = try JSONDecoder().decode(AppSettings.self, from: Data(future.utf8))

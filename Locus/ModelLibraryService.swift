@@ -183,7 +183,8 @@ enum LocalModelManagement {
 
     static func delete(ollamaHost: String, model: String) async throws {
         let request = try deleteRequest(ollamaHost: ollamaHost, model: model)
-        let (data, response) = try await ProxyRuntime.shared.urlSession.data(for: request)
+        let (data, response) = try await ProxyRuntime.shared
+            .urlSession(for: .downloads).data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw LocalModelManagementError.invalidResponse
         }
@@ -219,7 +220,8 @@ actor ModelLibraryService {
         }
         components.queryItems = items
         guard let url = components.url else { throw ModelLibraryError.invalidRepository }
-        let (data, response) = try await ProxyRuntime.shared.urlSession.data(from: url)
+        let (data, response) = try await ProxyRuntime.shared
+            .urlSession(for: .downloads).data(from: url)
         try validate(response, data: data, service: "Hugging Face")
         let decoded = try decoder.decode([HuggingFaceModel].self, from: data)
         let chatPipelines = Set(["text-generation", "conversational", "image-text-to-text"])
@@ -244,7 +246,8 @@ actor ModelLibraryService {
         guard let url = URL(string: "https://huggingface.co/api/models/\(escaped)?blobs=true") else {
             throw ModelLibraryError.invalidRepository
         }
-        let (data, response) = try await ProxyRuntime.shared.urlSession.data(from: url)
+        let (data, response) = try await ProxyRuntime.shared
+            .urlSession(for: .downloads).data(from: url)
         try validate(response, data: data, service: "Hugging Face")
         let detail = try decoder.decode(HuggingFaceModelDetail.self, from: data)
 
@@ -320,7 +323,10 @@ actor ModelLibraryService {
         // The pull talks to Ollama, which the bypass list keeps direct; the
         // proxy is applied anyway so a deliberately proxied remote Ollama
         // behaves like every other endpoint.
-        let session = URLSession(configuration: ProxyRuntime.shared.configuration(base: configuration))
+        let session = URLSession(configuration: ProxyRuntime.shared.configuration(
+            base: configuration,
+            scope: .downloads
+        ))
         defer { session.finishTasksAndInvalidate() }
         let (bytes, response) = try await session.bytes(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {

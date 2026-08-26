@@ -1879,7 +1879,7 @@ final class BrowserService: NSObject, ObservableObject {
         let generation = ProxyRuntime.shared.generation
         guard proxyGeneration != generation else { return }
         proxyGeneration = generation
-        if let proxy = ProxyRuntime.shared.current {
+        if let proxy = ProxyRuntime.shared.current(for: .browser) {
             dataStore.proxyConfigurations = [
                 ProxyConfigurator.networkProxyConfiguration(for: proxy)
             ]

@@ -295,30 +295,50 @@ struct InspectorRouterTab: View {
 
 // MARK: - Proxy manager
 
+/// Advanced proxy management stays in the right inspector so routing and
+/// health are visible while a chat is open. The Settings sheet still edits
+/// the backward-compatible Default profile.
 struct InspectorProxiesTab: View {
     @EnvironmentObject private var model: AppModel
     @State private var modeRaw = ProxyMode.off.rawValue
-    @State private var typeRaw = ProxyType.http.rawValue
-    @State private var host = ""
-    @State private var port = ""
-    @State private var bypass = ""
-    @State private var authEnabled = false
-    @State private var username = ""
-    @State private var password = ""
-    @State private var passwordStored = false
+    @State private var profiles: [ProxyProfile] = []
+    @State private var selectedProfileID = ProxyProfile.primaryID
+    @State private var activeProfileID = ProxyProfile.primaryID.uuidString
+    @State private var strictMode = false
+    @State private var autoFailover = false
+    @State private var scopeRoutes: [String: String] = [:]
+    @State private var workspaceRoutes: [String: String] = [:]
+    @State private var providerRoutes: [String: String] = [:]
+    @State private var authEnabledIDs: Set<UUID> = []
+    @State private var passwordStoredIDs: Set<UUID> = []
+    @State private var typedPasswords: [UUID: String] = [:]
     @State private var isTesting = false
     @State private var testOutcome: ProxyProbe.Outcome?
 
     private var mode: ProxyMode { ProxyMode(rawValue: modeRaw) ?? .off }
-    private var type: ProxyType { ProxyType(rawValue: typeRaw) ?? .http }
+    private var selectedProfile: ProxyProfile? {
+        profiles.first { $0.id == selectedProfileID }
+    }
+    private var workspaceKey: String {
+        SessionSummary.canonicalWorkspacePath(model.workspacePath)
+    }
+    private var providerKey: String { model.settings.activeAccountID ?? "ollama" }
+    private var providerTitle: String {
+        model.activeAccount?.displayName ?? "Local Ollama"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            proxyHeader
+            header
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     connectionCard
-                    if mode == .manual { manualCard }
+                    if mode == .manual {
+                        profileCard
+                        safetyCard
+                        routingCard
+                        healthCard
+                    }
                     coverageCard
                     actionBar
                 }
@@ -330,7 +350,7 @@ struct InspectorProxiesTab: View {
         .accessibilityIdentifier("inspector.proxies")
     }
 
-    private var proxyHeader: some View {
+    private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: InspectorTab.proxies.symbol)
                 .foregroundStyle(LocusTheme.signalDeep)
@@ -340,7 +360,7 @@ struct InspectorProxiesTab: View {
             Circle()
                 .fill(mode == .off ? LocusTheme.muted : LocusTheme.success)
                 .frame(width: 7, height: 7)
-            Text(mode == .off ? "Direct" : (mode == .system ? "System" : type.rawValue.uppercased()))
+            Text(headerStatus)
                 .font(.locus(size: 8, weight: .semibold))
                 .foregroundStyle(LocusTheme.muted)
         }
@@ -382,37 +402,84 @@ struct InspectorProxiesTab: View {
         .locusCard(radius: 10)
     }
 
-    private var manualCard: some View {
+    private var profileCard: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Picker("Type", selection: $typeRaw) {
-                Text("HTTP / HTTPS").tag(ProxyType.http.rawValue)
-                Text("SOCKS5").tag(ProxyType.socks5.rawValue)
+            HStack {
+                Text("Profiles")
+                    .font(.locus(size: 10, weight: .bold))
+                Spacer()
+                Button { addProfile() } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.plain)
+                .help("Add proxy profile")
+                Button { deleteSelectedProfile() } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.plain)
+                .disabled(selectedProfileID == ProxyProfile.primaryID)
+                .help("Delete selected profile")
             }
-            .pickerStyle(.segmented)
-            .accessibilityIdentifier("proxies.type")
 
-            TextField("Proxy host", text: $host)
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier("proxies.host")
-            TextField("Port", text: $port)
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier("proxies.port")
-            TextField("Bypass hosts (optional)", text: $bypass)
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier("proxies.bypass")
+            Picker("Profile", selection: $selectedProfileID) {
+                ForEach(profiles) { profile in
+                    Text(profile.name.isEmpty ? "Untitled proxy" : profile.name)
+                        .tag(profile.id)
+                }
+            }
+            .labelsHidden()
+            .accessibilityIdentifier("proxies.profile")
 
-            Toggle("Proxy requires sign-in", isOn: $authEnabled)
-                .accessibilityIdentifier("proxies.auth")
-            if authEnabled {
-                TextField("Username", text: $username)
+            if selectedProfile != nil {
+                if selectedProfileID != ProxyProfile.primaryID {
+                    TextField("Profile name", text: profileBinding(\.name))
+                        .textFieldStyle(.roundedBorder)
+                    Toggle("Include in proxy pool", isOn: profileBinding(\.enabled))
+                } else {
+                    Text("Default profile")
+                        .font(.locus(size: 9, weight: .semibold))
+                }
+
+                Picker("Type", selection: profileBinding(\.typeRaw)) {
+                    Text("HTTP / HTTPS").tag(ProxyType.http.rawValue)
+                    Text("SOCKS5").tag(ProxyType.socks5.rawValue)
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("proxies.type")
+
+                TextField("Proxy host", text: profileBinding(\.host))
                     .textFieldStyle(.roundedBorder)
-                    .accessibilityIdentifier("proxies.username")
-                SecureField(
-                    passwordStored ? "Password (saved)" : "Password",
-                    text: $password
-                )
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier("proxies.password")
+                    .accessibilityIdentifier("proxies.host")
+                TextField("Port", text: portBinding)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("proxies.port")
+                TextField("Bypass hosts (optional)", text: profileBinding(\.bypass))
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(strictMode)
+                    .accessibilityIdentifier("proxies.bypass")
+
+                Toggle("Proxy requires sign-in", isOn: authBinding)
+                    .accessibilityIdentifier("proxies.auth")
+                if authEnabledIDs.contains(selectedProfileID) {
+                    TextField("Username", text: profileBinding(\.username))
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("proxies.username")
+                    SecureField(
+                        passwordStoredIDs.contains(selectedProfileID)
+                            ? "Password (saved)" : "Password",
+                        text: passwordBinding
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("proxies.password")
+                }
+            }
+
+            HStack {
+                Text("Default route")
+                    .font(.locus(size: 9))
+                Spacer()
+                profilePicker(selection: $activeProfileID, inheritTitle: nil)
+                    .frame(maxWidth: 150)
             }
 
             if let error = draftError {
@@ -427,6 +494,110 @@ struct InspectorProxiesTab: View {
         .locusCard(radius: 10)
     }
 
+    private var safetyCard: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("Safety & failover")
+                .font(.locus(size: 10, weight: .bold))
+            Toggle("Strict tunnel (block direct fallback)", isOn: $strictMode)
+                .accessibilityIdentifier("proxies.strict")
+            Text("Only loopback, the local agent, and Ollama stay direct. Custom bypass hosts are ignored while strict mode is on.")
+                .font(.locus(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            Toggle("Health-ranked automatic failover", isOn: $autoFailover)
+                .accessibilityIdentifier("proxies.failover")
+            Text("Locus checks enabled profiles every minute, keeps the assigned route when healthy, and otherwise selects the fastest healthy proxy. If none are healthy, traffic is blocked.")
+                .font(.locus(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(11)
+        .locusCard(radius: 10)
+    }
+
+    private var routingCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Split routing")
+                .font(.locus(size: 10, weight: .bold))
+            Text("An assignment overrides the default route. Provider overrides workspace; traffic class is strongest.")
+                .font(.locus(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ForEach(ProxyTrafficScope.allCases.filter { $0 != .app }) { scope in
+                routeRow(
+                    scope.title,
+                    selection: routeBinding(scope: scope)
+                )
+            }
+
+            Divider()
+            routeRow(
+                "This workspace",
+                selection: workspaceRouteBinding
+            )
+            Text(URL(fileURLWithPath: workspaceKey).lastPathComponent)
+                .font(.locus(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+                .lineLimit(1)
+
+            routeRow(providerTitle, selection: providerRouteBinding)
+            Text("The provider route applies when this account is active.")
+                .font(.locus(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+        }
+        .padding(11)
+        .locusCard(radius: 10)
+    }
+
+    private var healthCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Pool health")
+                    .font(.locus(size: 10, weight: .bold))
+                Spacer()
+                Button(model.isCheckingProxyHealth ? "Checking…" : "Check all") {
+                    model.refreshProxyHealth()
+                }
+                .disabled(model.isCheckingProxyHealth || draftError != nil)
+                .accessibilityIdentifier("proxies.healthCheck")
+            }
+            Text(model.proxyHealthMessage)
+                .font(.locus(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(model.proxyHealthRecords) { record in
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: record.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundStyle(record.ok ? LocusTheme.success : LocusTheme.coral)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text(record.profileName)
+                                .font(.locus(size: 9, weight: .semibold))
+                            Spacer()
+                            if let latency = record.latencyMilliseconds {
+                                Text("\(latency) ms")
+                                    .font(.locus(size: 8))
+                                    .monospacedDigit()
+                            }
+                        }
+                        Text(record.message)
+                            .font(.locus(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let location = record.location, !location.isEmpty {
+                            Text("Location: \(location)")
+                                .font(.locus(size: 8))
+                                .foregroundStyle(LocusTheme.muted)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(11)
+        .locusCard(radius: 10)
+    }
+
     private var coverageCard: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text("Coverage")
@@ -434,10 +605,8 @@ struct InspectorProxiesTab: View {
             Label("App requests and model providers", systemImage: "checkmark.circle.fill")
             Label("Agent web traffic, extensions, and Git", systemImage: "checkmark.circle.fill")
             Label("Built-in browser and model downloads", systemImage: "checkmark.circle.fill")
-            Label("Local agent, Ollama, and bypass hosts stay direct", systemImage: "arrow.triangle.turn.up.right.circle")
-            Text(type == .socks5 && mode == .manual
-                ? "SOCKS5 uses remote DNS (socks5h). If the proxy fails, Locus reports an error instead of silently connecting directly."
-                : "If a configured proxy fails, Locus reports an error instead of silently connecting directly.")
+            Label("Local agent and Ollama stay direct", systemImage: "arrow.triangle.turn.up.right.circle")
+            Text("This controls Locus traffic, not other Mac apps. SOCKS5 uses remote DNS. Health checks show the external exit address and never use a direct fallback.")
                 .font(.locus(size: 8))
                 .foregroundStyle(LocusTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -450,7 +619,7 @@ struct InspectorProxiesTab: View {
 
     private var actionBar: some View {
         HStack {
-            Button(isTesting ? "Testing…" : "Test") { testProxy() }
+            Button(isTesting ? "Testing…" : "Test selected") { testSelectedProfile() }
                 .disabled(isTesting || mode != .manual || draftError != nil)
                 .accessibilityIdentifier("proxies.test")
             if let outcome = testOutcome {
@@ -468,62 +637,255 @@ struct InspectorProxiesTab: View {
         }
     }
 
+    private func routeRow(_ title: String, selection: Binding<String>) -> some View {
+        HStack {
+            Text(title)
+                .font(.locus(size: 9))
+            Spacer()
+            profilePicker(selection: selection, inheritTitle: "Default")
+                .frame(maxWidth: 150)
+        }
+    }
+
+    private func profilePicker(
+        selection: Binding<String>,
+        inheritTitle: String?
+    ) -> some View {
+        Picker("Proxy", selection: selection) {
+            if let inheritTitle { Text(inheritTitle).tag("") }
+            ForEach(profiles) { profile in
+                Text(profile.name.isEmpty ? "Untitled proxy" : profile.name)
+                    .tag(profile.id.uuidString)
+            }
+        }
+        .labelsHidden()
+    }
+
+    private var headerStatus: String {
+        switch mode {
+        case .off: "Direct"
+        case .system: "System"
+        case .manual:
+            selectedProfile.map { $0.resolvedType.rawValue.uppercased() } ?? "Manual"
+        }
+    }
+
     private var modeDetail: String {
         switch mode {
         case .off: "Connections leave directly."
         case .system: "The app follows macOS proxy settings; the agent receives settings that can be expressed as proxy environment variables."
-        case .manual: "App and agent outbound traffic use this endpoint, except local plumbing and the bypass list."
+        case .manual: "Named profiles can be assigned by traffic class, workspace, or provider account."
         }
     }
 
     private var draftError: String? {
         guard mode == .manual else { return nil }
-        let normalized = ProxyConfigurator.normalizedHost(host)
-        let number = AppSettings.clampProxyPort(Int(port.trimmingCharacters(in: .whitespacesAndNewlines)))
-        if normalized.isEmpty || number == nil {
-            return "Manual proxy needs a host and a port from 1 to 65535."
+        guard !profiles.isEmpty else { return "Add at least one proxy profile." }
+        let enabled = profiles.filter(\.enabled)
+        for profile in enabled {
+            if profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Every enabled profile needs a name."
+            }
+            if ProxyConfigurator.normalizedHost(profile.host).isEmpty
+                || AppSettings.clampProxyPort(profile.port) == nil {
+                return "\(profile.name) needs a host and a port from 1 to 65535."
+            }
+            if authEnabledIDs.contains(profile.id) {
+                if profile.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return "\(profile.name) sign-in needs a username."
+                }
+                if !passwordStoredIDs.contains(profile.id)
+                    && (typedPasswords[profile.id] ?? "").isEmpty {
+                    return "\(profile.name) sign-in needs a password."
+                }
+            }
         }
-        if authEnabled && username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "Sign-in needs a username."
-        }
-        if authEnabled && !passwordStored
-            && password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "Sign-in needs a password."
+        guard let activeID = UUID(uuidString: activeProfileID),
+              enabled.contains(where: { $0.id == activeID })
+        else { return "Choose an enabled Default route." }
+        let assigned = Array(scopeRoutes.values)
+            + Array(workspaceRoutes.values)
+            + Array(providerRoutes.values)
+        let enabledIDs = Set(enabled.map { $0.id.uuidString })
+        if let invalid = assigned.first(where: { !$0.isEmpty && !enabledIDs.contains($0) }) {
+            let name = profiles.first { $0.id.uuidString == invalid }?.name ?? "A route"
+            return "\(name) is assigned but not enabled."
         }
         return nil
     }
 
     private var draftSignature: String {
-        [modeRaw, typeRaw, host, port, bypass, username, password, authEnabled ? "1" : "0"]
-            .joined(separator: "\u{1F}")
+        let encodedProfiles = (try? JSONEncoder().encode(profiles)).map {
+            String(decoding: $0, as: UTF8.self)
+        } ?? ""
+        return [
+            modeRaw, encodedProfiles, activeProfileID, strictMode ? "1" : "0",
+            autoFailover ? "1" : "0", scopeRoutes.description,
+            workspaceRoutes.description, providerRoutes.description,
+            authEnabledIDs.map(\.uuidString).sorted().joined(separator: ","),
+            typedPasswords.description,
+        ].joined(separator: "\u{1F}")
+    }
+
+    private func profileBinding<Value>(
+        _ keyPath: WritableKeyPath<ProxyProfile, Value>
+    ) -> Binding<Value> {
+        Binding(
+            get: {
+                guard let profile = selectedProfile else {
+                    preconditionFailure("A selected proxy profile must exist")
+                }
+                return profile[keyPath: keyPath]
+            },
+            set: { value in
+                guard let index = profiles.firstIndex(where: { $0.id == selectedProfileID })
+                else { return }
+                profiles[index][keyPath: keyPath] = value
+            }
+        )
+    }
+
+    private var portBinding: Binding<String> {
+        Binding(
+            get: { selectedProfile?.port.map(String.init) ?? "" },
+            set: { value in
+                guard let index = profiles.firstIndex(where: { $0.id == selectedProfileID })
+                else { return }
+                profiles[index].port = Int(value.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        )
+    }
+
+    private var authBinding: Binding<Bool> {
+        Binding(
+            get: { authEnabledIDs.contains(selectedProfileID) },
+            set: { enabled in
+                if enabled {
+                    authEnabledIDs.insert(selectedProfileID)
+                } else {
+                    authEnabledIDs.remove(selectedProfileID)
+                    if let index = profiles.firstIndex(where: { $0.id == selectedProfileID }) {
+                        profiles[index].username = ""
+                    }
+                    typedPasswords[selectedProfileID] = ""
+                }
+            }
+        )
+    }
+
+    private var passwordBinding: Binding<String> {
+        Binding(
+            get: { typedPasswords[selectedProfileID] ?? "" },
+            set: { typedPasswords[selectedProfileID] = $0 }
+        )
+    }
+
+    private func routeBinding(scope: ProxyTrafficScope) -> Binding<String> {
+        Binding(
+            get: { scopeRoutes[scope.rawValue] ?? "" },
+            set: { value in
+                if value.isEmpty { scopeRoutes.removeValue(forKey: scope.rawValue) }
+                else { scopeRoutes[scope.rawValue] = value }
+            }
+        )
+    }
+
+    private var workspaceRouteBinding: Binding<String> {
+        Binding(
+            get: { workspaceRoutes[workspaceKey] ?? "" },
+            set: { value in
+                if value.isEmpty { workspaceRoutes.removeValue(forKey: workspaceKey) }
+                else { workspaceRoutes[workspaceKey] = value }
+            }
+        )
+    }
+
+    private var providerRouteBinding: Binding<String> {
+        Binding(
+            get: { providerRoutes[providerKey] ?? "" },
+            set: { value in
+                if value.isEmpty { providerRoutes.removeValue(forKey: providerKey) }
+                else { providerRoutes[providerKey] = value }
+            }
+        )
     }
 
     private func load() {
         let settings = model.settings
         modeRaw = settings.proxyModeRaw
-        typeRaw = settings.proxyTypeRaw
-        host = settings.proxyHost
-        port = settings.proxyPort.map(String.init) ?? ""
-        bypass = settings.proxyBypass
-        username = settings.proxyUsername
-        authEnabled = !settings.proxyUsername.isEmpty
-        password = ""
-        passwordStored = model.persistenceEnabled
-            && CredentialStore.has(account: CredentialStore.proxyCredentialKey)
+        profiles = settings.allProxyProfiles
+        selectedProfileID = profiles.first?.id ?? ProxyProfile.primaryID
+        activeProfileID = settings.proxyActiveProfileID
+        if !profiles.contains(where: { $0.id.uuidString == activeProfileID }) {
+            activeProfileID = profiles.first?.id.uuidString ?? ProxyProfile.primaryID.uuidString
+        }
+        strictMode = settings.proxyStrictModeEnabled
+        autoFailover = settings.proxyAutoFailoverEnabled
+        scopeRoutes = settings.proxyScopeProfileIDs
+        workspaceRoutes = settings.proxyWorkspaceProfileIDs
+        providerRoutes = settings.proxyProviderProfileIDs
+        authEnabledIDs = Set(profiles.filter { !$0.username.isEmpty }.map(\.id))
+        passwordStoredIDs = model.persistenceEnabled
+            ? Set(profiles.compactMap { profile in
+                CredentialStore.proxyPassword(profileID: profile.id) == nil ? nil : profile.id
+            }) : []
+        typedPasswords = [:]
         testOutcome = nil
+    }
+
+    private func addProfile() {
+        let number = profiles.count + 1
+        let profile = ProxyProfile(name: "Proxy \(number)")
+        profiles.append(profile)
+        selectedProfileID = profile.id
+    }
+
+    private func deleteSelectedProfile() {
+        guard selectedProfileID != ProxyProfile.primaryID else { return }
+        let raw = selectedProfileID.uuidString
+        profiles.removeAll { $0.id == selectedProfileID }
+        scopeRoutes = scopeRoutes.filter { $0.value != raw }
+        workspaceRoutes = workspaceRoutes.filter { $0.value != raw }
+        providerRoutes = providerRoutes.filter { $0.value != raw }
+        authEnabledIDs.remove(selectedProfileID)
+        typedPasswords.removeValue(forKey: selectedProfileID)
+        passwordStoredIDs.remove(selectedProfileID)
+        if activeProfileID == raw {
+            activeProfileID = ProxyProfile.primaryID.uuidString
+        }
+        selectedProfileID = profiles.first?.id ?? ProxyProfile.primaryID
+    }
+
+    private func normalized(_ profile: ProxyProfile) -> ProxyProfile {
+        var result = profile
+        result.name = result.id == ProxyProfile.primaryID
+            ? "Default" : result.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        result.host = ProxyConfigurator.normalizedHost(result.host)
+        result.port = AppSettings.clampProxyPort(result.port)
+        result.username = authEnabledIDs.contains(result.id)
+            ? result.username.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        if result.id == ProxyProfile.primaryID { result.enabled = true }
+        return result
     }
 
     private func proxySettingsCandidate() -> AppSettings {
         var saved = model.settings
+        let normalizedProfiles = profiles.map(normalized)
+        let primary = normalizedProfiles.first { $0.id == ProxyProfile.primaryID }
+            ?? ProxyProfile(id: ProxyProfile.primaryID, name: "Default")
         saved.proxyModeRaw = modeRaw
-        saved.proxyTypeRaw = typeRaw
-        saved.proxyHost = ProxyConfigurator.normalizedHost(host)
-        saved.proxyPort = AppSettings.clampProxyPort(
-            Int(port.trimmingCharacters(in: .whitespacesAndNewlines))
-        )
-        saved.proxyBypass = bypass
-        saved.proxyUsername = authEnabled
-            ? username.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        saved.proxyTypeRaw = primary.typeRaw
+        saved.proxyHost = primary.host
+        saved.proxyPort = primary.port
+        saved.proxyBypass = primary.bypass
+        saved.proxyUsername = primary.username
+        saved.proxyProfiles = normalizedProfiles.filter { $0.id != ProxyProfile.primaryID }
+        saved.proxyActiveProfileID = activeProfileID
+        saved.proxyStrictModeEnabled = strictMode
+        saved.proxyAutoFailoverEnabled = autoFailover
+        saved.proxyScopeProfileIDs = scopeRoutes.filter { !$0.value.isEmpty }
+        saved.proxyWorkspaceProfileIDs = workspaceRoutes.filter { !$0.value.isEmpty }
+        saved.proxyProviderProfileIDs = providerRoutes.filter { !$0.value.isEmpty }
         return saved
     }
 
@@ -531,13 +893,19 @@ struct InspectorProxiesTab: View {
         let saved = proxySettingsCandidate()
         var credentialChanged = false
         if model.persistenceEnabled {
-            if !authEnabled, passwordStored {
-                CredentialStore.setProxyPassword("")
-                credentialChanged = true
-            } else {
-                let typed = password.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !typed.isEmpty, typed != CredentialStore.proxyPassword() {
-                    credentialChanged = CredentialStore.setProxyPassword(typed)
+            for profile in profiles {
+                let stored = CredentialStore.proxyPassword(profileID: profile.id)
+                if !authEnabledIDs.contains(profile.id) {
+                    if stored != nil {
+                        credentialChanged = CredentialStore.setProxyPassword(
+                            "", profileID: profile.id
+                        ) || credentialChanged
+                    }
+                } else if let typed = typedPasswords[profile.id], !typed.isEmpty,
+                          typed != stored {
+                    credentialChanged = CredentialStore.setProxyPassword(
+                        typed, profileID: profile.id
+                    ) || credentialChanged
                 }
             }
         }
@@ -545,13 +913,17 @@ struct InspectorProxiesTab: View {
         load()
     }
 
-    private func testProxy() {
+    private func testSelectedProfile() {
         let candidate = proxySettingsCandidate()
-        let typed = password.trimmingCharacters(in: .whitespacesAndNewlines)
-        let passwordValue = typed.isEmpty ? CredentialStore.proxyPassword() : typed
+        guard let profile = candidate.allProxyProfiles.first(where: { $0.id == selectedProfileID })
+        else { return }
+        let typed = typedPasswords[profile.id] ?? ""
+        let password = typed.isEmpty
+            ? CredentialStore.proxyPassword(profileID: profile.id) : typed
         guard let resolved = ProxyConfigurator.resolved(
             settings: candidate,
-            password: passwordValue,
+            profile: profile,
+            password: password,
             ollamaHost: nil
         ) else { return }
         let base = model.activeAccount

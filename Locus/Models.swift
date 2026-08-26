@@ -2012,6 +2012,84 @@ enum ProxyType: String, CaseIterable {
     case socks5
 }
 
+/// Independently routable classes of network traffic. The main agent owns
+/// model-provider calls, web tools, extensions, and its model-visible child
+/// processes, so those stay one class until the agent can isolate them safely.
+enum ProxyTrafficScope: String, Codable, CaseIterable, Identifiable {
+    case app
+    case browser
+    case modelAndAgent = "model_agent"
+    case downloads
+    case gitAndTools = "git_tools"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .app: "App requests"
+        case .browser: "Browser"
+        case .modelAndAgent: "Models & agent"
+        case .downloads: "Downloads"
+        case .gitAndTools: "Git & terminal tools"
+        }
+    }
+}
+
+/// A named endpoint in the proxy pool. The original single-proxy settings are
+/// represented by `primaryID`; additional profiles live in AppSettings while
+/// every password remains in CredentialStore under the immutable id.
+struct ProxyProfile: Codable, Hashable, Identifiable {
+    static let primaryID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+
+    var id: UUID
+    var name: String
+    var typeRaw: String
+    var host: String
+    var port: Int?
+    var bypass: String
+    var username: String
+    var enabled: Bool
+
+    init(
+        id: UUID = UUID(),
+        name: String = "Proxy",
+        type: ProxyType = .http,
+        host: String = "",
+        port: Int? = nil,
+        bypass: String = "",
+        username: String = "",
+        enabled: Bool = true
+    ) {
+        self.id = id
+        self.name = name
+        typeRaw = type.rawValue
+        self.host = host
+        self.port = port
+        self.bypass = bypass
+        self.username = username
+        self.enabled = enabled
+    }
+
+    var resolvedType: ProxyType { ProxyType(rawValue: typeRaw) ?? .http }
+    var isConfigured: Bool {
+        enabled && !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && AppSettings.clampProxyPort(port) != nil
+    }
+}
+
+struct ProxyHealthRecord: Identifiable, Equatable {
+    let profileID: UUID
+    let profileName: String
+    let ok: Bool
+    let latencyMilliseconds: Int?
+    let exitIP: String?
+    let location: String?
+    let message: String
+    let checkedAt: Date
+
+    var id: UUID { profileID }
+}
+
 enum AutomaticInspectorPresentation: String, CaseIterable, Identifiable {
     case ask
     case always
@@ -2227,6 +2305,22 @@ struct AppSettings: Codable, Hashable {
     /// Non-empty means the proxy requires sign-in. The password is not stored
     /// in settings — see `CredentialStore.proxyPassword`.
     var proxyUsername = ""
+    /// Named standby endpoints. The original fields above remain the primary
+    /// profile for a lossless migration from every build before proxy pools.
+    var proxyProfiles: [ProxyProfile] = []
+    /// Empty or the primary id means the original fields are the default.
+    var proxyActiveProfileID = ProxyProfile.primaryID.uuidString
+    /// Strict applies only to Manual mode: external traffic is blocked if no
+    /// configured/healthy endpoint exists, and custom bypass entries are ignored.
+    var proxyStrictModeEnabled = false
+    /// Enabled profiles become a failover pool. Health-ranked failover never
+    /// falls through to a direct external connection.
+    var proxyAutoFailoverEnabled = false
+    /// Optional scope, workspace, and provider assignments. Values are profile
+    /// UUID strings; invalid future values fall back to the default profile.
+    var proxyScopeProfileIDs: [String: String] = [:]
+    var proxyWorkspaceProfileIDs: [String: String] = [:]
+    var proxyProviderProfileIDs: [String: String] = [:]
     /// Empty follows the user's SHELL and then falls back to /bin/zsh.
     var terminalShell = ""
     /// Login shells load the user's normal profile and PATH, matching
@@ -2349,6 +2443,24 @@ struct AppSettings: Codable, Hashable {
 
     var resolvedProxyType: ProxyType {
         ProxyType(rawValue: proxyTypeRaw) ?? .http
+    }
+
+    var primaryProxyProfile: ProxyProfile {
+        ProxyProfile(
+            id: ProxyProfile.primaryID,
+            name: "Default",
+            type: resolvedProxyType,
+            host: proxyHost,
+            port: proxyPort,
+            bypass: proxyBypass,
+            username: proxyUsername,
+            enabled: true
+        )
+    }
+
+    var allProxyProfiles: [ProxyProfile] {
+        var seen = Set<UUID>()
+        return ([primaryProxyProfile] + proxyProfiles).filter { seen.insert($0.id).inserted }
     }
 
     var resolvedModelRoutingPolicy: ModelRoutingPolicy {
@@ -2557,6 +2669,27 @@ struct AppSettings: Codable, Hashable {
             ?? defaults.proxyBypass
         proxyUsername = try container.decodeIfPresent(String.self, forKey: .proxyUsername)
             ?? defaults.proxyUsername
+        proxyProfiles = try container.decodeIfPresent(
+            [ProxyProfile].self, forKey: .proxyProfiles
+        ) ?? defaults.proxyProfiles
+        proxyActiveProfileID = try container.decodeIfPresent(
+            String.self, forKey: .proxyActiveProfileID
+        ) ?? defaults.proxyActiveProfileID
+        proxyStrictModeEnabled = try container.decodeIfPresent(
+            Bool.self, forKey: .proxyStrictModeEnabled
+        ) ?? defaults.proxyStrictModeEnabled
+        proxyAutoFailoverEnabled = try container.decodeIfPresent(
+            Bool.self, forKey: .proxyAutoFailoverEnabled
+        ) ?? defaults.proxyAutoFailoverEnabled
+        proxyScopeProfileIDs = try container.decodeIfPresent(
+            [String: String].self, forKey: .proxyScopeProfileIDs
+        ) ?? defaults.proxyScopeProfileIDs
+        proxyWorkspaceProfileIDs = try container.decodeIfPresent(
+            [String: String].self, forKey: .proxyWorkspaceProfileIDs
+        ) ?? defaults.proxyWorkspaceProfileIDs
+        proxyProviderProfileIDs = try container.decodeIfPresent(
+            [String: String].self, forKey: .proxyProviderProfileIDs
+        ) ?? defaults.proxyProviderProfileIDs
         terminalShell = try container.decodeIfPresent(String.self, forKey: .terminalShell)
             ?? defaults.terminalShell
         terminalLoginShell = try container.decodeIfPresent(Bool.self, forKey: .terminalLoginShell)

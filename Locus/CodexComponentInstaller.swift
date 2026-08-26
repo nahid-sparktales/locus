@@ -35,7 +35,7 @@ final class CodexComponentInstaller: ObservableObject {
 
     @Published private(set) var state: State = .idle
 
-    private let session: URLSession
+    private let session: ProxyAwareSession
     private var activeTask: Task<Void, Never>?
 
     init() {
@@ -43,7 +43,7 @@ final class CodexComponentInstaller: ObservableObject {
         configuration.timeoutIntervalForRequest = 60
         // A 100 MB payload on a slow link must not trip the resource timeout.
         configuration.timeoutIntervalForResource = 6 * 60 * 60
-        session = URLSession(configuration: ProxyRuntime.shared.configuration(base: configuration))
+        session = ProxyAwareSession(scope: .downloads, configuration: { configuration })
         if let version = CodexComponent.installedVersion(), CodexComponent.isInstalled {
             state = .installed(version: version)
         }
@@ -186,7 +186,7 @@ final class CodexComponentInstaller: ObservableObject {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await session.current.data(for: request)
         } catch {
             throw CodexComponentError.feedUnavailable
         }
@@ -223,7 +223,10 @@ final class CodexComponentInstaller: ObservableObject {
         let located: URL
         let response: URLResponse
         do {
-            (located, response) = try await session.download(from: url, delegate: progress)
+            (located, response) = try await session.current.download(
+                from: url,
+                delegate: progress
+            )
         } catch let error as URLError where error.code == .cancelled {
             // URLSession surfaces task cancellation as URLError.cancelled, not
             // CancellationError. Without this the user's own Cancel click comes

@@ -52,6 +52,7 @@ enum RemoteEndpointTester {
     /// Proxy-aware: rebuilt when the proxy settings change, so Test
     /// Connection exercises the same route real traffic will take.
     private static let noRedirectSession = ProxyAwareSession(
+        scope: .modelAndAgent,
         configuration: { .ephemeral },
         delegate: { NoRedirectSessionDelegate() }
     )
