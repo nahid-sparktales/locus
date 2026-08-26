@@ -21,6 +21,9 @@ struct AccountEditorView: View {
     @State private var testResult: String?
     @State private var testFailed = false
     @State private var contextWindow = ""
+    @State private var nativeMode = true
+    @State private var webSearch = false
+    @State private var reasoningEffort = ""
     @State private var focusedField: FocusedField?
 
     private enum FocusedField: Hashable {
@@ -205,6 +208,9 @@ struct AccountEditorView: View {
             keyStored = account.hasKey
             contextWindow = account.contextWindow.map(String.init) ?? ""
             if kind == .chatGPT {
+                nativeMode = account.codexNativeModeEnabled
+                webSearch = account.codexWebSearchEnabled
+                reasoningEffort = account.codexReasoningEffortValue
                 Task { await model.refreshChatGPTAccount(for: account) }
             }
         }
@@ -265,6 +271,28 @@ struct AccountEditorView: View {
                 .accessibilityIdentifier("accountEditor.chatGPT.signIn")
             }
 
+            Toggle("Codex-native mode", isOn: $nativeMode)
+                .accessibilityIdentifier("accountEditor.chatGPT.nativeMode")
+            Text("Answers match OpenAI's Codex: native prompt and tools, no Locus memory or skills on this account's chats. Changing this restarts conversation context.")
+                .font(.locus(size: 9))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Toggle("Web search", isOn: $webSearch)
+                .accessibilityIdentifier("accountEditor.chatGPT.webSearch")
+            Text("Lets the model use OpenAI's web search (sends search queries to OpenAI).")
+                .font(.locus(size: 9))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Picker("Reasoning effort", selection: $reasoningEffort) {
+                Text("Default").tag("")
+                ForEach(reasoningEffortOptions, id: \.self) { effort in
+                    Text(effort.capitalized).tag(effort)
+                }
+            }
+            .accessibilityIdentifier("accountEditor.chatGPT.reasoningEffort")
+
             Text(
                 "Authentication is managed by OpenAI's bundled agent runtime. "
                 + "Locus never reads or stores its OAuth tokens, and this route never falls back to paid API usage."
@@ -274,6 +302,23 @@ struct AccountEditorView: View {
             .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The efforts the account's preferred model supports, from the fetched
+    /// catalog; a fixed list stands in before the catalog has arrived. The
+    /// stored choice is kept selectable even when the catalog drops it.
+    private var reasoningEffortOptions: [String] {
+        var efforts = model.accountModelCatalogs[account.id]?
+            .first(where: { $0.id == account.preferredModel })?
+            .supportedReasoningEfforts?
+            .map(\.effort) ?? []
+        if efforts.isEmpty {
+            efforts = ["minimal", "low", "medium", "high", "xhigh"]
+        }
+        if !reasoningEffort.isEmpty, !efforts.contains(reasoningEffort) {
+            efforts.append(reasoningEffort)
+        }
+        return efforts
     }
 
 #if LOCUS_APP_STORE
@@ -418,6 +463,9 @@ struct AccountEditorView: View {
             }
             updated.baseURLOverride = nil
             updated.contextWindow = nil
+            updated.codexNativeMode = nativeMode
+            updated.codexWebSearch = webSearch
+            updated.codexReasoningEffort = reasoningEffort
             if model.saveProviderAccount(updated, apiKey: nil) {
                 dismiss()
             }

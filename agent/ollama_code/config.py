@@ -46,6 +46,15 @@ DEFAULTS: dict[str, Any] = {
     "chatgpt_account_id": "",
     "chatgpt_account_label": "",
     "chatgpt_model": "",
+    # Codex-native parity: the model runs under its own Codex prompt and
+    # Codex-shaped tools instead of the Locus contract. Web search is separate
+    # because it changes where queries go, not just how the model behaves.
+    "chatgpt_native_mode": True,
+    "chatgpt_web_search": False,
+    # "" means the model's default effort; otherwise a value the account's
+    # model list advertised. Applied per turn, so changing it never restarts
+    # the helper thread.
+    "chatgpt_reasoning_effort": "",
     # "ask" prompts for every non-safe tool, "accept_edits" also auto-allows
     # file writes/edits, "bypass" auto-allows everything (equivalent to
     # --dangerously-skip-permissions).
@@ -214,10 +223,12 @@ def load_config() -> dict[str, Any]:
         cfg["provider"] = "ollama"
     for key in (
         "remote_auth_style", "remote_account_label", "chatgpt_account_id",
-        "chatgpt_account_label", "chatgpt_model",
+        "chatgpt_account_label", "chatgpt_model", "chatgpt_reasoning_effort",
     ):
         if not isinstance(cfg.get(key), str):
             cfg[key] = ""
+    cfg["chatgpt_native_mode"] = bool(cfg.get("chatgpt_native_mode", True))
+    cfg["chatgpt_web_search"] = bool(cfg.get("chatgpt_web_search", False))
     # Silently, rather than raising: a hand-edited config reaches here at
     # startup, and refusing to start is how a user loses the ability to fix it.
     cfg["context_window"] = context_window(cfg.get("context_window"))

@@ -2956,16 +2956,27 @@ struct ChatGPTLoginResponse: Codable, Hashable {
 }
 
 struct ChatGPTModelsResponse: Codable, Hashable {
+    struct EffortOption: Codable, Hashable {
+        let effort: String
+        let description: String?
+    }
+
     struct Model: Codable, Hashable, Identifiable {
         let id: String
         let displayName: String
         let description: String
         let isDefault: Bool
+        /// Optional so rows from a backend that predates reasoning-effort
+        /// reporting decode unchanged.
+        let supportedReasoningEfforts: [EffortOption]?
+        let defaultReasoningEffort: String?
 
         enum CodingKeys: String, CodingKey {
             case id, description
             case displayName = "display_name"
             case isDefault = "is_default"
+            case supportedReasoningEfforts = "supported_reasoning_efforts"
+            case defaultReasoningEffort = "default_reasoning_effort"
         }
     }
 

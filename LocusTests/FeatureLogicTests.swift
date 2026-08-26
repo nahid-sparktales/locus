@@ -2041,6 +2041,68 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertFalse(account.kind.allowsBaseURLOverride)
     }
 
+    func testAccountStoredBeforeCodexNativeParityDecodesWithTheDefaults() throws {
+        // An account written before the parity fields existed carries none of
+        // them; the accessors supply parity on, web search off, default effort.
+        let json = """
+        [{"id":"\(UUID().uuidString)","kindRaw":"chatgpt","name":"Existing",
+          "preferredModel":"gpt-5","createdAt":0}]
+        """
+        let account = try XCTUnwrap(ProviderAccountStore.decode(Data(json.utf8)).first)
+
+        XCTAssertNil(account.codexNativeMode)
+        XCTAssertNil(account.codexWebSearch)
+        XCTAssertNil(account.codexReasoningEffort)
+        XCTAssertTrue(account.codexNativeModeEnabled, "parity defaults to on")
+        XCTAssertFalse(account.codexWebSearchEnabled, "web search stays opt-in")
+        XCTAssertEqual(account.codexReasoningEffortValue, "", "empty means the model default")
+    }
+
+    func testCodexNativeParityFieldsRoundTrip() throws {
+        var account = ProviderAccount(kind: .chatGPT, name: "Personal")
+        account.codexNativeMode = false
+        account.codexWebSearch = true
+        account.codexReasoningEffort = "high"
+
+        let data = try JSONEncoder().encode([account])
+        let restored = try XCTUnwrap(ProviderAccountStore.decode(data).first)
+
+        XCTAssertEqual(restored.codexNativeMode, false)
+        XCTAssertEqual(restored.codexWebSearch, true)
+        XCTAssertEqual(restored.codexReasoningEffort, "high")
+        XCTAssertFalse(restored.codexNativeModeEnabled)
+        XCTAssertTrue(restored.codexWebSearchEnabled)
+        XCTAssertEqual(restored.codexReasoningEffortValue, "high")
+    }
+
+    func testChatGPTModelCatalogCarriesReasoningEfforts() throws {
+        let json = """
+        {"status":"ok","models":[
+          {"id":"gpt-5.1-codex","display_name":"GPT-5.1 Codex","description":"Fast",
+           "is_default":true,
+           "supported_reasoning_efforts":[
+             {"effort":"medium","description":"Balanced"},
+             {"effort":"high"}],
+           "default_reasoning_effort":"medium"},
+          {"id":"gpt-5.1","display_name":"GPT-5.1","description":"General","is_default":false}
+        ]}
+        """
+        let response = try JSONDecoder().decode(
+            ChatGPTModelsResponse.self, from: Data(json.utf8)
+        )
+
+        XCTAssertEqual(response.models.count, 2)
+        let codex = try XCTUnwrap(response.models.first)
+        XCTAssertEqual(codex.supportedReasoningEfforts?.map(\.effort), ["medium", "high"])
+        XCTAssertEqual(codex.supportedReasoningEfforts?.first?.description, "Balanced")
+        XCTAssertNil(codex.supportedReasoningEfforts?.last?.description)
+        XCTAssertEqual(codex.defaultReasoningEffort, "medium")
+        // A backend that predates the fields must still decode.
+        let plain = try XCTUnwrap(response.models.last)
+        XCTAssertNil(plain.supportedReasoningEfforts)
+        XCTAssertNil(plain.defaultReasoningEffort)
+    }
+
     func testLegacyRemoteEndpointMigratesIntoACustomAccount() {
         var settings = AppSettings()
         settings.provider = .remote

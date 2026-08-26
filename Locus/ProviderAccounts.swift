@@ -319,10 +319,20 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
     /// across the upgrade. Accounts added afterwards carry their own id, which
     /// is what keeps two ChatGPT plans from sharing one set of tokens.
     var codexHomeID: String?
+    /// Codex-native parity for this ChatGPT account: the agent uses Codex's
+    /// own prompt and tools, with no Locus memory or skills. Optional so
+    /// accounts stored before this existed decode unchanged; nil reads as on.
+    var codexNativeMode: Bool?
+    /// Whether the model may call OpenAI's web search on this account.
+    /// Optional for the same migration reason; nil reads as off.
+    var codexWebSearch: Bool?
+    /// The reasoning effort to request for this account's model. Optional for
+    /// the same migration reason; nil and "" both mean the model's default.
+    var codexReasoningEffort: String?
 
     private enum CodingKeys: String, CodingKey {
         case id, kindRaw, name, baseURLOverride, preferredModel, contextWindow, createdAt
-        case codexHomeID
+        case codexHomeID, codexNativeMode, codexWebSearch, codexReasoningEffort
         // Preserve the stored field name written by earlier versions without
         // carrying Keychain terminology into new code or behavior.
         case legacyCredentialAccount = "legacyKeychainAccount"
@@ -385,6 +395,16 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
     /// The value the agent uses to pick this account's credential home. Empty
     /// is the pre-multi-account home, which is exactly what nil should mean.
     var codexHomeIdentifier: String { codexHomeID ?? "" }
+
+    /// Parity mode defaults to on: a ChatGPT account answers like Codex until
+    /// the user turns Locus's own prompt and tools back on.
+    var codexNativeModeEnabled: Bool { codexNativeMode ?? true }
+
+    /// Web search stays off until the user opts in to sending queries out.
+    var codexWebSearchEnabled: Bool { codexWebSearch ?? false }
+
+    /// The effort the agent should request; empty means the model's default.
+    var codexReasoningEffortValue: String { codexReasoningEffort ?? "" }
 
     var hasKey: Bool {
         kind.usesManagedChatGPTAuthentication

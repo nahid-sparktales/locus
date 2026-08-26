@@ -797,3 +797,27 @@ def strip_prompt_decoration(content: str) -> str:
     if index == -1:
         return ""
     return content[index + len(_DECORATION_MARKER):].strip()
+
+
+def split_parity_prompt(content: str, mode: str) -> tuple[str, str]:
+    """Split a decorated GUI message into (context, raw request) for the model.
+
+    Codex-native parity turns send the user's own words as the final input
+    item, with the selected context files and attachment guidance as a
+    separate leading item. The ``[Locus mode: X]`` header always goes; the
+    mode-instruction paragraph (always the second section, and never itself
+    blank-line separated) goes too for ask/work, while plan/build keep it —
+    the plan-approval and GSD flows ride on that instruction. Persistence is
+    untouched: sessions keep the decorated form this function reads.
+    """
+    if not content.lstrip().startswith("[Locus mode:"):
+        return "", content
+    index = content.rfind(_DECORATION_MARKER)
+    if index == -1:
+        return "", content
+    raw = content[index + len(_DECORATION_MARKER):].strip()
+    sections = content[:index].split("\n\n")
+    # Section 0 is the header; section 1 is the mode instruction.
+    kept = sections[2:] if mode in ("ask", "work") else sections[1:]
+    context = "\n\n".join(part for part in kept if part.strip()).strip()
+    return context, raw

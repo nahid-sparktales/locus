@@ -280,3 +280,336 @@ def test_registry_close_forgets_the_helper_it_closed(monkeypatch, tmp_path):
     registry.close_all()
     assert registry.existing("aaaa1111") is None
     assert registry.existing("bbbb2222") is None
+
+
+# --- Codex-native parity mode -----------------------------------------------
+
+
+from ollama_code.codex_app_server import CodexThreadOptions  # noqa: E402
+from ollama_code.sessions import split_parity_prompt  # noqa: E402
+
+PARITY_OPTIONS = CodexThreadOptions(
+    native_prompt=True,
+    developer_instructions="workspace notes",
+    sandbox="workspace-write",
+    approval_policy="on-request",
+)
+
+
+def test_parity_thread_contract_omits_base_instructions_and_personality(monkeypatch):
+    manager = CodexAppServerManager(helper_path="/fake/codex")
+    captured = {}
+
+    def request(method, params=None, **_kwargs):
+        captured["method"] = method
+        captured["params"] = params
+        return {"thread": {"id": "thread-1"}}
+
+    monkeypatch.setattr(manager, "request", request)
+    manager.start_thread(
+        model="gpt-test",
+        cwd="/workspace",
+        tools=[schema("shell")],
+        options=PARITY_OPTIONS,
+    )
+    params = captured["params"]
+    # Omission — not an empty string — is what selects the native prompt.
+    assert "baseInstructions" not in params
+    assert "personality" not in params
+    assert params["developerInstructions"] == "workspace notes"
+    assert params["sandbox"] == "workspace-write"
+    assert params["approvalPolicy"] == "on-request"
+    assert params["environments"] == []
+    assert params["config"]["web_search"] == "disabled"
+
+
+def test_parity_web_search_toggle_flips_config(monkeypatch):
+    manager = CodexAppServerManager(helper_path="/fake/codex")
+    captured = {}
+
+    def request(method, params=None, **_kwargs):
+        captured["params"] = params
+        return {"thread": {"id": "thread-1"}}
+
+    monkeypatch.setattr(manager, "request", request)
+    search_on = CodexThreadOptions(native_prompt=True, web_search=True)
+    manager.start_thread(model="gpt-test", cwd="/w", tools=[], options=search_on)
+    config = captured["params"]["config"]
+    assert config["web_search"] == "cached"
+    assert config["features"]["standalone_web_search"] is True
+    assert config["features"]["web_search_request"] is True
+    assert config["features"]["web_search_cached"] is True
+    assert config["features"]["shell_tool"] is False
+
+
+def test_legacy_thread_contract_is_unchanged_without_options(monkeypatch):
+    manager = CodexAppServerManager(helper_path="/fake/codex")
+    captured = {}
+
+    def request(method, params=None, **_kwargs):
+        captured["params"] = params
+        return {"thread": {"id": "thread-1"}}
+
+    monkeypatch.setattr(manager, "request", request)
+    manager.start_thread(
+        model="gpt-test", cwd="/w", base_instructions="Locus prompt", tools=[],
+    )
+    params = captured["params"]
+    assert params["baseInstructions"] == "Locus prompt"
+    assert params["personality"] == "none"
+    assert params["developerInstructions"] == ""
+    assert params["sandbox"] == "read-only"
+    assert params["approvalPolicy"] == "never"
+    assert all(value is False for value in params["config"]["features"].values())
+
+
+def test_config_toml_follows_thread_defaults(tmp_path):
+    manager = CodexAppServerManager(helper_path="/fake/codex", codex_home=tmp_path / "home")
+    manager._prepare_home()
+    baseline = (tmp_path / "home" / "config.toml").read_text()
+    assert 'web_search = "disabled"' in baseline
+    assert "standalone_web_search = false" in baseline
+
+    manager.set_thread_defaults(CodexThreadOptions(web_search=True))
+    manager._prepare_home()
+    enabled = (tmp_path / "home" / "config.toml").read_text()
+    assert 'web_search = "cached"' in enabled
+    assert "standalone_web_search = true" in enabled
+    assert "web_search_cached = true" in enabled
+
+
+def test_effort_rides_turn_start_only_when_set(monkeypatch):
+    manager = CodexAppServerManager(helper_path="/fake/codex")
+    captured = []
+
+    def request(method, params=None, **_kwargs):
+        captured.append((method, params))
+        if method == "turn/start":
+            for target in manager._thread_queues.get(params["threadId"], []):
+                target.put({"method": "turn/completed", "params": {
+                    "threadId": params["threadId"], "turn": {"status": "completed"},
+                }})
+        return {"turn": {"id": "turn-1"}}
+
+    monkeypatch.setattr(manager, "request", request)
+    manager.run_turn(thread_id="t1", text="hello", effort="high")
+    manager.run_turn(thread_id="t1", text="hello")
+    with_effort, without_effort = captured[0][1], captured[1][1]
+    assert with_effort["effort"] == "high"
+    assert "effort" not in without_effort
+
+
+def test_structured_tool_results_pass_through(monkeypatch):
+    manager = CodexAppServerManager(helper_path="/fake/codex")
+    responses = []
+
+    def request(method, params=None, **_kwargs):
+        if method == "turn/start":
+            targets = manager._thread_queues.get(params["threadId"], [])
+            for target in targets:
+                target.put({
+                    "id": 7, "method": "item/tool/call",
+                    "params": {"threadId": params["threadId"], "tool": "view_image",
+                               "arguments": {}, "callId": "c1"},
+                })
+                target.put({"method": "turn/completed", "params": {
+                    "threadId": params["threadId"], "turn": {}}})
+        return {"turn": {"id": "turn-1"}}
+
+    monkeypatch.setattr(manager, "request", request)
+    monkeypatch.setattr(manager, "respond", lambda ident, body: responses.append(body))
+    structured = {
+        "content_items": [{"type": "inputImage", "imageUrl": "data:image/png;base64,AAA"}],
+        "success": True,
+    }
+    manager.run_turn(
+        thread_id="t1", text="x", tool_handler=lambda *a: structured,
+    )
+    assert responses == [{
+        "contentItems": [{"type": "inputImage", "imageUrl": "data:image/png;base64,AAA"}],
+        "success": True,
+    }]
+
+
+def test_split_parity_prompt_modes():
+    decorated = (
+        "[Locus mode: Work]\n\n"
+        "Solve the request using the workspace and tools when useful.\n\n"
+        "Use this explicitly selected context:\n--- /x.txt ---\ncontents\n\n"
+        "User request:\nfix the bug"
+    )
+    context, raw = split_parity_prompt(decorated, "work")
+    assert raw == "fix the bug"
+    assert "[Locus mode:" not in context
+    assert "Solve the request" not in context
+    assert "--- /x.txt ---" in context
+
+    context, raw = split_parity_prompt(decorated.replace("Work", "Plan"), "plan")
+    assert raw == "fix the bug"
+    assert "Solve the request" in context
+
+    context, raw = split_parity_prompt("plain CLI text", "work")
+    assert (context, raw) == ("", "plain CLI text")
+
+
+class ParityFakeRuntime(FakeManagedRuntime):
+    supports_parity = True
+
+    def __init__(self, tool_calls: list[tuple[str, dict]] | None = None):
+        super().__init__()
+        self.tool_calls = tool_calls or []
+        self.start_kwargs: list[dict] = []
+        self.turn_kwargs: list[dict] = []
+        self.thread_defaults = CodexThreadOptions()
+
+    def set_thread_defaults(self, options):
+        self.thread_defaults = options
+
+    def start_thread(self, **kwargs):
+        self.start_kwargs.append(kwargs)
+        return super().start_thread()
+
+    def run_turn(self, *, text, event_handler, tool_handler=None, **kwargs):
+        self.turn_kwargs.append({"text": text, **kwargs})
+        for name, arguments in self.tool_calls:
+            assert tool_handler is not None
+            tool_handler(name, arguments, f"call-{name}")
+        return super().run_turn(text=text, event_handler=event_handler)
+
+
+DECORATED = (
+    "[Locus mode: Work]\n\n"
+    "Solve the request using the workspace and tools when useful.\n\n"
+    "User request:\nwhat changed?"
+)
+
+
+def test_parity_turn_uses_native_contract_and_raw_input(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("Always answer in haiku.\n")
+    runtime = ParityFakeRuntime()
+    core = _managed_core(tmp_path, runtime)
+
+    core.run_turn(DECORATED)
+
+    start = runtime.start_kwargs[-1]
+    options = start["options"]
+    assert options.native_prompt is True
+    assert "Always answer in haiku." in options.developer_instructions
+    assert start["base_instructions"] == ""
+    tool_names = [item["function"]["name"] for item in start["tools"]]
+    assert tool_names == ["shell", "apply_patch", "update_plan"]
+
+    items = runtime.turn_kwargs[-1]["input_items"]
+    texts = [item["text"] for item in items if item["type"] == "text"]
+    assert texts[-1] == "what changed?"
+    assert all("[Locus mode:" not in text for text in texts)
+
+
+def test_parity_thread_survives_identical_turns_and_effort_changes(tmp_path):
+    runtime = ParityFakeRuntime()
+    core = _managed_core(tmp_path, runtime)
+
+    core.run_turn(DECORATED)
+    core.run_turn(DECORATED)
+    assert runtime.started == ["thread-1"]
+
+    # Effort is applied per turn: changing it must not restart the thread.
+    core.use_chatgpt(
+        account_id="managed-account", model="gpt-test",
+        account_label="ChatGPT plan", manager=runtime, reasoning_effort="high",
+    )
+    core.run_turn(DECORATED)
+    assert runtime.started == ["thread-1"]
+    assert runtime.turn_kwargs[-1]["effort"] == "high"
+    assert runtime.turn_kwargs[0]["effort"] == ""
+
+    # Flipping web search changes the thread contract and must restart it.
+    core.use_chatgpt(
+        account_id="managed-account", model="gpt-test",
+        account_label="ChatGPT plan", manager=runtime, web_search=True,
+    )
+    core.run_turn(DECORATED)
+    assert runtime.started == ["thread-1", "thread-2"]
+    assert runtime.start_kwargs[-1]["options"].web_search is True
+
+
+def test_parity_gate_falls_back_to_legacy_contract(tmp_path):
+    runtime = ParityFakeRuntime()
+    core = _managed_core(tmp_path, runtime)
+    assert core.chatgpt_parity_active() is True
+
+    core.config["chatgpt_native_mode"] = False
+    assert core.chatgpt_parity_active() is False
+    core.config["chatgpt_native_mode"] = True
+
+    core.agent_mode = "ask"
+    assert core.chatgpt_parity_active() is False
+    core.agent_mode = "work"
+
+    core.tool_ctx.delegate_read_only = lambda args: ""
+    assert core.chatgpt_parity_active() is False
+    core.tool_ctx.delegate_read_only = None
+
+    core.agent_role_contract = "read-only reviewer"
+    assert core.chatgpt_parity_active() is False
+    core.agent_role_contract = ""
+
+    # The broker proxy never runs parity threads.
+    runtime_no_parity = FakeManagedRuntime()
+    core.codex_manager = runtime_no_parity
+    assert core.chatgpt_parity_active() is False
+
+
+def test_parity_disabled_keeps_locus_instructions(tmp_path):
+    runtime = ParityFakeRuntime()
+    core = _managed_core(tmp_path, runtime)
+    core.config["chatgpt_native_mode"] = False
+
+    core.run_turn(DECORATED)
+
+    start = runtime.start_kwargs[-1]
+    assert start["options"] is None
+    assert "Locked runtime rules" in start["base_instructions"]
+    # Legacy behavior unchanged: a fresh thread's first turn carries the
+    # canonical-transcript wrapper with the decorated text embedded.
+    items = runtime.turn_kwargs[-1]["input_items"]
+    assert "[Locus mode: Work]" in items[0]["text"]
+
+
+def test_parity_shell_and_update_plan_execute_as_canonical_tools(tmp_path):
+    runtime = ParityFakeRuntime(tool_calls=[
+        ("shell", {"command": "echo parity", "workdir": str(tmp_path)}),
+        ("update_plan", {"plan": [
+            {"step": "look around", "status": "completed"},
+            {"step": "fix it", "status": "in_progress"},
+        ]}),
+    ])
+    core = _managed_core(tmp_path, runtime)
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn(DECORATED, lambda *a: "once")
+
+    proposed = [event for event in events if event["type"] == "tool_call_proposed"]
+    assert [event["tool"] for event in proposed] == ["bash", "todo_write"]
+    assert f"cd {tmp_path} && echo parity" in proposed[0]["detail"]
+    results = [event for event in events if event["type"] == "tool_result"]
+    assert "parity" in results[0]["result"]
+    todo_updates = [event for event in events if event["type"] == "todo_update"]
+    assert todo_updates[-1]["todos"] == [
+        {"content": "look around", "status": "completed"},
+        {"content": "fix it", "status": "in_progress"},
+    ]
+
+
+def test_parity_schemas_add_submit_plan_only_in_plan_mode(tmp_path):
+    runtime = ParityFakeRuntime()
+    core = _managed_core(tmp_path, runtime)
+    work = [item["function"]["name"] for item in core.tool_registry.parity_schemas()]
+    plan = [
+        item["function"]["name"]
+        for item in core.tool_registry.parity_schemas(plan_mode=True)
+    ]
+    assert "submit_plan" not in work
+    assert "submit_plan" in plan
+    assert set(work) == {"shell", "apply_patch", "update_plan"}

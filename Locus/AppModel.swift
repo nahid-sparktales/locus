@@ -132,6 +132,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var installedLocalModels: [ModelInfo] = []
     @Published private(set) var providerAccounts: [ProviderAccount] = []
     @Published private(set) var accountModels: [UUID: [String]] = [:]
+    /// The full ChatGPT catalog rows, kept beside the plain name list because
+    /// the account editor needs each model's supported reasoning efforts.
+    @Published private(set) var accountModelCatalogs: [UUID: [ChatGPTModelsResponse.Model]] = [:]
     @Published private(set) var accountStatus: [UUID: ProviderAccountStatus] = [:]
     /// ChatGPT plan state is per account: each one signs in to its own
     /// isolated credential home, so a single set of these would report the
@@ -2743,6 +2746,7 @@ final class AppModel: ObservableObject {
                 )
                 let names = response.models.map(\.id)
                 accountModels[account.id] = names.isEmpty ? account.kind.curatedModels : names
+                accountModelCatalogs[account.id] = response.models
                 await refreshChatGPTAccount(for: account)
             } catch {
                 accountModels[account.id] = account.kind.curatedModels
@@ -2789,6 +2793,7 @@ final class AppModel: ObservableObject {
     func forgetAccountCatalog(_ id: UUID) {
         accountCatalogFetchedAt[id] = nil
         accountModels[id] = nil
+        accountModelCatalogs[id] = nil
         accountStatus[id] = nil
     }
 
@@ -4057,6 +4062,11 @@ final class AppModel: ObservableObject {
                         "account_id": account.id.uuidString,
                         "codex_home_id": account.codexHomeIdentifier,
                         "account_label": account.displayName,
+                        // Always sent: a missing field means "keep the
+                        // current server-side value", not "use the default".
+                        "native_mode": account.codexNativeModeEnabled,
+                        "web_search": account.codexWebSearchEnabled,
+                        "reasoning_effort": account.codexReasoningEffortValue,
                     ]
                 } else {
                     route = [
@@ -8078,6 +8088,11 @@ final class AppModel: ObservableObject {
                 "codex_home_id": account.codexHomeIdentifier,
                 "account_label": account.displayName,
                 "model": account.preferredModel,
+                // Always sent: the backend keeps its current value for any
+                // missing field, so omitting one would freeze a stale choice.
+                "native_mode": account.codexNativeModeEnabled,
+                "web_search": account.codexWebSearchEnabled,
+                "reasoning_effort": account.codexReasoningEffortValue,
             ]
         }
         return [
@@ -9964,6 +9979,11 @@ final class AppModel: ObservableObject {
                 "codex_home_id": account.codexHomeIdentifier,
                 "account_label": account.displayName,
                 "model": model,
+                // Always sent: a missing field means "keep the current
+                // server-side value", not "use the default".
+                "native_mode": account.codexNativeModeEnabled,
+                "web_search": account.codexWebSearchEnabled,
+                "reasoning_effort": account.codexReasoningEffortValue,
             ]
         }
         guard provider == "remote", account.kind != .chatGPT else { return nil }
@@ -10431,6 +10451,13 @@ final class AppModel: ObservableObject {
             return
         case .other:
             break
+        }
+        if tool == "update_plan" {
+            // Codex-native runs report plan changes as a tool call. The plan
+            // itself arrives through `todo_update`, so resync from it rather
+            // than letting the path heuristics read step text as file activity.
+            synchronizeSessionPlan(todos)
+            return
         }
         if tool.contains("command") || tool.contains("shell") || tool.contains("terminal")
             || tool == "bash" || tool == "exec" {

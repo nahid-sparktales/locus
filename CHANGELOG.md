@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **ChatGPT-plan chats now answer the way Codex does.** A new per-account
+  "Codex-native mode" (on by default) runs Work, Plan, and Build turns under
+  the model's own Codex prompt and Codex-shaped tools — `shell`,
+  `apply_patch`, `update_plan` — instead of the Locus contract. The model
+  keeps its trained voice, editing style, and workflow. Execution never
+  leaves Locus: every call still runs through the same permission prompts,
+  deny lists, and accept-edits behavior as before, and `apply_patch` previews
+  render as a diff. In native mode those chats deliberately carry no approved
+  memories, cross-chat context, or skill index — that is what "answers like
+  Codex" means — and skipping that recall work also shaves time off every
+  message. Ask mode, teams, evaluations, and Solo Swarm are unchanged. Turn
+  the toggle off in the account editor to get the previous Locus-flavored
+  behavior back; flipping it restarts the conversation's server-side context,
+  and the first message of each existing ChatGPT chat after this update
+  replays its history once.
+- **Reasoning effort is now yours to set.** ChatGPT accounts gain a
+  reasoning-effort picker fed by the account's own model list, so a chat can
+  match the effort you use in Codex. It applies per turn — changing it never
+  resets the conversation. Higher efforts consume plan quota faster.
+- **Optional web search for ChatGPT chats.** A separate per-account toggle
+  (off by default) lets Codex-native chats use OpenAI's web search the way
+  Codex can. Turning it on sends search queries to OpenAI.
+
+### Fixed
+
+- `/compact` on a ChatGPT chat now also resets the helper's server-side
+  thread. It previously kept the full uncompacted history, silently undoing
+  the compaction on the next message.
+
 ## 2.0.0 — 2026-08-22
 
 ### Added

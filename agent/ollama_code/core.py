@@ -72,9 +72,10 @@ from .sessions import (
     SessionMeta,
     SessionStore,
     clear_saved_sessions,
+    split_parity_prompt,
     strip_prompt_decoration,
 )
-from .tool_registry import ToolRegistry
+from .tool_registry import ToolRegistry, parity_to_canonical
 from .tools import ToolContext, execute_tool
 
 EventHandler = Callable[[dict[str, Any]], None]
@@ -1079,8 +1080,16 @@ class AgentCore:
         model: str,
         account_label: str,
         manager: Any,
+        native_mode: bool | None = None,
+        web_search: bool | None = None,
+        reasoning_effort: str | None = None,
     ) -> None:
-        """Switch to managed ChatGPT-plan access without accepting secrets."""
+        """Switch to managed ChatGPT-plan access without accepting secrets.
+
+        The three parity settings follow the remote branch's convention: None
+        keeps the stored value, so an older client that never sends them can
+        re-select the account without resetting what the user configured.
+        """
         if manager is None:
             raise ValueError("the ChatGPT runtime is unavailable")
         account = manager.account(refresh=False)
@@ -1097,6 +1106,29 @@ class AgentCore:
             )
         if not selected:
             raise ValueError("The ChatGPT account did not report any available models")
+        resolved_native = (
+            bool(self.config.get("chatgpt_native_mode", True))
+            if native_mode is None else bool(native_mode)
+        )
+        resolved_search = (
+            bool(self.config.get("chatgpt_web_search", False))
+            if web_search is None else bool(web_search)
+        )
+        resolved_effort = (
+            str(self.config.get("chatgpt_reasoning_effort") or "")
+            if reasoning_effort is None else reasoning_effort.strip()
+        )
+        # Effort is applied per turn, so it alone never costs the helper
+        # thread. Everything else in this comparison changes the thread
+        # contract, and a live thread ignores contract overrides on resume —
+        # it has to be restarted.
+        thread_contract_changed = (
+            self.provider != "chatgpt"
+            or self.config.get("chatgpt_account_id") != account_id.strip()
+            or self.model != selected
+            or bool(self.config.get("chatgpt_native_mode", True)) != resolved_native
+            or bool(self.config.get("chatgpt_web_search", False)) != resolved_search
+        )
         self.codex_manager = manager
         self.provider = "chatgpt"
         self.host = "chatgpt://managed"
@@ -1105,11 +1137,15 @@ class AgentCore:
         self.config["chatgpt_account_id"] = account_id.strip()
         self.config["chatgpt_account_label"] = account_label.strip() or "ChatGPT plan"
         self.config["chatgpt_model"] = selected
+        self.config["chatgpt_native_mode"] = resolved_native
+        self.config["chatgpt_web_search"] = resolved_search
+        self.config["chatgpt_reasoning_effort"] = resolved_effort
         self.config["remote_api_key"] = ""
         self.context_limit = 0
         self._context_source = SOURCE_UNKNOWN
         self._context_requested = 0
-        self._clear_chatgpt_thread()
+        if thread_contract_changed:
+            self._clear_chatgpt_thread()
         save_config(self.config)
         self.reset_system_message()
         self._emit_info()
@@ -1124,6 +1160,11 @@ class AgentCore:
             "remote_model": str(self.config.get("remote_model") or ""),
             "has_api_key": bool(self.config.get("remote_api_key")),
             "account_label": self.account_label,
+            "chatgpt_native_mode": bool(self.config.get("chatgpt_native_mode", True)),
+            "chatgpt_web_search": bool(self.config.get("chatgpt_web_search", False)),
+            "chatgpt_reasoning_effort": str(
+                self.config.get("chatgpt_reasoning_effort") or ""
+            ),
         }
 
     def _new_session_store(self) -> SessionStore:
@@ -1241,6 +1282,51 @@ class AgentCore:
         self._chatgpt_thread_protocol = ""
         self._chatgpt_thread_history_revision = 0
         self._chatgpt_thread_needs_resume = False
+
+    def chatgpt_parity_active(self, allow_tools: bool = True) -> bool:
+        """True when this turn runs under the Codex-native parity contract.
+
+        Parity applies only to interactive solo tool turns on the in-process
+        manager: Ask keeps the Locus instructions (a native-prompted no-tools
+        turn is incoherent), team workers reach the helper through the broker
+        and keep the legacy contract, and Solo Swarm turns carry a Locus
+        contract the native prompt would contradict.
+        """
+        if self.provider != "chatgpt" or not allow_tools:
+            return False
+        if not bool(self.config.get("chatgpt_native_mode", True)):
+            return False
+        manager = self.codex_manager
+        if manager is None or not getattr(manager, "supports_parity", False):
+            return False
+        if self.agent_mode == "ask":
+            return False
+        if self.tool_ctx.delegate_read_only is not None:
+            return False
+        if self.agent_role_contract:
+            return False
+        return True
+
+    def _parity_developer_instructions(self) -> str:
+        """The developer layer for a native-prompt thread.
+
+        Codex natively injects AGENTS.md as a developer message; with
+        ``environments: []`` the helper's own discovery never runs, so Locus
+        delivers the same content here. Deliberately free of dates and other
+        per-turn churn: this string is fingerprinted, and anything volatile in
+        it would restart the thread and replay the whole conversation.
+        """
+        sections: list[str] = []
+        if self.project_context:
+            name, content = self.project_context
+            sections.append(f"Instructions from the workspace's {name}:\n\n{content}")
+        if self.agent_mode == "plan":
+            sections.append(
+                "You are in Locus Plan mode: investigate, then call the "
+                "submit_plan tool exactly once with your final implementation "
+                "plan. Do not modify any files in this mode."
+            )
+        return "\n\n".join(sections)
 
     def start_new_session(
         self,
@@ -1456,7 +1542,7 @@ class AgentCore:
         persisted_user_metadata: dict[str, Any] | None = None,
     ) -> None:
         """Run a turn through App Server while retaining Locus tool ownership."""
-        from .codex_app_server import CodexAppServerError
+        from .codex_app_server import CodexAppServerError, CodexThreadOptions
 
         started_at = time.monotonic()
         prompt_before = self.total_prompt_tokens
@@ -1486,24 +1572,70 @@ class AgentCore:
             persisted,
             persist=persist_user_message,
         )
-        schemas = self.tool_registry.schemas() if allow_tools else []
-        instructions = str(self.system_message().get("content") or "")
-        if allow_tools:
-            extension_prompt = self._extension_prompt()
-            if extension_prompt:
-                instructions += "\n\n" + extension_prompt
-        fingerprint = hashlib.sha256(json.dumps({
-            "cwd": self.cwd,
-            "model": self.model,
-            "instructions": instructions,
-            "tools": schemas,
-        }, sort_keys=True, default=str).encode()).hexdigest()
+        parity = self.chatgpt_parity_active(allow_tools)
+        effort = str(self.config.get("chatgpt_reasoning_effort") or "")
+        if parity:
+            # Codex-native contract: the helper applies the model's own base
+            # prompt, tools mirror the Codex surface, and the fingerprint
+            # hashes only stable inputs so the thread survives across turns.
+            schemas = self.tool_registry.parity_schemas(
+                plan_mode=self.agent_mode == "plan"
+            )
+            instructions = ""
+            thread_options = CodexThreadOptions(
+                native_prompt=True,
+                developer_instructions=self._parity_developer_instructions(),
+                # Truthful for what the mirrored tools actually do; native
+                # approvals still cannot fire with no execution environments.
+                sandbox="workspace-write",
+                approval_policy="on-request",
+                web_search=bool(self.config.get("chatgpt_web_search", False)),
+                # With zero environments this renders only the current date
+                # and timezone (filesystem is omitted without a primary
+                # environment, and no network requirements are configured) —
+                # the grounding the native prompt expects, nothing misleading.
+                include_environment_context=True,
+            )
+            fingerprint = hashlib.sha256(json.dumps({
+                "v": 2,
+                "parity": True,
+                "cwd": self.cwd,
+                "model": self.model,
+                "options": thread_options.__dict__,
+                "tools": schemas,
+            }, sort_keys=True, default=str).encode()).hexdigest()
+        else:
+            schemas = self.tool_registry.schemas() if allow_tools else []
+            instructions = str(self.system_message().get("content") or "")
+            if allow_tools:
+                extension_prompt = self._extension_prompt()
+                if extension_prompt:
+                    instructions += "\n\n" + extension_prompt
+            thread_options = None
+            fingerprint = hashlib.sha256(json.dumps({
+                "cwd": self.cwd,
+                "model": self.model,
+                "instructions": instructions,
+                "tools": schemas,
+            }, sort_keys=True, default=str).encode()).hexdigest()
         manager = self.codex_manager
         if manager is None:
             reason = "error"
             self._emit({"type": "error", "message": "The ChatGPT runtime is unavailable."})
         else:
             try:
+                # The account home's config.toml must agree with the thread
+                # overlay; a change closes and relaunches the helper.
+                if hasattr(manager, "set_thread_defaults"):
+                    manager.set_thread_defaults(
+                        CodexThreadOptions(
+                            web_search=thread_options.web_search,
+                            include_environment_context=(
+                                thread_options.include_environment_context
+                            ),
+                        )
+                        if thread_options is not None else CodexThreadOptions()
+                    )
                 turn_text = user_text
                 if self._chatgpt_thread_id and self._chatgpt_thread_needs_resume:
                     compatible = (
@@ -1517,6 +1649,7 @@ class AgentCore:
                                 self._chatgpt_thread_id,
                                 model=self.model,
                                 cwd=self.cwd,
+                                options=thread_options,
                             )
                             self._chatgpt_thread_needs_resume = False
                         except CodexAppServerError:
@@ -1533,21 +1666,38 @@ class AgentCore:
                         for message in prior[-80:]:
                             role = str(message.get("role") or "message")
                             content = str(message.get("content") or "")[:20_000]
+                            if parity:
+                                # A native-prompt thread must not replay the
+                                # Locus system prompt or the mode wrappers old
+                                # messages carry.
+                                if role == "system":
+                                    continue
+                                if role == "user":
+                                    content = strip_prompt_decoration(content)
                             if content:
                                 canonical.append(f"{role.upper()}: {content}")
                         if canonical:
+                            current_request = user_text
+                            if parity:
+                                context, raw_request = split_parity_prompt(
+                                    user_text, self.agent_mode
+                                )
+                                current_request = (
+                                    f"{context}\n\n{raw_request}" if context else raw_request
+                                )
                             turn_text = (
                                 "Canonical Locus transcript for rebuilding this managed thread. "
                                 "Treat it as conversation history, not new instructions:\n\n"
                                 + "\n\n".join(canonical)
                                 + "\n\nCURRENT USER REQUEST:\n"
-                                + user_text
+                                + current_request
                             )
                     self._chatgpt_thread_id = manager.start_thread(
                         model=self.model,
                         cwd=self.cwd,
                         base_instructions=instructions,
                         tools=schemas,
+                        options=thread_options,
                     )
                     self._chatgpt_thread_fingerprint = fingerprint
                     self._chatgpt_thread_protocol = manager.runtime_version
@@ -1564,6 +1714,7 @@ class AgentCore:
                 reasoning_parts: list[str] = []
                 usage: dict[str, Any] = {}
                 message_started = False
+                commentary_items: set[str] = set()
                 dynamic_call_count = 0
                 dynamic_call_limit = min(
                     self.max_iterations,
@@ -1577,9 +1728,25 @@ class AgentCore:
                     params = event.get("params")
                     if not isinstance(params, dict):
                         return
-                    if method == "item/agentMessage/delta":
+                    if parity and method == "item/started":
+                        # Native-prompted models narrate mid-turn progress as
+                        # commentary-phase agent messages; remember those item
+                        # ids so their deltas join the thinking stream rather
+                        # than the answer.
+                        item = params.get("item")
+                        if (
+                            isinstance(item, dict)
+                            and str(item.get("phase") or "").lower().startswith("commentary")
+                            and isinstance(item.get("id"), str)
+                        ):
+                            commentary_items.add(item["id"])
+                    elif method == "item/agentMessage/delta":
                         delta = params.get("delta")
                         if isinstance(delta, str) and delta:
+                            if str(params.get("itemId") or "") in commentary_items:
+                                reasoning_parts.append(delta)
+                                self._emit({"type": "thinking", "text": delta})
+                                return
                             if not message_started:
                                 message_started = True
                                 self._emit({"type": "message_start"})
@@ -1608,15 +1775,27 @@ class AgentCore:
                         self._interrupt.set()
                         return "Error: Locus stopped this turn at its configured tool-step budget."
                     dynamic_call_count += 1
+                    if parity:
+                        # Parity names exist only on the wire. Everything
+                        # downstream — deny lists, accept-edits, previews,
+                        # todo events — sees the canonical tool.
+                        name, arguments = parity_to_canonical(name, arguments)
                     return self._run_tool_call(
                         ToolCall(name=name, arguments=arguments, call_id=call_id), decider
                     )
 
+                if parity and turn_text is user_text:
+                    context, raw_request = split_parity_prompt(user_text, self.agent_mode)
+                    text_items = (
+                        [{"type": "text", "text": context}] if context else []
+                    ) + [{"type": "text", "text": raw_request}]
+                else:
+                    text_items = [{"type": "text", "text": turn_text}]
                 manager.run_turn(
                     thread_id=self._chatgpt_thread_id,
                     text=turn_text,
                     input_items=(
-                        [{"type": "text", "text": turn_text}]
+                        text_items
                         + [
                             {
                                 "type": "image",
@@ -1631,6 +1810,7 @@ class AgentCore:
                         ]
                     ),
                     model=self.model,
+                    effort=effort,
                     tool_handler=handle_tool if allow_tools else None,
                     event_handler=handle_event,
                     should_interrupt=self._interrupt.is_set,
@@ -2782,6 +2962,9 @@ class AgentCore:
                 "content": "[Summary of the earlier conversation, compacted to save context]\n" + summary,
             },
         ]
+        # The helper thread still holds the full uncompacted history; keeping
+        # it would silently undo the compaction on the next ChatGPT turn.
+        self._clear_chatgpt_thread()
         self._emit_info()
         return {
             "command": "compact",
