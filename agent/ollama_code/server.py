@@ -2287,10 +2287,33 @@ def chatgpt_models(account_id: str = Query(default="")) -> dict[str, Any]:
                 "display_name": str(row.get("displayName") or row.get("model") or row.get("id") or ""),
                 "description": str(row.get("description") or ""),
                 "is_default": bool(row.get("isDefault")),
+                "supported_reasoning_efforts": _chatgpt_efforts(row),
+                "default_reasoning_effort": str(row.get("defaultReasoningEffort") or ""),
             }
             for row in rows if row.get("model") or row.get("id")
         ],
     }
+
+
+def _chatgpt_efforts(row: dict[str, Any]) -> list[dict[str, str]]:
+    """The effort choices one model row advertises, in the helper's order.
+
+    "ultra" is withheld: on the App Server it means automatic multi-agent
+    delegation, which Locus's thread contract disables — offering it would
+    hand users a mode that cannot work.
+    """
+    raw = row.get("supportedReasoningEfforts")
+    if not isinstance(raw, list):
+        return []
+    efforts: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        effort = str(item.get("effort") or "").strip()
+        if not effort or effort == "ultra":
+            continue
+        efforts.append({"effort": effort, "description": str(item.get("description") or "")})
+    return efforts
 
 
 @app.get("/api/chatgpt/usage")
@@ -2360,6 +2383,12 @@ def _apply_provider(svc: ChatService, body: dict[str, Any]) -> dict[str, Any]:
         account_id = str(body.get("account_id") or "").strip()
         if not account_id:
             raise HTTPException(422, "account_id is required for the ChatGPT provider")
+        # Same "missing means keep" rule as the remote branch's key: a client
+        # that predates these fields re-selects the account without resetting
+        # what the user configured.
+        raw_native = body.get("native_mode")
+        raw_search = body.get("web_search")
+        raw_effort = body.get("reasoning_effort")
         try:
             # The home id, not the account id, selects the credentials: an
             # account created before multi-account support has no home of its
@@ -2370,6 +2399,9 @@ def _apply_provider(svc: ChatService, body: dict[str, Any]) -> dict[str, Any]:
                 model=str(body.get("model") or ""),
                 account_label=str(body.get("account_label") or "ChatGPT plan"),
                 manager=manager,
+                native_mode=None if raw_native is None else bool(raw_native),
+                web_search=None if raw_search is None else bool(raw_search),
+                reasoning_effort=None if raw_effort is None else str(raw_effort),
             )
         except (ValueError, CodexAppServerError) as error:
             raise HTTPException(409, str(error)) from error
@@ -4911,10 +4943,20 @@ def _run_user_turn(
         "solo_swarm": bool(solo_swarm_enabled and not just_chat),
     })
     configuration = AgentConfiguration.parse(agent_config)
-    memory_context = _automatic_memory_context(
+    # A Codex-native parity turn carries no ambient context at all, so the
+    # recall work — vault decryption, embedding calls, snapshot scoring — is
+    # pure pre-model latency there and is skipped outright.
+    parity_turn = (
+        not just_chat
+        and not solo_swarm_enabled
+        and svc.core.provider == "chatgpt"
+        and bool(svc.core.config.get("chatgpt_native_mode", True))
+        and getattr(svc.core.codex_manager, "supports_parity", False)
+    )
+    memory_context = "" if parity_turn else _automatic_memory_context(
         svc.core, text, configuration, just_chat=just_chat,
     )
-    continuity_context = _automatic_continuity_context(
+    continuity_context = "" if parity_turn else _automatic_continuity_context(
         svc.core, text, configuration, just_chat=just_chat,
     )
     svc.core.configure_agent(
@@ -6677,6 +6719,7 @@ async def ws_codex_broker(ws: WebSocket) -> None:
                         if isinstance(request.get("input_items"), list) else None
                     ),
                     model=str(request.get("model") or ""),
+                    effort=str(request.get("effort") or ""),
                     output_schema=(
                         request.get("output_schema")
                         if isinstance(request.get("output_schema"), dict) else None

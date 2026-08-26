@@ -15,6 +15,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,27 @@ logger = logging.getLogger(__name__)
 
 PINNED_CODEX_APP_SERVER_VERSION = "0.147.0"
 _TOOL_NAME = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+@dataclass(frozen=True)
+class CodexThreadOptions:
+    """The per-home App Server contract a thread is started under.
+
+    The defaults reproduce the historical Locus contract exactly, so every
+    caller that passes no options keeps its current behavior. Codex-native
+    parity mode swaps in the model's own base prompt and truthful
+    sandbox/approval labels without touching those callers.
+    """
+
+    native_prompt: bool = False
+    developer_instructions: str = ""
+    sandbox: str = "read-only"
+    approval_policy: str = "never"
+    web_search: bool = False
+    include_environment_context: bool = False
+
+
+_DEFAULT_THREAD_OPTIONS = CodexThreadOptions()
 
 
 class CodexAppServerError(RuntimeError):
@@ -129,6 +151,10 @@ def dynamic_tools(schemas: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
 class CodexAppServerManager:
     """One multiplexed App Server process owned by the primary Locus backend."""
 
+    # Only the in-process manager may start native-prompt threads: the broker
+    # proxy serves isolated team workers, which keep the legacy contract.
+    supports_parity = True
+
     def __init__(
         self,
         *,
@@ -139,6 +165,7 @@ class CodexAppServerManager:
         self.helper_path = helper_path if helper_path is not None else helper_path_from_environment()
         self.codex_home = codex_home or codex_home_from_environment()
         self.client_version = client_version
+        self.thread_defaults: CodexThreadOptions = _DEFAULT_THREAD_OPTIONS
         self._process: subprocess.Popen[str] | None = None
         self._write_lock = threading.Lock()
         self._state_lock = threading.RLock()
@@ -181,6 +208,21 @@ class CodexAppServerManager:
         with self._state_lock:
             self._global_listeners = [item for item in self._global_listeners if item != listener]
 
+    def set_thread_defaults(self, options: CodexThreadOptions) -> None:
+        """Adopt a new per-home contract for config.toml and future threads.
+
+        A change while the helper runs closes it, so the rewritten config.toml
+        and the per-thread config overlay can never disagree; the next request
+        relaunches the helper under the new contract.
+        """
+        with self._state_lock:
+            if options == self.thread_defaults:
+                return
+            self.thread_defaults = options
+            running = self.is_running
+        if running:
+            self.close()
+
     def _prepare_home(self) -> None:
         self.codex_home.mkdir(parents=True, exist_ok=True, mode=0o700)
         try:
@@ -188,14 +230,18 @@ class CodexAppServerManager:
         except OSError:
             pass
         config = self.codex_home / "config.toml"
+        options = self.thread_defaults
+        web_search = "cached" if options.web_search else "disabled"
+        search_flag = "true" if options.web_search else "false"
+        environment_flag = "true" if options.include_environment_context else "false"
         content = (
             'cli_auth_credentials_store = "file"\n'
             'check_for_update_on_startup = false\n'
-            'web_search = "disabled"\n'
+            f'web_search = "{web_search}"\n'
             'include_permissions_instructions = false\n'
             'include_apps_instructions = false\n'
             'include_collaboration_mode_instructions = false\n'
-            'include_environment_context = false\n\n'
+            f'include_environment_context = {environment_flag}\n\n'
             '[analytics]\n'
             'enabled = false\n\n'
             '[features]\n'
@@ -208,9 +254,9 @@ class CodexAppServerManager:
             'apps = false\n'
             'multi_agent = false\n'
             'multi_agent_v2 = false\n'
-            'standalone_web_search = false\n'
-            'web_search_request = false\n'
-            'web_search_cached = false\n\n'
+            f'standalone_web_search = {search_flag}\n'
+            f'web_search_request = {search_flag}\n'
+            f'web_search_cached = {search_flag}\n\n'
             '[agents]\n'
             'enabled = false\n\n'
             '[skills]\n'
@@ -492,16 +538,17 @@ class CodexAppServerManager:
                 self._thread_queues.pop(thread_id, None)
 
     @staticmethod
-    def parity_config() -> dict[str, Any]:
+    def thread_config(options: CodexThreadOptions | None = None) -> dict[str, Any]:
+        options = options or _DEFAULT_THREAD_OPTIONS
         return {
-            "web_search": "disabled",
+            "web_search": "cached" if options.web_search else "disabled",
             # Request the provider's user-visible reasoning summary. Raw
             # reasoning deltas remain private and are never mapped to Locus.
             "model_reasoning_summary": "auto",
             "include_permissions_instructions": False,
             "include_apps_instructions": False,
             "include_collaboration_mode_instructions": False,
-            "include_environment_context": False,
+            "include_environment_context": options.include_environment_context,
             "features": {
                 "shell_tool": False,
                 "view_image": False,
@@ -512,9 +559,9 @@ class CodexAppServerManager:
                 "apps": False,
                 "multi_agent": False,
                 "multi_agent_v2": False,
-                "standalone_web_search": False,
-                "web_search_request": False,
-                "web_search_cached": False,
+                "standalone_web_search": options.web_search,
+                "web_search_request": options.web_search,
+                "web_search_cached": options.web_search,
             },
             "agents": {"enabled": False},
             "skills": {"include_instructions": False},
@@ -529,45 +576,63 @@ class CodexAppServerManager:
         *,
         model: str,
         cwd: str,
-        base_instructions: str,
+        base_instructions: str = "",
         tools: Iterable[dict[str, Any]],
         ephemeral: bool = False,
+        options: CodexThreadOptions | None = None,
     ) -> str:
-        result = self.request(
-            "thread/start",
+        options = options or self.thread_defaults
+        params: dict[str, Any] = {
+            "model": model or None,
+            "cwd": cwd,
+            "approvalPolicy": options.approval_policy,
+            "sandbox": options.sandbox,
+        }
+        if options.native_prompt:
+            # Omitting baseInstructions entirely is what selects the model's
+            # native Codex prompt (an empty string would yield *empty*
+            # instructions), and only then is personality meaningful — omit it
+            # too so the helper's default substitution applies.
+            params["developerInstructions"] = options.developer_instructions
+        else:
+            params["baseInstructions"] = base_instructions
+            params["developerInstructions"] = ""
+            params["personality"] = "none"
+        params.update(
             {
-                "model": model or None,
-                "cwd": cwd,
-                "approvalPolicy": "never",
-                "sandbox": "read-only",
-                "baseInstructions": base_instructions,
-                "developerInstructions": "",
-                "personality": "none",
                 "ephemeral": ephemeral,
                 "environments": [],
                 "dynamicTools": dynamic_tools(tools),
-                "config": self.parity_config(),
+                "config": self.thread_config(options),
                 "serviceName": "locus",
-            },
-            timeout=60,
+            }
         )
+        result = self.request("thread/start", params, timeout=60)
         thread = result.get("thread")
         thread_id = thread.get("id") if isinstance(thread, dict) else None
         if not isinstance(thread_id, str) or not thread_id:
             raise CodexProtocolMismatch("ChatGPT helper returned no thread id")
         return thread_id
 
-    def resume_thread(self, thread_id: str, *, model: str, cwd: str) -> str:
+    def resume_thread(
+        self,
+        thread_id: str,
+        *,
+        model: str,
+        cwd: str,
+        options: CodexThreadOptions | None = None,
+    ) -> str:
+        options = options or self.thread_defaults
         result = self.request(
             "thread/resume",
             {
                 "threadId": thread_id,
                 "model": model or None,
                 "cwd": cwd,
-                "approvalPolicy": "never",
-                "sandbox": "read-only",
+                "approvalPolicy": options.approval_policy,
+                "sandbox": options.sandbox,
                 "excludeTurns": True,
-                "config": self.parity_config(),
+                "config": self.thread_config(options),
             },
             timeout=60,
         )
@@ -584,8 +649,9 @@ class CodexAppServerManager:
         text: str,
         input_items: list[dict[str, Any]] | None = None,
         model: str = "",
+        effort: str = "",
         output_schema: dict[str, Any] | None = None,
-        tool_handler: Callable[[str, dict[str, Any], str], str] | None = None,
+        tool_handler: Callable[[str, dict[str, Any], str], str | dict[str, Any]] | None = None,
         event_handler: Callable[[dict[str, Any]], None] | None = None,
         should_interrupt: Callable[[], bool] | None = None,
         timeout: float = 1_800,
@@ -601,6 +667,11 @@ class CodexAppServerManager:
             }
             if model:
                 params["model"] = model
+            if effort:
+                # The helper applies an effort to this turn *and subsequent
+                # turns*, so callers resend it every turn rather than relying
+                # on stickiness across a setting change.
+                params["effort"] = effort
             if output_schema is not None:
                 params["outputSchema"] = output_schema
             response = self.request("turn/start", params, timeout=60)
@@ -652,7 +723,7 @@ class CodexAppServerManager:
                     arguments = call.get("arguments")
                     call_id = str(call.get("callId") or "")
                     if tool_handler is None:
-                        result = "Not run: this Locus route has no tool access."
+                        result: str | dict[str, Any] = "Not run: this Locus route has no tool access."
                         success = False
                     else:
                         try:
@@ -666,13 +737,19 @@ class CodexAppServerManager:
                             logger.exception("Locus dynamic tool failed")
                             result = f"Error: {error}"
                             success = False
-                    self.respond(
-                        identifier,
-                        {
+                    if isinstance(result, dict) and isinstance(result.get("content_items"), list):
+                        # A structured tool result (e.g. an image) carries its
+                        # own protocol content items and success flag.
+                        body = {
+                            "contentItems": result["content_items"],
+                            "success": bool(result.get("success", True)),
+                        }
+                    else:
+                        body = {
                             "contentItems": [{"type": "inputText", "text": str(result)}],
                             "success": success,
-                        },
-                    )
+                        }
+                    self.respond(identifier, body)
                     continue
                 if method == "turn/completed":
                     params_value = event.get("params")
@@ -763,6 +840,10 @@ class CodexAppServerManager:
 class CodexBrokerClient:
     """Worker-side proxy to the primary backend's sole App Server owner."""
 
+    # Isolated team workers keep the legacy thread contract; native-prompt
+    # parity threads exist only on the primary's in-process manager.
+    supports_parity = False
+
     def __init__(self, url: str, token: str) -> None:
         self.url = url.strip()
         self.token = token.strip()
@@ -823,10 +904,14 @@ class CodexBrokerClient:
         *,
         model: str,
         cwd: str,
-        base_instructions: str,
+        base_instructions: str = "",
         tools: Iterable[dict[str, Any]],
         ephemeral: bool = False,
+        options: CodexThreadOptions | None = None,
     ) -> str:
+        # Workers never start native-prompt threads; options exist only for
+        # signature compatibility with the in-process manager.
+        del options
         result = self._call("thread_start", {
             "model": model,
             "cwd": cwd,
@@ -838,7 +923,15 @@ class CodexBrokerClient:
             raise CodexProtocolMismatch("The ChatGPT broker returned no thread id")
         return result
 
-    def resume_thread(self, thread_id: str, *, model: str, cwd: str) -> str:
+    def resume_thread(
+        self,
+        thread_id: str,
+        *,
+        model: str,
+        cwd: str,
+        options: CodexThreadOptions | None = None,
+    ) -> str:
+        del options
         result = self._call("thread_resume", {
             "thread_id": thread_id,
             "model": model,
@@ -855,8 +948,9 @@ class CodexBrokerClient:
         text: str,
         input_items: list[dict[str, Any]] | None = None,
         model: str = "",
+        effort: str = "",
         output_schema: dict[str, Any] | None = None,
-        tool_handler: Callable[[str, dict[str, Any], str], str] | None = None,
+        tool_handler: Callable[[str, dict[str, Any], str], str | dict[str, Any]] | None = None,
         event_handler: Callable[[dict[str, Any]], None] | None = None,
         should_interrupt: Callable[[], bool] | None = None,
         timeout: float = 1_800,
@@ -868,6 +962,7 @@ class CodexBrokerClient:
                 "text": text,
                 "input_items": input_items,
                 "model": model,
+                "effort": effort,
                 "output_schema": output_schema,
                 "timeout": timeout,
             }))

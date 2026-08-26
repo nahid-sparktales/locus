@@ -392,6 +392,20 @@ def build_preview(
             head or "(empty file)",
             ctx,
         )
+    if name == "apply_patch":
+        from . import codex_patch
+
+        text = str(args.get("input") or args.get("patch") or "")
+        changed = codex_patch.changed_paths(text)
+        if changed:
+            listed = ", ".join(path for _, path in changed[:5])
+            if len(changed) > 5:
+                listed += f", … (+{len(changed) - 5} more)"
+            summary = f"patch {len(changed)} file(s): {listed}"
+        else:
+            summary = "apply patch (unparsed envelope)"
+        # The envelope is already diff-shaped, so the GUI renders it as one.
+        return summary, _shorten(text, 20_000)
     if name == "edit_file":
         path = str(args.get("path", ""))
         old = str(args.get("old_string", ""))

@@ -264,6 +264,29 @@ busy, 422 invalid configuration, 502 verification failure.
 The `chatgpt` variant requires `account_id`, with optional `account_label` and
 `model`, and rejects `api_key`, `base_url`, or `remote_base_url`. It uses the
 primary service's bundled Codex App Server and never falls back to `remote`.
+It also accepts three optional settings with "missing means keep" semantics,
+so an older client re-selecting the account never resets them: `native_mode`
+(bool, default true), `web_search` (bool, default false), and
+`reasoning_effort` (string, `""` = the model's default, applied per turn —
+changing it never restarts the helper thread). `GET` echoes them back as
+`chatgpt_native_mode`, `chatgpt_web_search`, and `chatgpt_reasoning_effort`.
+
+With `native_mode` on (Codex-native parity, the default), interactive solo
+Work/Plan/Build turns run under the model's own Codex base prompt instead of
+the Locus system prompt: `thread/start` omits `baseInstructions` and
+`personality`, AGENTS.md rides in `developerInstructions`, the environment
+context (date/timezone) is enabled, and the advertised dynamic tools mirror
+the Codex surface — `shell`, `apply_patch` (a `*** Begin Patch` envelope in a
+JSON `input` field), and `update_plan`, plus `submit_plan` in Plan mode only.
+Execution never leaves Locus: each call is translated to its canonical
+built-in (`bash`, `apply_patch`, `todo_write`) before permission checks, so
+deny lists, accept-edits, capability policy, and previews behave exactly as
+they always have. Parity turns carry no approved-memory, cross-chat, or
+skill-index context, and the recall work is skipped entirely. Ask mode, team
+workers, evaluations, and Solo Swarm keep the legacy Locus contract
+regardless of the toggle. `web_search` (parity turns only) sets the helper's
+`web_search = "cached"`, letting the model use OpenAI's web search; toggling
+either setting restarts the helper and the conversation's thread context.
 
 ### Managed ChatGPT account API
 
@@ -277,7 +300,11 @@ All responses are secret-free. `GET /api/chatgpt/account` returns `status`,
 - `POST /api/chatgpt/logout` clears the managed session and returns active
   ChatGPT routing to Ollama.
 - `GET /api/chatgpt/models` returns the signed-in account's visible App Server
-  model list.
+  model list. Each row carries `id`, `display_name`, `description`,
+  `is_default`, `supported_reasoning_efforts` (a list of
+  `{effort, description}` choices — `ultra` is withheld because it means
+  helper-side multi-agent delegation, which Locus disables), and
+  `default_reasoning_effort`.
 - `GET /api/chatgpt/usage` returns plan type, rate-limit windows, reset times,
   spend-control state, and token-activity summaries.
 
@@ -285,7 +312,10 @@ The app-owned backend is the only process allowed to launch App Server. The
 internal `/ws/internal/codex` broker requires the per-launch `X-Locus-Token`,
 rejects browser origins and nested brokers, and multiplexes account, model,
 usage, thread start/resume, turn/interrupt, dynamic tool, and tool-result
-operations for isolated team workers. OAuth values never cross this broker.
+operations for isolated team workers. `turn_run` accepts an optional `effort`
+string that is forwarded to `turn/start`. Broker threads always use the
+legacy Locus contract; Codex-native parity exists only on the primary's
+in-process manager. OAuth values never cross this broker.
 
 ### `GET /api/sessions`
 

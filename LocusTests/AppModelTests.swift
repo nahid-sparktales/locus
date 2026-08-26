@@ -1715,6 +1715,27 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(body["provider"] as? String, "chatgpt")
         XCTAssertEqual(body["account_id"] as? String, account.id.uuidString)
         XCTAssertEqual(body["codex_home_id"] as? String, account.codexHomeIdentifier)
+        // All three always travel: the backend keeps its current value for a
+        // missing field, so omitting one would freeze a stale choice.
+        XCTAssertEqual(body["native_mode"] as? Bool, true)
+        XCTAssertEqual(body["web_search"] as? Bool, false)
+        XCTAssertEqual(body["reasoning_effort"] as? String, "")
+    }
+
+    @MainActor
+    func testChatGPTRoutingCarriesTheStoredParityChoices() {
+        let model = AppModel(startImmediately: false)
+        var account = ProviderAccount(kind: .chatGPT, name: "Work")
+        account.codexNativeMode = false
+        account.codexWebSearch = true
+        account.codexReasoningEffort = "xhigh"
+        model.saveProviderAccount(account, apiKey: nil)
+        model.settings.activeAccountID = account.id.uuidString
+
+        let body = model.providerRequestBody()
+        XCTAssertEqual(body["native_mode"] as? Bool, false)
+        XCTAssertEqual(body["web_search"] as? Bool, true)
+        XCTAssertEqual(body["reasoning_effort"] as? String, "xhigh")
     }
 
     @MainActor

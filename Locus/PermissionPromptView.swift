@@ -214,7 +214,11 @@ struct PermissionPromptView: View {
     /// Truthful to the backend's semantics: "always" allows this tool for
     /// the rest of the session, and is cleared by "Reset session allowances".
     private var toolLabel: String {
-        request.tool.lowercased() == "bash" ? "bash commands" : request.tool
+        switch request.tool.lowercased() {
+        case "bash": "bash commands"
+        case "shell": "shell commands"
+        default: request.tool
+        }
     }
 
     private func confirm(_ index: Int) {
