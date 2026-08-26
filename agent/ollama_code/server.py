@@ -16,6 +16,7 @@ import binascii
 import hashlib
 import ipaddress
 import logging
+import math
 import os
 import re
 import signal
@@ -74,6 +75,7 @@ from .evaluations import (
 from .extensions import ExtensionError
 from .knowledge import KnowledgeError, KnowledgeStore
 from .memory import MemoryError, MemoryVault, format_memory_results
+from .model_router import ModelRouterError, decide_model_route
 from .ollama import OllamaError, effective_context_length
 from .orchestration import (
     GLOBAL_MODEL_SCHEDULER,
@@ -1514,6 +1516,53 @@ def memory_feedback(
         return {"ok": True, "memory": memory}
     except MemoryError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/model-router/decision")
+def model_router_decision(
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Score eligible model routes without receiving the user's prompt text."""
+    try:
+        return decide_model_route(service().run_store, body)
+    except (ModelRouterError, RunStoreError, sqlite3.DatabaseError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/model-router/sample")
+def model_router_sample(
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Record the observable outcome of one opt-in routed solo turn."""
+    route_id = str(body.get("route_id") or "").strip()[:512]
+    if not route_id:
+        raise HTTPException(422, "model router sample needs a route_id")
+    raw_tags = body.get("tags")
+    tags = [str(item).strip().lower()[:40] for item in raw_tags[:24]] \
+        if isinstance(raw_tags, list) else []
+    try:
+        quality_value = body.get("quality")
+        quality = None if quality_value is None else float(quality_value)
+        estimated_cost = float(body.get("estimated_cost") or 0)
+        if quality is not None and not math.isfinite(quality):
+            raise ValueError("model router quality must be finite")
+        if not math.isfinite(estimated_cost):
+            raise ValueError("model router estimated cost must be finite")
+        if quality is not None:
+            quality = min(max(quality, 0), 100)
+        service().run_store.record_routing_sample(
+            route_id,
+            tags=[tag for tag in tags if tag],
+            quality=quality,
+            reliable=bool(body.get("reliable")),
+            latency_ms=max(int(body.get("latency_ms") or 0), 0),
+            estimated_cost=max(estimated_cost, 0),
+            local=bool(body.get("local")),
+            evaluation=bool(body.get("evaluation")),
+        )
+    except (TypeError, ValueError, OverflowError, RunStoreError, sqlite3.DatabaseError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"ok": True, "route_id": route_id}
 
 
 @app.post("/api/memory/maintenance/run")

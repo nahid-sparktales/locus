@@ -431,6 +431,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var automaticInspectorPrompt: AutomaticInspectorPrompt?
     @Published var usageDashboardPresented = false
     @Published var usageSummary: UsageSummary?
+    @Published private(set) var lastModelRoutingDecision: ModelRoutingDecision?
+    @Published private(set) var modelRouterMessage = "No scorecard has been run yet."
     @Published var settingsPage: SettingsPage = .general
     @Published var modelLibraryPresented = false
     private var modelLibraryPendingSettingsDismissal = false
@@ -611,6 +613,13 @@ final class AppModel: ObservableObject {
     private var turnDispatchedTeamRunID: String?
     /// Client-side fallback for agents from before `turn_done.duration_ms`.
     private var turnStartedAt: Date?
+    /// Present only for solo turns that the optional model router prepared.
+    /// Keeping these per session matters because a routed chat can finish after
+    /// the user has switched to, or started, another conversation.
+    private var automaticModelRoutingTurns: [String: ModelRoutingPreparedTurn] = [:]
+    /// Keeps workspace persistence pinned to the user's manual choice while a
+    /// slower hosted-provider switch restores that choice after opt-out.
+    private var isRestoringManualModelRoute = false
     /// Turning Just Chat off returns to the last mode that could act on the
     /// workspace instead of always making the user reselect Build or Plan.
     private var lastAgenticMode: WorkMode = .work
@@ -2802,6 +2811,330 @@ final class AppModel: ObservableObject {
         lastOllamaHost = info.host
     }
 
+    // MARK: - Optional solo model router
+
+    func setAutomaticModelRoutingEnabled(_ enabled: Bool) {
+        guard enabled != settings.automaticModelRoutingEnabled else { return }
+        if enabled {
+            rememberManualModelRoute(accountID: activeAccount?.id, model: selectedModel)
+            settings.automaticModelRoutingEnabled = true
+            modelRouterMessage = "Ready — the next solo message will use the scorecard."
+            refreshModelRouterScorecard()
+        } else {
+            isRestoringManualModelRoute = true
+            settings.automaticModelRoutingEnabled = false
+            modelRouterMessage = "Automatic routing is off. Restoring the manual route…"
+            Task { [weak self] in
+                guard let self else { return }
+                await restoreManualModelRoute()
+                isRestoringManualModelRoute = false
+            }
+        }
+    }
+
+    func setAutomaticModelRoutingAllowHosted(_ allowed: Bool) {
+        settings.automaticModelRoutingAllowHosted = allowed
+        modelRouterMessage = allowed
+            ? "Hosted accounts are eligible for future solo messages."
+            : "Only models on this Mac are eligible."
+        refreshModelRouterScorecard()
+    }
+
+    func setModelRoutingPolicy(_ policy: ModelRoutingPolicy) {
+        settings.modelRoutingPolicyRaw = policy.rawValue
+        refreshModelRouterScorecard()
+    }
+
+    /// Re-scores the available routes for a generic task without changing the
+    /// active model. The Router inspector uses this after policy edits and on
+    /// explicit refresh.
+    func refreshModelRouterScorecard() {
+        let candidates = automaticModelRouteCandidates(requiresVision: false)
+        guard !candidates.isEmpty else {
+            lastModelRoutingDecision = nil
+            modelRouterMessage = settings.automaticModelRoutingAllowHosted
+                ? "No ready model routes are available."
+                : "No visible local models are available. Hosted routing is off."
+            return
+        }
+        modelRouterMessage = "Scoring \(candidates.count) eligible route\(candidates.count == 1 ? "" : "s")…"
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let decision = try await requestModelRoutingDecision(
+                    candidates: candidates,
+                    tags: ["general"]
+                )
+                lastModelRoutingDecision = decision
+                modelRouterMessage = decision.reason
+            } catch {
+                modelRouterMessage = "Could not load scorecards: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    static func modelRoutingTags(for text: String, mode: WorkMode) -> [String] {
+        let lower = text.lowercased()
+        var tags: [String] = []
+        func add(_ tag: String, when condition: Bool) {
+            if condition, !tags.contains(tag) { tags.append(tag) }
+        }
+        add("coding", when: mode != .ask || [
+            "code", "function", "class", "api", "compile", "refactor", ".swift",
+            ".py", ".js", ".ts", ".rs", ".go",
+        ].contains(where: lower.contains))
+        add("debugging", when: ["bug", "debug", "crash", "error", "failing", "fix"]
+            .contains(where: lower.contains))
+        add("testing", when: ["test", "spec", "verify", "regression"]
+            .contains(where: lower.contains))
+        add("review", when: ["review", "audit", "security", "risk"]
+            .contains(where: lower.contains))
+        add("research", when: ["research", "compare", "sources", "browse", "latest"]
+            .contains(where: lower.contains))
+        add("writing", when: ["write", "rewrite", "draft", "summarize", "explain"]
+            .contains(where: lower.contains))
+        add("long_context", when: text.count > 12_000)
+        if tags.isEmpty { tags.append("general") }
+        return Array(tags.prefix(24))
+    }
+
+    private func prepareAutomaticModelRoute(
+        text: String,
+        mode: WorkMode,
+        requiresVision: Bool
+    ) async -> ModelRoutingPreparedTurn? {
+        let candidates = automaticModelRouteCandidates(requiresVision: requiresVision)
+        guard !candidates.isEmpty else {
+            modelRouterMessage = "No eligible route; using the manual model."
+            return nil
+        }
+        let tags = Self.modelRoutingTags(for: text, mode: mode)
+        do {
+            let decision = try await requestModelRoutingDecision(
+                candidates: candidates,
+                tags: tags
+            )
+            lastModelRoutingDecision = decision
+            modelRouterMessage = decision.reason
+            guard let route = candidates.first(where: { $0.id == decision.selectedID }) else {
+                return nil
+            }
+            guard await applyAutomaticModelRoute(route) else {
+                modelRouterMessage = "The selected route was unavailable; using the manual model."
+                return nil
+            }
+            let score = decision.candidates.first(where: { $0.routeID == route.id })?.score
+            showToast(
+                "Auto route: \(route.name)"
+                    + (score.map { " · \(Int($0.rounded()))" } ?? "")
+            )
+            return ModelRoutingPreparedTurn(routeID: route.id, tags: tags, local: route.local)
+        } catch {
+            modelRouterMessage = "Router unavailable; using the manual model: \(error.localizedDescription)"
+            return nil
+        }
+    }
+
+    private func requestModelRoutingDecision(
+        candidates: [AutomaticModelRouteCandidate],
+        tags: [String]
+    ) async throws -> ModelRoutingDecision {
+        try await backend.post(
+            "/api/model-router/decision",
+            body: [
+                "tags": tags,
+                "weights": settings.resolvedModelRoutingPolicy.weights,
+                "candidates": candidates.map(\.payload),
+            ],
+            as: ModelRoutingDecision.self
+        )
+    }
+
+    private func automaticModelRouteCandidates(
+        requiresVision: Bool
+    ) -> [AutomaticModelRouteCandidate] {
+        var routes: [AutomaticModelRouteCandidate] = localModels.compactMap { model in
+            if requiresVision, model.visionCapable == false { return nil }
+            let id = Self.modelRouteID(accountID: nil, model: model.name)
+            let aliases = agentProfiles.compactMap { profile -> String? in
+                guard profile.route.accountID == nil,
+                      profile.model.caseInsensitiveCompare(model.name) == .orderedSame
+                else { return nil }
+                return profile.id.uuidString
+            }
+            return AutomaticModelRouteCandidate(
+                id: id,
+                name: "\(model.name) · Local",
+                model: model.name,
+                provider: "ollama",
+                accountID: nil,
+                local: true,
+                metering: "self_hosted",
+                memoryBytes: model.size,
+                current: activeAccount == nil
+                    && selectedModel.caseInsensitiveCompare(model.name) == .orderedSame,
+                sampleIDs: [id] + aliases
+            )
+        }
+        guard settings.automaticModelRoutingAllowHosted else { return routes }
+        for account in providerAccounts where account.hasKey {
+            guard accountStatus[account.id]?.isHealthy == true else { continue }
+            let model = account.preferredModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !model.isEmpty else { continue }
+            let id = Self.modelRouteID(accountID: account.id, model: model)
+            let aliases = agentProfiles.compactMap { profile -> String? in
+                guard profile.route.accountID == account.id,
+                      profile.model.caseInsensitiveCompare(model) == .orderedSame
+                else { return nil }
+                return profile.id.uuidString
+            }
+            let subscription = account.kind == .chatGPT || account.kind == .kimiCode
+            routes.append(AutomaticModelRouteCandidate(
+                id: id,
+                name: "\(model) · \(account.shortName)",
+                model: model,
+                provider: account.kind.rawValue,
+                accountID: account.id,
+                local: false,
+                metering: subscription ? "subscription" : "metered",
+                memoryBytes: 0,
+                current: activeAccount?.id == account.id
+                    && selectedModel.caseInsensitiveCompare(model) == .orderedSame,
+                sampleIDs: [id] + aliases
+            ))
+        }
+        return routes
+    }
+
+    private static func modelRouteID(accountID: UUID?, model: String) -> String {
+        let source = accountID?.uuidString.lowercased() ?? "ollama"
+        return "model-route:\(source):\(model.lowercased())"
+    }
+
+    private func applyAutomaticModelRoute(_ route: AutomaticModelRouteCandidate) async -> Bool {
+        let previousAccountID = settings.activeAccountID
+        let previousProvider = settings.provider
+        let previousModel = selectedModel
+        let sourceChanged = route.accountID?.uuidString != settings.activeAccountID
+        if let accountID = route.accountID {
+            guard providerAccounts.contains(where: { $0.id == accountID }) else { return false }
+            settings.activeAccountID = accountID.uuidString
+            settings.provider = .remote
+            if !sourceChanged { return true }
+            guard await applyProvider(announce: false) else {
+                settings.activeAccountID = previousAccountID
+                settings.provider = previousProvider
+                _ = await applyProvider(announce: false)
+                return false
+            }
+            return true
+        }
+
+        settings.activeAccountID = nil
+        settings.provider = .ollama
+        if sourceChanged, !(await applyProvider(announce: false)) {
+            settings.activeAccountID = previousAccountID
+            settings.provider = previousProvider
+            _ = await applyProvider(announce: false)
+            return false
+        }
+        do {
+            let state: ConfigStateResponse = try await backend.post(
+                "/api/config", body: ["model": route.model], as: ConfigStateResponse.self
+            )
+            if let info = state.sessionInfo { sessionInfo = info }
+            let transport = conversationBackend
+            if transport !== backend {
+                let _: ConfigStateResponse = try await transport.post(
+                    "/api/config", body: ["model": route.model], as: ConfigStateResponse.self
+                )
+            }
+            return true
+        } catch {
+            settings.activeAccountID = previousAccountID
+            settings.provider = previousProvider
+            _ = await applyProvider(announce: false)
+            if previousAccountID == nil, !previousModel.isEmpty {
+                let _: ConfigStateResponse? = try? await backend.post(
+                    "/api/config", body: ["model": previousModel], as: ConfigStateResponse.self
+                )
+            }
+            return false
+        }
+    }
+
+    private func rememberManualModelRoute(accountID: UUID?, model: String) {
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "No model" else { return }
+        settings.modelRouterFallbackAccountID = accountID?.uuidString
+        settings.modelRouterFallbackModel = trimmed
+    }
+
+    private func restoreManualModelRoute() async {
+        let model = settings.modelRouterFallbackModel
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !model.isEmpty else {
+            modelRouterMessage = "Automatic routing is off."
+            return
+        }
+        let accountID = settings.modelRouterFallbackAccountID.flatMap(UUID.init(uuidString:))
+        let candidate = AutomaticModelRouteCandidate(
+            id: Self.modelRouteID(accountID: accountID, model: model),
+            name: model,
+            model: model,
+            provider: accountID == nil ? "ollama" : "account",
+            accountID: accountID,
+            local: accountID == nil,
+            metering: accountID == nil ? "self_hosted" : "metered",
+            memoryBytes: 0,
+            current: false,
+            sampleIDs: []
+        )
+        modelRouterMessage = await applyAutomaticModelRoute(candidate)
+            ? "Automatic routing is off. Manual route restored."
+            : "Automatic routing is off, but the saved manual route is unavailable."
+    }
+
+    private func discardAutomaticModelRoutingTurn(
+        for sessionID: String,
+        matching prepared: ModelRoutingPreparedTurn?
+    ) {
+        guard let prepared,
+              automaticModelRoutingTurns[sessionID]?.id == prepared.id
+        else { return }
+        automaticModelRoutingTurns.removeValue(forKey: sessionID)
+    }
+
+    private func recordAutomaticModelRoutingOutcome(
+        sessionID: String,
+        reason: String,
+        backendDurationMilliseconds: Int?
+    ) {
+        guard let routed = automaticModelRoutingTurns.removeValue(forKey: sessionID) else {
+            return
+        }
+        let startedAt = taskWorkers[sessionID]?.startedAt
+            ?? (currentSessionID == sessionID ? turnStartedAt : nil)
+        let elapsed = startedAt.map { Int(Date().timeIntervalSince($0) * 1_000) } ?? 0
+        let duration = max(backendDurationMilliseconds ?? elapsed, 0)
+        Task { [weak self] in
+            guard let self else { return }
+            let _: SimpleActionResponse? = try? await backend.post(
+                "/api/model-router/sample",
+                body: [
+                    "route_id": routed.routeID,
+                    "tags": routed.tags,
+                    "reliable": reason == "complete",
+                    "latency_ms": duration,
+                    "estimated_cost": 0,
+                    "local": routed.local,
+                    "evaluation": false,
+                ],
+                as: SimpleActionResponse.self
+            )
+        }
+    }
+
     func send(_ rawText: String) {
         send(rawText, preservingDraftOnFailure: true)
     }
@@ -2810,7 +3143,9 @@ final class AppModel: ObservableObject {
         _ rawText: String,
         preservingDraftOnFailure: Bool,
         requeueingOnFailure: Bool = false,
-        includeAttachments: Bool = true
+        includeAttachments: Bool = true,
+        automaticRoutingPrepared: Bool = false,
+        preparedModelRoute: ModelRoutingPreparedTurn? = nil
     ) {
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         let availableAttachments = includeAttachments ? availableChatAttachments : []
@@ -2870,6 +3205,34 @@ final class AppModel: ObservableObject {
             && soloSwarmEnabled
             && dispatchedMode != .ask
             && !isSlashPassthrough
+        if settings.automaticModelRoutingEnabled,
+           !automaticRoutingPrepared,
+           !isSlashPassthrough,
+           dispatchedTeam == nil,
+           !dispatchedSoloSwarm
+        {
+            isBusy = true
+            modelRouterMessage = "Choosing a model for this message…"
+            let requiresVision = availableAttachments.contains { $0.kind == .image }
+            Task { [weak self] in
+                guard let self else { return }
+                let route = await prepareAutomaticModelRoute(
+                    text: text,
+                    mode: dispatchedMode,
+                    requiresVision: requiresVision
+                )
+                isBusy = false
+                send(
+                    rawText,
+                    preservingDraftOnFailure: preservingDraftOnFailure,
+                    requeueingOnFailure: requeueingOnFailure,
+                    includeAttachments: includeAttachments,
+                    automaticRoutingPrepared: true,
+                    preparedModelRoute: route
+                )
+            }
+            return
+        }
         // Agent-side slash commands never receive attachments (the server
         // routes them past the turn machinery), so dispatching any would
         // silently drop them — keep the chips for the next real message.
@@ -2886,6 +3249,7 @@ final class AppModel: ObservableObject {
 
         isBusy = true
         turnStartedAt = Date()
+        automaticModelRoutingTurns[dispatchedSessionID] = preparedModelRoute
         planApprovalPending = false
         planTodosChangedThisTurn = false
         planReadyThisTurn = false
@@ -2957,7 +3321,13 @@ final class AppModel: ObservableObject {
                     self.pendingChatTurnTokens.removeValue(forKey: dispatchedSessionID)
                 }
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                self.discardAutomaticModelRoutingTurn(
+                    for: dispatchedSessionID,
+                    matching: preparedModelRoute
+                )
+                return
+            }
             do {
                 let queuedTeam = dispatchedTeam?["team"] as? [String: Any]
                 let _: OrchestrationRun = try await self.backend.post(
@@ -2983,6 +3353,10 @@ final class AppModel: ObservableObject {
                 } else {
                     self.taskConversationStates.removeValue(forKey: dispatchedSessionID)
                 }
+                self.discardAutomaticModelRoutingTurn(
+                    for: dispatchedSessionID,
+                    matching: preparedModelRoute
+                )
                 if self.currentSessionID == dispatchedSessionID {
                     self.isBusy = false
                     self.turnStartedAt = nil
@@ -3006,7 +3380,13 @@ final class AppModel: ObservableObject {
                 : await Task.detached(priority: .utility) {
                     dispatchedContextFiles.map(Self.reloadContextReference)
                 }.value
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                self.discardAutomaticModelRoutingTurn(
+                    for: dispatchedSessionID,
+                    matching: preparedModelRoute
+                )
+                return
+            }
             let payload = isSlashPassthrough
                 ? text
                 : Self.decoratedPrompt(
@@ -3046,6 +3426,10 @@ final class AppModel: ObservableObject {
                 for: dispatchedSessionID,
                 workspaceRoot: dispatchedWorkspaceRoot
             ) else {
+                self.discardAutomaticModelRoutingTurn(
+                    for: dispatchedSessionID,
+                    matching: preparedModelRoute
+                )
                 if Task.isCancelled { return }
                 if self.currentSessionID == dispatchedSessionID {
                     self.isBusy = false
@@ -3062,6 +3446,10 @@ final class AppModel: ObservableObject {
                 return
             }
             guard !Task.isCancelled else {
+                self.discardAutomaticModelRoutingTurn(
+                    for: dispatchedSessionID,
+                    matching: preparedModelRoute
+                )
                 self.finishChatRuntime(worker, state: .cancelled)
                 return
             }
@@ -3069,7 +3457,13 @@ final class AppModel: ObservableObject {
             worker.dispatchedTeamRunID = teamRunID
             worker.reservedRunID = reservedRunID
             worker.dispatchedInPlanMode = dispatchedMode == .plan && !isSlashPassthrough
-            guard await self.waitForChatExecutionSlot(worker) else { return }
+            guard await self.waitForChatExecutionSlot(worker) else {
+                self.discardAutomaticModelRoutingTurn(
+                    for: dispatchedSessionID,
+                    matching: preparedModelRoute
+                )
+                return
+            }
             do {
                 let _: OrchestrationRun = try await self.backend.patch(
                     "/api/runs/\(reservedRunID)/queue",
@@ -3077,10 +3471,18 @@ final class AppModel: ObservableObject {
                     as: OrchestrationRun.self
                 )
             } catch {
+                self.discardAutomaticModelRoutingTurn(
+                    for: dispatchedSessionID,
+                    matching: preparedModelRoute
+                )
                 self.finishChatRuntime(worker, state: .failed, error: "The queued run could not start")
                 return
             }
             guard worker.service.send(request) else {
+                self.discardAutomaticModelRoutingTurn(
+                    for: dispatchedSessionID,
+                    matching: preparedModelRoute
+                )
                 self.finishChatRuntime(worker, state: .failed, error: "The turn could not be delivered")
                 if self.currentSessionID == dispatchedSessionID {
                     self.isBusy = false
@@ -3686,6 +4088,7 @@ final class AppModel: ObservableObject {
     }
 
     func selectModel(_ model: String) {
+        rememberManualModelRoute(accountID: activeAccount?.id, model: model)
         if isBusy {
             pendingProviderSwitch = (activeAccount?.id, model)
             showToast("Switching to \(model) after this turn")
@@ -3705,6 +4108,7 @@ final class AppModel: ObservableObject {
     /// agent's client, which it refuses to do mid-turn — so a switch requested
     /// during a run is held and applied when the turn finishes.
     func selectModel(account: ProviderAccount?, model: String) {
+        rememberManualModelRoute(accountID: account?.id, model: model)
         let sameSource = account?.id.uuidString == settings.activeAccountID
         guard !sameSource else {
             if let account {
@@ -9899,6 +10303,9 @@ final class AppModel: ObservableObject {
         runtime.sessionInfo = response.sessionInfo
         runtime.isAttaching = false
         if runtime.sessionID != requestedSessionID {
+            if let routed = automaticModelRoutingTurns.removeValue(forKey: requestedSessionID) {
+                automaticModelRoutingTurns[runtime.sessionID] = routed
+            }
             taskWorkers.removeValue(forKey: requestedSessionID)
             taskWorkers[runtime.sessionID] = runtime
             if currentSessionID == requestedSessionID {
@@ -10104,6 +10511,11 @@ final class AppModel: ObservableObject {
         }
         if type == "turn_done" {
             let reason = event["reason"] as? String ?? "complete"
+            recordAutomaticModelRoutingOutcome(
+                sessionID: runtime.sessionID,
+                reason: reason,
+                backendDurationMilliseconds: event["duration_ms"] as? Int
+            )
             if runtime.dispatchedTeamRunID == nil {
                 state = reason == "complete" ? .completed : .failed
             }
@@ -11326,6 +11738,11 @@ final class AppModel: ObservableObject {
             resolveDanglingPermissions()
             flushPendingBrowserCapability()
             let reason = event["reason"] as? String ?? "complete"
+            recordAutomaticModelRoutingOutcome(
+                sessionID: currentSessionID,
+                reason: reason,
+                backendDurationMilliseconds: event["duration_ms"] as? Int
+            )
             let completedRunID = event["run_id"] as? String
             let dispatchedMode = turnDispatchedMode
                 ?? (turnDispatchedInPlanMode ? .plan : nil)
@@ -11896,6 +12313,24 @@ final class AppModel: ObservableObject {
     /// the user's solo route instead of pairing the last team member's model
     /// with an unrelated account and contaminating that account's picker.
     private func stableWorkspaceRoute(for path: String) -> (model: String, accountID: String?) {
+        if settings.automaticModelRoutingEnabled || isRestoringManualModelRoute {
+            let fallback = settings.modelRouterFallbackModel
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !fallback.isEmpty {
+                if let accountID = settings.modelRouterFallbackAccountID,
+                   providerAccounts.contains(where: { $0.id.uuidString == accountID })
+                {
+                    return (fallback, accountID)
+                }
+                if settings.modelRouterFallbackAccountID == nil,
+                   localModels.contains(where: {
+                       $0.name.caseInsensitiveCompare(fallback) == .orderedSame
+                   })
+                {
+                    return (fallback, nil)
+                }
+            }
+        }
         if let account = activeAccount {
             return (account.preferredModel, account.id.uuidString)
         }
@@ -13924,6 +14359,40 @@ final class DisplaySynchronizedFlushDriver: NSObject {
         watchdog?.cancel()
         watchdog = nil
         callback()
+    }
+}
+
+private struct ModelRoutingPreparedTurn {
+    let id = UUID()
+    let routeID: String
+    let tags: [String]
+    let local: Bool
+}
+
+private struct AutomaticModelRouteCandidate {
+    let id: String
+    let name: String
+    let model: String
+    let provider: String
+    let accountID: UUID?
+    let local: Bool
+    let metering: String
+    let memoryBytes: Int64
+    let current: Bool
+    let sampleIDs: [String]
+
+    var payload: [String: Any] {
+        [
+            "id": id,
+            "name": name,
+            "model": model,
+            "provider": provider,
+            "local": local,
+            "metering": metering,
+            "memory_bytes": memoryBytes,
+            "current": current,
+            "sample_ids": sampleIDs,
+        ]
     }
 }
 

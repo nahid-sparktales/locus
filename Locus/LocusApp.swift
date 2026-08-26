@@ -137,9 +137,12 @@ struct LocusApp: App {
                     .accessibilityIdentifier("menu.terminal")
                 // Declared once, here — a second registration in a view would
                 // silently shadow these (see the ⌘⇧K note in WorkspaceView).
-                ForEach(InspectorTab.allCases) { tab in
+                ForEach(InspectorTab.allCases.filter { $0.shortcutKey != nil }) { tab in
                     Button(tab.title) { model.selectInspectorTab(tab) }
-                        .keyboardShortcut(KeyEquivalent(tab.shortcutKey), modifiers: .command)
+                        .keyboardShortcut(
+                            KeyEquivalent(tab.shortcutKey ?? "1"),
+                            modifiers: .command
+                        )
                         .disabled(model.justChatEnabled)
                 }
                 Button(model.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar") {

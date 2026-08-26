@@ -103,6 +103,16 @@ tokens only, since no pricing exists outside agent profiles. `recorded_since`
 reports when solo recording began; earlier turns were never recorded and
 cannot be backfilled. Gated by the `durable_runs` capability.
 
+`POST /api/model-router/decision` accepts bounded candidate metadata, task
+tags, and score weights, then returns the selected route plus a transparent
+scorecard for every candidate. The request does not contain prompt text.
+Scores cover quality, reliability, privacy, latency, cost, and model-footprint
+efficiency; sparse evaluation data is shrunk toward a neutral prior.
+`POST /api/model-router/sample` records a routed solo turn's task tags,
+reliability, latency, estimated cost, locality, and optional quality rating in
+the existing routing-sample store. Both endpoints reject malformed or
+non-finite numeric values with HTTP 422.
+
 Recovery controls are `POST /pause`, `/resume`, `/cancel`, `/discard`,
 `/jobs/{job_id}/retry`, `/jobs/{job_id}/reassign`, `/agents/{node_id}/stop`,
 `/agents/{node_id}/retry`, `/run-with-locus`, `/replay`, and `/duplicate`.

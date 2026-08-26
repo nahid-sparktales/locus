@@ -643,7 +643,7 @@ final class FeatureLogicTests: XCTestCase {
     // MARK: - Inspector chrome
 
     func testInspectorTabsAreStableAndUnique() {
-        XCTAssertEqual(InspectorTab.allCases.count, 9)
+        XCTAssertEqual(InspectorTab.allCases.count, 11)
         let raws = InspectorTab.allCases.map(\.rawValue)
         XCTAssertEqual(Set(raws).count, raws.count)
         XCTAssertEqual(Set(InspectorTab.allCases.map(\.symbol)).count, raws.count)
@@ -659,13 +659,66 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(InspectorTab.plan.symbol, "rectangle.grid.2x2")
         XCTAssertEqual(InspectorTab.notes.title, "Notes")
         XCTAssertEqual(InspectorTab.notes.symbol, "note.text")
+        XCTAssertEqual(InspectorTab.router.title, "Router")
+        XCTAssertEqual(InspectorTab.proxies.title, "Proxies")
+        XCTAssertTrue(InspectorTab.workspaceTabs.contains(.router))
+        XCTAssertTrue(InspectorTab.workspaceTabs.contains(.proxies))
     }
 
     func testInspectorShortcutsPreserveExistingKeysAndAddNotesOnNine() {
         XCTAssertEqual(
             InspectorTab.allCases.map(\.shortcutKey),
-            ["1", "2", "3", "4", "5", "9", "6", "7", "8"]
+            ["1", "2", "3", "4", "5", "9", "6", "7", "8", nil, nil]
         )
+    }
+
+    func testModelRouterSettingsAreOptInAndRoundTrip() throws {
+        let legacy = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
+        XCTAssertFalse(legacy.automaticModelRoutingEnabled)
+        XCTAssertFalse(legacy.automaticModelRoutingAllowHosted)
+        XCTAssertEqual(legacy.resolvedModelRoutingPolicy, .balanced)
+
+        var settings = AppSettings()
+        settings.automaticModelRoutingEnabled = true
+        settings.automaticModelRoutingAllowHosted = true
+        settings.modelRoutingPolicyRaw = ModelRoutingPolicy.fast.rawValue
+        settings.modelRouterFallbackAccountID = "account-1"
+        settings.modelRouterFallbackModel = "qwen3:8b"
+        let restored = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONEncoder().encode(settings)
+        )
+        XCTAssertTrue(restored.automaticModelRoutingEnabled)
+        XCTAssertTrue(restored.automaticModelRoutingAllowHosted)
+        XCTAssertEqual(restored.resolvedModelRoutingPolicy, .fast)
+        XCTAssertEqual(restored.modelRouterFallbackAccountID, "account-1")
+        XCTAssertEqual(restored.modelRouterFallbackModel, "qwen3:8b")
+    }
+
+    func testUnknownModelRoutingPolicyFallsBackWithoutDisablingRouter() throws {
+        let json = #"{"automaticModelRoutingEnabled":true,"modelRoutingPolicyRaw":"future"}"#
+        let restored = try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
+        XCTAssertTrue(restored.automaticModelRoutingEnabled)
+        XCTAssertEqual(restored.resolvedModelRoutingPolicy, .balanced)
+    }
+
+    func testModelRoutingPoliciesAlwaysHaveNormalizedScorecardWeights() {
+        for policy in ModelRoutingPolicy.allCases {
+            XCTAssertEqual(Set(policy.weights.keys), Set([
+                "quality", "reliability", "privacy", "latency", "cost", "efficiency",
+            ]))
+            XCTAssertEqual(policy.weights.values.reduce(0, +), 1, accuracy: 0.000_001)
+        }
+    }
+
+    @MainActor
+    func testModelRoutingTagsClassifyLocallyWithoutReturningPromptContent() {
+        let prompt = "Debug the failing Swift API test for CustomerSecretValue"
+        let tags = AppModel.modelRoutingTags(for: prompt, mode: .build)
+        XCTAssertTrue(tags.contains("coding"))
+        XCTAssertTrue(tags.contains("debugging"))
+        XCTAssertTrue(tags.contains("testing"))
+        XCTAssertFalse(tags.contains(where: { $0.contains("customersecretvalue") }))
     }
 
     func testAgentInstructionsFileRoundTripsAndRejectsEscapingSymlinks() throws {
