@@ -435,7 +435,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("message.00000000-0000-0000-0000-000000000101.rewind").exists)
     }
 
-    func testSessionOrganizerMenusAndArchivedFilter() {
+    func testSessionOrganizerMenus() {
         let workspace = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH %@ AND label CONTAINS[c] %@",
             "workspace.group.",
@@ -470,7 +470,9 @@ final class LocusUITests: XCTestCase {
 
         XCTAssertFalse(anyElement("sidebar.addWorkspace").exists)
         XCTAssertTrue(anyElement("sidebar.activity").exists)
+    }
 
+    func testArchivedSessionsFilter() {
         anyElement("sidebar.more").click()
         // A Toggle inside Menu is a MenuItem on newer macOS releases but an
         // AX checkbox on macOS 15. Its visible title is unique, so query all
@@ -2340,7 +2342,10 @@ final class LocusUITests: XCTestCase {
         lastTool.click()
 
         let firstMessage = anyElement("message.00000000-0000-0000-0000-000000000101")
-        lastTool.scroll(byDeltaX: 0, deltaY: 320)
+        // Expanding the final card can move its button outside the viewport on
+        // compact CI displays. This gesture only navigates back to the message;
+        // target the owning transcript rather than a stale offscreen row.
+        transcript.scroll(byDeltaX: 0, deltaY: 320)
         for _ in 0..<8 {
             if firstMessage.exists, firstMessage.isHittable { break }
             transcript.scroll(byDeltaX: 0, deltaY: 320)
