@@ -468,10 +468,15 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("sidebar.activity").exists)
 
         anyElement("sidebar.more").click()
-        let archivedToggle = menuItem(
+        // A Toggle inside Menu is a MenuItem on newer macOS releases but an
+        // AX checkbox on macOS 15. Its visible title is unique, so query all
+        // roles while still preferring the stable identifier where available.
+        let archivedToggle = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier == %@ OR label CONTAINS[c] %@ OR title CONTAINS[c] %@",
             "sidebar.showArchived",
-            title: "Show Archived Sessions"
-        )
+            "Show Archived Sessions",
+            "Show Archived Sessions"
+        )).firstMatch
         XCTAssertTrue(archivedToggle.waitForExistence(timeout: 2))
         archivedToggle.click()
         XCTAssertTrue(app.buttons["session.seed-archived"].waitForExistence(timeout: 3))
