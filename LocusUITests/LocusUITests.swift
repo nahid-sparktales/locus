@@ -474,12 +474,13 @@ final class LocusUITests: XCTestCase {
 
     func testArchivedSessionsFilter() {
         anyElement("sidebar.more").click()
-        let archivedToggle = menuItem(
-            "sidebar.showArchived",
-            title: "Show Archived Sessions"
-        )
-        XCTAssertTrue(archivedToggle.waitForExistence(timeout: 2))
-        archivedToggle.click()
+        // macOS 15 does not publish this dynamic SwiftUI command in the AX
+        // tree, even though the native menu can focus and invoke it. Walk the
+        // four enabled commands in their visible order and activate Archive.
+        for _ in 0..<4 {
+            app.typeKey(.downArrow, modifierFlags: [])
+        }
+        app.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(app.buttons["session.seed-archived"].waitForExistence(timeout: 3))
     }
 
