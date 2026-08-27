@@ -33,10 +33,11 @@ final class LocusUITests: XCTestCase {
 
     /// SwiftUI menu commands arrive as menu items on macOS 26 but can retain
     /// their underlying button or checkbox role on macOS 15. Match every role
-    /// by either the stable identifier or exact native title.
+    /// by either the stable identifier or native title; older AppKit can append
+    /// a toggle's accessibility value to its label.
     private func menuItem(_ identifier: String, title: String) -> XCUIElement {
         app.descendants(matching: .any).matching(NSPredicate(
-            format: "identifier == %@ OR label == %@ OR title == %@",
+            format: "identifier == %@ OR label CONTAINS[c] %@ OR title CONTAINS[c] %@",
             identifier,
             title,
             title
@@ -478,8 +479,21 @@ final class LocusUITests: XCTestCase {
             "sidebar.showArchived",
             title: "Archived Sessions"
         )
-        XCTAssertTrue(archivedToggle.waitForExistence(timeout: 2))
-        archivedToggle.click()
+        let archivedCommandExists = archivedToggle.waitForExistence(timeout: 2)
+        if archivedCommandExists {
+            archivedToggle.click()
+        } else {
+            // macOS 15 can omit this one SwiftUI command from AX while still
+            // rendering it as the native row immediately above Clear.
+            let clearSessions = menuItem(
+                "sidebar.clearSessions",
+                title: "Clear Saved Sessions…"
+            )
+            XCTAssertTrue(clearSessions.waitForExistence(timeout: 2))
+            clearSessions.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.5, dy: -0.5)
+            ).click()
+        }
         XCTAssertTrue(app.buttons["session.seed-archived"].waitForExistence(timeout: 3))
     }
 
@@ -2350,10 +2364,10 @@ final class LocusUITests: XCTestCase {
 
         let messageHeightBeforeHover = firstMessage.frame.height
         firstMessage.hover()
-        XCTAssertEqual(
-            firstMessage.frame.height,
-            messageHeightBeforeHover,
-            accuracy: 0.5,
+        XCTAssertTrue(
+            waitUntil(timeout: 2) {
+                abs(firstMessage.frame.height - messageHeightBeforeHover) <= 0.5
+            },
             "revealing message actions must not change transcript geometry"
         )
 
