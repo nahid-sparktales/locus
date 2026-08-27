@@ -33,6 +33,8 @@ struct ComposerView: View {
     @State private var contextPresented = false
     @State private var attachmentsPresented = false
     @State private var permissionModesPresented = false
+    @State private var teamPickerPresented = false
+    @State private var quickTeamPresented = false
     @State private var popupSelection = 0
     @State private var popupDismissedDraft: String?
     @State private var editorWidth: CGFloat = 600
@@ -161,6 +163,10 @@ struct ComposerView: View {
         )
         .animation(LocusMotion.spatial, value: model.activePermissionRequest?.requestID)
         .animation(LocusMotion.spatial, value: model.planApprovalPending)
+        .sheet(isPresented: $quickTeamPresented) {
+            QuickTeamBuilderView(suggestedName: model.suggestedQuickTeamName())
+                .environmentObject(model)
+        }
         .onAppear { restoreFocus() }
         .onChange(of: model.activePermissionRequest?.requestID) {
             // Focus returns to the editor after any decision — option 3 is
@@ -559,32 +565,8 @@ struct ComposerView: View {
                 .accessibilityIdentifier("composer.mode.\(mode.rawValue)")
             }
             Divider().frame(height: 16).padding(.horizontal, 4)
-            Menu {
-                Button {
-                    model.selectSoloRoute()
-                } label: {
-                    Label(
-                        "Solo",
-                        systemImage: model.selectedAgentTeamID == nil ? "checkmark" : "person"
-                    )
-                }
-                if !model.agentTeams.isEmpty {
-                    Divider()
-                    ForEach(model.agentTeams) { team in
-                        Button {
-                            model.selectAgentTeam(team.id)
-                        } label: {
-                            Label(
-                                team.name,
-                                systemImage: model.selectedAgentTeamID == team.id ? "checkmark" : "person.2"
-                            )
-                        }
-                    }
-                }
-                Divider()
-                Button("Manage Agents & Teams…", systemImage: "gearshape") {
-                    model.presentSettings(.agents)
-                }
+            Button {
+                teamPickerPresented.toggle()
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: model.teamModeEnabled
@@ -596,13 +578,30 @@ struct ComposerView: View {
                 .foregroundStyle(model.teamModeEnabled ? LocusTheme.signalDeep : LocusTheme.muted)
                 .padding(.horizontal, 8)
                 .frame(height: 24)
-                .background(LocusTheme.paperDeep.opacity(0.8))
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .background(LocusTheme.paperDeep.opacity(0.8))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
+            .buttonStyle(.locus())
             .fixedSize()
+            .popover(isPresented: $teamPickerPresented, arrowEdge: .bottom) {
+                ComposerTeamPickerPopover(
+                    dismiss: { teamPickerPresented = false },
+                    createQuickTeam: {
+                        teamPickerPresented = false
+                        Task { @MainActor in
+                            await Task.yield()
+                            quickTeamPresented = true
+                        }
+                    },
+                    manageAdvanced: {
+                        teamPickerPresented = false
+                        model.presentSettings(.agents)
+                    }
+                )
+                .environmentObject(model)
+            }
             .accessibilityLabel("Solo or team routing")
+            .accessibilityValue(model.selectedAgentTeam?.name ?? "Solo")
             .accessibilityIdentifier("composer.team")
         }
     }
@@ -1107,6 +1106,299 @@ enum ComposerReturnAction: Equatable {
         guard canSubmit else { return .newline }
         if isBusy { return .queue }
         return .send
+    }
+}
+
+private struct ComposerTeamPickerPopover: View {
+    @EnvironmentObject private var model: AppModel
+    let dismiss: () -> Void
+    let createQuickTeam: () -> Void
+    let manageAdvanced: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "person.3.sequence.fill")
+                    .font(.locus(size: 13, weight: .semibold))
+                    .foregroundStyle(LocusTheme.signalDeep)
+                    .frame(width: 30, height: 30)
+                    .background(LocusTheme.signal.opacity(0.10))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Choose how Locus works")
+                        .font(.locus(size: 12, weight: .bold))
+                    Text("Use one model or let a dispatcher coordinate a saved team.")
+                        .font(.locus(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                Spacer()
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.locus(size: 9, weight: .bold))
+                }
+                .buttonStyle(.locus())
+                .accessibilityLabel("Close team picker")
+                .accessibilityIdentifier("composer.teamPicker.close")
+            }
+            .padding(13)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 9) {
+                    soloCard
+                    if model.agentTeams.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("No saved teams yet")
+                                .font(.locus(size: 10, weight: .semibold))
+                            Text("Create one by choosing a dispatcher, lead editor, and any helper models.")
+                                .font(.locus(size: 8))
+                                .foregroundStyle(LocusTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text("SAVED TEAMS")
+                            .font(.locus(size: 8, weight: .bold))
+                            .tracking(0.7)
+                            .foregroundStyle(LocusTheme.muted)
+                            .padding(.top, 3)
+                        ForEach(model.agentTeams) { team in
+                            teamCard(team)
+                        }
+                    }
+                }
+                .padding(11)
+            }
+            .frame(maxHeight: 400)
+
+            Divider()
+
+            VStack(spacing: 4) {
+                actionButton(
+                    "Create Quick Team…",
+                    symbol: "plus.circle.fill",
+                    identifier: "composer.teamPicker.create"
+                ) { createQuickTeam() }
+                actionButton(
+                    "Manage Advanced Teams…",
+                    symbol: "slider.horizontal.3",
+                    identifier: "composer.teamPicker.manage"
+                ) { manageAdvanced() }
+            }
+            .padding(8)
+        }
+        .frame(width: 430)
+        .background(LocusTheme.panel)
+        .accessibilityIdentifier("composer.teamPicker")
+        .onKeyPress(.escape) {
+            dismiss()
+            return .handled
+        }
+    }
+
+    private var soloCard: some View {
+        let selected = model.selectedAgentTeamID == nil
+        return Button {
+            model.selectSoloRoute()
+            dismiss()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "person.fill")
+                    .foregroundStyle(selected ? LocusTheme.signalDeep : LocusTheme.muted)
+                    .frame(width: 24, height: 24)
+                    .background(selected ? LocusTheme.signal.opacity(0.10) : LocusTheme.paperDeep)
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Solo")
+                        .font(.locus(size: 10, weight: .semibold))
+                    Text("Use the selected conversation model directly")
+                        .font(.locus(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                Spacer()
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selected ? LocusTheme.signalDeep : LocusTheme.muted)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(selected ? LocusTheme.signal.opacity(0.08) : LocusTheme.white.opacity(0.62))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(selected ? LocusTheme.signalDeep.opacity(0.6) : LocusTheme.line)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.locus())
+        .accessibilityLabel("Solo, use the selected conversation model")
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .accessibilityIdentifier("composer.teamPicker.solo")
+    }
+
+    private func teamCard(_ team: AgentTeam) -> some View {
+        let selected = model.selectedAgentTeamID == team.id
+        let profiles = team.memberIDs.compactMap { id in
+            model.agentProfiles.first(where: { $0.id == id })
+        }
+        let dispatcher = team.dispatcherID.flatMap { id in
+            profiles.first(where: { $0.id == id })
+        }
+        let lead = team.defaultWriterID.flatMap { id in
+            profiles.first(where: { $0.id == id })
+        }
+        let helpers = profiles.filter { $0.id != dispatcher?.id && $0.id != lead?.id }
+        let issue = teamIssue(team)
+
+        return Button {
+            model.selectAgentTeam(team.id)
+            dismiss()
+        } label: {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: issue == nil ? "person.2.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(issue == nil ? LocusTheme.signalDeep : LocusTheme.coral)
+                        .frame(width: 22, height: 22)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(team.name)
+                            .font(.locus(size: 10, weight: .bold))
+                            .lineLimit(1)
+                        Text(issue ?? "Dispatcher chooses from \(profiles.count) configured agents")
+                            .font(.locus(size: 8))
+                            .foregroundStyle(issue == nil ? LocusTheme.muted : LocusTheme.coral)
+                            .lineLimit(2)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(selected ? LocusTheme.signalDeep : LocusTheme.muted)
+                }
+                if let dispatcher {
+                    profileLine("Dispatcher", profile: dispatcher, symbol: "arrow.triangle.branch")
+                }
+                if let lead {
+                    profileLine("Lead", profile: lead, symbol: "hammer.fill")
+                }
+                if !helpers.isEmpty {
+                    HStack(alignment: .top, spacing: 7) {
+                        Image(systemName: "person.2")
+                            .font(.locus(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                            .frame(width: 13)
+                        Text("Helpers · \(helpers.map(\.model).joined(separator: ", "))")
+                            .font(.locus(size: 8, design: .monospaced))
+                            .foregroundStyle(LocusTheme.inkSoft)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                    }
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(selected ? LocusTheme.signal.opacity(0.08) : LocusTheme.white.opacity(0.62))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(selected ? LocusTheme.signalDeep.opacity(0.6) : LocusTheme.line)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.locus())
+        .accessibilityLabel(teamAccessibilityLabel(team, profiles: profiles, issue: issue))
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .accessibilityIdentifier("composer.teamPicker.team.\(team.id.uuidString)")
+    }
+
+    private func profileLine(
+        _ label: String,
+        profile: AgentProfile,
+        symbol: String
+    ) -> some View {
+        HStack(alignment: .top, spacing: 7) {
+            Image(systemName: symbol)
+                .font(.locus(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+                .frame(width: 13)
+            Text("\(label) · \(profile.model) · \(routeTitle(profile.route))")
+                .font(.locus(size: 8, design: .monospaced))
+                .foregroundStyle(LocusTheme.inkSoft)
+                .lineLimit(2)
+                .truncationMode(.middle)
+        }
+    }
+
+    private func teamIssue(_ team: AgentTeam) -> String? {
+        if let error = AgentTeamValidation.errors(team: team, profiles: model.agentProfiles).first {
+            return error
+        }
+        let memberAccountIDs = Set(team.memberIDs.compactMap { id in
+            model.agentProfiles.first(where: { $0.id == id })?.route.accountID
+        })
+        for accountID in memberAccountIDs {
+            guard let account = model.providerAccounts.first(where: { $0.id == accountID }) else {
+                return "A hosted provider used by this team is unavailable."
+            }
+            if !account.hasKey {
+                return "Reconnect \(account.displayName) before using this team."
+            }
+        }
+        if let error = AgentTeamValidation.routeErrors(
+            team: team,
+            profiles: model.agentProfiles,
+            accounts: model.providerAccounts,
+            accountModels: model.accountModels
+        ).first {
+            return error
+        }
+        if let missingID = memberAccountIDs.subtracting(model.teamRoutingConsentAccountIDs).first {
+            let name = model.providerAccounts.first(where: { $0.id == missingID })?.displayName
+                ?? "a hosted provider"
+            return "Allow automatic routing for \(name) in Advanced settings."
+        }
+        return nil
+    }
+
+    private func routeTitle(_ route: AgentRoute) -> String {
+        switch route {
+        case .localOllama: "Local"
+        case .providerAccount(let accountID):
+            model.providerAccounts.first(where: { $0.id == accountID })?.shortName
+                ?? "Unavailable"
+        }
+    }
+
+    private func teamAccessibilityLabel(
+        _ team: AgentTeam,
+        profiles: [AgentProfile],
+        issue: String?
+    ) -> String {
+        let models = profiles.map(\.model).joined(separator: ", ")
+        return [team.name, "models \(models)", issue].compactMap { $0 }.joined(separator: ", ")
+    }
+
+    private func actionButton(
+        _ title: String,
+        symbol: String,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: symbol)
+                    .foregroundStyle(LocusTheme.signalDeep)
+                    .frame(width: 16)
+                Text(title)
+                Spacer()
+            }
+            .font(.locus(size: 9, weight: .semibold))
+            .padding(.horizontal, 7)
+            .frame(height: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.locus())
+        .accessibilityIdentifier(identifier)
     }
 }
 

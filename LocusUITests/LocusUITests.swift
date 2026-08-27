@@ -626,6 +626,44 @@ final class LocusUITests: XCTestCase {
         host.typeText("127.0.0.1")
         port.click()
         port.typeText("8080")
+    func testVisualQuickTeamCanBeCreatedFromComposerAndRemainsAdvancedEditable() {
+        let teamButton = anyElement("composer.team")
+        XCTAssertTrue(teamButton.waitForExistence(timeout: 3))
+        teamButton.click()
+
+        XCTAssertTrue(anyElement("composer.teamPicker").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("composer.teamPicker.solo").exists)
+        anyElement("composer.teamPicker.create").click()
+
+        XCTAssertTrue(anyElement("quickTeam.builder").waitForExistence(timeout: 3))
+        let create = anyElement("quickTeam.create")
+        XCTAssertFalse(create.isEnabled)
+
+        let modelCard = anyElement("quickTeam.model.ollama|qwen3:8b")
+        XCTAssertTrue(waitUntilHittable(modelCard))
+        modelCard.click() // Dispatcher; the builder advances to Lead editor.
+        XCTAssertEqual(anyElement("quickTeam.lane.lead").value as? String, "Active lane")
+        modelCard.click() // The same route is valid for a separate Lead profile.
+
+        XCTAssertTrue(waitUntil { create.isEnabled })
+        create.click()
+        XCTAssertTrue(waitUntil { !self.anyElement("quickTeam.builder").exists })
+        XCTAssertEqual(teamButton.value as? String, "Quick Team")
+
+        teamButton.click()
+        XCTAssertTrue(anyElement("composer.teamPicker.solo").waitForExistence(timeout: 3))
+        anyElement("composer.teamPicker.solo").click()
+        XCTAssertEqual(teamButton.value as? String, "Solo")
+
+        teamButton.click()
+        anyElement("composer.teamPicker.manage").click()
+        XCTAssertTrue(anyElement("settings.quickTeam.create").waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Add Agent"].exists)
+        XCTAssertTrue(app.staticTexts["Quick Team"].exists)
+        XCTAssertTrue(app.staticTexts["qwen3:8b Dispatcher"].exists)
+        XCTAssertTrue(app.staticTexts["qwen3:8b Lead"].exists)
+    }
+
         XCTAssertTrue(app.buttons["settings.save"].isEnabled)
 
         anyElement("settings.page.general").click()

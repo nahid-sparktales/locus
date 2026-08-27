@@ -4492,6 +4492,89 @@ final class AppModel: ObservableObject {
         guard updated.isConfigured else {
             showToast("Give the agent a name and exact model")
             return
+    func suggestedQuickTeamName() -> String {
+        QuickTeamFactory.suggestedTeamName(existingTeams: agentTeams)
+    }
+
+    func missingQuickTeamRoutingAccounts(for draft: QuickTeamDraft) -> [ProviderAccount] {
+        draft.selectedAccountIDs
+            .subtracting(teamRoutingConsentAccountIDs)
+            .compactMap { id in providerAccounts.first(where: { $0.id == id }) }
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
+    @discardableResult
+    func createAndSelectQuickTeam(
+        _ draft: QuickTeamDraft
+    ) -> Result<AgentTeam, QuickTeamCreationError> {
+        if isBusy { return quickTeamFailure(.activeRun) }
+        if let account = missingQuickTeamRoutingAccounts(for: draft).first {
+            return quickTeamFailure(.routingConsentRequired(account.displayName))
+        }
+        if let availabilityError = quickTeamAvailabilityError(for: draft) {
+            return quickTeamFailure(availabilityError)
+        }
+
+        do {
+            let build = try QuickTeamFactory.build(
+                draft: draft,
+                existingProfiles: agentProfiles,
+                existingTeams: agentTeams
+            )
+            // Publish only after the complete staged result validates. This
+            // prevents a failed quick setup from leaving orphaned profiles.
+            agentProfiles = build.profiles
+            agentTeams.append(build.team)
+            persistAgentTeams()
+            soloSwarmEnabled = false
+            selectedAgentTeamID = build.team.id
+            showToast("Created and selected \(build.team.name)")
+            return .success(build.team)
+        } catch let error as QuickTeamCreationError {
+            return quickTeamFailure(error)
+        } catch {
+            return quickTeamFailure(.invalidTeam(error.localizedDescription))
+        }
+    }
+
+    private func quickTeamAvailabilityError(
+        for draft: QuickTeamDraft
+    ) -> QuickTeamCreationError? {
+        for choice in draft.selectedChoices {
+            switch choice.route {
+            case .localOllama:
+                if !localModels.isEmpty,
+                   !localModels.contains(where: {
+                       $0.name.caseInsensitiveCompare(choice.model) == .orderedSame
+                   })
+                {
+                    return .unavailableModel(choice.model)
+                }
+            case .providerAccount(let accountID):
+                guard let account = providerAccounts.first(where: { $0.id == accountID }),
+                      account.hasKey
+                else {
+                    return .unavailableProvider(choice.providerName)
+                }
+                guard let reported = accountModels[accountID],
+                      reported.contains(where: {
+                          $0.caseInsensitiveCompare(choice.model) == .orderedSame
+                      })
+                else {
+                    return .unavailableModel(choice.model)
+                }
+            }
+        }
+        return nil
+    }
+
+    private func quickTeamFailure(
+        _ error: QuickTeamCreationError
+    ) -> Result<AgentTeam, QuickTeamCreationError> {
+        showToast(error.localizedDescription)
+        return .failure(error)
+    }
+
         }
         let collision = agentProfiles.contains {
             $0.id != updated.id

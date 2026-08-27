@@ -660,6 +660,75 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testQuickTeamCreationCommitsOnceAndSelectsTheResult() throws {
+        let model = AppModel(startImmediately: false)
+        let dispatcher = QuickTeamModelChoice(
+            route: .localOllama,
+            providerName: "Local (Ollama)",
+            providerShortName: "Local",
+            model: "qwen-dispatch"
+        )
+        let lead = QuickTeamModelChoice(
+            route: .localOllama,
+            providerName: "Local (Ollama)",
+            providerShortName: "Local",
+            model: "qwen-code"
+        )
+
+        let result = model.createAndSelectQuickTeam(QuickTeamDraft(
+            name: "Quick Team",
+            dispatcher: dispatcher,
+            leadEditor: lead
+        ))
+        let team = try result.get()
+
+        XCTAssertEqual(model.agentProfiles.count, 2)
+        XCTAssertEqual(model.agentTeams, [team])
+        XCTAssertEqual(model.selectedAgentTeamID, team.id)
+        XCTAssertFalse(model.soloSwarmEnabled)
+        XCTAssertEqual(model.suggestedQuickTeamName(), "Quick Team 2")
+
+        let profilesBeforeFailure = model.agentProfiles
+        let teamsBeforeFailure = model.agentTeams
+        let duplicate = model.createAndSelectQuickTeam(QuickTeamDraft(
+            name: "quick team",
+            dispatcher: dispatcher,
+            leadEditor: lead
+        ))
+        XCTAssertEqual(duplicate, .failure(.duplicateTeamName))
+        XCTAssertEqual(model.agentProfiles, profilesBeforeFailure)
+        XCTAssertEqual(model.agentTeams, teamsBeforeFailure)
+    }
+
+    @MainActor
+    func testQuickTeamCreationNeverGrantsHostedRoutingConsentImplicitly() {
+        let model = AppModel(startImmediately: false)
+        let account = seedAccount(
+            model,
+            kind: .claude,
+            name: "Quick Team",
+            preferredModel: "claude-sonnet"
+        )
+        let choice = QuickTeamModelChoice(
+            route: .providerAccount(account.id),
+            providerName: account.displayName,
+            providerShortName: account.shortName,
+            model: "claude-sonnet"
+        )
+
+        let result = model.createAndSelectQuickTeam(QuickTeamDraft(
+            name: "Hosted Team",
+            dispatcher: choice,
+            leadEditor: choice
+        ))
+
+        XCTAssertEqual(result, .failure(.routingConsentRequired(account.displayName)))
+        XCTAssertFalse(model.teamRoutingConsentAccountIDs.contains(account.id))
+        XCTAssertTrue(model.agentProfiles.isEmpty)
+        XCTAssertTrue(model.agentTeams.isEmpty)
+    }
+
+    @MainActor
     func testTeamDispatchProgressBecomesOneTimePlanApproval() {
         let model = AppModel(startImmediately: false)
         model.isBusy = true

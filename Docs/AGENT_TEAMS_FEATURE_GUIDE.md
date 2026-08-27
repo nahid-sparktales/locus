@@ -188,6 +188,32 @@ Example: begin a team task with local uncommitted edits. The team receives a pri
 
 Open **Settings → Agents & Teams**.
 
+### Quick Team
+
+For the shortest setup, choose **Create Quick Team** in Agents & Teams or open
+the Solo/Team control beside the composer modes and choose **Create Quick
+Team**. The visual builder has three lanes:
+
+- **Dispatcher** plans the run and decides which selected helpers are useful.
+- **Lead editor** is the only quick-team member allowed to edit workspace files.
+- **Helpers** are optional read-only models for research, planning, and review.
+
+Choose a lane, then select a model card. Dispatcher and Lead editor may use the
+same model; Locus still gives them separate, safely scoped profiles. Models are
+grouped by provider, so identical model names from different accounts remain
+distinct. Hosted providers require an explicit automatic-routing approval
+before **Create & Use Team** becomes available.
+
+Quick Team saves and selects the result immediately. It uses scorecard routing,
+one-time plan review, a managed worktree, automatic call budgeting, and adaptive
+read-only delegation. The generated profiles and team appear in the existing
+advanced sections, where every role, instruction, budget, routing weight, and
+tool policy remains editable.
+
+The composer’s Solo/Team popover shows each saved team as a card with its
+dispatcher, lead editor, helper models, providers, and any setup warning. Choose
+**Solo** there to return to the conversation model without deleting the team.
+
 ### Agent profiles
 
 An agent profile describes one model and the job it is allowed to perform. A profile includes:

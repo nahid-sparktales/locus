@@ -423,6 +423,100 @@ enum AgentRoute: Codable, Hashable {
     }
 }
 
+/// A provider-scoped model identity used by the visual quick-team builder.
+/// Model names alone are not unique because two accounts can expose the same
+/// identifier while using different credentials, billing, and privacy rules.
+struct QuickTeamModelChoice: Identifiable, Hashable {
+    let route: AgentRoute
+    let providerName: String
+    let providerShortName: String
+    let model: String
+
+    var id: String {
+        let source = switch route {
+        case .localOllama: "ollama"
+        case .providerAccount(let accountID): accountID.uuidString.lowercased()
+        }
+        return "\(source)|\(model.lowercased())"
+    }
+
+    var accountID: UUID? { route.accountID }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.route == rhs.route
+            && lhs.model.caseInsensitiveCompare(rhs.model) == .orderedSame
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(route)
+        hasher.combine(model.lowercased())
+    }
+
+    func matches(_ profile: AgentProfile) -> Bool {
+        route == profile.route
+            && model.caseInsensitiveCompare(profile.model) == .orderedSame
+    }
+}
+
+struct QuickTeamDraft: Hashable {
+    var name: String
+    var dispatcher: QuickTeamModelChoice?
+    var leadEditor: QuickTeamModelChoice?
+    var helpers: [QuickTeamModelChoice] = []
+
+    var selectedChoices: [QuickTeamModelChoice] {
+        var seen: Set<QuickTeamModelChoice> = []
+        return ([dispatcher, leadEditor].compactMap { $0 } + helpers).filter {
+            seen.insert($0).inserted
+        }
+    }
+
+    var selectedAccountIDs: Set<UUID> {
+        Set(selectedChoices.compactMap(\.accountID))
+    }
+}
+
+enum QuickTeamCreationError: LocalizedError, Equatable {
+    case activeRun
+    case missingName
+    case duplicateTeamName
+    case missingDispatcher
+    case missingLeadEditor
+    case unavailableProvider(String)
+    case unavailableModel(String)
+    case routingConsentRequired(String)
+    case invalidTeam(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .activeRun:
+            "Stop the active run before creating a team."
+        case .missingName:
+            "Give the quick team a name."
+        case .duplicateTeamName:
+            "A team with that name already exists."
+        case .missingDispatcher:
+            "Choose a dispatcher model."
+        case .missingLeadEditor:
+            "Choose a lead editor model."
+        case .unavailableProvider(let provider):
+            "\(provider) is unavailable. Choose a connected provider."
+        case .unavailableModel(let model):
+            "\(model) is no longer available. Refresh models and choose again."
+        case .routingConsentRequired(let provider):
+            "Allow automatic team routing for \(provider) before creating this team."
+        case .invalidTeam(let message):
+            message
+        }
+    }
+}
+
+struct QuickTeamBuild: Equatable {
+    let profiles: [AgentProfile]
+    let team: AgentTeam
+    let createdProfileIDs: [UUID]
+}
+
 struct AgentProfile: Identifiable, Codable, Hashable {
     var id = UUID()
     var name: String
@@ -792,6 +886,144 @@ enum AgentTeamValidation {
             )
         }
         return Array(Set(errors)).sorted()
+    }
+}
+
+enum QuickTeamFactory {
+    static func suggestedTeamName(existingTeams: [AgentTeam]) -> String {
+        let taken = Set(existingTeams.map { $0.name.lowercased() })
+        if !taken.contains("quick team") { return "Quick Team" }
+        for suffix in 2...999 {
+            let candidate = "Quick Team \(suffix)"
+            if !taken.contains(candidate.lowercased()) { return candidate }
+        }
+        return "Quick Team \(UUID().uuidString.prefix(6))"
+    }
+
+    static func build(
+        draft: QuickTeamDraft,
+        existingProfiles: [AgentProfile],
+        existingTeams: [AgentTeam]
+    ) throws -> QuickTeamBuild {
+        let name = String(
+            draft.name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(64)
+        )
+        guard !name.isEmpty else { throw QuickTeamCreationError.missingName }
+        guard !existingTeams.contains(where: {
+            $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }) else {
+            throw QuickTeamCreationError.duplicateTeamName
+        }
+        guard let dispatcherChoice = draft.dispatcher else {
+            throw QuickTeamCreationError.missingDispatcher
+        }
+        guard let leadChoice = draft.leadEditor else {
+            throw QuickTeamCreationError.missingLeadEditor
+        }
+
+        var profiles = existingProfiles
+        var createdProfileIDs: [UUID] = []
+
+        func resolveProfile(
+            choice: QuickTeamModelChoice,
+            role: AgentRole,
+            access: AgentAccessCeiling,
+            label: String
+        ) -> AgentProfile {
+            if let existing = profiles.first(where: {
+                choice.matches($0) && $0.role == role && $0.accessCeiling == access
+            }) {
+                return existing
+            }
+
+            let baseName = "\(choice.model) \(label)"
+            let profile = AgentProfile(
+                name: uniqueProfileName(baseName, existingProfiles: profiles),
+                route: choice.route,
+                model: choice.model,
+                role: role,
+                instructions: role.defaultInstructions,
+                accessCeiling: access
+            )
+            profiles.append(profile)
+            createdProfileIDs.append(profile.id)
+            return profile
+        }
+
+        let dispatcher = resolveProfile(
+            choice: dispatcherChoice,
+            role: .dispatcher,
+            access: .readOnly,
+            label: "Dispatcher"
+        )
+        let lead = resolveProfile(
+            choice: leadChoice,
+            role: .implementer,
+            access: .workspaceWrite,
+            label: "Lead"
+        )
+
+        var seenHelpers: Set<QuickTeamModelChoice> = []
+        let helperProfiles = draft.helpers.compactMap { choice -> AgentProfile? in
+            guard choice != dispatcherChoice,
+                  choice != leadChoice,
+                  seenHelpers.insert(choice).inserted
+            else { return nil }
+            return resolveProfile(
+                choice: choice,
+                role: .generalist,
+                access: .readOnly,
+                label: "Helper"
+            )
+        }
+
+        var seenMembers: Set<UUID> = []
+        let memberIDs = ([dispatcher.id, lead.id] + helperProfiles.map(\.id)).filter {
+            seenMembers.insert($0).inserted
+        }
+        var team = AgentTeam(
+            name: name,
+            dispatcherID: dispatcher.id,
+            fallbackDispatcherID: nil,
+            memberIDs: memberIDs,
+            defaultWriterID: lead.id,
+            budget: OrchestrationBudget(callBudgetMode: .automatic),
+            useManagedWorktree: true,
+            parallelWriters: nil,
+            dispatchApprovalMode: .preview,
+            routingMode: .scorecard,
+            routingWeights: .init(),
+            evaluationTags: nil,
+            maximumEstimatedCost: nil,
+            swarmPolicy: .adaptiveDefault
+        )
+        team.clamp()
+        if let error = AgentTeamValidation.errors(team: team, profiles: profiles).first {
+            throw QuickTeamCreationError.invalidTeam(error)
+        }
+        return QuickTeamBuild(
+            profiles: profiles,
+            team: team,
+            createdProfileIDs: createdProfileIDs
+        )
+    }
+
+    private static func uniqueProfileName(
+        _ proposed: String,
+        existingProfiles: [AgentProfile]
+    ) -> String {
+        let taken = Set(existingProfiles.map { $0.name.lowercased() })
+        let base = String(
+            proposed.trimmingCharacters(in: .whitespacesAndNewlines).prefix(64)
+        )
+        if !taken.contains(base.lowercased()) { return base }
+        for suffix in 2...999 {
+            let ending = " \(suffix)"
+            let prefix = String(base.prefix(max(1, 64 - ending.count)))
+            let candidate = prefix + ending
+            if !taken.contains(candidate.lowercased()) { return candidate }
+        }
+        return String("\(base) \(UUID().uuidString.prefix(6))".prefix(64))
     }
 }
 

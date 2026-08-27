@@ -8,11 +8,13 @@ struct AgentTeamsSettingsView: View {
     @State private var editingSuite: EvaluationSuite?
     @State private var evaluationReport: EvaluationReport?
     @State private var consentAccount: ProviderAccount?
+    @State private var quickTeamPresented = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 settingsHeader
+                quickTeamSection
                 primaryAgentSection
                 runtimeSection
                 profilesSection
@@ -29,6 +31,10 @@ struct AgentTeamsSettingsView: View {
                 editingProfile = nil
             }
             .environmentObject(model)
+        }
+        .sheet(isPresented: $quickTeamPresented) {
+            QuickTeamBuilderView(suggestedName: model.suggestedQuickTeamName())
+                .environmentObject(model)
         }
         .sheet(isPresented: $editingPrimaryAgent) {
             AgentBehaviorEditor(
@@ -75,6 +81,40 @@ struct AgentTeamsSettingsView: View {
         } message: {
             Text("A dispatcher may send the task and specialist evidence to this provider without asking again during a team run. API keys stay in memory and are never stored in team manifests.")
         }
+    }
+
+    private var quickTeamSection: some View {
+        HStack(alignment: .center, spacing: 14) {
+            Image(systemName: "person.3.sequence.fill")
+                .font(.locus(size: 18, weight: .semibold))
+                .foregroundStyle(LocusTheme.signalDeep)
+                .frame(width: 42, height: 42)
+                .background(LocusTheme.signal.opacity(0.10))
+                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            VStack(alignment: .leading, spacing: 3) {
+                Text("QUICK TEAM")
+                    .font(.locus(size: 8, weight: .bold))
+                    .tracking(0.8)
+                    .foregroundStyle(LocusTheme.muted)
+                Text("Choose models visually and start using the team right away.")
+                    .font(.locus(size: 11, weight: .semibold))
+                Text("Pick a dispatcher, a lead editor, and optional read-only helpers. Everything remains editable in the advanced sections below.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            Button("Create Quick Team…") { quickTeamPresented = true }
+                .buttonStyle(.borderedProminent)
+                .tint(LocusTheme.ink)
+                .controlSize(.small)
+                .disabled(model.isBusy)
+                .accessibilityIdentifier("settings.quickTeam.create")
+        }
+        .padding(14)
+        .locusCard()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("settings.quickTeam")
     }
 
     private var runtimeSection: some View {
@@ -394,6 +434,569 @@ struct AgentTeamsSettingsView: View {
                 .background(LocusTheme.white.opacity(0.65))
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .overlay { RoundedRectangle(cornerRadius: 10).stroke(LocusTheme.line) }
+        }
+    }
+}
+
+struct QuickTeamBuilderView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: QuickTeamDraft
+    @State private var activeLane: Lane = .dispatcher
+    @State private var search = ""
+    @State private var consentAccount: ProviderAccount?
+    @State private var creationError: String?
+
+    private enum Lane: String, CaseIterable, Identifiable {
+        case dispatcher
+        case lead
+        case helpers
+
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .dispatcher: "Dispatcher"
+            case .lead: "Lead editor"
+            case .helpers: "Helpers"
+            }
+        }
+        var symbol: String {
+            switch self {
+            case .dispatcher: "point.3.connected.trianglepath.dotted"
+            case .lead: "hammer.fill"
+            case .helpers: "person.2.fill"
+            }
+        }
+        var detail: String {
+            switch self {
+            case .dispatcher: "Plans and assigns work"
+            case .lead: "Can edit workspace files"
+            case .helpers: "Read-only research and review"
+            }
+        }
+    }
+
+    private struct ChoiceSection: Identifiable {
+        let id: String
+        let title: String
+        let choices: [QuickTeamModelChoice]
+        let emptyMessage: String?
+    }
+
+    init(suggestedName: String) {
+        _draft = State(initialValue: QuickTeamDraft(name: suggestedName))
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    nameField
+                    lanePicker
+                    modelCatalog
+                    runSummary
+                    consentSection
+                }
+                .padding(20)
+            }
+            .accessibilityIdentifier("quickTeam.scroll")
+            Divider()
+            footer
+        }
+        .frame(width: 700, height: 660)
+        .background(LocusTheme.paper)
+        .accessibilityIdentifier("quickTeam.builder")
+        .task {
+            await model.refreshMetadata()
+            await model.refreshAccountCatalogs(force: true)
+        }
+        .confirmationDialog(
+            "Allow automatic hosted routing?",
+            isPresented: Binding(
+                get: { consentAccount != nil },
+                set: { if !$0 { consentAccount = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let account = consentAccount {
+                Button("Allow \(account.displayName)") {
+                    model.grantAutomaticRoutingConsent(for: account.id)
+                    consentAccount = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { consentAccount = nil }
+        } message: {
+            Text("The dispatcher may send the task and specialist evidence to this provider during a team run. Credentials are never stored in the team.")
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "person.3.sequence.fill")
+                .font(.locus(size: 16, weight: .semibold))
+                .foregroundStyle(LocusTheme.signalDeep)
+                .frame(width: 38, height: 38)
+                .background(LocusTheme.signal.opacity(0.10))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Create a Quick Team")
+                    .font(.locus(size: 16, weight: .bold))
+                Text("Choose a lane, then click a model. Advanced settings remain available afterward.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            Spacer()
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.locus(size: 10, weight: .bold))
+            }
+            .buttonStyle(.locus())
+            .accessibilityLabel("Close quick team builder")
+            .accessibilityIdentifier("quickTeam.close")
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 15)
+    }
+
+    private var nameField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("TEAM NAME")
+                .font(.locus(size: 8, weight: .bold))
+                .tracking(0.8)
+                .foregroundStyle(LocusTheme.muted)
+            TextField("Quick Team", text: $draft.name)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Quick team name")
+                .accessibilityIdentifier("quickTeam.name")
+        }
+    }
+
+    private var lanePicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("1. CHOOSE WHERE THE MODEL WILL WORK")
+                .font(.locus(size: 8, weight: .bold))
+                .tracking(0.8)
+                .foregroundStyle(LocusTheme.muted)
+            HStack(alignment: .top, spacing: 10) {
+                ForEach(Lane.allCases) { lane in
+                    laneCard(lane)
+                }
+            }
+        }
+    }
+
+    private func laneCard(_ lane: Lane) -> some View {
+        let selected = activeLane == lane
+        return Button {
+            activeLane = lane
+            creationError = nil
+        } label: {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 7) {
+                    Image(systemName: lane.symbol)
+                        .foregroundStyle(selected ? LocusTheme.signalDeep : LocusTheme.muted)
+                    Text(lane.title)
+                        .font(.locus(size: 11, weight: .semibold))
+                    Spacer(minLength: 4)
+                    if selected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(LocusTheme.signalDeep)
+                    }
+                }
+                Text(laneSelectionTitle(lane))
+                    .font(.locus(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(laneHasSelection(lane) ? LocusTheme.ink : LocusTheme.muted)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .frame(minHeight: 23, alignment: .topLeading)
+                Text(lane.detail)
+                    .font(.locus(size: 8))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            .padding(11)
+            .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
+            .background(selected ? LocusTheme.signal.opacity(0.09) : LocusTheme.white.opacity(0.62))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(selected ? LocusTheme.signalDeep.opacity(0.65) : LocusTheme.line, lineWidth: selected ? 1.5 : 1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.locus())
+        .accessibilityLabel("\(lane.title), \(laneSelectionTitle(lane))")
+        .accessibilityValue(selected ? "Active lane" : "Not active")
+        .accessibilityIdentifier("quickTeam.lane.\(lane.rawValue)")
+    }
+
+    private var modelCatalog: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("2. PICK \(activeLane.title.uppercased()) MODELS")
+                        .font(.locus(size: 8, weight: .bold))
+                        .tracking(0.8)
+                        .foregroundStyle(LocusTheme.muted)
+                    Text(activeLane == .helpers
+                        ? "Choose any number of helpers. Click again to remove one."
+                        : "Choose one model. Dispatcher and lead may use the same model.")
+                        .font(.locus(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                Spacer()
+                TextField("Search models", text: $search)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 220)
+                    .accessibilityIdentifier("quickTeam.search")
+            }
+
+            if choiceSections.allSatisfy({ $0.choices.isEmpty }) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(search.isEmpty
+                        ? "No catalog models are available yet. Connect a provider or install an Ollama model."
+                        : "No models match “\(search)”.")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                    Button("Manage Models & Providers…") { openProviders() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityIdentifier("quickTeam.manageProviders")
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(LocusTheme.white.opacity(0.55))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            } else {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(choiceSections) { section in
+                        if !section.choices.isEmpty {
+                            VStack(alignment: .leading, spacing: 7) {
+                                Text(section.title.uppercased())
+                                    .font(.locus(size: 8, weight: .bold))
+                                    .tracking(0.7)
+                                    .foregroundStyle(LocusTheme.muted)
+                                LazyVGrid(
+                                    columns: [GridItem(.adaptive(minimum: 205), spacing: 8)],
+                                    alignment: .leading,
+                                    spacing: 8
+                                ) {
+                                    ForEach(section.choices) { choice in
+                                        modelCard(choice)
+                                    }
+                                }
+                            }
+                        } else if search.isEmpty, let emptyMessage = section.emptyMessage {
+                            VStack(alignment: .leading, spacing: 7) {
+                                Text(section.title.uppercased())
+                                    .font(.locus(size: 8, weight: .bold))
+                                    .tracking(0.7)
+                                    .foregroundStyle(LocusTheme.muted)
+                                HStack(spacing: 10) {
+                                    Text(emptyMessage)
+                                        .font(.locus(size: 8))
+                                        .foregroundStyle(LocusTheme.muted)
+                                    Spacer()
+                                    Button("Manage…") { openProviders() }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.mini)
+                                        .accessibilityLabel("Manage models for \(section.title)")
+                                }
+                                .padding(10)
+                                .background(LocusTheme.white.opacity(0.45))
+                                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func modelCard(_ choice: QuickTeamModelChoice) -> some View {
+        let selected = isSelected(choice, for: activeLane)
+        let unavailableAsHelper = activeLane == .helpers
+            && (choice == draft.dispatcher || choice == draft.leadEditor)
+        return Button {
+            choose(choice, for: activeLane)
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(selected ? LocusTheme.signalDeep : LocusTheme.muted)
+                    Text(choice.model)
+                        .font(.locus(size: 9, weight: .semibold, design: .monospaced))
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                HStack(spacing: 5) {
+                    Text(choice.providerShortName)
+                        .font(.locus(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                        .lineLimit(1)
+                    Spacer(minLength: 2)
+                    assignmentBadges(choice)
+                }
+            }
+            .padding(9)
+            .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
+            .background(selected ? LocusTheme.signal.opacity(0.09) : LocusTheme.white.opacity(0.62))
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(selected ? LocusTheme.signalDeep.opacity(0.62) : LocusTheme.line, lineWidth: selected ? 1.5 : 1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.locus())
+        .disabled(unavailableAsHelper)
+        .help(unavailableAsHelper
+            ? "This model already has a required role."
+            : "Use \(choice.model) as \(activeLane.title.lowercased())")
+        .accessibilityLabel("\(choice.model) from \(choice.providerName)")
+        .accessibilityValue(accessibilityAssignments(choice))
+        .accessibilityIdentifier("quickTeam.model.\(choice.id)")
+    }
+
+    @ViewBuilder
+    private func assignmentBadges(_ choice: QuickTeamModelChoice) -> some View {
+        if draft.dispatcher == choice { assignmentBadge("D") }
+        if draft.leadEditor == choice { assignmentBadge("L") }
+        if draft.helpers.contains(choice) { assignmentBadge("H") }
+    }
+
+    private func assignmentBadge(_ label: String) -> some View {
+        Text(label)
+            .font(.locus(size: 7, weight: .bold))
+            .foregroundStyle(LocusTheme.signalDeep)
+            .frame(width: 16, height: 16)
+            .background(LocusTheme.signal.opacity(0.12))
+            .clipShape(Circle())
+            .accessibilityHidden(true)
+    }
+
+    private var runSummary: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("WHAT HAPPENS WHEN YOU RUN IT")
+                .font(.locus(size: 8, weight: .bold))
+                .tracking(0.8)
+                .foregroundStyle(LocusTheme.muted)
+            summaryRow("Dispatcher chooses only the useful helpers", symbol: "arrow.triangle.branch")
+            summaryRow("Lead editor is the only quick-team member that can edit files", symbol: "lock.shield")
+            summaryRow("You review the complete plan once before work starts", symbol: "checkmark.shield")
+            summaryRow("Advanced roles, budgets, routing, and instructions remain editable", symbol: "slider.horizontal.3")
+        }
+        .padding(12)
+        .locusCard()
+    }
+
+    private func summaryRow(_ title: String, symbol: String) -> some View {
+        Label(title, systemImage: symbol)
+            .font(.locus(size: 9))
+            .foregroundStyle(LocusTheme.inkSoft)
+    }
+
+    @ViewBuilder
+    private var consentSection: some View {
+        let accounts = model.missingQuickTeamRoutingAccounts(for: draft)
+        if !accounts.isEmpty {
+            VStack(alignment: .leading, spacing: 9) {
+                Label("Hosted routing needs your approval", systemImage: "lock.shield.fill")
+                    .font(.locus(size: 10, weight: .semibold))
+                    .foregroundStyle(LocusTheme.coral)
+                Text("Approve each selected hosted account before creating the team. This never stores its credentials in the team.")
+                    .font(.locus(size: 8))
+                    .foregroundStyle(LocusTheme.muted)
+                ForEach(accounts) { account in
+                    HStack {
+                        Text(account.displayName)
+                            .font(.locus(size: 9, weight: .medium))
+                        Spacer()
+                        Button("Allow") { consentAccount = account }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .accessibilityLabel("Allow automatic routing for \(account.displayName)")
+                            .accessibilityIdentifier("quickTeam.consent.\(account.id.uuidString)")
+                    }
+                }
+            }
+            .padding(12)
+            .background(LocusTheme.coral.opacity(0.07))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(LocusTheme.coral.opacity(0.35))
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 12) {
+            if let message = creationError ?? blockingMessage {
+                Label(message, systemImage: "info.circle")
+                    .font(.locus(size: 8))
+                    .foregroundStyle(creationError == nil ? LocusTheme.muted : LocusTheme.coral)
+                    .lineLimit(2)
+                    .accessibilityIdentifier("quickTeam.status")
+            } else {
+                Text("Ready to create and select \(draft.name.trimmingCharacters(in: .whitespacesAndNewlines)).")
+                    .font(.locus(size: 8))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            Spacer()
+            Button("Cancel") { dismiss() }
+                .accessibilityIdentifier("quickTeam.cancel")
+            Button("Create & Use Team") { createTeam() }
+                .buttonStyle(.borderedProminent)
+                .tint(LocusTheme.ink)
+                .disabled(blockingMessage != nil)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("quickTeam.create")
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(LocusTheme.paper)
+    }
+
+    private var choiceSections: [ChoiceSection] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return allChoiceSections.map { section in
+            ChoiceSection(
+                id: section.id,
+                title: section.title,
+                choices: section.choices.filter { choice in
+                    query.isEmpty
+                        || choice.model.lowercased().contains(query)
+                        || choice.providerName.lowercased().contains(query)
+                },
+                emptyMessage: section.emptyMessage
+            )
+        }
+    }
+
+    private var allChoiceSections: [ChoiceSection] {
+        model.modelPickerSections.map { section in
+            let route = section.account.map { AgentRoute.providerAccount($0.id) }
+                ?? .localOllama
+            let choices = section.models.map { modelName in
+                QuickTeamModelChoice(
+                    route: route,
+                    providerName: section.title,
+                    providerShortName: section.account?.shortName ?? "Local",
+                    model: modelName
+                )
+            }
+            return ChoiceSection(
+                id: section.id,
+                title: section.title,
+                choices: choices,
+                emptyMessage: section.emptyMessage
+            )
+        }
+    }
+
+    private var availableChoices: Set<QuickTeamModelChoice> {
+        Set(allChoiceSections.flatMap(\.choices))
+    }
+
+    private var blockingMessage: String? {
+        if model.isBusy { return "Stop the active run before creating a team." }
+        let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty { return "Give the team a name." }
+        if model.agentTeams.contains(where: {
+            $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }) {
+            return "A team with that name already exists."
+        }
+        guard let dispatcher = draft.dispatcher else { return "Choose a dispatcher model." }
+        guard let lead = draft.leadEditor else { return "Choose a lead editor model." }
+        let allAvailable = availableChoices
+        if !allAvailable.contains(dispatcher) || !allAvailable.contains(lead)
+            || draft.helpers.contains(where: { !allAvailable.contains($0) })
+        {
+            return "A selected model is no longer available. Refresh and choose again."
+        }
+        if let account = model.missingQuickTeamRoutingAccounts(for: draft).first {
+            return "Allow routing for \(account.displayName) to continue."
+        }
+        return nil
+    }
+
+    private func laneSelectionTitle(_ lane: Lane) -> String {
+        switch lane {
+        case .dispatcher: draft.dispatcher?.model ?? "Choose one model"
+        case .lead: draft.leadEditor?.model ?? "Choose one model"
+        case .helpers:
+            draft.helpers.isEmpty
+                ? "Optional"
+                : "\(draft.helpers.count) selected"
+        }
+    }
+
+    private func laneHasSelection(_ lane: Lane) -> Bool {
+        switch lane {
+        case .dispatcher: draft.dispatcher != nil
+        case .lead: draft.leadEditor != nil
+        case .helpers: !draft.helpers.isEmpty
+        }
+    }
+
+    private func isSelected(_ choice: QuickTeamModelChoice, for lane: Lane) -> Bool {
+        switch lane {
+        case .dispatcher: draft.dispatcher == choice
+        case .lead: draft.leadEditor == choice
+        case .helpers: draft.helpers.contains(choice)
+        }
+    }
+
+    private func choose(_ choice: QuickTeamModelChoice, for lane: Lane) {
+        creationError = nil
+        switch lane {
+        case .dispatcher:
+            draft.dispatcher = choice
+            draft.helpers.removeAll { $0 == choice }
+            activeLane = draft.leadEditor == nil ? .lead : .dispatcher
+        case .lead:
+            draft.leadEditor = choice
+            draft.helpers.removeAll { $0 == choice }
+            activeLane = .helpers
+        case .helpers:
+            guard choice != draft.dispatcher, choice != draft.leadEditor else { return }
+            if let index = draft.helpers.firstIndex(of: choice) {
+                draft.helpers.remove(at: index)
+            } else {
+                draft.helpers.append(choice)
+            }
+        }
+    }
+
+    private func accessibilityAssignments(_ choice: QuickTeamModelChoice) -> String {
+        var assignments: [String] = []
+        if draft.dispatcher == choice { assignments.append("Dispatcher") }
+        if draft.leadEditor == choice { assignments.append("Lead editor") }
+        if draft.helpers.contains(choice) { assignments.append("Helper") }
+        return assignments.isEmpty ? "Not assigned" : assignments.joined(separator: ", ")
+    }
+
+    private func createTeam() {
+        creationError = nil
+        switch model.createAndSelectQuickTeam(draft) {
+        case .success:
+            dismiss()
+        case .failure(let error):
+            creationError = error.localizedDescription
+        }
+    }
+
+    private func openProviders() {
+        dismiss()
+        Task { @MainActor in
+            await Task.yield()
+            model.presentSettings(.accounts)
         }
     }
 }

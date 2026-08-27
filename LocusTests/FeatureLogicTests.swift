@@ -3289,6 +3289,166 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
+    func testQuickTeamFactoryBuildsSafeProfilesInVisualLaneOrder() throws {
+        let dispatcherChoice = QuickTeamModelChoice(
+            route: .localOllama,
+            providerName: "Local (Ollama)",
+            providerShortName: "Local",
+            model: "qwen-dispatch"
+        )
+        let leadChoice = QuickTeamModelChoice(
+            route: .localOllama,
+            providerName: "Local (Ollama)",
+            providerShortName: "Local",
+            model: "qwen-code"
+        )
+        let helperChoice = QuickTeamModelChoice(
+            route: .localOllama,
+            providerName: "Local (Ollama)",
+            providerShortName: "Local",
+            model: "qwen-review"
+        )
+
+        let build = try QuickTeamFactory.build(
+            draft: QuickTeamDraft(
+                name: "Quick Team",
+                dispatcher: dispatcherChoice,
+                leadEditor: leadChoice,
+                helpers: [helperChoice]
+            ),
+            existingProfiles: [],
+            existingTeams: []
+        )
+
+        XCTAssertEqual(build.createdProfileIDs.count, 3)
+        XCTAssertEqual(build.team.memberIDs.count, 3)
+        let members = build.team.memberIDs.compactMap { id in
+            build.profiles.first(where: { $0.id == id })
+        }
+        XCTAssertEqual(members.map(\.role), [.dispatcher, .implementer, .generalist])
+        XCTAssertEqual(members.map(\.accessCeiling), [.readOnly, .workspaceWrite, .readOnly])
+        XCTAssertEqual(build.team.dispatcherID, members[0].id)
+        XCTAssertEqual(build.team.defaultWriterID, members[1].id)
+        XCTAssertEqual(build.team.resolvedRoutingMode, .scorecard)
+        XCTAssertEqual(build.team.resolvedDispatchApprovalMode, .preview)
+        XCTAssertEqual(build.team.budget.callBudgetMode, .automatic)
+        XCTAssertTrue(build.team.useManagedWorktree)
+        XCTAssertEqual(build.team.resolvedSwarmPolicy, .adaptiveDefault)
+    }
+
+    func testQuickTeamFactoryReusesOnlyExactRoleAndAccessMatches() throws {
+        let sharedChoice = QuickTeamModelChoice(
+            route: .localOllama,
+            providerName: "Local (Ollama)",
+            providerShortName: "Local",
+            model: "qwen"
+        )
+        let dispatcher = AgentProfile(
+            name: "Existing Dispatcher",
+            model: "qwen",
+            role: .dispatcher,
+            accessCeiling: .readOnly
+        )
+        let lead = AgentProfile(
+            name: "Existing Lead",
+            model: "qwen",
+            role: .implementer,
+            accessCeiling: .workspaceWrite
+        )
+        let overlyBroadLead = AgentProfile(
+            name: "Computer Lead",
+            model: "other-code",
+            role: .implementer,
+            accessCeiling: .computerControl
+        )
+        let otherChoice = QuickTeamModelChoice(
+            route: .localOllama,
+            providerName: "Local (Ollama)",
+            providerShortName: "Local",
+            model: "other-code"
+        )
+
+        let reused = try QuickTeamFactory.build(
+            draft: QuickTeamDraft(
+                name: "One Model Team",
+                dispatcher: sharedChoice,
+                leadEditor: sharedChoice
+            ),
+            existingProfiles: [dispatcher, lead],
+            existingTeams: []
+        )
+        XCTAssertTrue(reused.createdProfileIDs.isEmpty)
+        XCTAssertEqual(reused.team.memberIDs, [dispatcher.id, lead.id])
+
+        let narrowed = try QuickTeamFactory.build(
+            draft: QuickTeamDraft(
+                name: "Narrow Team",
+                dispatcher: sharedChoice,
+                leadEditor: otherChoice
+            ),
+            existingProfiles: [dispatcher, overlyBroadLead],
+            existingTeams: []
+        )
+        XCTAssertEqual(narrowed.createdProfileIDs.count, 1)
+        let generatedLead = try XCTUnwrap(
+            narrowed.profiles.first(where: { $0.id == narrowed.team.defaultWriterID })
+        )
+        XCTAssertEqual(generatedLead.accessCeiling, .workspaceWrite)
+        XCTAssertNotEqual(generatedLead.id, overlyBroadLead.id)
+    }
+
+    func testQuickTeamNamingAndProviderScopedModelIdentity() throws {
+        let accountA = UUID()
+        let accountB = UUID()
+        let first = QuickTeamModelChoice(
+            route: .providerAccount(accountA),
+            providerName: "Provider A",
+            providerShortName: "A",
+            model: "shared-model"
+        )
+        let second = QuickTeamModelChoice(
+            route: .providerAccount(accountB),
+            providerName: "Provider B",
+            providerShortName: "B",
+            model: "shared-model"
+        )
+        XCTAssertNotEqual(first, second)
+        XCTAssertNotEqual(first.id, second.id)
+
+        let existing = [
+            AgentTeam(
+                name: "Quick Team",
+                dispatcherID: nil,
+                fallbackDispatcherID: nil,
+                memberIDs: [],
+                defaultWriterID: nil
+            ),
+            AgentTeam(
+                name: "quick team 2",
+                dispatcherID: nil,
+                fallbackDispatcherID: nil,
+                memberIDs: [],
+                defaultWriterID: nil
+            ),
+        ]
+        XCTAssertEqual(
+            QuickTeamFactory.suggestedTeamName(existingTeams: existing),
+            "Quick Team 3"
+        )
+
+        XCTAssertThrowsError(try QuickTeamFactory.build(
+            draft: QuickTeamDraft(
+                name: "QUICK TEAM",
+                dispatcher: first,
+                leadEditor: second
+            ),
+            existingProfiles: [],
+            existingTeams: existing
+        )) { error in
+            XCTAssertEqual(error as? QuickTeamCreationError, .duplicateTeamName)
+        }
+    }
+
     func testLegacyTeamApprovalModesMigrateToOneTimePreview() {
         let team = AgentTeam(
             name: "Legacy automatic team",
