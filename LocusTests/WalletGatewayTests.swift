@@ -187,7 +187,10 @@ final class WalletGatewayTests: XCTestCase {
 
     @MainActor
     func testUnavailableSignerHasNoCapability() {
-        let gateway = WalletGateway(environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"])
+        let gateway = WalletGateway(
+            signer: UnavailableWalletSignerClient(),
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"]
+        )
         XCTAssertFalse(gateway.agentToolingAvailable)
         XCTAssertNil(gateway.capability)
         XCTAssertEqual(gateway.status, .securityReviewRequired)

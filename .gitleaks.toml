@@ -1,0 +1,11 @@
+title = "Locus secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "The Ollama context budget constant is not an API token"
+condition = "AND"
+regexTarget = "line"
+paths = ['''(^|/)agent/ollama_code/core\.py$''']
+regexes = ['''headroom_tokens\s*=\s*RESERVED_REPLY_TOKENS''']
