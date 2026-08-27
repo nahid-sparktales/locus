@@ -31,11 +31,11 @@ final class LocusUITests: XCTestCase {
         app.descendants(matching: .any)[identifier].firstMatch
     }
 
-    /// SwiftUI menu-item identifiers arrive as identifiers on macOS 26 but as
-    /// native titles on macOS 15. Match both representations so CI exercises
-    /// the same visible command instead of depending on an OS bridge detail.
+    /// SwiftUI menu commands arrive as menu items on macOS 26 but can retain
+    /// their underlying button or checkbox role on macOS 15. Match every role
+    /// by either the stable identifier or exact native title.
     private func menuItem(_ identifier: String, title: String) -> XCUIElement {
-        app.menuItems.matching(NSPredicate(
+        app.descendants(matching: .any).matching(NSPredicate(
             format: "identifier == %@ OR label == %@ OR title == %@",
             identifier,
             title,
