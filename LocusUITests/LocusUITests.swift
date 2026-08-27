@@ -490,9 +490,9 @@ final class LocusUITests: XCTestCase {
                 title: "Clear Saved Sessions…"
             )
             XCTAssertTrue(clearSessions.waitForExistence(timeout: 2))
-            clearSessions.coordinate(
-                withNormalizedOffset: CGVector(dx: 0.5, dy: -0.5)
-            ).click()
+            clearSessions.hover()
+            app.typeKey(.upArrow, modifierFlags: [])
+            app.typeKey(.return, modifierFlags: [])
         }
         XCTAssertTrue(app.buttons["session.seed-archived"].waitForExistence(timeout: 3))
     }
