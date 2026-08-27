@@ -31,6 +31,18 @@ final class LocusUITests: XCTestCase {
         app.descendants(matching: .any)[identifier].firstMatch
     }
 
+    /// SwiftUI menu-item identifiers arrive as identifiers on macOS 26 but as
+    /// native titles on macOS 15. Match both representations so CI exercises
+    /// the same visible command instead of depending on an OS bridge detail.
+    private func menuItem(_ identifier: String, title: String) -> XCUIElement {
+        app.menuItems.matching(NSPredicate(
+            format: "identifier == %@ OR label == %@ OR title == %@",
+            identifier,
+            title,
+            title
+        )).firstMatch
+    }
+
     /// Existence becomes true at the start of a SwiftUI transition, before a
     /// newly presented control has necessarily reached a clickable position.
     private func waitUntilHittable(_ element: XCUIElement, timeout: TimeInterval = 3) -> Bool {
@@ -369,11 +381,10 @@ final class LocusUITests: XCTestCase {
 
     func testClearSessionsPreservesTheActiveJob() {
         anyElement("sidebar.more").click()
-        let clearSessions = app.menuItems.matching(NSPredicate(
-            format: "identifier == %@ OR label == %@",
+        let clearSessions = menuItem(
             "sidebar.clearSessions",
-            "Clear Saved Sessions…"
-        )).firstMatch
+            title: "Clear Saved Sessions…"
+        )
         XCTAssertTrue(clearSessions.waitForExistence(timeout: 3))
         clearSessions.click()
 
@@ -457,7 +468,10 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("sidebar.activity").exists)
 
         anyElement("sidebar.more").click()
-        let archivedToggle = app.menuItems["sidebar.showArchived"]
+        let archivedToggle = menuItem(
+            "sidebar.showArchived",
+            title: "Show Archived Sessions"
+        )
         XCTAssertTrue(archivedToggle.waitForExistence(timeout: 2))
         archivedToggle.click()
         XCTAssertTrue(app.buttons["session.seed-archived"].waitForExistence(timeout: 3))
@@ -1194,16 +1208,14 @@ final class LocusUITests: XCTestCase {
         let settingsMenu = anyElement("sidebar.more")
         XCTAssertTrue(settingsMenu.waitForExistence(timeout: 3))
         settingsMenu.click()
-        XCTAssertTrue(app.menuItems.matching(NSPredicate(
-            format: "identifier == %@ OR label == %@",
+        XCTAssertTrue(menuItem(
             "sidebar.settings",
-            "Settings…"
-        )).firstMatch.waitForExistence(timeout: 3))
-        XCTAssertTrue(app.menuItems.matching(NSPredicate(
-            format: "identifier == %@ OR label == %@",
+            title: "Settings…"
+        ).waitForExistence(timeout: 3))
+        XCTAssertTrue(menuItem(
             "sidebar.checkpoints",
-            "Session Checkpoints…"
-        )).firstMatch.exists)
+            title: "Session Checkpoints…"
+        ).exists)
     }
 
     func testRouterAndProxiesLiveOnlyInMorePanelsMenu() {
