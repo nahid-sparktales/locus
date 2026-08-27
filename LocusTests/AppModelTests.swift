@@ -823,13 +823,13 @@ final class AppModelTests: XCTestCase {
     func testAdaptiveWorkIsTheNeutralDefault() {
         let model = AppModel(startImmediately: false)
         XCTAssertEqual(model.selectedMode, .work)
-        XCTAssertFalse(model.soloSwarmEnabled)
+        XCTAssertTrue(model.soloSwarmEnabled)
     }
 
     @MainActor
-    func testSoloTeamAndSoloSwarmRoutesAreMutuallyExclusive() {
+    func testSoloDelegationAndTeamRoutesAreMutuallyExclusive() {
         let model = AppModel(startImmediately: false)
-        model.selectSoloRoute(swarm: true)
+        model.selectSoloRoute()
         XCTAssertTrue(model.soloSwarmEnabled)
         XCTAssertNil(model.selectedAgentTeamID)
 
@@ -837,8 +837,8 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.soloSwarmEnabled)
         XCTAssertNotNil(model.selectedAgentTeamID)
 
-        model.selectSoloRoute(swarm: false)
-        XCTAssertFalse(model.soloSwarmEnabled)
+        model.selectAgentTeam(nil)
+        XCTAssertTrue(model.soloSwarmEnabled)
         XCTAssertNil(model.selectedAgentTeamID)
     }
 
@@ -1398,6 +1398,24 @@ final class AppModelTests: XCTestCase {
     }
 
     // MARK: - Settings
+
+    @MainActor
+    func testApplyingSettingsDoesNotDismissTheirPresentation() {
+        let model = AppModel(startImmediately: false)
+        model.presentSettings(.extensions)
+        XCTAssertEqual(model.settingsPage, .extensions)
+        var updated = model.settings
+        updated.showContextUsageInHeader.toggle()
+
+        model.applySettings(updated, showConfirmation: false)
+
+        XCTAssertTrue(model.settingsPresented)
+        XCTAssertEqual(
+            model.settings.showContextUsageInHeader,
+            updated.showContextUsageInHeader
+        )
+        XCTAssertNil(model.toastMessage)
+    }
 
     @MainActor
     func testAppearancePreviewIsImmediateButOnlySaveCommitsIt() {
@@ -2493,6 +2511,16 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testSelectingLegacyCheckpointDestinationOpensManagerWithoutAddingATab() {
+        let model = AppModel(startImmediately: false)
+
+        model.selectInspectorTab(.checkpoints)
+
+        XCTAssertTrue(model.checkpointPresented)
+        XCTAssertFalse(model.openInspectorTabs.contains(.checkpoints))
+    }
+
+    @MainActor
     func testClosingInspectorTabsSelectsRightThenLeftAndCollapsesWhenEmpty() {
         let model = AppModel(startImmediately: false)
         model.selectInspectorTab(.changes)
@@ -2625,7 +2653,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertNotEqual(solo.title, team.title)
         XCTAssertNotEqual(solo.message, team.message)
         XCTAssertTrue(solo.title.contains("Context & Plan"))
-        XCTAssertTrue(team.title.contains("Solo Swarm"))
+        XCTAssertTrue(team.title.contains("team requests"))
         XCTAssertTrue(solo.message.contains("Settings → General → Conversation"))
         XCTAssertTrue(team.message.contains("Settings → General → Conversation"))
     }

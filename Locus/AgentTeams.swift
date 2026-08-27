@@ -1244,7 +1244,7 @@ enum RunScope: String, CaseIterable, Identifiable {
         switch self {
         case .all: "All"
         case .teams: "Teams"
-        case .soloSwarm: "Solo Swarm"
+        case .soloSwarm: "Solo"
         }
     }
 

@@ -1,6 +1,7 @@
 import AppKit
 import QuartzCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct WorkspaceView: View {
     @EnvironmentObject private var model: AppModel
@@ -71,15 +72,18 @@ struct WorkspaceView: View {
             ConversationView(streamingReply: model.streamingReply)
                 .frame(maxHeight: .infinity)
 
-            WorkStatusStrip(streamingReply: model.streamingReply)
-                .environmentObject(model)
+            if shouldShowWorkStatus {
+                WorkStatusStrip(streamingReply: model.streamingReply)
+                    .environmentObject(model)
+                    .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
+            }
 
             ComposerView()
         }
     }
 
     private var header: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             if !sidebarVisible {
                 HeaderIconButton(
                     symbol: "sidebar.left",
@@ -92,11 +96,15 @@ struct WorkspaceView: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(sessionTitle)
+                    .font(.locus(size: 13, weight: .bold))
+                    .lineLimit(1)
+                    .accessibilityIdentifier("workspace.sessionTitle")
+
                 HStack(spacing: 5) {
                     Image(systemName: "folder.fill")
-                        .font(.locus(size: 8, weight: .medium))
-                        .foregroundStyle(LocusTheme.ink)
+                        .font(.locus(size: 7, weight: .medium))
                         .accessibilityHidden(true)
                     Text(URL(fileURLWithPath: model.workspacePath).lastPathComponent)
                         .accessibilityIdentifier("workspace.breadcrumb.path")
@@ -109,22 +117,12 @@ struct WorkspaceView: View {
                                 .accessibilityLabel("Git branch \(branch)")
                                 .accessibilityIdentifier("workspace.breadcrumb.gitBranch")
                         }
-                        .foregroundStyle(LocusTheme.ink)
                     }
-                    Text("/")
-                        .accessibilityHidden(true)
-                    Text("sessions")
-                        .accessibilityIdentifier("workspace.breadcrumb.scope")
                 }
                 .font(.locus(size: 8, design: .monospaced))
-                .foregroundStyle(LocusTheme.ink)
+                .foregroundStyle(LocusTheme.muted)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("workspace.breadcrumb")
-
-                Text(sessionTitle)
-                    .font(.locus(size: 14, weight: .bold))
-                    .lineLimit(1)
-                    .accessibilityIdentifier("workspace.sessionTitle")
             }
 
             Spacer()
@@ -135,26 +133,26 @@ struct WorkspaceView: View {
                 } label: {
                     ZStack(alignment: .topTrailing) {
                         Image(systemName: "waveform.path.ecg")
-                            .font(.locus(size: 13, weight: .medium))
+                            .font(.locus(size: 12, weight: .medium))
                             .foregroundStyle(LocusTheme.inkSoft)
-                            .frame(width: 32, height: 32)
+                            .frame(width: 28, height: 28)
                         Circle()
                             .fill(teamProgressColor)
-                            .frame(width: 7, height: 7)
+                            .frame(width: 6, height: 6)
                             .overlay {
                                 Circle().stroke(LocusTheme.panel, lineWidth: 1.5)
                             }
                             .offset(x: -3, y: 3)
                     }
                     .background(LocusTheme.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
                             .stroke(LocusTheme.line, lineWidth: 1)
                     }
                 }
                 .buttonStyle(.locus())
-                .frame(width: 32, height: 32)
+                .frame(width: 28, height: 28)
                 .help("Team progress · \(teamProgressTitle)")
                 .accessibilityLabel("Team progress, \(teamProgressTitle)")
                 .accessibilityIdentifier("workspace.teamProgress")
@@ -184,12 +182,10 @@ struct WorkspaceView: View {
             Button {
                 modelPickerPresented.toggle()
             } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: model.teamModeEnabled
-                        ? "person.2.fill"
-                        : (model.activeAccount == nil ? "bolt.fill" : "cloud.fill"))
-                        .font(.locus(size: 11))
-                        .foregroundStyle(LocusTheme.signalDeep)
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(runtimeHealthColor)
+                        .frame(width: 6, height: 6)
                     Text(model.modelPickerLabel)
                         .font(.locus(size: 9, weight: .semibold))
                         .lineLimit(1)
@@ -197,25 +193,25 @@ struct WorkspaceView: View {
                         .font(.locus(size: 8, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
                 }
-                .padding(.horizontal, 10)
-                .frame(height: 32)
-                .background(LocusTheme.white)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(.horizontal, 9)
+                .frame(height: 28)
+                .background(LocusTheme.white.opacity(0.78))
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
                         .stroke(LocusTheme.line, lineWidth: 1)
                 }
-                .frame(maxWidth: 190)
+                .frame(maxWidth: 176)
             }
             .buttonStyle(.locus())
             .help(model.teamModeEnabled
                 ? "Active team: \(model.selectedTeamModelNames.joined(separator: ", "))"
                 : "Select model")
             .accessibilityLabel(model.teamModeEnabled
-                ? "Active team, \(model.modelPickerLabel)"
-                : "Select model")
+                ? "Active team, \(model.modelPickerLabel), \(runtimeHealthTitle)"
+                : "Select model, \(model.modelPickerLabel), \(runtimeHealthTitle)")
             .accessibilityIdentifier("workspace.modelPicker")
-            .frame(height: 32)
+            .frame(height: 28)
             .popover(isPresented: $modelPickerPresented, arrowEdge: .top) {
                 ModelPickerPopover {
                     modelPickerPresented = false
@@ -229,12 +225,51 @@ struct WorkspaceView: View {
         }
         // When the sidebar is absent this column begins at the window edge.
         // Keep its restore control beyond the native traffic-light cluster.
-        .padding(.leading, sidebarVisible ? 22 : 76)
-        .padding(.trailing, 22)
-        .frame(height: 62)
+        .padding(.leading, sidebarVisible ? 20 : 76)
+        .padding(.trailing, 18)
+        .frame(height: 52)
         .locusSurface(.toolbar)
         .overlay(alignment: .bottom) {
             Rectangle().fill(LocusTheme.line).frame(height: 1)
+        }
+    }
+
+    private var shouldShowWorkStatus: Bool {
+        if model.isBusy || model.hasPendingPermission { return true }
+        switch model.agentRuntimePhase {
+        case .online: break
+        case .starting, .recovering, .unavailable: return true
+        }
+        switch model.modelRuntimePhase {
+        case .online: break
+        case .starting, .recovering, .unavailable: return true
+        }
+        switch model.orchestrationState {
+        case .queued, .dispatching, .running, .reviewing,
+             .waitingPermission, .waitingComputer, .waitingDispatchApproval,
+             .paused, .failed, .interrupted:
+            return true
+        case .completed, .cancelled, .discarded, nil:
+            return false
+        }
+    }
+
+    private var runtimeHealthColor: Color {
+        let phase = model.isAgentOnline ? model.modelRuntimePhase : model.agentRuntimePhase
+        return switch phase {
+        case .online: LocusTheme.success
+        case .starting, .recovering: LocusTheme.warning
+        case .unavailable: LocusTheme.coral
+        }
+    }
+
+    private var runtimeHealthTitle: String {
+        let phase = model.isAgentOnline ? model.modelRuntimePhase : model.agentRuntimePhase
+        return switch phase {
+        case .online: "ready"
+        case .starting: "starting"
+        case .recovering: "recovering"
+        case .unavailable: "unavailable"
         }
     }
 
@@ -263,7 +298,7 @@ struct WorkspaceView: View {
                 .font(.locus(size: 10, weight: .medium))
                 .lineLimit(1)
             Spacer()
-            Button("Settings") { model.settingsPresented = true }
+            Button("Settings") { model.presentSettings() }
                 .buttonStyle(.locus())
                 .font(.locus(size: 9, weight: .semibold))
                 .underline()
@@ -281,6 +316,327 @@ struct WorkspaceView: View {
             Rectangle()
                 .fill((recovering ? LocusTheme.warning : LocusTheme.coral).opacity(0.25))
                 .frame(height: 1)
+        }
+    }
+}
+
+/// Two fully addressable chat slots backed by the app's shared worker registry.
+/// The focused slot owns the live runtime UI; the other remains readable and
+/// editable from its cached transcript while its worker continues in the background.
+enum ChatWorkspacePresentation: Equatable {
+    case single
+    case sideBySide
+
+    static func resolve(isSplit: Bool) -> Self {
+        isSplit ? .sideBySide : .single
+    }
+}
+
+struct SplitChatWorkspaceView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let sidebarVisible: Bool
+    let showSidebar: () -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            switch ChatWorkspacePresentation.resolve(isSplit: model.splitViewActive) {
+            case .single:
+                liveWorkspace
+            case .sideBySide:
+                sideBySide(width: proxy.size.width)
+            }
+        }
+        .animation(reduceMotion ? nil : LocusMotion.spatial, value: model.splitViewActive)
+    }
+
+    private var liveWorkspace: some View {
+        WorkspaceView(sidebarVisible: sidebarVisible, showSidebar: showSidebar)
+    }
+
+    private func sideBySide(width: CGFloat) -> some View {
+        let dividerWidth: CGFloat = 8
+        let usable = max(0, width - dividerWidth)
+        let minimumRatio = min(0.5, 360 / max(usable, 1))
+        let ratio = min(
+            max(CGFloat(model.chatSplitRestoration.dividerRatio), minimumRatio),
+            1 - minimumRatio
+        )
+        return HStack(spacing: 0) {
+            pane(.primary)
+                .frame(width: usable * ratio)
+
+            SplitPaneDivider(totalWidth: usable, minimumRatio: Double(minimumRatio))
+                .environmentObject(model)
+                .frame(width: dividerWidth)
+
+            pane(.secondary)
+                .frame(width: usable * (1 - ratio))
+        }
+    }
+
+    @ViewBuilder
+    private func pane(_ pane: ChatPaneID) -> some View {
+        if model.chatSplitRestoration.focusedPane == pane {
+            liveWorkspace
+                .overlay(alignment: .leading) {
+                    Rectangle().fill(LocusTheme.signalDeep).frame(width: 2)
+                }
+                .onDrop(of: [.plainText], isTargeted: nil) { providers in
+                    handlePaneDrop(providers, into: pane)
+                }
+                .accessibilityIdentifier("split.pane.\(pane.rawValue).focused")
+        } else if let sessionID = model.splitSessionID(for: pane),
+                  let session = model.sessions.first(where: { $0.id == sessionID })
+        {
+            BackgroundChatPane(
+                pane: pane,
+                session: session,
+                paneState: model.chatPaneState(for: pane)
+            )
+                .environmentObject(model)
+        } else {
+            Color.clear
+        }
+    }
+
+    private func handlePaneDrop(_ providers: [NSItemProvider], into pane: ChatPaneID) -> Bool {
+        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else {
+            return false
+        }
+        provider.loadObject(ofClass: NSString.self) { value, _ in
+            guard let payload = value as? String,
+                  payload.hasPrefix("locus-chat:"),
+                  let sessionID = payload.split(separator: ":").last.map(String.init)
+            else { return }
+            Task { @MainActor in
+                if let session = model.sessions.first(where: { $0.id == sessionID }) {
+                    model.open(session, in: pane)
+                }
+            }
+        }
+        return true
+    }
+}
+
+private struct SplitPaneDivider: View {
+    @EnvironmentObject private var model: AppModel
+    let totalWidth: CGFloat
+    let minimumRatio: Double
+    @State private var startingRatio: Double?
+
+    var body: some View {
+        Rectangle()
+            .fill(LocusTheme.line)
+            .overlay { Capsule().fill(LocusTheme.muted.opacity(0.45)).frame(width: 2, height: 34) }
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    let start = startingRatio ?? model.chatSplitRestoration.dividerRatio
+                    if startingRatio == nil { startingRatio = start }
+                    let proposed = start + Double(value.translation.width / max(totalWidth, 1))
+                    model.setSplitDividerRatio(min(max(proposed, minimumRatio), 1 - minimumRatio))
+                }
+                .onEnded { _ in startingRatio = nil })
+            .help("Resize chat panes")
+            .accessibilityLabel("Chat pane divider")
+            .accessibilityIdentifier("split.divider")
+    }
+}
+
+private struct BackgroundChatPane: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let pane: ChatPaneID
+    let session: SessionSummary
+    @ObservedObject var paneState: ChatPaneState
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            transcript
+            composer
+        }
+        .background(LocusTheme.panel)
+        .contentShape(Rectangle())
+        .onTapGesture { model.focusChatPane(pane) }
+        .onAppear { model.refreshSplitPane(session.id) }
+        .onDrop(of: [.plainText], isTargeted: nil, perform: handleDrop)
+        .overlay {
+            Rectangle().stroke(LocusTheme.line, lineWidth: 1)
+        }
+        .accessibilityIdentifier("split.pane.\(pane.rawValue)")
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(session.displayTitle)
+                    .font(.locus(size: 13, weight: .bold))
+                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(model.chatHasActiveRun(session) ? LocusTheme.success : LocusTheme.muted.opacity(0.4))
+                        .frame(width: 6, height: 6)
+                    Text(session.workspacePath.map { URL(fileURLWithPath: $0).lastPathComponent }
+                        ?? "Saved chat")
+                        .lineLimit(1)
+                }
+                .font(.locus(size: 8, design: .monospaced))
+                .foregroundStyle(LocusTheme.muted)
+            }
+            Spacer()
+            Button {
+                model.focusChatPane(pane)
+            } label: {
+                Label("Focus", systemImage: "cursorarrow.click")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.locus())
+            .help("Focus this chat")
+            .accessibilityIdentifier("split.pane.\(pane.rawValue).focus")
+            Button {
+                model.closeChatPane(pane)
+            } label: {
+                Image(systemName: "xmark").frame(width: 28, height: 28)
+            }
+            .buttonStyle(.locus())
+            .help("Close pane — running work continues")
+            .accessibilityIdentifier("split.pane.\(pane.rawValue).close")
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 52)
+        .locusSurface(.toolbar)
+        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+    }
+
+    private var transcript: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 20) {
+                let blocks = model.paneBlocks(for: session.id)
+                if blocks.isEmpty {
+                    ProgressView("Loading chat…")
+                        .controlSize(.small)
+                        .foregroundStyle(LocusTheme.muted)
+                        .frame(maxWidth: .infinity, minHeight: 180)
+                } else {
+                    ForEach(blocks) { block in
+                        PassiveChatBlockView(block: block)
+                    }
+                }
+            }
+            .frame(maxWidth: 780)
+            .padding(22)
+            .frame(maxWidth: .infinity)
+        }
+        .accessibilityLabel("\(session.displayTitle) transcript")
+    }
+
+    private var composer: some View {
+        VStack(spacing: 7) {
+            TextEditor(text: Binding(
+                get: { paneState.draft },
+                set: { model.setPaneDraft($0, for: session.id) }
+            ))
+            .font(.locus(size: 12))
+            .scrollContentBackground(.hidden)
+            .frame(minHeight: 44, maxHeight: 92)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(LocusTheme.paperDeep.opacity(0.55))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .accessibilityIdentifier("split.pane.\(pane.rawValue).composer")
+
+            HStack {
+                Text(model.chatHasActiveRun(session) ? "Working in background" : "Ready")
+                    .font(.locus(size: 8, design: .monospaced))
+                    .foregroundStyle(LocusTheme.muted)
+                Spacer()
+                Button {
+                    model.submitDraft(in: pane)
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.locus(size: 10, weight: .bold))
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(LocusTheme.ink)
+                .disabled(paneState.draft
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityLabel("Send in \(session.displayTitle)")
+                .accessibilityIdentifier("split.pane.\(pane.rawValue).send")
+            }
+        }
+        .padding(10)
+        .background(LocusTheme.panel)
+        .overlay(alignment: .top) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+    }
+
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else {
+            return false
+        }
+        provider.loadObject(ofClass: NSString.self) { value, _ in
+            guard let payload = value as? String,
+                  payload.hasPrefix("locus-chat:"),
+                  let sessionID = payload.split(separator: ":").last.map(String.init)
+            else { return }
+            Task { @MainActor in
+                if let dropped = model.sessions.first(where: { $0.id == sessionID }) {
+                    withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
+                        model.open(dropped, in: pane)
+                    }
+                }
+            }
+        }
+        return true
+    }
+}
+
+private struct PassiveChatBlockView: View {
+    let block: ChatBlock
+
+    var body: some View {
+        switch block.kind {
+        case .user:
+            HStack {
+                Spacer(minLength: 44)
+                Text(block.text)
+                    .font(.locus(size: 11))
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(LocusTheme.paperDeep.opacity(0.88))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+        case .assistant:
+            HStack(alignment: .top, spacing: 9) {
+                LocusMessageMarker()
+                MessageContentView(
+                    text: block.text,
+                    isStreaming: block.isStreaming,
+                    reasoningText: block.reasoningText,
+                    thinkingVisibility: .collapsed
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        case .tool:
+            Label(block.tool?.summary ?? "Tool activity", systemImage: "wrench.and.screwdriver")
+                .font(.locus(size: 9, design: .monospaced))
+                .foregroundStyle(LocusTheme.muted)
+                .padding(9)
+                .background(LocusTheme.paperDeep.opacity(0.6))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        case .note:
+            Text(block.text)
+                .font(.locus(size: 9, design: .monospaced))
+                .foregroundStyle(LocusTheme.muted)
+        case .error:
+            Label(block.text, systemImage: "xmark.octagon.fill")
+                .font(.locus(size: 10, weight: .medium))
+                .foregroundStyle(LocusTheme.coral)
         }
     }
 }
@@ -1126,7 +1482,7 @@ struct ScheduleEditorView: View {
                         }
                     }
                     Picker("Runner", selection: $draft.runner) {
-                        ForEach(ScheduleRunner.allCases) { runner in
+                        ForEach(ScheduleRunner.selectableCases) { runner in
                             Text(runner.title).tag(runner)
                         }
                     }
@@ -1339,8 +1695,7 @@ private struct ModelPickerPopover: View {
                     identifier: "workspace.modelPicker.manageAccounts"
                 ) {
                     dismiss()
-                    model.settingsPage = .accounts
-                    model.settingsPresented = true
+                    model.presentSettings(.accounts)
                 }
                 pickerAction(
                     "Manage Agents & Teams…",
@@ -1348,8 +1703,7 @@ private struct ModelPickerPopover: View {
                     identifier: "workspace.modelPicker.manageAgentsTeams"
                 ) {
                     dismiss()
-                    model.settingsPage = .agents
-                    model.settingsPresented = true
+                    model.presentSettings(.agents)
                 }
             }
             .padding(10)
@@ -1379,8 +1733,7 @@ private struct ModelPickerPopover: View {
             HStack(spacing: 14) {
                 Button("Manage \(team.name)…") {
                     dismiss()
-                    model.settingsPage = .agents
-                    model.settingsPresented = true
+                    model.presentSettings(.agents)
                 }
                 .accessibilityIdentifier("workspace.modelPicker.manageTeam")
                 Button("Switch to Solo") {
@@ -1840,7 +2193,7 @@ private struct ConversationView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 20) {
+                LazyVStack(alignment: .leading, spacing: 24) {
                     if model.blocks.isEmpty {
                         EmptyConversationView()
                             .environmentObject(model)
@@ -1856,9 +2209,9 @@ private struct ConversationView: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Conversation transcript")
                 .background { TranscriptSelectionScope() }
-                .frame(maxWidth: 740)
-                .padding(.horizontal, 28)
-                .padding(.top, model.blocks.isEmpty ? 0 : 26)
+                .frame(maxWidth: 780)
+                .padding(.horizontal, 24)
+                .padding(.top, model.blocks.isEmpty ? 0 : 24)
                 .padding(.bottom, 40)
                 .frame(maxWidth: .infinity)
             }
@@ -1925,7 +2278,7 @@ private struct ConversationView: View {
                 visibility: model.toolActivityVisibility,
                 onExpansionChange: scrollCoordinator.detach
             )
-            .padding(.leading, 43)
+            .padding(.leading, 27)
             .id("tool-activity-\(id.uuidString)")
         case .thinkingGroup(let id, let entries):
             ThinkingActivityView(
@@ -1934,7 +2287,7 @@ private struct ConversationView: View {
                 visibility: model.thinkingVisibility,
                 onExpansionChange: scrollCoordinator.detach
             )
-            .padding(.leading, 43)
+            .padding(.leading, 27)
             .id("thinking-activity-\(id.uuidString)")
         }
     }
@@ -2447,36 +2800,51 @@ private struct EmptyConversationView: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(runtimeColor)
-                    .frame(width: 7, height: 7)
-                Text(runtimeStatus)
-                    .font(.locus(size: 8, weight: .bold))
-                    .tracking(0.9)
-                    .foregroundStyle(LocusTheme.muted)
-            }
-            .padding(.top, 48)
+        VStack(spacing: 10) {
+            BrandMark(compact: true)
+                .padding(.bottom, 6)
 
-            Text("What are we making\nbetter today?")
-                .font(.locus(size: 40, weight: .medium))
-                .tracking(-1.8)
+            Text("How can I help with \(workspaceName)?")
+                .font(.locus(size: 26, weight: .medium))
+                .tracking(-0.7)
                 .foregroundStyle(LocusTheme.ink)
-                .padding(.top, 15)
+                .multilineTextAlignment(.center)
 
-            Text("Locus works inside your selected workspace with local Ollama models. You stay in control of every file change and command.")
+            Text("Ask about the project, make a plan, or start a focused change.")
                 .font(.locus(size: 11))
                 .foregroundStyle(LocusTheme.muted)
-                .lineSpacing(4)
-                .frame(maxWidth: 520, alignment: .leading)
-                .padding(.top, 15)
+                .multilineTextAlignment(.center)
 
+            if activeRuntimePhase != .online {
+                Label(runtimeStatus, systemImage: "circle.fill")
+                    .font(.locus(size: 8, weight: .semibold))
+                    .foregroundStyle(runtimeColor)
+                    .padding(.top, 3)
+            }
+
+            VStack(spacing: 7) {
+                ForEach(Array(model.locusRecommendations.prefix(3))) { recommendation in
+                    LocusRecommendationCard(
+                        recommendation: recommendation,
+                        identifier: "conversation.recommendation.\(recommendation.id)",
+                        compact: true
+                    ) {
+                        model.activateRecommendation(recommendation)
+                    }
+                }
+            }
+            .frame(maxWidth: 540)
+            .padding(.top, 14)
         }
-        .frame(maxWidth: 700, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 88)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Welcome to Locus")
         .accessibilityIdentifier("conversation.welcome")
+    }
+
+    private var workspaceName: String {
+        URL(fileURLWithPath: model.workspacePath).lastPathComponent
     }
 
     private var activeRuntimePhase: RuntimePhase {
@@ -2493,10 +2861,10 @@ private struct EmptyConversationView: View {
 
     private var runtimeStatus: String {
         switch activeRuntimePhase {
-        case .starting: "LOCAL SERVICES · STARTING"
-        case .online: "LOCAL SERVICES · READY WHEN YOU ARE"
-        case .recovering: "LOCAL SERVICES · RECOVERING"
-        case .unavailable: "LOCAL SERVICES · UNAVAILABLE"
+        case .starting: "Local services are starting"
+        case .online: "Local services are ready"
+        case .recovering: "Local services are recovering"
+        case .unavailable: "Local services need attention"
         }
     }
 }
@@ -2509,23 +2877,41 @@ private struct ActiveAssistantBlockView: View {
     let thinkingVisibility: ThinkingVisibility
 
     var body: some View {
-        HStack(alignment: .top, spacing: 13) {
-            BrandMark(compact: true)
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Locus")
-                    .font(.locus(size: 10, weight: .bold))
-                StreamingMessageContentView(
-                    reply: reply,
-                    thinkingVisibility: thinkingVisibility
-                )
-            }
+        HStack(alignment: .top, spacing: 10) {
+            LocusMessageMarker()
+                .accessibilityIdentifier("message.streamingAssistant.marker")
+            StreamingMessageContentView(
+                reply: reply,
+                thinkingVisibility: thinkingVisibility
+            )
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .accessibilityIdentifier("message.streamingAssistant")
     }
 }
 
+private struct LocusMessageMarker: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(LocusTheme.signal)
+            .frame(width: 20, height: 20)
+            .overlay {
+                Image(systemName: "sparkle")
+                    .font(.locus(size: 9, weight: .bold))
+                    .foregroundStyle(LocusTheme.brandInk)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(LocusTheme.signalDeep.opacity(0.4), lineWidth: 1)
+            }
+            .accessibilityHidden(true)
+    }
+}
+
 private struct MessageBlockView: View, Equatable {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovering = false
+    @FocusState private var actionsFocused: Bool
     let block: ChatBlock
     let thinkingVisibility: ThinkingVisibility
     let actionsDisabled: Bool
@@ -2548,16 +2934,30 @@ private struct MessageBlockView: View, Equatable {
         Group {
             switch block.kind {
             case .user:
-                conversationRow(name: "You", avatar: userAvatar) {
-                    Text(block.text)
-                        .font(.locus(size: 12))
-                        .foregroundStyle(LocusTheme.inkSoft)
-                        .lineSpacing(4)
-                        .textSelection(.enabled)
+                HStack(alignment: .top) {
+                    Spacer(minLength: 68)
+                    VStack(alignment: .trailing, spacing: 4) {
+                        MarkdownBodyView(text: block.text)
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 11)
+                            .background(LocusTheme.paperDeep.opacity(0.88))
+                            .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                                    .stroke(LocusTheme.line.opacity(0.7), lineWidth: 1)
+                            }
+                            .accessibilityIdentifier("message.\(block.id.uuidString).bubble")
+                        messageActionBar(name: "You")
+                    }
+                    .frame(maxWidth: 620, alignment: .trailing)
                 }
+                .frame(maxWidth: .infinity, alignment: .trailing)
 
             case .assistant:
-                conversationRow(name: "Locus", avatar: AnyView(BrandMark(compact: true))) {
+                HStack(alignment: .top, spacing: 10) {
+                    LocusMessageMarker()
+                        .accessibilityIdentifier("message.\(block.id.uuidString).marker")
+                    VStack(alignment: .leading, spacing: 5) {
                     if block.text.isEmpty,
                        (block.reasoningText?.isEmpty ?? true),
                        block.isStreaming
@@ -2577,12 +2977,15 @@ private struct MessageBlockView: View, Equatable {
                                 .opacity(0.8)
                         }
                     }
+                        messageActionBar(name: "Locus")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
             case .tool:
                 if let tool = block.tool {
                     ToolCardView(tool: tool)
-                        .padding(.leading, 43)
+                        .padding(.leading, 27)
                 }
 
             case .note:
@@ -2612,6 +3015,9 @@ private struct MessageBlockView: View, Equatable {
                     }
             }
         }
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
+        .animation(reduceMotion ? nil : LocusMotion.press, value: isHovering || actionsFocused)
         .accessibilityIdentifier(blockAccessibilityIdentifier)
         .contextMenu {
             if block.kind == .user || block.kind == .assistant {
@@ -2639,49 +3045,14 @@ private struct MessageBlockView: View, Equatable {
             : "turnCompletion.\(block.id.uuidString)"
     }
 
-    private var userAvatar: AnyView {
-        AnyView(
-            Image(systemName: "person.fill")
-                .font(.locus(size: 10, weight: .semibold))
-                .foregroundStyle(LocusTheme.muted)
-                .frame(width: 30, height: 30)
-                .background(LocusTheme.paperDeep)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(LocusTheme.line, lineWidth: 1)
-                }
-                .accessibilityHidden(true)
-        )
-    }
-
-    private func conversationRow<Content: View>(
-        name: String,
-        avatar: AnyView,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        HStack(alignment: .top, spacing: 13) {
-            avatar
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Text(name)
-                        .font(.locus(size: 10, weight: .bold))
-                    Spacer()
-                    // Keep message actions visible and in a stable region so
-                    // they remain discoverable without pointer hover and do
-                    // not change row geometry during scrolling.
-                    HStack(spacing: 0) {
-                        messageActions
-                    }
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel("\(name) message actions")
-                    .accessibilityIdentifier("message.\(block.id.uuidString).actions")
-                }
-                .frame(minHeight: 22)
-                content()
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+    private func messageActionBar(name: String) -> some View {
+        HStack(spacing: 1) {
+            messageActions
         }
+        .frame(height: 23)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(name) message actions")
+        .accessibilityIdentifier("message.\(block.id.uuidString).actions")
     }
 
     @ViewBuilder
@@ -2717,15 +3088,22 @@ private struct MessageBlockView: View, Equatable {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.locus(size: 9, weight: .semibold))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(showsMessageActions ? LocusTheme.muted : Color.clear)
                 .frame(width: 24, height: 22)
-                .background(LocusTheme.paperDeep.opacity(0.8))
+                .background(
+                    showsMessageActions ? LocusTheme.paperDeep.opacity(0.8) : Color.clear
+                )
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.locus())
+        .focused($actionsFocused)
         .help(help)
         .accessibilityLabel(help)
         .accessibilityIdentifier("message.\(block.id.uuidString).\(identifier)")
+    }
+
+    private var showsMessageActions: Bool {
+        isHovering || actionsFocused
     }
 }
 

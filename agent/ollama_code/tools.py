@@ -88,7 +88,7 @@ class ToolContext:
     #: App-owned process broker. Work submitted here is detached from the
     #: current turn and therefore survives Stop.
     background_service: Callable[[dict[str, Any]], str] | None = None
-    #: Per-turn Solo Swarm executor. It is installed only for eligible Solo
+    #: Per-turn adaptive Solo executor. It is installed only for eligible Solo
     #: turns and removed before the turn identity is released.
     delegate_read_only: Callable[[dict[str, Any]], str] | None = None
 
@@ -1067,7 +1067,7 @@ def _impl_capture_context_snapshot(args: dict[str, Any], ctx: ToolContext) -> st
 
 def _impl_delegate_read_only(args: dict[str, Any], ctx: ToolContext) -> str:
     if ctx.delegate_read_only is None:
-        return "Error: Solo Swarm is not active for this turn."
+        return "Error: Solo delegation is not active for this turn."
     return ctx.delegate_read_only(args)
 
 

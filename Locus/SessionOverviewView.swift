@@ -362,8 +362,7 @@ private struct SummaryShortcutsBar: View {
                 symbol: "person.crop.circle",
                 help: "Add or edit provider accounts and their API keys"
             ) {
-                model.settingsPage = .accounts
-                model.settingsPresented = true
+                model.presentSettings(.accounts)
             },
             Shortcut(
                 id: "plan.shortcuts.extensions",
@@ -371,8 +370,7 @@ private struct SummaryShortcutsBar: View {
                 symbol: "puzzlepiece.extension",
                 help: "Manage plugins, MCP servers, and skills"
             ) {
-                model.settingsPage = .extensions
-                model.settingsPresented = true
+                model.presentSettings(.extensions)
             },
         ]
     }

@@ -814,16 +814,22 @@ class ToolRegistry:
     def parity_schemas(self, plan_mode: bool = False) -> list[dict[str, Any]]:
         """The Codex-parity tool surface for a native-mode ChatGPT turn.
 
-        Deliberately minimal — every tool beyond what Codex natively carries
-        is a distribution deviation. The user's capability policy is applied
-        against each tool's canonical name, the same gate `schemas()` uses.
-        `submit_plan` joins only in Plan mode, where Locus's plan-approval
-        flow depends on it.
+        Deliberately minimal: the Codex-native aliases plus Locus's bounded
+        adaptive delegation tool when available. The user's capability policy
+        is applied against each canonical tool, the same gate `schemas()` uses.
+        `submit_plan` joins only in Plan mode, where Locus's plan-approval flow
+        depends on it.
         """
         schemas = [
             schema for schema in PARITY_TOOL_SCHEMAS
             if self._user_allows(_PARITY_CANONICAL[schema["function"]["name"]])
         ]
+        if (
+            self._solo_swarm_enabled
+            and self._agent_access_ceiling != "read_only"
+            and self._user_allows("delegate_read_only")
+        ):
+            schemas.append(DELEGATE_READ_ONLY_SCHEMA)
         if plan_mode:
             schemas.extend(
                 schema for schema in TOOL_SCHEMAS

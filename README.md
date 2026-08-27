@@ -1,12 +1,42 @@
-# Locus for macOS
+<p align="center">
+  <img src="Locus/Resources/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png" width="88" alt="Locus icon: a black mark on a lime tile">
+</p>
 
-Locus is a native AI workspace for building software with local or hosted models. It brings chat, planning, file context, change review, a terminal, agent teams, and an agent-drivable browser into one SwiftUI app.
+<h1 align="center">Locus for macOS</h1>
 
-Local Ollama is the default. ChatGPT plans and API-backed providers are used only after you add and select an account.
+<p align="center">
+  A native, private AI workspace for planning, building, and reviewing software.
+</p>
 
-[Website](https://locushost.co) · [Download the latest release](https://github.com/nahid-sparktales/locus/releases/latest) · [Changelog](CHANGELOG.md)
+<p align="center">
+  <a href="https://github.com/nahid-sparktales/locus/actions/workflows/ci.yml"><img alt="Locus CI" src="https://github.com/nahid-sparktales/locus/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/nahid-sparktales/locus/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/nahid-sparktales/locus?display_name=tag&sort=semver"></a>
+  <a href="LICENSE"><img alt="Apache 2.0 license" src="https://img.shields.io/badge/license-Apache--2.0-8fbf27"></a>
+  <img alt="macOS 14 or newer" src="https://img.shields.io/badge/macOS-14%2B-111111">
+  <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple%20Silicon-arm64-111111">
+</p>
 
-![Locus workspace in dark mode](Docs/locus-workspace-dark.png)
+<p align="center">
+  <a href="https://locushost.co">Website</a> ·
+  <a href="https://github.com/nahid-sparktales/locus/releases/latest">Download</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
+
+![Locus workspace with the project sidebar, adaptive composer, and files inspector](Docs/locus-workspace-dark.png)
+
+Locus brings conversations, plans, file context, change review, a retained
+terminal, agent teams, scheduled work, and an agent-drivable browser into one
+SwiftUI app. The interface stays close to the project while every run remains
+inspectable and under your control.
+
+Local Ollama is the default. ChatGPT plans and API-backed providers are used
+only after you add and select an account; Locus never silently switches to a
+paid route.
+
+> [!TIP]
+> Want the supported app instead of a development checkout? Download the latest
+> signed build from [GitHub Releases](https://github.com/nahid-sparktales/locus/releases/latest).
 
 ## What Locus does
 
@@ -101,7 +131,7 @@ The helpers behind ChatGPT-plan accounts are a separate download. They are large
 
 ## Install
 
-1. Download `Locus-macOS.zip` (about 62 MB) from [locushost.co](https://locushost.co) or [GitHub Releases](https://github.com/nahid-sparktales/locus/releases/latest).
+1. Download `Locus-macOS.zip` from [locushost.co](https://locushost.co) or [GitHub Releases](https://github.com/nahid-sparktales/locus/releases/latest).
 2. Move Locus to Applications and open it.
 3. Choose a workspace and model, then start in Chat, Plan, or Build mode.
 
@@ -114,6 +144,18 @@ ChatGPT-plan accounts are served by two helpers from OpenAI's Codex project. The
 The component is signed by SparkTales. Because it lands outside the app's notarized seal, Locus verifies the archive's checksum and then checks each binary against SparkTales' code-signing identity before anything is moved into place or run — a payload that fails either check installs nothing and leaves any previous install untouched. Removing the component reclaims the space and can be undone by adding a plan account again.
 
 Mac App Store builds still bundle the helpers, because the App Store does not permit downloading executable code.
+
+## Project status
+
+Locus is in active development. GitHub Releases are the stable, signed delivery
+channel; `main` may contain work intended for a later release. The source gate
+covers the native app, bundled agent, protocol contracts, security-sensitive
+packaging, and representative interface flows.
+
+- [Latest release](https://github.com/nahid-sparktales/locus/releases/latest)
+- [Changelog](CHANGELOG.md)
+- [Open issues](https://github.com/nahid-sparktales/locus/issues)
+- [Security policy](.github/SECURITY.md)
 
 ## Build from source
 
@@ -184,9 +226,18 @@ Docs/           Guides and screenshots
 
 For protocol and orchestration details, see the [agent README](agent/README.md), [wire protocol](agent/PROTOCOL.md), and [Agent Teams guide](Docs/AGENT_TEAMS_FEATURE_GUIDE.md).
 
-## Contributing
+## Contributing and security
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a change. Please include focused tests and update documentation when behavior changes.
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before
+opening a change, keep pull requests focused, include tests for changed
+behavior, and update documentation when the product surface changes. Use the
+[issue chooser](https://github.com/nahid-sparktales/locus/issues/new/choose) for
+reproducible bugs and feature proposals.
+
+For vulnerabilities, follow the [security policy](.github/SECURITY.md) and use
+GitHub's private vulnerability reporting. Do not put credentials, private
+workspace contents, session transcripts, or decrypted local data in a public
+issue.
 
 ## License
 

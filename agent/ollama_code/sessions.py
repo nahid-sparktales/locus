@@ -12,6 +12,7 @@ import json
 import re
 import shutil
 import threading
+import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -22,12 +23,14 @@ from .paths import APP_DIR
 SESSIONS_DIR = APP_DIR / "sessions"
 
 _META_LOCK = threading.Lock()
+_ORGANIZATION_LOCK = threading.Lock()
 _APPEND_LOCK = threading.Lock()
 
 MAX_SESSION_BYTES = 64 * 1024 * 1024
 MAX_SESSION_LINE_BYTES = 2 * 1024 * 1024
 MAX_SESSION_MESSAGES = 20_000
 MAX_METADATA_BYTES = 4 * 1024 * 1024
+MAX_ORGANIZATION_BYTES = 4 * 1024 * 1024
 
 
 class SessionTooLargeError(ValueError):
@@ -47,6 +50,10 @@ def _meta_path() -> Path:
 
 def _trash_dir() -> Path:
     return _app_dir() / "session-trash"
+
+
+def _organization_path() -> Path:
+    return _app_dir() / "chat-organization.json"
 
 
 def _slug(text: str) -> str:
@@ -71,6 +78,28 @@ def _meta_guard():
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         except OSError:
             handle = None  # best effort: still guarded within this process
+        try:
+            yield
+        finally:
+            if handle is not None:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                finally:
+                    handle.close()
+
+
+@contextmanager
+def _organization_guard():
+    """Serialize folder and placement mutations across app and CLI agents."""
+    with _ORGANIZATION_LOCK:
+        lock_path = _organization_path().with_suffix(".lock")
+        handle = None
+        try:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            handle = lock_path.open("w")
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        except OSError:
+            handle = None
         try:
             yield
         finally:
@@ -140,6 +169,382 @@ class SessionMeta:
             for session_id in session_ids:
                 data.pop(session_id, None)
             SessionMeta._write(data)
+
+
+class ChatOrganizationStore:
+    """Versioned nested folders and session placement, separate from JSONL chat data."""
+
+    VERSION = 1
+
+    @staticmethod
+    def _empty() -> dict[str, Any]:
+        return {"version": ChatOrganizationStore.VERSION, "folders": [], "placements": {}}
+
+    @staticmethod
+    def _canonical_workspace(value: str) -> str:
+        return str(Path(value).expanduser().resolve(strict=False))
+
+    @staticmethod
+    def _read() -> dict[str, Any]:
+        try:
+            if _organization_path().stat().st_size > MAX_ORGANIZATION_BYTES:
+                return ChatOrganizationStore._empty()
+            value = json.loads(_organization_path().read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return ChatOrganizationStore._empty()
+        if not isinstance(value, dict) or value.get("version") != ChatOrganizationStore.VERSION:
+            return ChatOrganizationStore._empty()
+        folders = value.get("folders")
+        placements = value.get("placements")
+        if not isinstance(folders, list) or not isinstance(placements, dict):
+            return ChatOrganizationStore._empty()
+        sanitized_folders: list[dict[str, Any]] = []
+        folder_ids: set[str] = set()
+        for raw in folders:
+            if not isinstance(raw, dict):
+                continue
+            folder_id = raw.get("id")
+            workspace = raw.get("workspace")
+            name = raw.get("name")
+            if (
+                not isinstance(folder_id, str) or not folder_id or folder_id in folder_ids
+                or not isinstance(workspace, str) or not workspace
+                or not isinstance(name, str) or not name.strip()
+            ):
+                continue
+            parent_id = raw.get("parent_id")
+            sanitized_folders.append({
+                "id": folder_id,
+                "workspace": ChatOrganizationStore._canonical_workspace(workspace),
+                "parent_id": parent_id if isinstance(parent_id, str) else None,
+                "name": " ".join(name.split())[:80],
+                "order": max(0, raw.get("order") if isinstance(raw.get("order"), int) else 0),
+            })
+            folder_ids.add(folder_id)
+
+        folders_by_id = {folder["id"]: folder for folder in sanitized_folders}
+        for folder in sanitized_folders:
+            parent_id = folder["parent_id"]
+            parent = folders_by_id.get(parent_id)
+            if parent is None or parent["workspace"] != folder["workspace"]:
+                folder["parent_id"] = None
+                continue
+            visited = {folder["id"]}
+            cursor = parent
+            while cursor is not None:
+                if cursor["id"] in visited:
+                    folder["parent_id"] = None
+                    break
+                visited.add(cursor["id"])
+                cursor = folders_by_id.get(cursor.get("parent_id"))
+
+        sanitized_placements: dict[str, dict[str, Any]] = {}
+        for session_id, raw in placements.items():
+            if not isinstance(session_id, str) or not session_id or not isinstance(raw, dict):
+                continue
+            workspace = raw.get("workspace")
+            if not isinstance(workspace, str) or not workspace:
+                continue
+            canonical = ChatOrganizationStore._canonical_workspace(workspace)
+            folder_id = raw.get("folder_id") if isinstance(raw.get("folder_id"), str) else None
+            folder = folders_by_id.get(folder_id)
+            if folder_id is not None and (
+                folder is None or folder.get("workspace") != canonical
+            ):
+                folder_id = None
+            sanitized_placements[session_id] = {
+                "session_id": session_id,
+                "workspace": canonical,
+                "folder_id": folder_id,
+                "order": max(0, raw.get("order") if isinstance(raw.get("order"), int) else 0),
+            }
+        return {
+            "version": ChatOrganizationStore.VERSION,
+            "folders": sanitized_folders,
+            "placements": sanitized_placements,
+        }
+
+    @staticmethod
+    def _write(value: dict[str, Any]) -> None:
+        _organization_path().parent.mkdir(parents=True, exist_ok=True)
+        tmp = _organization_path().with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(_organization_path())
+
+    @staticmethod
+    def snapshot(workspace: str | None = None) -> dict[str, Any]:
+        with _organization_guard():
+            value = ChatOrganizationStore._read()
+        if not workspace:
+            return value
+        canonical = ChatOrganizationStore._canonical_workspace(workspace)
+        return {
+            "version": ChatOrganizationStore.VERSION,
+            "folders": [
+                dict(folder) for folder in value["folders"]
+                if isinstance(folder, dict) and folder.get("workspace") == canonical
+            ],
+            "placements": {
+                session_id: dict(placement)
+                for session_id, placement in value["placements"].items()
+                if isinstance(placement, dict) and placement.get("workspace") == canonical
+            },
+        }
+
+    @staticmethod
+    def placement(session_id: str) -> dict[str, Any] | None:
+        with _organization_guard():
+            placement = ChatOrganizationStore._read()["placements"].get(session_id)
+        return dict(placement) if isinstance(placement, dict) else None
+
+    @staticmethod
+    def _folder(value: dict[str, Any], folder_id: str | None) -> dict[str, Any] | None:
+        if folder_id is None:
+            return None
+        return next(
+            (
+                folder for folder in value["folders"]
+                if isinstance(folder, dict) and folder.get("id") == folder_id
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _normalized_name(raw: str) -> str:
+        name = " ".join(raw.split())[:80]
+        if not name:
+            raise ValueError("folder name is required")
+        return name
+
+    @staticmethod
+    def _assert_unique_name(
+        value: dict[str, Any], workspace: str, parent_id: str | None,
+        name: str, excluding: str | None = None,
+    ) -> None:
+        folded = name.casefold()
+        for folder in value["folders"]:
+            if not isinstance(folder, dict) or folder.get("id") == excluding:
+                continue
+            if folder.get("workspace") == workspace and folder.get("parent_id") == parent_id \
+                    and str(folder.get("name") or "").casefold() == folded:
+                raise ValueError("a folder with that name already exists here")
+
+    @staticmethod
+    def _normalize_orders(value: dict[str, Any], workspace: str, parent_id: str | None) -> None:
+        folders = sorted(
+            (
+                folder for folder in value["folders"]
+                if isinstance(folder, dict)
+                and folder.get("workspace") == workspace
+                and folder.get("parent_id") == parent_id
+            ),
+            key=lambda item: (int(item.get("order") or 0), str(item.get("name") or "").casefold()),
+        )
+        for order, folder in enumerate(folders):
+            folder["order"] = order
+        placements = sorted(
+            (
+                placement for placement in value["placements"].values()
+                if isinstance(placement, dict)
+                and placement.get("workspace") == workspace
+                and placement.get("folder_id") == parent_id
+            ),
+            key=lambda item: (int(item.get("order") or 0), str(item.get("session_id") or "")),
+        )
+        for order, placement in enumerate(placements):
+            placement["order"] = order
+
+    @staticmethod
+    def create_folder(
+        workspace: str, name: str, parent_id: str | None = None, index: int | None = None,
+    ) -> dict[str, Any]:
+        canonical = ChatOrganizationStore._canonical_workspace(workspace)
+        name = ChatOrganizationStore._normalized_name(name)
+        with _organization_guard():
+            value = ChatOrganizationStore._read()
+            parent = ChatOrganizationStore._folder(value, parent_id)
+            if parent_id is not None and (parent is None or parent.get("workspace") != canonical):
+                raise ValueError("parent folder is not in this workspace")
+            ChatOrganizationStore._assert_unique_name(value, canonical, parent_id, name)
+            siblings = [
+                folder for folder in value["folders"]
+                if isinstance(folder, dict)
+                and folder.get("workspace") == canonical
+                and folder.get("parent_id") == parent_id
+            ]
+            insertion = max(0, min(index if index is not None else len(siblings), len(siblings)))
+            for folder in siblings:
+                if int(folder.get("order") or 0) >= insertion:
+                    folder["order"] = int(folder.get("order") or 0) + 1
+            record = {
+                "id": str(uuid.uuid4()),
+                "workspace": canonical,
+                "parent_id": parent_id,
+                "name": name,
+                "order": insertion,
+            }
+            value["folders"].append(record)
+            ChatOrganizationStore._normalize_orders(value, canonical, parent_id)
+            ChatOrganizationStore._write(value)
+            return dict(record)
+
+    @staticmethod
+    def update_folder(
+        folder_id: str, *, name: str | None = None,
+        parent_id: str | None | object = ..., index: int | None = None,
+    ) -> dict[str, Any]:
+        with _organization_guard():
+            value = ChatOrganizationStore._read()
+            folder = ChatOrganizationStore._folder(value, folder_id)
+            if folder is None:
+                raise KeyError(folder_id)
+            workspace = str(folder.get("workspace") or "")
+            old_parent = folder.get("parent_id")
+            target_parent = old_parent if parent_id is ... else parent_id
+            parent = ChatOrganizationStore._folder(value, target_parent if isinstance(target_parent, str) else None)
+            if target_parent is not None and (
+                not isinstance(target_parent, str) or parent is None or parent.get("workspace") != workspace
+            ):
+                raise ValueError("parent folder is not in this workspace")
+            cursor = parent
+            while cursor is not None:
+                if cursor.get("id") == folder_id:
+                    raise ValueError("a folder cannot be moved inside itself")
+                cursor = ChatOrganizationStore._folder(value, cursor.get("parent_id"))
+            updated_name = ChatOrganizationStore._normalized_name(name) if name is not None else str(folder["name"])
+            ChatOrganizationStore._assert_unique_name(
+                value, workspace, target_parent if isinstance(target_parent, str) else None,
+                updated_name, excluding=folder_id,
+            )
+            folder["name"] = updated_name
+            folder["parent_id"] = target_parent
+            siblings = sorted(
+                [
+                sibling for sibling in value["folders"]
+                if isinstance(sibling, dict) and sibling.get("id") != folder_id
+                and sibling.get("workspace") == workspace and sibling.get("parent_id") == target_parent
+                ],
+                key=lambda item: (
+                    int(item.get("order") or 0), str(item.get("name") or "").casefold()
+                ),
+            )
+            insertion = max(0, min(index if index is not None else len(siblings), len(siblings)))
+            siblings.insert(insertion, folder)
+            for order, sibling in enumerate(siblings):
+                sibling["order"] = order
+            ChatOrganizationStore._normalize_orders(value, workspace, old_parent)
+            ChatOrganizationStore._write(value)
+            return dict(folder)
+
+    @staticmethod
+    def delete_folder(folder_id: str) -> dict[str, Any]:
+        with _organization_guard():
+            value = ChatOrganizationStore._read()
+            folder = ChatOrganizationStore._folder(value, folder_id)
+            if folder is None:
+                raise KeyError(folder_id)
+            workspace = str(folder.get("workspace") or "")
+            parent_id = folder.get("parent_id")
+            for child in value["folders"]:
+                if isinstance(child, dict) and child.get("parent_id") == folder_id:
+                    child["parent_id"] = parent_id
+            for placement in value["placements"].values():
+                if isinstance(placement, dict) and placement.get("folder_id") == folder_id:
+                    placement["folder_id"] = parent_id
+            value["folders"] = [
+                candidate for candidate in value["folders"]
+                if not isinstance(candidate, dict) or candidate.get("id") != folder_id
+            ]
+            ChatOrganizationStore._normalize_orders(value, workspace, parent_id)
+            ChatOrganizationStore._write(value)
+            return {"id": folder_id, "promoted_to": parent_id}
+
+    @staticmethod
+    def move_session(session_id: str, folder_id: str | None, index: int | None = None) -> dict[str, Any]:
+        path = SessionStore.path_for(session_id)
+        if path is None:
+            raise KeyError(session_id)
+        workspace = str(SessionStore.header(path).get("cwd") or "")
+        if not workspace:
+            raise ValueError("legacy chats without a workspace cannot be placed in folders")
+        canonical = ChatOrganizationStore._canonical_workspace(workspace)
+        with _organization_guard():
+            value = ChatOrganizationStore._read()
+            folder = ChatOrganizationStore._folder(value, folder_id)
+            if folder_id is not None and (folder is None or folder.get("workspace") != canonical):
+                raise ValueError("target folder is not in the chat's workspace")
+            previous = value["placements"].get(session_id)
+            old_parent = previous.get("folder_id") if isinstance(previous, dict) else None
+            siblings = sorted(
+                [
+                placement for key, placement in value["placements"].items()
+                if key != session_id and isinstance(placement, dict)
+                and placement.get("workspace") == canonical and placement.get("folder_id") == folder_id
+                ],
+                key=lambda item: (
+                    int(item.get("order") or 0), str(item.get("session_id") or "")
+                ),
+            )
+            insertion = max(0, min(index if index is not None else len(siblings), len(siblings)))
+            placement = {
+                "session_id": session_id,
+                "workspace": canonical,
+                "folder_id": folder_id,
+                "order": insertion,
+            }
+            value["placements"][session_id] = placement
+            siblings.insert(insertion, placement)
+            for order, sibling in enumerate(siblings):
+                sibling["order"] = order
+            ChatOrganizationStore._normalize_orders(value, canonical, old_parent)
+            ChatOrganizationStore._write(value)
+            return dict(placement)
+
+    @staticmethod
+    def detach_sessions(session_ids: list[str]) -> dict[str, Any]:
+        detached: dict[str, Any] = {}
+        with _organization_guard():
+            value = ChatOrganizationStore._read()
+            affected: set[tuple[str, str | None]] = set()
+            for session_id in session_ids:
+                placement = value["placements"].pop(session_id, None)
+                if isinstance(placement, dict):
+                    detached[session_id] = placement
+                    affected.add((str(placement.get("workspace") or ""), placement.get("folder_id")))
+            for workspace, folder_id in affected:
+                ChatOrganizationStore._normalize_orders(value, workspace, folder_id)
+            if detached:
+                ChatOrganizationStore._write(value)
+        return detached
+
+    @staticmethod
+    def restore_placement(source_id: str, target_id: str, placement: Any) -> None:
+        if not isinstance(placement, dict):
+            return
+        workspace = str(placement.get("workspace") or "")
+        folder_id = placement.get("folder_id") if isinstance(placement.get("folder_id"), str) else None
+        with _organization_guard():
+            value = ChatOrganizationStore._read()
+            folder = ChatOrganizationStore._folder(value, folder_id)
+            if folder_id is not None and (folder is None or folder.get("workspace") != workspace):
+                folder_id = None
+            restored = dict(placement)
+            restored.update({"session_id": target_id, "folder_id": folder_id})
+            value["placements"].pop(source_id, None)
+            value["placements"][target_id] = restored
+            ChatOrganizationStore._normalize_orders(value, workspace, folder_id)
+            ChatOrganizationStore._write(value)
+
+    @staticmethod
+    def clone_placement(source_id: str, target_id: str) -> dict[str, Any] | None:
+        source = ChatOrganizationStore.placement(source_id)
+        if source is None:
+            return None
+        return ChatOrganizationStore.move_session(
+            target_id,
+            source.get("folder_id") if isinstance(source.get("folder_id"), str) else None,
+            int(source.get("order") or 0) + 1,
+        )
 
 
 class SessionStore:
@@ -265,6 +670,115 @@ class SessionStore:
         except OSError:
             return messages
         return messages
+
+    @staticmethod
+    def export_messages(
+        path: Path, *, include_reasoning: bool = False,
+        include_tool_details: bool = False, include_attachments: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Return a full-length, secret-minimized transcript for file export."""
+        messages = SessionStore.load(path)
+        output: list[dict[str, Any]] = []
+        for message in messages:
+            role = str(message.get("role") or "")
+            if role not in {"user", "assistant", "tool"}:
+                continue
+            item: dict[str, Any] = {"role": role}
+            if role == "user":
+                item["content"] = strip_prompt_decoration(str(message.get("content") or ""))
+                if include_attachments:
+                    attachments: list[dict[str, str]] = []
+                    for attachment in message.get("attachments") or []:
+                        if not isinstance(attachment, dict):
+                            continue
+                        mime_type = str(attachment.get("mime_type") or "")
+                        data = str(attachment.get("data") or "")
+                        if mime_type not in {
+                            "image/png", "image/jpeg", "image/gif", "image/webp",
+                        } or not data:
+                            continue
+                        attachments.append({
+                            "name": str(attachment.get("name") or "image")[:255],
+                            "mime_type": mime_type,
+                            "data": data,
+                        })
+                    if attachments:
+                        item["attachments"] = attachments
+            elif role == "assistant":
+                item["content"] = str(message.get("content") or "")
+                if include_reasoning:
+                    reasoning = str(
+                        message.get("_display_reasoning")
+                        or message.get("reasoning_content")
+                        or ""
+                    )
+                    if reasoning:
+                        item["reasoning"] = reasoning
+            else:
+                item["name"] = str(message.get("name") or "tool")[:255]
+                item["content"] = str(message.get("content") or "") if include_tool_details else ""
+            output.append(item)
+        return output
+
+    @staticmethod
+    def duplicate(path: Path) -> SessionStore:
+        """Clone durable conversation content without live run/thread ownership."""
+        if path.stat().st_size > MAX_SESSION_BYTES:
+            raise SessionTooLargeError(
+                f"{path.name} is larger than the {MAX_SESSION_BYTES // (1024 * 1024)} MB "
+                "session safety limit"
+            )
+        header = SessionStore.header(path)
+        clone = SessionStore(
+            str(header.get("cwd") or ""),
+            model=str(header.get("model") or ""),
+            provider=str(header.get("provider") or ""),
+            account=str(header.get("account") or ""),
+        )
+        records: list[dict[str, Any]] = []
+        try:
+            with path.open("rb") as source:
+                for line_number, raw in enumerate(source, 1):
+                    if len(raw) > MAX_SESSION_LINE_BYTES:
+                        raise SessionTooLargeError(
+                            f"{path.name} line {line_number} exceeds the record limit"
+                        )
+                    try:
+                        record = json.loads(raw.decode("utf-8", errors="replace"))
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(record, dict):
+                        continue
+                    record_type = record.get("type")
+                    if record_type == "meta":
+                        copied = {
+                            key: record.get(key)
+                            for key in ("cwd", "model", "provider", "account")
+                            if record.get(key) is not None
+                        }
+                        copied.update({
+                            "type": "meta",
+                            "started": datetime.now().isoformat(timespec="seconds"),
+                            "duplicated_from": path.stem,
+                        })
+                        records.append(copied)
+                    elif record_type == "message" and isinstance(record.get("message"), dict):
+                        message = dict(record["message"])
+                        message.pop("run_id", None)
+                        message.pop("team_run_id", None)
+                        records.append({"type": "message", "message": message})
+                    elif record_type == "model" and record.get("model"):
+                        records.append({"type": "model", "model": record["model"]})
+        except Exception:
+            clone.path.unlink(missing_ok=True)
+            raise
+        if not records or records[0].get("type") != "meta":
+            clone.path.unlink(missing_ok=True)
+            raise ValueError("the source chat has no valid provenance record")
+        with _APPEND_LOCK, clone.path.open("w", encoding="utf-8") as destination:
+            for record in records:
+                destination.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        return clone
 
     @staticmethod
     def chatgpt_thread_state(path: Path) -> dict[str, Any] | None:
@@ -593,6 +1107,7 @@ class SessionStore:
         switch opens a transcript, and empty ones are noise in the sidebar.
         """
         meta = SessionMeta.all()
+        organization = ChatOrganizationStore.snapshot()["placements"]
         out: list[dict[str, Any]] = []
         for f in SessionStore.list_sessions():
             session_id = f.stem
@@ -606,6 +1121,15 @@ class SessionStore:
                 stat = f.stat()
             except OSError:
                 continue
+            placement = organization.get(session_id)
+            if isinstance(placement, dict):
+                summary_workspace = str(summary.get("cwd") or "")
+                canonical_summary_workspace = (
+                    ChatOrganizationStore._canonical_workspace(summary_workspace)
+                    if summary_workspace else ""
+                )
+                if placement.get("workspace") != canonical_summary_workspace:
+                    placement = None
             if query:
                 haystack = " ".join([
                     str(entry.get("title") or ""),
@@ -630,6 +1154,13 @@ class SessionStore:
                 "workspace_root": entry.get("workspace_root"),
                 "execution_path": entry.get("execution_path"),
                 "environment": entry.get("environment"),
+                "folder_id": (
+                    placement.get("folder_id") if isinstance(placement, dict) else None
+                ),
+                "sort_order": (
+                    int(placement.get("order") or 0)
+                    if isinstance(placement, dict) else None
+                ),
             })
         # Sort before truncating, otherwise a pinned session drops off the
         # list as soon as `limit` newer sessions exist.
@@ -668,6 +1199,7 @@ class SessionStore:
                 continue
             moved.append(session_id)
             manifest["sessions"][session_id] = meta.get(session_id, {})
+        manifest["organization"] = ChatOrganizationStore.detach_sessions(moved)
         try:
             (target / "manifest.json").write_text(
                 json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
@@ -726,6 +1258,8 @@ class SessionStore:
             entry = (manifest.get("sessions") or {}).get(path.stem)
             if isinstance(entry, dict) and entry:
                 SessionMeta.update(destination.stem, **entry)
+            placement = (manifest.get("organization") or {}).get(path.stem)
+            ChatOrganizationStore.restore_placement(path.stem, destination.stem, placement)
         if restored_ids and not any(folder.glob("*.jsonl")):
             # Drop the manifest too so the emptied batch does not linger and
             # make the next "restore newest" a no-op.

@@ -105,11 +105,12 @@ final class BackendService {
     func get<T: Decodable>(
         _ path: String,
         query: [URLQueryItem] = [],
+        timeout: TimeInterval = 5,
         as type: T.Type
     ) async throws -> T {
         let url = try endpointURL(path, query: query)
         var request = URLRequest(url: url)
-        request.timeoutInterval = 5
+        request.timeoutInterval = timeout
         request.setValue(authToken, forHTTPHeaderField: BackendSecurity.header)
         let (data, response) = try await session.data(for: request)
         try validate(response, data: data)

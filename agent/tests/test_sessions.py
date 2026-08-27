@@ -8,7 +8,8 @@ developer's real transcripts into the trash.
 """
 from __future__ import annotations
 
-from concurrent.futures import Future
+import json
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -18,12 +19,19 @@ import ollama_code.sessions as sessions_module
 from ollama_code import server
 from ollama_code.core import AgentCore
 from ollama_code.sessions import (
+    ChatOrganizationStore,
     SessionStore,
     SessionTooLargeError,
     clear_saved_sessions,
     session_metadata,
     update_session_metadata,
 )
+
+
+def _chat(workspace: str, text: str) -> SessionStore:
+    store = SessionStore(workspace)
+    store.append({"type": "message", "message": {"role": "user", "content": text}})
+    return store
 
 
 def test_new_session_resets_transient_state(tmp_path) -> None:
@@ -50,6 +58,175 @@ def test_new_session_resets_transient_state(tmp_path) -> None:
     assert core.total_completion_tokens == 0
     started = next(event for event in events if event["type"] == "session_started")
     assert started["reason"] == "clear_chat"
+
+
+def test_nested_chat_folders_validate_workspace_names_and_cycles(tmp_path) -> None:
+    first = str(tmp_path / "one")
+    second = str(tmp_path / "two")
+    root = ChatOrganizationStore.create_folder(first, "Research")
+    child = ChatOrganizationStore.create_folder(first, "Sources", root["id"])
+
+    with pytest.raises(ValueError, match="already exists"):
+        ChatOrganizationStore.create_folder(first, "research")
+    with pytest.raises(ValueError, match="inside itself"):
+        ChatOrganizationStore.update_folder(root["id"], parent_id=child["id"])
+    with pytest.raises(ValueError, match="workspace"):
+        ChatOrganizationStore.create_folder(second, "Wrong parent", root["id"])
+
+    snapshot = ChatOrganizationStore.snapshot(first)
+    assert [folder["name"] for folder in snapshot["folders"]] == ["Research", "Sources"]
+
+
+def test_corrupt_organization_rehomes_invalid_placements_to_workspace_root(tmp_path) -> None:
+    workspace = str(tmp_path)
+    chat = _chat(workspace, "still visible")
+    path = sessions_module._organization_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "version": 1,
+        "folders": [
+            {"id": "a", "workspace": workspace, "parent_id": "b", "name": "A", "order": 0},
+            {"id": "b", "workspace": workspace, "parent_id": "a", "name": "B", "order": 0},
+            {"id": 17, "workspace": workspace, "name": "bad"},
+        ],
+        "placements": {
+            chat.session_id: {
+                "session_id": chat.session_id,
+                "workspace": workspace,
+                "folder_id": "missing",
+                "order": -9,
+            },
+        },
+    }), encoding="utf-8")
+
+    snapshot = ChatOrganizationStore.snapshot(workspace)
+    assert len(snapshot["folders"]) == 2
+    assert any(folder["parent_id"] is None for folder in snapshot["folders"])
+    assert snapshot["placements"][chat.session_id]["folder_id"] is None
+    summary = next(item for item in SessionStore.summaries() if item["id"] == chat.session_id)
+    assert summary["folder_id"] is None
+
+
+def test_chat_folder_writes_are_serialized_across_concurrent_callers(tmp_path) -> None:
+    workspace = str(tmp_path)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        folders = list(pool.map(
+            lambda index: ChatOrganizationStore.create_folder(workspace, f"Folder {index}"),
+            range(40),
+        ))
+
+    snapshot = ChatOrganizationStore.snapshot(workspace)
+    assert len(folders) == len(snapshot["folders"]) == 40
+    assert len({folder["id"] for folder in snapshot["folders"]}) == 40
+    assert sorted(folder["order"] for folder in snapshot["folders"]) == list(range(40))
+
+
+def test_folder_and_chat_reordering_use_true_insertion_order(tmp_path) -> None:
+    workspace = str(tmp_path)
+    folders = [
+        ChatOrganizationStore.create_folder(workspace, name)
+        for name in ("First", "Second", "Third")
+    ]
+    ChatOrganizationStore.update_folder(folders[2]["id"], parent_id=None, index=0)
+    ordered_folders = sorted(
+        ChatOrganizationStore.snapshot(workspace)["folders"], key=lambda item: item["order"]
+    )
+    assert [folder["name"] for folder in ordered_folders] == ["Third", "First", "Second"]
+
+    chats = [_chat(workspace, f"chat {index}") for index in range(3)]
+    for chat in chats:
+        ChatOrganizationStore.move_session(chat.session_id, None)
+    ChatOrganizationStore.move_session(chats[2].session_id, None, 0)
+    placements = ChatOrganizationStore.snapshot(workspace)["placements"]
+    ordered_chats = sorted(placements.values(), key=lambda item: item["order"])
+    assert [placement["session_id"] for placement in ordered_chats] == [
+        chats[2].session_id, chats[0].session_id, chats[1].session_id,
+    ]
+
+
+def test_session_organization_listing_handles_five_hundred_chats(tmp_path) -> None:
+    workspace = str(tmp_path)
+    for index in range(500):
+        _chat(workspace, f"chat {index}")
+
+    summaries = SessionStore.summaries(limit=500)
+    assert len(summaries) == 500
+    assert all("folder_id" in summary and "sort_order" in summary for summary in summaries)
+
+
+def test_folder_delete_promotes_children_and_chats_without_deleting_them(tmp_path) -> None:
+    workspace = str(tmp_path)
+    parent = ChatOrganizationStore.create_folder(workspace, "Parent")
+    child = ChatOrganizationStore.create_folder(workspace, "Child", parent["id"])
+    chat = _chat(workspace, "keep this")
+    ChatOrganizationStore.move_session(chat.session_id, parent["id"])
+
+    ChatOrganizationStore.delete_folder(parent["id"])
+
+    snapshot = ChatOrganizationStore.snapshot(workspace)
+    promoted = next(folder for folder in snapshot["folders"] if folder["id"] == child["id"])
+    assert promoted["parent_id"] is None
+    assert snapshot["placements"][chat.session_id]["folder_id"] is None
+    assert SessionStore.path_for(chat.session_id) is not None
+
+
+def test_trash_restore_preserves_folder_placement(tmp_path) -> None:
+    workspace = str(tmp_path)
+    folder = ChatOrganizationStore.create_folder(workspace, "Saved")
+    chat = _chat(workspace, "recover me")
+    ChatOrganizationStore.move_session(chat.session_id, folder["id"])
+
+    count, trash = SessionStore.move_to_trash([chat.session_id])
+    assert count == 1
+    assert ChatOrganizationStore.placement(chat.session_id) is None
+
+    restored = SessionStore.restore_from_trash_details(Path(trash).name)
+    assert restored == [chat.session_id]
+    assert ChatOrganizationStore.placement(chat.session_id)["folder_id"] == folder["id"]
+
+
+def test_duplicate_keeps_messages_and_attachments_but_drops_live_run_records(tmp_path) -> None:
+    source = SessionStore(str(tmp_path), model="test:model")
+    source.append({
+        "type": "message",
+        "message": {
+            "role": "user",
+            "content": "hello",
+            "run_id": "live-run",
+            "attachments": [{"name": "pixel.png", "mime_type": "image/png", "data": "cG5n"}],
+        },
+    })
+    source.append({"type": "agent_activity", "event": {"run_id": "live-run"}})
+    clone = SessionStore.duplicate(source.path)
+
+    messages = SessionStore.load(clone.path)
+    assert messages[0]["content"] == "hello"
+    assert messages[0]["attachments"][0]["name"] == "pixel.png"
+    assert "run_id" not in messages[0]
+    assert "live-run" not in clone.path.read_text(encoding="utf-8")
+    assert SessionStore.header(clone.path)["duplicated_from"] == source.session_id
+
+
+def test_export_messages_are_full_length_and_privacy_filtered(tmp_path) -> None:
+    chat = SessionStore(str(tmp_path))
+    chat.append({"type": "message", "message": {"role": "system", "content": "secret"}})
+    chat.append({
+        "type": "message",
+        "message": {"role": "assistant", "content": "x" * 8_000, "_display_reasoning": "why"},
+    })
+    chat.append({"type": "message", "message": {"role": "tool", "name": "bash", "content": "details"}})
+
+    visible = SessionStore.export_messages(chat.path)
+    technical = SessionStore.export_messages(
+        chat.path, include_reasoning=True, include_tool_details=True,
+    )
+
+    assert len(visible[0]["content"]) == 8_000
+    assert "reasoning" not in visible[0]
+    assert visible[1] == {"role": "tool", "name": "bash", "content": ""}
+    assert technical[0]["reasoning"] == "why"
+    assert technical[1]["content"] == "details"
+    assert all(message["role"] != "system" for message in technical)
 
 
 def test_new_session_endpoint_returns_explicit_acknowledgement(tmp_path) -> None:

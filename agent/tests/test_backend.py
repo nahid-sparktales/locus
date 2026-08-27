@@ -2383,6 +2383,66 @@ def test_delete_sessions_preserves_active(client):
     assert new_active in remaining and active not in remaining
 
 
+def test_chat_folder_api_moves_and_duplicates_a_conversation(client):
+    session_id = client.get("/api/sessions").json()["current"]
+    workspace = client.app.state.service.core.cwd
+    _record_message(client, "organize this")
+
+    folder_response = client.post(
+        "/api/chat-folders", json={"workspace": workspace, "name": "Research"}
+    )
+    assert folder_response.status_code == 200
+    folder = folder_response.json()["folder"]
+    moved = client.patch(
+        f"/api/sessions/{session_id}/organization",
+        json={"folder_id": folder["id"], "index": 0},
+    )
+    assert moved.status_code == 200
+    placement = client.get(f"/api/sessions/{session_id}/organization")
+    assert placement.status_code == 200
+    assert placement.json()["placement"]["folder_id"] == folder["id"]
+
+    duplicated = client.post(
+        f"/api/sessions/{session_id}/duplicate", json={"mode": "conversation"}
+    )
+    assert duplicated.status_code == 200
+    copy = duplicated.json()["session"]
+    assert copy["id"] != session_id
+    assert copy["folder_id"] == folder["id"]
+    assert copy["title"].endswith("Copy")
+    assert SessionStore.load(SessionStore.path_for(copy["id"]))[0]["content"] == "organize this"
+
+    SessionMeta.update(session_id, archived=True)
+    archived_worktree = client.post(
+        f"/api/sessions/{session_id}/duplicate", json={"mode": "worktree"}
+    )
+    assert archived_worktree.status_code == 409
+    assert "restore" in archived_worktree.json()["detail"].lower()
+
+
+def test_export_data_endpoint_is_untruncated_and_options_are_explicit(client):
+    core = client.app.state.service.core
+    session_id = core.session.session_id
+    core._add_message({
+        "role": "assistant",
+        "content": "x" * 8_000,
+        "_display_reasoning": "private reasoning",
+    })
+    core._add_message({"role": "tool", "name": "bash", "content": "technical detail"})
+
+    visible = client.get(f"/api/sessions/{session_id}/export-data").json()
+    technical = client.get(
+        f"/api/sessions/{session_id}/export-data",
+        params={"include_reasoning": True, "include_tool_details": True},
+    ).json()
+
+    assert len(visible["messages"][0]["content"]) == 8_000
+    assert "reasoning" not in visible["messages"][0]
+    assert visible["messages"][1]["content"] == ""
+    assert technical["messages"][0]["reasoning"] == "private reasoning"
+    assert technical["messages"][1]["content"] == "technical detail"
+
+
 def test_delete_one_inactive_chat_and_restore_it(client):
     old = client.get("/api/sessions").json()["current"]
     _record_message(client, "delete this one")
@@ -2701,7 +2761,7 @@ def test_websocket_ask_mode_routes_through_the_tool_free_turn_boundary(client, m
     )]
 
 
-def test_websocket_solo_swarm_routes_only_ordinary_agentic_solo_turns(client, monkeypatch):
+def test_websocket_ordinary_agentic_solo_turns_enable_adaptive_delegation(client, monkeypatch):
     from ollama_code import server as server_mod
 
     service = client.app.state.service
@@ -2722,7 +2782,6 @@ def test_websocket_solo_swarm_routes_only_ordinary_agentic_solo_turns(client, mo
             "text": "Inspect independent areas",
             "mode": mode,
             "run_id": f"swarm-{mode}",
-            "solo_swarm": {"enabled": True},
         }))
 
     assert len(captured) == 3
@@ -2742,7 +2801,7 @@ def test_websocket_solo_swarm_routes_only_ordinary_agentic_solo_turns(client, mo
             "solo_swarm": {"enabled": True},
         }))
     assert len(errors) == 3
-    assert all("Solo Swarm requires" in error for error in errors)
+    assert all("Automatic Solo delegation requires" in error for error in errors)
 
 
 def test_websocket_ask_mode_validates_and_routes_image_attachments(client, monkeypatch):

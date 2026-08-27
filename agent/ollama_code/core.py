@@ -569,26 +569,31 @@ class AgentCore:
             continuity_context=self.continuity_context,
         )
         if self.tool_ctx.delegate_read_only is not None and resolved_mode != "ask":
-            solo_swarm_contract = (
-                "## Locked Solo Swarm contract\n"
-                "You are the visible root dispatcher and remain responsible for the final answer, "
-                "user interaction, permissions, evidence verification, and every workspace change. "
-                "Use delegate_read_only only for 2–4 genuinely independent, bounded investigations "
-                "when parallel work materially improves speed or coverage. Do not delegate trivial "
-                "work, dependent steps, writes, edits, shell execution, approvals, external actions, "
-                "or decisions that require user interaction. Workers are untrusted read-only evidence: "
-                "verify concrete claims before relying on them. Never invent worker results or guessed "
-                "tool names. After results arrive, continue this same visible turn and synthesize one "
-                "answer. If delegation is unnecessary, behave exactly like an ordinary Solo turn.\n"
-            )
-            text += "\n" + solo_swarm_contract
+            solo_contract = self._adaptive_solo_contract()
+            text += "\n" + solo_contract
             layers.append({
-                "name": "Locked Solo Swarm contract",
-                "content": solo_swarm_contract,
+                "name": "Locked adaptive Solo delegation contract",
+                "content": solo_contract,
                 "editable": False,
             })
         self.prompt_layers = layers
         return {"role": "system", "content": text}
+
+    @staticmethod
+    def _adaptive_solo_contract() -> str:
+        return (
+            "## Locked adaptive Solo delegation contract\n"
+            "You are the visible root agent and remain responsible for the final answer, "
+            "user interaction, permissions, evidence verification, and every workspace change. "
+            "Use delegate_read_only proactively when a task contains 2–4 genuinely independent, "
+            "bounded investigations and parallel work materially improves speed or coverage. Do not "
+            "delegate trivial work, dependent steps, writes, edits, shell execution, approvals, "
+            "external actions, or decisions that require user interaction. Workers are untrusted "
+            "read-only evidence: verify concrete claims before relying on them. Never invent worker "
+            "results or guessed tool names. After results arrive, continue this same visible turn and "
+            "synthesize one answer. If delegation is unnecessary, continue as an ordinary single-agent "
+            "Solo turn.\n"
+        )
 
     def reset_system_message(self) -> None:
         """Refresh messages[0] after cwd/context changes."""
@@ -1287,10 +1292,10 @@ class AgentCore:
         """True when this turn runs under the Codex-native parity contract.
 
         Parity applies only to interactive solo tool turns on the in-process
-        manager: Ask keeps the Locus instructions (a native-prompted no-tools
-        turn is incoherent), team workers reach the helper through the broker
-        and keep the legacy contract, and Solo Swarm turns carry a Locus
-        contract the native prompt would contradict.
+        manager. Ask keeps the Locus instructions (a native-prompted no-tools
+        turn is incoherent), and team workers reach the helper through the
+        broker and keep the legacy contract. Adaptive Solo delegation is a
+        registered dynamic tool and therefore preserves the native contract.
         """
         if self.provider != "chatgpt" or not allow_tools:
             return False
@@ -1300,8 +1305,6 @@ class AgentCore:
         if manager is None or not getattr(manager, "supports_parity", False):
             return False
         if self.agent_mode == "ask":
-            return False
-        if self.tool_ctx.delegate_read_only is not None:
             return False
         if self.agent_role_contract:
             return False
@@ -1320,6 +1323,8 @@ class AgentCore:
         if self.project_context:
             name, content = self.project_context
             sections.append(f"Instructions from the workspace's {name}:\n\n{content}")
+        if self.tool_ctx.delegate_read_only is not None:
+            sections.append(self._adaptive_solo_contract())
         if self.agent_mode == "plan":
             sections.append(
                 "You are in Locus Plan mode: investigate, then call the "

@@ -7,6 +7,41 @@ import ServiceManagement
 import UniformTypeIdentifiers
 import UserNotifications
 
+@MainActor
+private final class ChatExportAccessoryView: NSView {
+    let reasoning = NSButton(checkboxWithTitle: "Include reasoning", target: nil, action: nil)
+    let tools = NSButton(checkboxWithTitle: "Include full tool details", target: nil, action: nil)
+    let attachments = NSButton(checkboxWithTitle: "Include attachments", target: nil, action: nil)
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        attachments.state = .on
+        let stack = NSStackView(views: [attachments, reasoning, tools])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 7
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+        ])
+        frame.size = NSSize(width: 260, height: 80)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    var options: ChatExportOptions {
+        ChatExportOptions(
+            includeReasoning: reasoning.state == .on,
+            includeToolDetails: tools.state == .on,
+            includeAttachments: attachments.state == .on
+        )
+    }
+}
+
 struct AppLifecycleRunSnapshot: Codable, Equatable {
     let sessionID: String
     let runID: String
@@ -88,13 +123,13 @@ struct AutomaticInspectorPrompt: Equatable {
 
     var title: String {
         isTeamRun
-            ? "Open Runs for team and Solo Swarm requests?"
+            ? "Open Runs for team requests?"
             : "Open Context & Plan for solo requests?"
     }
 
     var message: String {
         if isTeamRun {
-            return "Locus can open Runs whenever you send a team or Solo Swarm request so you can follow its agents and progress. You can change this anytime in Settings → General → Conversation."
+            return "Locus can open Runs whenever you send a team request so you can follow its agents and progress. You can change this anytime in Settings → General → Conversation."
         }
         return "Locus can open Context & Plan whenever you send a solo Work request so you can follow context use and the current plan. You can change this anytime in Settings → General → Conversation."
     }
@@ -202,7 +237,9 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set(selectedAgentTeamID?.uuidString, forKey: AgentTeamStore.selectionKey)
         }
     }
-    @Published var soloSwarmEnabled = false {
+    /// Compatibility state for profiles written before Solo delegation became
+    /// adaptive. Every non-team Solo Work/Plan/GSD turn now enables it.
+    @Published var soloSwarmEnabled = true {
         didSet {
             guard soloSwarmEnabled != oldValue else { return }
             if soloSwarmEnabled, selectedAgentTeamID != nil {
@@ -265,7 +302,20 @@ final class AppModel: ObservableObject {
     @Published var mcpDeviceAuthorization: MCPDeviceAuthorizationPrompt?
     private var orchestrationEventIDs: Set<String> = []
     @Published var sessions: [SessionSummary] = []
+    @Published var chatFolders: [ChatFolderRecord] = []
     @Published var currentSessionID = ""
+    @Published private(set) var chatSplitRestoration = ChatSplitRestoration.empty
+    let primaryChatPaneState = ChatPaneState(id: .primary)
+    let secondaryChatPaneState = ChatPaneState(id: .secondary)
+    @Published private(set) var splitPaneBlocks: [String: [ChatBlock]] = [:]
+    @Published private(set) var splitPaneDrafts: [String: String] = [:]
+    private var splitPaneAttachments: [String: [ChatAttachment]] = [:]
+    private var splitPaneModes: [String: WorkMode] = [:]
+    private var splitPaneTeams: [String: UUID?] = [:]
+    private var splitPaneSoloRouting: [String: Bool] = [:]
+    private var splitPaneSearchQueries: [String: String] = [:]
+    private static let splitRestorationKey = "Locus.chatSplitRestoration"
+    private var didRestoreChatSplit = false
 
     var activityNeedsAttentionCount: Int {
         let states = Set(["waiting_permission", "waiting_computer",
@@ -457,6 +507,8 @@ final class AppModel: ObservableObject {
     @Published var isSearchingTranscripts = false
     @Published var transcriptSearchIndexing = false
     @Published var sidebarSearchFocusToken = UUID()
+    @Published var globalNewFolderPresented = false
+    @Published var globalNewFolderName = ""
     @Published var composerFocusToken = UUID()
     private var transcriptHitsTask: Task<Void, Never>?
     private var pendingSearchHit: TranscriptSearchHit?
@@ -706,6 +758,11 @@ final class AppModel: ObservableObject {
             dismissedActivityRunIDs = Set(
                 defaults.stringArray(forKey: "Locus.dismissedActivityRunIDs") ?? []
             )
+            if let data = defaults.data(forKey: Self.splitRestorationKey),
+               let restoration = try? JSONDecoder().decode(ChatSplitRestoration.self, from: data)
+            {
+                chatSplitRestoration = restoration
+            }
         }
         var loadedSettings: AppSettings
         // Gated on `persistenceEnabled` for the same reason the accounts below
@@ -1139,8 +1196,20 @@ final class AppModel: ObservableObject {
                 return lhs.mtime > rhs.mtime
             }
         guard !query.isEmpty else { return filtered }
+        let directlyMatchingFolders = Set(chatFolders.filter {
+            $0.name.lowercased().contains(query)
+        }.map(\.id))
+        var matchingFolderTree = directlyMatchingFolders
+        var changed = true
+        while changed {
+            changed = false
+            for folder in chatFolders where folder.parentID.map(matchingFolderTree.contains) == true {
+                if matchingFolderTree.insert(folder.id).inserted { changed = true }
+            }
+        }
         return filtered.filter {
             "\($0.displayTitle) \($0.name)".lowercased().contains(query)
+                || $0.folderID.map(matchingFolderTree.contains) == true
         }
     }
 
@@ -1179,7 +1248,13 @@ final class AppModel: ObservableObject {
 
         var groups = paths.compactMap { path -> WorkspaceChatGroup? in
             let groupChats = (chatsByPath.removeValue(forKey: path) ?? []).sorted(by: Self.sessionSort)
-            if queryActive && groupChats.isEmpty { return nil }
+            let folderMatches = queryActive && chatFolders.contains { folder in
+                SessionSummary.canonicalWorkspacePath(folder.workspace) == path
+                    && folder.name.localizedCaseInsensitiveContains(
+                        searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+                    )
+            }
+            if queryActive && groupChats.isEmpty && !folderMatches { return nil }
             let profile = profilesByPath[path]
             let chatDate = groupChats.map(\.date).max() ?? .distantPast
             let lastOpened = max(profile?.lastOpened ?? .distantPast, chatDate)
@@ -1214,6 +1289,44 @@ final class AppModel: ObservableObject {
             )
         }
         return groups
+    }
+
+    func folders(in group: WorkspaceChatGroup, parentID: String? = nil) -> [ChatFolderRecord] {
+        guard let path = group.path else { return [] }
+        let canonical = SessionSummary.canonicalWorkspacePath(path)
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return chatFolders
+            .filter { folder in
+                SessionSummary.canonicalWorkspacePath(folder.workspace) == canonical
+                    && folder.parentID == parentID
+                    && (query.isEmpty || folderMatchesSearch(folder, query: query, group: group))
+            }
+            .sorted { lhs, rhs in
+                if lhs.order != rhs.order { return lhs.order < rhs.order }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+    }
+
+    func chats(in group: WorkspaceChatGroup, folderID: String?) -> [SessionSummary] {
+        group.chats
+            .filter { $0.folderID == folderID }
+            .sorted { lhs, rhs in
+                if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
+                if lhs.sortOrder != rhs.sortOrder {
+                    return (lhs.sortOrder ?? .max) < (rhs.sortOrder ?? .max)
+                }
+                return lhs.mtime > rhs.mtime
+            }
+    }
+
+    private func folderMatchesSearch(
+        _ folder: ChatFolderRecord, query: String, group: WorkspaceChatGroup
+    ) -> Bool {
+        if folder.name.lowercased().contains(query) { return true }
+        if group.chats.contains(where: { $0.folderID == folder.id }) { return true }
+        return chatFolders.contains { child in
+            child.parentID == folder.id && folderMatchesSearch(child, query: query, group: group)
+        }
     }
 
     private static func sessionSort(_ lhs: SessionSummary, _ rhs: SessionSummary) -> Bool {
@@ -2282,9 +2395,15 @@ final class AppModel: ObservableObject {
                 : "?limit=500"
             let response = try await backend.get("/api/sessions\(suffix)", as: SessionsResponse.self)
             sessions = response.sessions
+            if let folders = try? await backend.get(
+                "/api/chat-folders", as: ChatFoldersResponse.self
+            ) {
+                chatFolders = folders.folders
+            }
             if taskWorkers[currentSessionID] == nil {
                 currentSessionID = response.current
             }
+            reconcileChatSplitRestoration()
             if let path = workspaceToOpenAfterReconnect {
                 workspaceToOpenAfterReconnect = nil
                 let canonical = SessionSummary.canonicalWorkspacePath(path)
@@ -3303,14 +3422,12 @@ final class AppModel: ObservableObject {
         if wantsTeam, dispatchedTeam == nil { return }
         let dispatchedSoloSwarm = dispatchedTeam == nil
             && selectedAgentTeamID == nil
-            && soloSwarmEnabled
             && dispatchedMode != .ask
             && !isSlashPassthrough
         if settings.automaticModelRoutingEnabled,
            !automaticRoutingPrepared,
            !isSlashPassthrough,
-           dispatchedTeam == nil,
-           !dispatchedSoloSwarm
+           dispatchedTeam == nil
         {
             isBusy = true
             modelRouterMessage = "Choosing a model for this message…"
@@ -3397,7 +3514,9 @@ final class AppModel: ObservableObject {
         if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
             draftText = ""
         }
-        let opensRuns = dispatchedTeam != nil || dispatchedSoloSwarm
+        // Adaptive workers stay inside the ordinary Solo experience. The Runs
+        // inspector still opens automatically for explicit teams only.
+        let opensRuns = dispatchedTeam != nil
         presentInspectorForSentRequest(
             isTeam: opensRuns,
             runID: opensRuns ? reservedRunID : nil
@@ -4346,15 +4465,15 @@ final class AppModel: ObservableObject {
     }
 
     func selectAgentTeam(_ id: UUID?) {
-        if id != nil { soloSwarmEnabled = false }
+        soloSwarmEnabled = id == nil
         selectedAgentTeamID = id
         showToast(id == nil ? "Solo mode" : "Team mode")
     }
 
-    func selectSoloRoute(swarm: Bool) {
+    func selectSoloRoute() {
         selectedAgentTeamID = nil
-        soloSwarmEnabled = swarm
-        showToast(swarm ? "Solo Swarm mode" : "Solo mode")
+        soloSwarmEnabled = true
+        showToast("Solo mode")
     }
 
     func savePrimaryAgentBehavior(_ behavior: AgentBehavior) {
@@ -6301,8 +6420,8 @@ final class AppModel: ObservableObject {
             draft.runner = .team
             draft.teamID = team.id.uuidString
             draft.teamName = team.name
-        } else if soloSwarmEnabled {
-            draft.runner = .soloSwarm
+        } else {
+            draft.runner = .solo
         }
         if let account = activeAccount {
             draft.provider = account.kind == .chatGPT ? "chatgpt" : "remote"
@@ -7594,6 +7713,7 @@ final class AppModel: ObservableObject {
                 )
                 sessions = list.sessions
                 currentSessionID = list.current
+                reconcileChatSplitRestoration()
                 if response.count == 0 {
                     showToast("No previous sessions to clear")
                 } else {
@@ -7625,6 +7745,7 @@ final class AppModel: ObservableObject {
             expandedWorkspaceIDs.insert(path)
             persistExpandedWorkspaces()
         }
+        prepareSplitSelection(session.id)
         if let runtime = taskWorkers[session.id] {
             activateWorkerSession(session, runtime: runtime)
             return
@@ -7651,6 +7772,8 @@ final class AppModel: ObservableObject {
                 appliedWorkspacePath = response.sessionInfo.cwd
                 pendingWorkspacePath = nil
                 blocks = Self.blocks(from: response.messages)
+                splitPaneBlocks[response.sessionInfo.sessionID] = blocks
+                paneState(containing: response.sessionInfo.sessionID)?.blocks = blocks
                 if let error = taskConversationStates[response.sessionInfo.sessionID]?
                     .errorMessage?.nilIfEmpty,
                    blocks.last?.text != error {
@@ -7741,6 +7864,8 @@ final class AppModel: ObservableObject {
                     as: SessionDetailResponse.self
                 )
                 blocks = Self.blocks(from: detail.messages)
+                splitPaneBlocks[runtime.sessionID] = blocks
+                paneState(containing: runtime.sessionID)?.blocks = blocks
                 if let streamingID = runtime.streamingBlockID {
                     blocks.append(ChatBlock(
                         id: streamingID,
@@ -7802,6 +7927,206 @@ final class AppModel: ObservableObject {
 
     func togglePin(_ session: SessionSummary) {
         updateSession(session, body: ["pinned": !session.isPinned], success: session.isPinned ? "Session unpinned" : "Session pinned")
+    }
+
+    func createChatFolder(in workspace: String, name: String, parentID: String? = nil) {
+        var body: [String: Any] = ["workspace": workspace, "name": name]
+        if let parentID { body["parent_id"] = parentID }
+        Task {
+            do {
+                let response = try await backend.post(
+                    "/api/chat-folders", body: body, as: ChatFolderMutationResponse.self
+                )
+                chatFolders.append(response.folder)
+                expandedChatFolderIDs.insert(response.folder.id)
+                persistExpandedChatFolders()
+                showToast("Folder created")
+            } catch {
+                showToast("Could not create folder: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func renameChatFolder(_ folder: ChatFolderRecord, name: String) {
+        Task {
+            do {
+                let response = try await backend.patch(
+                    "/api/chat-folders/\(folder.id)",
+                    body: ["name": name],
+                    as: ChatFolderMutationResponse.self
+                )
+                if let index = chatFolders.firstIndex(where: { $0.id == folder.id }) {
+                    chatFolders[index] = response.folder
+                }
+                showToast("Folder renamed")
+            } catch {
+                showToast("Could not rename folder: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func deleteChatFolder(_ folder: ChatFolderRecord) {
+        Task {
+            do {
+                let _: ChatFolderDeleteResponse = try await backend.delete(
+                    "/api/chat-folders/\(folder.id)", as: ChatFolderDeleteResponse.self
+                )
+                await refreshChatOrganization()
+                showToast("Folder removed — chats kept")
+            } catch {
+                showToast("Could not remove folder: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func moveChat(_ session: SessionSummary, to folderID: String?, index: Int? = nil) {
+        var body: [String: Any] = ["folder_id": folderID ?? NSNull()]
+        if let index { body["index"] = index }
+        Task {
+            do {
+                let response = try await backend.patch(
+                    "/api/sessions/\(session.id)/organization",
+                    body: body,
+                    as: SessionOrganizationResponse.self
+                )
+                if let position = sessions.firstIndex(where: { $0.id == session.id }) {
+                    sessions[position] = session.withOrganization(
+                        folderID: response.placement.folderID,
+                        sortOrder: response.placement.order
+                    )
+                }
+                await refreshMetadata()
+                showToast("Chat moved")
+            } catch {
+                showToast("Could not move chat: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func moveChatFolder(
+        _ folder: ChatFolderRecord, to parentID: String?, index: Int? = nil
+    ) {
+        var body: [String: Any] = ["parent_id": parentID ?? NSNull()]
+        if let index { body["index"] = index }
+        Task {
+            do {
+                let response = try await backend.patch(
+                    "/api/chat-folders/\(folder.id)",
+                    body: body,
+                    as: ChatFolderMutationResponse.self
+                )
+                if let position = chatFolders.firstIndex(where: { $0.id == folder.id }) {
+                    chatFolders[position] = response.folder
+                }
+                await refreshChatOrganization()
+                showToast("Folder moved")
+            } catch {
+                showToast("Could not move folder: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func canMoveChatFolder(_ folder: ChatFolderRecord, into target: ChatFolderRecord) -> Bool {
+        guard folder.id != target.id,
+              SessionSummary.canonicalWorkspacePath(folder.workspace)
+                == SessionSummary.canonicalWorkspacePath(target.workspace)
+        else { return false }
+        var cursor: ChatFolderRecord? = target
+        while let current = cursor {
+            if current.id == folder.id { return false }
+            cursor = current.parentID.flatMap { parentID in
+                chatFolders.first(where: { $0.id == parentID })
+            }
+        }
+        return true
+    }
+
+    func reorderChatFolder(_ folder: ChatFolderRecord, offset: Int) {
+        let siblings = chatFolders.filter {
+            SessionSummary.canonicalWorkspacePath($0.workspace)
+                == SessionSummary.canonicalWorkspacePath(folder.workspace)
+                && $0.parentID == folder.parentID
+        }.sorted { $0.order < $1.order }
+        guard let current = siblings.firstIndex(where: { $0.id == folder.id }) else { return }
+        let target = min(max(current + offset, 0), max(siblings.count - 1, 0))
+        guard target != current else { return }
+        moveChatFolder(folder, to: folder.parentID, index: target)
+    }
+
+    func reorderChat(_ session: SessionSummary, offset: Int) {
+        let siblings = sessions.filter {
+            $0.workspacePath == session.workspacePath
+                && $0.folderID == session.folderID
+                && $0.isPinned == session.isPinned
+                && $0.isArchived == session.isArchived
+        }.sorted {
+            if $0.sortOrder != $1.sortOrder {
+                return ($0.sortOrder ?? .max) < ($1.sortOrder ?? .max)
+            }
+            return $0.mtime > $1.mtime
+        }
+        guard let current = siblings.firstIndex(where: { $0.id == session.id }) else { return }
+        let target = min(max(current + offset, 0), max(siblings.count - 1, 0))
+        guard target != current else { return }
+        moveChat(session, to: session.folderID, index: target)
+    }
+
+    func duplicateSession(_ session: SessionSummary, withWorktree: Bool = false) {
+        guard !chatHasActiveRun(session) else {
+            showToast("Wait for this chat to stop before duplicating it")
+            return
+        }
+        Task {
+            do {
+                let response = try await backend.post(
+                    "/api/sessions/\(session.id)/duplicate",
+                    body: ["mode": withWorktree ? "worktree" : "conversation"],
+                    timeout: withWorktree ? 120 : 20,
+                    as: DuplicateSessionResponse.self
+                )
+                await refreshMetadata()
+                if let copy = sessions.first(where: { $0.id == response.session.id }) {
+                    resume(copy)
+                }
+                showToast(withWorktree ? "Chat and worktree duplicated" : "Chat duplicated")
+            } catch {
+                showToast("Could not duplicate chat: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    var expandedChatFolderIDs: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: "Locus.expandedChatFolders") ?? []) }
+        set { UserDefaults.standard.set(Array(newValue).sorted(), forKey: "Locus.expandedChatFolders") }
+    }
+
+    func isChatFolderExpanded(_ id: String) -> Bool {
+        expandedChatFolderIDs.contains(id)
+    }
+
+    func setChatFolderExpanded(_ id: String, expanded: Bool) {
+        var values = expandedChatFolderIDs
+        if expanded { values.insert(id) } else { values.remove(id) }
+        expandedChatFolderIDs = values
+    }
+
+    private func persistExpandedChatFolders() {
+        expandedChatFolderIDs = expandedChatFolderIDs
+    }
+
+    private func refreshChatOrganization() async {
+        if let response = try? await backend.get(
+            "/api/chat-folders", as: ChatFoldersResponse.self
+        ) {
+            chatFolders = response.folders
+        }
+        let suffix = showArchivedSessions ? "?include_archived=true&limit=500" : "?limit=500"
+        if let response = try? await backend.get(
+            "/api/sessions\(suffix)", as: SessionsResponse.self
+        ) {
+            sessions = response.sessions
+            reconcileChatSplitRestoration()
+        }
     }
 
     func archive(_ session: SessionSummary) {
@@ -7898,37 +8223,359 @@ final class AppModel: ObservableObject {
         Task { await refreshMetadata() }
     }
 
-    func exportCurrentSession() {
+    // MARK: - Split chat panes
+
+    var splitViewActive: Bool { chatSplitRestoration.isSplit }
+
+    func chatPaneState(for pane: ChatPaneID) -> ChatPaneState {
+        pane == .primary ? primaryChatPaneState : secondaryChatPaneState
+    }
+
+    func splitSessionID(for pane: ChatPaneID) -> String? {
+        chatSplitRestoration.sessionID(for: pane)
+    }
+
+    func paneBlocks(for sessionID: String) -> [ChatBlock] {
+        if sessionID == currentSessionID { return blocks }
+        var snapshot = splitPaneBlocks[sessionID] ?? []
+        if let runtime = taskWorkers[sessionID],
+           let streamingID = runtime.streamingBlockID
+        {
+            snapshot.removeAll { $0.id == streamingID || $0.isStreaming }
+            snapshot.append(ChatBlock(
+                id: streamingID,
+                kind: .assistant,
+                text: runtime.streamingText,
+                reasoningText: runtime.streamingReasoning.nilIfEmpty,
+                isStreaming: true
+            ))
+        }
+        return snapshot
+    }
+
+    func paneDraft(for sessionID: String) -> String {
+        if sessionID == currentSessionID { return draftText }
+        return splitPaneDrafts[sessionID] ?? ""
+    }
+
+    func setPaneDraft(_ value: String, for sessionID: String) {
+        if sessionID == currentSessionID {
+            draftText = value
+        } else {
+            splitPaneDrafts[sessionID] = value
+        }
+        paneState(containing: sessionID)?.draft = value
+    }
+
+    func toggleSplitView() {
+        if chatSplitRestoration.isSplit {
+            closeChatPane(.secondary)
+            return
+        }
+        guard let session = sessions.first(where: {
+            !$0.isArchived && $0.id != currentSessionID
+        }) else {
+            showToast("Open another saved chat before splitting the view")
+            return
+        }
+        openInOtherPane(session)
+    }
+
+    func openInOtherPane(_ session: SessionSummary) {
+        guard session.id != currentSessionID else {
+            showToast("That chat is already open in this pane")
+            return
+        }
+        if !chatSplitRestoration.isSplit {
+            chatSplitRestoration.primarySessionID = currentSessionID.nilIfEmpty
+        }
+        let other = chatSplitRestoration.focusedPane.other
+        if other == .primary {
+            chatSplitRestoration.primarySessionID = session.id
+        } else {
+            chatSplitRestoration.secondarySessionID = session.id
+        }
+        chatSplitRestoration.focusedPane = other
+        persistChatSplitRestoration()
+        refreshSplitPane(session.id)
+        resume(session)
+    }
+
+    func open(_ session: SessionSummary, in pane: ChatPaneID) {
+        if !chatSplitRestoration.isSplit {
+            openInOtherPane(session)
+            return
+        }
+        if chatSplitRestoration.sessionID(for: pane) == session.id {
+            focusChatPane(pane)
+            return
+        }
+        if pane == .primary {
+            chatSplitRestoration.primarySessionID = session.id
+        } else {
+            chatSplitRestoration.secondarySessionID = session.id
+        }
+        chatSplitRestoration.focusedPane = pane
+        persistChatSplitRestoration()
+        resume(session)
+    }
+
+    func focusChatPane(_ pane: ChatPaneID) {
+        guard let sessionID = splitSessionID(for: pane), sessionID != currentSessionID,
+              let session = sessions.first(where: { $0.id == sessionID })
+        else {
+            if splitSessionID(for: pane) != nil {
+                chatSplitRestoration.focusedPane = pane
+                persistChatSplitRestoration()
+            }
+            return
+        }
+        chatSplitRestoration.focusedPane = pane
+        persistChatSplitRestoration()
+        resume(session)
+    }
+
+    func closeChatPane(_ pane: ChatPaneID) {
+        guard chatSplitRestoration.isSplit else { return }
+        captureForegroundPane()
+        let remainingPane = pane.other
+        guard let remainingSessionID = splitSessionID(for: remainingPane) else { return }
+        let shouldActivate = currentSessionID != remainingSessionID
+        chatSplitRestoration = ChatSplitRestoration(
+            primarySessionID: remainingSessionID,
+            secondarySessionID: nil,
+            focusedPane: .primary,
+            dividerRatio: chatSplitRestoration.dividerRatio
+        )
+        persistChatSplitRestoration()
+        if shouldActivate,
+           let remaining = sessions.first(where: { $0.id == remainingSessionID })
+        {
+            resume(remaining)
+        }
+    }
+
+    func setSplitDividerRatio(_ value: Double) {
+        chatSplitRestoration.dividerRatio = min(max(value, 0.28), 0.72)
+        persistChatSplitRestoration()
+    }
+
+    func submitDraft(in pane: ChatPaneID) {
+        guard let sessionID = splitSessionID(for: pane) else { return }
+        let text = paneDraft(for: sessionID).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        setPaneDraft(text, for: sessionID)
+        if currentSessionID == sessionID {
+            submitDraft()
+            return
+        }
+        focusChatPane(pane)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            for _ in 0..<100 {
+                if currentSessionID == sessionID,
+                   sessionInfo?.sessionID == sessionID
+                {
+                    draftText = text
+                    submitDraft()
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            showToast("That pane is still reconnecting — your draft is preserved")
+        }
+    }
+
+    func refreshSplitPane(_ sessionID: String) {
+        guard sessionID != currentSessionID else {
+            splitPaneBlocks[sessionID] = blocks
+            return
+        }
+        Task {
+            guard let detail = try? await backend.get(
+                "/api/sessions/\(sessionID)",
+                as: SessionDetailResponse.self
+            ) else { return }
+            splitPaneBlocks[sessionID] = Self.blocks(from: detail.messages)
+            paneState(containing: sessionID)?.blocks = splitPaneBlocks[sessionID] ?? []
+        }
+    }
+
+    private func prepareSplitSelection(_ sessionID: String) {
+        guard sessionID != currentSessionID else { return }
+        captureForegroundPane()
+        if !chatSplitRestoration.isSplit {
+            chatSplitRestoration.primarySessionID = sessionID
+            chatSplitRestoration.secondarySessionID = nil
+            chatSplitRestoration.focusedPane = .primary
+        } else if chatSplitRestoration.primarySessionID == sessionID {
+            chatSplitRestoration.focusedPane = .primary
+        } else if chatSplitRestoration.secondarySessionID == sessionID {
+            chatSplitRestoration.focusedPane = .secondary
+        } else if chatSplitRestoration.focusedPane == .primary {
+            chatSplitRestoration.primarySessionID = sessionID
+        } else {
+            chatSplitRestoration.secondarySessionID = sessionID
+        }
+        restorePanePreferences(for: sessionID)
+        persistChatSplitRestoration()
+    }
+
+    private func captureForegroundPane() {
+        guard !currentSessionID.isEmpty else { return }
+        splitPaneBlocks[currentSessionID] = blocks
+        splitPaneDrafts[currentSessionID] = draftText
+        splitPaneAttachments[currentSessionID] = chatAttachments
+        splitPaneModes[currentSessionID] = selectedMode
+        splitPaneTeams[currentSessionID] = selectedAgentTeamID
+        splitPaneSoloRouting[currentSessionID] = soloSwarmEnabled
+        splitPaneSearchQueries[currentSessionID] = transcriptSearchQuery
+        if let state = paneState(containing: currentSessionID) {
+            state.blocks = blocks
+            state.draft = draftText
+            state.attachments = chatAttachments
+            state.mode = selectedMode
+            state.selectedTeamID = selectedAgentTeamID
+            state.soloRouting = soloSwarmEnabled
+            state.transcriptSearchQuery = transcriptSearchQuery
+            state.contextFiles = contextFiles
+            state.queuedMessages = queuedMessages
+            state.selectedRouteModel = selectedModel
+            state.runStatus = orchestrationState
+            state.isBusy = isBusy
+            state.hasPendingPermission = hasPendingPermission
+        }
+    }
+
+    private func restorePanePreferences(for sessionID: String) {
+        let state = paneState(containing: sessionID)
+        draftText = state?.draft ?? splitPaneDrafts[sessionID] ?? ""
+        chatAttachments = state?.attachments ?? splitPaneAttachments[sessionID] ?? []
+        contextFiles = state?.contextFiles ?? []
+        queuedMessages = state?.queuedMessages ?? []
+        if let mode = state?.mode ?? splitPaneModes[sessionID] { selectedMode = mode }
+        selectedAgentTeamID = state?.selectedTeamID ?? splitPaneTeams[sessionID] ?? nil
+        soloSwarmEnabled = selectedAgentTeamID == nil
+        if let query = state?.transcriptSearchQuery { transcriptSearchQuery = query }
+    }
+
+    private func paneState(containing sessionID: String) -> ChatPaneState? {
+        if primaryChatPaneState.sessionID == sessionID { return primaryChatPaneState }
+        if secondaryChatPaneState.sessionID == sessionID { return secondaryChatPaneState }
+        return nil
+    }
+
+    private func persistChatSplitRestoration() {
+        assign(primaryChatPaneState, to: chatSplitRestoration.primarySessionID)
+        assign(secondaryChatPaneState, to: chatSplitRestoration.secondarySessionID)
+        guard persistenceEnabled,
+              let data = try? JSONEncoder().encode(chatSplitRestoration)
+        else { return }
+        UserDefaults.standard.set(data, forKey: Self.splitRestorationKey)
+    }
+
+    private func assign(_ state: ChatPaneState, to sessionID: String?) {
+        guard state.sessionID != sessionID else { return }
+        state.sessionID = sessionID
+        guard let sessionID else {
+            state.blocks = []
+            state.draft = ""
+            state.attachments = []
+            return
+        }
+        state.blocks = splitPaneBlocks[sessionID] ?? []
+        state.draft = splitPaneDrafts[sessionID] ?? ""
+        state.attachments = splitPaneAttachments[sessionID] ?? []
+        state.mode = splitPaneModes[sessionID] ?? .work
+        state.selectedTeamID = splitPaneTeams[sessionID] ?? nil
+        state.soloRouting = splitPaneSoloRouting[sessionID] ?? false
+        state.transcriptSearchQuery = splitPaneSearchQueries[sessionID] ?? ""
+    }
+
+    private func reconcileChatSplitRestoration() {
+        let existing = Set(sessions.map(\.id))
+        var restoration = chatSplitRestoration
+        if let primary = restoration.primarySessionID, !existing.contains(primary) {
+            restoration.primarySessionID = nil
+        }
+        if let secondary = restoration.secondarySessionID, !existing.contains(secondary) {
+            restoration.secondarySessionID = nil
+        }
+        if restoration.primarySessionID == nil, let secondary = restoration.secondarySessionID {
+            restoration.primarySessionID = secondary
+            restoration.secondarySessionID = nil
+            restoration.focusedPane = .primary
+        }
+        if restoration.primarySessionID == restoration.secondarySessionID {
+            restoration.secondarySessionID = nil
+            restoration.focusedPane = .primary
+        }
+        if restoration.primarySessionID == nil {
+            restoration.primarySessionID = currentSessionID.nilIfEmpty
+        }
+        chatSplitRestoration = restoration
+        persistChatSplitRestoration()
+        if let secondary = restoration.secondarySessionID {
+            refreshSplitPane(secondary)
+        }
+        if let primary = restoration.primarySessionID, primary != currentSessionID {
+            refreshSplitPane(primary)
+        }
+        if !didRestoreChatSplit {
+            didRestoreChatSplit = true
+            if let focusedID = restoration.sessionID(for: restoration.focusedPane),
+               focusedID != currentSessionID,
+               let focused = sessions.first(where: { $0.id == focusedID })
+            {
+                resume(focused)
+            }
+        }
+    }
+
+    func exportCurrentSession(format: ChatExportFormat = .markdown) {
         guard let session = sessions.first(where: { $0.id == currentSessionID }) else {
             showToast("Send a message first — there is no saved session to export yet")
             return
         }
-        exportSession(session)
+        exportSession(session, format: format)
     }
 
-    func exportSession(_ session: SessionSummary) {
+    func exportSession(_ session: SessionSummary, format: ChatExportFormat = .markdown) {
         Task {
             do {
-                let detail = try await backend.get(
-                    "/api/sessions/\(session.id)",
-                    as: SessionDetailResponse.self
-                )
-                let markdown = Self.exportMarkdown(
-                    session: session,
-                    messages: detail.messages,
-                    workspace: detail.cwd,
-                    model: detail.model,
-                    started: detail.started
-                )
                 let panel = NSSavePanel()
                 panel.title = "Export Locus Session"
-                panel.nameFieldStringValue = "\(Self.safeFilename(session.displayTitle)).md"
-                if let markdownType = UTType(filenameExtension: "md") {
-                    panel.allowedContentTypes = [markdownType]
+                panel.nameFieldStringValue = "\(Self.safeFilename(session.displayTitle)).\(format.pathExtension)"
+                panel.allowedContentTypes = switch format {
+                case .pdf: [.pdf]
+                case .markdown: [UTType(filenameExtension: "md") ?? .plainText]
+                case .plainText: [.plainText]
                 }
+                let accessory = ChatExportAccessoryView(frame: .zero)
+                panel.accessoryView = accessory
                 guard panel.runModal() == .OK, let url = panel.url else { return }
-                try markdown.write(to: url, atomically: true, encoding: .utf8)
-                showToast("Session exported")
+                let options = accessory.options
+                let document = try await backend.get(
+                    "/api/sessions/\(session.id)/export-data",
+                    query: [
+                        URLQueryItem(
+                            name: "include_reasoning",
+                            value: options.includeReasoning ? "true" : "false"
+                        ),
+                        URLQueryItem(
+                            name: "include_tool_details",
+                            value: options.includeToolDetails ? "true" : "false"
+                        ),
+                        URLQueryItem(
+                            name: "include_attachments",
+                            value: options.includeAttachments ? "true" : "false"
+                        ),
+                    ],
+                    timeout: 60,
+                    as: ChatExportDocument.self
+                )
+                try ChatExportRenderer.write(document, format: format, to: url)
+                showToast("Session exported as \(format.title)")
             } catch {
                 showToast("Export failed: \(error.localizedDescription)")
             }
@@ -8384,7 +9031,21 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.open(URL(fileURLWithPath: settings.backendRoot))
     }
 
-    func applySettings(_ newSettings: AppSettings, proxyCredentialChanged: Bool = false) {
+    /// Routes every workspace entry point through one presentation action so
+    /// the destination is selected before SwiftUI evaluates the sheet.
+    func presentSettings(_ page: SettingsPage? = nil) {
+        if let page { settingsPage = page }
+        settingsPresented = true
+    }
+
+    /// Persists settings without owning the Settings window lifecycle. Live
+    /// controls and staged page applies both use this path while the window
+    /// remains open; callers dismiss explicitly when the user chooses Close.
+    func applySettings(
+        _ newSettings: AppSettings,
+        proxyCredentialChanged: Bool = false,
+        showConfirmation: Bool = true
+    ) {
         var newSettings = newSettings
         newSettings.maximumActiveChats = AppSettings.clampMaximumActiveChats(
             newSettings.maximumActiveChats
@@ -8447,7 +9108,6 @@ final class AppModel: ObservableObject {
         if mobileAccessChanged {
             Task { await companionGateway.setEnabled(newSettings.mobileAccessEnabled) }
         }
-        settingsPresented = false
         browser.defaultViewport = newSettings.resolvedBrowserViewport.size
         applyBrowserSettings(newSettings)
 
@@ -8524,10 +9184,12 @@ final class AppModel: ObservableObject {
             )
             Task { await applyTerminalSettings() }
         }
-        if let launchAtLoginError {
-            showToast("Settings saved, but launch at login could not change: \(launchAtLoginError)")
-        } else {
-            showToast("Settings saved")
+        if showConfirmation {
+            if let launchAtLoginError {
+                showToast("Settings saved, but launch at login could not change: \(launchAtLoginError)")
+            } else {
+                showToast("Settings saved")
+            }
         }
     }
 
@@ -9626,6 +10288,14 @@ final class AppModel: ObservableObject {
     }
 
     func selectInspectorTab(_ tab: InspectorTab, selecting runID: String? = nil) {
+        // Manual checkpoints are a brief management task, not a surface that
+        // needs to consume a persistent inspector tab. Keep the legacy enum
+        // value so stored settings and ⌘6 remain compatible, but route it to
+        // the existing focused manager.
+        if tab == .checkpoints {
+            checkpointPresented = true
+            return
+        }
         guard !justChatEnabled else { return }
         if !openInspectorTabs.contains(tab) {
             openInspectorTabs.append(tab)
@@ -10609,6 +11279,7 @@ final class AppModel: ObservableObject {
             runtime.streamingBlockID = nil
             runtime.streamingText = ""
             runtime.streamingReasoning = ""
+            refreshSplitPane(runtime.sessionID)
         }
         if type == "orchestration_started" { state = .dispatching }
         if type == "dispatch_plan_ready" {
@@ -10661,6 +11332,7 @@ final class AppModel: ObservableObject {
             runtime.dispatchedMode = nil
             runtime.dispatchedTeamRunID = nil
             runtime.dispatchedInPlanMode = false
+            refreshSplitPane(runtime.sessionID)
         }
         runtime.executionState = state
         var taskID = runtime.sessionInfo?.task?.id ?? previous?.taskID
@@ -10682,6 +11354,11 @@ final class AppModel: ObservableObject {
             errorMessage: runtime.lastError ?? previous?.errorMessage
         )
         taskConversationStates[runtime.sessionID] = updated
+        if let state = paneState(containing: runtime.sessionID) {
+            state.runStatus = updated.state
+            state.isBusy = runtime.occupiesExecutionSlot
+            state.hasPendingPermission = type == "permission_request"
+        }
         if let runID = updated.runID {
             lifecycleJournal?.record(
                 sessionID: runtime.sessionID,
@@ -12329,12 +13006,12 @@ final class AppModel: ObservableObject {
             planApprovalPending = false
             restoredTranscriptContext = nil
         }
-        soloSwarmEnabled = false
+        soloSwarmEnabled = true
         if let profile = workspaceProfiles.first(where: {
             SessionSummary.canonicalWorkspacePath($0.path) == path
         }) {
             draftText = profile.draft
-            soloSwarmEnabled = profile.resolvedSoloSwarmEnabled
+            soloSwarmEnabled = true
             selectedMode = profile.mode
             settings.previewURL = profile.previewURL
             contextFiles = profile.contextFiles
@@ -13438,7 +14115,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func showToast(
+    func showToast(
         _ message: String,
         actionTitle: String? = nil,
         duration: Double = 2.4
@@ -13858,6 +14535,259 @@ final class AppModel: ObservableObject {
         }
     }
 
+}
+
+// MARK: - Chat export
+
+@MainActor
+private enum ChatExportRenderer {
+    private static let exportedAtFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    static func write(_ document: ChatExportDocument, format: ChatExportFormat, to url: URL) throws {
+        switch format {
+        case .markdown:
+            try writeMarkdown(document, to: url)
+        case .plainText:
+            try plainText(document).write(to: url, atomically: true, encoding: .utf8)
+        case .pdf:
+            try writePDF(document, to: url)
+        }
+    }
+
+    private static func writeMarkdown(_ document: ChatExportDocument, to url: URL) throws {
+        let fileManager = FileManager.default
+        var assetDirectory: URL?
+        var assetDirectoryName: String?
+        let attachments = document.messages.flatMap { $0.attachments ?? [] }
+        if !attachments.isEmpty {
+            let base = url.deletingPathExtension().lastPathComponent + "-assets"
+            let parent = url.deletingLastPathComponent()
+            var candidate = parent.appendingPathComponent(base, isDirectory: true)
+            var suffix = 2
+            while fileManager.fileExists(atPath: candidate.path) {
+                candidate = parent.appendingPathComponent("\(base)-\(suffix)", isDirectory: true)
+                suffix += 1
+            }
+            try fileManager.createDirectory(at: candidate, withIntermediateDirectories: false)
+            assetDirectory = candidate
+            assetDirectoryName = candidate.lastPathComponent
+        }
+
+        do {
+            var lines = metadataLines(document, markdown: true)
+            var attachmentIndex = 0
+            for message in document.messages {
+                lines.append(markdownHeading(for: message))
+                lines.append("")
+                if message.role == "tool" {
+                    lines.append("```")
+                    lines.append(message.content)
+                    lines.append("```")
+                } else {
+                    lines.append(message.content)
+                }
+                if let reasoning = message.reasoning, !reasoning.isEmpty {
+                    lines.append("")
+                    lines.append("<details><summary>Reasoning</summary>")
+                    lines.append("")
+                    lines.append(reasoning)
+                    lines.append("")
+                    lines.append("</details>")
+                }
+                for attachment in message.attachments ?? [] {
+                    attachmentIndex += 1
+                    guard let data = decodedAttachmentData(attachment.data),
+                          let assetDirectory, let assetDirectoryName
+                    else { continue }
+                    let name = uniqueAttachmentName(
+                        attachment.name,
+                        mimeType: attachment.mimeType,
+                        index: attachmentIndex
+                    )
+                    try data.write(to: assetDirectory.appendingPathComponent(name), options: .atomic)
+                    lines.append("")
+                    lines.append("![\(markdownEscaped(attachment.name))](\(assetDirectoryName)/\(name))")
+                }
+                lines.append("")
+            }
+            try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            if let assetDirectory {
+                try? fileManager.removeItem(at: assetDirectory)
+            }
+            throw error
+        }
+    }
+
+    private static func plainText(_ document: ChatExportDocument) -> String {
+        var lines = metadataLines(document, markdown: false)
+        for message in document.messages {
+            lines.append(textHeading(for: message))
+            lines.append(message.content)
+            if let reasoning = message.reasoning, !reasoning.isEmpty {
+                lines.append("Reasoning:")
+                lines.append(reasoning)
+            }
+            for attachment in message.attachments ?? [] {
+                lines.append("[Attachment: \(attachment.name) — \(attachment.mimeType)]")
+            }
+            lines.append("")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func writePDF(_ document: ChatExportDocument, to url: URL) throws {
+        let contentWidth: CGFloat = 504
+        let storage = NSTextStorage(attributedString: attributedDocument(document, width: contentWidth))
+        let layoutManager = NSLayoutManager()
+        let container = NSTextContainer(size: NSSize(width: contentWidth, height: .greatestFiniteMagnitude))
+        container.widthTracksTextView = true
+        container.lineFragmentPadding = 0
+        layoutManager.addTextContainer(container)
+        storage.addLayoutManager(layoutManager)
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: contentWidth, height: 1), textContainer: container)
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isVerticallyResizable = true
+        textView.maxSize = NSSize(width: contentWidth, height: .greatestFiniteMagnitude)
+        layoutManager.ensureLayout(for: container)
+        let height = max(1, layoutManager.usedRect(for: container).height + 12)
+        textView.frame = NSRect(x: 0, y: 0, width: contentWidth, height: height)
+
+        let printInfo = NSPrintInfo()
+        printInfo.paperSize = NSSize(width: 612, height: 792)
+        printInfo.leftMargin = 54
+        printInfo.rightMargin = 54
+        printInfo.topMargin = 54
+        printInfo.bottomMargin = 54
+        printInfo.horizontalPagination = .fit
+        printInfo.verticalPagination = .automatic
+        printInfo.dictionary()[NSPrintInfo.AttributeKey.jobDisposition] = NSPrintInfo.JobDisposition.save
+        printInfo.dictionary()[NSPrintInfo.AttributeKey.jobSavingURL] = url
+
+        let operation = NSPrintOperation(view: textView, printInfo: printInfo)
+        operation.showsPrintPanel = false
+        operation.showsProgressPanel = false
+        guard operation.run() else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+    }
+
+    private static func attributedDocument(_ document: ChatExportDocument, width: CGFloat) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        let title = NSFont.systemFont(ofSize: 24, weight: .semibold)
+        let heading = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let body = NSFont.systemFont(ofSize: 11)
+        let detail = NSFont.systemFont(ofSize: 9.5)
+        let mono = NSFont.monospacedSystemFont(ofSize: 9.5, weight: .regular)
+        let secondary = NSColor.secondaryLabelColor
+
+        func append(_ value: String, font: NSFont, color: NSColor = .labelColor, spacing: CGFloat = 5) {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.paragraphSpacing = spacing
+            paragraph.lineSpacing = 2
+            result.append(NSAttributedString(string: value, attributes: [
+                .font: font,
+                .foregroundColor: color,
+                .paragraphStyle: paragraph,
+            ]))
+        }
+
+        append(document.title + "\n", font: title, spacing: 10)
+        let metadata = metadataLines(document, markdown: false).dropFirst(2).joined(separator: "\n")
+        append(metadata + "\n\n", font: detail, color: secondary, spacing: 9)
+        for message in document.messages {
+            append(textHeading(for: message) + "\n", font: heading, spacing: 3)
+            append(message.content + "\n", font: message.role == "tool" ? mono : body, spacing: 8)
+            if let reasoning = message.reasoning, !reasoning.isEmpty {
+                append("Reasoning\n", font: heading, color: secondary, spacing: 2)
+                append(reasoning + "\n", font: detail, color: secondary, spacing: 8)
+            }
+            for attachment in message.attachments ?? [] {
+                guard let data = decodedAttachmentData(attachment.data),
+                      let image = NSImage(data: data)
+                else {
+                    append("[Attachment: \(attachment.name)]\n", font: detail, color: secondary)
+                    continue
+                }
+                let attachmentCell = NSTextAttachmentCell(imageCell: image)
+                let original = image.size
+                let scale = min(1, width / max(original.width, 1), 320 / max(original.height, 1))
+                attachmentCell.image?.size = NSSize(width: original.width * scale, height: original.height * scale)
+                let textAttachment = NSTextAttachment()
+                textAttachment.attachmentCell = attachmentCell
+                result.append(NSAttributedString(attachment: textAttachment))
+                append("\n\(attachment.name)\n", font: detail, color: secondary, spacing: 9)
+            }
+            append("\n", font: body, spacing: 4)
+        }
+        return result
+    }
+
+    private static func metadataLines(_ document: ChatExportDocument, markdown: Bool) -> [String] {
+        let titlePrefix = markdown ? "# " : ""
+        let bullet = markdown ? "- " : ""
+        return [
+            titlePrefix + document.title,
+            "",
+            bullet + "Exported: \(exportedAtFormatter.string(from: Date()))",
+            bullet + "Started: \(document.started?.nilIfEmpty ?? "Unknown")",
+            bullet + "Model: \(document.model?.nilIfEmpty ?? "Unknown")",
+            bullet + "Provider: \(document.provider?.nilIfEmpty ?? "Unknown")",
+            bullet + "Workspace: \(document.cwd?.nilIfEmpty ?? "Unknown")",
+            bullet + "Session: \(document.id)",
+            "",
+        ]
+    }
+
+    private static func markdownHeading(for message: ChatExportMessage) -> String {
+        switch message.role {
+        case "user": "## You"
+        case "assistant": "## Locus"
+        case "tool": "### Tool: \(message.name?.nilIfEmpty ?? "tool")"
+        default: "## \(message.role.capitalized)"
+        }
+    }
+
+    private static func textHeading(for message: ChatExportMessage) -> String {
+        switch message.role {
+        case "user": "YOU"
+        case "assistant": "LOCUS"
+        case "tool": "TOOL — \(message.name?.nilIfEmpty ?? "tool")"
+        default: message.role.uppercased()
+        }
+    }
+
+    private static func decodedAttachmentData(_ value: String) -> Data? {
+        let payload = value.range(of: ",").map { String(value[$0.upperBound...]) } ?? value
+        return Data(base64Encoded: payload, options: .ignoreUnknownCharacters)
+    }
+
+    private static func uniqueAttachmentName(_ value: String, mimeType: String, index: Int) -> String {
+        let fallbackExtension: String = switch mimeType {
+        case "image/jpeg": "jpg"
+        case "image/gif": "gif"
+        case "image/webp": "webp"
+        default: "png"
+        }
+        let input = URL(fileURLWithPath: value)
+        let stem = input.deletingPathExtension().lastPathComponent
+            .replacingOccurrences(of: #"[^a-zA-Z0-9._-]+"#, with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        let ext = input.pathExtension.nilIfEmpty ?? fallbackExtension
+        return String(format: "%03d-%@.%@", index, stem.nilIfEmpty ?? "attachment", ext)
+    }
+
+    private static func markdownEscaped(_ value: String) -> String {
+        value.replacingOccurrences(of: "[", with: "\\[")
+            .replacingOccurrences(of: "]", with: "\\]")
+    }
 }
 
 // MARK: - Mobile companion

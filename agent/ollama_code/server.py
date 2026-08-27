@@ -96,6 +96,7 @@ from .runstore import ACTIVE_NONRECOVERABLE_STATES, RunStore, RunStoreError
 from .schedules import timezone as schedule_timezone
 from .sessions import (
     MAX_SESSION_LINE_BYTES,
+    ChatOrganizationStore,
     SessionMeta,
     SessionStore,
     SessionTooLargeError,
@@ -2604,6 +2605,71 @@ def sessions(
     }
 
 
+@app.get("/api/chat-folders")
+def chat_folders(workspace: str = Query("", max_length=4096)) -> dict[str, Any]:
+    snapshot = ChatOrganizationStore.snapshot(workspace or None)
+    return {"version": snapshot["version"], "folders": snapshot["folders"]}
+
+
+@app.post("/api/chat-folders")
+def chat_folder_create(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    workspace = body.get("workspace")
+    name = body.get("name")
+    if not isinstance(workspace, str) or not workspace.strip():
+        raise HTTPException(422, "workspace is required")
+    if not isinstance(name, str):
+        raise HTTPException(422, "folder name must be a string")
+    parent_id = body.get("parent_id")
+    if parent_id is not None and not isinstance(parent_id, str):
+        raise HTTPException(422, "parent_id must be a string or null")
+    index = body.get("index")
+    if index is not None and (not isinstance(index, int) or index < 0):
+        raise HTTPException(422, "index must be a non-negative integer")
+    try:
+        folder = ChatOrganizationStore.create_folder(workspace, name, parent_id, index)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"ok": True, "folder": folder}
+
+
+@app.patch("/api/chat-folders/{folder_id}")
+def chat_folder_update(
+    folder_id: str, body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    unknown = set(body) - {"name", "parent_id", "index"}
+    if unknown:
+        raise HTTPException(422, f"unknown folder field: {sorted(unknown)[0]}")
+    name = body.get("name")
+    if name is not None and not isinstance(name, str):
+        raise HTTPException(422, "folder name must be a string")
+    parent_value: str | None | object = ...
+    if "parent_id" in body:
+        parent_value = body.get("parent_id")
+        if parent_value is not None and not isinstance(parent_value, str):
+            raise HTTPException(422, "parent_id must be a string or null")
+    index = body.get("index")
+    if index is not None and (not isinstance(index, int) or index < 0):
+        raise HTTPException(422, "index must be a non-negative integer")
+    try:
+        folder = ChatOrganizationStore.update_folder(
+            folder_id, name=name, parent_id=parent_value, index=index,
+        )
+    except KeyError as exc:
+        raise HTTPException(404, "folder not found") from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"ok": True, "folder": folder}
+
+
+@app.delete("/api/chat-folders/{folder_id}")
+def chat_folder_delete(folder_id: str) -> dict[str, Any]:
+    try:
+        result = ChatOrganizationStore.delete_folder(folder_id)
+    except KeyError as exc:
+        raise HTTPException(404, "folder not found") from exc
+    return {"ok": True, **result}
+
+
 _TRANSCRIPT_INDEX: TranscriptIndex | None = None
 _TRANSCRIPT_INDEX_LOCK = threading.Lock()
 
@@ -2827,6 +2893,158 @@ def session_detail(session_id: str) -> dict[str, Any]:
         "orchestration_run_id": activity.get("run_id"),
         "worker_id": activity.get("worker_id"),
     }
+
+
+@app.get("/api/sessions/{session_id}/export-data")
+def session_export_data(
+    session_id: str,
+    include_reasoning: bool = False,
+    include_tool_details: bool = False,
+    include_attachments: bool = True,
+) -> dict[str, Any]:
+    path = SessionStore.path_for(session_id)
+    if path is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    provenance = SessionStore.provenance(path)
+    meta = SessionMeta.get(session_id)
+    try:
+        messages = SessionStore.export_messages(
+            path,
+            include_reasoning=include_reasoning,
+            include_tool_details=include_tool_details,
+            include_attachments=include_attachments,
+        )
+    except SessionTooLargeError as exc:
+        raise HTTPException(413, str(exc)) from exc
+    return {
+        "id": session_id,
+        "title": meta.get("title") or SessionStore.preview(path),
+        "cwd": provenance.get("cwd"),
+        "model": provenance.get("model"),
+        "provider": provenance.get("provider"),
+        "started": provenance.get("started"),
+        "messages": messages,
+    }
+
+
+@app.patch("/api/sessions/{session_id}/organization")
+def session_organization_update(
+    session_id: str, body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    unknown = set(body) - {"folder_id", "index"}
+    if unknown:
+        raise HTTPException(422, f"unknown organization field: {sorted(unknown)[0]}")
+    folder_id = body.get("folder_id")
+    if folder_id is not None and not isinstance(folder_id, str):
+        raise HTTPException(422, "folder_id must be a string or null")
+    index = body.get("index")
+    if index is not None and (not isinstance(index, int) or index < 0):
+        raise HTTPException(422, "index must be a non-negative integer")
+    try:
+        placement = ChatOrganizationStore.move_session(session_id, folder_id, index)
+    except KeyError as exc:
+        raise HTTPException(404, "session not found") from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"ok": True, "placement": placement}
+
+
+@app.get("/api/sessions/{session_id}/organization")
+def session_organization(session_id: str) -> dict[str, Any]:
+    path = SessionStore.path_for(session_id)
+    if path is None:
+        raise HTTPException(404, "session not found")
+    placement = ChatOrganizationStore.placement(session_id)
+    if placement is None:
+        workspace = str(SessionStore.header(path).get("cwd") or "")
+        placement = {
+            "session_id": session_id,
+            "workspace": (
+                ChatOrganizationStore._canonical_workspace(workspace) if workspace else ""
+            ),
+            "folder_id": None,
+            "order": 0,
+        }
+    return {"ok": True, "placement": placement}
+
+
+@app.post("/api/sessions/{session_id}/duplicate")
+def session_duplicate(
+    session_id: str, body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    mode = str(body.get("mode") or "conversation")
+    if mode not in {"conversation", "worktree"}:
+        raise HTTPException(422, "mode must be conversation or worktree")
+    source_path = SessionStore.path_for(session_id)
+    if source_path is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    svc = service()
+    if _session_has_active_run(session_id) or (
+        session_id == svc.core.session.session_id and svc.busy
+    ):
+        raise HTTPException(409, "wait for this chat to stop before duplicating it")
+    source_meta = SessionMeta.get(session_id)
+    source_task: TaskCheckout | None = None
+    if mode == "worktree":
+        if source_meta.get("archived"):
+            raise HTTPException(409, "restore the source chat before duplicating its worktree")
+        task_value = source_meta.get("task")
+        task_id = str(task_value.get("id") or "") if isinstance(task_value, dict) else ""
+        source_task = TaskCheckoutStore.load(task_id) if task_id else None
+        if source_task is None or not Path(source_task.execution_path).is_dir():
+            raise HTTPException(409, "restore the source worktree before duplicating it")
+    clone: SessionStore | None = None
+    child: TaskCheckout | None = None
+    try:
+        clone = SessionStore.duplicate(source_path)
+        title = str(source_meta.get("title") or SessionStore.preview(source_path)).strip()
+        fields: dict[str, Any] = {
+            "title": f"{title} Copy"[:120],
+            "team": source_meta.get("team"),
+        }
+        workspace = str(SessionStore.header(source_path).get("cwd") or "")
+        if mode == "worktree" and source_task is not None:
+            child = TaskCheckoutStore.fork(source_task, f"duplicate-{uuid.uuid4().hex}")
+            child.session_id = clone.session_id
+            child.state = "queued"
+            child.save()
+            fields.update({
+                "task": child.as_dict(),
+                "workspace_root": child.workspace_root,
+                "execution_path": child.execution_path,
+                "environment": {
+                    "type": "worktree",
+                    "isolation": "managed_worktree",
+                    "worktree_id": child.id,
+                    "starting_ref": child.starting_ref,
+                },
+            })
+        else:
+            fields.update({
+                "workspace_root": workspace,
+                "execution_path": workspace,
+                "environment": {"type": "local", "isolation": "local"},
+            })
+        SessionMeta.update(clone.session_id, **fields)
+        ChatOrganizationStore.clone_placement(session_id, clone.session_id)
+    except (OSError, ValueError, WorktreeError, SessionTooLargeError) as exc:
+        if child is not None:
+            try:
+                TaskCheckoutStore.snapshot_and_remove(child.id)
+            except WorktreeError:
+                pass
+        if clone is not None:
+            clone.path.unlink(missing_ok=True)
+            SessionMeta.forget([clone.session_id])
+            ChatOrganizationStore.detach_sessions([clone.session_id])
+        status = 413 if isinstance(exc, SessionTooLargeError) else 409
+        raise HTTPException(status, str(exc)) from exc
+    summary = next(
+        (item for item in SessionStore.summaries(limit=500, include_archived=True)
+         if item["id"] == clone.session_id),
+        None,
+    )
+    return {"ok": True, "session": summary, "mode": mode}
 
 
 # ------------------------------------------------------------ Scheduled tasks
@@ -3055,7 +3273,9 @@ def _dispatch_schedule(
             "occurrence_id": occurrence["id"],
             "mode": schedule["mode"],
             "runner": schedule["runner"],
-            "solo_swarm": schedule["runner"] == "solo_swarm",
+            # `solo_swarm` is the durable compatibility marker for a Solo run
+            # that may delegate. All Solo schedules are adaptive now.
+            "solo_swarm": schedule["runner"] != "team",
             "provider": schedule["provider"],
             "provider_account_id": schedule.get("provider_account_id") or "",
             "model": schedule["model"],
@@ -4963,7 +5183,7 @@ def _run_user_turn(
     agent_config: dict[str, Any] | None = None,
     mode: str = "work",
     reserved_run_id: str = "",
-    solo_swarm_enabled: bool = False,
+    solo_swarm_enabled: bool = True,
 ) -> None:
     """Worker entry that makes the UI's chat-only boundary explicit."""
     run_id = reserved_run_id if re.fullmatch(r"[A-Za-z0-9_-]{1,160}", reserved_run_id) else uuid.uuid4().hex
@@ -4997,7 +5217,6 @@ def _run_user_turn(
     # pure pre-model latency there and is skipped outright.
     parity_turn = (
         not just_chat
-        and not solo_swarm_enabled
         and svc.core.provider == "chatgpt"
         and bool(svc.core.config.get("chatgpt_native_mode", True))
         and getattr(svc.core.codex_manager, "supports_parity", False)
@@ -5036,7 +5255,7 @@ def _run_user_turn(
     elif solo_swarm_enabled and not just_chat:
         svc.emit({
             "type": "note",
-            "text": "Solo Swarm stayed single-model because workspace reading is disabled.",
+            "text": "Solo stayed single-agent because workspace reading is disabled.",
         })
     svc.active_solo_swarm = swarm
     svc.core.tool_ctx.delegate_read_only = swarm.execute if swarm is not None else None
@@ -6448,15 +6667,17 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         team_manifest = msg.get("team")
         solo_swarm = msg.get("solo_swarm")
         if solo_swarm is not None and not isinstance(solo_swarm, dict):
-            _command_error(svc, str(mtype), "The Solo Swarm setting is malformed.")
+            _command_error(svc, str(mtype), "The legacy Solo delegation setting is malformed.")
             return
-        solo_swarm_enabled = bool(
+        legacy_solo_swarm_enabled = bool(
             isinstance(solo_swarm, dict) and solo_swarm.get("enabled") is True
         )
-        if solo_swarm_enabled and (just_chat or text.startswith("/") or team_manifest is not None):
+        if legacy_solo_swarm_enabled and (
+            just_chat or text.startswith("/") or team_manifest is not None
+        ):
             _command_error(
                 svc, str(mtype),
-                "Solo Swarm requires an ordinary Solo Work, Plan, or Build message.",
+                "Automatic Solo delegation requires an ordinary Solo Work, Plan, or Build message.",
             )
             return
         if team_manifest is not None and (just_chat or text.startswith("/")):
@@ -6472,11 +6693,10 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         else:
             reserved_run_id = str(msg.get("run_id") or "")
             args = (svc, text, just_chat, attachments, agent_config, mode or "work")
-            if reserved_run_id:
+            adaptive_solo = not just_chat and not text.startswith("/")
+            if reserved_run_id or adaptive_solo:
                 args = (*args, reserved_run_id)
-            if solo_swarm_enabled:
-                if not reserved_run_id:
-                    args = (*args, "")
+            if adaptive_solo:
                 args = (*args, True)
             call = _run_user_turn
         if not svc.start_turn(loop, call, *args):

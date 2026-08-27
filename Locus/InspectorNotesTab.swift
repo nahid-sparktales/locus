@@ -745,6 +745,102 @@ private struct RichNotesEditor: NSViewRepresentable {
     }
 }
 
+/// SwiftUI's macOS `Menu` treats its symbol column as template artwork, which
+/// strips the actual accent from colored SF Symbol swatches. A native pop-up
+/// button keeps each menu item's image in original-color rendering while still
+/// providing the standard keyboard, VoiceOver, selection, and dismissal behavior.
+private struct NotesColorMenuButton: NSViewRepresentable {
+    let selectionColor: NSColor
+    let selectionName: String
+    let onSelect: (NSColor) -> Void
+
+    private var options: [(name: String, color: NSColor)] {
+        [("Default", NotesTextStyle.defaultColor)] + NotesTextStyle.accents
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onSelect: onSelect)
+    }
+
+    func makeNSView(context: Context) -> NSPopUpButton {
+        let button = NSPopUpButton(frame: .zero, pullsDown: false)
+        button.controlSize = .small
+        button.isBordered = false
+        button.imagePosition = .imageOnly
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.selectionChanged(_:))
+        button.toolTip = "Text color"
+        button.setAccessibilityLabel("Text color")
+        button.setAccessibilityIdentifier("notes.toolbar.textColor")
+        if let cell = button.cell as? NSPopUpButtonCell {
+            cell.arrowPosition = .noArrow
+            cell.imagePosition = .imageOnly
+        }
+        configure(button)
+        return button
+    }
+
+    func updateNSView(_ button: NSPopUpButton, context: Context) {
+        context.coordinator.onSelect = onSelect
+        configure(button)
+    }
+
+    private func configure(_ button: NSPopUpButton) {
+        if button.numberOfItems != options.count {
+            button.removeAllItems()
+            for option in options {
+                button.addItem(withTitle: option.name)
+                button.lastItem?.representedObject = option.color
+            }
+        }
+
+        for (index, option) in options.enumerated() {
+            guard let item = button.item(at: index) else { continue }
+            item.representedObject = option.color
+            item.image = Self.swatchImage(
+                color: option.color,
+                appearance: button.effectiveAppearance
+            )
+        }
+        let selectedIndex = options.firstIndex {
+            selectionColor.isEqual($0.color)
+        } ?? 0
+        button.selectItem(at: selectedIndex)
+        button.setAccessibilityValue(selectionName)
+    }
+
+    private static func swatchImage(color: NSColor, appearance: NSAppearance) -> NSImage {
+        let size = NSSize(width: 14, height: 14)
+        let image = NSImage(size: size, flipped: false) { rect in
+            appearance.performAsCurrentDrawingAppearance {
+                let path = NSBezierPath(ovalIn: rect.insetBy(dx: 1.25, dy: 1.25))
+                color.setFill()
+                path.fill()
+                NSColor.separatorColor.withAlphaComponent(0.72).setStroke()
+                path.lineWidth = 0.8
+                path.stroke()
+            }
+            return true
+        }
+        image.isTemplate = false
+        image.accessibilityDescription = "Color swatch"
+        return image
+    }
+
+    final class Coordinator: NSObject {
+        var onSelect: (NSColor) -> Void
+
+        init(onSelect: @escaping (NSColor) -> Void) {
+            self.onSelect = onSelect
+        }
+
+        @objc func selectionChanged(_ sender: NSPopUpButton) {
+            guard let color = sender.selectedItem?.representedObject as? NSColor else { return }
+            onSelect(color)
+        }
+    }
+}
+
 /// The formatting and export bar above the notes editor.
 private struct NotesFormatToolbar: View {
     @ObservedObject var store: NotesStore
@@ -864,28 +960,15 @@ private struct NotesFormatToolbar: View {
     }
 
     private var colorMenu: some View {
-        Menu {
-            colorItem(name: "Default", color: NotesTextStyle.defaultColor)
-            Divider()
-            ForEach(NotesTextStyle.accents, id: \.name) { accent in
-                colorItem(name: accent.name, color: accent.color)
-            }
-        } label: {
-            // A symbol, not a bare Circle: AppKit drops shape-only labels from
-            // a borderless menu, which left the swatch invisible.
-            Image(systemName: "circle.fill")
-                .font(.locus(size: 11, weight: .semibold))
-                .foregroundStyle(Color(nsColor: proxy.selectionColor))
-                .frame(width: 24, height: 24)
-                .contentShape(Rectangle())
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
+        NotesColorMenuButton(
+            selectionColor: proxy.selectionColor,
+            selectionName: currentColorName,
+            onSelect: proxy.setTextColor
+        )
+        .frame(width: 24, height: 24)
         .help("Text color")
         .accessibilityLabel("Text color")
         .accessibilityValue(currentColorName)
-        .accessibilityIdentifier("notes.toolbar.textColor")
     }
 
     private var currentColorName: String {
@@ -893,18 +976,6 @@ private struct NotesFormatToolbar: View {
         return NotesTextStyle.accents.first {
             proxy.selectionColor.isEqual($0.color)
         }?.name ?? "Custom"
-    }
-
-    private func colorItem(name: String, color: NSColor) -> some View {
-        Button {
-            proxy.setTextColor(color)
-        } label: {
-            if proxy.selectionColor.isEqual(color) {
-                Label(name, systemImage: "checkmark")
-            } else {
-                Label(name, systemImage: "circle.fill")
-            }
-        }
     }
 
     private var insertMenu: some View {

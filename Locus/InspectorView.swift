@@ -42,7 +42,9 @@ struct InspectorView: View {
                         scope: model.settings.resolvedNotesScope
                     ))
                 case .checkpoints:
-                    InspectorCheckpointsTab()
+                    // Retained only as a persistence-compatible enum value.
+                    // Every selection path redirects to CheckpointSheet.
+                    EmptyView()
                 case .runs:
                     InspectorRunsTab()
                 case .agents:
@@ -171,7 +173,7 @@ struct InspectorRouterTab: View {
             .disabled(model.isBusy)
             .accessibilityIdentifier("router.policy")
 
-            Text("Hosted models are ineligible until separately allowed. Teams and Solo Swarm keep their own routing rules. Prompt text is never sent to the scorecard endpoint.")
+            Text("Hosted models are ineligible until separately allowed. Teams and automatic Solo delegation keep their own routing rules. Prompt text is never sent to the scorecard endpoint.")
                 .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1509,7 +1511,7 @@ struct InspectorRunsTab: View {
             .accessibilityIdentifier("runs.scope")
 
             if scope == .soloSwarm {
-                soloSwarmControl
+                adaptiveSoloInfo
             }
 
             if !showingRunDetail {
@@ -1550,7 +1552,7 @@ struct InspectorRunsTab: View {
 
     private func runTitle(_ run: OrchestrationRun) -> String {
         if let name = run.teamName?.nilIfEmpty { return name }
-        if run.isSoloSwarm { return "Solo Swarm" }
+        if run.isSoloSwarm { return "Solo run" }
         switch run.runKind {
         case "solo": return "Solo run"
         case "evaluation": return "Evaluation"
@@ -1561,7 +1563,7 @@ struct InspectorRunsTab: View {
     }
 
     private func runCategoryTitle(_ run: OrchestrationRun) -> String {
-        if run.isSoloSwarm { return "Solo Swarm" }
+        if run.isSoloSwarm { return "Solo" }
         if run.runKind == "team" { return "Team" }
         return (run.runKind ?? "solo")
             .replacingOccurrences(of: "_", with: " ")
@@ -1605,21 +1607,16 @@ struct InspectorRunsTab: View {
             }
     }
 
-    private var soloSwarmControl: some View {
+    private var adaptiveSoloInfo: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Toggle("Use Solo Swarm for the next turn", isOn: Binding(
-                get: { model.soloSwarmEnabled },
-                set: { model.selectSoloRoute(swarm: $0) }
-            ))
-            .font(.locus(size: 9, weight: .semibold))
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .accessibilityIdentifier("runs.soloSwarm.toggle")
-            Text("Temporary read-only workers share the selected model and fixed safety limits.")
+            Label("Solo delegates automatically", systemImage: "point.3.connected.trianglepath.dotted")
+                .font(.locus(size: 9, weight: .semibold))
+            Text("When parallel investigation would help, temporary read-only workers share the selected model and fixed safety limits.")
                 .font(.locus(size: 8))
                 .foregroundStyle(LocusTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .accessibilityIdentifier("runs.solo.adaptiveDelegation")
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(LocusTheme.signal.opacity(0.08))
@@ -1642,10 +1639,10 @@ struct InspectorRunsTab: View {
                         ? "circle.hexagongrid" : "clock.arrow.circlepath")
                         .font(.locus(size: 24))
                         .foregroundStyle(LocusTheme.muted)
-                    Text(scope == .soloSwarm ? "No Solo Swarm runs yet" : "No matching runs")
+                    Text(scope == .soloSwarm ? "No Solo runs yet" : "No matching runs")
                         .font(.locus(size: 11, weight: .bold))
                     Text(scope == .soloSwarm
-                        ? "Turn on Solo Swarm above, then send a Work, Plan, or GSD request. The run appears even if no workers are delegated."
+                        ? "Send a Solo Work, Plan, or GSD request. Locus delegates automatically when parallel investigation would help."
                         : "Try another run type, status, or search term.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
@@ -2115,7 +2112,7 @@ struct InspectorRunsTab: View {
                                 ? "No workers delegated yet"
                                 : "This run did not delegate any workers")
                                 .font(.locus(size: 9, weight: .semibold))
-                            Text("The primary agent can finish a Solo Swarm request itself when parallel investigation would not help.")
+                            Text("The primary agent can finish a Solo request itself when parallel investigation would not help.")
                                 .font(.locus(size: 8))
                                 .foregroundStyle(LocusTheme.muted)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -2945,7 +2942,7 @@ struct InspectorRunsTab: View {
 
     private var activityGroups: [ActivityGroup] {
         let visible = filteredEvents.filter(isUserFacingEvent)
-        let order = ["Solo Swarm", "Planning", "Approval", "Specialists", "Coding jobs", "Review", "Complete"]
+        let order = ["Solo workers", "Planning", "Approval", "Specialists", "Coding jobs", "Review", "Complete"]
         let grouped = Dictionary(grouping: visible, by: activityPhase)
         return order.compactMap { title in
             guard let events = grouped[title], !events.isEmpty else { return nil }
@@ -3024,7 +3021,7 @@ struct InspectorRunsTab: View {
            ["run_started", "agent_spawned", "agent_branch_stopped",
             "swarm_telemetry", "turn_done", "note"].contains(event.type)
                 || event.type.hasPrefix("agent_job_") {
-            return "Solo Swarm"
+            return "Solo workers"
         }
         switch event.type {
         case "dispatch_plan_ready", "dispatch_plan", "dispatch_decision":
@@ -3055,11 +3052,11 @@ struct InspectorRunsTab: View {
     private func friendlyEventTitle(_ event: OrchestrationEvent) -> String {
         let isSoloSwarm = model.selectedOrchestrationRun?.isSoloSwarm == true
         return switch event.type {
-        case "run_started": isSoloSwarm ? "Solo Swarm run started" : "Run started"
+        case "run_started": isSoloSwarm ? "Solo run started" : "Run started"
         case "agent_spawned": isSoloSwarm ? "Read-only worker started" : "Agent started"
         case "agent_branch_stopped": isSoloSwarm ? "Read-only worker stopped" : "Agent branch stopped"
         case "swarm_telemetry": "Worker batch completed"
-        case "turn_done": isSoloSwarm ? "Solo Swarm run completed" : "Run completed"
+        case "turn_done": isSoloSwarm ? "Solo run completed" : "Run completed"
         case "note": "Run note"
         case "orchestration_started": "Team run started"
         case "orchestration_state": event.text("state") == "reviewing" ? "Review started" : "Team progressed"
