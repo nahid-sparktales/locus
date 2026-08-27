@@ -29,6 +29,11 @@
 
 ### Fixed
 
+- **The Browser now follows the panel instead of acting like a zoomed canvas.**
+  Resizing the inspector immediately resizes the live page, wide pages retain
+  WebKit's native horizontal scrolling, and the always-visible magnification
+  controls have been removed. Tabs and navigation now use a quieter,
+  responsive toolbar, with less common page actions collected in one menu.
 - `/compact` on a ChatGPT chat now also resets the helper's server-side
   thread. It previously kept the full uncompacted history, silently undoing
   the compaction on the next message.

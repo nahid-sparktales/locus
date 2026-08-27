@@ -4250,6 +4250,10 @@ final class AppModel: ObservableObject {
         cancelSimulatorActions()
         simulatorControl.detachAll()
         browser.cancelPendingActions()
+        guard hasRunningWorkForQuit else {
+            completion()
+            return
+        }
         Task { @MainActor in
             // Give every worker a bounded window to append its interrupted
             // task state and terminal event before shutdown stops processes.

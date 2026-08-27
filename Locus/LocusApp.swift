@@ -228,10 +228,6 @@ struct LocusApp: App {
                 browser: model.browser,
                 sessionID: model.currentSessionID,
                 homeURL: model.normalizedPreviewURL,
-                viewportRaw: Binding(
-                    get: { model.settings.browserViewportRaw },
-                    set: { model.settings.browserViewportRaw = $0 }
-                ),
                 isExpanded: locusEnvironment["LOCUS_UI_TESTING_BROWSER_EXPANDED"] == "1",
                 onToggleExpand: {}
             )
@@ -458,6 +454,13 @@ private final class MainWindowMarkerView: NSView {
     func markWindow() {
         guard let window else { return }
         window.identifier = LocusApplicationDelegate.mainWindowIdentifier
+        // SwiftUI's hidden-title-bar style still leaves a 28-point content
+        // inset on macOS 15 unless AppKit is told that the content owns that
+        // band. Make the contract explicit so the workspace header begins at
+        // the window edge and compact layouts retain the full usable height.
+        window.styleMask.insert(.fullSizeContentView)
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
 
         guard let visibleFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame else {
             return

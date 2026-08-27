@@ -70,7 +70,8 @@ struct WorkspaceView: View {
             }
 
             ConversationView(streamingReply: model.streamingReply)
-                .frame(maxHeight: .infinity)
+                .frame(minHeight: 0, maxHeight: .infinity)
+                .clipped()
 
             if shouldShowWorkStatus {
                 WorkStatusStrip(streamingReply: model.streamingReply)

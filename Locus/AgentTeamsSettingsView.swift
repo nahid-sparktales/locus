@@ -505,7 +505,10 @@ struct QuickTeamBuilderView: View {
             Divider()
             footer
         }
-        .frame(width: 700, height: 660)
+        // Keep the footer reachable in the app's supported 620-point compact
+        // window. The catalog already scrolls, so height belongs to the
+        // viewport instead of being forced beyond the sheet's host window.
+        .frame(width: 700, height: 580)
         .background(LocusTheme.paper)
         .accessibilityIdentifier("quickTeam.builder")
         .task {

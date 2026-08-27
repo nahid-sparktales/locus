@@ -79,21 +79,68 @@ final class BrowserHostTests: XCTestCase {
         XCTAssertEqual(host.webView.bounds.size, host.viewport)
     }
 
-    func testFixedCanvasLendingPreservesViewportAcrossInspectorResizes() {
+    func testBrowserCanvasTracksInspectorSizeWithoutPresentationScaling() {
         let (host, _) = makeHost(viewport: BrowserViewport.desktop.size)
-        let canvas = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 240))
-
-        host.lend(to: canvas, preservingViewport: true)
-        XCTAssertEqual(canvas.frame.size, BrowserViewport.desktop.size)
-        XCTAssertEqual(host.webView.frame.size, BrowserViewport.desktop.size)
-        XCTAssertTrue(host.webView.autoresizingMask.isEmpty)
-
-        canvas.frame.size = CGSize(width: 520, height: 400)
-        XCTAssertEqual(
-            host.webView.frame.size,
-            BrowserViewport.desktop.size,
-            "Presentation resizing must never change page layout or agent coordinates"
+        let canvas = BrowserCanvasContainer(
+            frame: NSRect(x: 0, y: 0, width: 520, height: 360)
         )
+
+        canvas.display(host)
+        canvas.layoutSubtreeIfNeeded()
+        XCTAssertEqual(host.viewport, CGSize(width: 520, height: 360))
+        XCTAssertEqual(host.webView.frame.size, CGSize(width: 520, height: 360))
+        XCTAssertTrue(host.webView.superview === canvas)
+        XCTAssertEqual(canvas.subviews.count, 1, "No outer magnifying scroll view should wrap the page")
+
+        canvas.frame.size = CGSize(width: 760, height: 480)
+        canvas.needsLayout = true
+        canvas.layoutSubtreeIfNeeded()
+        XCTAssertEqual(host.viewport, CGSize(width: 760, height: 480))
+        XCTAssertEqual(host.webView.frame.size, CGSize(width: 760, height: 480))
+    }
+
+    func testWidePageExposesHorizontalOverflowInResponsiveCanvas() async throws {
+        let (host, _) = makeHost()
+        let canvas = BrowserCanvasContainer(
+            frame: NSRect(x: 0, y: 0, width: 480, height: 320)
+        )
+        let livePanel = try XCTUnwrap(host.webView.window?.contentView)
+        livePanel.addSubview(canvas)
+        canvas.display(host)
+        canvas.layoutSubtreeIfNeeded()
+        host.webView.loadHTMLString(
+            """
+            <!doctype html>
+            <html>
+              <head>
+                <style>
+                  html, body { margin: 0; overflow: auto; }
+                  #wide { width: 1600px; height: 240px; background: linear-gradient(to right, red, blue); }
+                </style>
+              </head>
+              <body><div id="wide"></div></body>
+            </html>
+            """,
+            baseURL: nil
+        )
+
+        var widePageIsReady = false
+        for _ in 0..<40 {
+            widePageIsReady = (try? await host.webView.evaluateJavaScript(
+                "document.getElementById('wide') !== null"
+            ) as? Bool) == true
+            if widePageIsReady { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(widePageIsReady, "The wide test page never finished loading")
+        guard widePageIsReady else { return }
+
+        let innerWidth = try await host.webView.evaluateJavaScript("window.innerWidth") as? Int
+        let scrollWidth = try await host.webView.evaluateJavaScript(
+            "Math.max(document.documentElement?.scrollWidth ?? 0, document.body?.scrollWidth ?? 0)"
+        ) as? Int
+        XCTAssertEqual(innerWidth, 480)
+        XCTAssertGreaterThan(scrollWidth ?? 0, 1_500)
     }
 
     func testViewportIsClampedToSaneBounds() {
