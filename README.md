@@ -137,6 +137,10 @@ The helpers behind ChatGPT-plan accounts are a separate download. They are large
 
 Direct-download builds from 1.14.0 onward check the stable release channel and can install signed updates when Locus quits. Mac App Store installations use the App Store update service.
 
+Experimental direct-download builds can enable the isolated, Sepolia-only
+[Locus Vault](Docs/WalletActivation.md). The feature is off by default;
+mainnet and external-wallet connectors remain security gated.
+
 ## ChatGPT plan support
 
 ChatGPT-plan accounts are served by two helpers from OpenAI's Codex project. They come to about 268 MB installed and do nothing unless a plan is signed in, so the direct download does not carry them: Locus offers the component when you add a ChatGPT-plan account, downloads about 104 MB once, and keeps it until you remove it. Ollama, API-key and custom-endpoint accounts never download it.
@@ -161,12 +165,14 @@ packaging, and representative interface flows.
 
 The checked-in Xcode project can be opened directly. Clone with `--recurse-submodules` if you also want the pinned Locus Mobile source. Install [XcodeGen](https://github.com/yonaskolb/XcodeGen) only when changing `project.yml` or adding source files.
 
-Source builds require Xcode 26 and Rust 1.95 through [rustup](https://rustup.rs/):
+Source builds require Xcode 26 and the Rust version pinned in
+`WalletSignerCore/rust-toolchain.toml` (currently 1.97.1) through
+[rustup](https://rustup.rs/):
 
 ```bash
 brew install xcodegen
-rustup toolchain install 1.95.0 --profile minimal --component rust-src
-rustup target add aarch64-apple-darwin x86_64-apple-darwin --toolchain 1.95.0
+rustup toolchain install 1.97.1 --profile minimal --component rust-src,clippy,rustfmt
+rustup target add aarch64-apple-darwin x86_64-apple-darwin --toolchain 1.97.1
 xcodegen generate
 open Locus.xcodeproj
 ```

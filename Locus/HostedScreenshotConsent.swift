@@ -9,22 +9,25 @@ import AppKit
 final class HostedScreenshotConsent {
     static let shared = HostedScreenshotConsent()
 
-    private var granted: Set<String> = []
+    private var grantedBySession: [String: Set<String>] = [:]
     private var currentSessionID: String?
 
     /// Consent is per conversation: a new session starts from no again.
     func beginSession(_ sessionID: String) {
         guard !sessionID.isEmpty, currentSessionID != sessionID else { return }
         currentSessionID = sessionID
-        granted.removeAll()
+        grantedBySession[sessionID, default: []] = grantedBySession[sessionID] ?? []
     }
 
     /// `nil` means a local model, which never leaves the machine and never asks.
-    func isAllowed(provider: String?) -> Bool {
+    func isAllowed(provider: String?, sessionID: String? = nil) -> Bool {
         guard let provider, !provider.isEmpty else { return true }
-        if granted.contains(provider) { return true }
+        guard let sessionID = sessionID ?? currentSessionID, !sessionID.isEmpty else {
+            return false
+        }
+        if grantedBySession[sessionID, default: []].contains(provider) { return true }
         guard ask(provider: provider) else { return false }
-        granted.insert(provider)
+        grantedBySession[sessionID, default: []].insert(provider)
         return true
     }
 

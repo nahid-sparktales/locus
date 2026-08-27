@@ -31,7 +31,6 @@ struct ComposerView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var contextPresented = false
-    @State private var attachmentsPresented = false
     @State private var permissionModesPresented = false
     @State private var teamPickerPresented = false
     @State private var quickTeamPresented = false
@@ -120,7 +119,7 @@ struct ComposerView: View {
                         }
                     }
 
-                    if !model.chatAttachments.isEmpty {
+                    if model.hasComposerContextChips {
                         attachmentChipsRow
                     }
 
@@ -634,24 +633,8 @@ struct ComposerView: View {
                 .accessibilityLabel("Open chat attachments")
                 .accessibilityIdentifier("composer.chatAttachments")
 
-                Button {
-                    model.addChatAttachments()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.locus(size: 11, weight: .semibold))
-                        .frame(width: 30, height: 30)
-                        .background(LocusTheme.paperDeep.opacity(0.68))
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(LocusTheme.line, lineWidth: 1)
-                        }
-                }
-                .buttonStyle(.locus())
-                .help("Attach files, PDFs, or images to this message")
-                .accessibilityLabel("Add chat attachments")
-                .accessibilityIdentifier("composer.addChatAttachment")
-                .disabled(model.isLoadingChatAttachments)
+                ComposerAttachmentSourceMenu(style: .plus)
+                    .environmentObject(model)
 
                 Label("Chat only", systemImage: "lock.fill")
                     .font(.locus(size: 9, weight: .semibold))
@@ -694,47 +677,20 @@ struct ComposerView: View {
                 .accessibilityLabel("Open context pack")
                 .accessibilityIdentifier("composer.context")
 
-                Button {
-                    contextPresented = false
-                    attachmentsPresented.toggle()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "paperclip")
-                        if !model.availableChatAttachments.isEmpty {
-                            Text("\(model.availableChatAttachments.count)")
-                        }
-                    }
-                    .font(.locus(size: 9, weight: .semibold))
-                    .foregroundStyle(
-                        attachmentWarningActive ? LocusTheme.warning : LocusTheme.ink
-                    )
-                    .padding(.horizontal, 9)
-                    .frame(height: 30)
-                    .background(LocusTheme.paperDeep.opacity(0.68))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(
-                                attachmentWarningActive
-                                    ? LocusTheme.warning.opacity(0.55) : LocusTheme.line,
-                                lineWidth: 1
-                            )
-                    }
-                }
-                .buttonStyle(.locus())
-                .fixedSize()
-                .popover(isPresented: $attachmentsPresented, arrowEdge: .bottom) {
-                    ChatAttachmentsPopover()
-                        .environmentObject(model)
-                }
-                .help("Attach files, PDFs, or images to this message")
-                .accessibilityLabel("Open message attachments")
-                .accessibilityIdentifier("composer.chatAttachments")
+                ComposerAttachmentSourceMenu(style: .paperclip)
+                    .environmentObject(model)
 
                 permissionChip
             }
 
-            if !model.justChatEnabled {
+            if model.justChatEnabled {
+                Button("Attach live application…", systemImage: "scope") {}
+                    .disabled(true)
+                    .help("Live application control is unavailable in Just Chat")
+                Button("Attach iOS Simulator…", systemImage: "ipad.and.iphone") {}
+                    .disabled(true)
+                    .help("iOS Simulator control is unavailable in Just Chat")
+            } else {
                 Divider()
                     .frame(height: 17)
                     .padding(.horizontal, 1)
@@ -969,17 +925,12 @@ struct ComposerView: View {
         model.steeringState?.hasPrefix("Stopping") == true
     }
 
-    private var attachmentWarningActive: Bool {
-        model.activeModelRejectsImages
-            && model.chatAttachments.contains { $0.kind == .image }
-    }
-
     private var attachmentChipsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(model.chatAttachments) { attachment in
                     HStack(spacing: 6) {
-                        if attachment.kind == .image,
+                        if attachment.kind == .image || attachment.kind == .applicationSnapshot,
                            let data = attachment.imageData,
                            let image = NSImage(data: data) {
                             Image(nsImage: image)
@@ -988,7 +939,7 @@ struct ComposerView: View {
                                 .frame(width: 22, height: 22)
                                 .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                         } else {
-                            Image(systemName: attachment.kind == .image ? "photo" : "doc.text")
+                            Image(systemName: attachmentSymbol(attachment.kind))
                                 .font(.locus(size: 10))
                                 .foregroundStyle(
                                     attachment.isAvailable ? LocusTheme.muted : LocusTheme.warning
@@ -1022,10 +973,101 @@ struct ComposerView: View {
                     }
                     .accessibilityIdentifier("composer.attachmentChip.\(attachment.id.uuidString)")
                 }
+                if let target = model.currentLiveApplicationTarget {
+                    persistentContextChip(
+                        title: target.name + (model.justChatEnabled ? " · paused" : ""),
+                        symbol: model.currentLiveApplicationIsConnected
+                            ? "macwindow" : "exclamationmark.triangle",
+                        iconData: target.iconData,
+                        warning: !model.currentLiveApplicationIsConnected,
+                        open: {},
+                        detach: { model.detachLiveApplication() },
+                        identifier: "composer.liveApplicationChip"
+                    )
+                }
+                if let target = model.currentSimulatorTarget {
+                    persistentContextChip(
+                        title: target.device.name + (
+                            model.justChatEnabled
+                                ? " · paused"
+                                : (model.simulatorControl.nativeAvailable ? "" : " · disconnected")
+                        ),
+                        symbol: serviceSymbol,
+                        iconData: nil,
+                        warning: !model.simulatorControl.nativeAvailable,
+                        open: {
+                            if !model.justChatEnabled { model.selectInspectorTab(.simulator) }
+                        },
+                        detach: { model.detachSimulator() },
+                        identifier: "composer.simulatorChip"
+                    )
+                }
             }
             .padding(.horizontal, 10)
         }
         .frame(height: 38)
+    }
+
+    private var serviceSymbol: String {
+        model.simulatorControl.nativeAvailable
+            ? "ipad.and.iphone" : "exclamationmark.triangle"
+    }
+
+    private func attachmentSymbol(_ kind: ChatAttachmentKind) -> String {
+        switch kind {
+        case .text: "doc.text"
+        case .image: "photo"
+        case .applicationSnapshot: "macwindow.badge.plus"
+        }
+    }
+
+    private func persistentContextChip(
+        title: String,
+        symbol: String,
+        iconData: Data?,
+        warning: Bool,
+        open: @escaping () -> Void,
+        detach: @escaping () -> Void,
+        identifier: String
+    ) -> some View {
+        HStack(spacing: 6) {
+            Button(action: open) {
+                HStack(spacing: 6) {
+                    if let iconData, let icon = NSImage(data: iconData) {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 20, height: 20)
+                    } else {
+                        Image(systemName: symbol)
+                            .font(.locus(size: 10))
+                            .foregroundStyle(warning ? LocusTheme.warning : LocusTheme.signalDeep)
+                            .frame(width: 22, height: 22)
+                    }
+                    Text(title)
+                        .font(.locus(size: 9, weight: .semibold))
+                        .lineLimit(1)
+                        .frame(maxWidth: 170, alignment: .leading)
+                }
+            }
+            .buttonStyle(.locus())
+            Button(action: detach) {
+                Image(systemName: "xmark")
+                    .font(.locus(size: 8, weight: .semibold))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            .buttonStyle(.locus())
+            .accessibilityLabel("Detach \(title)")
+        }
+        .padding(.horizontal, 7)
+        .frame(height: 30)
+        .background(LocusTheme.paperDeep.opacity(0.75))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(warning ? LocusTheme.warning.opacity(0.6) : LocusTheme.line, lineWidth: 1)
+        }
+        .accessibilityIdentifier(identifier)
     }
 
     private var placeholder: String {
@@ -1402,6 +1444,180 @@ private struct ComposerTeamPickerPopover: View {
     }
 }
 
+private enum ComposerAttachmentMenuStyle {
+    case plus
+    case paperclip
+}
+
+private struct ComposerAttachmentSourceMenu: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var reviewPresented = false
+    @State private var refreshRevision = 0
+    let style: ComposerAttachmentMenuStyle
+
+    var body: some View {
+        Menu {
+            Button("Review message attachments", systemImage: "tray.full") {
+                reviewPresented = true
+            }
+            .disabled(model.chatAttachments.isEmpty)
+            Divider()
+            Button("Add files or photos…", systemImage: "doc.badge.plus") {
+                model.addChatAttachments()
+            }
+            .disabled(model.isLoadingChatAttachments)
+
+            if ApplicationContextService.isAvailable {
+                if let current = model.applicationContext.lastExternalApplication {
+                    Button {
+                        model.attachApplicationSnapshot(current)
+                    } label: {
+                        Label("Attach \(current.name)", systemImage: "macwindow.badge.plus")
+                    }
+                    .disabled(model.isLoadingChatAttachments)
+                } else {
+                    Button("Attach current application", systemImage: "macwindow.badge.plus") {}
+                        .disabled(true)
+                }
+            } else {
+                Button("Application context requires the direct-download build") {}
+                    .disabled(true)
+            }
+
+            if !model.justChatEnabled {
+                Menu("Attach live application…", systemImage: "scope") {
+                    if model.applicationContext.runningApplications.isEmpty {
+                        Button("No applications are available") {}
+                            .disabled(true)
+                    }
+                    ForEach(model.applicationContext.runningApplications) { target in
+                        Button {
+                            model.attachLiveApplication(target)
+                        } label: {
+                            if let data = target.iconData, let icon = NSImage(data: data) {
+                                Label {
+                                    Text(target.name)
+                                } icon: {
+                                    Image(nsImage: icon)
+                                }
+                            } else {
+                                Label(target.name, systemImage: "macwindow")
+                            }
+                        }
+                    }
+                }
+                .disabled(!ApplicationContextService.isAvailable)
+
+                Menu("Attach iOS Simulator…", systemImage: "ipad.and.iphone") {
+                    if !SimulatorControlService.isSupportedBuild {
+                        Button("Requires the direct-download build") {}
+                            .disabled(true)
+                    } else if model.simulatorControl.devices.isEmpty {
+                        Button("No iPhone or iPad simulators found") {
+                            model.refreshSimulatorDevices()
+                        }
+                    }
+                    ForEach(model.simulatorControl.devices) { device in
+                        Button {
+                            model.attachSimulator(device)
+                        } label: {
+                            Label(
+                                "\(device.name) — \(device.subtitle)",
+                                systemImage: device.isIPad ? "ipad" : "iphone"
+                            )
+                        }
+                    }
+                    if model.simulatorControl.isRefreshing {
+                        Button("Refreshing simulators…") {}
+                            .disabled(true)
+                    } else {
+                        Divider()
+                        Button("Refresh Simulators", systemImage: "arrow.clockwise") {
+                            model.refreshSimulatorDevices()
+                        }
+                    }
+                }
+            }
+        } label: {
+            label
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Attach files, application context, or an iOS Simulator")
+        .accessibilityLabel("Add message context")
+        .accessibilityIdentifier("composer.addChatAttachment")
+        .popover(isPresented: $reviewPresented, arrowEdge: .bottom) {
+            ChatAttachmentsPopover()
+                .environmentObject(model)
+        }
+        .onAppear {
+            // The service is seeded at initialization and stays current from
+            // workspace launch/termination notifications. Avoid refreshing on
+            // every identity-driven menu rebuild, which otherwise forms a
+            // publish → rebuild → onAppear loop.
+            if model.applicationContext.runningApplications.isEmpty {
+                model.applicationContext.refreshRunningApplications()
+            }
+            if !model.justChatEnabled,
+               model.simulatorControl.devices.isEmpty,
+               !model.simulatorControl.isRefreshing
+            {
+                model.refreshSimulatorDevices()
+            }
+        }
+        .onReceive(model.applicationContext.objectWillChange) { _ in
+            refreshRevision &+= 1
+        }
+        .onReceive(model.simulatorControl.objectWillChange) { _ in
+            refreshRevision &+= 1
+        }
+    }
+
+    @ViewBuilder
+    private var label: some View {
+        switch style {
+        case .plus:
+            Image(systemName: "plus")
+                .font(.locus(size: 11, weight: .semibold))
+                .frame(width: 30, height: 30)
+                .background(LocusTheme.paperDeep.opacity(0.68))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(LocusTheme.line, lineWidth: 1)
+                }
+        case .paperclip:
+            HStack(spacing: 6) {
+                Image(systemName: "paperclip")
+                if !model.availableChatAttachments.isEmpty {
+                    Text("\(model.availableChatAttachments.count)")
+                }
+            }
+            .font(.locus(size: 9, weight: .semibold))
+            .foregroundStyle(imageWarning ? LocusTheme.warning : LocusTheme.ink)
+            .padding(.horizontal, 9)
+            .frame(height: 30)
+            .background(LocusTheme.paperDeep.opacity(0.68))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(
+                        imageWarning ? LocusTheme.warning.opacity(0.55) : LocusTheme.line,
+                        lineWidth: 1
+                    )
+            }
+        }
+    }
+
+    private var imageWarning: Bool {
+        model.activeModelRejectsImages
+            && model.chatAttachments.contains {
+                $0.kind == .image || $0.kind == .applicationSnapshot
+            }
+    }
+}
+
 private struct ChatAttachmentsPopover: View {
     @EnvironmentObject private var model: AppModel
 
@@ -1413,7 +1629,7 @@ private struct ChatAttachmentsPopover: View {
                         .font(.locus(size: 8, weight: .bold))
                         .tracking(0.8)
                         .foregroundStyle(LocusTheme.muted)
-                    Text("Files sent with this message")
+                    Text("Inputs sent with this message")
                         .font(.locus(size: 11, weight: .bold))
                 }
                 Spacer()
@@ -1431,9 +1647,9 @@ private struct ChatAttachmentsPopover: View {
 
             Label(
                 model.justChatEnabled
-                    ? "Only these files are supplied to the model. Chat cannot browse "
+                    ? "Only these inputs are supplied to the model. Chat cannot browse "
                         + "their folders, use tools, or edit anything."
-                    : "These files ride with this one message as direct evidence. In a "
+                    : "These files and Appshots ride with this one message as direct evidence. In a "
                         + "team run, images reach the dispatcher and the first coding job.",
                 systemImage: model.justChatEnabled ? "lock.shield" : "paperclip"
             )
@@ -1446,7 +1662,9 @@ private struct ChatAttachmentsPopover: View {
             .background(LocusTheme.paperDeep.opacity(0.7))
 
             if model.activeModelRejectsImages,
-               model.chatAttachments.contains(where: { $0.kind == .image }) {
+               model.chatAttachments.contains(where: {
+                   $0.kind == .image || $0.kind == .applicationSnapshot
+               }) {
                 Label(
                     "\(model.selectedModel) reports no vision support. Locus will "
                         + "send the images and fall back to their names if the model "
@@ -1490,7 +1708,7 @@ private struct ChatAttachmentsPopover: View {
                     LazyVStack(spacing: 3) {
                         ForEach(model.chatAttachments) { attachment in
                             HStack(spacing: 8) {
-                                Image(systemName: attachment.kind == .image ? "photo" : "doc.text")
+                                Image(systemName: attachmentSymbol(attachment.kind))
                                     .font(.locus(size: 11))
                                     .foregroundStyle(
                                         attachment.isAvailable ? LocusTheme.muted : LocusTheme.warning
@@ -1545,6 +1763,14 @@ private struct ChatAttachmentsPopover: View {
         }
         .frame(width: 370)
         .background(LocusTheme.white)
+    }
+
+    private func attachmentSymbol(_ kind: ChatAttachmentKind) -> String {
+        switch kind {
+        case .text: "doc.text"
+        case .image: "photo"
+        case .applicationSnapshot: "macwindow.badge.plus"
+        }
     }
 }
 

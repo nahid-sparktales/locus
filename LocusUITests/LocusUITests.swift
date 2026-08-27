@@ -551,6 +551,35 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(anyElement("settings.appStoreUpdates").exists)
     }
 
+    func testNativeSettingsClosesCleanlyByButtonCommandWAndTrafficLight() {
+        let settingsPage = anyElement("settings.page.general")
+        let workspace = anyElement("workspace.modelPicker")
+
+        func openSettings() {
+            app.typeKey(",", modifierFlags: .command)
+            XCTAssertTrue(settingsPage.waitForExistence(timeout: 3))
+        }
+
+        func assertClosedAndReopenable() {
+            XCTAssertTrue(waitUntil { !settingsPage.exists })
+            XCTAssertTrue(workspace.exists, "closing Settings must not quit Locus")
+            openSettings()
+        }
+
+        openSettings()
+        app.buttons["settings.cancel"].click()
+        assertClosedAndReopenable()
+
+        app.typeKey("w", modifierFlags: .command)
+        assertClosedAndReopenable()
+
+        let closeButton = app.buttons[XCUIIdentifierCloseWindow].firstMatch
+        XCTAssertTrue(closeButton.waitForExistence(timeout: 3))
+        closeButton.click()
+        XCTAssertTrue(waitUntil { !settingsPage.exists })
+        XCTAssertTrue(workspace.exists)
+    }
+
     func testAgentProfileEditorKeepsInstructionsAndAdvancedActionsVisible() {
         anyElement("workspace.modelPicker").click()
         app.buttons["Manage Agents & Teams…"].click()
@@ -597,35 +626,6 @@ final class LocusUITests: XCTestCase {
         cancel.click()
     }
 
-    func testNetworkSettingsRevealManualProxyFieldsAndGateSave() {
-        anyElement("workspace.modelPicker").click()
-        app.buttons["Manage Accounts…"].click()
-
-        let networkPage = anyElement("settings.page.network")
-        XCTAssertTrue(networkPage.waitForExistence(timeout: 3))
-        networkPage.click()
-
-        let mode = anyElement("settings.proxyMode")
-        XCTAssertTrue(mode.waitForExistence(timeout: 3))
-        // Direct connection by default: no manual fields and nothing to apply.
-        XCTAssertFalse(anyElement("settings.proxyHost").exists)
-        XCTAssertFalse(app.buttons["settings.save"].isEnabled)
-
-        mode.click()
-        app.menuItems["Manual proxy"].click()
-        XCTAssertTrue(anyElement("settings.proxyHost").waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("settings.proxyPort").exists)
-        XCTAssertTrue(anyElement("settings.proxyBypass").exists)
-        // A manual proxy with no host must not be saveable — silent direct
-        // connections are the failure this feature exists to prevent.
-        XCTAssertFalse(app.buttons["settings.save"].isEnabled)
-
-        let host = anyElement("settings.proxyHost")
-        let port = anyElement("settings.proxyPort")
-        host.click()
-        host.typeText("127.0.0.1")
-        port.click()
-        port.typeText("8080")
     func testVisualQuickTeamCanBeCreatedFromComposerAndRemainsAdvancedEditable() {
         let teamButton = anyElement("composer.team")
         XCTAssertTrue(teamButton.waitForExistence(timeout: 3))
@@ -664,6 +664,35 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["qwen3:8b Lead"].exists)
     }
 
+    func testNetworkSettingsRevealManualProxyFieldsAndGateSave() {
+        anyElement("workspace.modelPicker").click()
+        app.buttons["Manage Accounts…"].click()
+
+        let networkPage = anyElement("settings.page.network")
+        XCTAssertTrue(networkPage.waitForExistence(timeout: 3))
+        networkPage.click()
+
+        let mode = anyElement("settings.proxyMode")
+        XCTAssertTrue(mode.waitForExistence(timeout: 3))
+        // Direct connection by default: no manual fields and nothing to apply.
+        XCTAssertFalse(anyElement("settings.proxyHost").exists)
+        XCTAssertFalse(app.buttons["settings.save"].isEnabled)
+
+        mode.click()
+        app.menuItems["Manual proxy"].click()
+        XCTAssertTrue(anyElement("settings.proxyHost").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("settings.proxyPort").exists)
+        XCTAssertTrue(anyElement("settings.proxyBypass").exists)
+        // A manual proxy with no host must not be saveable — silent direct
+        // connections are the failure this feature exists to prevent.
+        XCTAssertFalse(app.buttons["settings.save"].isEnabled)
+
+        let host = anyElement("settings.proxyHost")
+        let port = anyElement("settings.proxyPort")
+        host.click()
+        host.typeText("127.0.0.1")
+        port.click()
+        port.typeText("8080")
         XCTAssertTrue(app.buttons["settings.save"].isEnabled)
 
         anyElement("settings.page.general").click()
@@ -2202,6 +2231,37 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(waitUntil(timeout: 3) {
             firstMessage.exists && firstMessage.frame.minY < messageYBeforeWheel - 20
         })
+    }
+
+    func testJumpToLatestReturnsToTheEndOfTheTranscript() {
+        relaunchWithScrollFixture()
+
+        let transcript = anyElement("conversation.scroll")
+        XCTAssertTrue(transcript.waitForExistence(timeout: 3))
+
+        app.typeKey("f", modifierFlags: .command)
+        let search = app.textFields["search.field"]
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        search.click()
+        search.typeText("Review the workspace")
+
+        let firstMessage = anyElement(
+            "message.00000000-0000-0000-0000-000000000101"
+        )
+        let jump = anyElement("conversation.jumpToLatest")
+        XCTAssertTrue(firstMessage.waitForExistence(timeout: 3))
+        XCTAssertTrue(firstMessage.isHittable)
+        XCTAssertTrue(jump.waitForExistence(timeout: 3))
+        let firstMessageY = firstMessage.frame.minY
+
+        jump.click()
+
+        XCTAssertTrue(waitUntil(timeout: 3) {
+            !firstMessage.exists
+                || !firstMessage.isHittable
+                || firstMessage.frame.minY < firstMessageY - 20
+        })
+        XCTAssertFalse(jump.exists)
     }
 
     func testCollapsedToolActivityGroupsAndExpands() {

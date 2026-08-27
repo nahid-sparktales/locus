@@ -116,12 +116,19 @@ final class OffscreenWebHost {
     /// Move the web view into a visible container. Only one container may hold
     /// it at a time — `NSView` has a single superview, so lending it twice
     /// takes it away from the first borrower.
-    func lend(to container: NSView) {
-        guard webView.superview !== container else { return }
-        webView.removeFromSuperview()
-        webView.frame = container.bounds
-        webView.autoresizingMask = [.width, .height]
-        container.addSubview(webView)
+    func lend(to container: NSView, preservingViewport: Bool = false) {
+        if webView.superview !== container {
+            webView.removeFromSuperview()
+            container.addSubview(webView)
+        }
+        if preservingViewport {
+            container.frame.size = viewport
+            webView.frame = NSRect(origin: .zero, size: viewport)
+            webView.autoresizingMask = []
+        } else {
+            webView.frame = container.bounds
+            webView.autoresizingMask = [.width, .height]
+        }
     }
 
     /// Return the web view to the off-screen panel, restoring the emulated
@@ -142,9 +149,9 @@ final class OffscreenWebHost {
         webView.pauseAllMediaPlayback(completionHandler: nil)
     }
 
-    /// Resize the emulated viewport. Takes effect immediately while parked;
-    /// while the view is lent out its size follows the borrower, and the new
-    /// viewport applies the next time it is parked.
+    /// Resize the emulated viewport. The visible fixed-canvas borrower also
+    /// keeps this exact size; it may magnify the canvas, but never relayouts
+    /// the page to match the inspector panel.
     func setViewport(_ size: CGSize) {
         let clamped = CGSize(
             width: max(120, min(size.width, 4_000)),
@@ -155,9 +162,7 @@ final class OffscreenWebHost {
             NSRect(origin: Self.parkingOrigin, size: clamped),
             display: false
         )
-        if isParked {
-            webView.frame = NSRect(origin: .zero, size: clamped)
-        }
+        webView.frame = NSRect(origin: .zero, size: clamped)
     }
 
     // MARK: - Real input

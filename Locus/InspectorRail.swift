@@ -14,7 +14,7 @@ struct InspectorRail: View {
     /// Direct rail destinations stay one click away. The remaining workspace
     /// panels live in the overflow menu instead of disappearing from the UI.
     static let menuTabs = InspectorTab.workspaceTabs.filter {
-        $0 != .terminal && $0 != .notes
+        $0 != .terminal && $0 != .simulator && $0 != .notes
     }
 
     var body: some View {
@@ -24,6 +24,7 @@ struct InspectorRail: View {
             railTab(.plan)
             railTab(.terminal)
             railTab(.preview)
+            railTab(.simulator)
             railTab(.notes)
             Spacer(minLength: 0)
             zoomButton

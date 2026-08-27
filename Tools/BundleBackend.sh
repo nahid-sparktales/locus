@@ -167,6 +167,26 @@ bundle_source() {
     /bin/rm -rf "${runtime}"
     /bin/mkdir -p "${runtime}/source"
     copy_without_extended_metadata "${source_package}" "${runtime}/source/ollama_code"
+    if [[ "${TARGET_NAME:-}" == "LocusMAS" || "${CONFIGURATION:-}" == "ReleaseMAS" ]]; then
+        # The App Store runtime must not even contain Simulator tool schemas.
+        # Keep the registry's empty variables so shared lookup code imports,
+        # while removing every tool name/description from the packaged copy.
+        local registry="${runtime}/source/ollama_code/tool_registry.py"
+        local stripped
+        stripped="$(/usr/bin/mktemp "${registry}.mas.XXXXXX")"
+        /usr/bin/awk '
+            /^SIMULATOR_TOOL_SCHEMAS = \[/ {
+                print "SIMULATOR_TOOL_SCHEMAS = []"
+                print "_READ_ONLY_SIMULATOR_TOOLS: set[str] = set()"
+                print "_SIMULATOR_TOOL_NAMES: set[str] = set()"
+                skipping = 1
+                next
+            }
+            skipping && /^#: The one wording/ { skipping = 0 }
+            !skipping { print }
+        ' "${registry}" > "${stripped}"
+        /bin/mv "${stripped}" "${registry}"
+    fi
     for junk in "${runtime}/source/ollama_code"/**/__pycache__(N/); do
         /bin/rm -rf "${junk}"
     done

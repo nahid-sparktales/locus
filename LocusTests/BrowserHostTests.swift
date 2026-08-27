@@ -79,6 +79,23 @@ final class BrowserHostTests: XCTestCase {
         XCTAssertEqual(host.webView.bounds.size, host.viewport)
     }
 
+    func testFixedCanvasLendingPreservesViewportAcrossInspectorResizes() {
+        let (host, _) = makeHost(viewport: BrowserViewport.desktop.size)
+        let canvas = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 240))
+
+        host.lend(to: canvas, preservingViewport: true)
+        XCTAssertEqual(canvas.frame.size, BrowserViewport.desktop.size)
+        XCTAssertEqual(host.webView.frame.size, BrowserViewport.desktop.size)
+        XCTAssertTrue(host.webView.autoresizingMask.isEmpty)
+
+        canvas.frame.size = CGSize(width: 520, height: 400)
+        XCTAssertEqual(
+            host.webView.frame.size,
+            BrowserViewport.desktop.size,
+            "Presentation resizing must never change page layout or agent coordinates"
+        )
+    }
+
     func testViewportIsClampedToSaneBounds() {
         let (host, _) = makeHost()
         host.setViewport(CGSize(width: 1, height: 1))
@@ -114,4 +131,3 @@ final class BrowserHostTests: XCTestCase {
         XCTAssertTrue(host.isKeptLive)
     }
 }
-

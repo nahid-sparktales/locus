@@ -7,6 +7,7 @@ private final class FakeUpdateDriver: AppUpdateDriving {
     var automaticallyChecksForUpdates: Bool
     var automaticallyDownloadsUpdates: Bool
     var stateDidChange: (() -> Void)?
+    weak var relaunchHandler: AppUpdateRelaunchHandling?
     private(set) var checkCount = 0
 
     init(canCheck: Bool = true, automaticChecks: Bool = true, automaticDownloads: Bool = true) {
@@ -113,5 +114,56 @@ final class AppUpdateControllerTests: XCTestCase {
         XCTAssertTrue(driver.automaticallyChecksForUpdates)
         XCTAssertTrue(driver.automaticallyDownloadsUpdates)
         XCTAssertEqual(driver.checkCount, 0)
+    }
+
+    func testRelaunchHandlerIsForwardedToTheUpdateDriver() {
+        let driver = FakeUpdateDriver()
+        let controller = AppUpdateController(
+            startImmediately: false,
+            distribution: .directDownload,
+            driver: driver
+        )
+        let lifecycle = ApplicationLifecycleCoordinator()
+
+        controller.setRelaunchHandler(lifecycle)
+
+        XCTAssertTrue(driver.relaunchHandler === lifecycle)
+    }
+
+    func testUpdaterCleanupAndContinuationAreIdempotent() {
+        let lifecycle = ApplicationLifecycleCoordinator()
+        var continuations = 0
+
+        XCTAssertTrue(lifecycle.shouldAllowUpdateRelaunch())
+        lifecycle.prepareForUpdateRelaunch { continuations += 1 }
+        lifecycle.prepareForUpdateRelaunch { continuations += 1 }
+
+        XCTAssertEqual(lifecycle.state, .relaunching)
+        XCTAssertEqual(continuations, 1)
+    }
+
+    func testInvalidOpenSettingsAbortRelaunchBeforeCleanup() {
+        let model = AppModel(startImmediately: false)
+        let registrationID = UUID()
+        model.registerSettingsUpdatePreparation(id: registrationID) { false }
+        let lifecycle = ApplicationLifecycleCoordinator()
+        lifecycle.connect(model: model)
+        var continuations = 0
+
+        XCTAssertFalse(lifecycle.shouldAllowUpdateRelaunch())
+        XCTAssertEqual(lifecycle.state, .idle)
+        lifecycle.prepareForUpdateRelaunch { continuations += 1 }
+
+        // Sparkle does not enter the postponed path after a false preflight;
+        // this direct call only verifies the coordinator itself remains usable.
+        XCTAssertEqual(continuations, 1)
+        model.unregisterSettingsUpdatePreparation(id: registrationID)
+    }
+
+    func testIdleApplicationTerminationDoesNotRequireAReply() {
+        let lifecycle = ApplicationLifecycleCoordinator()
+
+        XCTAssertEqual(lifecycle.applicationShouldTerminate(.shared), .terminateNow)
+        XCTAssertEqual(lifecycle.state, .idle)
     }
 }

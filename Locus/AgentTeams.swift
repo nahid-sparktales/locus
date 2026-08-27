@@ -191,12 +191,27 @@ struct AgentCapabilityPolicy: Codable, Hashable {
     var network = true
     var mcp = true
     var computerControl = true
+    var simulatorControl = true
 
     private enum CodingKeys: String, CodingKey {
         case shell, network, mcp
         case workspaceRead = "workspace_read"
         case workspaceWrite = "workspace_write"
         case computerControl = "computer_control"
+        case simulatorControl = "simulator_control"
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        workspaceRead = try container.decodeIfPresent(Bool.self, forKey: .workspaceRead) ?? true
+        workspaceWrite = try container.decodeIfPresent(Bool.self, forKey: .workspaceWrite) ?? true
+        shell = try container.decodeIfPresent(Bool.self, forKey: .shell) ?? true
+        network = try container.decodeIfPresent(Bool.self, forKey: .network) ?? true
+        mcp = try container.decodeIfPresent(Bool.self, forKey: .mcp) ?? true
+        computerControl = try container.decodeIfPresent(Bool.self, forKey: .computerControl) ?? true
+        simulatorControl = try container.decodeIfPresent(Bool.self, forKey: .simulatorControl) ?? true
     }
 }
 

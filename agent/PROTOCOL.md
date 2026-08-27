@@ -675,6 +675,8 @@ Endpoint: `/ws/chat`.
 | `steer` | `text: string` | Adds direction to the active turn. It interrupts only the current provider generation, waits for an already-running tool/native action to reach a safe boundary, and continues the same turn without an intermediate `turn_done`. |
 | `set_computer_control` | `enabled: boolean`, `native_available: boolean` | Advertises the direct-build native broker. Computer tools enter model schemas only when both values are true. Rejected while a turn is busy. |
 | `computer_action_result` | `request_id: string`, `result: object` | Completes one pending native broker request. `result` may contain `text`, `error`, and optional `screenshot` metadata/data. Late, duplicate, and unknown IDs are ignored after cancellation or timeout. |
+| `set_simulator_control` | `enabled: boolean`, `native_available: boolean`, optional `attached_device: {udid, name, runtime, family, state}` | Advertises the direct-download Simulator broker for one task-leased device. Simulator schemas enter the model only when the helper is compatible and the message includes a non-empty attached UDID. Rejected while a turn is busy. |
+| `simulator_action_result` | `request_id: string`, `result: object` | Completes one pending Simulator request. Results contain `text` or `error`, may include structured `build` failure details, and may use the shared newest-only `screenshot` observation. Late, duplicate, and unknown IDs are ignored after cancellation, timeout, disconnect, or detach. |
 | `set_browser_control` | `enabled: boolean` | Advertises the native browser broker. Browser tools enter model schemas only while true. Rejected while a turn is busy, so the client re-sends after `turn_done`. Unlike computer control there is no `native_available`: a web view needs no special access and is present in every build. |
 | `browser_action_result` | `request_id: string`, `result: object` | Completes one pending browser request. `result` may contain `text`, `error`, and optional `screenshot` metadata/data. Late, duplicate, and unknown IDs are ignored after cancellation or timeout. |
 | `set_notes_control` | `enabled: boolean` | Advertises the native Notes broker. `notes_read` and `notes_update` enter model schemas only while true; read-only routes receive only `notes_read`. The native app, not the model, resolves the workspace/chat owner and current scope. Rejected while a turn is busy. |
@@ -819,6 +821,35 @@ valid only for the latest Accessibility snapshot and must be refreshed after a
 mutation. A screenshot result is an ephemeral newest-only observation; routes
 that reject images are retried once without it and remain Accessibility-only
 for the session.
+
+### `simulator_control_status` / `simulator_action_request`
+
+`simulator_control_status {enabled, attached_device}` acknowledges the
+direct-download Simulator capability handshake. The server exposes these tools
+only while one compatible device is explicitly attached to the task:
+`simulator_list_devices`, `simulator_attach`, `simulator_get_state`,
+`simulator_tap`, `simulator_swipe`, `simulator_type_text`,
+`simulator_press_button`, `simulator_open_url`,
+`simulator_build_and_launch`, `simulator_screenshot`, and `simulator_detach`.
+Read-only agent routes receive only list, state, and screenshot.
+
+```json
+{ "type": "simulator_action_request", "request_id": "...",
+  "session_id": "...", "tool": "simulator_tap",
+  "arguments": {"element": "a1b2c3d4-7"}, "timeout_ms": 120000 }
+```
+
+The native client always resolves the request against `session_id` and the
+UDID leased to that task; arguments cannot select another device. Calls are
+serialized per UDID. Builds may wait up to 600 seconds and every other action
+up to 120 seconds. `simulator_get_state` returns logical device dimensions,
+bounded Accessibility elements with frames, and snapshot-scoped element IDs;
+every mutation invalidates those IDs. Interrupt, task stop, socket teardown,
+helper failure, shutdown, and detach cancel matching pending requests. Detach
+releases the lease without shutting down, erasing, or deleting the device.
+Simulator screenshots share the same ephemeral visual-observation slot as
+computer screenshots; image-incompatible routes receive Accessibility text
+and one visible fallback diagnostic.
 
 ### `browser_control_status` / `browser_action_request`
 

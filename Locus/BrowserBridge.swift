@@ -14,6 +14,8 @@ enum BrowserBridge {
 
     /// Name of the message handler the page-world capture posts to.
     static let captureHandlerName = "locusBrowserCapture"
+    static let autofillHandlerName = "locusBrowserAutofill"
+    static let walletHandlerName = "locusWalletProvider"
 
     /// Main frame only: refs are minted exclusively there — `callBridge`
     /// evaluates with `in: nil` (the main frame) and `walk()` stops at IFRAME
@@ -43,6 +45,20 @@ enum BrowserBridge {
         )
     }
 
+    /// User-only Autofill detection. It runs in the isolated reader world, so
+    /// pages cannot call the native handler or enumerate vault records. Focus
+    /// messages contain field metadata only; a password crosses the bridge
+    /// only after a trusted form submission and is ignored while an agent
+    /// action is active.
+    static func autofillScript() -> WKUserScript {
+        WKUserScript(
+            source: autofillSource,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true,
+            in: readerWorld
+        )
+    }
+
     /// The mobile device profile.
     ///
     /// Runs in the **page** world for the same reason the capture layer does:
@@ -59,6 +75,14 @@ enum BrowserBridge {
             source: deviceSource,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
+        )
+    }
+
+    static func walletProviderScript() -> WKUserScript {
+        WKUserScript(
+            source: LocusWalletProviderScript.evmBootstrap,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
         )
     }
 
@@ -1157,6 +1181,113 @@ enum BrowserBridge {
         // Resource timing is unavailable on this page; console and JS-initiated
         // traffic still report.
       }
+    })();
+    """#
+
+    private static let autofillSource = #"""
+    (() => {
+      if (globalThis.__locusAutofill) { return; }
+
+      const post = (payload) => {
+        try { webkit.messageHandlers.locusBrowserAutofill.postMessage(payload); }
+        catch (error) { /* handler unavailable in unmanaged views */ }
+      };
+
+      function autocomplete(element) {
+        return (element.getAttribute('autocomplete') || '').toLowerCase().split(/\s+/).pop() || '';
+      }
+
+      function category(element) {
+        if (!element || element.tagName !== 'INPUT') { return null; }
+        const type = (element.getAttribute('type') || 'text').toLowerCase();
+        const auto = autocomplete(element);
+        if (type === 'password' || auto === 'current-password' || auto === 'new-password') {
+          return 'password';
+        }
+        if (auto.startsWith('cc-')) { return auto === 'cc-csc' ? null : 'paymentCard'; }
+        if (['name', 'given-name', 'family-name', 'organization', 'email', 'tel',
+             'street-address', 'address-line1', 'address-line2', 'address-level1',
+             'address-level2', 'postal-code', 'country', 'country-name'].includes(auto)) {
+          return 'contact';
+        }
+        if (type === 'email' || type === 'tel') { return 'contact'; }
+        if (auto === 'username') { return 'password'; }
+        return null;
+      }
+
+      addEventListener('focusin', (event) => {
+        if (!event.isTrusted) { return; }
+        const element = event.target;
+        const kind = category(element);
+        if (!kind) { return; }
+        const rect = element.getBoundingClientRect();
+        post({
+          event: 'focus', category: kind, origin: location.origin,
+          name: element.name || element.id || autocomplete(element),
+          rect: [rect.left, rect.top, rect.width, rect.height],
+        });
+      }, true);
+
+      addEventListener('submit', (event) => {
+        if (!event.isTrusted) { return; }
+        const form = event.target;
+        if (!form || !form.querySelector) { return; }
+        const password = form.querySelector(
+          'input[type=password],input[autocomplete~=current-password],input[autocomplete~=new-password]'
+        );
+        if (!password || !password.value) { return; }
+        const username = form.querySelector(
+          'input[autocomplete~=username],input[type=email],input[name*=user i],input[name*=email i]'
+        );
+        post({
+          event: 'passwordSubmit', origin: location.origin,
+          username: username ? String(username.value || '') : '',
+          password: String(password.value || ''),
+        });
+      }, true);
+
+      function fire(element) {
+        element.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      }
+
+      function matching(form, selector) {
+        return (form || document).querySelector(selector);
+      }
+
+      function fill(payload) {
+        const active = document.activeElement;
+        const form = active && (active.form || active.closest && active.closest('form'));
+        const values = payload || {};
+        if (values.kind === 'password') {
+          const user = matching(form,
+            'input[autocomplete~=username],input[type=email],input[name*=user i],input[name*=email i]');
+          const pass = matching(form,
+            'input[type=password],input[autocomplete~=current-password],input[autocomplete~=new-password]');
+          if (user && typeof values.username === 'string') { user.value = values.username; fire(user); }
+          if (pass && typeof values.password === 'string') { pass.value = values.password; fire(pass); }
+          return !!pass;
+        }
+        const map = values.kind === 'paymentCard' ? {
+          'cc-name': values.cardholder, 'cc-number': values.number,
+          'cc-exp-month': values.expirationMonth, 'cc-exp-year': values.expirationYear,
+        } : {
+          'name': values.fullName, 'organization': values.organization,
+          'email': values.email, 'tel': values.phone, 'street-address': values.street,
+          'address-line1': values.street, 'address-level2': values.city,
+          'address-level1': values.region, 'postal-code': values.postalCode,
+          'country': values.country, 'country-name': values.country,
+        };
+        let filled = false;
+        for (const [token, value] of Object.entries(map)) {
+          if (value === undefined || value === null || String(value) === '') { continue; }
+          const element = matching(form, 'input[autocomplete~="' + token + '"]');
+          if (element) { element.value = String(value); fire(element); filled = true; }
+        }
+        return filled;
+      }
+
+      globalThis.__locusAutofill = { fill };
     })();
     """#
 }

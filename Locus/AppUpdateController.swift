@@ -6,11 +6,19 @@ import Sparkle
 #endif
 
 @MainActor
+protocol AppUpdateRelaunchHandling: AnyObject {
+    func shouldAllowUpdateRelaunch() -> Bool
+    func prepareForUpdateRelaunch(continuation: @escaping @MainActor () -> Void)
+    func updaterWillRelaunch()
+}
+
+@MainActor
 protocol AppUpdateDriving: AnyObject {
     var canCheckForUpdates: Bool { get }
     var automaticallyChecksForUpdates: Bool { get set }
     var automaticallyDownloadsUpdates: Bool { get set }
     var stateDidChange: (() -> Void)? { get set }
+    var relaunchHandler: AppUpdateRelaunchHandling? { get set }
 
     func checkForUpdates()
 }
@@ -75,6 +83,10 @@ final class AppUpdateController: ObservableObject {
         driver.checkForUpdates()
     }
 
+    func setRelaunchHandler(_ handler: AppUpdateRelaunchHandling?) {
+        driver.relaunchHandler = handler
+    }
+
     func setAutomaticallyChecksForUpdates(_ enabled: Bool) {
         guard isAvailable else { return }
         driver.automaticallyChecksForUpdates = enabled
@@ -100,24 +112,27 @@ private final class AppStoreUpdateDriver: AppUpdateDriving {
     var automaticallyChecksForUpdates = false
     var automaticallyDownloadsUpdates = false
     var stateDidChange: (() -> Void)?
+    weak var relaunchHandler: AppUpdateRelaunchHandling?
 
     func checkForUpdates() {}
 }
 
 #if LOCUS_DIRECT_DOWNLOAD
 @MainActor
-private final class SparkleUpdateDriver: AppUpdateDriving {
+private final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterDelegate {
     var stateDidChange: (() -> Void)?
+    weak var relaunchHandler: AppUpdateRelaunchHandling?
 
-    private let controller: SPUStandardUpdaterController
+    private var controller: SPUStandardUpdaterController!
     private var canCheckObservation: AnyCancellable?
     private var automaticCheckObservation: AnyCancellable?
     private var automaticDownloadObservation: AnyCancellable?
 
     init(startImmediately: Bool) {
+        super.init()
         controller = SPUStandardUpdaterController(
             startingUpdater: startImmediately,
-            updaterDelegate: nil,
+            updaterDelegate: self,
             userDriverDelegate: nil
         )
 
@@ -149,6 +164,24 @@ private final class SparkleUpdateDriver: AppUpdateDriving {
 
     func checkForUpdates() {
         controller.checkForUpdates(nil)
+    }
+
+    func updater(
+        _ updater: SPUUpdater,
+        shouldPostponeRelaunchForUpdate item: SUAppcastItem,
+        untilInvokingBlock installHandler: @escaping () -> Void
+    ) -> Bool {
+        guard let relaunchHandler else { return false }
+        relaunchHandler.prepareForUpdateRelaunch(continuation: installHandler)
+        return true
+    }
+
+    func updaterShouldRelaunchApplication(_ updater: SPUUpdater) -> Bool {
+        relaunchHandler?.shouldAllowUpdateRelaunch() ?? true
+    }
+
+    func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
+        relaunchHandler?.updaterWillRelaunch()
     }
 }
 #endif

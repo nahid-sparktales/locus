@@ -20,6 +20,11 @@ project_yml="${repo_root}/project.yml"
 key_id="${LOCUS_ASC_KEY_ID:?set LOCUS_ASC_KEY_ID (App Store Connect API key id)}"
 issuer_id="${LOCUS_ASC_ISSUER_ID:?set LOCUS_ASC_ISSUER_ID (App Store Connect issuer id)}"
 key_path="${LOCUS_ASC_KEY_PATH:?set LOCUS_ASC_KEY_PATH (path to the App Store Connect .p8 key)}"
+github_client_id="${LOCUS_GITHUB_OAUTH_CLIENT_ID:?set LOCUS_GITHUB_OAUTH_CLIENT_ID (public Locus GitHub App client id)}"
+if [[ "${github_client_id}" == *'$('* ]]; then
+    echo "error: LOCUS_GITHUB_OAUTH_CLIENT_ID is still an unresolved build placeholder." >&2
+    exit 1
+fi
 team_id="${LOCUS_TEAM_ID:-4X4RJA7GMD}"
 version="${LOCUS_MARKETING_VERSION:-$(/usr/bin/awk '/MARKETING_VERSION/ { print $2; exit }' "${project_yml}" | /usr/bin/tr -d '"')}"
 build="${LOCUS_BUILD_VERSION:-$(/usr/bin/awk '/CURRENT_PROJECT_VERSION/ { print $2; exit }' "${project_yml}")}"
@@ -68,6 +73,7 @@ xcodebuild -quiet \
     -authenticationKeyIssuerID "${issuer_id}" \
     DEVELOPMENT_TEAM="${team_id}" \
     CODE_SIGN_STYLE=Automatic \
+    LOCUS_GITHUB_OAUTH_CLIENT_ID="${github_client_id}" \
     archive
 
 echo "Archive: ${archive_path}"

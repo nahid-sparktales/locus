@@ -1197,6 +1197,7 @@ private struct AgentBehaviorEditor: View {
                 Toggle("Network and browser", isOn: $draft.capabilityPolicy.network)
                 Toggle("Skills and MCP integrations", isOn: $draft.capabilityPolicy.mcp)
                 Toggle("Computer control", isOn: $draft.capabilityPolicy.computerControl)
+                Toggle("iOS Simulator control", isOn: $draft.capabilityPolicy.simulatorControl)
                 Text("These switches can only remove access. The selected mode, permission policy, and team role can narrow it further.")
                     .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
             }

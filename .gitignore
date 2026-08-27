@@ -4,6 +4,7 @@
 # Xcode / builds
 .build/
 .build-*/
+build/
 DerivedData/
 .derivedData*/
 .release-tools/
@@ -16,6 +17,9 @@ xcuserdata/
 .release-*/
 .releasebuild-*/
 artifacts/
+
+# Rust build cache
+WalletSignerCore/target/
 
 # Bundled agent runtime cache (downloaded standalone Python + deps)
 .agent-runtime/

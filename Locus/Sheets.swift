@@ -170,6 +170,47 @@ private struct ExtensionsSettingsView: View {
         var id: String { rawValue }
     }
 
+    private struct RecommendedPlugin: Identifiable {
+        let name: String
+        let purpose: String
+        let permissions: String
+        let symbol: String
+        var id: String { name }
+    }
+
+    private static let recommendedPluginBacklog = [
+        RecommendedPlugin(
+            name: "Linear",
+            purpose: "Issues, roadmaps, and implementation context.",
+            permissions: "teams, projects, issues, and comments",
+            symbol: "checklist"
+        ),
+        RecommendedPlugin(
+            name: "Slack",
+            purpose: "Team discussions, approvals, and incident coordination.",
+            permissions: "selected workspaces and channels",
+            symbol: "bubble.left.and.bubble.right"
+        ),
+        RecommendedPlugin(
+            name: "Sentry",
+            purpose: "Production errors, traces, releases, and service health.",
+            permissions: "selected organizations and projects",
+            symbol: "waveform.path.ecg"
+        ),
+        RecommendedPlugin(
+            name: "PostHog",
+            purpose: "Product analytics, sessions, and feature flags.",
+            permissions: "selected projects and analytics data",
+            symbol: "chart.xyaxis.line"
+        ),
+        RecommendedPlugin(
+            name: "Notion",
+            purpose: "Specifications, decisions, and internal documentation.",
+            permissions: "explicitly shared pages and databases",
+            symbol: "doc.text"
+        ),
+    ]
+
     @EnvironmentObject private var model: AppModel
     @State private var tab: Tab = .installed
     @State private var search = ""
@@ -239,10 +280,15 @@ private struct ExtensionsSettingsView: View {
                 .environmentObject(model)
         }
         .sheet(item: $presetReview) { preset in
-            MCPPresetReviewView(preset: preset) { projectRef in
+            MCPPresetReviewView(preset: preset) { projectRef, useTokenFallback in
                 presetReview = nil
-                connectPreset(preset, projectRef: projectRef)
+                connectPreset(
+                    preset,
+                    projectRef: projectRef,
+                    useTokenFallback: useTokenFallback
+                )
             }
+            .environmentObject(model)
         }
         .sheet(item: $enableAfterProbe) { server in
             MCPEnableReviewView(server: server) { scope in
@@ -380,6 +426,47 @@ private struct ExtensionsSettingsView: View {
 
             ScrollView {
                 LazyVStack(spacing: 9) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Recommended next")
+                                .font(.locus(size: 11, weight: .semibold))
+                            Spacer()
+                            Text("Opt-in · review permissions before install")
+                                .font(.locus(size: 8))
+                                .foregroundStyle(LocusTheme.muted)
+                        }
+                        ForEach(Self.recommendedPluginBacklog) { recommendation in
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: recommendation.symbol)
+                                    .frame(width: 22, height: 22)
+                                    .foregroundStyle(LocusTheme.muted)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(recommendation.name)
+                                        .font(.locus(size: 10, weight: .semibold))
+                                    Text(recommendation.purpose)
+                                        .font(.locus(size: 9))
+                                        .foregroundStyle(LocusTheme.muted)
+                                    Text("Review: \(recommendation.permissions)")
+                                        .font(.locus(size: 8))
+                                        .foregroundStyle(LocusTheme.warning)
+                                }
+                                Spacer()
+                                Button("Find") {
+                                    search = recommendation.name
+                                    Task {
+                                        await model.refreshExtensionCatalog(
+                                            query: recommendation.name,
+                                            marketplaceID: marketplaceID
+                                        )
+                                    }
+                                }
+                            }
+                            .padding(9)
+                            .locusCard(radius: 8)
+                        }
+                    }
+                    .padding(.bottom, 6)
+
                     ForEach(model.extensionCatalog) { entry in
                         HStack(alignment: .top, spacing: 10) {
                             Image(systemName: "shippingbox")
@@ -538,6 +625,16 @@ private struct ExtensionsSettingsView: View {
                             if let error = server.error, !error.isEmpty {
                                 Text(error).font(.locus(size: 8)).foregroundStyle(LocusTheme.coral)
                             }
+                            if server.presetID == "github",
+                               model.githubConnectionCapability(for: server) == .tokenFallbackOnly {
+                                Label(
+                                    "This build has no GitHub App client ID. Account sign-in is disabled; use a personal token instead.",
+                                    systemImage: "exclamationmark.triangle.fill"
+                                )
+                                .font(.locus(size: 8))
+                                .foregroundStyle(LocusTheme.coral)
+                                .accessibilityIdentifier("extensions.github.capability.tokenFallbackOnly")
+                            }
                             HStack {
                                 Menu("Default: \(policyTitle(server.approvalMode))") {
                                     policyButtons(serverID: server.id, tool: nil)
@@ -546,6 +643,10 @@ private struct ExtensionsSettingsView: View {
                                     Button(server.hasCredentials == true ? "Reconnect account" : "Connect account") {
                                         model.authenticateMCPServer(server)
                                     }
+                                    .disabled(
+                                        server.presetID == "github"
+                                            && model.githubConnectionCapability(for: server) == .tokenFallbackOnly
+                                    )
                                 } else if server.auth != "none" {
                                     Button(server.hasCredentials == true ? "Update credentials" : "Add credentials") {
                                         credentialServer = server
@@ -707,9 +808,17 @@ private struct ExtensionsSettingsView: View {
         }
     }
 
-    private func connectPreset(_ preset: ExtensionMCPPreset, projectRef: String) {
+    private func connectPreset(
+        _ preset: ExtensionMCPPreset,
+        projectRef: String,
+        useTokenFallback: Bool = false
+    ) {
         Task {
             guard let server = await model.materializeMCPPreset(preset, projectRef: projectRef) else {
+                return
+            }
+            if useTokenFallback {
+                credentialServer = server
                 return
             }
             let probe: @MainActor () async -> Void = {
@@ -871,8 +980,9 @@ private struct PluginTrustReviewView: View {
 
 private struct MCPPresetReviewView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var model: AppModel
     let preset: ExtensionMCPPreset
-    let connect: (String) -> Void
+    let connect: (String, Bool) -> Void
     @State private var projectRef = ""
 
     var body: some View {
@@ -918,6 +1028,15 @@ private struct MCPPresetReviewView: View {
             Label(preset.warning, systemImage: "hand.raised.fill")
                 .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.warning)
+            if preset.id == "github", githubCapability == .tokenFallbackOnly {
+                Label(
+                    "Account sign-in is unavailable because this build has no Locus GitHub App client ID. A personal token can still be stored in Keychain.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.locus(size: 9))
+                .foregroundStyle(LocusTheme.coral)
+                .accessibilityIdentifier("extensions.github.capability.tokenFallbackOnly")
+            }
             Text("Continue copies this versioned template into your settings while it is disabled. Locus then signs in if needed, probes the server, and asks once more before enabling it.")
                 .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.muted)
@@ -925,15 +1044,25 @@ private struct MCPPresetReviewView: View {
             HStack {
                 Button("Cancel") { dismiss() }
                 Spacer()
-                Button("Continue") { connect(projectRef) }
-                    .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
-                    .disabled(preset.requiresProjectRef == true && projectRef.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if preset.id == "github", githubCapability == .tokenFallbackOnly {
+                    Button("Use token instead") { connect(projectRef, true) }
+                        .buttonStyle(.borderedProminent)
+                        .tint(LocusTheme.ink)
+                } else {
+                    Button("Continue") { connect(projectRef, false) }
+                        .buttonStyle(.borderedProminent)
+                        .tint(LocusTheme.ink)
+                        .disabled(preset.requiresProjectRef == true && projectRef.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
             }
         }
         .padding(18)
         .frame(width: 500, height: 430)
         .background(LocusTheme.panel)
+    }
+
+    private var githubCapability: GitHubConnectionCapability {
+        model.githubConnectionCapability()
     }
 }
 
@@ -1141,6 +1270,601 @@ private struct MCPCredentialView: View {
     }
 }
 
+private struct WalletSettingsView: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject var gateway: WalletGateway
+    @Binding var rpcURL: String
+    @State private var recoveryPresented = false
+    @State private var deletePresented = false
+    @State private var policyPresented = false
+    @State private var registryPresented = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                vaultCard
+                if !gateway.accounts.isEmpty { accountsCard }
+                rpcCard
+                policyCard
+                if !gateway.transactionHistory.isEmpty { historyCard }
+                externalWalletsCard
+                rolloutCard
+                controlsCard
+            }
+            .padding(24)
+            .frame(maxWidth: 680)
+            .frame(maxWidth: .infinity)
+        }
+        .task {
+            gateway.configureRPCURL(rpcURL)
+            await gateway.refreshStatus()
+            await gateway.checkRPCHealth()
+        }
+        .onChange(of: rpcURL) { _, value in gateway.configureRPCURL(value) }
+        .sheet(isPresented: $recoveryPresented) {
+            if let creation = gateway.vaultCreation {
+                WalletVaultBackupSheet(gateway: gateway, creation: creation)
+            }
+        }
+        .sheet(isPresented: $deletePresented) { WalletVaultDeleteSheet(gateway: gateway) }
+        .sheet(isPresented: $policyPresented) { WalletNativePolicySheet(gateway: gateway) }
+        .sheet(isPresented: $registryPresented) { WalletContractRegistrySheet(gateway: gateway) }
+        .sheet(item: Binding(
+            get: { gateway.pendingBrowserOriginGrant },
+            set: { value in if value == nil { gateway.denyBrowserOrigin() } }
+        )) { request in
+            WalletBrowserOriginGrantSheet(gateway: gateway, request: request)
+        }
+        .sheet(item: Binding(
+            get: { gateway.pendingConfirmation },
+            set: { value in
+                if value == nil, let pending = gateway.pendingConfirmation {
+                    gateway.cancelConfirmation(intentID: pending.id)
+                }
+            }
+        )) { transaction in
+            WalletTransactionConfirmationSheet(gateway: gateway, transaction: transaction)
+        }
+    }
+
+    private var vaultCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Locus Vault", systemImage: "wallet.bifold.fill")
+                    .font(.locus(size: 13, weight: .bold))
+                Spacer()
+                Text(gateway.statusText).font(.locus(size: 9, weight: .semibold))
+                    .foregroundStyle(LocusTheme.warning)
+                    .accessibilityIdentifier("settings.wallet.status")
+            }
+            Text("A separate, limited-fund vault for policy-controlled transactions. Existing Phantom, MetaMask, and Slush recovery phrases are never imported or extracted.")
+                .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+            Label("Mainnet signing stays disabled until independent security review is complete.", systemImage: "lock.shield.fill")
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.coral)
+            if gateway.status == .unlocked {
+                Button("Lock vault") { model.lockWalletSession() }
+                    .accessibilityIdentifier("settings.wallet.lock")
+            } else if gateway.canCreateVault {
+                Button("Create Locus Vault") {
+                    Task {
+                        if await gateway.beginVaultCreation() != nil { recoveryPresented = true }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("settings.wallet.create")
+            } else if gateway.canAuthorizeSession {
+                Button("Unlock vault") { Task { await model.authorizeWalletSession() } }
+                    .accessibilityIdentifier("settings.wallet.unlock")
+            }
+            if !gateway.isExperimentalEnabled && gateway.signerAvailable {
+                Text("Activation required: enable the experimental wallet for this Mac, quit Locus, then reopen it. The exact commands are in Docs/WalletActivation.md.")
+                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.warning)
+            }
+            if let error = gateway.lastError {
+                Text(error).font(.locus(size: 9)).foregroundStyle(LocusTheme.coral)
+            }
+        }
+        .padding(14).locusCard(radius: 10)
+    }
+
+    private var accountsCard: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("Accounts").font(.locus(size: 12, weight: .semibold))
+            ForEach(gateway.accounts) { account in
+                HStack(alignment: .top, spacing: 9) {
+                    Image(systemName: account.chain == .evm ? "diamond.fill" : "circle.hexagongrid.fill")
+                        .foregroundStyle(account.chain == .evm ? LocusTheme.success : LocusTheme.muted)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(account.label).font(.locus(size: 10, weight: .semibold))
+                        Text(account.address).font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(LocusTheme.muted).textSelection(.enabled)
+                        Text(account.chain == .evm ? "Sepolia signing available" : "Public account · signing is security gated")
+                            .font(.locus(size: 8)).foregroundStyle(LocusTheme.textTertiary)
+                    }
+                }
+            }
+        }
+        .padding(14).locusCard(radius: 10)
+    }
+
+    private var rpcCard: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("Sepolia connection").font(.locus(size: 12, weight: .semibold))
+            TextField("HTTPS RPC URL", text: $rpcURL).textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("settings.wallet.rpc-url")
+            HStack {
+                Text(gateway.rpcHealthText).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                Spacer()
+                Button("Check connection") { Task { await gateway.checkRPCHealth() } }
+            }
+            Text("The endpoint stays native and is never sent to Python or included in model context.")
+                .font(.locus(size: 8)).foregroundStyle(LocusTheme.textTertiary)
+        }
+        .padding(14).locusCard(radius: 10)
+    }
+
+    private var policyCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Contract registry & policies").font(.locus(size: 12, weight: .semibold))
+                Spacer()
+                Button("Add contract") { registryPresented = true }
+                    .disabled(gateway.status != .unlocked)
+                Button("New budget") { policyPresented = true }
+                    .disabled(gateway.status != .unlocked)
+            }
+            Label("Native ETH transfer adapter active", systemImage: "checkmark.shield.fill")
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.success)
+            Label("Registered ABI calls use signer-produced calldata and exact confirmation. Autonomous ERC-20 and Uniswap adapters remain locked until separately reviewed.", systemImage: "checkmark.shield.fill")
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+            Text(gateway.activePolicies.isEmpty
+                 ? "No active budgets. Every Sepolia transfer requires exact confirmation."
+                 : "\(gateway.activePolicies.count) budget(s) active until the vault locks.")
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.textTertiary)
+            ForEach(gateway.activePolicyStatuses) { status in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Native ETH → \(status.policy.allowedRecipients.sorted().joined(separator: ", "))")
+                            .font(.locus(size: 9, weight: .semibold)).lineLimit(1)
+                        Text("Used \(status.spentBaseUnits) / \(status.policy.maximumSessionBaseUnits) wei · expires \(status.policy.expiresAt.formatted(date: .omitted, time: .shortened))")
+                            .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                    }
+                    Spacer()
+                }
+            }
+            if !gateway.activePolicies.isEmpty {
+                Button("Clear active budgets", role: .destructive) { Task { await gateway.clearPolicies() } }
+                    .font(.locus(size: 9))
+            }
+            ForEach(gateway.savedPolicyTemplates) { template in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(template.name).font(.locus(size: 9, weight: .semibold))
+                        Text("Saved template · no current authorization")
+                            .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                    }
+                    Spacer()
+                    Button("Authorize") {
+                        Task { _ = await gateway.activatePolicyTemplate(id: template.id) }
+                    }.font(.locus(size: 8)).disabled(gateway.status != .unlocked)
+                    Button("Remove", role: .destructive) { gateway.removePolicyTemplate(id: template.id) }
+                        .font(.locus(size: 8))
+                }
+            }
+            ForEach(gateway.contractRegistry) { entry in
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(entry.label).font(.locus(size: 9, weight: .semibold))
+                        Text(entry.checksumAddress).font(.system(size: 8, design: .monospaced))
+                        Text("\(entry.permittedFunctions.count) approved method(s) · code \(entry.runtimeCodeHash.prefix(12))…")
+                            .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                    }
+                    Spacer()
+                    Button("Remove", role: .destructive) {
+                        Task { await gateway.removeContractRegistryEntry(id: entry.id) }
+                    }.font(.locus(size: 8))
+                }
+            }
+        }
+        .padding(14).locusCard(radius: 10)
+    }
+
+    private var historyCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Transaction history").font(.locus(size: 12, weight: .semibold))
+            ForEach(Array(gateway.transactionHistory.enumerated()), id: \.offset) { _, item in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item["summary"] ?? "Sepolia transaction").font(.locus(size: 9, weight: .semibold))
+                    Text(item["hash"] ?? "").font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted).textSelection(.enabled)
+                    Text(item["status"] ?? "submitted").font(.locus(size: 8)).foregroundStyle(LocusTheme.success)
+                }
+            }
+        }
+        .padding(14).locusCard(radius: 10)
+    }
+
+    private var externalWalletsCard: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("External approval wallets").font(.locus(size: 12, weight: .semibold))
+            connector("MetaMask", detail: "EVM approval through MetaMask Connect.", destination: "https://docs.metamask.io/metamask-connect/")
+            connector("Phantom", detail: "User-approved Solana sessions through Phantom Connect.", destination: "https://docs.phantom.com/sdks/browser-sdk/index")
+            connector("Slush", detail: "Sui Wallet Standard and web-wallet approval.", destination: "https://my.slush.app/")
+            Text("External wallets always retain their own keys and confirmation experience.")
+                .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+        }
+        .padding(14).locusCard(radius: 10)
+    }
+
+    private var rolloutCard: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Security rollout").font(.locus(size: 12, weight: .semibold))
+            rollout("1", "Native ETH on Sepolia", ready: true)
+            rollout("2", "Registered ABI calls with exact confirmation", ready: true)
+            rollout("3", "Session-scoped Sepolia browser provider", ready: gateway.browserProviderEnabled)
+            rollout("4", "EVM mainnet + MetaMask", ready: false)
+            rollout("5", "Solana/Phantom and Sui/Slush", ready: false)
+            if gateway.isExperimentalEnabled && !gateway.browserProviderEnabled {
+                Text("Browser access has a separate experimental activation gate. Registered contract calls remain exact-confirmation-only until their effect adapters are reviewed.")
+                    .font(.locus(size: 8)).foregroundStyle(LocusTheme.textTertiary)
+            }
+        }
+        .padding(14).locusCard(radius: 10)
+    }
+
+    private var controlsCard: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Vault controls").font(.locus(size: 12, weight: .semibold))
+            Button("Delete Locus Vault", role: .destructive) { deletePresented = true }
+                .disabled(gateway.vaultState == .missing)
+                .accessibilityIdentifier("settings.wallet.delete")
+            Text("Deletion requires macOS authentication and the exact confirmation phrase. Locus cannot show the recovery phrase again.")
+                .font(.locus(size: 8)).foregroundStyle(LocusTheme.textTertiary)
+        }
+        .padding(14).locusCard(radius: 10)
+    }
+
+    private func connector(_ name: String, detail: String, destination: String) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name).font(.locus(size: 10, weight: .semibold))
+                Text(detail).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+            }
+            Spacer()
+            if let url = URL(string: destination) { Link("Setup guide", destination: url).font(.locus(size: 9)) }
+        }
+    }
+
+    private func rollout(_ number: String, _ title: String, ready: Bool) -> some View {
+        HStack(spacing: 8) {
+            Text(number).font(.locus(size: 8, weight: .bold)).frame(width: 20, height: 20)
+                .background(LocusTheme.surfaceCard).clipShape(Circle())
+            Text(title).font(.locus(size: 9))
+            Spacer()
+            Text(ready ? "Available" : "Security gated").font(.locus(size: 8, weight: .semibold))
+                .foregroundStyle(ready ? LocusTheme.success : LocusTheme.warning)
+        }
+    }
+}
+
+private struct WalletBrowserOriginGrantSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var gateway: WalletGateway
+    let request: WalletBrowserOriginGrant
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Connect Locus Vault?", systemImage: "globe.badge.chevron.backward")
+                .font(.locus(size: 16, weight: .bold))
+            Text(request.origin).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+            Text("This website can see your Sepolia EVM address and request transactions. Every request still follows the native registry, simulation, policy, and confirmation path. Message signing and chain addition remain disabled.")
+                .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+            Text("Access lasts only until you navigate to another origin, lock the vault, quit, update, or restart Locus.")
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.warning)
+            HStack {
+                Button("Deny", role: .cancel) { gateway.denyBrowserOrigin(); dismiss() }
+                Spacer()
+                Button("Connect for this session") { gateway.approveBrowserOrigin(); dismiss() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(22).frame(width: 480).interactiveDismissDisabled()
+    }
+}
+
+private struct WalletNativePolicySheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var gateway: WalletGateway
+    @State private var recipient = ""
+    @State private var perTransaction = ""
+    @State private var sessionCap = ""
+    @State private var feeCap = ""
+    @State private var durationMinutes = "30"
+    @State private var saveTemplate = false
+    @State private var templateName = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            Text("Authorize a Sepolia budget").font(.locus(size: 16, weight: .bold))
+            Text("This budget lives only inside the signer and disappears when the vault locks or Locus exits.")
+                .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+            field("Approved recipient", placeholder: "0x…", text: $recipient)
+            field("Maximum per transfer (wei)", placeholder: "1000000000000000", text: $perTransaction)
+            field("Total session budget (wei)", placeholder: "5000000000000000", text: $sessionCap)
+            field("Maximum fee per transfer (wei)", placeholder: "2000000000000000", text: $feeCap)
+            field("Expires after (minutes, max 480)", placeholder: "30", text: $durationMinutes)
+            Toggle("Save as a reusable template (authorization is never saved)", isOn: $saveTemplate)
+                .font(.locus(size: 9))
+            if saveTemplate {
+                field("Template name", placeholder: "Sepolia test allowance", text: $templateName)
+            }
+            Label("Only the reviewed native-ETH adapter can use this budget. Contracts and unlimited approvals cannot.", systemImage: "shield.lefthalf.filled")
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.warning)
+            HStack {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                Button("Authorize budget") { activate() }.buttonStyle(.borderedProminent)
+                    .disabled(!valid)
+            }
+            if let error = gateway.lastError { Text(error).font(.locus(size: 9)).foregroundStyle(LocusTheme.coral) }
+        }
+        .padding(22).frame(width: 500)
+    }
+
+    private var valid: Bool {
+        recipient.count == 42 && recipient.hasPrefix("0x")
+            && WalletBaseUnits.normalize(perTransaction) != nil
+            && WalletBaseUnits.normalize(sessionCap) != nil
+            && WalletBaseUnits.normalize(feeCap) != nil
+            && (Int(durationMinutes) ?? 0) > 0 && (Int(durationMinutes) ?? 0) <= 480
+            && (!saveTemplate || !templateName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            && !gateway.accounts.filter { $0.chain == .evm }.isEmpty
+    }
+
+    private func field(_ title: String, placeholder: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.locus(size: 9, weight: .semibold))
+            TextField(placeholder, text: text).textFieldStyle(.roundedBorder)
+        }
+    }
+
+    private func activate() {
+        guard let account = gateway.accounts.first(where: { $0.chain == .evm }),
+              let minutes = Int(durationMinutes) else { return }
+        let policy = WalletSessionPolicy(
+            id: UUID().uuidString.lowercased(), accountID: account.id,
+            networkID: WalletGateway.sepoliaNetworkID,
+            allowedAssetIDs: ["slip44:60"], allowedRecipients: [recipient],
+            allowedContractIDs: [], allowedAdapterIDs: ["native-eth-transfer-v1"],
+            maximumTransactionBaseUnits: perTransaction,
+            maximumSessionBaseUnits: sessionCap,
+            maximumFeeBaseUnits: feeCap,
+            expiresAt: Date().addingTimeInterval(TimeInterval(minutes * 60))
+        )
+        let template = saveTemplate ? WalletPolicyTemplate(
+                id: UUID().uuidString.lowercased(),
+                name: templateName.trimmingCharacters(in: .whitespacesAndNewlines),
+                accountID: account.id, networkID: WalletGateway.sepoliaNetworkID,
+                recipient: recipient, maximumTransactionBaseUnits: perTransaction,
+                maximumSessionBaseUnits: sessionCap, maximumFeeBaseUnits: feeCap,
+                durationMinutes: minutes
+            ) : nil
+        Task {
+            if await gateway.activatePolicy(policy) {
+                if let template { gateway.savePolicyTemplate(template) }
+                dismiss()
+            }
+        }
+    }
+}
+
+private struct WalletContractRegistrySheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var gateway: WalletGateway
+    @State private var registryID = ""
+    @State private var label = ""
+    @State private var address = ""
+    @State private var functions = ""
+    @State private var abiJSON = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Verify a Sepolia contract").font(.locus(size: 16, weight: .bold))
+            Text("Locus reads the deployed bytecode, normalizes the ABI, and records exact function selectors. Registration enables decoded confirmation only; autonomous use still requires a reviewed adapter.")
+                .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+            HStack {
+                TextField("Registry ID (for example token.usdc)", text: $registryID)
+                TextField("Display label", text: $label)
+            }.textFieldStyle(.roundedBorder)
+            TextField("Sepolia contract address (0x…)", text: $address).textFieldStyle(.roundedBorder)
+            TextField("Permitted signatures, comma-separated", text: $functions).textFieldStyle(.roundedBorder)
+            Text("Normalized ABI source").font(.locus(size: 9, weight: .semibold))
+            TextEditor(text: $abiJSON).font(.system(size: 9, design: .monospaced))
+                .frame(height: 150).overlay(RoundedRectangle(cornerRadius: 6).stroke(LocusTheme.separator))
+            HStack {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                Button("Verify and add") { add() }.buttonStyle(.borderedProminent)
+                    .disabled(registryID.isEmpty || label.isEmpty || address.isEmpty || abiJSON.isEmpty)
+            }
+            if let error = gateway.lastError { Text(error).font(.locus(size: 9)).foregroundStyle(LocusTheme.coral) }
+        }
+        .padding(22).frame(width: 660)
+    }
+
+    private func add() {
+        let draft = WalletContractRegistryDraft(
+            id: registryID, networkID: WalletGateway.sepoliaNetworkID,
+            address: address, label: label, abiJSON: abiJSON,
+            permittedFunctions: functions.split(separator: ",").map(String.init),
+            reviewedAdapterID: nil
+        )
+        Task { if await gateway.addContractRegistryEntry(draft) { dismiss() } }
+    }
+}
+
+private struct WalletVaultBackupSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var gateway: WalletGateway
+    let creation: WalletVaultCreation
+    @State private var confirming = false
+    @State private var answers: [Int: String] = [:]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(confirming ? "Confirm your recovery phrase" : "Write down these 24 words")
+                .font(.locus(size: 16, weight: .bold))
+            Text(confirming
+                 ? "Enter the six requested words. Paste and clipboard actions are disabled."
+                 : "This is the only time Locus shows the phrase. Keep it offline and private.")
+                .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+            if confirming {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                    ForEach(creation.verificationIndices, id: \.self) { index in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Word \(index + 1)").font(.locus(size: 8, weight: .semibold))
+                            WalletNoPasteSecureField(text: Binding(
+                                get: { answers[index] ?? "" }, set: { answers[index] = $0 }
+                            )).frame(height: 24)
+                        }
+                    }
+                }
+            } else {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 8) {
+                    ForEach(Array(creation.words.enumerated()), id: \.offset) { index, word in
+                        HStack(spacing: 5) {
+                            Text("\(index + 1).").foregroundStyle(LocusTheme.textTertiary)
+                            Text(word).fontWeight(.semibold)
+                            Spacer()
+                        }
+                        .font(.system(size: 11, design: .monospaced)).padding(6)
+                        .background(LocusTheme.surfaceCard).clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+            }
+            HStack {
+                Button("Cancel", role: .cancel) { Task { await gateway.cancelVaultCreation(); dismiss() } }
+                Spacer()
+                if confirming {
+                    Button("Activate vault") {
+                        Task { if await gateway.confirmVaultBackup(wordsByIndex: answers) { dismiss() } }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(creation.verificationIndices.contains { (answers[$0] ?? "").isEmpty })
+                } else {
+                    Button("I saved all 24 words") { confirming = true }.buttonStyle(.borderedProminent)
+                }
+            }
+            if let error = gateway.lastError { Text(error).font(.locus(size: 9)).foregroundStyle(LocusTheme.coral) }
+        }
+        .padding(22).frame(width: 620).interactiveDismissDisabled()
+    }
+}
+
+private struct WalletNoPasteSecureField: NSViewRepresentable {
+    @Binding var text: String
+    final class Field: NSSecureTextField {
+        override func performKeyEquivalent(with event: NSEvent) -> Bool {
+            if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "v" { return true }
+            return super.performKeyEquivalent(with: event)
+        }
+    }
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: WalletNoPasteSecureField
+        init(_ parent: WalletNoPasteSecureField) { self.parent = parent }
+        func controlTextDidChange(_ notification: Notification) {
+            if let field = notification.object as? NSTextField { parent.text = field.stringValue }
+        }
+    }
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeNSView(context: Context) -> Field {
+        let field = Field(); field.delegate = context.coordinator
+        field.isAutomaticTextCompletionEnabled = false
+        field.menu = NSMenu()
+        return field
+    }
+    func updateNSView(_ view: Field, context: Context) {
+        if view.stringValue != text { view.stringValue = text }
+        context.coordinator.parent = self
+    }
+}
+
+private struct WalletVaultDeleteSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var gateway: WalletGateway
+    @State private var confirmation = ""
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Delete Locus Vault?").font(.locus(size: 16, weight: .bold))
+            Text("This removes the encrypted vault from this Mac. Locus cannot recover funds without your 24-word phrase.")
+                .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+            TextField("Type DELETE LOCUS VAULT", text: $confirmation).textFieldStyle(.roundedBorder)
+            HStack {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                Button("Delete vault", role: .destructive) {
+                    Task { if await gateway.deleteVault(confirmation: confirmation) { dismiss() } }
+                }.disabled(confirmation != "DELETE LOCUS VAULT")
+            }
+        }.padding(22).frame(width: 440)
+    }
+}
+
+private struct WalletTransactionConfirmationSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var gateway: WalletGateway
+    let transaction: WalletPreparedTransaction
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Confirm exact Sepolia transaction", systemImage: "checkmark.shield.fill")
+                .font(.locus(size: 16, weight: .bold))
+            row("Network", transaction.networkID)
+            row("Account", transaction.accountID)
+            if let contract = transaction.contract {
+                row("Contract", "\(contract.label) · \(contract.address)")
+                row("Code hash", contract.runtimeCodeHash)
+                row("ABI digest", contract.abiDigest)
+                row("Method", contract.function)
+                row("Arguments", transaction.action.arguments.map {
+                    "\($0.type): \($0.value)"
+                }.joined(separator: "\n"))
+            } else {
+                row("Method", "Native ETH transfer")
+                row("Recipient", transaction.action.recipient ?? "Unknown")
+            }
+            row("Effects", transaction.effects.map {
+                let destination = $0.spender.map { "spender \($0)" } ?? ($0.to ?? "unknown")
+                return "\($0.kind) \($0.amountBaseUnits) \($0.assetID) → \(destination)"
+            }.joined(separator: "\n"))
+            row("Risk flags", transaction.riskFlags.isEmpty
+                ? "None"
+                : transaction.riskFlags.map(\.rawValue).joined(separator: ", "))
+            row("Fee ceiling", "\(transaction.maximumFeeBaseUnits) wei")
+            row("Quoted fee", "\(transaction.feeQuoteBaseUnits) wei")
+            row("Simulation", transaction.simulation)
+            row("Policy", transaction.policyDecision)
+            row("Nonce", transaction.nonce)
+            row("Expires", transaction.expiresAt.formatted(date: .omitted, time: .standard))
+            Text(transaction.digest).font(.system(size: 8, design: .monospaced))
+                .foregroundStyle(LocusTheme.textTertiary).textSelection(.enabled)
+            HStack {
+                Button("Cancel", role: .cancel) { gateway.cancelConfirmation(intentID: transaction.id); dismiss() }
+                Spacer()
+                Button("Confirm this transaction") { gateway.confirm(intentID: transaction.id); dismiss() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(transaction.expiresAt <= Date() || !transaction.simulationSucceeded)
+            }
+        }.padding(22).frame(width: 560).interactiveDismissDisabled()
+    }
+    private func row(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(label).font(.locus(size: 9, weight: .semibold)).frame(width: 90, alignment: .leading)
+            Text(value).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted).textSelection(.enabled)
+            Spacer(minLength: 0)
+        }
+    }
+}
+
 struct CheckpointSheet: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -1256,6 +1980,7 @@ struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var updates: AppUpdateController
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissWindow) private var dismissWindow
     @State private var draft = AppSettings()
     @State private var localWindow = ""
     @State private var iterationLimit = ""
@@ -1274,6 +1999,7 @@ struct SettingsView: View {
     @State private var pendingSearchAnchor: String?
     @State private var hasLoadedDraft = false
     @State private var discardPromptPresented = false
+    @State private var lifecycleRegistrationID = UUID()
     @FocusState private var focusedTextPreference: String?
     let presentationContext: SettingsPresentationContext
 
@@ -1325,6 +2051,9 @@ struct SettingsView: View {
                 model.settingsPage = .general
             }
             hasLoadedDraft = true
+            model.registerSettingsUpdatePreparation(id: lifecycleRegistrationID) {
+                prepareSettingsForUpdate()
+            }
         }
         // A result describes the values it was run against; the moment any of
         // them changes it is a claim about a proxy that no longer exists.
@@ -1342,6 +2071,7 @@ struct SettingsView: View {
         }
         .interactiveDismissDisabled(hasAnyStagedChanges)
         .onDisappear {
+            model.unregisterSettingsUpdatePreparation(id: lifecycleRegistrationID)
             model.clearAppearancePreview()
             if presentationContext == .settingsWindow {
                 model.completeSettingsDismissal()
@@ -1594,6 +2324,11 @@ struct SettingsView: View {
                 case .chat: chatPage
                 case .network: networkPage
                 case .browser: browserPage
+                case .wallet:
+                    WalletSettingsView(
+                        gateway: model.walletGateway,
+                        rpcURL: $draft.walletSepoliaRPCURL
+                    )
                 case .accounts: accountsPage
                 case .agents:
                     AgentTeamsSettingsView()
@@ -1614,6 +2349,7 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onChange(of: pendingSearchAnchor) { _, anchor in
                 guard let anchor else { return }
+                guard model.settingsPage != .browser else { return }
                 withAnimation(LocusMotion.scroll) {
                     proxy.scrollTo(anchor, anchor: .top)
                 }
@@ -1728,6 +2464,7 @@ struct SettingsView: View {
     private var immediateDraftSignature: String {
         [
             draft.settingsLevelRaw, draft.appearanceRaw,
+            draft.accentPresetRaw, draft.customAccentHex,
             draft.showTeamProgressInHeader.description,
             draft.showContextUsageInHeader.description,
             draft.notesScopeRaw, draft.soloPlanPresentationRaw,
@@ -1740,6 +2477,16 @@ struct SettingsView: View {
             draft.browserViewportRaw, draft.browserPersistProfile.description,
             draft.browserRealInput.description, draft.browserEmulateDevice.description,
             draft.browserWebInspector.description, draft.webSearchDestinationRaw,
+            draft.browserAutofillAuthModeRaw, draft.browserDownloadDestinationRaw,
+            draft.browserDownloadAskEveryTime.description,
+            draft.browserCustomDownloadBookmark?.base64EncodedString() ?? "",
+            draft.browserHistoryAccessRaw, draft.browserPresentationModeRaw,
+            draft.browserPageAppearanceRaw, draft.browserJavaScriptPermissionRaw,
+            draft.browserUserDownloadPermissionRaw, draft.browserAgentDownloadPermissionRaw,
+            draft.browserUploadPermissionRaw, draft.browserPopupPermissionRaw,
+            draft.browserExternalPermissionRaw, draft.browserCameraPermissionRaw,
+            draft.browserMicrophonePermissionRaw,
+            draft.walletSepoliaRPCURL,
         ].joined(separator: "\u{1F}")
     }
 
@@ -1880,9 +2627,32 @@ struct SettingsView: View {
         }
     }
 
+    /// An updater relaunch is an explicit request to finish the session. Apply
+    /// every valid staged page and close Settings; if the proxy draft is
+    /// invalid, keep the window open so the relaunch cannot silently discard
+    /// or persist malformed configuration.
+    private func prepareSettingsForUpdate() -> Bool {
+        applyImmediateDraft()
+        if hasStagedChanges(for: .network), proxyDraftError != nil {
+            model.settingsPage = .network
+            model.showToast("Fix the invalid proxy settings before installing the update")
+            return false
+        }
+        SettingsPage.allCases
+            .filter { $0.mutationPolicy == .staged && hasStagedChanges(for: $0) }
+            .forEach(applyStagedPage)
+        completeSettingsDismissal()
+        return true
+    }
+
     private func completeSettingsDismissal() {
         model.clearAppearancePreview()
-        dismiss()
+        switch presentationContext {
+        case .sheet:
+            dismiss()
+        case .settingsWindow:
+            dismissWindow()
+        }
         model.settingsPresented = false
     }
 
@@ -1915,7 +2685,50 @@ struct SettingsView: View {
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
+                }
 
+                Section("Accent colour") {
+                    HStack(spacing: 10) {
+                        ForEach(LocusAccentPreset.allCases) { preset in
+                            accentPresetButton(preset)
+                        }
+                    }
+
+                    HStack(spacing: 12) {
+                        Image(
+                            nsImage: LocusBrandIcon.image(
+                                accent: draft.resolvedAccent.logoNSColor,
+                                size: 128
+                            )
+                        )
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 38, height: 38)
+                        .accessibilityHidden(true)
+
+                        ColorPicker(
+                            "Choose any colour",
+                            selection: customAccentColor,
+                            supportsOpacity: false
+                        )
+                        .accessibilityIdentifier("settings.accentColor.custom")
+
+                        if draft.accentPresetRaw == LocusAccentSelection.customRawValue {
+                            Text("#\(draft.customAccentHex)")
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(LocusTheme.textTertiary)
+                                .accessibilityLabel("Custom colour \(draft.customAccentHex)")
+                        }
+                    }
+
+                    Text("The Dock logo, buttons, highlights, status accents, and Locus icons all update together. Your choice is saved automatically.")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .id("settings.accentColor")
+
+                Section("Workspace header") {
                 Toggle(
                     "Show team progress in the workspace header",
                     isOn: $draft.showTeamProgressInHeader
@@ -1933,7 +2746,6 @@ struct SettingsView: View {
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 }
-                .id("settings.appearance")
             }
 
             if model.settingsPage == .developer {
@@ -2219,103 +3031,13 @@ struct SettingsView: View {
     }
 
     private var browserPage: some View {
-        Form {
-            Section("Browser") {
-                Toggle("Let the agent browse the web", isOn: $draft.browserEnabled)
-                    .accessibilityIdentifier("settings.browser.enabled")
-
-                Text("The agent can open pages, read them, and act on them in the Browser tab. Reading never asks. Page JavaScript follows the permission level in Settings → Permissions. Turning this off removes browser tools from the model.")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Section("Defaults") {
-                TextField("Home URL", text: $draft.previewURL)
-                    .focused($focusedTextPreference, equals: "browser.homeURL")
-                    .onSubmit { applyImmediateDraft() }
-                    .accessibilityIdentifier("settings.previewURL")
-
-                Picker("Default viewport", selection: $draft.browserViewportRaw) {
-                    ForEach(BrowserViewport.allCases) { viewport in
-                        Text(viewport.title).tag(viewport.rawValue)
-                    }
-                }
-                .accessibilityIdentifier("settings.browser.viewport")
-
-                Text("The home page is used when a new Browser tab opens. The viewport can still be changed per tab from the Browser toolbar.")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Section("Highlighted text") {
-                Picker("Search in Google opens in", selection: $draft.webSearchDestinationRaw) {
-                    ForEach(WebSearchDestination.allCases) { destination in
-                        Text(destination.title).tag(destination.rawValue)
-                    }
-                }
-                .accessibilityIdentifier("settings.browser.webSearchDestination")
-
-                Text("Right-clicking highlighted text in a conversation offers Copy and Search in Google. The Browser tab is used only while the agent’s browser is on.")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Section("Input") {
-                Picker("The agent acts on pages with", selection: $draft.browserRealInput) {
-                    Text("Real input").tag(true)
-                    Text("Synthetic events only").tag(false)
-                }
-                .accessibilityIdentifier("settings.browser.realInput")
-
-                Text("Real input is delivered the way your own clicks and keystrokes are, so pages see trusted input carrying a user gesture. That is what makes canvases, maps and drag surfaces reachable — and equally what lets a page the agent clicks open a popup or start playback. Synthetic events cannot do either, and a page that checks for trusted input ignores them.")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Toggle("Emulate a mobile device at phone widths", isOn: $draft.browserEmulateDevice)
-                    .accessibilityIdentifier("settings.browser.emulateDevice")
-
-                Text("A mobile viewport also presents a mobile user agent, touch points and coarse-pointer media queries, so a site serves what it would serve a phone rather than a narrow desktop.")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if settingsLevel == .advanced {
-                Section("Developer") {
-                    Toggle("Allow the Web Inspector to attach", isOn: $draft.browserWebInspector)
-                        .accessibilityIdentifier("settings.browser.webInspector")
-
-                    Text("Lets Safari's Web Inspector open the agent's pages. Any local process can attach and read the cookies and storage of whatever has been browsed, so leave this off unless you are debugging. Dev servers named in .locus/launch.json can be started by name; the agent lists them for you.")
-                        .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .id("settings.browser.webInspector")
-            }
-
-            Section("Privacy & data") {
-                Picker("Browsing profile", selection: $draft.browserPersistProfile) {
-                    Text("Forget when Locus quits").tag(false)
-                    Text("Keep per workspace").tag(true)
-                }
-                .accessibilityIdentifier("settings.browser.persistProfile")
-
-                Text("Forgetting browses ephemerally: cookies, logins, and cache do not outlive the app. Keeping stores a separate profile for each workspace, including that workspace’s signed-in sessions.")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Button("Clear Browsing Data…", role: .destructive) {
-                    model.browser.clearBrowsingData()
-                }
-                .accessibilityIdentifier("settings.browser.clearData")
-            }
-        }
-        .formStyle(.grouped)
+        BrowserSettingsView(
+            browser: model.browser,
+            draft: $draft,
+            deepLink: $pendingSearchAnchor,
+            settingsLevel: settingsLevel
+        )
+        .environmentObject(model)
     }
 
     /// Outbound proxy. Rides the same draft as General: nothing — settings,
@@ -2511,7 +3233,58 @@ struct SettingsView: View {
             }
         }
     }
+#endif
 
+    private var customAccentColor: Binding<Color> {
+        Binding(
+            get: { draft.resolvedAccent.fillColor },
+            set: { color in
+                guard let hex = LocusAccentSelection.hexString(for: NSColor(color)) else {
+                    return
+                }
+                draft.customAccentHex = hex
+                draft.accentPresetRaw = LocusAccentSelection.customRawValue
+            }
+        )
+    }
+
+    private func accentPresetButton(_ preset: LocusAccentPreset) -> some View {
+        let selected = draft.accentPresetRaw == preset.rawValue
+        let accent = LocusAccentSelection(
+            rawValue: preset.rawValue,
+            customHex: draft.customAccentHex
+        )
+        return Button {
+            draft.accentPresetRaw = preset.rawValue
+        } label: {
+            VStack(spacing: 6) {
+                Image(nsImage: LocusBrandIcon.image(accent: accent.logoNSColor, size: 128))
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 44, height: 44)
+                Text(preset.title)
+                    .font(.system(.caption, design: .default, weight: .medium))
+                    .foregroundStyle(selected ? LocusTheme.accentAction : LocusTheme.textSecondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 9)
+            .background(selected ? LocusTheme.accentFill.opacity(0.12) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(
+                        selected ? LocusTheme.accentAction : LocusTheme.separator,
+                        lineWidth: selected ? 2 : 1
+                    )
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(preset.title) accent colour")
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .accessibilityIdentifier("settings.accentColor.\(preset.rawValue)")
+    }
+
+#if !LOCUS_APP_STORE
     private var componentSizeLabel: String {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
@@ -2772,6 +3545,39 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            Section("Application Context") {
+                if ApplicationContextService.isAvailable {
+                    Text("Appshots are explicit one-message captures. A live application attachment is granted separately for each task and restricts that task to the exact selected process, even when global Computer Control is enabled.")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    LabeledContent("Accessibility text") {
+                        permissionStatus(
+                            granted: model.computerControl.accessibilityGranted,
+                            grant: model.computerControl.requestAccessibility,
+                            settings: model.computerControl.openAccessibilitySettings
+                        )
+                    }
+                    LabeledContent("Window screenshots") {
+                        permissionStatus(
+                            granted: model.computerControl.screenRecordingGranted,
+                            grant: model.computerControl.requestScreenRecording,
+                            settings: model.computerControl.openScreenRecordingSettings
+                        )
+                    }
+                    LabeledContent("Live task attachment") {
+                        Text(model.currentLiveApplicationTarget?.name ?? "Not attached")
+                            .foregroundStyle(model.currentLiveApplicationIsConnected
+                                ? LocusTheme.success : LocusTheme.muted)
+                    }
+                } else {
+                    Label("Unavailable in the Mac App Store build", systemImage: "lock.app.dashed")
+                        .font(.locus(size: 10, weight: .semibold))
+                    Text("Install the signed direct-download build to capture or attach another application.")
+                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                }
+            }
+
             Section("Computer Control") {
                 if ComputerControlService.isAvailable {
                     Toggle("Allow Locus to control Mac apps", isOn: Binding(
@@ -2817,9 +3623,87 @@ struct SettingsView: View {
                     .font(.locus(size: 9, weight: .semibold))
                 }
             }
+
+            Section("iOS Simulator") {
+                if SimulatorControlService.isSupportedBuild {
+                    Toggle("Allow control of the attached simulator", isOn: Binding(
+                        get: { model.settings.simulatorControlEnabled },
+                        set: { model.setSimulatorControlEnabled($0) }
+                    ))
+                    .disabled(model.currentSimulatorTarget == nil)
+                    .accessibilityIdentifier("settings.simulatorControl.enabled")
+
+                    Text("Simulator access stays off until you explicitly attach a device and accept the consent prompt. Avoid real accounts and sensitive data; a hosted model may receive screenshots only after provider-specific session consent.")
+                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    LabeledContent("Xcode") {
+                        settingsStatus(
+                            ready: model.simulatorControl.helperHealth.xcodePath != nil,
+                            readyText: "Ready",
+                            missingText: "Full Xcode required"
+                        )
+                    }
+                    LabeledContent("Signed bridge") {
+                        settingsStatus(
+                            ready: model.simulatorControl.helperHealth.touchHelperPresent
+                                && model.simulatorControl.helperHealth.treeHelperPresent,
+                            readyText: "Present",
+                            missingText: "Missing"
+                        )
+                    }
+                    LabeledContent("Bridge compatibility") {
+                        settingsStatus(
+                            ready: model.simulatorControl.nativeAvailable,
+                            readyText: "Ready",
+                            missingText: model.simulatorControl.helperHealth.message
+                        )
+                    }
+                    LabeledContent("iOS runtime") {
+                        settingsStatus(
+                            ready: !model.simulatorControl.devices.isEmpty,
+                            readyText: "\(model.simulatorControl.devices.count) devices",
+                            missingText: "No installed runtime"
+                        )
+                    }
+                    LabeledContent("Live streaming") {
+                        settingsStatus(
+                            ready: model.computerControl.screenRecordingGranted,
+                            readyText: "Screen Recording granted",
+                            missingText: "Screen Recording required"
+                        )
+                    }
+                    LabeledContent("Keyboard controls") {
+                        settingsStatus(
+                            ready: model.computerControl.accessibilityGranted,
+                            readyText: "Accessibility granted",
+                            missingText: "Accessibility required"
+                        )
+                    }
+                    LabeledContent("Attached device") {
+                        Text(model.currentSimulatorTarget?.device.name ?? "Not attached")
+                            .foregroundStyle(model.currentSimulatorTarget == nil
+                                ? LocusTheme.muted : LocusTheme.success)
+                    }
+                    if model.currentSimulatorTarget == nil {
+                        Text("Attach a simulator from the composer’s attachment menu.")
+                            .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    }
+                } else {
+                    Label("Unavailable in the Mac App Store build", systemImage: "lock.app.dashed")
+                        .font(.locus(size: 10, weight: .semibold))
+                    Text("The direct-download build includes the signed Xcode Simulator bridge; the App Store package contains no bridge helper or simulator tool schema.")
+                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
         .formStyle(.grouped)
-        .onAppear { model.computerControl.refreshPermissionStatus() }
+        .onAppear {
+            model.computerControl.refreshPermissionStatus()
+            model.applicationContext.refreshRunningApplications()
+            model.refreshSimulatorDevices()
+        }
     }
 
     @ViewBuilder
@@ -2836,6 +3720,19 @@ struct SettingsView: View {
                 Button("Open Settings", action: settings)
             }
         }
+        .font(.locus(size: 9, weight: .semibold))
+    }
+
+    private func settingsStatus(
+        ready: Bool,
+        readyText: String,
+        missingText: String
+    ) -> some View {
+        Label(
+            ready ? readyText : missingText,
+            systemImage: ready ? "checkmark.circle.fill" : "exclamationmark.circle"
+        )
+        .foregroundStyle(ready ? LocusTheme.success : LocusTheme.warning)
         .font(.locus(size: 9, weight: .semibold))
     }
 

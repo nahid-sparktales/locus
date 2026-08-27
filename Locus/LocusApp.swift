@@ -54,6 +54,7 @@ struct LocusApp: App {
     @StateObject private var updates = AppUpdateController(
         startImmediately: locusStartsAutomaticUpdater
     )
+    @StateObject private var lifecycle = ApplicationLifecycleCoordinator()
     @StateObject private var mainWindowPresenter = MainWindowPresenter()
 
     var body: some Scene {
@@ -64,8 +65,14 @@ struct LocusApp: App {
                 .onAppear {
                     appDelegate.model = model
                     appDelegate.windowPresenter = mainWindowPresenter
+                    appDelegate.lifecycle = lifecycle
+                    lifecycle.connect(model: model)
+                    updates.setRelaunchHandler(lifecycle)
+                    model.applyApplicationAccent()
                 }
                 .preferredColorScheme(model.effectiveAppearance.colorScheme)
+                .accentColor(model.accentActionColor)
+                .tint(model.accentActionColor)
                 .frame(
                     // The full three-column layout fits comfortably at the
                     // default size. Narrow windows progressively overlay the
@@ -191,6 +198,8 @@ struct LocusApp: App {
                 .environmentObject(model)
                 .environmentObject(updates)
                 .preferredColorScheme(model.effectiveAppearance.colorScheme)
+                .accentColor(model.accentActionColor)
+                .tint(model.accentActionColor)
         }
 
         MenuBarExtra {
@@ -214,6 +223,29 @@ struct LocusApp: App {
             SettingsView(presentationContext: .sheet)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(LocusTheme.surfaceCanvas)
+        case "browser":
+            BrowserPanel(
+                browser: model.browser,
+                sessionID: model.currentSessionID,
+                homeURL: model.normalizedPreviewURL,
+                viewportRaw: Binding(
+                    get: { model.settings.browserViewportRaw },
+                    set: { model.settings.browserViewportRaw = $0 }
+                ),
+                isExpanded: locusEnvironment["LOCUS_UI_TESTING_BROWSER_EXPANDED"] == "1",
+                onToggleExpand: {}
+            )
+            .onAppear {
+                if model.browser.snapshots(for: model.currentSessionID).isEmpty {
+                    model.browser.userNewTab(sessionID: model.currentSessionID)
+                }
+            }
+            .frame(
+                maxWidth: locusEnvironment["LOCUS_UI_TESTING_BROWSER_COMPACT"] == "1"
+                    ? 440 : .infinity
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(LocusTheme.surfaceCanvas)
         case "model-library":
             ModelLibraryView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -295,7 +327,7 @@ final class LocusApplicationDelegate: NSObject, NSApplicationDelegate,
     static let mainWindowIdentifier = NSUserInterfaceItemIdentifier("locus.main")
     weak var model: AppModel?
     weak var windowPresenter: MainWindowPresenter?
-    private var terminationPending = false
+    weak var lifecycle: ApplicationLifecycleCoordinator?
 
     static func mainWindow(in windows: [NSWindow]) -> NSWindow? {
         windows.first { $0.identifier == mainWindowIdentifier }
@@ -342,27 +374,7 @@ final class LocusApplicationDelegate: NSObject, NSApplicationDelegate,
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if terminationPending { return .terminateLater }
-        guard model?.hasRunningWorkForQuit == true else {
-            return .terminateNow
-        }
-        let alert = NSAlert()
-        alert.messageText = "Stop running processes and quit Locus?"
-        alert.informativeText = model?.terminal.hasForegroundJob == true
-            ? "The terminal has a foreground job. It will be stopped; resumable agent tasks and private checkouts remain available."
-            : "The active team and its private checkout will remain available to resume."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Stop and Quit")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else {
-            return .terminateCancel
-        }
-        terminationPending = true
-        model?.stopRunningWorkForQuit { [weak self, weak sender] in
-            self?.terminationPending = false
-            sender?.reply(toApplicationShouldTerminate: true)
-        }
-        return .terminateLater
+        lifecycle?.applicationShouldTerminate(sender) ?? .terminateNow
     }
 
 }

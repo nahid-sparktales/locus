@@ -15,6 +15,7 @@ import base64
 import binascii
 import hashlib
 import ipaddress
+import json
 import logging
 import math
 import os
@@ -142,6 +143,7 @@ BROWSER_TOOL_BUDGET_MS = {"browser_navigate": 120_000}
 #: delivered right at the cutoff is still collected rather than dropped.
 BROWSER_TIMEOUT_SLACK_SECONDS = 8
 NOTES_BUDGET_MS = 15_000
+WALLET_BUDGET_MS = 60_000
 
 #: Tools whose result is page-derived and must be framed before the model reads
 #: it. Locus has no shared helper for this — MCP resources carry their own
@@ -191,8 +193,10 @@ class ChatService:
         self.event_pump: asyncio.Task[Any] | None = None
         self.pending_permissions: dict[str, Future[str]] = {}
         self.pending_computer_actions: dict[str, Future[dict[str, Any]]] = {}
+        self.pending_simulator_actions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_browser_actions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_notes_actions: dict[str, Future[dict[str, Any]]] = {}
+        self.pending_wallet_actions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_dispatch_decisions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_dispatch_plans: dict[str, dict[str, Any]] = {}
         self._parallel_writer_cores: dict[str, AgentCore] = {}
@@ -379,7 +383,8 @@ class ChatService:
         persisted_types = {
             "message_start", "message_end", "tool_call_proposed", "permission_request",
             "tool_result", "steer_ack", "steer_applied", "computer_action_request",
-            "browser_action_request", "notes_action_request",
+            "simulator_action_request",
+            "browser_action_request", "notes_action_request", "wallet_action_request",
             "workspace_changed", "note", "error", "dispatch_plan", "run_started",
             "turn_done", "session_handoff", "task_ready", "task_applied",
             "orchestration_checkpoint", "dispatch_plan_ready", "dispatcher_plan_rejected",
@@ -569,6 +574,50 @@ class ChatService:
             text = f"{text}\n\n{suffix}".strip()
         return text or "Computer action completed."
 
+    def execute_simulator(
+        self,
+        tool: str,
+        arguments: dict[str, Any],
+        request_id: str,
+    ) -> str:
+        """Bridge one correlated call to the task-leased native simulator."""
+        if not self.core.tool_registry.simulator_enabled:
+            return "Error: native iOS Simulator control is disabled."
+        timeout = 600 if tool == "simulator_build_and_launch" else 120
+        future: Future[dict[str, Any]] = Future()
+        self.pending_simulator_actions[request_id] = future
+        self.emit({
+            "type": "simulator_action_request",
+            "request_id": request_id,
+            "session_id": self.core.session.session_id,
+            "tool": tool,
+            "arguments": arguments,
+            "timeout_ms": timeout * 1_000,
+        })
+        try:
+            result = future.result(timeout=timeout + 5)
+        except FutureTimeout:
+            return f"Error: simulator action timed out after {timeout} seconds."
+        finally:
+            self.pending_simulator_actions.pop(request_id, None)
+        error = str(result.get("error") or "").strip()
+        if error:
+            build = result.get("build")
+            suffix = f"\n{json.dumps(build, ensure_ascii=False)}" if isinstance(build, dict) else ""
+            return f"Error: {error}{suffix}"
+        text = str(result.get("text") or "").strip()
+        screenshot = result.get("screenshot")
+        if isinstance(screenshot, dict):
+            detail = str(screenshot.get("description") or "simulator screenshot")
+            accepted = self.core.accept_computer_screenshot(screenshot)
+            suffix = (
+                f"Screenshot observation available: {detail}"
+                if accepted
+                else "This route is using simulator Accessibility text only for this session."
+            )
+            text = f"{text}\n\n{suffix}".strip()
+        return text or "Simulator action completed."
+
     def execute_browser(
         self,
         tool: str,
@@ -657,6 +706,39 @@ class ChatService:
             return f"Error: {error}"
         text = str(result.get("text") or "")
         return truncate_output(text) if text else "Notes action completed."
+
+    def execute_wallet(
+        self,
+        tool: str,
+        arguments: dict[str, Any],
+        request_id: str,
+    ) -> str:
+        """Bridge a capability-gated wallet call to the native policy gateway."""
+        if not self.core.tool_registry.wallet_enabled:
+            return "Error: the Locus Vault is unavailable."
+        if not self.core.tool_registry.wallet_tool_allowed(tool):
+            return "Error: this wallet operation is not present in the active signer capability."
+        future: Future[dict[str, Any]] = Future()
+        self.pending_wallet_actions[request_id] = future
+        self.emit({
+            "type": "wallet_action_request",
+            "request_id": request_id,
+            "tool": tool,
+            "arguments": arguments,
+            "timeout_ms": WALLET_BUDGET_MS,
+            "session_id": self.core.session.session_id,
+        })
+        try:
+            result = future.result(timeout=WALLET_BUDGET_MS / 1000 + 2)
+        except FutureTimeout:
+            return "Error: the Locus Vault did not answer within 60 seconds."
+        finally:
+            self.pending_wallet_actions.pop(request_id, None)
+        error = str(result.get("error") or "").strip()
+        if error:
+            return f"Error: {error}"
+        text = str(result.get("text") or "")
+        return truncate_output(text) if text else "Wallet action completed."
 
     def _execute_background_service(self, arguments: dict[str, Any]) -> str:
         action = str(arguments.get("action") or "status").lower()
@@ -801,12 +883,36 @@ class ChatService:
             if not future.done():
                 future.set_result({"error": "cancelled by the user"})
 
+    def answer_wallet(self, request_id: str, result: dict[str, Any]) -> bool:
+        future = self.pending_wallet_actions.get(request_id)
+        if future is None or future.done():
+            return False
+        future.set_result(result)
+        return True
+
+    def cancel_all_wallet_actions(self) -> None:
+        for future in list(self.pending_wallet_actions.values()):
+            if not future.done():
+                future.set_result({"error": "cancelled by the user"})
+
     def answer_computer(self, request_id: str, result: dict[str, Any]) -> bool:
         future = self.pending_computer_actions.get(request_id)
         if future is None or future.done():
             return False
         future.set_result(result)
         return True
+
+    def answer_simulator(self, request_id: str, result: dict[str, Any]) -> bool:
+        future = self.pending_simulator_actions.get(request_id)
+        if future is None or future.done():
+            return False
+        future.set_result(result)
+        return True
+
+    def cancel_all_simulator_actions(self) -> None:
+        for future in list(self.pending_simulator_actions.values()):
+            if not future.done():
+                future.set_result({"error": "cancelled by the user"})
 
     def cancel_all_computer_actions(self) -> None:
         for future in list(self.pending_computer_actions.values()):
@@ -3611,8 +3717,10 @@ def orchestration_pause(run_id: str) -> dict[str, Any]:
     svc.interrupt_parallel_writers()
     svc.deny_all_pending()
     svc.cancel_all_computer_actions()
+    svc.cancel_all_simulator_actions()
     svc.cancel_all_browser_actions()
     svc.cancel_all_notes_actions()
+    svc.cancel_all_wallet_actions()
     svc.cancel_dispatch_decisions()
     svc.cancel_all_mcp_inputs()
     svc.emit({
@@ -3643,8 +3751,10 @@ def orchestration_cancel(run_id: str) -> dict[str, Any]:
     svc.interrupt_parallel_writers()
     svc.deny_all_pending()
     svc.cancel_all_computer_actions()
+    svc.cancel_all_simulator_actions()
     svc.cancel_all_browser_actions()
     svc.cancel_all_notes_actions()
+    svc.cancel_all_wallet_actions()
     svc.cancel_dispatch_decisions()
     svc.cancel_all_mcp_inputs()
     svc.run_store.set_state(run_id, "cancelled", recoverable=False)
@@ -6751,14 +6861,41 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         # native broker was unwinding. Late/duplicate results are harmless and
         # intentionally ignored.
         svc.answer_computer(request_id, result)
+    elif mtype == "set_simulator_control":
+        if svc.busy:
+            _command_error(svc, "set_simulator_control", "Wait for the active turn to finish.")
+            return
+        enabled = bool(msg.get("enabled")) and bool(msg.get("native_available"))
+        attached = msg.get("attached_device")
+        enabled = enabled and isinstance(attached, dict) \
+            and bool(str(attached.get("udid") or "").strip())
+        core.tool_registry.simulator_enabled = enabled
+        core.simulator_executor = svc.execute_simulator if enabled else None
+        if not enabled:
+            svc.cancel_all_simulator_actions()
+        svc.queue_event({
+            "type": "simulator_control_status",
+            "enabled": enabled,
+            "attached_device": attached if enabled else None,
+        })
+    elif mtype == "simulator_action_result":
+        request_id = str(msg.get("request_id") or "")
+        raw = msg.get("result")
+        result = raw if isinstance(raw, dict) else {"error": "invalid simulator result"}
+        svc.answer_simulator(request_id, result)
     elif mtype == "set_browser_control":
         if svc.busy:
             _command_error(svc, "set_browser_control", "Wait for the active turn to finish.")
             return
         enabled = bool(msg.get("enabled"))
         core.tool_registry.browser_enabled = enabled
+        core.tool_registry.browser_history_enabled = enabled and bool(msg.get("history_enabled"))
         core.browser_executor = svc.execute_browser if enabled else None
-        svc.queue_event({"type": "browser_control_status", "enabled": enabled})
+        svc.queue_event({
+            "type": "browser_control_status",
+            "enabled": enabled,
+            "history_enabled": core.tool_registry.browser_history_enabled,
+        })
     elif mtype == "browser_action_result":
         request_id = str(msg.get("request_id") or "")
         raw = msg.get("result")
@@ -6779,6 +6916,27 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         raw = msg.get("result")
         result = raw if isinstance(raw, dict) else {"error": "invalid Notes result"}
         svc.answer_notes(request_id, result)
+    elif mtype == "set_wallet_control":
+        if svc.busy:
+            _command_error(svc, "set_wallet_control", "Wait for the active turn to finish.")
+            return
+        capability = msg.get("capability")
+        enabled = core.tool_registry.configure_wallet_capability(capability)
+        core.wallet_executor = svc.execute_wallet if enabled else None
+        svc.queue_event({
+            "type": "wallet_control_status",
+            "enabled": enabled,
+            "protocol_version": 1,
+            "session_id": (
+                core.tool_registry.wallet_capability.get("session_id")
+                if core.tool_registry.wallet_capability else None
+            ),
+        })
+    elif mtype == "wallet_action_result":
+        request_id = str(msg.get("request_id") or "")
+        raw = msg.get("result")
+        result = raw if isinstance(raw, dict) else {"error": "invalid wallet result"}
+        svc.answer_wallet(request_id, result)
     elif mtype == "mcp_input_response":
         request_id = str(msg.get("request_id") or "")
         action = str(msg.get("action") or "cancel")
@@ -6795,8 +6953,10 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             svc.active_evaluation_core.interrupt()
         svc.deny_all_pending()  # unblock a permission wait so the turn can end
         svc.cancel_all_computer_actions()
+        svc.cancel_all_simulator_actions()
         svc.cancel_all_browser_actions()
         svc.cancel_all_notes_actions()
+        svc.cancel_all_wallet_actions()
         svc.cancel_dispatch_decisions()
         svc.cancel_all_mcp_inputs()
     elif mtype == "retry_last":
@@ -7083,8 +7243,10 @@ async def ws_chat(ws: WebSocket) -> None:
             svc.interrupt_parallel_writers()
             svc.deny_all_pending()
             svc.cancel_all_computer_actions()
+            svc.cancel_all_simulator_actions()
             svc.cancel_all_browser_actions()
             svc.cancel_all_notes_actions()
+            svc.cancel_all_wallet_actions()
             svc.cancel_dispatch_decisions()
             svc.cancel_all_mcp_inputs()
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vercel CLI Safety"
+  short_description: "Guard production links, deploys, and rollbacks"
+  default_prompt: "Use $vercel-cli-extras to link or promote a Vercel project with a verified rollback path."

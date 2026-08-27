@@ -231,7 +231,10 @@ enum PinnedSummary {
     /// first) → the single web-search row.
     static func sources(state: SessionState) -> [SourceRow] {
         let provided = state.sources
-            .filter { $0.kind == .file || $0.kind == .image }
+            .filter {
+                $0.kind == .file || $0.kind == .image
+                    || $0.kind == .application || $0.kind == .simulator
+            }
             .sorted {
                 if $0.lastSeenAt != $1.lastSeenAt { return $0.lastSeenAt > $1.lastSeenAt }
                 if $0.firstSeenAt != $1.firstSeenAt { return $0.firstSeenAt > $1.firstSeenAt }
@@ -251,7 +254,7 @@ enum PinnedSummary {
 
     static func sourceMeta(_ source: SessionSource) -> String? {
         switch source.kind {
-        case .file, .image: source.target
+        case .file, .image, .application, .simulator: source.target
         case .url: source.target
         case .tool: "MCP server"
         case .webSearch: nil
@@ -260,7 +263,7 @@ enum PinnedSummary {
 
     static func detailLines(for source: SessionSource) -> [String] {
         switch source.kind {
-        case .file, .image:
+        case .file, .image, .application, .simulator:
             if source.target == nil { return ["Attached to the conversation"] }
             let lines = source.activities.map { activity -> String in
                 switch activity {

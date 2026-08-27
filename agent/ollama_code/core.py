@@ -387,8 +387,10 @@ class AgentCore:
         self._turn_allows_tools = True
         self._last_turn_allowed_tools = True
         self.computer_executor: Callable[[str, dict[str, Any], str], str] | None = None
+        self.simulator_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self.browser_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self.notes_executor: Callable[[str, dict[str, Any], str], str] | None = None
+        self.wallet_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self._pending_computer_screenshot: dict[str, str] | None = None
         self._ax_only_routes: set[str] = set()
         self._suppress_turn_done = False
@@ -2767,6 +2769,15 @@ class AgentCore:
                     if self.computer_executor is not None
                     else "Error: native computer control is unavailable."
                 )
+            elif info.get("origin") == "simulator":
+                # A guessed mutating name must still respect a reviewer or
+                # dispatcher route's read-only ceiling.
+                if not self.tool_registry.simulator_tool_allowed(tc.name):
+                    result = "Error: this agent is read-only and cannot use that simulator tool."
+                elif self.simulator_executor is None:
+                    result = "Error: iOS Simulator control is unavailable."
+                else:
+                    result = self.simulator_executor(tc.name, tc.arguments, call_id)
             elif info.get("origin") == "browser":
                 # Checked here rather than relying on schema omission: a team's
                 # writer route swaps the access ceiling without unwiring the
@@ -2785,6 +2796,15 @@ class AgentCore:
                     result = "Error: Notes are unavailable."
                 else:
                     result = self.notes_executor(tc.name, tc.arguments, call_id)
+            elif info.get("origin") == "wallet":
+                # Schema omission is not the security boundary: a guessed tool
+                # name must still pass the native-broker and access-ceiling gate.
+                if not self.tool_registry.wallet_tool_allowed(tc.name):
+                    result = "Error: this agent cannot use that wallet tool."
+                elif self.wallet_executor is None:
+                    result = "Error: the Locus Vault is unavailable."
+                else:
+                    result = self.wallet_executor(tc.name, tc.arguments, call_id)
             else:
                 result = (
                     execute_tool(tc.name, tc.arguments, self.tool_ctx)

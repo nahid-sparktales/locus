@@ -89,12 +89,14 @@ struct SessionOutput: Identifiable, Codable, Equatable {
     }
 }
 
-/// Something the conversation drew on: a file or image the user provided, a
-/// URL the agent fetched, an MCP server it called, or web search.
+/// Something the conversation drew on: a file, image, application snapshot,
+/// simulator, URL, MCP server, or web search.
 struct SessionSource: Identifiable, Codable, Equatable {
     enum Kind: String, Codable, Equatable {
         case file
         case image
+        case application
+        case simulator
         case url
         case tool
         case webSearch
@@ -127,6 +129,8 @@ struct SessionSource: Identifiable, Codable, Equatable {
         switch kind {
         case .file: "file:\(target ?? label)"
         case .image: "image:\(target ?? label)"
+        case .application: "application:\(target ?? label)"
+        case .simulator: "simulator:\(target ?? label)"
         case .url: "url:\(SessionOutput.normalize(target ?? label))"
         case .tool: "tool:\(label)"
         case .webSearch: "web-search"
@@ -153,7 +157,7 @@ struct SessionProvidedItem: Codable, Equatable {
     var name: String
     /// Absolute path; nil for pasted images that never touched disk.
     var path: String?
-    /// `.file` or `.image` only.
+    /// A directly provided file, image, application snapshot, or simulator.
     var kind: SessionSource.Kind
 }
 
@@ -428,7 +432,10 @@ enum SessionStateReducer {
             upsertWebsiteOutput(in: &next, url: url, at: at)
 
         case .sourceProvided(let items, let at):
-            for item in items where item.kind == .file || item.kind == .image {
+            for item in items where item.kind == .file
+                || item.kind == .image
+                || item.kind == .application
+                || item.kind == .simulator {
                 let name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
                 let path = item.path?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
                 guard !name.isEmpty || path != nil else { continue }

@@ -2174,7 +2174,6 @@ struct TranscriptFollowState: Equatable {
     }
 
     mutating func jumpToLatest() {
-        isNearBottom = true
         isFollowingOutput = true
     }
 
@@ -2223,7 +2222,10 @@ private struct ConversationView: View {
             .overlay(alignment: .bottom) {
                 if scrollCoordinator.followState.showsJumpToLatest, !model.blocks.isEmpty {
                     Button {
-                        scrollCoordinator.jumpToLatest(animated: true)
+                        scrollCoordinator.jumpToLatest()
+                        withAnimation(LocusMotion.scroll) {
+                            proxy.scrollTo(bottomID, anchor: .bottom)
+                        }
                     } label: {
                         Label("Jump to Latest", systemImage: "arrow.down")
                             .font(.locus(size: 9, weight: .semibold))
@@ -2515,11 +2517,10 @@ final class TranscriptScrollCoordinator: ObservableObject {
         mutateState { $0.detach() }
     }
 
-    func jumpToLatest(animated: Bool) {
+    func jumpToLatest() {
         mutateState { $0.jumpToLatest() }
         pinPending = false
         displayLink?.isPaused = true
-        scrollToBottom(animated: animated)
     }
 
     func detachAll() {

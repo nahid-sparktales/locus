@@ -30,6 +30,8 @@ struct InspectorView: View {
                     InspectorTerminalTab()
                 case .preview:
                     InspectorBrowserTab()
+                case .simulator:
+                    InspectorSimulatorTab(service: model.simulatorControl)
                 case .notes:
                     InspectorNotesTab(
                         workspacePath: model.workspacePath,

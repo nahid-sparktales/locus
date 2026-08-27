@@ -5,6 +5,29 @@ on:
   pull_request:
 
 jobs:
+  wallet-signer:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Rust formatting, lint, and tests
+        working-directory: WalletSignerCore
+        run: |
+          rustup component add rustfmt clippy
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+      - name: Locked dependency, license, and SBOM gate
+        run: python3 Tools/WalletSignerSBOM.py WalletSignerCore "$RUNNER_TEMP/WalletSignerSBOM.cdx.json"
+      - name: Rust advisory audit
+        working-directory: WalletSignerCore
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+      - name: Repository secret scan
+        run: |
+          brew install gitleaks
+          gitleaks git --no-banner --redact .
+
   python:
     runs-on: macos-15
     steps:
@@ -73,6 +96,10 @@ jobs:
 
           direct="$build_root/Build/Products/Release/Locus.app"
           app_store="$build_root/Build/Products/ReleaseMAS/Locus.app"
+          test -x "$direct/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
+          Tools/AuditWalletSignerBinary.sh \
+            "$direct/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
+          test ! -e "$app_store/Contents/XPCServices/WalletSigner.xpc"
           test -d "$direct/Contents/Frameworks/Sparkle.framework"
           test ! -e "$app_store/Contents/Frameworks/Sparkle.framework"
           test "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$direct/Contents/Info.plist")" = \

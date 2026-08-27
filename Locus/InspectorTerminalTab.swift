@@ -74,7 +74,7 @@ private struct TerminalPanel: View {
             ForEach(model.backgroundServices) { service in
                 HStack(spacing: 7) {
                     Circle()
-                        .fill(service.running ? Color.green : LocusTheme.warning)
+                        .fill(service.running ? LocusTheme.success : LocusTheme.warning)
                         .frame(width: 6, height: 6)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(service.name)
@@ -123,7 +123,7 @@ private struct TerminalPanel: View {
     private var header: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(terminal.isRunning ? Color.green : LocusTheme.muted)
+                .fill(terminal.isRunning ? LocusTheme.success : LocusTheme.muted)
                 .frame(width: 6, height: 6)
             VStack(alignment: .leading, spacing: 1) {
                 Text(terminal.title)

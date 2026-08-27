@@ -10,7 +10,18 @@ resources="${app}/Contents/Resources"
 runtime="${resources}/AgentRuntime"
 codex_helper="${app}/Contents/Helpers/codex"
 code_mode_host="${app}/Contents/Helpers/codex-code-mode-host"
+simulator_touch="${app}/Contents/Helpers/LocusSimulatorTouch"
+simulator_tree="${app}/Contents/Helpers/LocusSimulatorTree"
+wallet_signer="${app}/Contents/XPCServices/WalletSigner.xpc"
 licenses="${resources}/ThirdPartyLicenses/python-build-standalone-20260728"
+info_plist="${app}/Contents/Info.plist"
+
+github_client_id="$(/usr/bin/plutil -extract LocusGitHubOAuthClientID raw -o - \
+    "${info_plist}" 2>/dev/null || true)"
+if [[ -z "${github_client_id}" || "${github_client_id}" == *'$('* ]]; then
+    echo "error: distribution is missing the public Locus GitHub App client ID" >&2
+    exit 1
+fi
 
 [[ -d "${runtime}" ]] || {
     echo "error: bundled agent runtime is missing" >&2
@@ -133,6 +144,7 @@ for notice in \
     "| websockets | 17.0 |" \
     "SwiftTerm 1.18.0" \
     "Sparkle 2.9.4" \
+    "ios-mcp-server Simulator bridge" \
     "Anthropic Frontend Design" \
     "Vercel React Best Practices" \
     "Superpowers (complete 14-skill suite)"
@@ -276,6 +288,22 @@ fi
 
 sparkle="${app}/Contents/Frameworks/Sparkle.framework"
 if [[ "${sandboxed}" == "1" ]]; then
+    [[ ! -e "${wallet_signer}" ]] || {
+        echo "error: the Mac App Store build contains WalletSigner.xpc" >&2
+        exit 1
+    }
+    [[ ! -e "${simulator_touch}" && ! -e "${simulator_tree}" ]] || {
+        echo "error: the Mac App Store build contains a Simulator bridge helper" >&2
+        exit 1
+    }
+    registry="${runtime}/source/ollama_code/tool_registry.py"
+    if [[ -f "${registry}" ]] && /usr/bin/grep -Eq \
+        'simulator_(list_devices|attach|get_state|tap|swipe|type_text|press_button|open_url|build_and_launch|screenshot|detach)' \
+        "${registry}"
+    then
+        echo "error: the Mac App Store runtime contains Simulator tool schemas" >&2
+        exit 1
+    fi
     [[ ! -e "${sparkle}" ]] || {
         echo "error: the Mac App Store build contains Sparkle.framework" >&2
         exit 1
@@ -292,6 +320,117 @@ if [[ "${sandboxed}" == "1" ]]; then
         exit 1
     }
 else
+    [[ -x "${wallet_signer}/Contents/MacOS/WalletSigner" ]] || {
+        echo "error: the direct-download build is missing WalletSigner.xpc" >&2
+        exit 1
+    }
+    "${repo_root}/Tools/AuditWalletSignerBinary.sh" \
+        "${wallet_signer}/Contents/MacOS/WalletSigner"
+    wallet_sbom="${resources}/WalletSignerSBOM.cdx.json"
+    [[ -f "${wallet_sbom}" ]] || {
+        echo "error: direct-download build is missing the WalletSigner SBOM" >&2
+        exit 1
+    }
+    [[ "$(/usr/bin/plutil -extract bomFormat raw -o - "${wallet_sbom}" 2>/dev/null || true)" \
+        == "CycloneDX" ]] || {
+        echo "error: WalletSigner SBOM is not valid CycloneDX JSON" >&2
+        exit 1
+    }
+    [[ "$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - \
+        "${wallet_signer}/Contents/Info.plist" 2>/dev/null || true)" \
+        == "io.sparktales.locus.WalletSigner" ]] || {
+        echo "error: WalletSigner.xpc has an unexpected bundle identifier" >&2
+        exit 1
+    }
+    /usr/bin/codesign --verify --strict "${wallet_signer}" || {
+        echo "error: WalletSigner.xpc signature is invalid" >&2
+        exit 1
+    }
+    wallet_entitlements="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-wallet-entitlements.XXXXXX")"
+    /usr/bin/codesign -d --entitlements "${wallet_entitlements}" --xml \
+        "${wallet_signer}" >/dev/null 2>&1 || {
+        echo "error: WalletSigner.xpc entitlements cannot be read" >&2
+        exit 1
+    }
+    [[ "$(/usr/bin/plutil -extract 'com\.apple\.security\.app-sandbox' raw -o - \
+        "${wallet_entitlements}" 2>/dev/null || true)" == "true" ]] || {
+        echo "error: WalletSigner.xpc is not sandboxed" >&2
+        exit 1
+    }
+    for forbidden in \
+        com.apple.security.network.client \
+        com.apple.security.network.server \
+        com.apple.security.get-task-allow \
+        com.apple.security.cs.allow-dyld-environment-variables \
+        com.apple.security.cs.disable-library-validation
+    do
+        value="$(/usr/bin/plutil -extract "${forbidden//./\\.}" raw -o - \
+            "${wallet_entitlements}" 2>/dev/null || true)"
+        [[ "${value}" != "true" ]] || {
+            echo "error: WalletSigner.xpc has forbidden entitlement ${forbidden}" >&2
+            exit 1
+        }
+    done
+    /bin/rm -f "${wallet_entitlements}"
+    app_team="$(/usr/bin/codesign -dv --verbose=4 "${app}" 2>&1 \
+        | /usr/bin/awk -F= '$1 == "TeamIdentifier" { print $2; exit }')"
+    wallet_team="$(/usr/bin/codesign -dv --verbose=4 "${wallet_signer}" 2>&1 \
+        | /usr/bin/awk -F= '$1 == "TeamIdentifier" { print $2; exit }')"
+    [[ -n "${app_team}" && "${wallet_team}" == "${app_team}" ]] || {
+        echo "error: WalletSigner.xpc Team ID does not match the containing app" >&2
+        exit 1
+    }
+    simulator_provenance="${resources}/SimulatorBridgeProvenance.txt"
+    [[ -x "${simulator_touch}" && -x "${simulator_tree}" ]] || {
+        echo "error: direct-download Simulator bridge helpers are missing" >&2
+        exit 1
+    }
+    [[ -f "${simulator_provenance}" ]] || {
+        echo "error: Simulator bridge provenance is missing" >&2
+        exit 1
+    }
+    [[ -f "${resources}/ThirdPartyLicenses/ios-mcp-server-bd5aca7/LICENSE" ]] || {
+        echo "error: Simulator bridge MIT license is missing" >&2
+        exit 1
+    }
+    for pin in \
+        "commit=bd5aca70704fe0fb5e974abaed205f54469799b0" \
+        "license=MIT" \
+        "touch_source_sha256=af01bb7412a7c4c1db14a49ea21b7c1a055f7cffd6440c04059348885832fb71" \
+        "tree_source_sha256=b16c270de8121e5b53626949ff818aca8ee29ba0c8b8372edd957d41bd243b63"
+    do
+        /usr/bin/grep -Fq -- "${pin}" "${simulator_provenance}" || {
+            echo "error: Simulator bridge provenance is missing ${pin}" >&2
+            exit 1
+        }
+    done
+    expected_touch_sha="$(/usr/bin/awk -F= '$1 == "touch_binary_sha256" {print $2}' \
+        "${simulator_provenance}")"
+    expected_tree_sha="$(/usr/bin/awk -F= '$1 == "tree_binary_sha256" {print $2}' \
+        "${simulator_provenance}")"
+    [[ "$(/usr/bin/shasum -a 256 "${simulator_touch}" | /usr/bin/awk '{print $1}')" \
+        == "${expected_touch_sha}" ]] || {
+        echo "error: Simulator touch helper checksum does not match provenance" >&2
+        exit 1
+    }
+    [[ "$(/usr/bin/shasum -a 256 "${simulator_tree}" | /usr/bin/awk '{print $1}')" \
+        == "${expected_tree_sha}" ]] || {
+        echo "error: Simulator tree helper checksum does not match provenance" >&2
+        exit 1
+    }
+    expected_simulator_archs="$(/usr/bin/awk -F= '$1 == "architectures" {print $2}' \
+        "${simulator_provenance}")"
+    [[ "$(/usr/bin/lipo -archs "${simulator_touch}")" == "${expected_simulator_archs}" \
+        && "$(/usr/bin/lipo -archs "${simulator_tree}")" == "${expected_simulator_archs}" ]] || {
+        echo "error: Simulator bridge architectures do not match provenance" >&2
+        exit 1
+    }
+    /usr/bin/codesign --verify --strict "${simulator_touch}" || {
+        echo "error: Simulator touch helper signature is invalid" >&2; exit 1
+    }
+    /usr/bin/codesign --verify --strict "${simulator_tree}" || {
+        echo "error: Simulator tree helper signature is invalid" >&2; exit 1
+    }
     [[ -d "${sparkle}" ]] || {
         echo "error: the direct-download build is missing Sparkle.framework" >&2
         exit 1
@@ -385,4 +524,4 @@ for sealed_helper in "${codex_helper}" "${code_mode_host}"; do
 done
 fi
 
-echo "Distribution audit passed: notices present; gdbm and tkinter absent."
+echo "Distribution audit passed: wallet boundary and notices verified; gdbm and tkinter absent."

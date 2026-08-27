@@ -921,6 +921,59 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(future.resolvedAppearance, .system)
     }
 
+    func testAccentOffersFivePresetsAndAnOpenEndedCustomColour() throws {
+        XCTAssertEqual(LocusAccentPreset.allCases.count, 5)
+        XCTAssertEqual(LocusAccentPreset.allCases.map(\.title), [
+            "Lime", "Blue", "Purple", "Orange", "Pink",
+        ])
+
+        let legacy = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
+        XCTAssertEqual(legacy.resolvedAccent.preset, .lime)
+
+        let future = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data(#"{"accentPresetRaw":"future-neon"}"#.utf8)
+        )
+        XCTAssertEqual(future.resolvedAccent.preset, .lime)
+
+        var settings = AppSettings()
+        settings.accentPresetRaw = LocusAccentSelection.customRawValue
+        settings.customAccentHex = "#123456"
+        let restored = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONEncoder().encode(settings)
+        )
+        XCTAssertNil(restored.resolvedAccent.preset)
+        XCTAssertEqual(restored.resolvedAccent.customHex, "123456")
+        assertColor(restored.resolvedAccent.fillNSColor, hex: 0x123456)
+    }
+
+    func testAccentForegroundsStayReadableAndLogoRendererKeepsItsGeometry() throws {
+        let light = try XCTUnwrap(NSAppearance(named: .aqua))
+        let dark = try XCTUnwrap(NSAppearance(named: .darkAqua))
+        let lightBackground = NSColor(srgbRed: 0.953, green: 0.945, blue: 0.918, alpha: 1)
+        let darkBackground = NSColor(srgbRed: 0.090, green: 0.090, blue: 0.075, alpha: 1)
+
+        for preset in LocusAccentPreset.allCases {
+            let accent = LocusAccentSelection(
+                rawValue: preset.rawValue,
+                customHex: LocusAccentSelection.defaultCustomHex
+            )
+            assertTextContrast(
+                foregrounds: [accent.actionNSColor(for: light)],
+                backgrounds: [lightBackground]
+            )
+            assertTextContrast(
+                foregrounds: [accent.actionNSColor(for: dark)],
+                backgrounds: [darkBackground]
+            )
+            XCTAssertEqual(
+                LocusBrandIcon.image(accent: accent.logoNSColor, size: 128).size,
+                NSSize(width: 128, height: 128)
+            )
+        }
+    }
+
     func testSettingsLevelDefaultsToStandardAndRoundTripsAdvanced() throws {
         XCTAssertEqual(AppSettings().resolvedSettingsLevel, .standard)
         XCTAssertEqual(
@@ -956,7 +1009,7 @@ final class FeatureLogicTests: XCTestCase {
         )
         XCTAssertEqual(
             SettingsPage.allCases.filter { $0.navigationGroup == .tools },
-            [.browser, .extensions, .permissions, .network]
+            [.browser, .wallet, .extensions, .permissions, .network]
         )
         XCTAssertEqual(
             SettingsPage.allCases.filter { $0.navigationGroup == .system },
@@ -998,6 +1051,7 @@ final class FeatureLogicTests: XCTestCase {
         var saved = AppSettings()
         var draft = saved
         draft.appearanceRaw = AppAppearance.dark.rawValue
+        draft.accentPresetRaw = LocusAccentPreset.purple.rawValue
         draft.previewURL = "https://preview.example"
         draft.proxyModeRaw = ProxyMode.manual.rawValue
         draft.proxyHost = "proxy.example"
@@ -1007,6 +1061,7 @@ final class FeatureLogicTests: XCTestCase {
         saved.applyImmediatePreferences(from: draft)
 
         XCTAssertEqual(saved.resolvedAppearance, .dark)
+        XCTAssertEqual(saved.resolvedAccent.preset, .purple)
         XCTAssertEqual(saved.previewURL, "https://preview.example")
         XCTAssertEqual(saved.resolvedProxyMode, .off)
         XCTAssertTrue(saved.proxyHost.isEmpty)

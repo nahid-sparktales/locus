@@ -20,6 +20,7 @@ repo_root="${0:A:h:h}"
 resources="${app}/Contents/Resources"
 info_plist="${app}/Contents/Info.plist"
 sparkle="${app}/Contents/Frameworks/Sparkle.framework"
+wallet_signer="${app}/Contents/XPCServices/WalletSigner.xpc"
 
 identity="${LOCUS_SIGN_IDENTITY:-}"
 if [[ -z "${identity}" ]]; then
@@ -40,6 +41,16 @@ echo "Signing with: ${identity}"
     echo "error: app Info.plist is missing" >&2
     exit 1
 }
+github_client_id="${LOCUS_GITHUB_OAUTH_CLIENT_ID:-}"
+if [[ -z "${github_client_id}" || "${github_client_id}" == *'$('* ]]; then
+    echo "error: set LOCUS_GITHUB_OAUTH_CLIENT_ID to the public client ID of the Locus GitHub App." >&2
+    exit 1
+fi
+if ! /usr/bin/plutil -insert LocusGitHubOAuthClientID -string "${github_client_id}" "${info_plist}" \
+    2>/dev/null
+then
+    /usr/bin/plutil -replace LocusGitHubOAuthClientID -string "${github_client_id}" "${info_plist}"
+fi
 revision="$(/usr/bin/git -C "${repo_root}" rev-parse HEAD)"
 built_revision="$(
     /usr/bin/awk -F= '$1 == "source_revision" { print $2; exit }' \
@@ -106,6 +117,41 @@ if [[ -d "${sparkle}" ]]; then
             --sign "${identity}" "${nested}"
     done
 fi
+[[ -x "${wallet_signer}/Contents/MacOS/WalletSigner" ]] || {
+    echo "error: direct-download release is missing WalletSigner.xpc" >&2
+    exit 1
+}
+# The independently sandboxed signer is sealed before the containing app so
+# the outer signature commits to its executable, identifier, and entitlements.
+/usr/bin/codesign --force --timestamp --options runtime \
+    --entitlements "${repo_root}/Config/WalletSigner.entitlements" \
+    --sign "${identity}" "${wallet_signer}"
+for simulator_helper in \
+    "${app}/Contents/Helpers/LocusSimulatorTouch" \
+    "${app}/Contents/Helpers/LocusSimulatorTree"
+do
+    [[ -x "${simulator_helper}" ]] || {
+        echo "error: Simulator bridge helper is missing: ${simulator_helper:t}" >&2
+        exit 1
+    }
+    /usr/bin/codesign --force --timestamp --options runtime \
+        --sign "${identity}" "${simulator_helper}"
+done
+simulator_provenance="${resources}/SimulatorBridgeProvenance.txt"
+[[ -f "${simulator_provenance}" ]] || {
+    echo "error: Simulator bridge provenance is missing" >&2
+    exit 1
+}
+signed_touch_sha="$(/usr/bin/shasum -a 256 \
+    "${app}/Contents/Helpers/LocusSimulatorTouch" | /usr/bin/awk '{print $1}')"
+signed_tree_sha="$(/usr/bin/shasum -a 256 \
+    "${app}/Contents/Helpers/LocusSimulatorTree" | /usr/bin/awk '{print $1}')"
+/usr/bin/sed -i '' "s/^touch_binary_sha256=.*/touch_binary_sha256=${signed_touch_sha}/" \
+    "${simulator_provenance}"
+/usr/bin/sed -i '' "s/^tree_binary_sha256=.*/tree_binary_sha256=${signed_tree_sha}/" \
+    "${simulator_provenance}"
+python3 "${repo_root}/Tools/WalletSignerSBOM.py" \
+    "${repo_root}/WalletSignerCore" "${resources}/WalletSignerSBOM.cdx.json"
 /usr/bin/codesign --force --timestamp --options runtime --sign "${identity}" "${app}"
 "${repo_root}/Tools/AuditDistribution.sh" "${app}"
 /usr/bin/codesign --verify --deep --strict "${app}"

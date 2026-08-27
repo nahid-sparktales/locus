@@ -40,6 +40,10 @@ final class ComputerControlService: ObservableObject {
     private var latestScreenshot: Data?
     private var cancellationGeneration = 0
     private var currentSessionID: String?
+    /// Set only for the duration of one broker request. `isExecuting` makes
+    /// requests mutually exclusive, so every app lookup below observes the
+    /// same immutable task scope and a guessed app name cannot escape it.
+    private var activeScope: ApplicationTarget?
 
     func beginSession(_ sessionID: String) {
         guard !sessionID.isEmpty, currentSessionID != sessionID else { return }
@@ -83,6 +87,7 @@ final class ComputerControlService: ObservableObject {
         tool: String,
         arguments: [String: Any],
         hostedProvider: String?,
+        scope: ApplicationTarget? = nil,
         timeoutMilliseconds: Int = 60_000
     ) async -> [String: Any] {
         guard !isExecuting else {
@@ -99,8 +104,18 @@ final class ComputerControlService: ObservableObject {
         let deadline = Date().addingTimeInterval(
             Double(max(min(timeoutMilliseconds, 120_000), 1_000)) / 1_000
         )
+        if let scope,
+           NSRunningApplication(processIdentifier: scope.processIdentifier)?.bundleIdentifier
+            != scope.bundleIdentifier
+        {
+            return ["error": "The task-scoped application is no longer running. Reattach it before continuing."]
+        }
         isExecuting = true
-        defer { isExecuting = false }
+        activeScope = scope
+        defer {
+            activeScope = nil
+            isExecuting = false
+        }
 
         switch tool {
         case "computer_list_apps":
@@ -181,14 +196,37 @@ final class ComputerControlService: ObservableObject {
     // MARK: - AX state
 
     private func runningApps() -> [NSRunningApplication] {
-        NSWorkspace.shared.runningApplications
+        let apps = NSWorkspace.shared.runningApplications
             .filter { !$0.isTerminated && $0.activationPolicy == .regular }
             .sorted { ($0.localizedName ?? "") < ($1.localizedName ?? "") }
+        guard let scope = activeScope else { return apps }
+        return apps.filter {
+            Self.scopeAllows(
+                bundleIdentifier: $0.bundleIdentifier,
+                processIdentifier: $0.processIdentifier,
+                scope: scope
+            )
+        }
+    }
+
+    static func scopeAllows(
+        bundleIdentifier: String?,
+        processIdentifier: Int32,
+        scope: ApplicationTarget
+    ) -> Bool {
+        processIdentifier == scope.processIdentifier
+            && bundleIdentifier == scope.bundleIdentifier
     }
 
     private func resolveApp(_ query: String?) -> NSRunningApplication? {
         let wanted = (query ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !wanted.isEmpty else { return nil }
+        if let scope = activeScope {
+            let allowed = wanted.caseInsensitiveCompare(scope.bundleIdentifier) == .orderedSame
+                || wanted.caseInsensitiveCompare(scope.name) == .orderedSame
+                || wanted == String(scope.processIdentifier)
+            guard allowed else { return nil }
+        }
         return runningApps().first {
             $0.bundleIdentifier?.caseInsensitiveCompare(wanted) == .orderedSame
                 || $0.localizedName?.caseInsensitiveCompare(wanted) == .orderedSame
@@ -516,11 +554,18 @@ final class ComputerControlService: ObservableObject {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(
                 true,
-                onScreenWindowsOnly: true
+                onScreenWindowsOnly: false
             )
-            guard let window = content.windows
-                .filter({ $0.owningApplication?.processID == app.processIdentifier })
-                .max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height })
+            let windows = content.windows.filter {
+                $0.owningApplication?.processID == app.processIdentifier
+            }
+            let selected = activeScope?.windowIdentifier.flatMap { identifier in
+                windows.first { $0.windowID == identifier }
+            }
+            guard let window = selected
+                ?? windows.max(by: {
+                    $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+                })
             else { return nil }
             let configuration = SCStreamConfiguration()
             let scale = min(2.0, 1_600 / max(window.frame.width, 1))

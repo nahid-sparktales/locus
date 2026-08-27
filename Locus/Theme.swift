@@ -26,6 +26,251 @@ enum AppAppearance: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+/// The five ready-made Locus brand colours. A custom value is stored separately
+/// so presets remain a small, stable set while the colour picker stays open-ended.
+enum LocusAccentPreset: String, CaseIterable, Identifiable {
+    case lime
+    case blue
+    case purple
+    case orange
+    case pink
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .lime: "Lime"
+        case .blue: "Blue"
+        case .purple: "Purple"
+        case .orange: "Orange"
+        case .pink: "Pink"
+        }
+    }
+
+    /// Bright fills preserve the friendly, high-energy character of the
+    /// original lime. Foreground uses are contrast-adjusted independently.
+    fileprivate var fillHex: UInt32 {
+        switch self {
+        case .lime: 0xC9F54A
+        case .blue: 0x4A90FF
+        case .purple: 0xA56EFF
+        case .orange: 0xFF9F43
+        case .pink: 0xFF5FA2
+        }
+    }
+
+    /// The original app icon used a slightly softer lime than the workspace.
+    /// Matching softer companions keep all five logo treatments equally vivid.
+    fileprivate var logoHex: UInt32 {
+        switch self {
+        case .lime: 0xDAF66C
+        case .blue: 0x67A9FF
+        case .purple: 0xBC86FF
+        case .orange: 0xFFB15F
+        case .pink: 0xFF82B6
+        }
+    }
+}
+
+struct LocusAccentSelection: Hashable {
+    static let customRawValue = "custom"
+    static let defaultCustomHex = "4A90FF"
+
+    let preset: LocusAccentPreset?
+    let customHex: String
+
+    init(rawValue: String, customHex: String) {
+        preset = LocusAccentPreset(rawValue: rawValue)
+        self.customHex = Self.normalizedHex(customHex) ?? Self.defaultCustomHex
+    }
+
+    var rawValue: String { preset?.rawValue ?? Self.customRawValue }
+    var title: String { preset?.title ?? "Custom" }
+
+    var fillNSColor: NSColor {
+        preset.map { Self.color(hex: $0.fillHex) }
+            ?? Self.color(hexString: customHex)
+            ?? Self.color(hex: LocusAccentPreset.lime.fillHex)
+    }
+
+    var logoNSColor: NSColor {
+        preset.map { Self.color(hex: $0.logoHex) } ?? fillNSColor
+    }
+
+    var fillColor: Color { Color(nsColor: fillNSColor) }
+
+    func actionNSColor(for appearance: NSAppearance) -> NSColor {
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let background = dark ? Self.color(hex: 0x171713) : Self.color(hex: 0xF3F1EA)
+        let destination = dark ? NSColor.white : NSColor.black
+        return Self.firstReadableMix(
+            from: fillNSColor,
+            toward: destination,
+            over: background
+        )
+    }
+
+    func brandInkNSColor() -> NSColor {
+        let darkInk = Self.color(hex: 0x161814)
+        let lightInk = Self.color(hex: 0xFFFDF8)
+        return Self.contrast(darkInk, over: logoNSColor)
+            >= Self.contrast(lightInk, over: logoNSColor)
+            ? darkInk
+            : lightInk
+    }
+
+    static func hexString(for color: NSColor) -> String? {
+        guard let rgb = color.usingColorSpace(.sRGB) else { return nil }
+        let red = Int(round(rgb.redComponent * 255))
+        let green = Int(round(rgb.greenComponent * 255))
+        let blue = Int(round(rgb.blueComponent * 255))
+        return String(format: "%02X%02X%02X", red, green, blue)
+    }
+
+    static func normalizedHex(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+            .uppercased()
+        let hexDigits = CharacterSet(charactersIn: "0123456789ABCDEF")
+        guard trimmed.count == 6,
+              trimmed.unicodeScalars.allSatisfy({ hexDigits.contains($0) })
+        else { return nil }
+        return trimmed
+    }
+
+    private static func color(hexString: String) -> NSColor? {
+        normalizedHex(hexString)
+            .flatMap { UInt32($0, radix: 16) }
+            .map(color(hex:))
+    }
+
+    private static func color(hex: UInt32) -> NSColor {
+        NSColor(
+            srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+            green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255,
+            alpha: 1
+        )
+    }
+
+    private static func firstReadableMix(
+        from source: NSColor,
+        toward destination: NSColor,
+        over background: NSColor
+    ) -> NSColor {
+        for step in 0...20 {
+            let fraction = CGFloat(step) / 20
+            let candidate = mix(source, destination, fraction: fraction)
+            if contrast(candidate, over: background) >= 4.5 { return candidate }
+        }
+        return destination
+    }
+
+    private static func mix(_ lhs: NSColor, _ rhs: NSColor, fraction: CGFloat) -> NSColor {
+        let lhs = lhs.usingColorSpace(.sRGB) ?? lhs
+        let rhs = rhs.usingColorSpace(.sRGB) ?? rhs
+        return NSColor(
+            srgbRed: lhs.redComponent + (rhs.redComponent - lhs.redComponent) * fraction,
+            green: lhs.greenComponent + (rhs.greenComponent - lhs.greenComponent) * fraction,
+            blue: lhs.blueComponent + (rhs.blueComponent - lhs.blueComponent) * fraction,
+            alpha: 1
+        )
+    }
+
+    private static func contrast(_ foreground: NSColor, over background: NSColor) -> CGFloat {
+        let lighter = max(luminance(foreground), luminance(background))
+        let darker = min(luminance(foreground), luminance(background))
+        return (lighter + 0.05) / (darker + 0.05)
+    }
+
+    private static func luminance(_ color: NSColor) -> CGFloat {
+        let color = color.usingColorSpace(.sRGB) ?? color
+        func channel(_ value: CGFloat) -> CGFloat {
+            value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+        }
+        return channel(color.redComponent) * 0.2126
+            + channel(color.greenComponent) * 0.7152
+            + channel(color.blueComponent) * 0.0722
+    }
+}
+
+/// Dynamic colours ask this small process-wide store for their current value.
+/// The app's published settings still own invalidation and persistence.
+final class LocusAccentRuntime: @unchecked Sendable {
+    static let shared = LocusAccentRuntime()
+
+    private let lock = NSLock()
+    private var selection = LocusAccentSelection(
+        rawValue: LocusAccentPreset.lime.rawValue,
+        customHex: LocusAccentSelection.defaultCustomHex
+    )
+
+    private init() {}
+
+    func configure(_ selection: LocusAccentSelection) {
+        lock.lock()
+        self.selection = selection
+        lock.unlock()
+    }
+
+    func currentSelection() -> LocusAccentSelection {
+        lock.lock()
+        defer { lock.unlock() }
+        return selection
+    }
+}
+
+enum LocusBrandIcon {
+    static func image(accent: NSColor, size: CGFloat = 1_024) -> NSImage {
+        let image = NSImage(size: NSSize(width: size, height: size))
+        image.lockFocus()
+        guard let context = NSGraphicsContext.current?.cgContext else {
+            image.unlockFocus()
+            return image
+        }
+        context.saveGState()
+        context.scaleBy(x: size / 1_024, y: size / 1_024)
+        context.setShouldAntialias(true)
+
+        let darkInk = NSColor(srgbRed: 0.075, green: 0.086, blue: 0.071, alpha: 1)
+        darkInk.setFill()
+        NSBezierPath(
+            roundedRect: NSRect(x: 0, y: 0, width: 1_024, height: 1_024),
+            xRadius: 224,
+            yRadius: 224
+        ).fill()
+
+        accent.setFill()
+        NSBezierPath(
+            roundedRect: NSRect(x: 92, y: 92, width: 840, height: 840),
+            xRadius: 170,
+            yRadius: 170
+        ).fill()
+
+        NSColor(srgbRed: 0.969, green: 0.949, blue: 0.886, alpha: 1).setFill()
+        NSBezierPath(
+            roundedRect: NSRect(x: 136, y: 136, width: 752, height: 752),
+            xRadius: 138,
+            yRadius: 138
+        ).fill()
+
+        darkInk.setStroke()
+        for offset in [-86.0, 86.0] {
+            let slash = NSBezierPath()
+            slash.lineWidth = 82
+            slash.lineCapStyle = .round
+            slash.move(to: NSPoint(x: 420 + offset, y: 312))
+            slash.line(to: NSPoint(x: 604 + offset, y: 712))
+            slash.stroke()
+        }
+
+        context.restoreGState()
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
+    }
+}
+
 enum LocusTheme {
     struct Palette {
         let ink: NSColor
@@ -109,16 +354,21 @@ enum LocusTheme {
     static let line = adaptive(\.line)
     static let lineStrong = adaptive(\.lineStrong)
     static let muted = adaptive(\.muted)
-    static let signal = adaptive(\.signal)
-    static let signalDeep = adaptive(\.signalDeep)
+    static let signal = accentAdaptive { selection, _ in selection.fillNSColor }
+    /// Resolve from Locus's saved theme directly. `Color.accentColor` can fall
+    /// back to the user's macOS accent inside nested panes, which made active
+    /// folders, focus outlines, context labels, and Ready dots turn orange.
+    static let signalDeep = accentAdaptive { selection, appearance in
+        selection.actionNSColor(for: appearance)
+    }
     static let coral = adaptive(\.coral)
     static let danger = adaptive(\.danger)
     static let blue = adaptive(\.blue)
-    static let success = adaptive(\.success)
+    static let success = signalDeep
     static let warning = adaptive(\.warning)
     static let permissionInk = adaptive(\.permissionInk)
     static let permissionMuted = adaptive(\.permissionMuted)
-    static let successSoft = adaptive(\.successSoft)
+    static let successSoft = signal.opacity(0.18)
 
     // Semantic roles. The legacy names above remain source-compatible while
     // screens migrate; new UI should describe the purpose of a color rather
@@ -140,8 +390,11 @@ enum LocusTheme {
     static let selectionFill = signal
     static let focusRing = blue
 
-    /// Artwork drawn on the lime signal color must stay dark in both modes.
-    static let brandInk = Color(nsColor: rgb(red: 0.086, green: 0.094, blue: 0.078))
+    /// Artwork drawn on the chosen signal colour automatically uses whichever
+    /// ink has stronger contrast, including for arbitrary custom colours.
+    static let brandInk = accentAdaptive { selection, _ in
+        selection.brandInkNSColor()
+    }
 
     static func palette(for appearance: NSAppearance) -> Palette {
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -152,6 +405,14 @@ enum LocusTheme {
     private static func adaptive(_ keyPath: KeyPath<Palette, NSColor>) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
             palette(for: appearance)[keyPath: keyPath]
+        })
+    }
+
+    private static func accentAdaptive(
+        _ resolve: @escaping @Sendable (LocusAccentSelection, NSAppearance) -> NSColor
+    ) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            resolve(LocusAccentRuntime.shared.currentSelection(), appearance)
         })
     }
 

@@ -1048,6 +1048,23 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(state.permitsAutomaticScroll)
     }
 
+    func testTranscriptJumpStaysVisibleUntilTheViewportReachesLatest() {
+        var state = TranscriptFollowState()
+        state.updateBottom(isNear: false)
+        state.detach()
+
+        state.jumpToLatest()
+
+        XCTAssertTrue(state.permitsAutomaticScroll)
+        XCTAssertTrue(
+            state.showsJumpToLatest,
+            "requesting a jump must not claim the viewport moved before it actually does"
+        )
+
+        state.updateBottom(isNear: true)
+        XCTAssertFalse(state.showsJumpToLatest)
+    }
+
     func testTranscriptScrollMetricsHandleFlippedAndUnflippedDocuments() {
         let document = CGRect(x: 0, y: 0, width: 600, height: 2_000)
         let flippedVisible = CGRect(x: 0, y: 1_500, width: 600, height: 400)
@@ -1508,6 +1525,38 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.settings.resolvedAppearance, .dark)
         XCTAssertEqual(model.effectiveAppearance, .dark)
         XCTAssertNil(model.appearancePreview)
+    }
+
+    @MainActor
+    func testApplyingAccentUpdatesTheLiveThemeRuntime() {
+        let previous = LocusAccentRuntime.shared.currentSelection()
+        defer { LocusAccentRuntime.shared.configure(previous) }
+
+        let model = AppModel(startImmediately: false)
+        var updated = model.settings
+        updated.accentPresetRaw = LocusAccentPreset.blue.rawValue
+        model.applySettings(updated, showConfirmation: false)
+
+        XCTAssertEqual(model.settings.resolvedAccent.preset, .blue)
+        XCTAssertEqual(LocusAccentRuntime.shared.currentSelection().preset, .blue)
+
+        for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
+            guard let appearance = NSAppearance(named: appearanceName) else {
+                XCTFail("Missing test appearance \(appearanceName.rawValue)")
+                continue
+            }
+            var actionHex: String?
+            var successHex: String?
+            appearance.performAsCurrentDrawingAppearance {
+                actionHex = LocusAccentSelection.hexString(for: NSColor(LocusTheme.signalDeep))
+                successHex = LocusAccentSelection.hexString(for: NSColor(LocusTheme.success))
+            }
+            let expectedHex = LocusAccentSelection.hexString(
+                for: model.settings.resolvedAccent.actionNSColor(for: appearance)
+            )
+            XCTAssertEqual(actionHex, expectedHex)
+            XCTAssertEqual(successHex, expectedHex)
+        }
     }
 
     // MARK: - Provider accounts
@@ -4251,6 +4300,151 @@ final class AppModelTests: XCTestCase {
                 $0.contains("Every pair of coding jobs")
             })
         )
+    }
+
+    @MainActor
+    func testApplicationSnapshotPromptIsRedactedContextWithoutAPath() {
+        let model = AppModel(startImmediately: false)
+        let context = ApplicationSnapshotContext(
+            bundleIdentifier: "com.example.Editor",
+            processIdentifier: 42,
+            applicationName: "Editor",
+            windowTitle: "Draft",
+            windowIdentifier: 7,
+            accessibilityText: "AXTextField · Password · ••••••",
+            iconData: nil
+        )
+        let attachment = ChatAttachment(
+            url: URL(fileURLWithPath: "/dev/null/appshot.png"),
+            kind: .applicationSnapshot,
+            imageData: Data([0x89, 0x50, 0x4e, 0x47]),
+            mimeType: "image/png",
+            overrideName: "Editor — Draft",
+            applicationContext: context
+        )
+
+        let prompt = model.decoratedPrompt(
+            "Review this", mode: .ask, chatAttachments: [attachment]
+        )
+        XCTAssertTrue(prompt.contains("Applications mentioned by the user"))
+        XCTAssertTrue(prompt.contains("Editor: Draft"))
+        XCTAssertTrue(prompt.contains("secure-field-redacted"))
+        XCTAssertTrue(prompt.contains("••••••"))
+        XCTAssertFalse(prompt.contains("/dev/null"))
+        let sources = AppModel.providedSourceItems(
+            attachments: [attachment], contextFiles: [], mode: .ask
+        )
+        XCTAssertEqual(sources.first?.kind, .application)
+        XCTAssertNil(sources.first?.path)
+    }
+
+    @MainActor
+    func testApplicationSnapshotClearsOnlyAfterSuccessfulDelivery() {
+        let snapshot = ChatAttachment(
+            url: URL(fileURLWithPath: "/dev/null/appshot.png"),
+            kind: .applicationSnapshot,
+            imageData: Data([0x89]),
+            mimeType: "image/png",
+            overrideName: "Editor — Draft"
+        )
+        let image = ChatAttachment(
+            url: URL(fileURLWithPath: "/tmp/image.png"),
+            kind: .image,
+            imageData: Data([0x89]),
+            mimeType: "image/png"
+        )
+        XCTAssertEqual(
+            AppModel.attachmentIDsToClear([snapshot, image], deliverySucceeded: false),
+            [image.id]
+        )
+        XCTAssertEqual(
+            AppModel.attachmentIDsToClear([snapshot, image], deliverySucceeded: true),
+            [snapshot.id, image.id]
+        )
+    }
+
+    @MainActor
+    func testSimulatorDiscoverySortsBootedIPadFirstAndFiltersOtherFamilies() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "devices": [
+                "com.apple.CoreSimulator.SimRuntime.iOS-26-0": [
+                    [
+                        "name": "iPhone 17", "udid": "PHONE", "state": "Booted",
+                        "isAvailable": true, "deviceTypeIdentifier": "phone",
+                    ],
+                    [
+                        "name": "iPad Pro 13-inch", "udid": "IPAD", "state": "Booted",
+                        "isAvailable": true, "deviceTypeIdentifier": "ipad",
+                    ],
+                    [
+                        "name": "Apple Watch", "udid": "WATCH", "state": "Booted",
+                        "isAvailable": true, "deviceTypeIdentifier": "watch",
+                    ],
+                ],
+            ],
+        ])
+
+        let devices = try SimulatorControlService.parseDevices(data)
+        XCTAssertEqual(devices.map(\.udid), ["IPAD", "PHONE"])
+        XCTAssertTrue(devices[0].isIPad)
+    }
+
+    @MainActor
+    func testLiveApplicationScopeRequiresExactBundleAndPID() {
+        let target = ApplicationTarget(
+            bundleIdentifier: "com.example.Editor",
+            processIdentifier: 42,
+            name: "Editor",
+            windowTitle: "Draft",
+            windowIdentifier: 7,
+            iconData: nil
+        )
+        XCTAssertTrue(
+            ComputerControlService.scopeAllows(
+                bundleIdentifier: "com.example.Editor",
+                processIdentifier: 42,
+                scope: target
+            )
+        )
+        XCTAssertFalse(
+            ComputerControlService.scopeAllows(
+                bundleIdentifier: "com.example.Editor",
+                processIdentifier: 43,
+                scope: target
+            )
+        )
+        XCTAssertTrue(
+            AppModel.effectiveComputerControlEnabled(
+                globalEnabled: false,
+                hasLiveApplication: true,
+                liveApplicationConnected: true
+            )
+        )
+        XCTAssertFalse(
+            AppModel.effectiveComputerControlEnabled(
+                globalEnabled: true,
+                hasLiveApplication: true,
+                liveApplicationConnected: false
+            ),
+            "A disconnected exact scope must override broader global control."
+        )
+        XCTAssertFalse(
+            ComputerControlService.scopeAllows(
+                bundleIdentifier: "com.example.Other",
+                processIdentifier: 42,
+                scope: target
+            )
+        )
+    }
+
+    func testSimulatorAccessibilityCoordinatesFollowLandscapeRotation() {
+        let mapped = SimulatorControlService.mapAccessibilityPoint(
+            CGPoint(x: 549.5, y: 762),
+            displaySize: CGSize(width: 1_376, height: 1_032),
+            clockwiseQuarterTurns: 1
+        )
+        XCTAssertEqual(mapped.x, 614, accuracy: 0.01)
+        XCTAssertEqual(mapped.y, 549.5, accuracy: 0.01)
     }
 
     private func sessionInfo(id: String) -> [String: Any] {

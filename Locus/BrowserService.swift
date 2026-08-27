@@ -78,6 +78,37 @@ enum BrowserLoadOutcome {
 /// that a redirect loop or a wedged page can simply never deliver.
 @MainActor
 final class BrowserService: NSObject, ObservableObject {
+    final class DownloadContext: NSObject {
+        let id: UUID
+        let sourceURL: URL?
+        let agentInitiated: Bool
+        let requiresApproval: Bool
+        let approvalAction: String
+        weak var webView: WKWebView?
+        var destination: URL?
+        var scopedDirectory: URL?
+        var progressObservation: NSKeyValueObservation?
+
+        init(
+            id: UUID,
+            sourceURL: URL?,
+            agentInitiated: Bool,
+            requiresApproval: Bool? = nil,
+            approvalAction: String? = nil,
+            webView: WKWebView?
+        ) {
+            self.id = id
+            self.sourceURL = sourceURL
+            self.agentInitiated = agentInitiated
+            self.requiresApproval = requiresApproval ?? agentInitiated
+            self.approvalAction = approvalAction
+                ?? (agentInitiated ? "let the agent download this file" : "download this file")
+            self.webView = webView
+        }
+
+        deinit { scopedDirectory?.stopAccessingSecurityScopedResource() }
+    }
+
     /// One tab: a web view parked off-screen, plus the delegate state that
     /// drives it.
     @MainActor
@@ -106,6 +137,14 @@ final class BrowserService: NSObject, ObservableObject {
         fileprivate var observations: [NSKeyValueObservation] = []
         /// Whether this tab presents itself to pages as a mobile device.
         fileprivate(set) var emulatesDevice = false
+        /// Used for history attribution and to keep an agent-triggered upload,
+        /// popup, or save prompt from being mistaken for a person's action.
+        fileprivate var navigationSource: BrowserVisitSource = .user
+        fileprivate var agentInteractionUntil = Date.distantPast
+        fileprivate var pendingUserDownload = false
+        fileprivate var walletOrigin: String?
+        fileprivate var walletPendingRequestIDs: Set<String> = []
+        fileprivate var walletRequestTimes: [Date] = []
 
         init(id: String, host: OffscreenWebHost, ownerSessionID: String) {
             self.id = id
@@ -179,6 +218,11 @@ final class BrowserService: NSObject, ObservableObject {
         await BrowserService.proxiedFaviconFetch(url)
     }
     @Published private(set) var isExecuting = false
+    @Published var autofillPrompt: BrowserAutofillPrompt?
+    @Published var pendingPasswordSave: BrowserPasswordSavePrompt?
+    let autofillVault = BrowserAutofillVault()
+    let activityStore = BrowserActivityStore()
+    let permissionStore = BrowserPermissionStore()
     /// More live web views than this and the oldest idle one is closed. Each
     /// carries a WebContent process; a long day of team runs must not
     /// accumulate them without bound.
@@ -186,6 +230,12 @@ final class BrowserService: NSObject, ObservableObject {
 
     private var openTabs: [Tab] = []
     private var activeTabBySession: [String: String] = [:]
+    private struct ClosedTab {
+        var url: URL
+        var viewport: CGSize
+        var emulatesDevice: Bool
+    }
+    private var recentlyClosedTabs: [String: [ClosedTab]] = [:]
     private var tabCounter = 0
     /// Cancellation is per agent session. One shared counter would let a stop
     /// in one conversation relabel another conversation's genuine failure as
@@ -206,8 +256,14 @@ final class BrowserService: NSObject, ObservableObject {
     var deviceEmulationEnabled = true
     /// Whether new tabs allow the Web Inspector to attach.
     var webInspectorEnabled = false
+    var historyAccess: BrowserHistoryAccess = .disabled
+    var downloadDestination: BrowserDownloadDestinationKind = .systemDownloads
+    var downloadAskEveryTime = false
+    var customDownloadBookmark: Data?
+    var pageAppearance: BrowserPageAppearance = .automatic
     /// Surfaced as a toast by AppModel — download completions and the like.
     var onUserNotice: ((String) -> Void)?
+    private weak var walletGateway: WalletGateway?
 
     // FIFO admission. Concurrent workers queue instead of being refused, so a
     // background agent's call is never dropped just because the foreground one
@@ -230,6 +286,22 @@ final class BrowserService: NSObject, ObservableObject {
     /// explicit process pool: WebKit shares processes app-wide since macOS 12,
     /// so warming any web view on the same data store warms them all.
     private var prewarmView: WKWebView?
+    private var activeDownloads: [UUID: WKDownload] = [:]
+    private var resumeDataByDownload: [UUID: Data] = [:]
+    private var recentDownloadStarts: [String: [Date]] = [:]
+
+    func configureWalletGateway(_ gateway: WalletGateway) {
+        walletGateway = gateway
+        gateway.onBrowserGrantsRevoked = { [weak self] origin in
+            self?.emitWalletRevocation(origin: origin)
+        }
+        for tab in openTabs {
+            installUserScripts(
+                on: tab.webView.configuration.userContentController,
+                emulatingDevice: tab.emulatesDevice
+            )
+        }
+    }
 
     /// Point the browser at a workspace's profile. Ephemeral by default; the
     /// opt-in persistent store is keyed per **workspace** — session ids are
@@ -252,6 +324,9 @@ final class BrowserService: NSObject, ObservableObject {
         persistentProfileID = identifier
         dataStore = identifier.map { WKWebsiteDataStore(forIdentifier: $0) }
             ?? .nonPersistent()
+        let activityProfileID = identifier?.uuidString ?? "ephemeral"
+        activityStore.configure(profileID: activityProfileID, persistent: persistent)
+        permissionStore.configure(profileID: activityProfileID, persistent: persistent)
         proxyGeneration = nil
         // The prewarm view holds the old store; keeping it would warm the
         // wrong networking process.
@@ -259,10 +334,21 @@ final class BrowserService: NSObject, ObservableObject {
         publishTabs()
     }
 
-    /// Erase the active profile. The only sweeper this data has: nothing else
-    /// garbage-collects an abandoned workspace's cookies.
-    func clearBrowsingData() {
+    /// Erase selected parts of the active profile without silently deleting
+    /// downloaded files. Clearing all WebKit storage closes live tabs so pages
+    /// cannot immediately rewrite the data being removed.
+    func clearBrowsingData(_ types: Set<BrowserDataType> = Set(BrowserDataType.allCases)) {
+        if types.contains(.history) { activityStore.clearHistory() }
+        if types.contains(.downloadHistory) { activityStore.clearDownloads() }
+        let webKitTypes = types.reduce(into: Set<String>()) { result, type in
+            result.formUnion(type.webKitTypes)
+        }
+        guard !webKitTypes.isEmpty else {
+            onUserNotice?("Selected browser data cleared")
+            return
+        }
         let identifier = persistentProfileID
+        let storeBeingCleared = dataStore
         if !openTabs.isEmpty {
             cancelPendingActions()
             for tab in openTabs { retire(tab) }
@@ -277,13 +363,24 @@ final class BrowserService: NSObject, ObservableObject {
         favicons.removeAll()
         faviconHostsAttempted.removeAll()
         publishTabs()
-        if let identifier {
-            Task {
-                // Removal wants no live store references; recreate after.
-                try? await WKWebsiteDataStore.remove(forIdentifier: identifier)
-            }
+        Task {
+            await storeBeingCleared.removeData(ofTypes: webKitTypes, modifiedSince: .distantPast)
         }
-        onUserNotice?("Browsing data cleared")
+        onUserNotice?("Selected browser data cleared")
+    }
+
+    func websiteDataRecords() async -> [BrowserWebsiteDataRecord] {
+        let records = await dataStore.dataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes())
+        return records.map { .init(displayName: $0.displayName, dataTypes: $0.dataTypes) }
+            .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    }
+
+    func removeWebsiteData(named displayName: String) async {
+        let records = await dataStore.dataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes())
+            .filter { $0.displayName == displayName }
+        guard !records.isEmpty else { return }
+        await dataStore.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), for: records)
+        onUserNotice?("Data for \(displayName) cleared")
     }
 
     /// Deterministic per-workspace identity: the first 16 bytes of the
@@ -382,6 +479,9 @@ final class BrowserService: NSObject, ObservableObject {
     ) async -> [String: Any] {
         await acquire()
         isExecuting = true
+        if let tab = existingTab(for: sessionID) {
+            tab.agentInteractionUntil = Date().addingTimeInterval(3)
+        }
         defer {
             isExecuting = false
             release()
@@ -441,9 +541,94 @@ final class BrowserService: NSObject, ObservableObject {
                 return networkLog(arguments, sessionID: sessionID)
             case "browser_tabs":
                 return tabsTool(arguments, sessionID: sessionID)
+            case "browser_history":
+                return try await historyTool(arguments)
             default:
                 return ["error": "unsupported browser tool '\(tool)'"]
             }
+    }
+
+    private func historyTool(_ arguments: [String: Any]) async throws -> [String: Any] {
+        switch historyAccess {
+        case .disabled:
+            throw BrowserToolError("browsing history access is disabled in Browser Settings")
+        case .ask:
+            guard await requestHistoryAccess() else {
+                throw BrowserToolError("the user did not allow access to browsing history")
+            }
+        case .always:
+            break
+        }
+
+        let query = (arguments["query"] as? String) ?? ""
+        let limit = max(1, min((arguments["limit"] as? Int) ?? 25, 100))
+        let offset = max(0, Int((arguments["cursor"] as? String) ?? "0") ?? 0)
+        let from = Self.parseHistoryDate(arguments["date_from"] ?? arguments["from"])
+        let to = Self.parseHistoryDate(arguments["date_to"] ?? arguments["to"])
+        let matches = activityStore.searchHistory(query: query, limit: 1_000).filter { entry in
+            (from == nil || entry.visitedAt >= from!) && (to == nil || entry.visitedAt <= to!)
+        }
+        let page = Array(matches.dropFirst(offset).prefix(limit))
+        let formatter = ISO8601DateFormatter()
+        let entries = page.map { entry in
+            [
+                "url": entry.url,
+                "title": entry.title,
+                "visited_at": formatter.string(from: entry.visitedAt),
+            ]
+        }
+        let next = offset + page.count < matches.count ? String(offset + page.count) : nil
+        let data = try JSONSerialization.data(
+            withJSONObject: ["entries": entries, "next_cursor": (next as Any?) ?? NSNull()],
+            options: [.sortedKeys]
+        )
+        return ["text": String(decoding: data, as: UTF8.self)]
+    }
+
+    private static func parseHistoryDate(_ value: Any?) -> Date? {
+        if let number = value as? Double { return Date(timeIntervalSince1970: number) }
+        if let number = value as? Int { return Date(timeIntervalSince1970: Double(number)) }
+        guard let text = value as? String else { return nil }
+        return ISO8601DateFormatter().date(from: text)
+    }
+
+    private func requestHistoryAccess() async -> Bool {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return false }
+        let alert = NSAlert()
+        alert.messageText = "Allow this agent to read browsing history?"
+        alert.informativeText = "Only page titles, addresses, and visit times from the current workspace profile are shared. Passwords, autofill records, cookies, and downloads stay private."
+        alert.addButton(withTitle: "Allow Once")
+        alert.addButton(withTitle: "Don’t Allow")
+        return await withCheckedContinuation { continuation in
+            alert.beginSheetModal(for: window) { response in
+                continuation.resume(returning: response == .alertFirstButtonReturn)
+            }
+        }
+    }
+
+    private func resolvePermission(
+        _ kind: BrowserPermissionKind,
+        url: URL?,
+        action: String
+    ) async -> Bool {
+        switch permissionStore.decision(for: kind, url: url) {
+        case .allow:
+            return true
+        case .block:
+            return false
+        case .ask:
+            guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return false }
+            let alert = NSAlert()
+            alert.messageText = "Allow \(action)?"
+            alert.informativeText = "\(url?.host ?? "This site") is requesting this action. You can change its remembered permission in Browser Settings."
+            alert.addButton(withTitle: "Allow Once")
+            alert.addButton(withTitle: "Block")
+            return await withCheckedContinuation { continuation in
+                alert.beginSheetModal(for: window) { response in
+                    continuation.resume(returning: response == .alertFirstButtonReturn)
+                }
+            }
+        }
     }
 
     /// Fold any dialogs that fired during the action into its result, so the
@@ -470,6 +655,8 @@ final class BrowserService: NSObject, ObservableObject {
         budget: Duration
     ) async throws -> [String: Any] {
         let tab = try tab(for: sessionID, tabID: arguments["tab_id"] as? String)
+        tab.navigationSource = .agent
+        tab.agentInteractionUntil = Date().addingTimeInterval(3)
         let action = (arguments["url"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !action.isEmpty else {
@@ -533,9 +720,9 @@ final class BrowserService: NSObject, ObservableObject {
             """]
         case .becameDownload:
             return ["text": """
-            That link is a file, not a page: it is downloading into Locus's \
-            own folder and will be reported when it finishes. The previous \
-            page is still open.
+            That link is a file, not a page. Its download is waiting for the \
+            configured site permission and destination, and will be reported \
+            when it finishes. The previous page is still open.
             """]
         case .finished:
             let heading = title.isEmpty ? location : "\(title) — \(location)"
@@ -1418,6 +1605,11 @@ final class BrowserService: NSObject, ObservableObject {
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.underPageBackgroundColor = .clear
+        switch pageAppearance {
+        case .automatic: webView.appearance = nil
+        case .light: webView.appearance = NSAppearance(named: .aqua)
+        case .dark: webView.appearance = NSAppearance(named: .darkAqua)
+        }
         // Web Inspector lets any local process attach and read cookies and
         // localStorage for whatever the agent browsed. On in debug builds, and
         // in a shipping build only where the user has asked for it.
@@ -1482,6 +1674,17 @@ final class BrowserService: NSObject, ObservableObject {
             WeakScriptMessageHandler(self),
             name: BrowserBridge.captureHandlerName
         )
+        configuration.userContentController.add(
+            WeakScriptMessageHandler(self),
+            contentWorld: BrowserBridge.readerWorld,
+            name: BrowserBridge.autofillHandlerName
+        )
+        if walletGateway?.browserProviderEnabled == true {
+            configuration.userContentController.add(
+                WeakScriptMessageHandler(self),
+                name: BrowserBridge.walletHandlerName
+            )
+        }
         // Agent clicks carry no user gesture, so this blocks programmatic
         // window.open; links and user-gestured popups route through
         // createWebViewWith into a managed tab.
@@ -1506,7 +1709,11 @@ final class BrowserService: NSObject, ObservableObject {
     ) {
         controller.removeAllUserScripts()
         controller.addUserScript(BrowserBridge.readerScript())
+        controller.addUserScript(BrowserBridge.autofillScript())
         controller.addUserScript(BrowserBridge.captureScript())
+        if walletGateway?.browserProviderEnabled == true {
+            controller.addUserScript(BrowserBridge.walletProviderScript())
+        }
         if emulatingDevice {
             controller.addUserScript(BrowserBridge.deviceScript())
         }
@@ -1634,6 +1841,7 @@ final class BrowserService: NSObject, ObservableObject {
         }
         applyProxyIfNeeded()
         let tab = tab(for: sessionID)
+        tab.navigationSource = .user
         tab.webView.load(URLRequest(url: url, cachePolicy: BrowserScheme.cachePolicy(for: url)))
         publishTabs()
         return true
@@ -1641,18 +1849,21 @@ final class BrowserService: NSObject, ObservableObject {
 
     func userGoBack(sessionID: String) {
         guard let tab = existingTab(for: sessionID), tab.webView.canGoBack else { return }
+        tab.navigationSource = .user
         tab.webView.goBack()
         publishTabs()
     }
 
     func userGoForward(sessionID: String) {
         guard let tab = existingTab(for: sessionID), tab.webView.canGoForward else { return }
+        tab.navigationSource = .user
         tab.webView.goForward()
         publishTabs()
     }
 
     func userReload(sessionID: String) {
         guard let tab = existingTab(for: sessionID) else { return }
+        tab.navigationSource = .user
         applyProxyIfNeeded()
         tab.webView.reload()
         publishTabs()
@@ -1682,11 +1893,65 @@ final class BrowserService: NSObject, ObservableObject {
             $0.id == tabID && $0.ownerSessionID == sessionID
         }) else { return }
         let closed = openTabs.remove(at: index)
+        if let url = closed.webView.url {
+            recentlyClosedTabs[sessionID, default: []].insert(
+                .init(
+                    url: url,
+                    viewport: closed.host.viewport,
+                    emulatesDevice: closed.emulatesDevice
+                ),
+                at: 0
+            )
+            recentlyClosedTabs[sessionID] = Array(
+                recentlyClosedTabs[sessionID, default: []].prefix(10)
+            )
+        }
         retire(closed)
         if activeTabBySession[sessionID] == closed.id {
             activeTabBySession[sessionID] = openTabs
                 .first { $0.ownerSessionID == sessionID }?.id
         }
+        publishTabs()
+    }
+
+    func canReopenClosedTab(sessionID: String) -> Bool {
+        recentlyClosedTabs[sessionID]?.isEmpty == false
+    }
+
+    func userReopenClosedTab(sessionID: String) {
+        guard var closed = recentlyClosedTabs[sessionID], !closed.isEmpty else { return }
+        let item = closed.removeFirst()
+        recentlyClosedTabs[sessionID] = closed
+        let tab = makeTab(ownerSessionID: sessionID)
+        tab.host.setViewport(item.viewport)
+        _ = setDeviceEmulation(item.emulatesDevice, on: tab)
+        tab.navigationSource = .user
+        tab.webView.load(URLRequest(url: item.url))
+    }
+
+    func userDuplicateTab(_ tabID: String, sessionID: String) {
+        guard let source = openTabs.first(where: {
+            $0.id == tabID && $0.ownerSessionID == sessionID
+        }), let url = source.webView.url else { return }
+        let tab = makeTab(ownerSessionID: sessionID)
+        tab.host.setViewport(source.host.viewport)
+        _ = setDeviceEmulation(source.emulatesDevice, on: tab)
+        tab.navigationSource = .user
+        tab.webView.load(URLRequest(url: url))
+    }
+
+    func userMoveTab(_ tabID: String, before targetID: String, sessionID: String) {
+        guard tabID != targetID,
+              let sourceIndex = openTabs.firstIndex(where: {
+                  $0.id == tabID && $0.ownerSessionID == sessionID
+              }),
+              let targetIndex = openTabs.firstIndex(where: {
+                  $0.id == targetID && $0.ownerSessionID == sessionID
+              })
+        else { return }
+        let tab = openTabs.remove(at: sourceIndex)
+        let adjustedTarget = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex
+        openTabs.insert(tab, at: adjustedTarget)
         publishTabs()
     }
 
@@ -1792,7 +2057,11 @@ final class BrowserService: NSObject, ObservableObject {
     /// could already do this and the interface could not.
     func userSetColorScheme(_ scheme: String, sessionID: String) {
         guard let tab = existingTab(for: sessionID) else { return }
-        tab.webView.appearance = NSAppearance(named: scheme == "dark" ? .darkAqua : .aqua)
+        switch BrowserPageAppearance(rawValue: scheme) ?? .automatic {
+        case .automatic: tab.webView.appearance = nil
+        case .light: tab.webView.appearance = NSAppearance(named: .aqua)
+        case .dark: tab.webView.appearance = NSAppearance(named: .darkAqua)
+        }
     }
 
     /// Point one tab's emulated viewport at a size, from the interface.
@@ -1895,19 +2164,64 @@ extension BrowserService: WKNavigationDelegate {
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        preferences: WKWebpagePreferences,
+        decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void
     ) {
         guard let url = navigationAction.request.url else {
-            decisionHandler(.cancel)
+            decisionHandler(.cancel, preferences)
             return
         }
-        // Defence in depth: the tool refuses a disallowed scheme up front, and
-        // this catches anything the page itself tries.
-        decisionHandler(BrowserScheme.permits(url) ? .allow : .cancel)
+        if navigationAction.targetFrame?.isMainFrame != false,
+           let tab = tab(owning: webView)
+        {
+            tab.pendingUserDownload = navigationAction.navigationType == .linkActivated
+                || navigationAction.navigationType == .formSubmitted
+        }
+        preferences.allowsContentJavaScript = permissionStore.decision(
+            for: .javascript,
+            url: url
+        ) != .block
+        if BrowserScheme.permits(url) {
+            decisionHandler(.allow, preferences)
+            return
+        }
+        guard let scheme = url.scheme?.lowercased(),
+              !["file", "data", "javascript", "blob", "locus"].contains(scheme)
+        else {
+            decisionHandler(.cancel, preferences)
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self else {
+                decisionHandler(.cancel, preferences)
+                return
+            }
+            let allowed = await self.resolvePermission(
+                .externalSchemes,
+                url: webView.url ?? url,
+                action: "open \(scheme) in another application"
+            )
+            if allowed { NSWorkspace.shared.open(url) }
+            decisionHandler(.cancel, preferences)
+        }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        tab(owning: webView)?.gate?.settle(.finished)
+        if let tab = tab(owning: webView) {
+            tab.gate?.settle(.finished)
+            if let url = webView.url {
+                let nextOrigin = Self.walletOrigin(for: url)
+                if let previous = tab.walletOrigin, previous != nextOrigin {
+                    walletGateway?.revokeBrowserOrigin(previous)
+                }
+                tab.walletOrigin = nextOrigin
+                activityStore.recordVisit(
+                    url: url,
+                    title: webView.title ?? "",
+                    source: tab.navigationSource
+                )
+            }
+        }
         noteFaviconOpportunity(for: webView)
         publishTabs()
     }
@@ -1937,6 +2251,9 @@ extension BrowserService: WKNavigationDelegate {
         _ webView: WKWebView,
         didSameDocumentNavigation navigation: WKNavigation!
     ) {
+        if let tab = tab(owning: webView), let url = webView.url {
+            activityStore.recordVisit(url: url, title: webView.title ?? "", source: tab.navigationSource)
+        }
         publishTabs()
     }
 
@@ -2058,6 +2375,24 @@ extension BrowserService: WKUIDelegate {
         guard let url = navigationAction.request.url, BrowserScheme.permits(url) else {
             return nil
         }
+        let permission = permissionStore.decision(for: .popups, url: webView.url)
+        if permission == .block || (permission == .ask && opener.agentInteractionUntil > Date()) {
+            recordDialog(
+                on: webView,
+                kind: "popup",
+                message: url.absoluteString,
+                outcome: "blocked by site permissions"
+            )
+            return nil
+        }
+        if permission == .ask {
+            let alert = NSAlert()
+            alert.messageText = "Allow a popup from \(webView.url?.host ?? "this site")?"
+            alert.informativeText = url.absoluteString
+            alert.addButton(withTitle: "Allow Once")
+            alert.addButton(withTitle: "Block")
+            guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        }
         let popup = makeTab(ownerSessionID: opener.ownerSessionID, adopting: configuration)
         // A popup opened from a page being viewed as a phone has to stay a
         // phone. The adopted configuration already carries the opener's scripts;
@@ -2075,21 +2410,47 @@ extension BrowserService: WKUIDelegate {
         userCloseTab(tab.id, sessionID: tab.ownerSessionID)
     }
 
-    /// A page's file input must never reach the user's files: an agent click
-    /// on `<input type=file>` would otherwise open a picker over their disk.
+    /// Uploads remain a user-only capability. An agent can reveal the control,
+    /// but only a physical user action may open this native picker.
     func webView(
         _ webView: WKWebView,
         runOpenPanelWith parameters: WKOpenPanelParameters,
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping ([URL]?) -> Void
     ) {
-        recordDialog(
-            on: webView,
-            kind: "file picker",
-            message: "the page asked for a file upload",
-            outcome: "refused; Locus does not upload local files"
-        )
-        completionHandler(nil)
+        guard let tab = tab(owning: webView), tab.agentInteractionUntil <= Date() else {
+            recordDialog(
+                on: webView,
+                kind: "file picker",
+                message: "the page asked for a file upload",
+                outcome: "refused; agents cannot select local files"
+            )
+            completionHandler(nil)
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self,
+                  await self.resolvePermission(
+                    .fileUploads,
+                    url: webView.url,
+                    action: "choose local files for upload"
+                  )
+            else {
+                completionHandler(nil)
+                return
+            }
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = parameters.allowsDirectories
+            panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+            if let window = webView.window ?? NSApp.keyWindow {
+                panel.beginSheetModal(for: window) { response in
+                    completionHandler(response == .OK ? panel.urls : nil)
+                }
+            } else {
+                completionHandler(panel.runModal() == .OK ? panel.urls : nil)
+            }
+        }
     }
 
     func webView(
@@ -2099,7 +2460,30 @@ extension BrowserService: WKUIDelegate {
         type: WKMediaCaptureType,
         decisionHandler: @escaping (WKPermissionDecision) -> Void
     ) {
-        decisionHandler(.deny)
+        let kinds: [BrowserPermissionKind]
+        switch type {
+        case .camera: kinds = [.camera]
+        case .microphone: kinds = [.microphone]
+        case .cameraAndMicrophone: kinds = [.camera, .microphone]
+        @unknown default: kinds = [.camera, .microphone]
+        }
+        Task { @MainActor [weak self] in
+            guard let self else {
+                decisionHandler(.deny)
+                return
+            }
+            for kind in kinds {
+                guard await self.resolvePermission(
+                    kind,
+                    url: webView.url,
+                    action: "use the \(kind.title.lowercased())"
+                ) else {
+                    decisionHandler(.deny)
+                    return
+                }
+            }
+            decisionHandler(.grant)
+        }
     }
 
     private func recordDialog(
@@ -2123,23 +2507,69 @@ extension BrowserService: WKUIDelegate {
 // MARK: - Downloads
 
 extension BrowserService: WKDownloadDelegate {
-    /// Everything lands in Locus's own folder — never the user's Downloads —
-    /// uniquified, size-capped, quarantined, and never opened. That containment
-    /// is why no per-download prompt exists: the permission layer cannot see a
-    /// download coming anyway (it arises from an ordinary click's navigation
-    /// policy, not a tool call).
     static let maximumDownloadBytes: Int64 = 512 * 1_024 * 1_024
 
-    private static var downloadDestinationKey: UInt8 = 0
+    private static var downloadContextKey: UInt8 = 0
 
     private func adopt(_ download: WKDownload, from webView: WKWebView) {
         download.delegate = self
+        let tab = tab(owning: webView)
+        let agentInitiated = (tab?.agentInteractionUntil ?? .distantPast) > Date()
+        let directUserGesture = tab?.pendingUserDownload == true && !agentInitiated
+        tab?.pendingUserDownload = false
+        let origin = (download.originalRequest?.url ?? webView.url).map {
+            BrowserPermissionStore.normalizedOrigin($0)
+        } ?? "unknown"
+        let now = Date()
+        let recent = recentDownloadStarts[origin, default: []]
+            .filter { now.timeIntervalSince($0) < 30 }
+        recentDownloadStarts[origin] = recent + [now]
+        let repeated = directUserGesture && !recent.isEmpty
+        let requiresApproval = agentInitiated || !directUserGesture || repeated
+        let context = DownloadContext(
+            id: UUID(),
+            sourceURL: download.originalRequest?.url ?? webView.url,
+            agentInitiated: agentInitiated,
+            requiresApproval: requiresApproval,
+            approvalAction: agentInitiated
+                ? "let the agent download this file"
+                : repeated
+                    ? "allow another download from this site"
+                    : directUserGesture
+                        ? "download this file"
+                        : "allow this site to start a download automatically",
+            webView: webView
+        )
+        objc_setAssociatedObject(
+            download,
+            &Self.downloadContextKey,
+            context,
+            .OBJC_ASSOCIATION_RETAIN
+        )
+        activeDownloads[context.id] = download
+        context.progressObservation = download.progress.observe(\.fractionCompleted) {
+            [weak self, weak context] progress, _ in
+            guard let self, let context else { return }
+            Task { @MainActor in
+                self.activityStore.updateDownload(
+                    id: context.id,
+                    progress: progress.fractionCompleted
+                )
+            }
+        }
+        activityStore.beginDownload(.init(
+            id: context.id,
+            profileID: activityStore.currentProfileID,
+            sourceURL: context.sourceURL?.absoluteString ?? "",
+            destinationPath: "",
+            fileName: context.sourceURL?.lastPathComponent.nilIfBlank ?? "download"
+        ))
         // The navigation this became will never fire didFinish/didFail; the
         // waiting tool gets its own honest answer.
-        tab(owning: webView)?.gate?.settle(.becameDownload)
+        tab?.gate?.settle(.becameDownload)
     }
 
-    static func downloadsDirectory() -> URL? {
+    static func locusDownloadsDirectory() -> URL? {
         guard let base = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -2160,34 +2590,57 @@ extension BrowserService: WKDownloadDelegate {
     ) {
         if response.expectedContentLength > Self.maximumDownloadBytes {
             notifyDownload(download, line: "[download] refused: larger than 512 MB")
+            if let context = downloadContext(download) {
+                activityStore.updateDownload(
+                    id: context.id,
+                    state: .failed,
+                    error: "Larger than 512 MB"
+                )
+            }
             completionHandler(nil)
             return
         }
-        guard let directory = Self.downloadsDirectory() else {
+        guard let context = downloadContext(download) else {
             completionHandler(nil)
             return
         }
-        // The destination must not exist; step the name until it doesn't.
-        let base = suggestedFilename.isEmpty ? "download" : suggestedFilename
-        var candidate = directory.appendingPathComponent(base)
-        var counter = 2
-        while FileManager.default.fileExists(atPath: candidate.path) {
-            let stem = (base as NSString).deletingPathExtension
-            let ext = (base as NSString).pathExtension
-            let renamed = ext.isEmpty ? "\(stem)-\(counter)" : "\(stem)-\(counter).\(ext)"
-            candidate = directory.appendingPathComponent(renamed)
-            counter += 1
+        Task { @MainActor [weak self] in
+            guard let self else {
+                completionHandler(nil)
+                return
+            }
+            let permissionKind: BrowserPermissionKind = context.requiresApproval
+                ? .agentDownloads : .userDownloads
+            guard await self.resolvePermission(
+                permissionKind,
+                url: context.sourceURL,
+                action: context.approvalAction
+            ) else {
+                self.activityStore.updateDownload(
+                    id: context.id,
+                    state: .cancelled,
+                    error: "Blocked by site permissions"
+                )
+                completionHandler(nil)
+                return
+            }
+            let destination = await self.chooseDownloadDestination(
+                suggestedFilename: suggestedFilename,
+                context: context
+            )
+            context.destination = destination
+            if let destination {
+                self.activityStore.updateDownload(
+                    id: context.id,
+                    destinationPath: destination.path
+                )
+            }
+            completionHandler(destination)
         }
-        objc_setAssociatedObject(
-            download, &Self.downloadDestinationKey, candidate, .OBJC_ASSOCIATION_RETAIN
-        )
-        completionHandler(candidate)
     }
 
     func downloadDidFinish(_ download: WKDownload) {
-        guard let destination = objc_getAssociatedObject(
-            download, &Self.downloadDestinationKey
-        ) as? URL else { return }
+        guard let context = downloadContext(download), let destination = context.destination else { return }
         // Quarantined per file — the targeted alternative to a process-wide
         // LSFileQuarantineEnabled, which would stamp every file the app writes.
         var values = URLResourceValues()
@@ -2196,6 +2649,8 @@ extension BrowserService: WKDownloadDelegate {
         ]
         var url = destination
         try? url.setResourceValues(values)
+        activityStore.updateDownload(id: context.id, state: .completed, progress: 1)
+        finishDownload(context)
         notifyDownload(download, line: "[download] saved \(destination.lastPathComponent) to \(destination.path)")
     }
 
@@ -2204,7 +2659,176 @@ extension BrowserService: WKDownloadDelegate {
         didFailWithError error: Error,
         resumeData: Data?
     ) {
+        if let context = downloadContext(download) {
+            if let resumeData { resumeDataByDownload[context.id] = resumeData }
+            activityStore.updateDownload(
+                id: context.id,
+                state: .failed,
+                error: error.localizedDescription
+            )
+            finishDownload(context, keepResumeData: resumeData != nil)
+        }
         notifyDownload(download, line: "[download] failed: \(error.localizedDescription)")
+    }
+
+    func pauseDownload(_ id: UUID) {
+        guard let download = activeDownloads[id] else { return }
+        download.cancel { [weak self] resumeData in
+            Task { @MainActor in
+                guard let self else { return }
+                if let resumeData { self.resumeDataByDownload[id] = resumeData }
+                self.activeDownloads.removeValue(forKey: id)
+                self.activityStore.updateDownload(id: id, state: .paused)
+            }
+        }
+    }
+
+    func resumeDownload(_ id: UUID) {
+        guard let data = resumeDataByDownload[id],
+              let context = activityStore.downloads.first(where: { $0.id == id }),
+              let webView = openTabs.first?.webView
+        else { return }
+        webView.resumeDownload(fromResumeData: data) { [weak self] download in
+            guard let self else { return }
+            Task { @MainActor in
+                let metadata = DownloadContext(
+                    id: id,
+                    sourceURL: URL(string: context.sourceURL),
+                    agentInitiated: false,
+                    requiresApproval: false,
+                    webView: webView
+                )
+                objc_setAssociatedObject(
+                    download,
+                    &Self.downloadContextKey,
+                    metadata,
+                    .OBJC_ASSOCIATION_RETAIN
+                )
+                self.activeDownloads[id] = download
+                self.resumeDataByDownload.removeValue(forKey: id)
+                download.delegate = self
+                self.activityStore.updateDownload(id: id, state: .running, error: nil)
+            }
+        }
+    }
+
+    func cancelDownload(_ id: UUID) {
+        guard let download = activeDownloads[id] else {
+            resumeDataByDownload.removeValue(forKey: id)
+            activityStore.updateDownload(id: id, state: .cancelled)
+            return
+        }
+        download.cancel { [weak self] _ in
+            Task { @MainActor in
+                self?.activeDownloads.removeValue(forKey: id)
+                self?.resumeDataByDownload.removeValue(forKey: id)
+                self?.activityStore.updateDownload(id: id, state: .cancelled)
+            }
+        }
+    }
+
+    func retryDownload(_ id: UUID) {
+        guard let record = activityStore.downloads.first(where: { $0.id == id }),
+              let url = URL(string: record.sourceURL),
+              let tab = openTabs.first
+        else { return }
+        tab.navigationSource = .user
+        tab.webView.load(URLRequest(url: url))
+    }
+
+    func openDownload(_ id: UUID) {
+        guard let url = activityStore.downloads.first(where: { $0.id == id })?.destinationURL,
+              FileManager.default.fileExists(atPath: url.path)
+        else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    func revealDownload(_ id: UUID) {
+        guard let url = activityStore.downloads.first(where: { $0.id == id })?.destinationURL else {
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    @discardableResult
+    func deleteDownloadedFile(_ id: UUID) -> Bool {
+        guard let url = activityStore.downloads.first(where: { $0.id == id })?.destinationURL else {
+            return false
+        }
+        do {
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            activityStore.removeDownload(id)
+            return true
+        } catch {
+            onUserNotice?("Could not move \(url.lastPathComponent) to Trash")
+            return false
+        }
+    }
+
+    private func chooseDownloadDestination(
+        suggestedFilename: String,
+        context: DownloadContext
+    ) async -> URL? {
+        let base = suggestedFilename.nilIfBlank ?? "download"
+        if downloadAskEveryTime, !context.agentInitiated {
+            guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return nil }
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = base
+            return await withCheckedContinuation { continuation in
+                panel.beginSheetModal(for: window) { response in
+                    continuation.resume(returning: response == .OK ? panel.url : nil)
+                }
+            }
+        }
+
+        var directory: URL?
+        switch downloadDestination {
+        case .systemDownloads:
+            directory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        case .locus:
+            directory = Self.locusDownloadsDirectory()
+        case .custom:
+            guard let bookmark = customDownloadBookmark else { return nil }
+            var stale = false
+            directory = try? URL(
+                resolvingBookmarkData: bookmark,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &stale
+            )
+            if let directory, directory.startAccessingSecurityScopedResource() {
+                context.scopedDirectory = directory
+            }
+        }
+        guard let directory else { return nil }
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return Self.uniqueDestination(in: directory, suggestedFilename: base)
+    }
+
+    private static func uniqueDestination(in directory: URL, suggestedFilename: String) -> URL {
+        var candidate = directory.appendingPathComponent(suggestedFilename)
+        var counter = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            let stem = (suggestedFilename as NSString).deletingPathExtension
+            let ext = (suggestedFilename as NSString).pathExtension
+            let renamed = ext.isEmpty ? "\(stem)-\(counter)" : "\(stem)-\(counter).\(ext)"
+            candidate = directory.appendingPathComponent(renamed)
+            counter += 1
+        }
+        return candidate
+    }
+
+    private func downloadContext(_ download: WKDownload) -> DownloadContext? {
+        objc_getAssociatedObject(download, &Self.downloadContextKey) as? DownloadContext
+    }
+
+    private func finishDownload(_ context: DownloadContext, keepResumeData: Bool = false) {
+        context.progressObservation?.invalidate()
+        context.progressObservation = nil
+        context.scopedDirectory?.stopAccessingSecurityScopedResource()
+        context.scopedDirectory = nil
+        activeDownloads.removeValue(forKey: context.id)
+        if !keepResumeData { resumeDataByDownload.removeValue(forKey: context.id) }
     }
 
     private func notifyDownload(_ download: WKDownload, line: String) {
@@ -2220,6 +2844,103 @@ extension BrowserService: WKDownloadDelegate {
     }
 }
 
+// MARK: - User-only Autofill
+
+extension BrowserService {
+    func dismissAutofillPrompt() { autofillPrompt = nil }
+    func dismissPasswordSavePrompt() { pendingPasswordSave = nil }
+
+    func acceptPasswordSavePrompt() async -> Bool {
+        guard let prompt = pendingPasswordSave else { return false }
+        guard await autofillVault.unlock(reason: "Save a password in Locus Autofill") else {
+            return false
+        }
+        do {
+            try autofillVault.save(.init(
+                origin: prompt.origin,
+                username: prompt.username,
+                password: prompt.password
+            ))
+            pendingPasswordSave = nil
+            if autofillVault.authMode == .eachFill { autofillVault.lock() }
+            onUserNotice?("Password saved in Autofill")
+            return true
+        } catch {
+            onUserNotice?(error.localizedDescription)
+            return false
+        }
+    }
+
+    func fillPassword(_ id: UUID, sessionID: String) async -> Bool {
+        guard await prepareVaultForFill(),
+              let record = autofillVault.passwords.first(where: { $0.id == id })
+        else { return false }
+        let payload: [String: Any] = [
+            "kind": "password",
+            "username": record.username,
+            "password": record.password,
+        ]
+        return await completeFill(payload, sessionID: sessionID)
+    }
+
+    func fillContact(_ id: UUID, sessionID: String) async -> Bool {
+        guard await prepareVaultForFill(),
+              let record = autofillVault.contacts.first(where: { $0.id == id })
+        else { return false }
+        let payload: [String: Any] = [
+            "kind": "contact",
+            "fullName": record.fullName,
+            "organization": record.organization,
+            "email": record.email,
+            "phone": record.phone,
+            "street": record.street,
+            "city": record.city,
+            "region": record.region,
+            "postalCode": record.postalCode,
+            "country": record.country,
+        ]
+        return await completeFill(payload, sessionID: sessionID)
+    }
+
+    func fillCard(_ id: UUID, sessionID: String) async -> Bool {
+        guard await prepareVaultForFill(),
+              let record = autofillVault.cards.first(where: { $0.id == id })
+        else { return false }
+        // There is intentionally no security-code key in this payload.
+        let payload: [String: Any] = [
+            "kind": "paymentCard",
+            "cardholder": record.cardholder,
+            "number": record.normalizedNumber,
+            "expirationMonth": String(format: "%02d", record.expirationMonth),
+            "expirationYear": String(record.expirationYear),
+        ]
+        return await completeFill(payload, sessionID: sessionID)
+    }
+
+    private func prepareVaultForFill() async -> Bool {
+        if autofillVault.authMode == .eachFill { autofillVault.lock() }
+        return await autofillVault.unlock(reason: "Fill saved information in this page")
+    }
+
+    private func completeFill(_ payload: [String: Any], sessionID: String) async -> Bool {
+        guard let tab = existingTab(for: sessionID) else { return false }
+        do {
+            let result = try await tab.webView.callAsyncJavaScript(
+                "return globalThis.__locusAutofill && globalThis.__locusAutofill.fill(record)",
+                arguments: ["record": payload],
+                in: nil,
+                contentWorld: BrowserBridge.readerWorld
+            )
+            autofillPrompt = nil
+            if autofillVault.authMode == .eachFill { autofillVault.lock() }
+            return (result as? Bool) == true
+        } catch {
+            if autofillVault.authMode == .eachFill { autofillVault.lock() }
+            return false
+        }
+    }
+}
+
 // MARK: - Capture
 
 extension BrowserService: WKScriptMessageHandler {
@@ -2231,9 +2952,191 @@ extension BrowserService: WKScriptMessageHandler {
               let webView = message.webView,
               let tab = tab(owning: webView)
         else { return }
+        if message.name == BrowserBridge.walletHandlerName {
+            handleWalletMessage(payload, tab: tab, webView: webView, message: message)
+            return
+        }
+        if message.name == BrowserBridge.autofillHandlerName {
+            handleAutofillMessage(payload, tab: tab, webView: webView)
+            return
+        }
         tab.log.note(dropped: (payload["dropped"] as? Int) ?? 0)
         for entry in (payload["entries"] as? [[String: Any]]) ?? [] {
             record(entry, into: tab.log)
+        }
+    }
+
+    private func handleWalletMessage(
+        _ payload: [String: Any],
+        tab: Tab,
+        webView: WKWebView,
+        message: WKScriptMessage
+    ) {
+        guard message.frameInfo.isMainFrame,
+              walletGateway?.browserProviderEnabled == true,
+              let id = payload["id"] as? String, id.count <= 128,
+              let method = payload["method"] as? String, method.count <= 96,
+              let origin = Self.walletOrigin(for: message.frameInfo.securityOrigin),
+              Self.walletOrigin(for: webView.url) == origin else { return }
+        let params = payload["params"] as? [Any] ?? []
+        let now = Date()
+        tab.walletRequestTimes.removeAll { now.timeIntervalSince($0) > 10 }
+        guard JSONSerialization.isValidJSONObject(params),
+              let paramsData = try? JSONSerialization.data(withJSONObject: params),
+              paramsData.count <= 256 * 1024,
+              tab.walletPendingRequestIDs.count < 32,
+              tab.walletRequestTimes.count < 80,
+              tab.walletPendingRequestIDs.insert(id).inserted else {
+            sendWalletResponse(
+                walletError(-32005, "The website sent too many or invalid wallet requests."),
+                requestID: id, origin: origin, tab: tab, webView: webView
+            )
+            return
+        }
+        tab.walletRequestTimes.append(now)
+        Task { @MainActor [weak self, weak webView] in
+            guard let self, let webView else { return }
+            defer { tab.walletPendingRequestIDs.remove(id) }
+            let response = await self.walletResponse(method: method, params: params, origin: origin)
+            guard Self.walletOrigin(for: webView.url) == origin else { return }
+            self.sendWalletResponse(
+                response, requestID: id, origin: origin, tab: tab, webView: webView
+            )
+        }
+    }
+
+    private func sendWalletResponse(
+        _ response: [String: Any],
+        requestID: String,
+        origin: String,
+        tab: Tab,
+        webView: WKWebView
+    ) {
+        guard tab.webView === webView, Self.walletOrigin(for: webView.url) == origin else { return }
+        Task { @MainActor [weak webView] in
+            _ = try? await webView?.callAsyncJavaScript(
+                "globalThis.__locusWalletReceive(requestID, response)",
+                arguments: ["requestID": requestID, "response": response],
+                in: nil,
+                contentWorld: .page
+            )
+        }
+    }
+
+    private func walletResponse(method: String, params: [Any], origin: String) async -> [String: Any] {
+        guard let gateway = walletGateway else { return walletError(4900, "Locus Vault is unavailable.") }
+        do {
+            switch method {
+            case "eth_requestAccounts":
+                guard let accounts = await gateway.requestBrowserAccounts(origin: origin) else {
+                    return walletError(4001, "The Locus Vault connection was rejected.")
+                }
+                emitWalletEvent("accountsChanged", value: accounts, origin: origin)
+                return ["result": accounts]
+            case "eth_accounts":
+                return ["result": gateway.browserAccounts(origin: origin)]
+            case "eth_chainId":
+                return ["result": "0xaa36a7"]
+            case "wallet_switchEthereumChain":
+                guard let object = params.first as? [String: Any],
+                      (object["chainId"] as? String)?.lowercased() == "0xaa36a7" else {
+                    return walletError(4902, "Only Sepolia is supported.")
+                }
+                return ["result": NSNull()]
+            case "eth_sendTransaction":
+                guard let transaction = params.first as? [String: Any] else {
+                    return walletError(-32602, "A transaction object is required.")
+                }
+                return ["result": try await gateway.browserSendTransaction(
+                    origin: origin, transaction: transaction
+                )]
+            case "personal_sign", "eth_sign", "eth_signTypedData", "eth_signTypedData_v3",
+                 "eth_signTypedData_v4", "wallet_addEthereumChain":
+                return walletError(4200, "Locus Vault does not support message signing or chain addition.")
+            default:
+                return ["result": try await gateway.browserReadRPC(
+                    origin: origin, method: method, params: params
+                )]
+            }
+        } catch {
+            return walletError(4100, error.localizedDescription)
+        }
+    }
+
+    private func walletError(_ code: Int, _ message: String) -> [String: Any] {
+        ["error": ["code": code, "message": message]]
+    }
+
+    private func emitWalletEvent(_ event: String, value: Any, origin: String?) {
+        for tab in openTabs where origin == nil || tab.walletOrigin == origin {
+            Task { @MainActor [weak webView = tab.webView] in
+                try? await webView?.callAsyncJavaScript(
+                    "globalThis.__locusWalletEvent && globalThis.__locusWalletEvent(eventName, value)",
+                    arguments: ["eventName": event, "value": value],
+                    in: nil,
+                    contentWorld: .page
+                )
+            }
+        }
+    }
+
+    private func emitWalletRevocation(origin: String?) {
+        emitWalletEvent("accountsChanged", value: [String](), origin: origin)
+    }
+
+    private static func walletOrigin(for url: URL?) -> String? {
+        guard let url, let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
+              let host = url.host?.lowercased() else { return nil }
+        let isStandardPort = (scheme == "https" && url.port == 443)
+            || (scheme == "http" && url.port == 80)
+        let port = url.port.map { isStandardPort ? "" : ":\($0)" } ?? ""
+        return "\(scheme)://\(host)\(port)"
+    }
+
+    private static func walletOrigin(for securityOrigin: WKSecurityOrigin) -> String? {
+        let scheme = securityOrigin.protocol.lowercased()
+        guard ["http", "https"].contains(scheme), !securityOrigin.host.isEmpty else { return nil }
+        let standard = (scheme == "https" && securityOrigin.port == 443)
+            || (scheme == "http" && securityOrigin.port == 80) || securityOrigin.port == 0
+        return "\(scheme)://\(securityOrigin.host.lowercased())\(standard ? "" : ":\(securityOrigin.port)")"
+    }
+
+    private func handleAutofillMessage(
+        _ payload: [String: Any],
+        tab: Tab,
+        webView: WKWebView
+    ) {
+        // Real agent input is trusted by WebKit; this native activity marker is
+        // the independent boundary that prevents it from surfacing or saving
+        // credentials through the user-only bridge.
+        guard tab.agentInteractionUntil <= Date() else { return }
+        let origin = (payload["origin"] as? String)
+            .map(BrowserAutofillVault.normalizedOrigin) ?? ""
+        switch payload["event"] as? String {
+        case "focus":
+            guard let raw = payload["category"] as? String,
+                  let category = BrowserAutofillCategory(rawValue: raw)
+            else { return }
+            let rect = (payload["rect"] as? [Double]) ?? []
+            autofillPrompt = .init(
+                sessionID: tab.ownerSessionID,
+                origin: origin,
+                category: category,
+                fieldName: (payload["name"] as? String) ?? "",
+                fieldRect: rect.count == 4
+                    ? CGRect(x: rect[0], y: rect[1], width: rect[2], height: rect[3])
+                    : .zero
+            )
+        case "passwordSubmit":
+            guard let password = payload["password"] as? String, !password.isEmpty else { return }
+            pendingPasswordSave = .init(
+                sessionID: tab.ownerSessionID,
+                origin: origin,
+                username: (payload["username"] as? String) ?? "",
+                password: password
+            )
+        default:
+            break
         }
     }
 

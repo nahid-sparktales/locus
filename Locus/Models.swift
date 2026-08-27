@@ -392,6 +392,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     case files
     case terminal
     case preview
+    case simulator
     case notes
     case checkpoints
     case runs
@@ -405,7 +406,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     /// and Browser have dedicated rail buttons and open only when explicitly
     /// requested (or when an active request needs them).
     static let workspaceTabs: [InspectorTab] = [
-        .changes, .files, .terminal, .notes, .runs, .agents,
+        .changes, .files, .terminal, .simulator, .notes, .runs, .agents,
         .router, .proxies,
     ]
 
@@ -421,6 +422,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .files: "Files"
         case .terminal: "Terminal"
         case .preview: "Browser"
+        case .simulator: "Simulator"
         case .notes: "Notes"
         case .checkpoints: "Checkpoints"
         case .runs: "Runs"
@@ -437,6 +439,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .files: "folder"
         case .terminal: "terminal"
         case .preview: "globe"
+        case .simulator: "ipad.and.iphone"
         case .notes: "note.text"
         case .checkpoints: "clock.arrow.circlepath"
         case .runs: "point.3.connected.trianglepath.dotted"
@@ -460,7 +463,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .runs: "7"
         case .agents: "8"
         case .notes: "9"
-        case .router, .proxies: nil
+        case .simulator, .router, .proxies: nil
         }
     }
 }
@@ -501,6 +504,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case agents = "Agents & Teams"
     case knowledge = "Memory & Knowledge"
     case browser = "Browser"
+    case wallet = "Wallets"
     case extensions = "Extensions"
     case permissions = "Permissions"
     case network = "Network"
@@ -517,6 +521,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .chat: "bubble.left.and.bubble.right"
         case .network: "network"
         case .browser: "safari"
+        case .wallet: "wallet.bifold"
         case .accounts: "person.crop.circle"
         case .agents: "person.3.sequence.fill"
         case .knowledge: "books.vertical.fill"
@@ -542,7 +547,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general, .appearance, .chat: .app
         case .accounts, .agents, .knowledge: .models
-        case .browser, .extensions, .permissions, .network: .tools
+        case .browser, .wallet, .extensions, .permissions, .network: .tools
         case .developer, .updates, .shortcuts: .system
         }
     }
@@ -567,6 +572,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .agents: "Profiles, teams, routing, and evaluation"
         case .knowledge: "Workspace memory, indexing, and handoffs"
         case .browser: "Built-in browsing, input, and privacy"
+        case .wallet: "Locus Vault, transaction policies, and external approval wallets"
         case .extensions: "Skills and MCP integrations"
         case .permissions: "Agent authority and macOS access"
         case .network: "Proxy routing and connection security"
@@ -612,13 +618,23 @@ struct SettingsSearchDescriptor: Identifiable, Hashable {
         .init("settings.launchAtLogin", page: .general, title: "Launch at login", keywords: ["startup", "menu bar"]),
         .init("settings.maximumActiveChats", page: .general, title: "Background chats", keywords: ["concurrency", "worktrees"]),
         .init("settings.appearance", page: .appearance, title: "Appearance", keywords: ["light", "dark", "system"]),
+        .init("settings.accentColor", page: .appearance, title: "Accent colour", keywords: ["logo", "brand", "lime", "green", "blue", "purple", "orange", "pink", "custom"]),
         .init("settings.showTeamProgressInHeader", page: .appearance, title: "Header status", keywords: ["team", "context usage"]),
         .init("settings.notesScope", page: .chat, title: "Conversation notes", keywords: ["workspace", "scratchpad"]),
         .init("settings.thinkingVisibility", page: .chat, title: "Reasoning display", keywords: ["thinking", "collapsed"]),
         .init("settings.toolActivityVisibility", page: .chat, title: "Tool activity display", keywords: ["tools", "collapsed"]),
         .init("settings.accounts.add", page: .accounts, title: "Provider accounts", keywords: ["API", "model", "Ollama"]),
+        .init("settings.wallet.status", page: .wallet, title: "Locus Vault", keywords: ["crypto", "Phantom", "MetaMask", "Slush", "Sui", "Solana", "EVM"]),
         .init("settings.localContextWindow", page: .accounts, title: "Local context window", keywords: ["tokens", "Ollama"], minimumLevel: .advanced),
         .init("settings.browserEnabled", page: .browser, title: "Built-in browser", keywords: ["web", "privacy"]),
+        .init("settings.browser.passwords", page: .browser, title: "Passwords and Autofill", keywords: ["login", "credentials", "save", "fill"]),
+        .init("settings.browser.contacts", page: .browser, title: "Contact information", keywords: ["address", "email", "phone", "autofill"]),
+        .init("settings.browser.cards", page: .browser, title: "Payment cards", keywords: ["credit card", "billing", "autofill", "CVV"]),
+        .init("settings.browser.history", page: .browser, title: "Browsing history", keywords: ["visits", "search", "agent access", "clear"]),
+        .init("settings.browser.downloads", page: .browser, title: "Downloads", keywords: ["destination", "folder", "pause", "resume"]),
+        .init("settings.browser.permissions", page: .browser, title: "Site permissions", keywords: ["camera", "microphone", "popups", "JavaScript", "uploads"]),
+        .init("settings.browser.siteData", page: .browser, title: "Cookies and site data", keywords: ["cache", "storage", "clear"]),
+        .init("settings.browser.import", page: .browser, title: "Import browser data", keywords: ["CSV", "vCard", "JSON"]),
         .init("settings.browser.webInspector", page: .browser, title: "Browser Web Inspector", keywords: ["Safari", "developer", "debug"], minimumLevel: .advanced),
         .init("settings.permissionMode", page: .permissions, title: "Agent permissions", keywords: ["approval", "full access"]),
         .init("settings.proxyMode", page: .network, title: "Outbound proxy", keywords: ["SOCKS5", "HTTP", "network"]),
@@ -2220,6 +2236,17 @@ struct ContextFile: Identifiable, Codable, Hashable {
 enum ChatAttachmentKind: String, Hashable, Sendable {
     case text
     case image
+    case applicationSnapshot = "application_snapshot"
+}
+
+struct ApplicationSnapshotContext: Hashable, Sendable {
+    let bundleIdentifier: String
+    let processIdentifier: Int32
+    let applicationName: String
+    let windowTitle: String
+    let windowIdentifier: UInt32?
+    let accessibilityText: String
+    let iconData: Data?
 }
 
 /// An explicitly selected, one-message input for the composer, valid in every
@@ -2234,6 +2261,7 @@ struct ChatAttachment: Identifiable, Hashable, Sendable {
     let imageData: Data?
     let mimeType: String?
     let issue: String?
+    let applicationContext: ApplicationSnapshotContext?
     /// Display name for content with no real file behind it (pasted images);
     /// the synthesized `url` then only provides Hashable/dedupe identity.
     let overrideName: String?
@@ -2246,7 +2274,8 @@ struct ChatAttachment: Identifiable, Hashable, Sendable {
         imageData: Data? = nil,
         mimeType: String? = nil,
         issue: String? = nil,
-        overrideName: String? = nil
+        overrideName: String? = nil,
+        applicationContext: ApplicationSnapshotContext? = nil
     ) {
         self.id = id
         self.url = url
@@ -2256,6 +2285,7 @@ struct ChatAttachment: Identifiable, Hashable, Sendable {
         self.mimeType = mimeType
         self.issue = issue
         self.overrideName = overrideName
+        self.applicationContext = applicationContext
     }
 
     static func pasted(
@@ -2287,6 +2317,10 @@ struct ChatAttachment: Identifiable, Hashable, Sendable {
         switch kind {
         case .text: return !(textContent?.isEmpty ?? true)
         case .image: return !(imageData?.isEmpty ?? true) && mimeType != nil
+        case .applicationSnapshot:
+            return !(imageData?.isEmpty ?? true)
+                && mimeType == "image/png"
+                && applicationContext != nil
         }
     }
 
@@ -2300,6 +2334,13 @@ struct ChatAttachment: Identifiable, Hashable, Sendable {
                 fromByteCount: Int64(imageData?.count ?? 0),
                 countStyle: .file
             )
+        case .applicationSnapshot:
+            let bytes = ByteCountFormatter.string(
+                fromByteCount: Int64(imageData?.count ?? 0),
+                countStyle: .file
+            )
+            let title = applicationContext?.windowTitle.nilIfEmpty
+            return [title, bytes].compactMap { $0 }.joined(separator: " · ")
         }
     }
 }
@@ -2507,6 +2548,11 @@ struct AppSettings: Codable, Hashable {
     /// Stored as a raw string so a preference written by a future version
     /// cannot make the rest of the settings payload fail to decode.
     var appearanceRaw = AppAppearance.system.rawValue
+    /// Five stable presets plus a separately stored custom swatch. Keeping the
+    /// raw value tolerant lets a newer build add presets without resetting the
+    /// rest of a person's settings in an older build.
+    var accentPresetRaw = LocusAccentPreset.lime.rawValue
+    var customAccentHex = LocusAccentSelection.defaultCustomHex
     /// Settings use progressive disclosure like a studio application. Raw
     /// storage keeps future levels from invalidating the remaining payload.
     var settingsLevelRaw = SettingsLevel.standard.rawValue
@@ -2595,9 +2641,16 @@ struct AppSettings: Codable, Hashable {
     var adaptiveWorkMigrationCompleted = false
     /// Computer control is opt-in and is ignored in sandboxed builds.
     var computerControlEnabled = false
+    /// Simulator tooling is enabled by the first explicit attach. It remains
+    /// opt-in because screenshots can become model input and native helpers use
+    /// Xcode's private simulator frameworks.
+    var simulatorControlEnabled = false
     /// The browser is on by default and, unlike computer control, works in the
     /// sandboxed App Store build too — a web view needs no special access.
     var browserEnabled = true
+    /// Public Sepolia RPC used only by the native wallet broker. It is never
+    /// included in model context or sent to the Python agent.
+    var walletSepoliaRPCURL = "https://ethereum-sepolia-rpc.publicnode.com"
     /// Raw string, like the tab: an unknown preset from a future version must
     /// not fail the whole settings decode.
     var browserViewportRaw = BrowserViewport.desktop.rawValue
@@ -2618,6 +2671,25 @@ struct AppSettings: Codable, Hashable {
     /// Web Inspector lets any local process attach to the agent's pages and
     /// read their cookies and storage, so it is opt-in and off by default.
     var browserWebInspector = false
+    /// Browser privacy settings use raw strings so a value written by a newer
+    /// build cannot make the rest of the preferences payload fail to decode.
+    var browserAutofillAuthModeRaw = BrowserAutofillAuthMode.session.rawValue
+    var browserDownloadDestinationRaw = BrowserDownloadDestinationKind.systemDownloads.rawValue
+    var browserDownloadAskEveryTime = false
+    /// A security-scoped bookmark, never a plain path. Nil means the custom
+    /// destination has not been granted access yet.
+    var browserCustomDownloadBookmark: Data?
+    var browserHistoryAccessRaw = BrowserHistoryAccess.disabled.rawValue
+    var browserPresentationModeRaw = BrowserPresentationMode.fixedCanvas.rawValue
+    var browserPageAppearanceRaw = BrowserPageAppearance.automatic.rawValue
+    var browserJavaScriptPermissionRaw = BrowserPermissionDecision.allow.rawValue
+    var browserUserDownloadPermissionRaw = BrowserPermissionDecision.allow.rawValue
+    var browserAgentDownloadPermissionRaw = BrowserPermissionDecision.ask.rawValue
+    var browserUploadPermissionRaw = BrowserPermissionDecision.ask.rawValue
+    var browserPopupPermissionRaw = BrowserPermissionDecision.ask.rawValue
+    var browserExternalPermissionRaw = BrowserPermissionDecision.ask.rawValue
+    var browserCameraPermissionRaw = BrowserPermissionDecision.ask.rawValue
+    var browserMicrophonePermissionRaw = BrowserPermissionDecision.ask.rawValue
     /// Where "Search in Google" on highlighted conversation text opens. Raw
     /// string for the same forward-compatibility reason as the viewport.
     var webSearchDestinationRaw = WebSearchDestination.defaultBrowser.rawValue
@@ -2738,6 +2810,17 @@ struct AppSettings: Codable, Hashable {
         AppAppearance(rawValue: appearanceRaw) ?? .system
     }
 
+    var resolvedAccent: LocusAccentSelection {
+        let recognizedRawValue = LocusAccentPreset(rawValue: accentPresetRaw) != nil
+            || accentPresetRaw == LocusAccentSelection.customRawValue
+            ? accentPresetRaw
+            : LocusAccentPreset.lime.rawValue
+        return LocusAccentSelection(
+            rawValue: recognizedRawValue,
+            customHex: customAccentHex
+        )
+    }
+
     var resolvedSettingsLevel: SettingsLevel {
         SettingsLevel(rawValue: settingsLevelRaw) ?? .standard
     }
@@ -2745,6 +2828,8 @@ struct AppSettings: Codable, Hashable {
     mutating func applyImmediatePreferences(from draft: AppSettings) {
         settingsLevelRaw = draft.settingsLevelRaw
         appearanceRaw = draft.appearanceRaw
+        accentPresetRaw = draft.accentPresetRaw
+        customAccentHex = draft.customAccentHex
         showTeamProgressInHeader = draft.showTeamProgressInHeader
         showContextUsageInHeader = draft.showContextUsageInHeader
         notesScopeRaw = draft.notesScopeRaw
@@ -2760,12 +2845,28 @@ struct AppSettings: Codable, Hashable {
         notifyOnCompletion = draft.notifyOnCompletion
         notifyOnNeedsAttention = draft.notifyOnNeedsAttention
         browserEnabled = draft.browserEnabled
+        walletSepoliaRPCURL = draft.walletSepoliaRPCURL
         previewURL = draft.previewURL
         browserViewportRaw = draft.browserViewportRaw
         browserPersistProfile = draft.browserPersistProfile
         browserRealInput = draft.browserRealInput
         browserEmulateDevice = draft.browserEmulateDevice
         browserWebInspector = draft.browserWebInspector
+        browserAutofillAuthModeRaw = draft.browserAutofillAuthModeRaw
+        browserDownloadDestinationRaw = draft.browserDownloadDestinationRaw
+        browserDownloadAskEveryTime = draft.browserDownloadAskEveryTime
+        browserCustomDownloadBookmark = draft.browserCustomDownloadBookmark
+        browserHistoryAccessRaw = draft.browserHistoryAccessRaw
+        browserPresentationModeRaw = draft.browserPresentationModeRaw
+        browserPageAppearanceRaw = draft.browserPageAppearanceRaw
+        browserJavaScriptPermissionRaw = draft.browserJavaScriptPermissionRaw
+        browserUserDownloadPermissionRaw = draft.browserUserDownloadPermissionRaw
+        browserAgentDownloadPermissionRaw = draft.browserAgentDownloadPermissionRaw
+        browserUploadPermissionRaw = draft.browserUploadPermissionRaw
+        browserPopupPermissionRaw = draft.browserPopupPermissionRaw
+        browserExternalPermissionRaw = draft.browserExternalPermissionRaw
+        browserCameraPermissionRaw = draft.browserCameraPermissionRaw
+        browserMicrophonePermissionRaw = draft.browserMicrophonePermissionRaw
         webSearchDestinationRaw = draft.webSearchDestinationRaw
     }
 
@@ -2808,6 +2909,39 @@ struct AppSettings: Codable, Hashable {
 
     var resolvedBrowserViewport: BrowserViewport {
         BrowserViewport(rawValue: browserViewportRaw) ?? .desktop
+    }
+
+    var resolvedBrowserAutofillAuthMode: BrowserAutofillAuthMode {
+        BrowserAutofillAuthMode(rawValue: browserAutofillAuthModeRaw) ?? .session
+    }
+
+    var resolvedBrowserDownloadDestination: BrowserDownloadDestinationKind {
+        BrowserDownloadDestinationKind(rawValue: browserDownloadDestinationRaw) ?? .systemDownloads
+    }
+
+    var resolvedBrowserHistoryAccess: BrowserHistoryAccess {
+        BrowserHistoryAccess(rawValue: browserHistoryAccessRaw) ?? .disabled
+    }
+
+    var resolvedBrowserPresentationMode: BrowserPresentationMode {
+        BrowserPresentationMode(rawValue: browserPresentationModeRaw) ?? .fixedCanvas
+    }
+
+    var resolvedBrowserPageAppearance: BrowserPageAppearance {
+        BrowserPageAppearance(rawValue: browserPageAppearanceRaw) ?? .automatic
+    }
+
+    var resolvedBrowserPermissionDefaults: [BrowserPermissionKind: BrowserPermissionDecision] {
+        [
+            .javascript: BrowserPermissionDecision(rawValue: browserJavaScriptPermissionRaw) ?? .allow,
+            .userDownloads: BrowserPermissionDecision(rawValue: browserUserDownloadPermissionRaw) ?? .allow,
+            .agentDownloads: BrowserPermissionDecision(rawValue: browserAgentDownloadPermissionRaw) ?? .ask,
+            .fileUploads: BrowserPermissionDecision(rawValue: browserUploadPermissionRaw) ?? .ask,
+            .popups: BrowserPermissionDecision(rawValue: browserPopupPermissionRaw) ?? .ask,
+            .externalSchemes: BrowserPermissionDecision(rawValue: browserExternalPermissionRaw) ?? .ask,
+            .camera: BrowserPermissionDecision(rawValue: browserCameraPermissionRaw) ?? .ask,
+            .microphone: BrowserPermissionDecision(rawValue: browserMicrophonePermissionRaw) ?? .ask,
+        ]
     }
 
     var resolvedWebSearchDestination: WebSearchDestination {
@@ -2882,6 +3016,10 @@ struct AppSettings: Codable, Hashable {
         ) ?? defaults.mobileAccessEnabled
         appearanceRaw = try container.decodeIfPresent(String.self, forKey: .appearanceRaw)
             ?? defaults.appearanceRaw
+        accentPresetRaw = try container.decodeIfPresent(String.self, forKey: .accentPresetRaw)
+            ?? defaults.accentPresetRaw
+        customAccentHex = try container.decodeIfPresent(String.self, forKey: .customAccentHex)
+            ?? defaults.customAccentHex
         settingsLevelRaw = try container.decodeIfPresent(String.self, forKey: .settingsLevelRaw)
             ?? defaults.settingsLevelRaw
         provider = try container.decodeIfPresent(ModelProvider.self, forKey: .provider)
@@ -2989,8 +3127,15 @@ struct AppSettings: Codable, Hashable {
             Bool.self,
             forKey: .computerControlEnabled
         ) ?? defaults.computerControlEnabled
+        simulatorControlEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .simulatorControlEnabled
+        ) ?? defaults.simulatorControlEnabled
         browserEnabled = try container.decodeIfPresent(Bool.self, forKey: .browserEnabled)
             ?? defaults.browserEnabled
+        walletSepoliaRPCURL = try container.decodeIfPresent(
+            String.self, forKey: .walletSepoliaRPCURL
+        ) ?? defaults.walletSepoliaRPCURL
         browserViewportRaw = try container.decodeIfPresent(String.self, forKey: .browserViewportRaw)
             ?? defaults.browserViewportRaw
         browserPersistProfile = try container.decodeIfPresent(
@@ -3007,6 +3152,51 @@ struct AppSettings: Codable, Hashable {
             Bool.self,
             forKey: .browserWebInspector
         ) ?? defaults.browserWebInspector
+        browserAutofillAuthModeRaw = try container.decodeIfPresent(
+            String.self, forKey: .browserAutofillAuthModeRaw
+        ) ?? defaults.browserAutofillAuthModeRaw
+        browserDownloadDestinationRaw = try container.decodeIfPresent(
+            String.self, forKey: .browserDownloadDestinationRaw
+        ) ?? defaults.browserDownloadDestinationRaw
+        browserDownloadAskEveryTime = try container.decodeIfPresent(
+            Bool.self, forKey: .browserDownloadAskEveryTime
+        ) ?? defaults.browserDownloadAskEveryTime
+        browserCustomDownloadBookmark = try container.decodeIfPresent(
+            Data.self, forKey: .browserCustomDownloadBookmark
+        )
+        browserHistoryAccessRaw = try container.decodeIfPresent(
+            String.self, forKey: .browserHistoryAccessRaw
+        ) ?? defaults.browserHistoryAccessRaw
+        browserPresentationModeRaw = try container.decodeIfPresent(
+            String.self, forKey: .browserPresentationModeRaw
+        ) ?? defaults.browserPresentationModeRaw
+        browserPageAppearanceRaw = try container.decodeIfPresent(
+            String.self, forKey: .browserPageAppearanceRaw
+        ) ?? defaults.browserPageAppearanceRaw
+        browserJavaScriptPermissionRaw = try container.decodeIfPresent(
+            String.self, forKey: .browserJavaScriptPermissionRaw
+        ) ?? defaults.browserJavaScriptPermissionRaw
+        browserUserDownloadPermissionRaw = try container.decodeIfPresent(
+            String.self, forKey: .browserUserDownloadPermissionRaw
+        ) ?? defaults.browserUserDownloadPermissionRaw
+        browserAgentDownloadPermissionRaw = try container.decodeIfPresent(
+            String.self, forKey: .browserAgentDownloadPermissionRaw
+        ) ?? defaults.browserAgentDownloadPermissionRaw
+        browserUploadPermissionRaw = try container.decodeIfPresent(
+            String.self, forKey: .browserUploadPermissionRaw
+        ) ?? defaults.browserUploadPermissionRaw
+        browserPopupPermissionRaw = try container.decodeIfPresent(
+            String.self, forKey: .browserPopupPermissionRaw
+        ) ?? defaults.browserPopupPermissionRaw
+        browserExternalPermissionRaw = try container.decodeIfPresent(
+            String.self, forKey: .browserExternalPermissionRaw
+        ) ?? defaults.browserExternalPermissionRaw
+        browserCameraPermissionRaw = try container.decodeIfPresent(
+            String.self, forKey: .browserCameraPermissionRaw
+        ) ?? defaults.browserCameraPermissionRaw
+        browserMicrophonePermissionRaw = try container.decodeIfPresent(
+            String.self, forKey: .browserMicrophonePermissionRaw
+        ) ?? defaults.browserMicrophonePermissionRaw
         webSearchDestinationRaw = try container.decodeIfPresent(
             String.self,
             forKey: .webSearchDestinationRaw

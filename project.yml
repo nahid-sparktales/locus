@@ -77,6 +77,10 @@ targetTemplates:
         script: |
           "$SRCROOT/Tools/CleanStaleBuildProducts.sh"
     postBuildScripts:
+      - name: Build pinned Simulator bridge
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/Tools/BuildSimulatorBridge.sh"
       - name: Bundle local agent runtime
         basedOnDependencyAnalysis: false
         script: |
@@ -87,6 +91,53 @@ targetTemplates:
         PRODUCT_NAME: Locus
         COMBINE_HIDPI_IMAGES: YES
 targets:
+  WalletSignerService:
+    type: xpc-service
+    platform: macOS
+    sources:
+      - path: WalletSignerService
+      - path: Locus/WalletSignerProtocol.swift
+    preBuildScripts:
+      - name: Build pinned Rust signer core
+        basedOnDependencyAnalysis: false
+        script: |
+          cargo_bin="${LOCUS_CARGO_BIN:-}"
+          if [ -z "$cargo_bin" ]; then
+            cargo_bin="$(command -v cargo 2>/dev/null || true)"
+          fi
+          if [ -z "$cargo_bin" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+            cargo_bin="$HOME/.cargo/bin/cargo"
+          fi
+          if [ -z "$cargo_bin" ]; then
+            echo "error: Rust Cargo was not found. Install Rust with rustup, or set LOCUS_CARGO_BIN to the cargo executable." >&2
+            exit 1
+          fi
+          cd "$SRCROOT/WalletSignerCore"
+          "$cargo_bin" build --release --locked --target aarch64-apple-darwin
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.WalletSigner
+        PRODUCT_NAME: WalletSigner
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: WalletSignerService/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Config/WalletSigner.entitlements
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+        ARCHS: arm64
+        LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/WalletSignerCore/target/aarch64-apple-darwin/release"
+        OTHER_LDFLAGS: "$(inherited) -llocus_wallet_signer_core"
+      configs:
+        Debug:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "-"
+          DEVELOPMENT_TEAM: ""
+          ENABLE_HARDENED_RUNTIME: NO
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Developer ID Application"
+          DEVELOPMENT_TEAM: 4X4RJA7GMD
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+          ENABLE_HARDENED_RUNTIME: YES
   Locus:
     templates:
       - LocusApplication
@@ -96,6 +147,9 @@ targets:
         INFOPLIST_FILE: Locus/Info.plist
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD"
     dependencies:
+      - target: WalletSignerService
+        embed: true
+        codeSign: true
       - package: Sparkle
       - package: SwiftTerm
     scheme:

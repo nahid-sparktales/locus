@@ -1,0 +1,4 @@
+interface:
+  display_name: "Secure Capability Bridges"
+  short_description: "Fail-closed bridges for privileged agent tools"
+  default_prompt: "Use $secure-capability-bridges to design a fail-closed native tool bridge."

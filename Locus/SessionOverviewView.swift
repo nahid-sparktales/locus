@@ -141,6 +141,8 @@ struct SourcesDetailView: View {
         switch source.kind {
         case .file: .forPath(source.target ?? source.label)
         case .image: .symbol("photo")
+        case .application: .symbol("macwindow")
+        case .simulator: .symbol("iphone")
         case .url:
             .forURL(
                 source.target.flatMap(URL.init(string:)),

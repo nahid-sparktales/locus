@@ -57,6 +57,7 @@ class CapabilityPolicy:
     network: bool = True
     mcp: bool = True
     computer_control: bool = True
+    simulator_control: bool = True
 
 
 @dataclass(frozen=True)

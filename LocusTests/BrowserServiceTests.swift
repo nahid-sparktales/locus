@@ -132,6 +132,82 @@ final class BrowserServiceTests: XCTestCase {
         XCTAssertEqual(result["error"] as? String, "unsupported browser tool 'browser_teleport'")
     }
 
+    func testHistoryToolRefusesExecutionWhileAccessIsDisabled() async {
+        service.historyAccess = .disabled
+        service.activityStore.recordVisit(
+            url: URL(string: "https://example.com/private")!,
+            title: "Private visit",
+            source: .user
+        )
+
+        let result = await service.perform(
+            tool: "browser_history",
+            arguments: [:],
+            sessionID: "session-history-disabled",
+            timeoutMilliseconds: 5_000
+        )
+
+        XCTAssertEqual(
+            result["error"] as? String,
+            "browsing history access is disabled in Browser Settings"
+        )
+        XCTAssertNil(result["text"])
+    }
+
+    func testHistoryToolPaginatesAndReturnsOnlyPublicVisitFields() async throws {
+        service.historyAccess = .always
+        service.activityStore.recordVisit(
+            url: URL(string: "https://example.com/older")!,
+            title: "Example older",
+            visitedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            source: .user
+        )
+        service.activityStore.recordVisit(
+            url: URL(string: "https://example.com/newer")!,
+            title: "Example newer",
+            visitedAt: Date(timeIntervalSince1970: 1_700_000_100),
+            source: .agent
+        )
+        service.activityStore.recordVisit(
+            url: URL(string: "https://unrelated.test")!,
+            title: "Unrelated",
+            visitedAt: Date(timeIntervalSince1970: 1_700_000_200),
+            source: .user
+        )
+
+        let firstResult = await service.perform(
+            tool: "browser_history",
+            arguments: ["query": "example", "limit": 1],
+            sessionID: "session-history-allowed",
+            timeoutMilliseconds: 5_000
+        )
+        let firstText = try XCTUnwrap(firstResult["text"] as? String)
+        let firstData = try XCTUnwrap(firstText.data(using: .utf8))
+        let firstObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: firstData) as? [String: Any]
+        )
+        let firstEntries = try XCTUnwrap(firstObject["entries"] as? [[String: Any]])
+        XCTAssertEqual(firstEntries.count, 1)
+        XCTAssertEqual(Set(firstEntries[0].keys), ["url", "title", "visited_at"])
+        XCTAssertEqual(firstEntries[0]["url"] as? String, "https://example.com/newer")
+        XCTAssertEqual(firstObject["next_cursor"] as? String, "1")
+
+        let secondResult = await service.perform(
+            tool: "browser_history",
+            arguments: ["query": "example", "limit": 1, "cursor": "1"],
+            sessionID: "session-history-allowed",
+            timeoutMilliseconds: 5_000
+        )
+        let secondText = try XCTUnwrap(secondResult["text"] as? String)
+        let secondData = try XCTUnwrap(secondText.data(using: .utf8))
+        let secondObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: secondData) as? [String: Any]
+        )
+        let secondEntries = try XCTUnwrap(secondObject["entries"] as? [[String: Any]])
+        XCTAssertEqual(secondEntries.first?["url"] as? String, "https://example.com/older")
+        XCTAssertTrue(secondObject["next_cursor"] is NSNull)
+    }
+
     func testReadingBeforeOpeningAnythingSaysSo() async {
         let result = await service.perform(
             tool: "browser_read_page",

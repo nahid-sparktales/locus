@@ -4,6 +4,55 @@ import AppKit
 import CryptoKit
 import Security
 
+enum GitHubConnectionCapability: String, Equatable {
+    case deviceFlowAvailable
+    case tokenFallbackOnly
+    case connected
+    case authorizationFailed
+}
+
+enum GitHubConnectionConfiguration {
+    static func clientID(
+        configured: String? = nil,
+        bundleValue: String? = Bundle.main.object(
+            forInfoDictionaryKey: "LocusGitHubOAuthClientID"
+        ) as? String,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String? {
+        let candidates = [
+            configured,
+            bundleValue,
+            environment["LOCUS_GITHUB_OAUTH_CLIENT_ID"],
+        ]
+        for candidate in candidates {
+            let value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !value.isEmpty, !value.contains("$(") { return value }
+        }
+        return nil
+    }
+
+    static func capability(
+        configured: String? = nil,
+        bundleValue: String? = Bundle.main.object(
+            forInfoDictionaryKey: "LocusGitHubOAuthClientID"
+        ) as? String,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        hasCredentials: Bool = false,
+        authorizationError: String? = nil
+    ) -> GitHubConnectionCapability {
+        if hasCredentials { return .connected }
+        guard clientID(
+            configured: configured,
+            bundleValue: bundleValue,
+            environment: environment
+        ) != nil else { return .tokenFallbackOnly }
+        if authorizationError?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return .authorizationFailed
+        }
+        return .deviceFlowAvailable
+    }
+}
+
 /// Credential storage for provider API keys and MCP server tokens.
 ///
 /// One JSON file, `~/.locus/auth.json`, mode `0600` inside a `0700` directory —
@@ -703,15 +752,9 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
     }
 
     private func githubClientID(server: ExtensionMCPServer) throws -> String {
-        let configured = server.oauth?.clientID.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let bundled = (Bundle.main.object(forInfoDictionaryKey: "LocusGitHubOAuthClientID") as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let environment = ProcessInfo.processInfo.environment["LOCUS_GITHUB_OAUTH_CLIENT_ID"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let clientID = [configured, bundled, environment].first {
-            !$0.isEmpty && !$0.contains("$(")
-        } ?? ""
-        guard !clientID.isEmpty else {
+        guard let clientID = GitHubConnectionConfiguration.clientID(
+            configured: server.oauth?.clientID
+        ) else {
             throw authError(
                 "GitHub account sign-in is unavailable in this build because its public app client ID is not configured. Use a personal token instead."
             )

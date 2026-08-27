@@ -3170,6 +3170,81 @@ def test_native_computer_tool_uses_permission_mode_and_bridge(tmp_path):
     assert calls[0][1]["element"] == "snap-1"
 
 
+def test_simulator_tools_require_native_attachment_and_respect_read_only_routes(tmp_path):
+    core = _core(tmp_path, [ChatResponse(content_parts=["ok"], done=True)])
+
+    def names():
+        return {schema["function"]["name"] for schema in core.tool_registry.schemas()}
+
+    assert "simulator_get_state" not in names()
+    core.tool_registry.simulator_enabled = True
+    assert {
+        "simulator_get_state", "simulator_tap", "simulator_build_and_launch",
+        "simulator_screenshot",
+    } <= names()
+
+    core.tool_registry.set_mcp_agent_policy(
+        {}, access_ceiling="read_only", role="reviewer",
+    )
+    assert {
+        "simulator_list_devices", "simulator_get_state", "simulator_screenshot",
+    } <= names()
+    assert "simulator_tap" not in names()
+    assert core.tool_registry.simulator_tool_allowed("simulator_get_state")
+    assert not core.tool_registry.simulator_tool_allowed("simulator_type_text")
+
+
+def test_native_simulator_tool_uses_dedicated_bridge(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(tool_calls=[ToolCall("simulator_tap", {"x": 10, "y": 20})], done=True),
+        ChatResponse(content_parts=["done"], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    core.tool_registry.simulator_enabled = True
+    core.perms.set_mode("bypass")
+    calls = []
+    core.simulator_executor = lambda name, args, request_id: (
+        calls.append((name, args, request_id)) or "tapped"
+    )
+
+    core.run_turn("tap the simulator")
+
+    assert calls and calls[0][0] == "simulator_tap"
+    assert calls[0][1] == {"x": 10, "y": 20}
+
+
+def test_simulator_capability_websocket_requires_attached_device(client):
+    svc = client.app.state.service
+    with client.websocket_connect("/ws/chat") as ws:
+        ws.receive_json()
+        ws.send_json({
+            "type": "set_simulator_control",
+            "enabled": True,
+            "native_available": True,
+        })
+        status = next(
+            event for event in drain(ws)
+            if event["type"] == "simulator_control_status"
+        )
+        assert status["enabled"] is False
+        assert not svc.core.tool_registry.simulator_enabled
+
+        ws.send_json({
+            "type": "set_simulator_control",
+            "enabled": True,
+            "native_available": True,
+            "attached_device": {"udid": "SIM-1", "name": "iPad Pro"},
+        })
+        status = next(
+            event for event in drain(ws)
+            if event["type"] == "simulator_control_status"
+        )
+        assert status["enabled"] is True
+        assert svc.core.tool_registry.simulator_enabled
+
+
 def test_browser_tools_are_absent_until_the_app_announces_a_broker(tmp_path):
     core = _core(tmp_path, [ChatResponse(content_parts=["ok"], done=True)])
 
@@ -3183,6 +3258,44 @@ def test_browser_tools_are_absent_until_the_app_announces_a_broker(tmp_path):
 
     core.tool_registry.browser_enabled = True
     assert {"browser_read_page", "browser_navigate"} <= names()
+    assert "browser_history" not in names()
+
+
+def test_browser_history_requires_its_separate_opt_in_at_schema_and_dispatch(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(tool_calls=[ToolCall("browser_history", {"query": "docs"})], done=True),
+        ChatResponse(content_parts=["done"], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    core.tool_registry.browser_enabled = True
+    calls = []
+    core.browser_executor = lambda name, args, request_id: calls.append(name) or "history"
+
+    assert not core.tool_registry.browser_tool_allowed("browser_history")
+    assert "browser_history" not in {
+        schema["function"]["name"] for schema in core.tool_registry.schemas()
+    }
+    core.perms.set_mode("bypass")
+    core.run_turn("search browser history")
+    assert calls == []
+
+    core.tool_registry.browser_history_enabled = True
+    assert core.tool_registry.browser_tool_allowed("browser_history")
+    assert "browser_history" in {
+        schema["function"]["name"] for schema in core.tool_registry.schemas()
+    }
+
+
+def test_browser_history_is_read_only_when_enabled(tmp_path):
+    core = _core(tmp_path, [ChatResponse(content_parts=["ok"], done=True)])
+    core.tool_registry.browser_enabled = True
+    core.tool_registry.browser_history_enabled = True
+    core.tool_registry.set_mcp_agent_policy({}, access_ceiling="read_only", role="reviewer")
+
+    assert core.tool_registry.browser_tool_allowed("browser_history")
+    assert core.tool_registry.is_safe("browser_history")
 
 
 def test_read_only_agents_see_and_may_use_only_the_reading_half(tmp_path):
@@ -3279,6 +3392,58 @@ def test_notes_tools_require_the_native_broker_and_respect_read_only_agents(tmp_
     assert "notes_update" not in names()
     assert core.tool_registry.notes_tool_allowed("notes_read")
     assert not core.tool_registry.notes_tool_allowed("notes_update")
+
+
+def test_wallet_tools_require_a_native_signer_and_keep_read_only_agents_read_only(tmp_path):
+    core = _core(tmp_path, [ChatResponse(content_parts=["ok"], done=True)])
+
+    def names():
+        return {schema["function"]["name"] for schema in core.tool_registry.schemas()}
+
+    assert core.tool_registry.wallet_enabled is False
+    assert "wallet_list_accounts" not in names()
+
+    assert core.tool_registry.configure_wallet_capability({
+        "protocol_version": 1,
+        "signer_state": "unlocked",
+        "session_id": "session-1",
+        "supported_chains": ["eip155:11155111"],
+        "allowed_operations": [
+            "wallet_list_accounts", "wallet_get_balance", "wallet_get_activity",
+            "wallet_prepare_transaction", "wallet_simulate_transaction",
+            "wallet_execute_transaction", "wallet_lock",
+        ],
+    })
+    assert {"wallet_list_accounts", "wallet_prepare_transaction", "wallet_execute_transaction"} <= names()
+
+    core.tool_registry.set_mcp_agent_policy({}, access_ceiling="read_only", role="reviewer")
+    assert "wallet_list_accounts" in names()
+    assert "wallet_get_balance" in names()
+    assert "wallet_prepare_transaction" not in names()
+    assert not core.tool_registry.wallet_tool_allowed("wallet_execute_transaction")
+
+
+def test_wallet_tool_reaches_the_native_policy_bridge(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(tool_calls=[ToolCall("wallet_list_accounts", {})], done=True),
+        ChatResponse(content_parts=["done"], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    core.tool_registry.configure_wallet_capability({
+        "protocol_version": 1,
+        "signer_state": "unlocked",
+        "session_id": "session-1",
+        "supported_chains": ["eip155:11155111"],
+        "allowed_operations": ["wallet_list_accounts"],
+    })
+    calls = []
+    core.wallet_executor = lambda name, args, request_id: calls.append((name, args)) or "account-1"
+
+    core.run_turn("list my Locus Vault accounts")
+
+    assert calls == [("wallet_list_accounts", {})]
 
 
 def test_notes_tool_reaches_the_native_bridge(tmp_path):
@@ -3751,6 +3916,81 @@ def test_notes_bridge_round_trips_one_result_per_request(client):
             "result": {"text": "duplicate"},
         })
         assert drain(ws) == []
+
+
+def test_wallet_bridge_round_trips_only_after_the_native_capability_is_enabled(client):
+    with client.websocket_connect("/ws/chat") as ws:
+        assert ws.receive_json()["type"] == "session_info"
+        ws.send_json({
+            "type": "set_wallet_control",
+            "capability": {
+                "protocol_version": 1,
+                "signer_state": "unlocked",
+                "session_id": "native-session-1",
+                "supported_chains": ["eip155:11155111"],
+                "allowed_operations": ["wallet_list_accounts"],
+            },
+        })
+        events = drain(ws)
+        assert {"type": "wallet_control_status", "enabled": True} in [
+            {"type": event.get("type"), "enabled": event.get("enabled")}
+            for event in events
+        ]
+
+        service = client.app.state.service
+        completed: list[str] = []
+        thread = threading.Thread(
+            target=lambda: completed.append(
+                service.execute_wallet("wallet_list_accounts", {}, "wallet-req-1")
+            )
+        )
+        thread.start()
+        request = ws.receive_json()
+        assert request["type"] == "wallet_action_request"
+        assert request["session_id"] == service.core.session.session_id
+        ws.send_json({
+            "type": "wallet_action_result",
+            "request_id": "wallet-req-1",
+            "result": {"text": "Locus Vault · evm · 0x123"},
+        })
+        thread.join(timeout=3)
+
+        assert completed == ["Locus Vault · evm · 0x123"]
+        assert service.pending_wallet_actions == {}
+        # A duplicate/late answer is intentionally ignored.
+        ws.send_json({
+            "type": "wallet_action_result",
+            "request_id": "wallet-req-1",
+            "result": {"text": "duplicate"},
+        })
+        assert drain(ws) == []
+
+
+def test_wallet_capability_rejects_stale_boolean_and_limits_operations(client):
+    with client.websocket_connect("/ws/chat") as ws:
+        assert ws.receive_json()["type"] == "session_info"
+        ws.send_json({"type": "set_wallet_control", "enabled": True})
+        events = drain(ws)
+        assert any(
+            event.get("type") == "wallet_control_status" and event.get("enabled") is False
+            for event in events
+        )
+        registry = client.app.state.service.core.tool_registry
+        assert not registry.wallet_enabled
+
+        ws.send_json({
+            "type": "set_wallet_control",
+            "capability": {
+                "protocol_version": 1,
+                "signer_state": "unlocked",
+                "session_id": "native-session-2",
+                "supported_chains": ["eip155:11155111"],
+                "allowed_operations": ["wallet_list_accounts"],
+            },
+        })
+        drain(ws)
+        assert registry.wallet_tool_allowed("wallet_list_accounts")
+        assert not registry.wallet_tool_allowed("wallet_execute_transaction")
 
 
 def test_dev_server_permission_posture():

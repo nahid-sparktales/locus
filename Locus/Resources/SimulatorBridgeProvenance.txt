@@ -1,0 +1,6 @@
+upstream=https://github.com/martingeidobler/ios-mcp-server
+commit=bd5aca70704fe0fb5e974abaed205f54469799b0
+license=MIT
+touch_source_sha256=af01bb7412a7c4c1db14a49ea21b7c1a055f7cffd6440c04059348885832fb71
+tree_source_sha256=b16c270de8121e5b53626949ff818aca8ee29ba0c8b8372edd957d41bd243b63
+delivery=direct-download-only
