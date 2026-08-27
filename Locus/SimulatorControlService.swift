@@ -44,7 +44,13 @@ enum SimulatorStreamEncoding: String, CaseIterable, Identifiable, Sendable {
     case jpeg
 
     var id: String { rawValue }
-    var title: String { rawValue.capitalized }
+    var title: String {
+        switch self {
+        case .automatic: "Auto"
+        case .png: "PNG"
+        case .jpeg: "JPEG"
+        }
+    }
 }
 
 struct SimulatorStreamSettings: Equatable, Sendable {
@@ -270,6 +276,88 @@ final class SimulatorControlService: ObservableObject {
         }
     }
 
+    private static func makeUITestFrame(size: CGSize) -> NSImage {
+        let image = NSImage(size: size)
+        image.lockFocus()
+        defer { image.unlockFocus() }
+
+        NSColor(srgbRed: 0.955, green: 0.945, blue: 0.91, alpha: 1).setFill()
+        NSBezierPath(rect: CGRect(origin: .zero, size: size)).fill()
+
+        let ink = NSColor(srgbRed: 0.08, green: 0.09, blue: 0.07, alpha: 1)
+        let muted = NSColor(srgbRed: 0.38, green: 0.39, blue: 0.34, alpha: 1)
+        let accent = NSColor(srgbRed: 0.79, green: 0.96, blue: 0.29, alpha: 1)
+        let card = NSColor(srgbRed: 1, green: 0.995, blue: 0.975, alpha: 1)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 28, weight: .bold),
+            .foregroundColor: ink,
+        ]
+        let captionAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 14, weight: .medium),
+            .foregroundColor: muted,
+        ]
+
+        "Good morning".draw(at: CGPoint(x: 24, y: 750), withAttributes: attributes)
+        "A calm plan for a focused day".draw(
+            at: CGPoint(x: 25, y: 724),
+            withAttributes: captionAttributes
+        )
+
+        card.setFill()
+        NSBezierPath(
+            roundedRect: CGRect(x: 20, y: 505, width: 350, height: 180),
+            xRadius: 24,
+            yRadius: 24
+        ).fill()
+        accent.setFill()
+        NSBezierPath(
+            roundedRect: CGRect(x: 40, y: 625, width: 88, height: 26),
+            xRadius: 13,
+            yRadius: 13
+        ).fill()
+        "IN PROGRESS".draw(
+            at: CGPoint(x: 51, y: 631),
+            withAttributes: [
+                .font: NSFont.systemFont(ofSize: 10, weight: .bold),
+                .foregroundColor: ink,
+            ]
+        )
+        "Refine onboarding".draw(
+            at: CGPoint(x: 40, y: 580),
+            withAttributes: [
+                .font: NSFont.systemFont(ofSize: 21, weight: .semibold),
+                .foregroundColor: ink,
+            ]
+        )
+        "Review the welcome flow and ship the final polish.".draw(
+            in: CGRect(x: 40, y: 532, width: 295, height: 38),
+            withAttributes: captionAttributes
+        )
+
+        for (index, label) in ["Check empty state", "Tighten type scale", "Verify dark mode"].enumerated() {
+            let y = 438 - CGFloat(index * 62)
+            card.setFill()
+            NSBezierPath(
+                roundedRect: CGRect(x: 20, y: y, width: 350, height: 50),
+                xRadius: 16,
+                yRadius: 16
+            ).fill()
+            ink.setStroke()
+            let circle = NSBezierPath(ovalIn: CGRect(x: 38, y: y + 16, width: 18, height: 18))
+            circle.lineWidth = 1.5
+            circle.stroke()
+            label.draw(
+                at: CGPoint(x: 70, y: y + 17),
+                withAttributes: [
+                    .font: NSFont.systemFont(ofSize: 14, weight: .medium),
+                    .foregroundColor: ink,
+                ]
+            )
+        }
+
+        return image
+    }
+
     @Published private(set) var devices: [SimulatorDevice] = []
     @Published private(set) var targets: [String: SimulatorTarget] = [:]
     @Published private(set) var isRefreshing = false
@@ -290,6 +378,7 @@ final class SimulatorControlService: ObservableObject {
     private var recordingProcess: Process?
     private var recordingURL: URL?
     private var compatibilityFailure: String?
+    private var uiTestingPointSize: CGSize?
 
     private let xcrunURL = URL(fileURLWithPath: "/usr/bin/xcrun")
     private let openURL = URL(fileURLWithPath: "/usr/bin/open")
@@ -330,6 +419,33 @@ final class SimulatorControlService: ObservableObject {
     var nativeAvailable: Bool { helperHealth.ready && compatibilityFailure == nil }
 
     func target(for sessionID: String) -> SimulatorTarget? { targets[sessionID] }
+
+    /// Stable, process-local simulator state for UI coverage. It never runs
+    /// outside the UI-test harness and avoids coupling layout verification to
+    /// whatever devices happen to be installed on the host Mac.
+    func installUITestFixture(sessionID: String, attached: Bool) {
+        guard ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1" else { return }
+        let device = SimulatorDevice(
+            udid: "00000000-0000-0000-0000-00000000F17E",
+            name: "iPhone 17 Pro",
+            runtime: "iOS 26.0",
+            deviceTypeIdentifier: "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+            state: .booted,
+            isAvailable: true
+        )
+        devices = [device]
+        guard attached else { return }
+
+        let size = CGSize(width: 390, height: 844)
+        let target = SimulatorTarget(sessionID: sessionID, device: device, attachedAt: Date())
+        targets[sessionID] = target
+        leases[device.udid] = sessionID
+        uiTestingPointSize = size
+        latestFrame = Self.makeUITestFrame(size: size)
+        previewSessionID = sessionID
+        previewIsLive = true
+        previewStatus = "Live"
+    }
 
     func refreshDevices() async {
         guard Self.isSupportedBuild else {
@@ -453,6 +569,12 @@ final class SimulatorControlService: ObservableObject {
             previewStatus = "Attach a simulator to begin."
             return
         }
+        if uiTestingPointSize != nil {
+            previewSessionID = sessionID
+            previewIsLive = true
+            previewStatus = "Live"
+            return
+        }
         if previewSessionID == sessionID, previewIsLive { return }
         stopPreview()
         previewSessionID = sessionID
@@ -502,6 +624,7 @@ final class SimulatorControlService: ObservableObject {
         guard let target = targets[sessionID] else {
             throw SimulatorControlError.noAttachedDevice
         }
+        if let uiTestingPointSize { return uiTestingPointSize }
         let info = try await screenInformation(for: target.udid)
         return CGSize(width: info.pointWidth, height: info.pointHeight)
     }

@@ -14333,6 +14333,18 @@ final class AppModel: ObservableObject {
         }
         seedUITestRunFixtureIfNeeded()
 
+        if let simulatorFixture = ProcessInfo.processInfo.environment[
+            "LOCUS_UI_TESTING_SIMULATOR"
+        ] {
+            simulatorControl.installUITestFixture(
+                sessionID: currentSessionID,
+                attached: simulatorFixture == "attached"
+            )
+            openInspectorTabs = [.simulator]
+            inspectorTab = .simulator
+            inspectorCollapsed = false
+        }
+
         // Documentation captures use the same deterministic app state as UI
         // tests, but start at the calm empty workspace shown to new users.
         // This is test-only state and never runs in a normal app launch.

@@ -1625,6 +1625,57 @@ final class LocusUITests: XCTestCase {
         XCTAssertLessThanOrEqual(terminalClose.frame.maxX, tabBar.frame.maxX + 1)
     }
 
+    func testSimulatorWorkspaceKeepsDeviceAndPrimaryControlsVisible() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_SIMULATOR"] = "attached"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "1120"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "700"
+        app.launch()
+
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10))
+        let stage = anyElement("simulator.stage")
+        let status = anyElement("simulator.status")
+        let controls = anyElement("simulator.controls")
+        for element in [stage, status, controls] {
+            XCTAssertTrue(element.waitForExistence(timeout: 5))
+            XCTAssertTrue(
+                window.frame.insetBy(dx: -1, dy: -1).contains(element.frame),
+                "Simulator chrome must remain inside the window at the acceptance size."
+            )
+        }
+
+        let base = XCTAttachment(screenshot: window.screenshot())
+        base.name = "simulator-workspace"
+        base.lifetime = .keepAlways
+        add(base)
+
+        let typing = app.buttons["Type on device"].firstMatch
+        XCTAssertTrue(waitUntilHittable(typing))
+        typing.click()
+        let typingTray = anyElement("simulator.typing")
+        XCTAssertTrue(typingTray.waitForExistence(timeout: 3))
+        XCTAssertTrue(window.frame.insetBy(dx: -1, dy: -1).contains(typingTray.frame))
+
+        let settings = app.buttons["Stream settings"].firstMatch
+        XCTAssertTrue(waitUntilHittable(settings))
+        settings.click()
+        XCTAssertTrue(anyElement("simulator.streamSettings").waitForExistence(timeout: 3))
+    }
+
+    func testSimulatorDevicePickerHasAVisibleAttachPath() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_SIMULATOR"] = "picker"
+        app.launch()
+
+        XCTAssertTrue(anyElement("simulator.devicePicker").waitForExistence(timeout: 10))
+        let attach = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "simulator.attach.")
+        ).firstMatch
+        XCTAssertTrue(waitUntilHittable(attach))
+        XCTAssertTrue(app.windows.firstMatch.frame.insetBy(dx: -1, dy: -1).contains(attach.frame))
+    }
+
     func testPrimaryWorkspacePassesAccessibilityAudit() throws {
         try auditCurrentSurface()
     }
