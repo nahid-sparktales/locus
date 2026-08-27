@@ -826,6 +826,7 @@ struct SessionSidebarView: View {
             Button("Archived Sessions") {
                 model.setShowArchived(!model.showArchivedSessions)
             }
+            .keyboardShortcut("a", modifiers: [.command, .shift])
             .accessibilityValue(model.showArchivedSessions ? "Shown" : "Hidden")
             .accessibilityIdentifier("sidebar.showArchived")
             Button(model.isClearingSessions ? "Clearing Saved Sessions…" : "Clear Saved Sessions…") {

@@ -483,16 +483,9 @@ final class LocusUITests: XCTestCase {
         if archivedCommandExists {
             archivedToggle.click()
         } else {
-            // macOS 15 can omit this one SwiftUI command from AX while still
-            // rendering it as the native row immediately above Clear.
-            let clearSessions = menuItem(
-                "sidebar.clearSessions",
-                title: "Clear Saved Sessions…"
-            )
-            XCTAssertTrue(clearSessions.waitForExistence(timeout: 2))
-            clearSessions.hover()
-            app.typeKey(.upArrow, modifierFlags: [])
-            app.typeKey(.return, modifierFlags: [])
+            // macOS 15 can omit this one SwiftUI command from AX. Its native
+            // key equivalent remains available while the menu is open.
+            app.typeKey("a", modifierFlags: [.command, .shift])
         }
         XCTAssertTrue(app.buttons["session.seed-archived"].waitForExistence(timeout: 3))
     }
