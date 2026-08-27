@@ -462,6 +462,10 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.menuItems["Markdown…"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.menuItems["Archive"].exists)
         XCTAssertTrue(app.menuItems["Delete Chat"].exists)
+        // On macOS 15 the first escape dismisses only the Export submenu.
+        // A second escape closes the parent context menu before opening the
+        // sidebar menu; newer releases safely ignore the extra key press.
+        app.typeKey(.escape, modifierFlags: [])
         app.typeKey(.escape, modifierFlags: [])
 
         XCTAssertFalse(anyElement("sidebar.addWorkspace").exists)
@@ -2357,10 +2361,20 @@ final class LocusUITests: XCTestCase {
         // must move the transcript by the same amount as a gesture over its
         // scrollbar or empty background.
         let messageYBeforeWheel = firstMessage.frame.minY
-        firstMessage.scroll(byDeltaX: 0, deltaY: -160)
-        XCTAssertTrue(waitUntil(timeout: 3) {
+        firstMessage.scroll(byDeltaX: 0, deltaY: -320)
+        var messageMoved = waitUntil(timeout: 2) {
             firstMessage.exists && abs(firstMessage.frame.minY - messageYBeforeWheel) > 20
-        })
+        }
+        if !messageMoved {
+            // The fixture can land at either elastic boundary depending on
+            // AppKit's wheel acceleration. Retry in the opposite direction so
+            // the assertion measures routing rather than the starting edge.
+            firstMessage.scroll(byDeltaX: 0, deltaY: 320)
+            messageMoved = waitUntil(timeout: 2) {
+                firstMessage.exists && abs(firstMessage.frame.minY - messageYBeforeWheel) > 20
+            }
+        }
+        XCTAssertTrue(messageMoved)
     }
 
     func testJumpToLatestReturnsToTheEndOfTheTranscript() {
