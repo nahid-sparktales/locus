@@ -1095,6 +1095,37 @@ final class AppModelTests: XCTestCase {
         )
     }
 
+    func testTranscriptWheelRoutingFallsBackToLegacyAppKitDeltas() {
+        XCTAssertEqual(
+            TranscriptScrollMetrics.dominantVerticalWheelDelta(
+                scrollingDeltaX: 0,
+                scrollingDeltaY: 0,
+                legacyDeltaX: 0,
+                legacyDeltaY: -4
+            ),
+            -4
+        )
+        XCTAssertEqual(
+            TranscriptScrollMetrics.dominantVerticalWheelDelta(
+                scrollingDeltaX: 1,
+                scrollingDeltaY: 6,
+                legacyDeltaX: 20,
+                legacyDeltaY: 20
+            ),
+            6,
+            "precise scrolling deltas take precedence when AppKit supplies them"
+        )
+        XCTAssertNil(
+            TranscriptScrollMetrics.dominantVerticalWheelDelta(
+                scrollingDeltaX: 8,
+                scrollingDeltaY: 2,
+                legacyDeltaX: 0,
+                legacyDeltaY: 0
+            ),
+            "horizontal gestures must keep reaching nested code views"
+        )
+    }
+
     func testPlanDocumentDecodesOlderPartialPayloads() throws {
         let document = try JSONDecoder().decode(
             PlanDocument.self,

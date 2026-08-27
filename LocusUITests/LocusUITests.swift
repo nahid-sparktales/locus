@@ -474,15 +474,10 @@ final class LocusUITests: XCTestCase {
 
     func testArchivedSessionsFilter() {
         anyElement("sidebar.more").click()
-        // A Toggle inside Menu is a MenuItem on newer macOS releases but an
-        // AX checkbox on macOS 15. Its visible title is unique, so query all
-        // roles while still preferring the stable identifier where available.
-        let archivedToggle = app.descendants(matching: .any).matching(NSPredicate(
-            format: "identifier == %@ OR label CONTAINS[c] %@ OR title CONTAINS[c] %@",
+        let archivedToggle = menuItem(
             "sidebar.showArchived",
-            "Show Archived Sessions",
-            "Show Archived Sessions"
-        )).firstMatch
+            title: "Show Archived Sessions"
+        )
         XCTAssertTrue(archivedToggle.waitForExistence(timeout: 2))
         archivedToggle.click()
         XCTAssertTrue(app.buttons["session.seed-archived"].waitForExistence(timeout: 3))
