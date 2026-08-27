@@ -823,10 +823,17 @@ struct SessionSidebarView: View {
             Button("Session Checkpoints…") { model.checkpointPresented = true }
                 .accessibilityIdentifier("sidebar.checkpoints")
             Divider()
-            Button(model.showArchivedSessions ? "Hide Archived Sessions" : "Show Archived Sessions") {
-                model.setShowArchived(!model.showArchivedSessions)
+            if model.showArchivedSessions {
+                Button("Hide Archived Sessions") {
+                    model.setShowArchived(false)
+                }
+                .accessibilityIdentifier("sidebar.showArchived")
+            } else {
+                Button("Show Archived Sessions") {
+                    model.setShowArchived(true)
+                }
+                .accessibilityIdentifier("sidebar.showArchived")
             }
-            .accessibilityIdentifier("sidebar.showArchived")
             Button(model.isClearingSessions ? "Clearing Saved Sessions…" : "Clear Saved Sessions…") {
                 model.requestClearSavedSessions()
             }
