@@ -287,8 +287,7 @@ struct PinnedSummaryCard: View {
     private var sourcesMenuItems: some View {
         Button("Attach files or folders", systemImage: "paperclip") { model.addContext() }
         Button("Skills & MCP", systemImage: "puzzlepiece.extension") {
-            model.settingsPage = .extensions
-            model.settingsPresented = true
+            model.presentSettings(.extensions)
         }
     }
 

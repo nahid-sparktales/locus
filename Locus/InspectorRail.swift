@@ -2,8 +2,9 @@ import Foundation
 import SwiftUI
 
 /// The always-visible right rail. Collapsing the inspector no longer empties
-/// the window edge: Overview, Terminal, Browser, Notes, Router, and Proxies stay within reach,
-/// while the vertical-ellipsis menu restores every additional workspace panel.
+/// the window edge: Side Chat, Overview, Terminal, Browser, and Notes stay within reach,
+/// while the vertical-ellipsis menu restores every additional workspace panel,
+/// including Model Router and Proxies.
 /// The panel opens to the rail's left. Attention badges
 /// live on the icons, so a run can ask for eyes without the panel being open.
 struct InspectorRail: View {
@@ -13,18 +14,17 @@ struct InspectorRail: View {
     /// Direct rail destinations stay one click away. The remaining workspace
     /// panels live in the overflow menu instead of disappearing from the UI.
     static let menuTabs = InspectorTab.workspaceTabs.filter {
-        $0 != .terminal && $0 != .notes && $0 != .router && $0 != .proxies
+        $0 != .terminal && $0 != .notes
     }
 
     var body: some View {
         VStack(spacing: 4) {
             moreMenu
+            sideChatButton
             railTab(.plan)
             railTab(.terminal)
             railTab(.preview)
             railTab(.notes)
-            railTab(.router)
-            railTab(.proxies)
             Spacer(minLength: 0)
             zoomButton
         }
@@ -35,6 +35,44 @@ struct InspectorRail: View {
         .overlay(alignment: .leading) {
             Rectangle().fill(LocusTheme.line).frame(width: 1)
         }
+    }
+
+    private var sideChatButton: some View {
+        let selected = model.splitViewActive
+        return Button {
+            withAnimation(LocusMotion.spatial) {
+                model.toggleSplitView()
+            }
+        } label: {
+            Image(
+                systemName: selected
+                    ? "rectangle.split.2x1.fill"
+                    : "rectangle.split.2x1"
+            )
+            .font(.locus(size: 13, weight: .medium))
+            .foregroundStyle(selected ? LocusTheme.ink : LocusTheme.muted)
+            .frame(width: 34, height: 32)
+            .background {
+                if selected {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(LocusTheme.ink.opacity(0.09))
+                }
+            }
+            .overlay(alignment: .leading) {
+                if selected {
+                    Capsule()
+                        .fill(LocusTheme.signalDeep)
+                        .frame(width: 2, height: 14)
+                        .offset(x: -3)
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.locus())
+        .help(selected ? "Close Side Chat" : "Open Side Chat")
+        .accessibilityLabel(selected ? "Close Side Chat" : "Open Side Chat")
+        .accessibilityValue(selected ? "Open" : "Closed")
+        .accessibilityIdentifier("inspector.rail.sideChat")
     }
 
     private var zoomButton: some View {
@@ -142,6 +180,7 @@ struct InspectorRail: View {
             return "\(tab.title) (\(model.changedFileCount))"
         }
         if tab == .runs { return "Team Runs" }
+        if tab == .router { return "Model Router" }
         return tab.title
     }
 
@@ -200,10 +239,18 @@ struct WorkspaceActionsMenu: View {
                 model.newSession(in: model.workspacePath, environment: .local)
             }
             .accessibilityIdentifier("workspace.actions.newLocalSession")
+            Button(model.splitViewActive ? "Close Second Chat Pane" : "Split Chat View") {
+                model.toggleSplitView()
+            }
+            .accessibilityIdentifier("workspace.actions.splitView")
             Divider()
-            Button("Export Current Session…") { model.exportCurrentSession() }
-                .disabled(!model.sessions.contains { $0.id == model.currentSessionID })
-                .accessibilityIdentifier("workspace.actions.export")
+            Menu("Export Current Session") {
+                ForEach(ChatExportFormat.allCases) { format in
+                    Button("\(format.title)…") { model.exportCurrentSession(format: format) }
+                }
+            }
+            .disabled(!model.sessions.contains { $0.id == model.currentSessionID })
+            .accessibilityIdentifier("workspace.actions.export")
             Divider()
             Picker("Tool activity", selection: Binding(
                 get: { model.toolActivityVisibility },

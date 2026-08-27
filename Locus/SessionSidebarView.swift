@@ -1,5 +1,15 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
+
+private struct ChatFolderEditorRequest: Identifiable {
+    let id = UUID()
+    let workspace: String
+    let parentID: String?
+    let folder: ChatFolderRecord?
+
+    var title: String { folder == nil ? "New Chat Folder" : "Rename Chat Folder" }
+}
 
 /// The sidebar's shared rail. Every leading glyph — plus, magnifying glass,
 /// bell, and the nav rows above them — is drawn in a fixed-width column at
@@ -19,8 +29,8 @@ private enum SidebarMetrics {
 /// Workspace groups are the parent object, so their folder remains the visual
 /// anchor while the child chat rows rely on indentation and text hierarchy.
 enum SidebarIconMetrics {
-    static let workspaceIconSize: CGFloat = 27
-    static let workspaceSymbolSize: CGFloat = 12
+    static let workspaceIconSize: CGFloat = 22
+    static let workspaceSymbolSize: CGFloat = 11
 }
 
 struct SessionSidebarView: View {
@@ -29,6 +39,9 @@ struct SessionSidebarView: View {
     @State private var sessionToRename: SessionSummary?
     @State private var renameText = ""
     @State private var workspaceToRemove: WorkspaceChatGroup?
+    @State private var folderToDelete: ChatFolderRecord?
+    @State private var folderEditor: ChatFolderEditorRequest?
+    @State private var folderEditorName = ""
     @State private var searchExpanded = false
     @FocusState private var searchFocused: Bool
 
@@ -65,7 +78,12 @@ struct SessionSidebarView: View {
                                 }
                             )
                             .contextMenu {
-                                if group.path != nil {
+                                if let path = group.path {
+                                    Button("New Folder…") {
+                                        requestFolderEditor(workspace: path, parentID: nil)
+                                    }
+                                    .accessibilityIdentifier("workspace.group.\(group.id).newFolder")
+                                    Divider()
                                     Button("Remove from Sidebar") {
                                         requestWorkspaceRemoval(group)
                                     }
@@ -76,8 +94,13 @@ struct SessionSidebarView: View {
                                     .accessibilityIdentifier("workspace.group.\(group.id).remove")
                                 }
                             }
+                            .modifier(ChatSidebarDropTarget(
+                                targetFolderID: nil,
+                                index: nil,
+                                targetWorkspace: group.path
+                            ))
                             if model.isWorkspaceExpanded(group.id) {
-                                if group.chats.isEmpty {
+                                if group.chats.isEmpty && model.folders(in: group).isEmpty {
                                     Text("No chats yet")
                                         .font(.locus(size: 9))
                                         .foregroundStyle(LocusTheme.muted)
@@ -85,7 +108,32 @@ struct SessionSidebarView: View {
                                         .padding(.leading, 42)
                                         .padding(.vertical, 7)
                                 } else {
-                                    ForEach(group.chats) { session in
+                                    ForEach(model.folders(in: group)) { folder in
+                                        ChatFolderBranchView(
+                                            group: group,
+                                            folder: folder,
+                                            depth: 0,
+                                            onCreateFolder: { workspace, parentID in
+                                                requestFolderEditor(
+                                                    workspace: workspace,
+                                                    parentID: parentID
+                                                )
+                                            },
+                                            onRenameFolder: { folder in
+                                                requestFolderEditor(
+                                                    workspace: folder.workspace,
+                                                    parentID: folder.parentID,
+                                                    folder: folder
+                                                )
+                                            },
+                                            onDeleteFolder: { folderToDelete = $0 },
+                                            sessionContent: { session in
+                                                AnyView(sessionRow(session))
+                                            }
+                                        )
+                                        .environmentObject(model)
+                                    }
+                                    ForEach(model.chats(in: group, folderID: nil)) { session in
                                         sessionRow(session)
                                             .padding(.leading, 18)
                                     }
@@ -142,6 +190,31 @@ struct SessionSidebarView: View {
         } message: {
             Text("Give this conversation a name that is easy to find later.")
         }
+        .alert(folderEditor?.title ?? "Chat Folder", isPresented: Binding(
+            get: { folderEditor != nil },
+            set: { if !$0 { folderEditor = nil } }
+        )) {
+            TextField("Folder name", text: $folderEditorName)
+                .accessibilityIdentifier("chatFolder.name")
+            Button("Cancel", role: .cancel) { folderEditor = nil }
+            Button(folderEditor?.folder == nil ? "Create" : "Save") {
+                guard let request = folderEditor else { return }
+                if let folder = request.folder {
+                    model.renameChatFolder(folder, name: folderEditorName)
+                } else {
+                    model.createChatFolder(
+                        in: request.workspace,
+                        name: folderEditorName,
+                        parentID: request.parentID
+                    )
+                }
+                folderEditor = nil
+            }
+            .disabled(folderEditorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityIdentifier("chatFolder.save")
+        } message: {
+            Text("Folders organize chats inside this workspace without changing where they run.")
+        }
         .confirmationDialog(
             "Remove \(workspaceToRemove?.title ?? "this workspace") from the sidebar?",
             isPresented: Binding(
@@ -165,6 +238,22 @@ struct SessionSidebarView: View {
                     + "Files on disk are not touched."
             )
         }
+        .confirmationDialog(
+            "Delete \(folderToDelete?.name ?? "this folder")?",
+            isPresented: Binding(
+                get: { folderToDelete != nil },
+                set: { if !$0 { folderToDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Folder", role: .destructive) {
+                if let folderToDelete { model.deleteChatFolder(folderToDelete) }
+                folderToDelete = nil
+            }
+            Button("Cancel", role: .cancel) { folderToDelete = nil }
+        } message: {
+            Text("Chats and subfolders move up one level. No conversations are deleted.")
+        }
     }
 
     private var removableChatCount: Int {
@@ -180,6 +269,17 @@ struct SessionSidebarView: View {
         } else {
             workspaceToRemove = group
         }
+    }
+
+    private func requestFolderEditor(
+        workspace: String, parentID: String?, folder: ChatFolderRecord? = nil
+    ) {
+        folderEditorName = folder?.name ?? ""
+        folderEditor = ChatFolderEditorRequest(
+            workspace: workspace,
+            parentID: parentID,
+            folder: folder
+        )
     }
 
     // MARK: - Header
@@ -232,8 +332,7 @@ struct SessionSidebarView: View {
                 accessibilityLabel: "Manage Accounts",
                 identifier: "sidebar.accounts"
             ) {
-                model.settingsPage = .accounts
-                model.settingsPresented = true
+                model.presentSettings(.accounts)
             }
 
             newChatButton
@@ -420,6 +519,19 @@ struct SessionSidebarView: View {
             .accessibilityLabel("Search sessions")
             .accessibilityValue(searchExpanded ? "Shown" : "Hidden")
             .accessibilityIdentifier("sidebar.search.toggle")
+            Button {
+                requestFolderEditor(workspace: model.activeWorkspaceID, parentID: nil)
+            } label: {
+                Image(systemName: "folder.badge.plus")
+                    .font(.locus(size: 10, weight: .semibold))
+                    .foregroundStyle(LocusTheme.muted)
+                    .frame(width: 22, height: 22)
+                    .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+            .buttonStyle(.locus(.icon))
+            .help("New chat folder (⇧⌘N)")
+            .accessibilityLabel("New chat folder")
+            .accessibilityIdentifier("sidebar.newChatFolder")
         }
         .padding(.trailing, 6)
     }
@@ -486,9 +598,52 @@ struct SessionSidebarView: View {
                 model.togglePin(session)
             }
             .accessibilityIdentifier("session.\(session.id).pin")
+            Button("Duplicate") {
+                model.duplicateSession(session)
+            }
+            .disabled(model.chatHasActiveRun(session))
+            .accessibilityIdentifier("session.\(session.id).duplicate")
+            Button("Open in Other Pane") {
+                model.openInOtherPane(session)
+            }
+            .disabled(session.id == model.currentSessionID)
+            .accessibilityIdentifier("session.\(session.id).openOtherPane")
+            if session.executionEnvironment == .worktree {
+                Button("Duplicate with Worktree") {
+                    model.duplicateSession(session, withWorktree: true)
+                }
+                .disabled(
+                    session.isArchived || model.chatHasActiveRun(session)
+                        || session.task.map {
+                            !FileManager.default.fileExists(atPath: $0.executionPath)
+                        } ?? true
+                )
+                .accessibilityIdentifier("session.\(session.id).duplicateWorktree")
+            }
+            Menu("Move to Folder") {
+                Button("Workspace Root") { model.moveChat(session, to: nil) }
+                    .disabled(session.folderID == nil)
+                let workspace = session.workspacePath
+                ForEach(
+                    model.chatFolders.filter {
+                        SessionSummary.canonicalWorkspacePath($0.workspace) == workspace
+                    }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                ) { folder in
+                    Button(folder.name) { model.moveChat(session, to: folder.id) }
+                        .disabled(session.folderID == folder.id)
+                    }
+            }
+            Button("Move Earlier") { model.reorderChat(session, offset: -1) }
+                .accessibilityIdentifier("session.\(session.id).moveEarlier")
+            Button("Move Later") { model.reorderChat(session, offset: 1) }
+                .accessibilityIdentifier("session.\(session.id).moveLater")
             Divider()
-            Button("Export Markdown…") {
-                model.exportSession(session)
+            Menu("Export") {
+                ForEach(ChatExportFormat.allCases) { format in
+                    Button("\(format.title)…") {
+                        model.exportSession(session, format: format)
+                    }
+                }
             }
             .accessibilityIdentifier("session.\(session.id).export")
             Button(session.isArchived ? "Restore from Archive" : "Archive") {
@@ -511,6 +666,20 @@ struct SessionSidebarView: View {
                 model.isBusy || model.hasPendingPermission || model.chatHasActiveRun(session)
             )
             .accessibilityIdentifier("session.\(session.id).delete")
+        }
+        .onDrag {
+            NSItemProvider(object: "locus-chat:\(session.id)" as NSString)
+        }
+        .modifier(ChatSidebarDropTarget(
+            targetFolderID: session.folderID,
+            index: session.sortOrder,
+            targetWorkspace: session.workspacePath
+        ))
+        .accessibilityAction(named: "Move Earlier") {
+            model.reorderChat(session, offset: -1)
+        }
+        .accessibilityAction(named: "Move Later") {
+            model.reorderChat(session, offset: 1)
         }
     }
 
@@ -647,7 +816,7 @@ struct SessionSidebarView: View {
 
     private var settingsMenu: some View {
         Menu {
-            Button("Settings…") { model.settingsPresented = true }
+            Button("Settings…") { model.presentSettings() }
                 .accessibilityIdentifier("sidebar.settings")
             Button("Usage & Costs…") { model.usageDashboardPresented = true }
                 .accessibilityIdentifier("sidebar.usage")
@@ -1172,7 +1341,223 @@ struct TeamProgressPopover: View {
     }
 }
 
+private func handleChatSidebarDrop(
+    _ providers: [NSItemProvider],
+    model: AppModel,
+    targetFolderID: String?,
+    index: Int?,
+    targetWorkspace: String? = nil
+) -> Bool {
+    guard let provider = providers.first(where: {
+        $0.hasItemConformingToTypeIdentifier(UTType.plainText.identifier)
+    }) else { return false }
+    provider.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) {
+        item, _ in
+        let value: String?
+        if let data = item as? Data {
+            value = String(data: data, encoding: .utf8)
+        } else if let text = item as? String {
+            value = text
+        } else if let text = item as? NSString {
+            value = text as String
+        } else {
+            value = nil
+        }
+        guard let value else { return }
+        Task { @MainActor in
+            if value.hasPrefix("locus-chat:") {
+                let id = String(value.dropFirst("locus-chat:".count))
+                guard let session = model.sessions.first(where: { $0.id == id }) else { return }
+                if let targetWorkspace,
+                   session.workspacePath != SessionSummary.canonicalWorkspacePath(targetWorkspace) {
+                    model.showToast("Chats stay inside their workspace")
+                    return
+                }
+                model.moveChat(session, to: targetFolderID, index: index)
+            } else if value.hasPrefix("locus-folder:") {
+                let id = String(value.dropFirst("locus-folder:".count))
+                guard let folder = model.chatFolders.first(where: { $0.id == id }) else { return }
+                if let targetWorkspace,
+                   SessionSummary.canonicalWorkspacePath(folder.workspace)
+                    != SessionSummary.canonicalWorkspacePath(targetWorkspace) {
+                    model.showToast("Folders stay inside their workspace")
+                    return
+                }
+                model.moveChatFolder(folder, to: targetFolderID, index: index)
+            }
+        }
+    }
+    return true
+}
+
+private struct ChatSidebarDropTarget: ViewModifier {
+    @EnvironmentObject private var model: AppModel
+    let targetFolderID: String?
+    let index: Int?
+    let targetWorkspace: String?
+    @State private var targeted = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .top) {
+                if targeted {
+                    Capsule()
+                        .fill(LocusTheme.signalDeep)
+                        .frame(height: 2)
+                        .padding(.horizontal, 5)
+                        .transition(.opacity)
+                        .accessibilityHidden(true)
+                }
+            }
+            .onDrop(of: [.plainText], isTargeted: $targeted) { providers in
+                handleChatSidebarDrop(
+                    providers,
+                    model: model,
+                    targetFolderID: targetFolderID,
+                    index: index,
+                    targetWorkspace: targetWorkspace
+                )
+            }
+    }
+}
+
+private struct ChatFolderBranchView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let group: WorkspaceChatGroup
+    let folder: ChatFolderRecord
+    let depth: Int
+    let onCreateFolder: (String, String?) -> Void
+    let onRenameFolder: (ChatFolderRecord) -> Void
+    let onDeleteFolder: (ChatFolderRecord) -> Void
+    let sessionContent: (SessionSummary) -> AnyView
+    @State private var isDropTarget = false
+    @State private var hoverExpansion: Task<Void, Never>?
+
+    private var expanded: Bool {
+        !model.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || model.isChatFolderExpanded(folder.id)
+    }
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Button {
+                withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
+                    model.setChatFolderExpanded(folder.id, expanded: !expanded)
+                }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.locus(size: 8, weight: .semibold))
+                        .frame(width: 10)
+                    Image(systemName: expanded ? "folder.fill" : "folder")
+                        .font(.locus(size: 11, weight: .medium))
+                        .foregroundStyle(isDropTarget ? LocusTheme.signalDeep : LocusTheme.muted)
+                    Text(folder.name)
+                        .font(.locus(size: 10, weight: .semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text("\(model.chats(in: group, folderID: folder.id).count)")
+                        .font(.locus(size: 8, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                .foregroundStyle(LocusTheme.inkSoft)
+                .padding(.horizontal, 8)
+                .frame(height: 30)
+                .background(isDropTarget ? LocusTheme.signal.opacity(0.18) : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.locus())
+            .padding(.leading, 18 + CGFloat(depth) * 14)
+            .contextMenu {
+                Button("New Subfolder…") { onCreateFolder(folder.workspace, folder.id) }
+                Button("Rename…") { onRenameFolder(folder) }
+                Menu("Move to Folder") {
+                    Button("Workspace Root") { model.moveChatFolder(folder, to: nil) }
+                        .disabled(folder.parentID == nil)
+                    ForEach(model.chatFolders.filter {
+                        model.canMoveChatFolder(folder, into: $0)
+                    }.sorted {
+                        $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                    }) { target in
+                        Button(target.name) { model.moveChatFolder(folder, to: target.id) }
+                            .disabled(folder.parentID == target.id)
+                    }
+                }
+                Button("Move Earlier") { model.reorderChatFolder(folder, offset: -1) }
+                Button("Move Later") { model.reorderChatFolder(folder, offset: 1) }
+                Divider()
+                Button("Delete Folder", role: .destructive) {
+                    onDeleteFolder(folder)
+                }
+            }
+            .onDrag { NSItemProvider(object: "locus-folder:\(folder.id)" as NSString) }
+            .onDrop(of: [.plainText], isTargeted: $isDropTarget) { providers in
+                handleChatSidebarDrop(
+                    providers,
+                    model: model,
+                    targetFolderID: folder.id,
+                    index: nil,
+                    targetWorkspace: folder.workspace
+                )
+            }
+            .onChange(of: isDropTarget) { _, targeted in
+                hoverExpansion?.cancel()
+                guard targeted, !expanded else { return }
+                hoverExpansion = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(600))
+                    guard !Task.isCancelled, isDropTarget else { return }
+                    withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
+                        model.setChatFolderExpanded(folder.id, expanded: true)
+                    }
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if isDropTarget {
+                    Capsule()
+                        .fill(LocusTheme.signalDeep)
+                        .frame(height: 2)
+                        .padding(.horizontal, 8)
+                        .accessibilityHidden(true)
+                }
+            }
+            .accessibilityLabel("Folder \(folder.name)")
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            .accessibilityIdentifier("chatFolder.\(folder.id)")
+            .accessibilityAction(named: "Move Earlier") {
+                model.reorderChatFolder(folder, offset: -1)
+            }
+            .accessibilityAction(named: "Move Later") {
+                model.reorderChatFolder(folder, offset: 1)
+            }
+
+            if expanded {
+                ForEach(model.folders(in: group, parentID: folder.id)) { child in
+                    ChatFolderBranchView(
+                        group: group,
+                        folder: child,
+                        depth: depth + 1,
+                        onCreateFolder: onCreateFolder,
+                        onRenameFolder: onRenameFolder,
+                        onDeleteFolder: onDeleteFolder,
+                        sessionContent: sessionContent
+                    )
+                    .environmentObject(model)
+                }
+                ForEach(model.chats(in: group, folderID: folder.id)) { session in
+                    sessionContent(session)
+                        .padding(.leading, 32 + CGFloat(depth) * 14)
+                }
+            }
+        }
+    }
+}
+
 private struct WorkspaceGroupRow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovering = false
+    @FocusState private var newChatFocused: Bool
     let group: WorkspaceChatGroup
     let expanded: Bool
     let active: Bool
@@ -1187,7 +1572,7 @@ private struct WorkspaceGroupRow: View {
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
                     .font(.locus(size: 8, weight: .bold))
                     .foregroundStyle(LocusTheme.muted)
-                    .frame(width: 18, height: 30)
+                    .frame(width: 16, height: 28)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.locus())
@@ -1203,15 +1588,14 @@ private struct WorkspaceGroupRow: View {
                             height: SidebarIconMetrics.workspaceIconSize
                         )
                         .accessibilityIdentifier("workspace.group.icon.\(group.id)")
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(group.title)
-                            .font(.locus(size: 10, weight: .semibold))
-                            .foregroundStyle(LocusTheme.ink)
-                            .lineLimit(1)
-                        Text("\(group.chats.count) \(group.chats.count == 1 ? "chat" : "chats")")
-                            .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
-                    }
+                    Text(group.title)
+                        .font(.locus(size: 10, weight: .medium))
+                        .foregroundStyle(LocusTheme.ink)
+                        .lineLimit(1)
+                    Text("\(group.chats.count)")
+                        .font(.locus(size: 8, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                        .accessibilityLabel("\(group.chats.count) \(group.chats.count == 1 ? "chat" : "chats")")
                     Spacer(minLength: 3)
                     if !group.isAvailable {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -1231,11 +1615,14 @@ private struct WorkspaceGroupRow: View {
                 Button(action: onNewChat) {
                     Image(systemName: "plus")
                         .font(.locus(size: 9, weight: .bold))
-                        .foregroundStyle(LocusTheme.muted)
-                        .frame(width: 24, height: 28)
+                        .foregroundStyle(
+                            isHovering || newChatFocused ? LocusTheme.muted : Color.clear
+                        )
+                        .frame(width: 24, height: 26)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.locus())
+                .focused($newChatFocused)
                 .disabled(actionsDisabled || !group.isAvailable)
                 .help("New chat in \(group.title)")
                 .accessibilityLabel("New chat in \(group.title)")
@@ -1243,9 +1630,12 @@ private struct WorkspaceGroupRow: View {
             }
         }
         .padding(.horizontal, 5)
-        .frame(height: 38)
-        .background(active ? LocusTheme.panel.opacity(0.85) : Color.clear)
+        .frame(height: 34)
+        .background(active ? LocusTheme.paperDeep.opacity(0.62) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
+        .animation(reduceMotion ? nil : LocusMotion.press, value: isHovering || newChatFocused)
     }
 }
 
@@ -1280,7 +1670,7 @@ private struct SessionRow: View {
             HStack(spacing: 7) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(session.displayTitle)
-                        .font(.locus(size: 10, weight: .semibold))
+                        .font(.locus(size: 10, weight: isActive ? .medium : .regular))
                         .foregroundStyle(LocusTheme.ink)
                         .lineLimit(1)
                     if isRunning || teamState != nil {
@@ -1324,13 +1714,9 @@ private struct SessionRow: View {
                 }
             }
             .padding(.horizontal, 8)
-            .frame(height: showsActivity ? 42 : 34)
-            .background(isActive ? LocusTheme.panel : Color.clear)
+            .frame(height: showsActivity ? 38 : 30)
+            .background(isActive ? LocusTheme.paperDeep.opacity(0.56) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(isActive ? LocusTheme.line : Color.clear, lineWidth: 1)
-            }
         }
         .buttonStyle(.locus())
         .accessibilityLabel("Resume \(session.displayTitle)")

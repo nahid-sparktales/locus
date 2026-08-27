@@ -98,6 +98,11 @@ struct LocusApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("New Session") { model.newSession() }
                     .keyboardShortcut("n", modifiers: .command)
+                Button("New Chat Folder…") {
+                    model.globalNewFolderName = ""
+                    model.globalNewFolderPresented = true
+                }
+                    .keyboardShortcut("n", modifiers: [.command, .shift])
             }
 
             CommandMenu("Locus") {
@@ -126,10 +131,14 @@ struct LocusApp: App {
                     .accessibilityIdentifier("menu.modelLibrary")
                 Button("Review Changes") { model.selectInspectorTab(.changes) }
                     .keyboardShortcut("r", modifiers: .command)
-                Button("Create Checkpoint") { model.checkpointPresented = true }
+                Button("Session Checkpoints…") { model.checkpointPresented = true }
                     .keyboardShortcut("s", modifiers: .command)
-                Button("Export Session…") { model.exportCurrentSession() }
-                    .accessibilityIdentifier("menu.exportSession")
+                Menu("Export Session") {
+                    ForEach(ChatExportFormat.allCases) { format in
+                        Button("\(format.title)…") { model.exportCurrentSession(format: format) }
+                    }
+                }
+                .accessibilityIdentifier("menu.exportSession")
                 Divider()
                 Button("Open Terminal") { model.openTerminal() }
                     .keyboardShortcut("`", modifiers: .control)
@@ -138,12 +147,18 @@ struct LocusApp: App {
                 // Declared once, here — a second registration in a view would
                 // silently shadow these (see the ⌘⇧K note in WorkspaceView).
                 ForEach(InspectorTab.allCases.filter { $0.shortcutKey != nil }) { tab in
-                    Button(tab.title) { model.selectInspectorTab(tab) }
+                    Button(tab.title) {
+                        if tab == .checkpoints {
+                            model.checkpointPresented = true
+                        } else {
+                            model.selectInspectorTab(tab)
+                        }
+                    }
                         .keyboardShortcut(
                             KeyEquivalent(tab.shortcutKey ?? "1"),
                             modifiers: .command
                         )
-                        .disabled(model.justChatEnabled)
+                        .disabled(model.justChatEnabled && tab != .checkpoints)
                 }
                 Button(model.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar") {
                     model.toggleSidebar()
@@ -526,7 +541,7 @@ struct RootView: View {
                             ))
                     }
 
-                    WorkspaceView(
+                    SplitChatWorkspaceView(
                         sidebarVisible: docksSidebar,
                         showSidebar: {
                             if proxy.size.width < minimumThreeColumnWidth {
@@ -742,6 +757,23 @@ struct RootView: View {
             .accessibilityIdentifier("clearSessions.confirm")
         } message: {
             Text("Previous sessions will move to a recovery folder. The active session, current chat, connection, and any running job will remain untouched.")
+        }
+        .alert("New Chat Folder", isPresented: $model.globalNewFolderPresented) {
+            TextField("Folder name", text: $model.globalNewFolderName)
+                .accessibilityIdentifier("chatFolder.global.name")
+            Button("Cancel", role: .cancel) {}
+            Button("Create") {
+                model.createChatFolder(
+                    in: model.activeWorkspaceID,
+                    name: model.globalNewFolderName,
+                    parentID: nil
+                )
+            }
+            .disabled(model.globalNewFolderName
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityIdentifier("chatFolder.global.create")
+        } message: {
+            Text("Folders organize chats without changing where they run.")
         }
     }
 }

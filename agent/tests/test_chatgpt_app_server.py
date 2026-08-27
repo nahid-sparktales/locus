@@ -547,7 +547,7 @@ def test_parity_gate_falls_back_to_legacy_contract(tmp_path):
     core.agent_mode = "work"
 
     core.tool_ctx.delegate_read_only = lambda args: ""
-    assert core.chatgpt_parity_active() is False
+    assert core.chatgpt_parity_active() is True
     core.tool_ctx.delegate_read_only = None
 
     core.agent_role_contract = "read-only reviewer"
@@ -613,3 +613,20 @@ def test_parity_schemas_add_submit_plan_only_in_plan_mode(tmp_path):
     assert "submit_plan" not in work
     assert "submit_plan" in plan
     assert set(work) == {"shell", "apply_patch", "update_plan"}
+
+    core.tool_ctx.delegate_read_only = lambda _arguments: '{"results":[]}'
+    core.tool_registry.set_solo_swarm_enabled(True)
+    adaptive = [
+        item["function"]["name"]
+        for item in core.tool_registry.parity_schemas()
+    ]
+    assert set(adaptive) == {
+        "shell", "apply_patch", "update_plan", "delegate_read_only",
+    }
+    core.run_turn(DECORATED)
+    start = runtime.start_kwargs[-1]
+    assert start["options"].native_prompt is True
+    assert "adaptive Solo delegation" in start["options"].developer_instructions
+    assert "delegate_read_only" in {
+        item["function"]["name"] for item in start["tools"]
+    }

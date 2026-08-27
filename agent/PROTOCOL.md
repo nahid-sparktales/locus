@@ -287,14 +287,16 @@ the Locus system prompt: `thread/start` omits `baseInstructions` and
 `personality`, AGENTS.md rides in `developerInstructions`, the environment
 context (date/timezone) is enabled, and the advertised dynamic tools mirror
 the Codex surface — `shell`, `apply_patch` (a `*** Begin Patch` envelope in a
-JSON `input` field), and `update_plan`, plus `submit_plan` in Plan mode only.
-Execution never leaves Locus: each call is translated to its canonical
-built-in (`bash`, `apply_patch`, `todo_write`) before permission checks, so
-deny lists, accept-edits, capability policy, and previews behave exactly as
-they always have. Parity turns carry no approved-memory, cross-chat, or
+JSON `input` field), `update_plan`, and adaptive `delegate_read_only`, plus
+`submit_plan` in Plan mode only.
+Execution never leaves Locus: the parity aliases are translated to canonical
+built-ins (`bash`, `apply_patch`, `todo_write`) before permission checks, and
+delegation runs through Locus's bounded executor, so deny lists, accept-edits,
+capability policy, and previews behave exactly as they always have. Parity
+turns carry no approved-memory, cross-chat, or
 skill-index context, and the recall work is skipped entirely. Ask mode, team
-workers, evaluations, and Solo Swarm keep the legacy Locus contract
-regardless of the toggle. `web_search` (parity turns only) sets the helper's
+workers, and evaluations keep the legacy Locus contract regardless of the
+toggle. `web_search` (parity turns only) sets the helper's
 `web_search = "cached"`, letting the model use OpenAI's web search; toggling
 either setting restarts the helper and the conversation's thread context.
 
@@ -687,12 +689,14 @@ Endpoint: `/ws/chat`.
 | `resume` | `session_id: string` | Resumes a saved session. Ends with `slash_result {command: "resume", data: {messages: [...]}}`. Rejected when busy. |
 | `ping` | — | Emits `pong`; used as an ordering sentinel. |
 
-An ordinary Solo Work, Plan, or Build `user_message` may include
-`solo_swarm: {"enabled": true}`. The backend snapshots the selected route and
-temporarily exposes one bounded `delegate_read_only` tool to the visible root.
+Every ordinary Solo Work, Plan, or Build `user_message` enables adaptive
+delegation. The deprecated `solo_swarm: {"enabled": true}` field remains
+accepted for older clients but is no longer required. The backend snapshots
+the selected route and temporarily exposes one bounded `delegate_read_only`
+tool to the visible root.
 Workers use the same provider/model, remain depth-one and workspace-read-only,
 and emit the existing agent activity plus `swarm_telemetry` events. Ask, slash,
-and team messages reject the field. `run_kind` remains `solo`.
+and team messages never expose delegation. `run_kind` remains `solo`.
 
 A team budget may include `call_budget_mode: "automatic" | "fixed"`.
 `automatic` resolves to the bounded 100-call adaptive pool; `fixed` preserves

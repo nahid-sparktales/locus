@@ -390,6 +390,24 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("message.00000000-0000-0000-0000-000000000102.regenerate").exists)
     }
 
+    func testTranscriptUsesTrailingUserBubbleAndOpenAssistantReadingFlow() {
+        let userBubble = anyElement(
+            "message.00000000-0000-0000-0000-000000000101.bubble"
+        )
+        let assistant = anyElement("message.00000000-0000-0000-0000-000000000102")
+        let composer = app.textViews["composer.input"]
+
+        XCTAssertTrue(userBubble.waitForExistence(timeout: 3))
+        XCTAssertTrue(assistant.exists)
+        XCTAssertGreaterThan(userBubble.frame.midX, assistant.frame.midX)
+        XCTAssertLessThanOrEqual(
+            userBubble.frame.width,
+            composer.frame.width * 0.84,
+            "user prompts should stay capped near 82 percent of the reading column"
+        )
+        XCTAssertGreaterThan(userBubble.frame.minX, assistant.frame.minX)
+    }
+
     func testUserMessageOffersRewind() {
         let user = anyElement("message.00000000-0000-0000-0000-000000000101")
         XCTAssertTrue(user.waitForExistence(timeout: 2))
@@ -400,6 +418,10 @@ final class LocusUITests: XCTestCase {
     }
 
     func testSessionOrganizerMenusAndArchivedFilter() {
+        let workspace = anyElement("workspace.group./private/tmp")
+        XCTAssertTrue(workspace.waitForExistence(timeout: 2))
+        XCTAssertLessThanOrEqual(workspace.frame.height, 34.5)
+
         let current = app.buttons["session.seed-current"]
         XCTAssertTrue(current.waitForExistence(timeout: 2))
         XCTAssertFalse(
@@ -585,9 +607,9 @@ final class LocusUITests: XCTestCase {
 
         let mode = anyElement("settings.proxyMode")
         XCTAssertTrue(mode.waitForExistence(timeout: 3))
-        // Direct connection by default: no manual fields, Save enabled.
+        // Direct connection by default: no manual fields and nothing to apply.
         XCTAssertFalse(anyElement("settings.proxyHost").exists)
-        XCTAssertTrue(app.buttons["settings.save"].isEnabled)
+        XCTAssertFalse(app.buttons["settings.save"].isEnabled)
 
         mode.click()
         app.menuItems["Manual proxy"].click()
@@ -598,18 +620,52 @@ final class LocusUITests: XCTestCase {
         // connections are the failure this feature exists to prevent.
         XCTAssertFalse(app.buttons["settings.save"].isEnabled)
 
+        let host = anyElement("settings.proxyHost")
+        let port = anyElement("settings.proxyPort")
+        host.click()
+        host.typeText("127.0.0.1")
+        port.click()
+        port.typeText("8080")
+        XCTAssertTrue(app.buttons["settings.save"].isEnabled)
+
+        anyElement("settings.page.general").click()
+        XCTAssertTrue(
+            networkPage.label.localizedCaseInsensitiveContains("unapplied"),
+            "staged pages should remain marked while navigating"
+        )
+        networkPage.click()
+        XCTAssertEqual(anyElement("settings.proxyHost").value as? String, "127.0.0.1")
+        XCTAssertEqual(anyElement("settings.proxyPort").value as? String, "8080")
+
         app.buttons["settings.cancel"].click()
+        XCTAssertTrue(app.buttons["Discard Changes"].waitForExistence(timeout: 2))
+        app.buttons["Discard Changes"].click()
     }
 
     func testRuntimeSettingsShowAutomaticOnlineServices() {
         anyElement("workspace.modelPicker").click()
         app.buttons["Manage Accounts…"].click()
 
-        // Manage Accounts lands on the Accounts tab; the runtime readout lives
-        // on General.
-        let generalPage = anyElement("settings.page.general")
-        XCTAssertTrue(generalPage.waitForExistence(timeout: 3))
-        generalPage.click()
+        XCTAssertFalse(
+            anyElement("settings.page.developer").exists,
+            "Standard settings should hide runtime diagnostics"
+        )
+        anyElement("settings.page.browser").click()
+        XCTAssertFalse(anyElement("settings.browser.webInspector").exists)
+
+        let chatPage = anyElement("settings.page.chat")
+        XCTAssertTrue(chatPage.waitForExistence(timeout: 3))
+        chatPage.click()
+        XCTAssertTrue(anyElement("settings.notesScope").exists)
+        XCTAssertTrue(anyElement("settings.soloPlanPresentation").exists)
+        XCTAssertTrue(anyElement("settings.teamRunsPresentation").exists)
+
+        anyElement("settings.level.advanced").click()
+        anyElement("settings.page.browser").click()
+        XCTAssertTrue(anyElement("settings.browser.webInspector").waitForExistence(timeout: 3))
+        let developerPage = anyElement("settings.page.developer")
+        XCTAssertTrue(developerPage.waitForExistence(timeout: 3))
+        developerPage.click()
 
         let agentStatus = app.staticTexts["settings.agentStatus"].firstMatch
         let modelStatus = app.staticTexts["settings.modelStatus"].firstMatch
@@ -619,9 +675,24 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(anyElement("settings.autoLaunch").exists)
         XCTAssertFalse(anyElement("settings.retryLocalServices").exists)
         XCTAssertFalse(anyElement("settings.enterSendsMessages").exists)
-        XCTAssertTrue(anyElement("settings.notesScope").exists)
-        XCTAssertTrue(anyElement("settings.soloPlanPresentation").exists)
-        XCTAssertTrue(anyElement("settings.teamRunsPresentation").exists)
+    }
+
+    func testSettingsSearchActivatesAdvancedAndRoutesToTheControl() {
+        app.typeKey(",", modifierFlags: .command)
+
+        let search = anyElement("settings.search")
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        search.click()
+        search.typeText("maximum tool steps")
+
+        let result = anyElement("settings.search.result.settings.maxIterations")
+        XCTAssertTrue(result.waitForExistence(timeout: 3))
+        XCTAssertTrue(result.label.localizedCaseInsensitiveContains("advanced"))
+        result.click()
+
+        XCTAssertTrue(anyElement("settings.page.developer").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("settings.maxIterations").waitForExistence(timeout: 3))
+        XCTAssertEqual(anyElement("settings.level.advanced").value as? String, "1")
     }
 
     func testAppearanceSettingsExposeAndApplySystemLightDarkChoices() {
@@ -634,20 +705,21 @@ final class LocusUITests: XCTestCase {
             70,
             "the resting composer should leave most of the window to the transcript"
         )
-        let status = anyElement("workspace.workStatus")
-        let composer = app.textViews["composer.input"]
-        XCTAssertTrue(status.exists)
+        XCTAssertFalse(
+            anyElement("workspace.workStatus").exists,
+            "idle operational status should stay out of the transcript"
+        )
         XCTAssertTrue(anyElement("sidebar.agentStatus").exists)
         XCTAssertFalse(anyElement("workspace.agentStatus").exists)
-        XCTAssertTrue(anyElement("workspace.modelStatus").exists)
-        XCTAssertLessThanOrEqual(status.frame.width, 740)
-        XCTAssertEqual(
-            status.frame.midX,
-            composer.frame.midX,
-            accuracy: 2,
-            "the model readiness indicator should stay centered with the composer"
+        XCTAssertFalse(anyElement("workspace.modelStatus").exists)
+        XCTAssertTrue(
+            anyElement("workspace.modelPicker").label.localizedCaseInsensitiveContains("ready")
         )
         app.typeKey(",", modifierFlags: .command)
+
+        let appearancePage = anyElement("settings.page.appearance")
+        XCTAssertTrue(appearancePage.waitForExistence(timeout: 3))
+        appearancePage.click()
 
         let picker = anyElement("settings.appearance")
         XCTAssertTrue(picker.waitForExistence(timeout: 3))
@@ -665,13 +737,15 @@ final class LocusUITests: XCTestCase {
         teamProgress.click()
         contextUsage.click()
 
-        app.buttons["settings.save"].click()
+        XCTAssertFalse(app.buttons["settings.save"].exists)
+        app.buttons["settings.cancel"].click()
         XCTAssertFalse(picker.exists)
         XCTAssertTrue(anyElement("workspace.contextUsage").waitForExistence(timeout: 3))
 
         // UI-test models do not persist to disk, but the saved in-memory
         // preference must still drive both scenes for the rest of the launch.
         app.typeKey(",", modifierFlags: .command)
+        anyElement("settings.page.appearance").click()
         let dark = anyElement("settings.appearance.dark")
         XCTAssertTrue(dark.waitForExistence(timeout: 3))
         XCTAssertEqual(anyElement("settings.appearance").value as? String, "dark")
@@ -888,11 +962,20 @@ final class LocusUITests: XCTestCase {
 
     func testSidebarPlacesChatWorkAndScheduleBelowTheBrand() {
         let brand = anyElement("sidebar.brand")
+        let sideChat = anyElement("inspector.rail.sideChat")
         let chat = app.buttons["workspace.mode.chat"]
         let work = app.buttons["workspace.mode.work"]
         let schedule = anyElement("sidebar.schedule")
 
         XCTAssertTrue(brand.waitForExistence(timeout: 3))
+        XCTAssertTrue(sideChat.exists)
+        XCTAssertGreaterThan(
+            sideChat.frame.minX,
+            brand.frame.maxX,
+            "Side Chat belongs on the right utility rail, not in the left sidebar header"
+        )
+        XCTAssertFalse(anyElement("sidebar.splitView").exists)
+        XCTAssertFalse(anyElement("workspace.splitView").exists)
         XCTAssertTrue(chat.exists)
         XCTAssertTrue(work.exists)
         XCTAssertTrue(schedule.exists)
@@ -941,8 +1024,14 @@ final class LocusUITests: XCTestCase {
 
         work.click()
         XCTAssertTrue(work.isSelected)
-        XCTAssertTrue(anyElement("composer.mode.plan").waitForExistence(timeout: 3))
+        let planMode = anyElement("composer.mode.plan")
+        XCTAssertTrue(planMode.waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("composer.mode.build").exists)
+        XCTAssertGreaterThanOrEqual(
+            planMode.frame.minY,
+            app.textViews["composer.input"].frame.maxY - 2,
+            "mode and routing controls belong in the composer footer"
+        )
         XCTAssertTrue(anyElement("plan.context").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("inspector.rail.plan").exists, "the rail returns with agentic modes")
     }
@@ -971,21 +1060,41 @@ final class LocusUITests: XCTestCase {
         )
 
         more.click()
-        for tab in ["changes", "files", "checkpoints", "runs", "agents"] {
+        for tab in ["changes", "files", "runs", "agents"] {
             XCTAssertTrue(
                 app.menuItems["inspector.rail.menu.\(tab)"].exists,
                 "the more-panels menu should restore \(tab)"
             )
         }
-        app.menuItems["inspector.rail.menu.checkpoints"].click()
-        XCTAssertTrue(anyElement("inspector.tab.checkpoints").waitForExistence(timeout: 3))
+        XCTAssertFalse(
+            app.menuItems["inspector.rail.menu.checkpoints"].exists,
+            "manual checkpoints should not occupy a persistent inspector tab"
+        )
+        app.menuItems["inspector.rail.menu.agents"].click()
+        XCTAssertTrue(anyElement("agents.content").waitForExistence(timeout: 3))
 
         let settingsMenu = anyElement("sidebar.more")
         XCTAssertTrue(settingsMenu.waitForExistence(timeout: 3))
         settingsMenu.click()
-        app.menuItems["sidebar.settings"].click()
-        XCTAssertTrue(anyElement("settings.page.general").waitForExistence(timeout: 3))
-        app.buttons["settings.cancel"].click()
+        XCTAssertTrue(app.menuItems["sidebar.settings"].exists)
+        XCTAssertTrue(app.menuItems["sidebar.checkpoints"].exists)
+    }
+
+    func testRouterAndProxiesLiveOnlyInMorePanelsMenu() {
+        XCTAssertTrue(anyElement("inspector.rail.notes").waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("inspector.rail.router").exists)
+        XCTAssertFalse(anyElement("inspector.rail.proxies").exists)
+
+        let more = anyElement("inspector.rail.more")
+        XCTAssertTrue(more.exists)
+        more.click()
+
+        for tab in ["router", "proxies"] {
+            XCTAssertTrue(
+                app.menuItems["inspector.rail.menu.\(tab)"].exists,
+                "the more-panels menu should contain \(tab)"
+            )
+        }
     }
 
     func testRailIconsOpenAndTogglePanels() {
@@ -1151,15 +1260,19 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("browser.url").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("browser.empty").exists)
 
-        // ⌘6 — Checkpoints, with its own creation and history panel.
+        // ⌘6 — the focused manual-checkpoint manager, not an inspector tab.
         app.typeKey("6", modifierFlags: .command)
-        XCTAssertTrue(anyElement("checkpointTab.content").waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("checkpointTab.create").exists)
+        XCTAssertTrue(anyElement("checkpoints.close").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("checkpoints.create").exists)
+        XCTAssertFalse(anyElement("inspector.tab.checkpoints").exists)
+        anyElement("checkpoints.close").click()
 
         // ⌘8 — AGENTS.md, with an explanation and the workspace editor.
         app.typeKey("8", modifierFlags: .command)
         XCTAssertTrue(anyElement("agents.content").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("agents.editor").exists)
+        XCTAssertTrue(anyElement("agents.starters").exists)
+        XCTAssertTrue(anyElement("agents.saveState").exists)
         XCTAssertTrue(anyElement("agents.save").exists)
 
         // ⌘1 — back to the idle Overview.
@@ -1250,7 +1363,18 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("notes.toolbar").exists)
         XCTAssertTrue(anyElement("notes.toolbar.insert").exists)
         XCTAssertTrue(anyElement("notes.toolbar.more").exists)
+        let color = anyElement("notes.toolbar.textColor")
+        XCTAssertTrue(color.exists)
+        XCTAssertEqual(color.value as? String, "Default")
         XCTAssertTrue(anyElement("notes.saveState").exists)
+
+        color.click()
+        let blue = app.menuItems["Blue"]
+        XCTAssertTrue(blue.waitForExistence(timeout: 3))
+        blue.click()
+        XCTAssertTrue(waitUntil {
+            self.anyElement("notes.toolbar.textColor").value as? String == "Blue"
+        })
 
         let scope = anyElement("notes.scopeMenu")
         XCTAssertTrue(scope.exists)

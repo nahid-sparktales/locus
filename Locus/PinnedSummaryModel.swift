@@ -331,7 +331,7 @@ enum PinnedSummary {
             .compactMap { run -> SubagentRow? in
                 guard let status = subagentStatus(run.state) else { return nil }
                 let name = run.teamName?.nilIfEmpty
-                    ?? (run.isSoloSwarm ? "Solo Swarm" : run.request.nilIfEmpty)
+                    ?? (run.isSoloSwarm ? "Solo" : run.request.nilIfEmpty)
                     ?? "Subagent"
                 return SubagentRow(id: run.id, name: name, status: status, runID: run.id)
             }

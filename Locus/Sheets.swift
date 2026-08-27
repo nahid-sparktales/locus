@@ -1150,11 +1150,12 @@ struct CheckpointSheet: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Session checkpoints")
+                    Text("Manual session checkpoints")
                         .font(.locus(size: 15, weight: .bold))
-                    Text("Save and restore the conversation, tasks, workspace, model, and context pack.")
+                    Text("Chats already autosave. Add a named rollback point when you want to restore the conversation, tasks, workspace, model, and context pack together.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 Button {
@@ -1269,6 +1270,11 @@ struct SettingsView: View {
     @State private var accountPendingRemoval: ProviderAccount?
     @State private var localModelPendingDeletion: ModelInfo?
     @State private var deletingLocalModelName: String?
+    @State private var settingsSearch = ""
+    @State private var pendingSearchAnchor: String?
+    @State private var hasLoadedDraft = false
+    @State private var discardPromptPresented = false
+    @FocusState private var focusedTextPreference: String?
     let presentationContext: SettingsPresentationContext
 
     init(presentationContext: SettingsPresentationContext = .sheet) {
@@ -1276,120 +1282,27 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Locus Settings")
-                        .font(.locus(size: 16, weight: .bold))
-                    Text("Local agent, models, browser, and account configuration")
-                        .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.ink)
-                        .accessibilityIdentifier("settings.subtitle")
-                }
-                Spacer()
-                Button {
-                    model.clearAppearancePreview()
-                    dismiss()
-                    model.settingsPresented = false
-                } label: {
-                    Image(systemName: "xmark")
-                }
-                .buttonStyle(.locus())
-                .accessibilityLabel("Close settings")
-                .accessibilityIdentifier("settings.close")
-            }
-            .padding(17)
-            .locusSurface(.toolbar)
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(LocusTheme.line).frame(height: 1)
-            }
+        HStack(spacing: 0) {
+            settingsSidebar
 
-            HStack(spacing: 0) {
-                List(SettingsPage.allCases, selection: $model.settingsPage) { item in
-                    Label(item.rawValue, systemImage: item.symbol)
-                        .font(LocusType.callout)
-                        // A native sidebar applies vibrancy and its own
-                        // selected-row treatment. Use the native semantic
-                        // label color here so macOS can resolve the correct
-                        // foreground against both states.
-                        .foregroundStyle(Color.primary)
-                        .tag(item)
-                        .accessibilityIdentifier("settings.page.\(item.accessibilityKey)")
-                }
-                .listStyle(.sidebar)
-                .frame(width: 155)
+            Rectangle()
+                .fill(LocusTheme.separator)
+                .frame(width: 1)
 
-                Rectangle().fill(LocusTheme.line).frame(width: 1)
+            VStack(spacing: 0) {
+                settingsDetailHeader
 
-                switch model.settingsPage {
-                case .general: generalPage
-                case .network: networkPage
-                case .browser: browserPage
-                case .accounts: accountsPage
-                case .agents:
-                    AgentTeamsSettingsView()
-                        .environmentObject(model)
-                case .knowledge:
-                    WorkspaceKnowledgeSettingsView()
-                        .environmentObject(model)
-                case .permissions: permissionsPage
-                case .extensions:
-                    ExtensionsSettingsView()
-                        .environmentObject(model)
-                case .updates: updatesPage
-                case .shortcuts:
-                    KeyboardShortcutsSettingsView()
+                if settingsSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    settingsPageContent
+                } else {
+                    settingsSearchResults
                 }
+
+                settingsActionBar
             }
-
-            // Network shares General's draft and Save: the proxy has no side
-            // effects until Save, and Save is the single point where the
-            // settings, the password file, and the agent relaunch commit.
-            if model.settingsPage == .general
-                || model.settingsPage == .network
-                || model.settingsPage == .browser
-            {
-                HStack {
-                    Button("Cancel") {
-                        model.clearAppearancePreview()
-                        dismiss()
-                        model.settingsPresented = false
-                    }
-                    .accessibilityIdentifier("settings.cancel")
-                    Spacer()
-                    // Shown wherever the Save bar is: the draft is shared, so
-                    // an incomplete proxy disables Save on General too, and a
-                    // greyed-out button with no stated reason is a dead end.
-                    if let error = proxyDraftError {
-                        Text(error)
-                            .font(.locus(size: 9))
-                            .foregroundStyle(LocusTheme.coral)
-                            .accessibilityIdentifier("settings.proxyError")
-                    }
-                    Button("Save") {
-                        var saved = draft
-                        let typed = localWindow.trimmingCharacters(in: .whitespacesAndNewlines)
-                        saved.localContextWindow = typed.isEmpty ? nil : Int(typed)
-                        let steps = iterationLimit.trimmingCharacters(in: .whitespacesAndNewlines)
-                        saved.maxIterations = steps.isEmpty ? nil : Int(steps)
-                        applyProxyDraft(to: &saved)
-                        let credentialChanged = updateProxyCredential(for: saved)
-                        model.applySettings(saved, proxyCredentialChanged: credentialChanged)
-                        dismiss()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
-                    .disabled(proxyDraftError != nil)
-                    .accessibilityIdentifier("settings.save")
-                }
-                .padding(15)
-                .locusSurface(.toolbar)
-                .overlay(alignment: .top) {
-                    Rectangle().fill(LocusTheme.line).frame(height: 1)
-                }
-            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 780, height: 620)
+        .frame(width: 920, height: 680)
         .background(LocusTheme.panel)
         .onAppear {
             draft = model.settings
@@ -1407,23 +1320,41 @@ struct SettingsView: View {
             proxyPassword = ""
             proxyPasswordStored = model.persistenceEnabled
                 && CredentialStore.has(account: CredentialStore.proxyCredentialKey)
+            if model.settingsPage.minimumLevel == .advanced,
+               model.settings.resolvedSettingsLevel == .standard {
+                model.settingsPage = .general
+            }
+            hasLoadedDraft = true
         }
         // A result describes the values it was run against; the moment any of
         // them changes it is a claim about a proxy that no longer exists.
         .onChange(of: proxyDraftSignature) { proxyTestOutcome = nil }
-        .onChange(of: draft.appearanceRaw) { _, rawValue in
-            model.previewAppearance(rawValue)
+        .onChange(of: immediateDraftSignature) {
+            guard hasLoadedDraft else { return }
+            applyImmediateDraft()
+        }
+        .onChange(of: focusedTextPreference) { oldValue, newValue in
+            guard hasLoadedDraft, oldValue != nil, oldValue != newValue else { return }
+            applyImmediateDraft()
         }
         .onExitCommand {
-            model.clearAppearancePreview()
-            dismiss()
-            model.settingsPresented = false
+            requestSettingsDismissal()
         }
+        .interactiveDismissDisabled(hasAnyStagedChanges)
         .onDisappear {
             model.clearAppearancePreview()
             if presentationContext == .settingsWindow {
                 model.completeSettingsDismissal()
             }
+        }
+        .alert("Discard unapplied settings?", isPresented: $discardPromptPresented) {
+            Button("Keep Editing", role: .cancel) {}
+            Button("Discard Changes", role: .destructive) {
+                discardAllStagedChanges()
+                completeSettingsDismissal()
+            }
+        } message: {
+            Text("Network, model runtime, or developer changes have not been applied.")
         }
         // Accounts are saved as they are edited rather than with the rest of
         // the draft: they write the credential file, and Cancel cannot un-write it.
@@ -1478,14 +1409,497 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Studio settings shell
+
+    private var settingsLevel: SettingsLevel { draft.resolvedSettingsLevel }
+
+    private var settingsSidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Settings")
+                .font(.system(.title2, design: .default, weight: .bold))
+                .foregroundStyle(LocusTheme.textPrimary)
+                .padding(.horizontal, 18)
+                .padding(.top, 20)
+                .padding(.bottom, 14)
+
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(LocusTheme.textTertiary)
+                TextField("Search settings", text: $settingsSearch)
+                    .textFieldStyle(.plain)
+                    .accessibilityIdentifier("settings.search")
+                if !settingsSearch.isEmpty {
+                    Button {
+                        settingsSearch = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(LocusTheme.textTertiary)
+                    }
+                    .buttonStyle(.locus())
+                    .accessibilityLabel("Clear settings search")
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .background(LocusTheme.surfaceCard.opacity(0.72))
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(LocusTheme.separator, lineWidth: 1)
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 3) {
+                    ForEach(SettingsNavigationGroup.allCases) { group in
+                        Text(group.rawValue.uppercased())
+                            .font(.system(.caption2, design: .default, weight: .semibold))
+                            .tracking(0.8)
+                            .foregroundStyle(LocusTheme.textTertiary)
+                            .padding(.horizontal, 11)
+                            .padding(.top, 11)
+                            .padding(.bottom, 3)
+
+                        ForEach(visiblePages(in: group)) { page in
+                            settingsNavigationButton(page)
+                        }
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 12)
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("SETTINGS LEVEL")
+                    .font(.system(.caption2, design: .default, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundStyle(LocusTheme.textTertiary)
+                Picker("Settings level", selection: $draft.settingsLevelRaw) {
+                    ForEach(SettingsLevel.allCases) { level in
+                        Text(level.title)
+                            .tag(level.rawValue)
+                            .accessibilityIdentifier("settings.level.\(level.rawValue)")
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("settings.level")
+                Text(settingsLevel == .standard
+                    ? "Common controls. Search still finds advanced settings."
+                    : "All runtime and diagnostic controls are visible.")
+                    .font(.system(.caption, design: .default))
+                    .foregroundStyle(LocusTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+            .overlay(alignment: .top) {
+                Rectangle().fill(LocusTheme.separator).frame(height: 1)
+            }
+        }
+        .frame(width: 208)
+        .frame(maxHeight: .infinity)
+        .locusSurface(.structural)
+        .onChange(of: draft.settingsLevelRaw) {
+            if settingsLevel == .standard, model.settingsPage.minimumLevel == .advanced {
+                model.settingsPage = .general
+            }
+        }
+    }
+
+    private func visiblePages(in group: SettingsNavigationGroup) -> [SettingsPage] {
+        SettingsPage.allCases.filter { page in
+            page.navigationGroup == group
+                && (settingsLevel == .advanced || page.minimumLevel == .standard)
+        }
+    }
+
+    private func settingsNavigationButton(_ page: SettingsPage) -> some View {
+        Button {
+            settingsSearch = ""
+            model.settingsPage = page
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: page.symbol)
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 18)
+                Text(page.rawValue)
+                    .font(.system(.callout, design: .default, weight: .medium))
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if hasStagedChanges(for: page) {
+                    Circle()
+                        .fill(LocusTheme.accentAction)
+                        .frame(width: 6, height: 6)
+                        .accessibilityLabel("Unapplied changes")
+                }
+            }
+            .foregroundStyle(
+                model.settingsPage == page ? LocusTheme.textPrimary : LocusTheme.textSecondary
+            )
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                model.settingsPage == page
+                    ? LocusTheme.surfaceCard.opacity(0.86) : Color.clear
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.locus())
+        .accessibilityIdentifier("settings.page.\(page.accessibilityKey)")
+    }
+
+    private var settingsDetailHeader: some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(settingsSearch.isEmpty ? model.settingsPage.rawValue : "Search Settings")
+                    .font(.system(.title2, design: .default, weight: .bold))
+                    .foregroundStyle(LocusTheme.textPrimary)
+                Text(settingsSearch.isEmpty
+                    ? model.settingsPage.subtitle
+                    : "Choose a result to open the matching control.")
+                    .font(.system(.callout, design: .default))
+                    .foregroundStyle(LocusTheme.textTertiary)
+                    .accessibilityIdentifier("settings.subtitle")
+            }
+            Spacer()
+            Button { requestSettingsDismissal() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 28, height: 28)
+                    .background(LocusTheme.surfaceCard.opacity(0.8))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.locus())
+            .accessibilityLabel("Close settings")
+            .accessibilityIdentifier("settings.close")
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 18)
+        .locusSurface(.toolbar)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LocusTheme.separator).frame(height: 1)
+        }
+    }
+
+    @ViewBuilder
+    private var settingsPageContent: some View {
+        ScrollViewReader { proxy in
+            Group {
+                switch model.settingsPage {
+                case .general: generalPage
+                case .appearance: appearancePage
+                case .chat: chatPage
+                case .network: networkPage
+                case .browser: browserPage
+                case .accounts: accountsPage
+                case .agents:
+                    AgentTeamsSettingsView()
+                        .environmentObject(model)
+                case .knowledge:
+                    WorkspaceKnowledgeSettingsView()
+                        .environmentObject(model)
+                case .permissions: permissionsPage
+                case .extensions:
+                    ExtensionsSettingsView()
+                        .environmentObject(model)
+                case .developer: developerPage
+                case .updates: updatesPage
+                case .shortcuts:
+                    KeyboardShortcutsSettingsView()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onChange(of: pendingSearchAnchor) { _, anchor in
+                guard let anchor else { return }
+                withAnimation(LocusMotion.scroll) {
+                    proxy.scrollTo(anchor, anchor: .top)
+                }
+                pendingSearchAnchor = nil
+            }
+        }
+    }
+
+    private var settingsSearchResults: some View {
+        ScrollView {
+            LazyVStack(spacing: 8) {
+                if searchResults.isEmpty {
+                    ContentUnavailableView(
+                        "No Settings Found",
+                        systemImage: "magnifyingglass",
+                        description: Text("Try a feature, control, or category name.")
+                    )
+                    .padding(.top, 90)
+                } else {
+                    ForEach(searchResults) { result in
+                        Button { openSearchResult(result) } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: result.page.symbol)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(LocusTheme.accentAction)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack(spacing: 7) {
+                                        Text(result.title)
+                                            .font(.system(.body, design: .default, weight: .semibold))
+                                        if result.minimumLevel == .advanced {
+                                            Text("ADVANCED")
+                                                .font(.system(.caption2, design: .default, weight: .bold))
+                                                .foregroundStyle(LocusTheme.textTertiary)
+                                        }
+                                    }
+                                    Text(result.page.rawValue)
+                                        .font(.system(.caption, design: .default))
+                                        .foregroundStyle(LocusTheme.textTertiary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .foregroundStyle(LocusTheme.textTertiary)
+                            }
+                            .padding(.horizontal, 16)
+                            .frame(height: 58)
+                            .background(LocusTheme.surfaceCard)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(LocusTheme.separator, lineWidth: 1)
+                            }
+                        }
+                        .buttonStyle(.locus())
+                        .accessibilityIdentifier("settings.search.result.\(result.id)")
+                    }
+                }
+            }
+            .frame(maxWidth: 660)
+            .padding(24)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private var searchResults: [SettingsSearchDescriptor] {
+        SettingsSearchDescriptor.all.filter { $0.matches(settingsSearch) }
+    }
+
+    private func openSearchResult(_ result: SettingsSearchDescriptor) {
+        if result.minimumLevel == .advanced {
+            draft.settingsLevelRaw = SettingsLevel.advanced.rawValue
+        }
+        model.settingsPage = result.page
+        pendingSearchAnchor = result.anchor
+        settingsSearch = ""
+    }
+
+    private var settingsActionBar: some View {
+        HStack(spacing: 10) {
+            Button("Close") { requestSettingsDismissal() }
+                .accessibilityIdentifier("settings.cancel")
+            Spacer()
+            if let error = model.settingsPage == .network ? proxyDraftError : nil {
+                Text(error)
+                    .font(.system(.caption, design: .default))
+                    .foregroundStyle(LocusTheme.dangerForeground)
+                    .accessibilityIdentifier("settings.proxyError")
+            } else if currentPageHasStagedChanges {
+                Text("Unapplied changes")
+                    .font(.system(.caption, design: .default, weight: .medium))
+                    .foregroundStyle(LocusTheme.textTertiary)
+            }
+            if isStagedPage(model.settingsPage) {
+                Button("Discard") { discardStagedChanges(for: model.settingsPage) }
+                    .disabled(!currentPageHasStagedChanges)
+                    .accessibilityIdentifier("settings.discard")
+                Button("Apply") { applyStagedPage(model.settingsPage) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(LocusTheme.ink)
+                    .disabled(!currentPageHasStagedChanges || stagedPageHasError)
+                    .accessibilityIdentifier("settings.save")
+            }
+        }
+        .padding(.horizontal, 20)
+        .frame(height: 52)
+        .locusSurface(.toolbar)
+        .overlay(alignment: .top) {
+            Rectangle().fill(LocusTheme.separator).frame(height: 1)
+        }
+    }
+
+    private var immediateDraftSignature: String {
+        [
+            draft.settingsLevelRaw, draft.appearanceRaw,
+            draft.showTeamProgressInHeader.description,
+            draft.showContextUsageInHeader.description,
+            draft.notesScopeRaw, draft.soloPlanPresentationRaw,
+            draft.teamRunsPresentationRaw, draft.thinkingVisibilityRaw,
+            draft.toolActivityVisibilityRaw, draft.maximumActiveChats.description,
+            draft.worktreeRetentionLimit.description,
+            draft.newGitChatsUseWorktree.description, draft.launchAtLogin.description,
+            draft.mobileAccessEnabled.description, draft.notifyOnCompletion.description,
+            draft.notifyOnNeedsAttention.description, draft.browserEnabled.description,
+            draft.browserViewportRaw, draft.browserPersistProfile.description,
+            draft.browserRealInput.description, draft.browserEmulateDevice.description,
+            draft.browserWebInspector.description, draft.webSearchDestinationRaw,
+        ].joined(separator: "\u{1F}")
+    }
+
+    private func applyImmediateDraft() {
+        var saved = model.settings
+        saved.applyImmediatePreferences(from: draft)
+        // Immediate preferences should feel live and quiet. In particular,
+        // seeding the draft on appear must never close Settings or flash a
+        // misleading “saved” confirmation before the user has interacted.
+        model.applySettings(saved, showConfirmation: false)
+    }
+
+    private func isStagedPage(_ page: SettingsPage) -> Bool {
+        guard page.mutationPolicy == .staged else { return false }
+        if page == .accounts {
+            return settingsLevel == .advanced || hasStagedChanges(for: page)
+        }
+        return true
+    }
+
+    private var currentPageHasStagedChanges: Bool {
+        hasStagedChanges(for: model.settingsPage)
+    }
+
+    private var hasAnyStagedChanges: Bool {
+        SettingsPage.allCases
+            .filter { $0.mutationPolicy == .staged }
+            .contains(where: hasStagedChanges)
+    }
+
+    private var stagedPageHasError: Bool {
+        model.settingsPage == .network && proxyDraftError != nil
+    }
+
+    private func hasStagedChanges(for page: SettingsPage) -> Bool {
+        switch page {
+        case .network:
+            var candidate = model.settings
+            candidate.proxyModeRaw = draft.proxyModeRaw
+            candidate.proxyTypeRaw = draft.proxyTypeRaw
+            candidate.proxyHost = draft.proxyHost
+            candidate.proxyBypass = draft.proxyBypass
+            candidate.proxyUsername = proxyAuthEnabled ? draft.proxyUsername : ""
+            candidate.proxyPort = AppSettings.clampProxyPort(
+                Int(proxyPort.trimmingCharacters(in: .whitespacesAndNewlines))
+            )
+            return candidate.proxyModeRaw != model.settings.proxyModeRaw
+                || candidate.proxyTypeRaw != model.settings.proxyTypeRaw
+                || candidate.proxyHost != model.settings.proxyHost
+                || candidate.proxyPort != model.settings.proxyPort
+                || candidate.proxyBypass != model.settings.proxyBypass
+                || candidate.proxyUsername != model.settings.proxyUsername
+                || !proxyPassword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .developer:
+            let steps = iterationLimit.trimmingCharacters(in: .whitespacesAndNewlines)
+            return draft.backendURL != model.settings.backendURL
+                || draft.backendRoot != model.settings.backendRoot
+                || draft.terminalShell != model.settings.terminalShell
+                || draft.terminalLoginShell != model.settings.terminalLoginShell
+                || (steps.isEmpty ? nil : Int(steps)) != model.settings.maxIterations
+        case .accounts:
+            let window = localWindow.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (window.isEmpty ? nil : Int(window)) != model.settings.localContextWindow
+        default:
+            return false
+        }
+    }
+
+    private func applyStagedPage(_ page: SettingsPage) {
+        var saved = model.settings
+        var proxyCredentialChanged = false
+        switch page {
+        case .network:
+            saved.proxyModeRaw = draft.proxyModeRaw
+            saved.proxyTypeRaw = draft.proxyTypeRaw
+            saved.proxyHost = draft.proxyHost
+            saved.proxyBypass = draft.proxyBypass
+            saved.proxyUsername = draft.proxyUsername
+            applyProxyDraft(to: &saved)
+            proxyCredentialChanged = updateProxyCredential(for: saved)
+        case .developer:
+            saved.backendURL = draft.backendURL
+            saved.backendRoot = draft.backendRoot
+            saved.terminalShell = draft.terminalShell
+            saved.terminalLoginShell = draft.terminalLoginShell
+            let steps = iterationLimit.trimmingCharacters(in: .whitespacesAndNewlines)
+            saved.maxIterations = steps.isEmpty ? nil : Int(steps)
+        case .accounts:
+            let window = localWindow.trimmingCharacters(in: .whitespacesAndNewlines)
+            saved.localContextWindow = window.isEmpty ? nil : Int(window)
+        default:
+            return
+        }
+        model.applySettings(saved, proxyCredentialChanged: proxyCredentialChanged)
+        if page == .network {
+            proxyPassword = ""
+            proxyPasswordStored = model.persistenceEnabled
+                && CredentialStore.has(account: CredentialStore.proxyCredentialKey)
+        }
+    }
+
+    private func discardStagedChanges(for page: SettingsPage) {
+        switch page {
+        case .network:
+            draft.proxyModeRaw = model.settings.proxyModeRaw
+            draft.proxyTypeRaw = model.settings.proxyTypeRaw
+            draft.proxyHost = model.settings.proxyHost
+            draft.proxyBypass = model.settings.proxyBypass
+            draft.proxyUsername = model.settings.proxyUsername
+            proxyPort = model.settings.proxyPort.map(String.init) ?? ""
+            proxyAuthEnabled = !model.settings.proxyUsername.isEmpty
+            proxyPassword = ""
+        case .developer:
+            draft.backendURL = model.settings.backendURL
+            draft.backendRoot = model.settings.backendRoot
+            draft.terminalShell = model.settings.terminalShell
+            draft.terminalLoginShell = model.settings.terminalLoginShell
+            iterationLimit = model.settings.maxIterations.map(String.init) ?? ""
+        case .accounts:
+            localWindow = model.settings.localContextWindow.map(String.init) ?? ""
+        default:
+            break
+        }
+    }
+
+    private func discardAllStagedChanges() {
+        SettingsPage.allCases
+            .filter { $0.mutationPolicy == .staged }
+            .forEach(discardStagedChanges)
+    }
+
+    private func requestSettingsDismissal() {
+        applyImmediateDraft()
+        if hasAnyStagedChanges {
+            discardPromptPresented = true
+        } else {
+            completeSettingsDismissal()
+        }
+    }
+
+    private func completeSettingsDismissal() {
+        model.clearAppearancePreview()
+        dismiss()
+        model.settingsPresented = false
+    }
+
     // MARK: - Pages
 
-    /// Everything saved through the draft, plus the runtime readout. Accounts
-    /// and permissions each own a tab because both write immediately and have
-    /// nothing to do with Cancel/Save.
-    private var generalPage: some View {
+    private var generalPage: some View { appAndDeveloperPage }
+    private var appearancePage: some View { appAndDeveloperPage }
+    private var chatPage: some View { appAndDeveloperPage }
+    private var developerPage: some View { appAndDeveloperPage }
+
+    /// The four lightweight app pages share one native Form implementation.
+    /// Keeping their controls here preserves every binding and identifier while
+    /// the studio sidebar provides the new information architecture.
+    private var appAndDeveloperPage: some View {
         Form {
-            Section("Appearance") {
+            if model.settingsPage == .appearance {
+                Section("Appearance") {
                 Picker("Appearance", selection: $draft.appearanceRaw) {
                     ForEach(AppAppearance.allCases) { appearance in
                         Text(appearance.title)
@@ -1497,7 +1911,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.appearance")
                 .accessibilityValue(Text(draft.appearanceRaw))
 
-                Text("Selections preview immediately. Save keeps the choice; Cancel restores the saved appearance. System follows your Mac automatically.")
+                Text("Changes apply immediately. System follows your Mac automatically.")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1518,9 +1932,12 @@ struct SettingsView: View {
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
+                }
+                .id("settings.appearance")
             }
 
-            Section("Agent") {
+            if model.settingsPage == .developer {
+                Section("Agent") {
                 TextField("Maximum tool steps per request — all models (optional)", text: $iterationLimit)
                     .accessibilityIdentifier("settings.maxIterations")
 
@@ -1528,9 +1945,12 @@ struct SettingsView: View {
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
+                }
+                .id("settings.maxIterations")
             }
 
-            Section("Conversation") {
+            if model.settingsPage == .chat {
+                Section("Conversation") {
                 Picker("Store notes by", selection: $draft.notesScopeRaw) {
                     ForEach(NotesScope.allCases) { scope in
                         Text(scope.title).tag(scope.rawValue)
@@ -1554,7 +1974,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.soloPlanPresentation")
 
                 Picker(
-                    "Team & Solo Swarm requests — Runs",
+                    "Team requests — Runs",
                     selection: $draft.teamRunsPresentationRaw
                 ) {
                     ForEach(AutomaticInspectorPresentation.allCases) { presentation in
@@ -1566,9 +1986,34 @@ struct SettingsView: View {
                 Text("Solo and team choices are independent. Choosing “Ask the first time” shows the matching explanation when that kind of request is first sent.")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
+                }
+                .id("settings.notesScope")
+
+                Section("Transcript") {
+                    Picker("Reasoning", selection: $draft.thinkingVisibilityRaw) {
+                        ForEach(ThinkingVisibility.allCases) { visibility in
+                            Text(visibility.title).tag(visibility.rawValue)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.thinkingVisibility")
+
+                    Picker("Tool activity", selection: $draft.toolActivityVisibilityRaw) {
+                        ForEach(ToolActivityVisibility.allCases) { visibility in
+                            Text(visibility.title).tag(visibility.rawValue)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.toolActivityVisibility")
+
+                    Text("Collapsed activity keeps technical detail available without interrupting the answer’s reading flow.")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .id("settings.thinkingVisibility")
             }
 
-            Section("Background chats") {
+            if model.settingsPage == .general {
+                Section("Background chats") {
                 Stepper(
                     "Up to \(draft.maximumActiveChats) active chats",
                     value: $draft.maximumActiveChats,
@@ -1595,9 +2040,10 @@ struct SettingsView: View {
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
-            }
+                }
+                .id("settings.maximumActiveChats")
 
-            Section("Startup") {
+                Section("Startup") {
                 Toggle("Launch Locus at login", isOn: $draft.launchAtLogin)
                     .accessibilityIdentifier("settings.launchAtLogin")
                 Text("Locus starts in the menu bar so schedules can run even when no window is open.")
@@ -1609,12 +2055,28 @@ struct SettingsView: View {
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.warning)
                 }
+                }
+                .id("settings.launchAtLogin")
+
+                CompanionAccessSettingsSection(enabled: $draft.mobileAccessEnabled)
+                    .environmentObject(model)
+
+                Section("Notifications") {
+                    Toggle(
+                        "Notify when a run finishes while Locus is in the background",
+                        isOn: $draft.notifyOnCompletion
+                    )
+                    .accessibilityIdentifier("settings.notifyOnCompletion")
+                    Toggle(
+                        "Notify when a run needs attention",
+                        isOn: $draft.notifyOnNeedsAttention
+                    )
+                    .accessibilityIdentifier("settings.notifyOnNeedsAttention")
+                }
             }
 
-            CompanionAccessSettingsSection(enabled: $draft.mobileAccessEnabled)
-                .environmentObject(model)
-
-            Section("Terminal") {
+            if model.settingsPage == .developer {
+                Section("Terminal") {
                 TextField("Shell executable (optional)", text: $draft.terminalShell)
                     .accessibilityIdentifier("settings.terminalShell")
                 Toggle("Start as a login shell", isOn: $draft.terminalLoginShell)
@@ -1623,9 +2085,10 @@ struct SettingsView: View {
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
-            }
+                }
+                .id("settings.terminalShell")
 
-            Section("Local agent") {
+                Section("Local agent") {
                 Text("The app includes its own local-agent runtime. These settings are used for custom or development backends.")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
@@ -1641,22 +2104,10 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings.revealBackend")
                 }
-            }
+                }
+                .id("settings.backendURL")
 
-            Section("Notifications") {
-                Toggle(
-                    "Notify when a run finishes while Locus is in the background",
-                    isOn: $draft.notifyOnCompletion
-                )
-                .accessibilityIdentifier("settings.notifyOnCompletion")
-                Toggle(
-                    "Notify when a run needs attention",
-                    isOn: $draft.notifyOnNeedsAttention
-                )
-                .accessibilityIdentifier("settings.notifyOnNeedsAttention")
-            }
-
-            Section("Status") {
+                Section("Status") {
                 LabeledContent("Agent") {
                     Text(runtimeLabel(model.agentRuntimePhase))
                         .foregroundStyle(runtimeColor(model.agentRuntimePhase))
@@ -1684,6 +2135,7 @@ struct SettingsView: View {
                 if !model.isAgentOnline || !model.isModelOnline {
                     Button("Retry Now") { model.retryLocalServices() }
                         .accessibilityIdentifier("settings.retryLocalServices")
+                }
                 }
             }
         }
@@ -1780,6 +2232,8 @@ struct SettingsView: View {
 
             Section("Defaults") {
                 TextField("Home URL", text: $draft.previewURL)
+                    .focused($focusedTextPreference, equals: "browser.homeURL")
+                    .onSubmit { applyImmediateDraft() }
                     .accessibilityIdentifier("settings.previewURL")
 
                 Picker("Default viewport", selection: $draft.browserViewportRaw) {
@@ -1830,14 +2284,17 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Section("Developer") {
-                Toggle("Allow the Web Inspector to attach", isOn: $draft.browserWebInspector)
-                    .accessibilityIdentifier("settings.browser.webInspector")
+            if settingsLevel == .advanced {
+                Section("Developer") {
+                    Toggle("Allow the Web Inspector to attach", isOn: $draft.browserWebInspector)
+                        .accessibilityIdentifier("settings.browser.webInspector")
 
-                Text("Lets Safari's Web Inspector open the agent's pages. Any local process can attach and read the cookies and storage of whatever has been browsed, so leave this off unless you are debugging. Dev servers named in .locus/launch.json can be started by name; the agent lists them for you.")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Text("Lets Safari's Web Inspector open the agent's pages. Any local process can attach and read the cookies and storage of whatever has been browsed, so leave this off unless you are debugging. Dev servers named in .locus/launch.json can be started by name; the agent lists them for you.")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .id("settings.browser.webInspector")
             }
 
             Section("Privacy & data") {
@@ -2252,15 +2709,18 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings.localModels.refresh")
                 }
 
-                TextField("Local context window in tokens (optional)", text: $localWindow)
-                    .accessibilityIdentifier("settings.localContextWindow")
+                if settingsLevel == .advanced {
+                    TextField("Local context window in tokens (optional)", text: $localWindow)
+                        .accessibilityIdentifier("settings.localContextWindow")
 
-                Text("Leave empty and Locus asks Ollama for the largest window the model was built for, up to 32,768 tokens — Ollama's own default is 4,096, most of which a turn spends on tools before the conversation starts. Bigger windows cost memory for the KV cache, and a model that ends up partly on the CPU is backed off automatically. Set a value to pin one exactly; it is requested as num_ctx and is what compaction budgets against.")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.inkSoft)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("settings.localContextDescription")
+                    Text("Leave empty and Locus asks Ollama for the largest window the model was built for, up to 32,768 tokens — Ollama's own default is 4,096, most of which a turn spends on tools before the conversation starts. Bigger windows cost memory for the KV cache, and a model that ends up partly on the CPU is backed off automatically. Set a value to pin one exactly; it is requested as num_ctx and is what compaction budgets against.")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.inkSoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("settings.localContextDescription")
+                }
             }
+            .id("settings.localContextWindow")
         }
         .formStyle(.grouped)
     }

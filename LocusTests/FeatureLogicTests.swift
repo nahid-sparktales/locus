@@ -605,6 +605,59 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(fragments, [.code(language: nil, body: "raw")])
     }
 
+    func testMarkdownProseRecognizesAssistantStyleBlocks() {
+        let blocks = MarkdownProseBlock.parse(
+            """
+            ## Result
+
+            - [x] Parsed Markdown
+            - [ ] Verify layout
+
+            3. First numbered item
+            4. Second numbered item
+
+            > Keep the interface calm.
+
+            | Surface | State |
+            | --- | --- |
+            | Composer | Ready |
+
+            ---
+            """
+        )
+
+        XCTAssertEqual(blocks[0], .heading(level: 2, text: "Result"))
+        XCTAssertEqual(
+            blocks[1],
+            .unordered([
+                MarkdownListItem(text: "Parsed Markdown", checked: true),
+                MarkdownListItem(text: "Verify layout", checked: false),
+            ])
+        )
+        XCTAssertEqual(
+            blocks[2],
+            .ordered(start: 3, items: ["First numbered item", "Second numbered item"])
+        )
+        XCTAssertEqual(blocks[3], .quote("Keep the interface calm."))
+        XCTAssertEqual(
+            blocks[4],
+            .table(headers: ["Surface", "State"], rows: [["Composer", "Ready"]])
+        )
+        XCTAssertEqual(blocks[5], .rule)
+    }
+
+    func testCodeHighlighterPreservesSourceAndClassifiesCommonTokens() {
+        let source = "let answer = \"yes\" // explanation\nreturn 42"
+        let tokens = CodeSyntaxHighlighter.tokens(for: source, language: "swift")
+
+        XCTAssertEqual(tokens.map(\.text).joined(), source)
+        XCTAssertTrue(tokens.contains(CodeToken(text: "let", kind: .keyword)))
+        XCTAssertTrue(tokens.contains(CodeToken(text: "\"yes\"", kind: .string)))
+        XCTAssertTrue(tokens.contains(CodeToken(text: "// explanation", kind: .comment)))
+        XCTAssertTrue(tokens.contains(CodeToken(text: "return", kind: .keyword)))
+        XCTAssertTrue(tokens.contains(CodeToken(text: "42", kind: .number)))
+    }
+
     // MARK: - Diff detection
 
     func testUnifiedDiffIsDetected() {
@@ -663,6 +716,10 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(InspectorTab.proxies.title, "Proxies")
         XCTAssertTrue(InspectorTab.workspaceTabs.contains(.router))
         XCTAssertTrue(InspectorTab.workspaceTabs.contains(.proxies))
+        XCTAssertFalse(
+            InspectorTab.workspaceTabs.contains(.checkpoints),
+            "manual checkpoints use the focused manager rather than a persistent tab"
+        )
     }
 
     func testInspectorShortcutsPreserveExistingKeysAndAddNotesOnNine() {
@@ -750,6 +807,20 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertNotNil(AgentInstructionsFile.load(from: workspace.path).error)
         XCTAssertThrowsError(try AgentInstructionsFile.save("escaped", in: workspace.path))
         XCTAssertEqual(try String(contentsOf: outside, encoding: .utf8), "do not overwrite")
+    }
+
+    func testAgentInstructionStartersAppendWithoutReplacingExistingGuidance() {
+        let existing = "# Workspace instructions\n\n- Keep public APIs stable.\n"
+        let appended = AgentInstructionsStarter.verification.appending(to: existing)
+
+        XCTAssertTrue(appended.hasPrefix("# Workspace instructions"))
+        XCTAssertTrue(appended.contains("Keep public APIs stable"))
+        XCTAssertTrue(appended.contains("## Verification"))
+        XCTAssertTrue(appended.contains("Report anything you could not verify"))
+        XCTAssertEqual(
+            AgentInstructionsStarter.boundaries.appending(to: ""),
+            AgentInstructionsStarter.boundaries.document
+        )
     }
 
     func testInspectorWidthIsClampedToTheUsableRange() {
@@ -848,6 +919,99 @@ final class FeatureLogicTests: XCTestCase {
             from: Data(#"{"appearanceRaw":"midnight-blue"}"#.utf8)
         )
         XCTAssertEqual(future.resolvedAppearance, .system)
+    }
+
+    func testSettingsLevelDefaultsToStandardAndRoundTripsAdvanced() throws {
+        XCTAssertEqual(AppSettings().resolvedSettingsLevel, .standard)
+        XCTAssertEqual(
+            try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
+                .resolvedSettingsLevel,
+            .standard
+        )
+        XCTAssertEqual(
+            try JSONDecoder().decode(
+                AppSettings.self,
+                from: Data(#"{"settingsLevelRaw":"future"}"#.utf8)
+            ).resolvedSettingsLevel,
+            .standard
+        )
+
+        var settings = AppSettings()
+        settings.settingsLevelRaw = SettingsLevel.advanced.rawValue
+        let restored = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONEncoder().encode(settings)
+        )
+        XCTAssertEqual(restored.resolvedSettingsLevel, .advanced)
+    }
+
+    func testSettingsPagesUseTheExpectedGroupsAndDisclosureLevels() {
+        XCTAssertEqual(
+            SettingsPage.allCases.filter { $0.navigationGroup == .app },
+            [.general, .appearance, .chat]
+        )
+        XCTAssertEqual(
+            SettingsPage.allCases.filter { $0.navigationGroup == .models },
+            [.accounts, .agents, .knowledge]
+        )
+        XCTAssertEqual(
+            SettingsPage.allCases.filter { $0.navigationGroup == .tools },
+            [.browser, .extensions, .permissions, .network]
+        )
+        XCTAssertEqual(
+            SettingsPage.allCases.filter { $0.navigationGroup == .system },
+            [.developer, .updates, .shortcuts]
+        )
+        XCTAssertEqual(
+            SettingsPage.allCases.filter { $0.minimumLevel == .advanced },
+            [.developer]
+        )
+    }
+
+    func testSettingsSearchMetadataIsUniqueAndIndexesAdvancedControls() {
+        let descriptors = SettingsSearchDescriptor.all
+        XCTAssertEqual(Set(descriptors.map(\.id)).count, descriptors.count)
+        XCTAssertEqual(Set(descriptors.map(\.anchor)).count, descriptors.count)
+
+        let contextResult = try? XCTUnwrap(
+            descriptors.first { $0.id == "settings.localContextWindow" }
+        )
+        XCTAssertEqual(contextResult?.minimumLevel, .advanced)
+        XCTAssertEqual(contextResult?.page, .accounts)
+        XCTAssertTrue(contextResult?.matches("tokens") == true)
+        XCTAssertTrue(
+            descriptors.filter { $0.matches("diagnostics") }
+                .allSatisfy { $0.minimumLevel == .advanced }
+        )
+    }
+
+    func testSettingsMutationPolicyStagesOnlyRiskyPages() {
+        XCTAssertEqual(SettingsPage.network.mutationPolicy, .staged)
+        XCTAssertEqual(SettingsPage.accounts.mutationPolicy, .staged)
+        XCTAssertEqual(SettingsPage.developer.mutationPolicy, .staged)
+        XCTAssertTrue(
+            SettingsPage.allCases
+                .filter { ![.network, .accounts, .developer].contains($0) }
+                .allSatisfy { $0.mutationPolicy == .immediate }
+        )
+
+        var saved = AppSettings()
+        var draft = saved
+        draft.appearanceRaw = AppAppearance.dark.rawValue
+        draft.previewURL = "https://preview.example"
+        draft.proxyModeRaw = ProxyMode.manual.rawValue
+        draft.proxyHost = "proxy.example"
+        draft.backendURL = "http://127.0.0.1:9999"
+        draft.localContextWindow = 65_536
+
+        saved.applyImmediatePreferences(from: draft)
+
+        XCTAssertEqual(saved.resolvedAppearance, .dark)
+        XCTAssertEqual(saved.previewURL, "https://preview.example")
+        XCTAssertEqual(saved.resolvedProxyMode, .off)
+        XCTAssertTrue(saved.proxyHost.isEmpty)
+        XCTAssertEqual(saved.backendURL, AppSettings().backendURL)
+        XCTAssertNil(saved.localContextWindow)
     }
 
     func testThemePaletteResolvesWarmLightAndDarkColors() throws {
@@ -1001,8 +1165,8 @@ final class FeatureLogicTests: XCTestCase {
     }
 
     func testWorkspaceFolderRetainsItsVisualAnchorMetrics() {
-        XCTAssertEqual(SidebarIconMetrics.workspaceIconSize, 27)
-        XCTAssertEqual(SidebarIconMetrics.workspaceSymbolSize, 12)
+        XCTAssertEqual(SidebarIconMetrics.workspaceIconSize, 22)
+        XCTAssertEqual(SidebarIconMetrics.workspaceSymbolSize, 11)
     }
 
     private func assertColor(
@@ -1108,6 +1272,14 @@ final class FeatureLogicTests: XCTestCase {
 
         XCTAssertEqual(restored.resolvedInspectorOpenTabs, [.files, .plan, .runs])
         XCTAssertEqual(restored.inspectorOpenTabs, ["files", "plan", "runs"])
+    }
+
+    func testStoredCheckpointTabMigratesOutOfInspectorRestoration() throws {
+        let stored = #"{"inspectorLastTab":"checkpoints","inspectorOpenTabs":["checkpoints","files"]}"#
+        let restored = try JSONDecoder().decode(AppSettings.self, from: Data(stored.utf8))
+
+        XCTAssertEqual(restored.resolvedInspectorTab, .plan)
+        XCTAssertEqual(restored.resolvedInspectorOpenTabs, [.files])
     }
 
     func testInspectorRestorationKeepsAValidSelectionOrUsesTheFirstOpenTab() throws {
@@ -2871,7 +3043,7 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(restored.count, 1)
         XCTAssertNil(restored[0].accountID, "an old profile means the local runtime")
         XCTAssertEqual(restored[0].model, "qwen3:8b")
-        XCTAssertFalse(restored[0].resolvedSoloSwarmEnabled)
+        XCTAssertTrue(restored[0].resolvedSoloSwarmEnabled)
 
         var updated = restored[0]
         updated.soloSwarmEnabled = true
@@ -4116,6 +4288,24 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
+    func testComposerHeightGrowsWithDraftAndCapsAtReadableMaximum() {
+        XCTAssertEqual(ComposerMetrics.editorHeight(for: "", width: 520), 58)
+
+        let multiline = "First line\nSecond line\nThird line\nFourth line"
+        XCTAssertGreaterThan(
+            ComposerMetrics.editorHeight(for: multiline, width: 520),
+            ComposerMetrics.editorHeight(for: "First line", width: 520)
+        )
+        XCTAssertEqual(
+            ComposerMetrics.editorHeight(
+                for: Array(repeating: "A deliberately long prompt line", count: 80)
+                    .joined(separator: "\n"),
+                width: 360
+            ),
+            180
+        )
+    }
+
     func testComposerReturnActionCoversSendQueueSteerAndNewlineStates() {
         XCTAssertEqual(
             ComposerReturnAction.current(
@@ -4344,5 +4534,83 @@ final class FeatureLogicTests: XCTestCase {
         // failing the decode.
         settings.webSearchDestinationRaw = "quantumBrowser"
         XCTAssertEqual(settings.resolvedWebSearchDestination, .defaultBrowser)
+    }
+
+    // MARK: - Rich chat management
+
+    func testSessionSummaryOrganizationFieldsRoundTripAndRemainOptional() throws {
+        let organized = SessionSummary(
+            id: "organized",
+            name: "organized.jsonl",
+            preview: "Research notes",
+            mtime: 42,
+            size: 100,
+            cwd: "/tmp/project",
+            folderID: "folder-1",
+            sortOrder: 3
+        )
+        let decoded = try JSONDecoder().decode(
+            SessionSummary.self,
+            from: JSONEncoder().encode(organized)
+        )
+        XCTAssertEqual(decoded.folderID, "folder-1")
+        XCTAssertEqual(decoded.sortOrder, 3)
+
+        let legacy = try JSONDecoder().decode(
+            SessionSummary.self,
+            from: Data(#"{"id":"old","name":"old.jsonl","preview":"Hi","mtime":1,"size":2}"#.utf8)
+        )
+        XCTAssertNil(legacy.folderID)
+        XCTAssertNil(legacy.sortOrder)
+    }
+
+    @MainActor
+    func testFolderNameSearchIncludesDescendantChatsAndAncestors() {
+        let model = AppModel(startImmediately: false)
+        let workspace = "/tmp/locus-folder-search"
+        model.sessions = [
+            SessionSummary(
+                id: "nested-chat", name: "nested.jsonl", preview: "Unrelated title",
+                mtime: 1, size: 1, cwd: workspace, folderID: "child", sortOrder: 0
+            ),
+        ]
+        model.chatFolders = [
+            ChatFolderRecord(
+                id: "parent", workspace: workspace, parentID: nil,
+                name: "Research", order: 0
+            ),
+            ChatFolderRecord(
+                id: "child", workspace: workspace, parentID: "parent",
+                name: "Sources", order: 0
+            ),
+        ]
+        model.searchQuery = "Research"
+
+        XCTAssertEqual(model.filteredSessions.map(\.id), ["nested-chat"])
+        let group = model.workspaceChatGroups.first { $0.path == workspace }
+        XCTAssertNotNil(group)
+        XCTAssertEqual(model.folders(in: group!).map(\.id), ["parent"])
+    }
+
+    func testSplitRestorationRoundTripPreservesFocusAndDivider() throws {
+        let value = ChatSplitRestoration(
+            primarySessionID: "left",
+            secondarySessionID: "right",
+            focusedPane: .secondary,
+            dividerRatio: 0.62
+        )
+        let decoded = try JSONDecoder().decode(
+            ChatSplitRestoration.self,
+            from: JSONEncoder().encode(value)
+        )
+        XCTAssertEqual(decoded, value)
+        XCTAssertTrue(decoded.isSplit)
+        XCTAssertEqual(decoded.sessionID(for: .secondary), "right")
+        XCTAssertEqual(ChatPaneID.primary.other, .secondary)
+    }
+
+    func testSplitWorkspaceAlwaysResolvesToSideBySidePresentation() {
+        XCTAssertEqual(ChatWorkspacePresentation.resolve(isSplit: false), .single)
+        XCTAssertEqual(ChatWorkspacePresentation.resolve(isSplit: true), .sideBySide)
     }
 }

@@ -28,7 +28,7 @@ struct SoloSwarmPanelView: View {
                 Image(systemName: isSuccessful ? "checkmark.circle.fill" : "circle.hexagongrid.fill")
                     .foregroundStyle(isSuccessful ? LocusTheme.success : LocusTheme.signalDeep)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("SOLO SWARM")
+                    Text("SOLO WORKERS")
                         .font(.locus(size: 8, weight: .bold))
                         .tracking(0.8)
                         .foregroundStyle(LocusTheme.muted)

@@ -428,7 +428,7 @@ def test_root_delegation_tool_is_ephemeral_and_requires_workspace_read(tmp_path)
     core.tool_registry.set_solo_swarm_enabled(True)
     assert "delegate_read_only" in names()
     assert core.tool_registry.is_safe("delegate_read_only")
-    assert "Locked Solo Swarm contract" in core.system_message()["content"]
+    assert "Locked adaptive Solo delegation contract" in core.system_message()["content"]
 
     core.tool_registry.set_user_capability_policy({"workspace_read": False})
     assert "delegate_read_only" not in names()
@@ -437,4 +437,4 @@ def test_root_delegation_tool_is_ephemeral_and_requires_workspace_read(tmp_path)
     core.tool_registry.set_solo_swarm_enabled(False)
     core.tool_ctx.delegate_read_only = None
     assert "delegate_read_only" not in names()
-    assert "Locked Solo Swarm contract" not in core.system_message()["content"]
+    assert "Locked adaptive Solo delegation contract" not in core.system_message()["content"]

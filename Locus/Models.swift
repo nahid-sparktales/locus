@@ -57,10 +57,14 @@ enum ScheduleRunner: String, CaseIterable, Codable, Identifiable {
     case team
 
     var id: String { rawValue }
+    /// `solo_swarm` remains decodable for existing schedules; new schedules
+    /// use Solo because adaptive delegation is now part of that runner.
+    static var selectableCases: [ScheduleRunner] { [.solo, .team] }
+
     var title: String {
         switch self {
         case .solo: "Solo"
-        case .soloSwarm: "Solo Swarm"
+        case .soloSwarm: "Solo"
         case .team: "Team"
         }
     }
@@ -211,7 +215,7 @@ struct ScheduleEditorDraft: Identifiable, Hashable {
         workspaceRoot = task.workspaceRoot
         mode = task.mode
         executionEnvironment = task.executionEnvironment
-        runner = task.runner
+        runner = task.runner == .soloSwarm ? .solo : task.runner
         teamID = task.teamID
         teamName = task.teamName ?? ""
         provider = task.provider
@@ -401,7 +405,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     /// and Browser have dedicated rail buttons and open only when explicitly
     /// requested (or when an active request needs them).
     static let workspaceTabs: [InspectorTab] = [
-        .changes, .files, .terminal, .notes, .checkpoints, .runs, .agents,
+        .changes, .files, .terminal, .notes, .runs, .agents,
         .router, .proxies,
     ]
 
@@ -442,8 +446,9 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Existing ⌘1…⌘8 bindings remain stable; Notes uses ⌘9. New panels stay
-    /// reachable from the rail without stealing ⌘0 from the sidebar.
+    /// Existing number bindings remain stable. ⌘6 opens the on-demand manual
+    /// checkpoint manager rather than a persistent inspector tab, and Notes
+    /// uses ⌘9. New panels stay reachable from the rail without stealing ⌘0.
     var shortcutKey: Character? {
         switch self {
         case .plan: "1"
@@ -460,15 +465,46 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     }
 }
 
+enum SettingsLevel: String, CaseIterable, Codable, Identifiable {
+    case standard
+    case advanced
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .standard: "Standard"
+        case .advanced: "Advanced"
+        }
+    }
+}
+
+enum SettingsNavigationGroup: String, CaseIterable, Identifiable {
+    case app = "App"
+    case models = "Models"
+    case tools = "Tools"
+    case system = "System"
+
+    var id: String { rawValue }
+}
+
+enum SettingsMutationPolicy: Equatable {
+    case immediate
+    case staged
+}
+
 enum SettingsPage: String, CaseIterable, Identifiable {
     case general = "General"
-    case network = "Network"
-    case browser = "Browser"
-    case accounts = "Accounts"
+    case appearance = "Appearance"
+    case chat = "Chat"
+    case accounts = "Models & Providers"
     case agents = "Agents & Teams"
     case knowledge = "Memory & Knowledge"
-    case permissions = "Permissions"
+    case browser = "Browser"
     case extensions = "Extensions"
+    case permissions = "Permissions"
+    case network = "Network"
+    case developer = "Developer"
     case updates = "Updates"
     case shortcuts = "Keyboard Shortcuts"
 
@@ -477,6 +513,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .general: "gearshape"
+        case .appearance: "paintbrush"
+        case .chat: "bubble.left.and.bubble.right"
         case .network: "network"
         case .browser: "safari"
         case .accounts: "person.crop.circle"
@@ -484,14 +522,112 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .knowledge: "books.vertical.fill"
         case .permissions: "lock.shield"
         case .extensions: "puzzlepiece.extension"
+        case .developer: "hammer"
         case .updates: "arrow.triangle.2.circlepath"
         case .shortcuts: "keyboard"
         }
     }
 
     var accessibilityKey: String {
-        self == .shortcuts ? "shortcuts" : rawValue.lowercased()
+        switch self {
+        case .accounts: "accounts"
+        case .agents: "agents"
+        case .knowledge: "knowledge"
+        case .shortcuts: "shortcuts"
+        default: rawValue.lowercased()
+        }
     }
+
+    var navigationGroup: SettingsNavigationGroup {
+        switch self {
+        case .general, .appearance, .chat: .app
+        case .accounts, .agents, .knowledge: .models
+        case .browser, .extensions, .permissions, .network: .tools
+        case .developer, .updates, .shortcuts: .system
+        }
+    }
+
+    var minimumLevel: SettingsLevel {
+        self == .developer ? .advanced : .standard
+    }
+
+    var mutationPolicy: SettingsMutationPolicy {
+        switch self {
+        case .accounts, .network, .developer: .staged
+        default: .immediate
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .general: "Startup, background work, companion access, and notifications"
+        case .appearance: "Theme and workspace presentation"
+        case .chat: "Conversation display, notes, and automatic panels"
+        case .accounts: "Local models and hosted model connections"
+        case .agents: "Profiles, teams, routing, and evaluation"
+        case .knowledge: "Workspace memory, indexing, and handoffs"
+        case .browser: "Built-in browsing, input, and privacy"
+        case .extensions: "Skills and MCP integrations"
+        case .permissions: "Agent authority and macOS access"
+        case .network: "Proxy routing and connection security"
+        case .developer: "Runtime, terminal, and diagnostic controls"
+        case .updates: "Installed components and software updates"
+        case .shortcuts: "Keyboard access for the full workspace"
+        }
+    }
+}
+
+struct SettingsSearchDescriptor: Identifiable, Hashable {
+    let id: String
+    let page: SettingsPage
+    let title: String
+    let keywords: [String]
+    let anchor: String
+    let minimumLevel: SettingsLevel
+
+    init(
+        _ id: String,
+        page: SettingsPage,
+        title: String,
+        keywords: [String] = [],
+        anchor: String? = nil,
+        minimumLevel: SettingsLevel = .standard
+    ) {
+        self.id = id
+        self.page = page
+        self.title = title
+        self.keywords = keywords
+        self.anchor = anchor ?? id
+        self.minimumLevel = minimumLevel
+    }
+
+    func matches(_ query: String) -> Bool {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !needle.isEmpty else { return true }
+        return ([title, page.rawValue] + keywords)
+            .contains { $0.lowercased().contains(needle) }
+    }
+
+    static let all: [SettingsSearchDescriptor] = [
+        .init("settings.launchAtLogin", page: .general, title: "Launch at login", keywords: ["startup", "menu bar"]),
+        .init("settings.maximumActiveChats", page: .general, title: "Background chats", keywords: ["concurrency", "worktrees"]),
+        .init("settings.appearance", page: .appearance, title: "Appearance", keywords: ["light", "dark", "system"]),
+        .init("settings.showTeamProgressInHeader", page: .appearance, title: "Header status", keywords: ["team", "context usage"]),
+        .init("settings.notesScope", page: .chat, title: "Conversation notes", keywords: ["workspace", "scratchpad"]),
+        .init("settings.thinkingVisibility", page: .chat, title: "Reasoning display", keywords: ["thinking", "collapsed"]),
+        .init("settings.toolActivityVisibility", page: .chat, title: "Tool activity display", keywords: ["tools", "collapsed"]),
+        .init("settings.accounts.add", page: .accounts, title: "Provider accounts", keywords: ["API", "model", "Ollama"]),
+        .init("settings.localContextWindow", page: .accounts, title: "Local context window", keywords: ["tokens", "Ollama"], minimumLevel: .advanced),
+        .init("settings.browserEnabled", page: .browser, title: "Built-in browser", keywords: ["web", "privacy"]),
+        .init("settings.browser.webInspector", page: .browser, title: "Browser Web Inspector", keywords: ["Safari", "developer", "debug"], minimumLevel: .advanced),
+        .init("settings.permissionMode", page: .permissions, title: "Agent permissions", keywords: ["approval", "full access"]),
+        .init("settings.proxyMode", page: .network, title: "Outbound proxy", keywords: ["SOCKS5", "HTTP", "network"]),
+        .init("settings.maxIterations", page: .developer, title: "Maximum tool steps", keywords: ["agent", "iterations"], minimumLevel: .advanced),
+        .init("settings.terminalShell", page: .developer, title: "Terminal shell", keywords: ["zsh", "login"], minimumLevel: .advanced),
+        .init("settings.backendURL", page: .developer, title: "Local agent runtime", keywords: ["backend", "diagnostics"], minimumLevel: .advanced),
+        .init("settings.automaticUpdateChecks", page: .updates, title: "Software updates", keywords: ["automatic", "version"]),
+        .init("settings.shortcuts", page: .shortcuts, title: "Keyboard shortcuts", keywords: ["commands", "hotkeys"]),
+    ]
 }
 
 enum LocusProjectKind: String, Equatable {
@@ -1266,6 +1402,8 @@ struct SessionSummary: Codable, Hashable, Identifiable {
     let workspaceRoot: String?
     let executionPath: String?
     let environment: [String: String]?
+    let folderID: String?
+    let sortOrder: Int?
 
     init(
         id: String,
@@ -1281,7 +1419,9 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         team: SessionTeamReference? = nil,
         workspaceRoot: String? = nil,
         executionPath: String? = nil,
-        environment: [String: String]? = nil
+        environment: [String: String]? = nil,
+        folderID: String? = nil,
+        sortOrder: Int? = nil
     ) {
         self.id = id
         self.name = name
@@ -1297,6 +1437,16 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         self.workspaceRoot = workspaceRoot
         self.executionPath = executionPath
         self.environment = environment
+        self.folderID = folderID
+        self.sortOrder = sortOrder
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, preview, mtime, size, title, pinned, archived, cwd, task, team, environment
+        case workspaceRoot = "workspace_root"
+        case executionPath = "execution_path"
+        case folderID = "folder_id"
+        case sortOrder = "sort_order"
     }
 
     var displayTitle: String {
@@ -1337,11 +1487,201 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         return Self.canonicalWorkspacePath(cwd)
     }
 
+    func withOrganization(folderID: String?, sortOrder: Int?) -> SessionSummary {
+        SessionSummary(
+            id: id,
+            name: name,
+            preview: preview,
+            mtime: mtime,
+            size: size,
+            title: title,
+            pinned: pinned,
+            archived: archived,
+            cwd: cwd,
+            task: task,
+            team: team,
+            workspaceRoot: workspaceRoot,
+            executionPath: executionPath,
+            environment: environment,
+            folderID: folderID,
+            sortOrder: sortOrder
+        )
+    }
+
     static func canonicalWorkspacePath(_ path: String) -> String {
         let expanded = NSString(string: path).expandingTildeInPath
         let standardized = URL(fileURLWithPath: expanded).standardizedFileURL.path
         guard FileManager.default.fileExists(atPath: standardized) else { return standardized }
         return URL(fileURLWithPath: standardized).resolvingSymlinksInPath().path
+    }
+}
+
+struct ChatFolderRecord: Codable, Hashable, Identifiable {
+    let id: String
+    let workspace: String
+    let parentID: String?
+    let name: String
+    let order: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id, workspace, name, order
+        case parentID = "parent_id"
+    }
+}
+
+struct ChatFoldersResponse: Codable {
+    let version: Int
+    let folders: [ChatFolderRecord]
+}
+
+struct ChatFolderMutationResponse: Codable {
+    let ok: Bool
+    let folder: ChatFolderRecord
+}
+
+struct ChatFolderDeleteResponse: Codable {
+    let ok: Bool
+    let id: String
+    let promotedTo: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, id
+        case promotedTo = "promoted_to"
+    }
+}
+
+struct ChatPlacement: Codable, Hashable {
+    let sessionID: String
+    let workspace: String
+    let folderID: String?
+    let order: Int
+
+    enum CodingKeys: String, CodingKey {
+        case workspace, order
+        case sessionID = "session_id"
+        case folderID = "folder_id"
+    }
+}
+
+struct SessionOrganizationResponse: Codable {
+    let ok: Bool
+    let placement: ChatPlacement
+}
+
+struct DuplicateSessionResponse: Codable {
+    let ok: Bool
+    let session: SessionSummary
+    let mode: String
+}
+
+enum ChatExportFormat: String, CaseIterable, Identifiable {
+    case pdf
+    case markdown
+    case plainText
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .pdf: "PDF"
+        case .markdown: "Markdown"
+        case .plainText: "Plain Text"
+        }
+    }
+
+    var pathExtension: String {
+        switch self {
+        case .pdf: "pdf"
+        case .markdown: "md"
+        case .plainText: "txt"
+        }
+    }
+}
+
+struct ChatExportOptions: Equatable {
+    var includeReasoning = false
+    var includeToolDetails = false
+    var includeAttachments = true
+}
+
+struct ChatExportAttachment: Codable, Hashable {
+    let name: String
+    let mimeType: String
+    let data: String
+
+    enum CodingKeys: String, CodingKey {
+        case name, data
+        case mimeType = "mime_type"
+    }
+}
+
+struct ChatExportMessage: Codable, Hashable {
+    let role: String
+    let content: String
+    let name: String?
+    let reasoning: String?
+    let attachments: [ChatExportAttachment]?
+}
+
+struct ChatExportDocument: Codable, Hashable {
+    let id: String
+    let title: String
+    let cwd: String?
+    let model: String?
+    let provider: String?
+    let started: String?
+    let messages: [ChatExportMessage]
+}
+
+enum ChatPaneID: String, Codable, CaseIterable, Identifiable {
+    case primary
+    case secondary
+
+    var id: String { rawValue }
+    var other: ChatPaneID { self == .primary ? .secondary : .primary }
+}
+
+struct ChatSplitRestoration: Codable, Equatable {
+    var primarySessionID: String?
+    var secondarySessionID: String?
+    var focusedPane: ChatPaneID
+    var dividerRatio: Double
+
+    static let empty = ChatSplitRestoration(
+        primarySessionID: nil,
+        secondarySessionID: nil,
+        focusedPane: .primary,
+        dividerRatio: 0.5
+    )
+
+    var isSplit: Bool { primarySessionID != nil && secondarySessionID != nil }
+
+    func sessionID(for pane: ChatPaneID) -> String? {
+        pane == .primary ? primarySessionID : secondarySessionID
+    }
+}
+
+@MainActor
+final class ChatPaneState: ObservableObject, Identifiable {
+    let id: ChatPaneID
+    @Published var sessionID: String?
+    @Published var blocks: [ChatBlock] = []
+    @Published var draft = ""
+    @Published var attachments: [ChatAttachment] = []
+    @Published var mode: WorkMode = .work
+    @Published var selectedTeamID: UUID?
+    @Published var soloRouting = false
+    @Published var transcriptSearchQuery = ""
+    @Published var contextFiles: [ContextFile] = []
+    @Published var queuedMessages: [String] = []
+    @Published var selectedRouteModel: String?
+    @Published var runStatus: TeamRunState?
+    @Published var isBusy = false
+    @Published var hasPendingPermission = false
+
+    init(id: ChatPaneID, sessionID: String? = nil) {
+        self.id = id
+        self.sessionID = sessionID
     }
 }
 
@@ -2167,6 +2507,9 @@ struct AppSettings: Codable, Hashable {
     /// Stored as a raw string so a preference written by a future version
     /// cannot make the rest of the settings payload fail to decode.
     var appearanceRaw = AppAppearance.system.rawValue
+    /// Settings use progressive disclosure like a studio application. Raw
+    /// storage keeps future levels from invalidating the remaining payload.
+    var settingsLevelRaw = SettingsLevel.standard.rawValue
     var provider: ModelProvider = .ollama
     /// Endpoint base URL. The API key is not stored here — see `CredentialStore`.
     ///
@@ -2387,11 +2730,43 @@ struct AppSettings: Codable, Hashable {
     }
 
     var resolvedInspectorTab: InspectorTab {
-        InspectorTab(rawValue: inspectorLastTab) ?? .plan
+        let tab = InspectorTab(rawValue: inspectorLastTab) ?? .plan
+        return tab == .checkpoints ? .plan : tab
     }
 
     var resolvedAppearance: AppAppearance {
         AppAppearance(rawValue: appearanceRaw) ?? .system
+    }
+
+    var resolvedSettingsLevel: SettingsLevel {
+        SettingsLevel(rawValue: settingsLevelRaw) ?? .standard
+    }
+
+    mutating func applyImmediatePreferences(from draft: AppSettings) {
+        settingsLevelRaw = draft.settingsLevelRaw
+        appearanceRaw = draft.appearanceRaw
+        showTeamProgressInHeader = draft.showTeamProgressInHeader
+        showContextUsageInHeader = draft.showContextUsageInHeader
+        notesScopeRaw = draft.notesScopeRaw
+        soloPlanPresentationRaw = draft.soloPlanPresentationRaw
+        teamRunsPresentationRaw = draft.teamRunsPresentationRaw
+        thinkingVisibilityRaw = draft.thinkingVisibilityRaw
+        toolActivityVisibilityRaw = draft.toolActivityVisibilityRaw
+        maximumActiveChats = draft.maximumActiveChats
+        worktreeRetentionLimit = draft.worktreeRetentionLimit
+        newGitChatsUseWorktree = draft.newGitChatsUseWorktree
+        launchAtLogin = draft.launchAtLogin
+        mobileAccessEnabled = draft.mobileAccessEnabled
+        notifyOnCompletion = draft.notifyOnCompletion
+        notifyOnNeedsAttention = draft.notifyOnNeedsAttention
+        browserEnabled = draft.browserEnabled
+        previewURL = draft.previewURL
+        browserViewportRaw = draft.browserViewportRaw
+        browserPersistProfile = draft.browserPersistProfile
+        browserRealInput = draft.browserRealInput
+        browserEmulateDevice = draft.browserEmulateDevice
+        browserWebInspector = draft.browserWebInspector
+        webSearchDestinationRaw = draft.webSearchDestinationRaw
     }
 
     var resolvedInspectorWorkspaceTab: InspectorTab {
@@ -2402,7 +2777,9 @@ struct AppSettings: Codable, Hashable {
     var resolvedInspectorOpenTabs: [InspectorTab] {
         var seen: Set<InspectorTab> = []
         return inspectorOpenTabs.compactMap { rawValue in
-            guard let tab = InspectorTab(rawValue: rawValue), seen.insert(tab).inserted else {
+            guard let tab = InspectorTab(rawValue: rawValue),
+                  tab != .checkpoints,
+                  seen.insert(tab).inserted else {
                 return nil
             }
             return tab
@@ -2505,6 +2882,8 @@ struct AppSettings: Codable, Hashable {
         ) ?? defaults.mobileAccessEnabled
         appearanceRaw = try container.decodeIfPresent(String.self, forKey: .appearanceRaw)
             ?? defaults.appearanceRaw
+        settingsLevelRaw = try container.decodeIfPresent(String.self, forKey: .settingsLevelRaw)
+            ?? defaults.settingsLevelRaw
         provider = try container.decodeIfPresent(ModelProvider.self, forKey: .provider)
             ?? defaults.provider
         remoteBaseURL = try container.decodeIfPresent(String.self, forKey: .remoteBaseURL)
@@ -3300,11 +3679,12 @@ struct WorkspaceProfile: Identifiable, Codable, Hashable {
     var previewURL: String
     var contextFiles: [ContextFile]
     var draft: String
-    /// Optional on disk so profiles from earlier releases decode as disabled.
+    /// Deprecated compatibility field. Solo now delegates adaptively without
+    /// a per-workspace switch.
     var soloSwarmEnabled: Bool? = nil
     var landingCheckCommands: [String]? = nil
 
-    var resolvedSoloSwarmEnabled: Bool { soloSwarmEnabled ?? false }
+    var resolvedSoloSwarmEnabled: Bool { soloSwarmEnabled ?? true }
 
     var resolvedLandingCheckCommands: [String] {
         Array((landingCheckCommands ?? []).filter { !$0.isEmpty }.prefix(8))

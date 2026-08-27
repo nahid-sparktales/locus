@@ -158,7 +158,7 @@ struct MessageContentView: View {
 
     var body: some View {
         let nativeReasoning = reasoningText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             if !nativeReasoning.isEmpty, thinkingVisibility != .hidden {
                 ThinkingSegmentView(
                     text: nativeReasoning,
@@ -192,9 +192,9 @@ struct MessageContentView: View {
             }
         } else {
             Text(text)
-                .font(.locus(size: 12))
+                .font(.locus(size: 13))
                 .foregroundStyle(LocusTheme.inkSoft)
-                .lineSpacing(4)
+                .lineSpacing(5)
                 .textSelection(.enabled)
         }
     }
@@ -211,16 +211,29 @@ struct MessageContentView: View {
                     forceExpanded: thinkingVisibility == .expanded
                 )
             case .visible(let body):
-                ForEach(
-                    Array(FinishedMarkdownCache.fragments(for: body).enumerated()),
-                    id: \.offset
-                ) { _, fragment in
-                    switch fragment {
-                    case .text(let value):
-                        InlineMarkdownText(value)
-                    case .code(let language, let code):
-                        CodeBlockView(language: language, code: code)
-                    }
+                MarkdownBodyView(text: body)
+            }
+        }
+    }
+}
+
+/// A complete Markdown answer body. Keeping this separate from assistant
+/// reasoning also lets user-authored prompts use the same high-quality prose,
+/// list, table, and code presentation without treating user text as reasoning.
+struct MarkdownBodyView: View {
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(
+                Array(FinishedMarkdownCache.fragments(for: text).enumerated()),
+                id: \.offset
+            ) { _, fragment in
+                switch fragment {
+                case .text(let value):
+                    InlineMarkdownText(value)
+                case .code(let language, let code):
+                    CodeBlockView(language: language, code: code)
                 }
             }
         }
@@ -236,7 +249,7 @@ struct StreamingMessageContentView: View {
 
     var body: some View {
         let snapshot = reply.snapshot
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             if !snapshot.reasoning.isEmpty, thinkingVisibility != .hidden {
                 StreamingThinkingSegmentView(
                     text: snapshot.reasoning,
@@ -256,9 +269,9 @@ struct StreamingMessageContentView: View {
             } else {
                 StreamingPlainTextView(
                     text: snapshot.text,
-                    font: .systemFont(ofSize: 12),
+                    font: .systemFont(ofSize: 13),
                     color: NSColor(LocusTheme.inkSoft),
-                    lineSpacing: 4
+                    lineSpacing: 5
                 )
                 Capsule()
                     .fill(LocusTheme.signalDeep)
@@ -288,14 +301,14 @@ private struct StreamingThinkingSegmentView: View {
                             .font(.locus(size: 8, weight: .semibold))
                     }
                     Image(systemName: "brain").font(.locus(size: 10))
-                    Text(isActive ? "Thinking…" : "Thought process")
-                        .font(.locus(size: 9, weight: .semibold))
+                    Text(isActive ? "Thinking…" : "Reasoning")
+                        .font(.locus(size: 10, weight: .semibold))
                     if isActive { ProgressView().controlSize(.mini) }
                     Spacer()
                 }
                 .foregroundStyle(LocusTheme.muted)
-                .padding(.horizontal, 10)
-                .frame(height: 30)
+                .padding(.horizontal, 11)
+                .frame(height: 34)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.locus())
@@ -304,18 +317,18 @@ private struct StreamingThinkingSegmentView: View {
             if isOpen {
                 StreamingPlainTextView(
                     text: text,
-                    font: .systemFont(ofSize: 10),
+                    font: .systemFont(ofSize: 11),
                     color: NSColor(LocusTheme.muted),
-                    lineSpacing: 3
+                    lineSpacing: 4
                 )
-                .padding(.horizontal, 12)
-                .padding(.bottom, 10)
+                .padding(.horizontal, 13)
+                .padding(.bottom, 12)
             }
         }
-        .background(LocusTheme.paperDeep.opacity(0.55))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(LocusTheme.paperDeep.opacity(0.46))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(LocusTheme.line.opacity(0.8), lineWidth: 1)
         }
     }
@@ -436,8 +449,8 @@ struct ThinkingSegmentView: View {
                     }
                     Image(systemName: "brain")
                         .font(.locus(size: 10))
-                    Text(isActive ? "Thinking…" : "Thought process")
-                        .font(.locus(size: 9, weight: .semibold))
+                    Text(isActive ? "Thinking…" : "Reasoning")
+                        .font(.locus(size: 10, weight: .semibold))
                     if isActive {
                         ProgressView()
                             .controlSize(.mini)
@@ -445,8 +458,8 @@ struct ThinkingSegmentView: View {
                     Spacer()
                 }
                 .foregroundStyle(LocusTheme.muted)
-                .padding(.horizontal, 10)
-                .frame(height: 30)
+                .padding(.horizontal, 11)
+                .frame(height: 34)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.locus())
@@ -456,113 +469,608 @@ struct ThinkingSegmentView: View {
 
             if isOpen {
                 Text(text)
-                    .font(.locus(size: 10))
+                    .font(.locus(size: 11))
                     .foregroundStyle(LocusTheme.muted)
-                    .lineSpacing(3)
+                    .lineSpacing(4)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 10)
+                    .padding(.horizontal, 13)
+                    .padding(.bottom, 12)
             }
         }
-        .background(LocusTheme.paperDeep.opacity(0.55))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(LocusTheme.paperDeep.opacity(0.46))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(LocusTheme.line.opacity(0.8), lineWidth: 1)
         }
     }
 }
 
-/// Paragraph text with inline markdown, with lightweight heading emphasis.
-struct InlineMarkdownText: View {
+struct MarkdownListItem: Hashable {
     let text: String
-    init(_ text: String) { self.text = text }
+    let checked: Bool?
+}
 
-    private enum ProseBlock: Hashable {
-        case heading(Int, String)
-        case paragraph(String)
-    }
+/// Semantic prose blocks inside the non-code portions of a response. This is
+/// deliberately small and deterministic rather than a web renderer: it covers
+/// the structures coding assistants produce most often while retaining native
+/// text selection, accessibility, and macOS link handling.
+enum MarkdownProseBlock: Hashable {
+    case heading(level: Int, text: String)
+    case paragraph(String)
+    case unordered([MarkdownListItem])
+    case ordered(start: Int, items: [String])
+    case quote(String)
+    case rule
+    case table(headers: [String], rows: [[String]])
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(proseBlocks.enumerated()), id: \.offset) { _, block in
-                switch block {
-                case .heading(let level, let value):
-                    Text(value)
-                        .font(.locus(size: level <= 2 ? 15 : 13, weight: .bold))
-                        .foregroundStyle(LocusTheme.ink)
-                        .padding(.top, 4)
-                        .textSelection(.enabled)
-                case .paragraph(let value):
-                    Text(inline(value))
-                        .font(.locus(size: 12))
-                        .foregroundStyle(LocusTheme.inkSoft)
-                        .lineSpacing(4)
-                        .textSelection(.enabled)
-                }
-            }
-        }
-    }
-
-    /// Coalesce consecutive prose and list lines into one Text view. Blank
-    /// lines and headings remain semantic boundaries, avoiding hundreds of
-    /// SwiftUI nodes in long model replies.
-    private var proseBlocks: [ProseBlock] {
-        var result: [ProseBlock] = []
+    static func parse(_ text: String) -> [MarkdownProseBlock] {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var blocks: [MarkdownProseBlock] = []
         var paragraph: [String] = []
-        func flush() {
+        var index = 0
+
+        func flushParagraph() {
             guard !paragraph.isEmpty else { return }
-            result.append(.paragraph(paragraph.joined(separator: "\n")))
+            blocks.append(.paragraph(paragraph.joined(separator: "\n")))
             paragraph = []
         }
-        for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = String(raw)
-            if let level = headingLevel(line) {
-                flush()
-                result.append(.heading(
-                    level,
-                    String(line.drop(while: { $0 == "#" || $0 == " " }))
-                ))
-            } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
-                flush()
-            } else {
-                paragraph.append(line)
+
+        while index < lines.count {
+            let line = lines[index]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty {
+                flushParagraph()
+                index += 1
+                continue
             }
+
+            if let level = headingLevel(line) {
+                flushParagraph()
+                blocks.append(.heading(
+                    level: level,
+                    text: String(line.drop(while: { $0 == "#" || $0 == " " }))
+                ))
+                index += 1
+                continue
+            }
+
+            if isRule(trimmed) {
+                flushParagraph()
+                blocks.append(.rule)
+                index += 1
+                continue
+            }
+
+            if index + 1 < lines.count,
+               let headers = tableCells(line),
+               isTableDivider(lines[index + 1], count: headers.count)
+            {
+                flushParagraph()
+                var rows: [[String]] = []
+                index += 2
+                while index < lines.count,
+                      let cells = tableCells(lines[index]),
+                      !lines[index].trimmingCharacters(in: .whitespaces).isEmpty
+                {
+                    rows.append(normalized(cells, count: headers.count))
+                    index += 1
+                }
+                blocks.append(.table(headers: headers, rows: rows))
+                continue
+            }
+
+            if quoteText(line) != nil {
+                flushParagraph()
+                var quoteLines: [String] = []
+                while index < lines.count, let value = quoteText(lines[index]) {
+                    quoteLines.append(value)
+                    index += 1
+                }
+                blocks.append(.quote(quoteLines.joined(separator: "\n")))
+                continue
+            }
+
+            if unorderedItem(line) != nil {
+                flushParagraph()
+                var items: [MarkdownListItem] = []
+                while index < lines.count, let item = unorderedItem(lines[index]) {
+                    items.append(item)
+                    index += 1
+                }
+                blocks.append(.unordered(items))
+                continue
+            }
+
+            if let first = orderedItem(line) {
+                flushParagraph()
+                var items = [first.text]
+                let start = first.number
+                index += 1
+                while index < lines.count, let item = orderedItem(lines[index]) {
+                    items.append(item.text)
+                    index += 1
+                }
+                blocks.append(.ordered(start: start, items: items))
+                continue
+            }
+
+            paragraph.append(line)
+            index += 1
         }
-        flush()
-        return result
+        flushParagraph()
+        return blocks
     }
 
-    private func headingLevel(_ line: String) -> Int? {
+    private static func headingLevel(_ line: String) -> Int? {
         let hashes = line.prefix(while: { $0 == "#" }).count
         guard hashes > 0, hashes <= 6,
               line.dropFirst(hashes).first == " " else { return nil }
         return hashes
     }
 
-    private func inline(_ line: String) -> AttributedString {
-        (try? AttributedString(
-            markdown: line,
-            options: AttributedString.MarkdownParsingOptions(
-                interpretedSyntax: .inlineOnlyPreservingWhitespace
-            )
-        )) ?? AttributedString(line)
+    private static func isRule(_ line: String) -> Bool {
+        let compact = line.filter { !$0.isWhitespace }
+        guard compact.count >= 3, let first = compact.first,
+              first == "-" || first == "_" || first == "*" else { return false }
+        return compact.allSatisfy { $0 == first }
+    }
+
+    private static func unorderedItem(_ line: String) -> MarkdownListItem? {
+        let value = line.trimmingCharacters(in: .whitespaces)
+        guard value.count >= 2,
+              ["- ", "* ", "+ "].contains(where: { value.hasPrefix($0) })
+        else { return nil }
+        var body = String(value.dropFirst(2))
+        var checked: Bool?
+        if body.hasPrefix("[ ] ") {
+            checked = false
+            body.removeFirst(4)
+        } else if body.lowercased().hasPrefix("[x] ") {
+            checked = true
+            body.removeFirst(4)
+        }
+        return MarkdownListItem(text: body, checked: checked)
+    }
+
+    private static func orderedItem(_ line: String) -> (number: Int, text: String)? {
+        let value = line.trimmingCharacters(in: .whitespaces)
+        let digits = value.prefix(while: { $0.isNumber })
+        guard let number = Int(digits), !digits.isEmpty else { return nil }
+        let suffix = value.dropFirst(digits.count)
+        guard suffix.hasPrefix(". ") || suffix.hasPrefix(") ") else { return nil }
+        return (number, String(suffix.dropFirst(2)))
+    }
+
+    private static func quoteText(_ line: String) -> String? {
+        let value = line.trimmingCharacters(in: .whitespaces)
+        guard value.hasPrefix(">") else { return nil }
+        return String(value.dropFirst().drop(while: { $0 == " " }))
+    }
+
+    private static func tableCells(_ line: String) -> [String]? {
+        let value = line.trimmingCharacters(in: .whitespaces)
+        guard value.contains("|") else { return nil }
+        var cells = value.split(separator: "|", omittingEmptySubsequences: false).map {
+            $0.trimmingCharacters(in: .whitespaces)
+        }
+        if value.hasPrefix("|") { cells.removeFirst() }
+        if value.hasSuffix("|") { cells.removeLast() }
+        return cells.count >= 2 ? cells : nil
+    }
+
+    private static func isTableDivider(_ line: String, count: Int) -> Bool {
+        guard let cells = tableCells(line), cells.count == count else { return false }
+        return cells.allSatisfy { cell in
+            let core = cell.trimmingCharacters(in: CharacterSet(charactersIn: ":"))
+            return core.count >= 3 && core.allSatisfy { $0 == "-" }
+        }
+    }
+
+    private static func normalized(_ cells: [String], count: Int) -> [String] {
+        if cells.count == count { return cells }
+        if cells.count > count { return Array(cells.prefix(count)) }
+        return cells + Array(repeating: "", count: count - cells.count)
     }
 }
 
-/// Fenced code block card with a language chip and a copy button.
+/// Paragraph text with native inline Markdown and block-level hierarchy close
+/// to Codex and Claude: crisp headings, readable lists, task state, quotes,
+/// dividers, and horizontally safe tables.
+struct InlineMarkdownText: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(Array(MarkdownProseBlock.parse(text).enumerated()), id: \.offset) { _, block in
+                switch block {
+                case .heading(let level, let value):
+                    Text(inline(value))
+                        .font(.locus(
+                            size: level == 1 ? 20 : (level == 2 ? 17 : 14),
+                            weight: level <= 2 ? .bold : .semibold
+                        ))
+                        .tracking(level <= 2 ? -0.25 : 0)
+                        .foregroundStyle(LocusTheme.ink)
+                        .padding(.top, level == 1 ? 7 : 4)
+                        .textSelection(.enabled)
+
+                case .paragraph(let value):
+                    prose(value)
+
+                case .unordered(let items):
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                                if let checked = item.checked {
+                                    Image(systemName: checked ? "checkmark.circle.fill" : "circle")
+                                        .font(.locus(size: 10, weight: .semibold))
+                                        .foregroundStyle(checked ? LocusTheme.success : LocusTheme.muted)
+                                        .frame(width: 12)
+                                } else {
+                                    Circle()
+                                        .fill(LocusTheme.inkSoft)
+                                        .frame(width: 4, height: 4)
+                                        .frame(width: 12)
+                                }
+                                prose(item.text)
+                            }
+                        }
+                    }
+                    .padding(.leading, 2)
+
+                case .ordered(let start, let items):
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { offset, item in
+                            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                                Text("\(start + offset).")
+                                    .font(.locus(size: 11, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(LocusTheme.muted)
+                                    .frame(minWidth: 20, alignment: .trailing)
+                                prose(item)
+                            }
+                        }
+                    }
+
+                case .quote(let value):
+                    HStack(alignment: .top, spacing: 11) {
+                        Capsule()
+                            .fill(LocusTheme.lineStrong.opacity(0.75))
+                            .frame(width: 3)
+                        prose(value)
+                            .foregroundStyle(LocusTheme.muted)
+                    }
+                    .padding(.vertical, 2)
+
+                case .rule:
+                    Rectangle()
+                        .fill(LocusTheme.line)
+                        .frame(height: 1)
+                        .padding(.vertical, 4)
+
+                case .table(let headers, let rows):
+                    MarkdownTableView(headers: headers, rows: rows)
+                }
+            }
+        }
+        .tint(LocusTheme.signalDeep)
+    }
+
+    private func prose(_ value: String) -> some View {
+        Text(inline(value))
+            .font(.locus(size: 13))
+            .foregroundStyle(LocusTheme.inkSoft)
+            .lineSpacing(5)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func inline(_ value: String) -> AttributedString {
+        var result = (try? AttributedString(
+            markdown: value,
+            options: AttributedString.MarkdownParsingOptions(
+                interpretedSyntax: .inlineOnlyPreservingWhitespace
+            )
+        )) ?? AttributedString(value)
+        for run in result.runs {
+            guard run.inlinePresentationIntent?.contains(.code) == true else { continue }
+            result[run.range].font = .locus(size: 12, weight: .medium, design: .monospaced)
+            result[run.range].foregroundColor = LocusTheme.ink
+            result[run.range].backgroundColor = LocusTheme.paperDeep
+        }
+        return result
+    }
+}
+
+private struct MarkdownTableView: View {
+    let headers: [String]
+    let rows: [[String]]
+    private let cellWidth: CGFloat = 154
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 0) {
+                row(headers, header: true)
+                Rectangle().fill(LocusTheme.lineStrong.opacity(0.8)).frame(height: 1)
+                ForEach(Array(rows.enumerated()), id: \.offset) { index, cells in
+                    row(cells, header: false)
+                        .background(index.isMultiple(of: 2) ? Color.clear : LocusTheme.paperDeep.opacity(0.28))
+                    if index < rows.count - 1 {
+                        Rectangle().fill(LocusTheme.line.opacity(0.7)).frame(height: 1)
+                    }
+                }
+            }
+            .background(LocusTheme.white)
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(LocusTheme.line, lineWidth: 1)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Table with \(headers.count) columns and \(rows.count) rows")
+    }
+
+    private func row(_ cells: [String], header: Bool) -> some View {
+        HStack(spacing: 0) {
+            ForEach(Array(cells.enumerated()), id: \.offset) { index, cell in
+                let showsDivider = index != cells.indices.last
+                Text(inline(cell))
+                    .font(.locus(size: 11, weight: header ? .semibold : .regular))
+                    .foregroundStyle(header ? LocusTheme.ink : LocusTheme.inkSoft)
+                    .lineLimit(4)
+                    .textSelection(.enabled)
+                    .frame(width: cellWidth, alignment: .leading)
+                    .frame(minHeight: 34, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .overlay(alignment: .trailing) {
+                        if showsDivider {
+                            Rectangle().fill(LocusTheme.line.opacity(0.7)).frame(width: 1)
+                        }
+                    }
+            }
+        }
+        .background(header ? LocusTheme.paperDeep.opacity(0.75) : Color.clear)
+    }
+
+    private func inline(_ value: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: value,
+            options: AttributedString.MarkdownParsingOptions(
+                interpretedSyntax: .inlineOnlyPreservingWhitespace
+            )
+        )) ?? AttributedString(value)
+    }
+}
+
+enum CodeTokenKind: Hashable {
+    case plain
+    case keyword
+    case string
+    case number
+    case comment
+}
+
+struct CodeToken: Hashable {
+    var text: String
+    let kind: CodeTokenKind
+}
+
+/// Small, dependency-free highlighter for the language families most common
+/// in coding-agent replies. It is intentionally lexical rather than a full
+/// parser: malformed or partial snippets still preserve every character and
+/// receive stable, useful color without blocking rendering.
+enum CodeSyntaxHighlighter {
+    static func tokens(for code: String, language: String?) -> [CodeToken] {
+        let family = normalizedLanguage(language)
+        let keywords = keywordSet(for: family)
+        let characters = Array(code)
+        var tokens: [CodeToken] = []
+        var index = 0
+
+        func emit(_ kind: CodeTokenKind, _ range: Range<Int>) {
+            guard !range.isEmpty else { return }
+            let value = String(characters[range])
+            if tokens.last?.kind == kind {
+                tokens[tokens.count - 1].text += value
+            } else {
+                tokens.append(CodeToken(text: value, kind: kind))
+            }
+        }
+
+        while index < characters.count {
+            let start = index
+
+            if let prefix = lineCommentPrefix(for: family),
+               matches(prefix, in: characters, at: index)
+            {
+                index += prefix.count
+                while index < characters.count, characters[index] != "\n" { index += 1 }
+                emit(.comment, start..<index)
+                continue
+            }
+
+            if supportsBlockComments(family),
+               matches(["/", "*"], in: characters, at: index)
+            {
+                index += 2
+                while index < characters.count,
+                      !matches(["*", "/"], in: characters, at: index)
+                {
+                    index += 1
+                }
+                index = min(index + 2, characters.count)
+                emit(.comment, start..<index)
+                continue
+            }
+
+            if characters[index] == "\"" || characters[index] == "'" || characters[index] == "`" {
+                let quote = characters[index]
+                index += 1
+                var escaped = false
+                while index < characters.count {
+                    let character = characters[index]
+                    index += 1
+                    if escaped {
+                        escaped = false
+                    } else if character == "\\" {
+                        escaped = true
+                    } else if character == quote {
+                        break
+                    }
+                }
+                emit(.string, start..<index)
+                continue
+            }
+
+            if characters[index].isNumber {
+                index += 1
+                while index < characters.count,
+                      characters[index].isNumber
+                        || characters[index] == "."
+                        || characters[index] == "_"
+                {
+                    index += 1
+                }
+                emit(.number, start..<index)
+                continue
+            }
+
+            if isIdentifierStart(characters[index]) {
+                index += 1
+                while index < characters.count, isIdentifierBody(characters[index]) {
+                    index += 1
+                }
+                let word = String(characters[start..<index])
+                emit(keywords.contains(word) ? .keyword : .plain, start..<index)
+                continue
+            }
+
+            index += 1
+            emit(.plain, start..<index)
+        }
+        return tokens
+    }
+
+    static func highlighted(_ code: String, language: String?) -> AttributedString {
+        var result = AttributedString()
+        for token in tokens(for: code, language: language) {
+            var piece = AttributedString(token.text)
+            piece.font = .locus(size: 11, design: .monospaced)
+            piece.foregroundColor = switch token.kind {
+            case .plain: LocusTheme.inkSoft
+            case .keyword: LocusTheme.signalDeep
+            case .string: LocusTheme.blue
+            case .number: LocusTheme.coral
+            case .comment: LocusTheme.muted
+            }
+            result.append(piece)
+        }
+        return result
+    }
+
+    private static func normalizedLanguage(_ language: String?) -> String {
+        let value = language?
+            .lowercased()
+            .split(whereSeparator: { $0.isWhitespace })
+            .first
+            .map(String.init) ?? ""
+        return switch value {
+        case "js", "jsx", "javascript": "javascript"
+        case "ts", "tsx", "typescript": "typescript"
+        case "py", "python3": "python"
+        case "sh", "bash", "zsh", "shell": "shell"
+        case "rs": "rust"
+        case "golang": "go"
+        case "c++", "cpp", "cc": "cpp"
+        case "objc", "objective-c": "objective-c"
+        case "yml": "yaml"
+        default: value
+        }
+    }
+
+    private static func keywordSet(for language: String) -> Set<String> {
+        switch language {
+        case "swift":
+            return ["actor", "as", "async", "await", "break", "case", "catch", "class", "continue", "default", "defer", "do", "else", "enum", "extension", "false", "for", "func", "guard", "if", "import", "in", "init", "let", "nil", "private", "protocol", "public", "return", "self", "static", "struct", "switch", "throw", "throws", "true", "try", "var", "where", "while"]
+        case "javascript", "typescript":
+            return ["async", "await", "break", "case", "catch", "class", "const", "continue", "default", "delete", "do", "else", "export", "extends", "false", "finally", "for", "from", "function", "if", "import", "in", "instanceof", "interface", "let", "new", "null", "of", "return", "static", "super", "switch", "throw", "true", "try", "type", "typeof", "undefined", "var", "while", "yield"]
+        case "python":
+            return ["and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "False", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True", "try", "while", "with", "yield"]
+        case "rust":
+            return ["as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while"]
+        case "go":
+            return ["break", "case", "chan", "const", "continue", "default", "defer", "else", "fallthrough", "for", "func", "go", "goto", "if", "import", "interface", "map", "package", "range", "return", "select", "struct", "switch", "type", "var"]
+        case "c", "cpp", "objective-c":
+            return ["auto", "bool", "break", "case", "catch", "char", "class", "const", "continue", "default", "do", "double", "else", "enum", "false", "float", "for", "if", "int", "long", "namespace", "new", "nullptr", "private", "protected", "public", "return", "short", "signed", "sizeof", "static", "struct", "switch", "template", "this", "throw", "true", "try", "typedef", "typename", "union", "unsigned", "using", "virtual", "void", "while"]
+        case "json":
+            return ["false", "null", "true"]
+        case "shell":
+            return ["case", "do", "done", "elif", "else", "esac", "fi", "for", "function", "if", "in", "local", "return", "then", "until", "while"]
+        default:
+            return []
+        }
+    }
+
+    private static func lineCommentPrefix(for language: String) -> [Character]? {
+        return switch language {
+        case "python", "shell", "ruby", "yaml": ["#"]
+        case "sql": ["-", "-"]
+        case "json", "html", "css", "markdown", "md", "": nil
+        default: ["/", "/"]
+        }
+    }
+
+    private static func supportsBlockComments(_ language: String) -> Bool {
+        !["python", "shell", "ruby", "yaml", "sql", "json", "markdown", "md", ""].contains(language)
+    }
+
+    private static func isIdentifierStart(_ character: Character) -> Bool {
+        character.isLetter || character == "_" || character == "$"
+    }
+
+    private static func isIdentifierBody(_ character: Character) -> Bool {
+        isIdentifierStart(character) || character.isNumber
+    }
+
+    private static func matches(
+        _ prefix: [Character],
+        in characters: [Character],
+        at index: Int
+    ) -> Bool {
+        guard index + prefix.count <= characters.count else { return false }
+        return Array(characters[index..<(index + prefix.count)]) == prefix
+    }
+}
+
+/// Fenced code rendered as a native macOS code card. Diff fences receive
+/// per-line add/remove treatment; all other languages retain exact whitespace
+/// and scroll horizontally without forcing the conversation itself sideways.
 struct CodeBlockView: View {
     let language: String?
     let code: String
     @State private var copied = false
 
+    private var displayLanguage: String {
+        let value = language?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? "Code" : value.capitalized
+    }
+
+    private var isDiff: Bool {
+        language?.lowercased() == "diff" || DiffDetector.isDiff(code)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text((language ?? "code").lowercased())
-                    .font(.locus(size: 8, weight: .bold, design: .monospaced))
+            HStack(spacing: 7) {
+                Image(systemName: isDiff ? "plusminus" : "chevron.left.forwardslash.chevron.right")
+                    .font(.locus(size: 9, weight: .semibold))
                     .foregroundStyle(LocusTheme.muted)
+                Text(displayLanguage)
+                    .font(.locus(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(LocusTheme.inkSoft)
                 Spacer()
                 Button {
                     NSPasteboard.general.clearContents()
@@ -573,33 +1081,96 @@ struct CodeBlockView: View {
                         copied = false
                     }
                 } label: {
-                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                        .font(.locus(size: 8, weight: .semibold))
-                        .foregroundStyle(copied ? LocusTheme.success : LocusTheme.muted)
+                    Label(
+                        copied ? "Copied" : "Copy",
+                        systemImage: copied ? "checkmark" : "doc.on.doc"
+                    )
+                    .font(.locus(size: 9, weight: .semibold))
+                    .foregroundStyle(copied ? LocusTheme.success : LocusTheme.muted)
+                    .padding(.horizontal, 7)
+                    .frame(height: 24)
+                    .background(LocusTheme.white.opacity(0.7))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
                 .buttonStyle(.locus())
                 .accessibilityLabel("Copy code block")
                 .accessibilityIdentifier("message.codeBlock.copy")
             }
-            .padding(.horizontal, 10)
-            .frame(height: 26)
-            .background(LocusTheme.paperDeep.opacity(0.8))
+            .padding(.horizontal, 11)
+            .frame(height: 34)
+            .background(LocusTheme.paperDeep.opacity(0.78))
+
+            Rectangle()
+                .fill(LocusTheme.line.opacity(0.8))
+                .frame(height: 1)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(code)
-                    .font(.locus(size: 10, design: .monospaced))
-                    .foregroundStyle(LocusTheme.inkSoft)
-                    .lineSpacing(2)
-                    .textSelection(.enabled)
-                    .padding(10)
+                if isDiff {
+                    CodeDiffLines(code: code)
+                } else {
+                    Text(CodeSyntaxHighlighter.highlighted(
+                        code.isEmpty ? " " : code,
+                        language: language
+                    ))
+                        .lineSpacing(3)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: true, vertical: true)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 11)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(LocusTheme.white)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(LocusTheme.line, lineWidth: 1)
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(displayLanguage) code block")
+    }
+}
+
+private struct CodeDiffLines: View {
+    let lines: [String]
+
+    init(code: String) {
+        lines = code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                Text(line.isEmpty ? " " : line)
+                    .font(.locus(size: 11, design: .monospaced))
+                    .foregroundStyle(foreground(for: line))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 20, alignment: .leading)
+                    .background(background(for: line))
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    private func foreground(for line: String) -> Color {
+        if line.hasPrefix("@@") { return LocusTheme.blue }
+        if line.hasPrefix("+") && !line.hasPrefix("+++") { return LocusTheme.success }
+        if line.hasPrefix("-") && !line.hasPrefix("---") { return LocusTheme.coral }
+        return LocusTheme.inkSoft
+    }
+
+    private func background(for line: String) -> Color {
+        if line.hasPrefix("+") && !line.hasPrefix("+++") {
+            return LocusTheme.success.opacity(0.1)
+        }
+        if line.hasPrefix("-") && !line.hasPrefix("---") {
+            return LocusTheme.coral.opacity(0.1)
+        }
+        if line.hasPrefix("@@") { return LocusTheme.blue.opacity(0.07) }
+        return Color.clear
     }
 }
 

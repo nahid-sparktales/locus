@@ -1,7 +1,30 @@
+import AppKit
 import SwiftUI
 
 enum ComposerSymbols {
     static let schedule = "calendar.badge.plus"
+}
+
+enum ComposerMetrics {
+    static func editorHeight(for text: String, width: CGFloat) -> CGFloat {
+        let measurementText: String
+        if text.isEmpty {
+            measurementText = " "
+        } else {
+            measurementText = text.hasSuffix("\n") ? text + " " : text
+        }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 5
+        let bounds = (measurementText as NSString).boundingRect(
+            with: NSSize(width: max(width - 24, 120), height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 13),
+                .paragraphStyle: paragraph,
+            ]
+        )
+        return min(max(ceil(bounds.height) + 22, 58), 180)
+    }
 }
 
 struct ComposerView: View {
@@ -12,6 +35,7 @@ struct ComposerView: View {
     @State private var permissionModesPresented = false
     @State private var popupSelection = 0
     @State private var popupDismissedDraft: String?
+    @State private var editorWidth: CGFloat = 600
     @FocusState private var focused: Bool
 
     private enum Popup {
@@ -51,16 +75,15 @@ struct ComposerView: View {
                             }
                     }
 
-                    if !model.justChatEnabled {
-                        modeRow
-                            .transition(LocusMotion.transition(edge: .top, reduceMotion: reduceMotion))
-                    }
-
+                    // TextKit supplies an exact wrapped height at the current
+                    // composer width. The field starts as one line, grows with
+                    // the draft, then caps and scrolls internally so a long
+                    // prompt never pushes the transcript away.
                     ZStack(alignment: .topLeading) {
                         if model.draftText.isEmpty {
                             Text(placeholder)
-                                .font(.locus(size: 12))
-                                .foregroundStyle(LocusTheme.inkSoft)
+                                .font(.locus(size: 13))
+                                .foregroundStyle(LocusTheme.inkSoft.opacity(0.82))
                                 .padding(.horizontal, 12)
                                 .padding(.top, 11)
                                 .allowsHitTesting(false)
@@ -68,15 +91,13 @@ struct ComposerView: View {
                         }
 
                         TextEditor(text: $model.draftText)
-                            .font(.locus(size: 12))
+                            .font(.locus(size: 13))
                             .foregroundStyle(LocusTheme.ink)
+                            .lineSpacing(5)
                             .scrollContentBackground(.hidden)
                             .padding(.horizontal, 7)
-                            .padding(.vertical, 4)
-                            // Start compact and keep long drafts internally
-                            // scrollable. The previous 120-point editor used
-                            // nearly twice the vertical space of the transcript.
-                            .frame(minHeight: 52, idealHeight: 60, maxHeight: 68)
+                            .padding(.vertical, 5)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .focused($focused)
                             .accessibilityLabel("Message Locus")
                             .accessibilityIdentifier("composer.input")
@@ -85,6 +106,16 @@ struct ComposerView: View {
                             .onKeyPress(.return, phases: .down) { press in handleReturn(press) }
                             .onKeyPress(.tab) { handleTab() }
                             .onKeyPress(.escape) { handleEscape() }
+                    }
+                    .frame(height: measuredEditorHeight)
+                    .background {
+                        GeometryReader { proxy in
+                            Color.clear
+                                .onAppear { editorWidth = proxy.size.width }
+                                .onChange(of: proxy.size.width) {
+                                    editorWidth = proxy.size.width
+                                }
+                        }
                     }
 
                     if !model.chatAttachments.isEmpty {
@@ -98,11 +129,23 @@ struct ComposerView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .stroke(LocusTheme.separator, lineWidth: 1)
+                        .stroke(
+                            focused
+                                ? LocusTheme.signalDeep.opacity(0.72)
+                                : LocusTheme.separator,
+                            lineWidth: focused ? 1.5 : 1
+                        )
                 }
                 .chatAttachmentDropTarget()
                 .chatPasteInterceptor(editorFocused: focused)
-                .shadow(color: .black.opacity(0.08), radius: 22, y: 9)
+                .shadow(
+                    color: focused
+                        ? LocusTheme.signalDeep.opacity(0.1)
+                        : Color.black.opacity(0.08),
+                    radius: focused ? 24 : 22,
+                    y: 9
+                )
+                .animation(reduceMotion ? nil : LocusMotion.press, value: focused)
                 .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
             }
         }
@@ -496,7 +539,7 @@ struct ComposerView: View {
         .accessibilityIdentifier(identifier)
     }
 
-    private var modeRow: some View {
+    private var modeControls: some View {
         HStack(spacing: 3) {
             ForEach([WorkMode.plan, WorkMode.build]) { mode in
                 Button {
@@ -518,21 +561,11 @@ struct ComposerView: View {
             Divider().frame(height: 16).padding(.horizontal, 4)
             Menu {
                 Button {
-                    model.selectSoloRoute(swarm: false)
+                    model.selectSoloRoute()
                 } label: {
                     Label(
                         "Solo",
-                        systemImage: model.selectedAgentTeamID == nil && !model.soloSwarmEnabled
-                            ? "checkmark" : "person"
-                    )
-                }
-                Button {
-                    model.selectSoloRoute(swarm: true)
-                } label: {
-                    Label(
-                        "Solo Swarm",
-                        systemImage: model.selectedAgentTeamID == nil && model.soloSwarmEnabled
-                            ? "checkmark" : "point.3.connected.trianglepath.dotted"
+                        systemImage: model.selectedAgentTeamID == nil ? "checkmark" : "person"
                     )
                 }
                 if !model.agentTeams.isEmpty {
@@ -550,17 +583,13 @@ struct ComposerView: View {
                 }
                 Divider()
                 Button("Manage Agents & Teams…", systemImage: "gearshape") {
-                    model.settingsPage = .agents
-                    model.settingsPresented = true
+                    model.presentSettings(.agents)
                 }
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: model.teamModeEnabled
-                        ? "person.2.fill"
-                        : (model.soloSwarmEnabled
-                            ? "point.3.connected.trianglepath.dotted" : "person.fill"))
-                    Text(model.selectedAgentTeam?.name
-                        ?? (model.soloSwarmEnabled ? "Solo Swarm" : "Solo"))
+                        ? "person.2.fill" : "person.fill")
+                    Text(model.selectedAgentTeam?.name ?? "Solo")
                         .lineLimit(1)
                 }
                 .font(.locus(size: 9, weight: .semibold))
@@ -575,21 +604,11 @@ struct ComposerView: View {
             .fixedSize()
             .accessibilityLabel("Solo or team routing")
             .accessibilityIdentifier("composer.team")
-            Spacer()
-            Text(model.selectedMode.description)
-                .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.inkSoft)
-                .accessibilityIdentifier("composer.modeDescription")
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 37)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.line.opacity(0.65)).frame(height: 1)
         }
     }
 
     private var actionRow: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 6) {
             if model.justChatEnabled {
                 Button {
                     contextPresented.toggle()
@@ -598,13 +617,13 @@ struct ComposerView: View {
                         Image(systemName: "paperclip")
                         Text("\(model.availableChatAttachments.count) attached")
                     }
-                    .font(.locus(size: 8, weight: .semibold))
-                    .padding(.horizontal, 8)
-                    .frame(height: 27)
-                    .background(LocusTheme.paperDeep.opacity(0.75))
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .font(.locus(size: 9, weight: .semibold))
+                    .padding(.horizontal, 9)
+                    .frame(height: 30)
+                    .background(LocusTheme.paperDeep.opacity(0.68))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .stroke(LocusTheme.line, lineWidth: 1)
                     }
                 }
@@ -621,11 +640,11 @@ struct ComposerView: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(.locus(size: 11, weight: .semibold))
-                        .frame(width: 27, height: 27)
-                        .background(LocusTheme.paperDeep.opacity(0.75))
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .frame(width: 30, height: 30)
+                        .background(LocusTheme.paperDeep.opacity(0.68))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .overlay {
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
                                 .stroke(LocusTheme.line, lineWidth: 1)
                         }
                 }
@@ -636,12 +655,12 @@ struct ComposerView: View {
                 .disabled(model.isLoadingChatAttachments)
 
                 Label("Chat only", systemImage: "lock.fill")
-                    .font(.locus(size: 8, weight: .semibold))
+                    .font(.locus(size: 9, weight: .semibold))
                     .foregroundStyle(LocusTheme.muted)
-                    .padding(.horizontal, 8)
-                    .frame(height: 27)
-                    .background(LocusTheme.paperDeep.opacity(0.75))
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .padding(.horizontal, 9)
+                    .frame(height: 30)
+                    .background(LocusTheme.paperDeep.opacity(0.68))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .accessibilityIdentifier("composer.justChatBoundary")
             } else {
                 Button {
@@ -649,46 +668,32 @@ struct ComposerView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "doc.on.doc")
-                        Text("\(model.includedContextCount) files")
-                        Text(model.includedContextTokens.formatted(.number.notation(.compactName)))
-                            .foregroundStyle(LocusTheme.muted.opacity(0.68))
+                        if model.includedContextCount == 0 {
+                            Text("Context")
+                        } else {
+                            Text("\(model.includedContextCount)")
+                            Text(model.includedContextTokens.formatted(.number.notation(.compactName)))
+                                .foregroundStyle(LocusTheme.muted.opacity(0.68))
+                        }
                     }
-                    .font(.locus(size: 8, weight: .semibold))
-                    .padding(.horizontal, 8)
-                    .frame(height: 27)
-                    .background(LocusTheme.paperDeep.opacity(0.75))
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .font(.locus(size: 9, weight: .semibold))
+                    .padding(.horizontal, 9)
+                    .frame(height: 30)
+                    .background(LocusTheme.paperDeep.opacity(0.68))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .stroke(LocusTheme.line, lineWidth: 1)
                     }
                 }
                 .buttonStyle(.locus())
+                .fixedSize()
                 .popover(isPresented: $contextPresented, arrowEdge: .bottom) {
                     ContextPopover()
                         .environmentObject(model)
                 }
                 .accessibilityLabel("Open context pack")
                 .accessibilityIdentifier("composer.context")
-
-                Button {
-                    model.addContext()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.locus(size: 11, weight: .semibold))
-                        .frame(width: 27, height: 27)
-                        .background(LocusTheme.paperDeep.opacity(0.75))
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .stroke(LocusTheme.line, lineWidth: 1)
-                        }
-                }
-                .buttonStyle(.locus())
-                .help("Add files or folders to context")
-                .accessibilityLabel("Add context")
-                .accessibilityIdentifier("composer.addContext")
-                .disabled(model.isLoadingContext)
 
                 Button {
                     contextPresented = false
@@ -700,16 +705,16 @@ struct ComposerView: View {
                             Text("\(model.availableChatAttachments.count)")
                         }
                     }
-                    .font(.locus(size: 8, weight: .semibold))
+                    .font(.locus(size: 9, weight: .semibold))
                     .foregroundStyle(
                         attachmentWarningActive ? LocusTheme.warning : LocusTheme.ink
                     )
-                    .padding(.horizontal, 8)
-                    .frame(height: 27)
-                    .background(LocusTheme.paperDeep.opacity(0.75))
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .padding(.horizontal, 9)
+                    .frame(height: 30)
+                    .background(LocusTheme.paperDeep.opacity(0.68))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .stroke(
                                 attachmentWarningActive
                                     ? LocusTheme.warning.opacity(0.55) : LocusTheme.line,
@@ -718,6 +723,7 @@ struct ComposerView: View {
                     }
                 }
                 .buttonStyle(.locus())
+                .fixedSize()
                 .popover(isPresented: $attachmentsPresented, arrowEdge: .bottom) {
                     ChatAttachmentsPopover()
                         .environmentObject(model)
@@ -729,12 +735,17 @@ struct ComposerView: View {
                 permissionChip
             }
 
-            Spacer()
+            if !model.justChatEnabled {
+                Divider()
+                    .frame(height: 17)
+                    .padding(.horizontal, 1)
+                modeControls
+                    .fixedSize()
+                    .layoutPriority(2)
+                    .transition(LocusMotion.transition(edge: .leading, reduceMotion: reduceMotion))
+            }
 
-            Text(sendHint)
-                .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.inkSoft)
-                .accessibilityIdentifier("composer.sendHint")
+            Spacer()
 
             if model.isBusy {
                 if primaryAction != .stop, !isWaitingForTeamApproval, !isStopping {
@@ -750,7 +761,7 @@ struct ComposerView: View {
                         Image(systemName: "chevron.down")
                             .font(.locus(size: 9, weight: .bold))
                             .foregroundStyle(LocusTheme.muted)
-                            .frame(width: 24, height: 30)
+                            .frame(width: 26, height: 32)
                             .background(LocusTheme.paperDeep)
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
@@ -780,9 +791,9 @@ struct ComposerView: View {
                                     .foregroundStyle(Color.white)
                             }
                         }
-                        .frame(width: 30, height: 30)
+                        .frame(width: 32, height: 32)
                         .background(LocusTheme.coral)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.locus())
                     .disabled(isStopping)
@@ -796,9 +807,9 @@ struct ComposerView: View {
                         Image(systemName: "tray.and.arrow.down.fill")
                             .font(.locus(size: 12, weight: .bold))
                             .foregroundStyle(canSubmit ? LocusTheme.brandInk : LocusTheme.muted)
-                            .frame(width: 30, height: 30)
+                            .frame(width: 32, height: 32)
                             .background(canSubmit ? LocusTheme.signal : LocusTheme.paperDeep)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.locus())
                     .disabled(!canSubmit)
@@ -813,15 +824,15 @@ struct ComposerView: View {
                     Image(systemName: "arrow.up")
                         .font(.locus(size: 13, weight: .bold))
                         .foregroundStyle(canSubmit ? LocusTheme.brandInk : LocusTheme.muted)
-                        .frame(width: 30, height: 30)
+                        .frame(width: 32, height: 32)
                         .background(
                             canSubmit
                                 ? LocusTheme.signal
                                 : LocusTheme.paperDeep.opacity(0.75)
                         )
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         .overlay {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
                                 .stroke(
                                     canSubmit
                                         ? LocusTheme.signalDeep.opacity(0.45)
@@ -835,14 +846,14 @@ struct ComposerView: View {
                 .help(
                     model.hasPendingPermission
                         ? "Answer the pending permission request first"
-                        : "Send (↵)"
+                        : "Send (↵) · New line (⇧↵)"
                 )
                 .accessibilityLabel("Send message")
                 .accessibilityIdentifier("composer.send")
             }
         }
         .padding(.horizontal, 10)
-        .padding(.bottom, 9)
+        .padding(.bottom, 10)
     }
 
     /// Always-visible reminder of what the agent may do without asking, and
@@ -857,10 +868,10 @@ struct ComposerView: View {
         }
         .buttonStyle(.locus())
         .fixedSize()
-        .background(LocusTheme.paperDeep.opacity(0.75))
-        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .background(LocusTheme.paperDeep.opacity(0.68))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(LocusTheme.line, lineWidth: 1)
         }
         .popover(isPresented: $permissionModesPresented, arrowEdge: .bottom) {
@@ -879,9 +890,9 @@ struct ComposerView: View {
                 : "shield.lefthalf.filled")
             Text(model.permissionMode.shortTitle)
         }
-        .font(.locus(size: 8, weight: .semibold))
-        .padding(.horizontal, 8)
-        .frame(height: 27)
+        .font(.locus(size: 9, weight: .semibold))
+        .padding(.horizontal, 9)
+        .frame(height: 30)
         .contentShape(Rectangle())
     }
 
@@ -1018,26 +1029,20 @@ struct ComposerView: View {
         .frame(height: 38)
     }
 
-    private var sendHint: String {
-        // No permission branch: while a request is pending the whole card —
-        // including this hint — is replaced by the permission panel.
-        model.isBusy
-            ? (isWaitingForTeamApproval
-                ? "↵ Queue for Next Turn"
-                : "↵ Queue · ⌘↵ Steer")
-            : "↵ Send"
-    }
-
     private var placeholder: String {
         if isWaitingForTeamApproval {
-            return "Write the next message — it will send after the plan decision…"
+            return "Add a follow-up for after the plan decision…"
         }
         return switch model.selectedMode {
-        case .ask: "Ask anything…  (attach files or images · no workspace tools)"
-        case .work: "What should Locus work on?  ( / commands · @ files · ⌘V images )"
-        case .plan: "Describe the change you want to plan…  ( / commands · @ files · ⌘V images )"
-        case .build: "What should we get done next?  ( / commands · @ files · ⌘V images )"
+        case .ask: "Ask anything"
+        case .work: "Ask Locus to work on something…"
+        case .plan: "Describe what you want to plan…"
+        case .build: "What should we build next?"
         }
+    }
+
+    private var measuredEditorHeight: CGFloat {
+        ComposerMetrics.editorHeight(for: model.draftText, width: editorWidth)
     }
 
     private var isWaitingForTeamApproval: Bool {

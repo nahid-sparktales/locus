@@ -20,7 +20,7 @@ private let shortcutReferenceGroups: [ShortcutReferenceGroup] = [
         ShortcutReference(keys: "⌘/", title: "Keyboard shortcuts"),
         ShortcutReference(keys: "⌘N", title: "New session"),
         ShortcutReference(keys: "⌘⇧K", title: "Clear chat"),
-        ShortcutReference(keys: "⌘S", title: "Create checkpoint"),
+        ShortcutReference(keys: "⌘S", title: "Session checkpoints"),
         ShortcutReference(keys: "⌘R", title: "Review changes"),
     ]),
     ShortcutReferenceGroup(name: "Composer", shortcuts: [
@@ -35,7 +35,8 @@ private let shortcutReferenceGroups: [ShortcutReferenceGroup] = [
     ]),
     ShortcutReferenceGroup(name: "Panels", shortcuts: [
         ShortcutReference(keys: "⌘0", title: "Show/hide sidebar"),
-        ShortcutReference(keys: "⌘1–⌘9", title: "Open inspector tabs"),
+        ShortcutReference(keys: "⌘1–5 · ⌘7–9", title: "Open inspector tabs"),
+        ShortcutReference(keys: "⌘6", title: "Session checkpoints"),
         ShortcutReference(keys: "⌘⌥I", title: "Show/hide inspector"),
     ]),
     ShortcutReferenceGroup(name: "Browser (while the panel is showing)", shortcuts: [
