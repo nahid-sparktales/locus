@@ -476,7 +476,7 @@ final class LocusUITests: XCTestCase {
         anyElement("sidebar.more").click()
         let archivedToggle = menuItem(
             "sidebar.showArchived",
-            title: "Show Archived Sessions"
+            title: "Archived Sessions"
         )
         XCTAssertTrue(archivedToggle.waitForExistence(timeout: 2))
         archivedToggle.click()
