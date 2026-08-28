@@ -216,7 +216,7 @@ struct ModelLibraryView: View {
                     .font(.locus(size: 18, weight: .bold))
                 Text("Discover GGUF models on Hugging Face and install them through Ollama.")
                     .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(LocusTheme.textSecondary)
             }
 
             Spacer()
@@ -248,7 +248,7 @@ struct ModelLibraryView: View {
     private var searchBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(LocusTheme.textSecondary)
                 .accessibilityHidden(true)
             TextField(
                 "Search models or paste a huggingface.co model URL",
@@ -283,7 +283,7 @@ struct ModelLibraryView: View {
             HStack {
                 Text(library.query.isEmpty ? "POPULAR GGUF MODELS" : "SEARCH RESULTS")
                     .font(.locus(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(LocusTheme.textSecondary)
                 Spacer()
                 if library.isSearching {
                     Text("SEARCHING…")
@@ -319,7 +319,7 @@ struct ModelLibraryView: View {
                 library.query.isEmpty ? "Popular GGUF models" : "Model search results"
             )
         }
-        .background(LocusTheme.white.opacity(0.55))
+        .background(LocusTheme.surfaceCard)
     }
 
     private func modelRow(_ item: HuggingFaceModel) -> some View {
@@ -339,7 +339,7 @@ struct ModelLibraryView: View {
                 }
             }
             .font(.locus(size: 8))
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(LocusTheme.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
@@ -362,7 +362,7 @@ struct ModelLibraryView: View {
                             .textSelection(.enabled)
                         Text(selected.id)
                             .font(.locus(size: 9, design: .monospaced))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(LocusTheme.textSecondary)
                             .textSelection(.enabled)
                     }
 
@@ -372,7 +372,7 @@ struct ModelLibraryView: View {
                             Text("Scanning GGUF files…")
                         }
                         .font(.locus(size: 10))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(LocusTheme.textSecondary)
                     } else {
                         variants
                     }
@@ -405,11 +405,11 @@ struct ModelLibraryView: View {
             HStack {
                 Text("CHOOSE A QUANTIZATION")
                     .font(.locus(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(LocusTheme.textSecondary)
                 Spacer()
                 Text("This Mac has \(Self.memoryLabel) of unified memory")
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(LocusTheme.textSecondary)
                     .accessibilityIdentifier("modelLibrary.machineMemory")
             }
 
@@ -425,10 +425,10 @@ struct ModelLibraryView: View {
                             }
                             Text(variant.sizeLabel)
                                 .font(.locus(size: 9))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(LocusTheme.textSecondary)
                             Text(variant.fileName)
                                 .font(.locus(size: 7, design: .monospaced))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(LocusTheme.textSecondary)
                                 .lineLimit(2)
                             if variant.quantization == library.recommendedQuant {
                                 Text("Fits comfortably while leaving room for the runtime and context window.")
@@ -506,7 +506,7 @@ struct ModelLibraryView: View {
                     if let fraction = progress.fraction {
                         Text(fraction, format: .percent.precision(.fractionLength(0)))
                             .font(.locus(size: 9, design: .monospaced))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(LocusTheme.textSecondary)
                     }
                 }
                 if let fraction = progress.fraction {
@@ -526,7 +526,7 @@ struct ModelLibraryView: View {
                         .foregroundStyle(downloadTitleColor)
                     Text(downloadCaption)
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(LocusTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()

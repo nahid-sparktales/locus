@@ -274,6 +274,16 @@ final class LocusUITests: XCTestCase {
                ].contains(identifier) {
                 return true
             }
+            let element = issue.element
+            print(
+                "Unhandled accessibility audit issue: "
+                    + "type=\(issue.auditType), "
+                    + "description=\(issue.compactDescription), "
+                    + "identifier=\(element?.identifier ?? "<none>"), "
+                    + "label=\(element?.label ?? "<none>"), "
+                    + "role=\(String(describing: element?.elementType)), "
+                    + "frame=\(String(describing: element?.frame))"
+            )
             return false
         }
     }
