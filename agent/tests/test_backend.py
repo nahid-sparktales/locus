@@ -1751,6 +1751,52 @@ def test_health_and_models(client):
     assert models["current"] == "test-model"
 
 
+def test_evaluation_crud_routes_preserve_suite_contract(client, tmp_path):
+    payload = {
+        "name": "Read-only smoke",
+        "workspace_root": str(tmp_path),
+        "tags": ["smoke"],
+        "cases": [
+            {
+                "id": "case-1",
+                "name": "Inspect",
+                "prompt": "Inspect the fixture without editing it.",
+                "mode": "read_only",
+                "target": "solo",
+                "assertions": [
+                    {"kind": "output_contains", "value": "ready", "required": True}
+                ],
+            }
+        ],
+    }
+
+    created = client.post("/api/evaluations", json=payload)
+    assert created.status_code == 200
+    suite = created.json()["suite"]
+    suite_id = suite["id"]
+
+    listed = client.get("/api/evaluations", params={"workspace": str(tmp_path)})
+    assert [item["id"] for item in listed.json()["suites"]] == [suite_id]
+    detail = client.get(f"/api/evaluations/{suite_id}").json()
+    assert detail["suite"]["name"] == "Read-only smoke"
+    assert detail["results"] == []
+    assert client.get(
+        f"/api/evaluations/{suite_id}/comparison"
+    ).json()["configurations"] == []
+    assert client.get(
+        f"/api/evaluations/{suite_id}/export"
+    ).json()["suite"]["id"] == suite_id
+
+    suite["name"] = "Updated smoke"
+    updated = client.put(f"/api/evaluations/{suite_id}", json=suite)
+    assert updated.json()["suite"]["name"] == "Updated smoke"
+    assert client.delete(f"/api/evaluations/{suite_id}").json() == {
+        "ok": True,
+        "id": suite_id,
+    }
+    assert client.get(f"/api/evaluations/{suite_id}").status_code == 404
+
+
 def test_schedule_crud_and_manual_dispatch_preserve_foreground_chat(client, tmp_path):
     foreground = client.app.state.service.core.session.session_id
     now = time.time()
