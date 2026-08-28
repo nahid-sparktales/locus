@@ -105,7 +105,7 @@ final class XPCWalletSignerClient: WalletSignerClient {
             let encodingRequest = WalletContractEncodingRequest(
                 action: request.action, registryEntry: contract
             )
-            let requestData = try encoder.encode(encodingRequest)
+            let requestData = try authorized(encodingRequest, source: request.source)
             encodedContract = try await call { proxy, reply in
                 proxy.encodeEVMContract(requestData, reply: reply)
             }
@@ -118,7 +118,7 @@ final class XPCWalletSignerClient: WalletSignerClient {
             contract: contract,
             encodedContract: encodedContract
         )
-        let data = try encoder.encode(packet)
+        let data = try authorized(packet, source: request.source)
         let transaction: WalletPreparedTransaction = try await call { proxy, reply in
             proxy.prepareEVM(data, reply: reply)
         }
@@ -131,13 +131,17 @@ final class XPCWalletSignerClient: WalletSignerClient {
             throw WalletGateway.Error.intentNotFound
         }
         let recheck = try await rpc.recheck(intentID: intentID, packet: packet)
-        let data = try encoder.encode(recheck)
+        let data = try authorized(recheck, source: packet.request.source)
         return try await call { proxy, reply in proxy.simulateEVM(data, reply: reply) }
     }
 
     func confirmExecution(intentID: String) async throws {
+        guard let packet = preparationPackets[intentID] else {
+            throw WalletGateway.Error.intentNotFound
+        }
+        let request = try authorized(intentID, source: packet.request.source)
         let _: WalletPreparedTransaction = try await call { proxy, reply in
-            proxy.confirmEVM(intentID, reply: reply)
+            proxy.confirmEVM(request, reply: reply)
         }
     }
 
@@ -146,17 +150,26 @@ final class XPCWalletSignerClient: WalletSignerClient {
             throw WalletGateway.Error.intentNotFound
         }
         let recheck = try await rpc.recheck(intentID: intentID, packet: packet)
-        let request = try encoder.encode(recheck)
+        let request = try authorized(recheck, source: packet.request.source)
         let signed: WalletEVMSignedTransaction = try await call { proxy, reply in
             proxy.executeEVM(request, reply: reply)
         }
         // The intent is consumed as soon as signed bytes cross the XPC boundary.
         // A broadcast failure must never make the same intent signable again.
         preparationPackets[intentID] = nil
-        let broadcastHash = try await rpc.broadcast(rawTransaction: signed.rawTransaction)
+        let broadcastHash: String
+        do {
+            broadcastHash = try await rpc.broadcast(rawTransaction: signed.rawTransaction)
+        } catch {
+            throw WalletGateway.Error.broadcastUnknown(
+                transactionHash: signed.transactionHash,
+                message: error.localizedDescription
+            )
+        }
         guard broadcastHash.caseInsensitiveCompare(signed.transactionHash) == .orderedSame else {
-            throw WalletGateway.Error.policyDenied(
-                "Sepolia returned a transaction hash that does not match the signed bytes."
+            throw WalletGateway.Error.broadcastUnknown(
+                transactionHash: signed.transactionHash,
+                message: "Sepolia returned a transaction hash that does not match the signed bytes."
             )
         }
         return [
@@ -169,17 +182,19 @@ final class XPCWalletSignerClient: WalletSignerClient {
     }
 
     func activatePolicy(_ policy: WalletSessionPolicy) async throws -> [WalletActivePolicyStatus] {
-        let request = try encoder.encode(policy)
+        let request = try authorized(policy, source: .agent)
         return try await call { proxy, reply in proxy.activatePolicy(request, reply: reply) }
     }
 
     func listPolicies() async throws -> [WalletActivePolicyStatus] {
-        try await call { proxy, reply in proxy.listPolicies(reply: reply) }
+        let request = try sessionRequest(source: .agent)
+        return try await call { proxy, reply in proxy.listPolicies(request, reply: reply) }
     }
 
     func clearPolicies() async throws {
+        let request = try sessionRequest(source: .agent)
         let _: [WalletActivePolicyStatus] = try await call { proxy, reply in
-            proxy.clearPolicies(reply: reply)
+            proxy.clearPolicies(request, reply: reply)
         }
     }
 
@@ -248,6 +263,28 @@ final class XPCWalletSignerClient: WalletSignerClient {
                           userInfo: [NSLocalizedDescriptionKey: error.error])
         }
         return try decoder.decode(T.self, from: data)
+    }
+
+    private func authorized<Payload: Codable & Equatable & Sendable>(
+        _ payload: Payload,
+        source: WalletRequestSource
+    ) throws -> Data {
+        guard let sessionID else { throw WalletGateway.Error.vaultLocked }
+        return try encoder.encode(WalletAuthorizedRequest(
+            protocolVersion: WalletGateway.protocolVersion,
+            sessionID: sessionID,
+            source: source,
+            payload: payload
+        ))
+    }
+
+    private func sessionRequest(source: WalletRequestSource) throws -> Data {
+        guard let sessionID else { throw WalletGateway.Error.vaultLocked }
+        return try encoder.encode(WalletSessionRequest(
+            protocolVersion: WalletGateway.protocolVersion,
+            sessionID: sessionID,
+            source: source
+        ))
     }
 
     private func rawCall(

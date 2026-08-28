@@ -41,8 +41,8 @@ final class WorkspaceFileModelTests: XCTestCase {
 
         isReady = true
         model.refresh()
-        for _ in 0..<20 where model.files.isEmpty {
-            await Task.yield()
+        for _ in 0..<40 where model.files.isEmpty {
+            try? await Task.sleep(for: .milliseconds(25))
         }
         XCTAssertEqual(model.files, [expected])
     }

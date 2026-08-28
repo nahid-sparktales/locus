@@ -1,5 +1,63 @@
 import Foundation
 
+enum WalletExternalConnectorKind: String, Codable, CaseIterable, Sendable {
+    case metamask
+    case phantom
+    case slush
+}
+
+enum WalletExternalConnectorState: String, Codable, Sendable {
+    case foundationReady = "foundation_ready"
+    case enabledAfterAudit = "enabled_after_audit"
+}
+
+struct WalletExternalConnectorDescriptor: Identifiable, Equatable, Sendable {
+    var id: String { kind.rawValue }
+    let kind: WalletExternalConnectorKind
+    let name: String
+    let supportedTestNetworks: Set<String>
+    let transport: String
+    let documentationURL: URL
+    let state: WalletExternalConnectorState
+}
+
+/// Non-secret connector metadata and rollout order. The connector foundations
+/// deliberately expose no generic signing primitive and do not enable native
+/// mainnet, Solana, or Sui signing.
+enum WalletExternalConnectorCatalog {
+    static let connectors: [WalletExternalConnectorDescriptor] = [
+        WalletExternalConnectorDescriptor(
+            kind: .metamask, name: "MetaMask",
+            supportedTestNetworks: ["eip155:11155111"],
+            transport: "MetaMask Connect · wallet-owned confirmation",
+            documentationURL: URL(string: "https://docs.metamask.io/")!,
+            state: .foundationReady
+        ),
+        WalletExternalConnectorDescriptor(
+            kind: .phantom, name: "Phantom",
+            supportedTestNetworks: ["solana:devnet"],
+            transport: "Phantom Connect · encrypted session · signTransaction",
+            documentationURL: URL(
+                string: "https://docs.phantom.com/phantom-deeplinks/provider-methods/signtransaction"
+            )!,
+            state: .foundationReady
+        ),
+        WalletExternalConnectorDescriptor(
+            kind: .slush, name: "Slush",
+            supportedTestNetworks: ["sui:testnet"],
+            transport: "Sui Wallet Standard · wallet-owned confirmation",
+            documentationURL: URL(string: "https://docs.sui.io/standards/wallet-standard")!,
+            state: .foundationReady
+        ),
+    ]
+
+    static let nativeSigningNetworks: Set<String> = ["eip155:11155111"]
+
+    static func canUseNativeSigner(on networkID: String) -> Bool {
+        nativeSigningNetworks.contains(networkID)
+    }
+}
+
 struct WalletPolicyTemplate: Codable, Equatable, Identifiable, Sendable {
     let id: String
     let name: String
@@ -29,6 +87,40 @@ struct WalletBrowserOriginGrant: Identifiable, Equatable, Sendable {
     let origin: String
 }
 
+enum WalletActivityState: String, Codable, Equatable, Sendable {
+    case submitted
+    case confirmed
+    case failed
+    case broadcastUnknown = "broadcast_unknown"
+}
+
+struct WalletActivityRecord: Codable, Equatable, Identifiable, Sendable {
+    let id: String
+    let intentID: String
+    let transactionHash: String
+    let networkID: String
+    let accountID: String
+    let summary: String
+    let submittedAt: Date
+    var state: WalletActivityState
+    var blockNumber: String?
+    var lastCheckedAt: Date?
+    var detail: String?
+}
+
+enum WalletAmountFormatter {
+    static func ether(wei: String) -> String? {
+        guard let normalized = WalletBaseUnits.normalize(wei) else { return nil }
+        let padded = String(repeating: "0", count: max(0, 19 - normalized.count)) + normalized
+        let split = padded.index(padded.endIndex, offsetBy: -18)
+        let whole = String(padded[..<split])
+        let fraction = String(padded[split...]).replacingOccurrences(
+            of: "0+$", with: "", options: .regularExpression
+        )
+        return fraction.isEmpty ? "\(whole) ETH" : "\(whole).\(fraction) ETH"
+    }
+}
+
 enum WalletPolicyDecision: Equatable, Sendable {
     case automatic
     case requiresApproval(String)
@@ -39,7 +131,8 @@ enum WalletPolicyDecision: Equatable, Sendable {
 /// must not round through Decimal, Double, locale formatting, or token decimals.
 enum WalletBaseUnits {
     static func normalize(_ value: String) -> String? {
-        guard !value.isEmpty, value.allSatisfy(\.isNumber) else { return nil }
+        guard !value.isEmpty,
+              value.utf8.allSatisfy({ (48...57).contains($0) }) else { return nil }
         let trimmed = value.drop(while: { $0 == "0" })
         return trimmed.isEmpty ? "0" : String(trimmed)
     }
@@ -102,6 +195,9 @@ enum WalletPolicyEngine {
     ) -> WalletPolicyDecision {
         guard transaction.expiresAt > now else { return .denied("The prepared transaction has expired.") }
         guard transaction.simulationSucceeded else { return .denied("The transaction simulation failed.") }
+        guard transaction.source.kind == .agent else {
+            return .requiresApproval("Browser transactions require an exact confirmation.")
+        }
         if transaction.riskFlags.contains(.codeHashMismatch) {
             return .denied("The observed contract code no longer matches the approved registry entry.")
         }
@@ -126,9 +222,37 @@ enum WalletPolicyEngine {
               policy.allowedAssetIDs.contains(transaction.budgetAssetID) else {
             return .requiresApproval("The asset or effect adapter is outside the active policy.")
         }
-        if let recipient = transaction.action.recipient,
-           !policy.allowedRecipients.contains(recipient) {
-            return .requiresApproval("The recipient is outside the active policy.")
+        let counterparties: [String]
+        switch adapterID {
+        case "native-eth-transfer-v1":
+            counterparties = transaction.action.recipient.map { [$0] } ?? []
+        case WalletReviewedAdapters.erc20:
+            counterparties = transaction.effects.compactMap { effect in
+                if effect.kind == "token_transfer" { return effect.to }
+                if effect.kind == "approval" || effect.kind == "approval_revoke" {
+                    return effect.spender
+                }
+                return nil
+            }
+        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn:
+            counterparties = transaction.effects.filter {
+                $0.kind == "minimum_receive"
+            }.compactMap(\.to)
+            guard transaction.action.arguments.count == 3,
+                  let deadline = UInt64(transaction.action.arguments[2].value),
+                  deadline >= UInt64(max(0, now.timeIntervalSince1970.rounded(.down))) else {
+                return .requiresApproval("The swap quote is stale.")
+            }
+        default:
+            counterparties = []
+        }
+        guard !counterparties.isEmpty,
+              counterparties.allSatisfy({ counterparty in
+                  policy.allowedRecipients.contains(where: {
+                      $0.caseInsensitiveCompare(counterparty) == .orderedSame
+                  })
+              }) else {
+            return .requiresApproval("A transaction counterparty is outside the active policy.")
         }
         if let contractID = transaction.action.contractID,
            !policy.allowedContractIDs.contains(contractID) {
@@ -244,6 +368,7 @@ final class WalletGateway: ObservableObject {
         case intentNotFound
         case policyDenied(String)
         case approvalRequired(String)
+        case broadcastUnknown(transactionHash: String, message: String)
 
         var errorDescription: String? {
             switch self {
@@ -253,12 +378,15 @@ final class WalletGateway: ObservableObject {
             case .intentNotFound: "The prepared transaction is missing or expired. Prepare it again."
             case .policyDenied(let message): message
             case .approvalRequired(let message): message
+            case .broadcastUnknown(let transactionHash, let message):
+                "The signed transaction \(transactionHash) may not have reached Sepolia: \(message)"
             }
         }
     }
 
     static let protocolVersion = 1
     static let sepoliaNetworkID = "eip155:11155111"
+    private static let maximumPreparedIntents = 32
     static let allowedOperations = [
         "wallet_list_accounts", "wallet_get_balance", "wallet_get_activity",
         "wallet_prepare_transaction", "wallet_simulate_transaction",
@@ -273,19 +401,21 @@ final class WalletGateway: ObservableObject {
     @Published private(set) var vaultCreation: WalletVaultCreation?
     @Published private(set) var rpcHealthText = "Not checked"
     @Published private(set) var lastError: String?
-    @Published private(set) var transactionHistory: [[String: String]] = []
+    @Published private(set) var transactionHistory: [WalletActivityRecord] = []
     @Published private(set) var activePolicyStatuses: [WalletActivePolicyStatus] = []
     @Published private(set) var contractRegistry: [WalletContractRegistryEntry] = []
     @Published private(set) var savedPolicyTemplates: [WalletPolicyTemplate] = []
     @Published private(set) var pendingBrowserOriginGrant: WalletBrowserOriginGrant?
 
     private let signer: WalletSignerClient
+    private let userDefaults: UserDefaults
     private let experimentalEnabled: Bool
     let browserProviderEnabled: Bool
     private var prepared: [String: WalletPreparedTransaction] = [:]
     private var confirmedIntentIDs: Set<String> = []
     private let registryDefaultsKey = "LocusWalletContractRegistryV1"
     private let policyTemplatesDefaultsKey = "LocusWalletPolicyTemplatesV1"
+    private let activityDefaultsKey = "LocusWalletActivityV1"
     private var browserOriginGrants: Set<String> = []
     private var browserIntentOrigins: [String: String] = [:]
     private var browserGrantContinuation: CheckedContinuation<Bool, Never>?
@@ -294,22 +424,51 @@ final class WalletGateway: ObservableObject {
     var onBrowserGrantsRevoked: ((String?) -> Void)?
 
     init(signer: WalletSignerClient? = nil,
-         environment: [String: String] = ProcessInfo.processInfo.environment) {
+         environment: [String: String] = ProcessInfo.processInfo.environment,
+         userDefaults: UserDefaults = .standard) {
         let signer = signer ?? WalletSignerClientFactory.make()
         self.signer = signer
+        self.userDefaults = userDefaults
         experimentalEnabled = environment["LOCUS_ENABLE_EXPERIMENTAL_WALLET"] == "1"
         browserProviderEnabled = experimentalEnabled
             && environment["LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER"] == "1"
         status = signer.isAvailable ? .locked : .securityReviewRequired
-        if let data = UserDefaults.standard.data(forKey: registryDefaultsKey),
+        if let data = userDefaults.data(forKey: registryDefaultsKey),
            let registry = try? JSONDecoder().decode([WalletContractRegistryEntry].self, from: data) {
-            contractRegistry = registry
+            contractRegistry = registry.map(Self.sanitizedRegistryEntry)
+            if contractRegistry != registry,
+               let upgraded = try? JSONEncoder().encode(contractRegistry) {
+                userDefaults.set(upgraded, forKey: registryDefaultsKey)
+            }
         }
-        if let data = UserDefaults.standard.data(forKey: policyTemplatesDefaultsKey),
+        if let data = userDefaults.data(forKey: policyTemplatesDefaultsKey),
            let templates = try? JSONDecoder().decode([WalletPolicyTemplate].self, from: data) {
             savedPolicyTemplates = templates
         }
+        if let data = userDefaults.data(forKey: activityDefaultsKey),
+           let activity = try? JSONDecoder().decode([WalletActivityRecord].self, from: data) {
+            transactionHistory = Array(activity.prefix(250))
+        }
         signer.invalidationHandler = { [weak self] in self?.handleSignerInvalidation() }
+    }
+
+    private static func sanitizedRegistryEntry(
+        _ entry: WalletContractRegistryEntry
+    ) -> WalletContractRegistryEntry {
+        let reviewedAdapterID = WalletReviewedAdapters.classify(
+            normalizedABI: entry.normalizedABI,
+            permittedFunctions: entry.permittedFunctions
+        )
+        guard entry.reviewedAdapterID != reviewedAdapterID else { return entry }
+        return WalletContractRegistryEntry(
+            id: entry.id, networkID: entry.networkID,
+            checksumAddress: entry.checksumAddress, label: entry.label,
+            normalizedABI: entry.normalizedABI, abiDigest: entry.abiDigest,
+            runtimeCodeHash: entry.runtimeCodeHash,
+            permittedFunctions: entry.permittedFunctions,
+            permittedSelectors: entry.permittedSelectors,
+            reviewedAdapterID: reviewedAdapterID, verifiedAt: entry.verifiedAt
+        )
     }
 
     var agentToolingAvailable: Bool {
@@ -419,6 +578,47 @@ final class WalletGateway: ObservableObject {
         catch { rpcHealthText = error.localizedDescription }
     }
 
+    func refreshTransactionHistory() async {
+        guard signer.isAvailable else { return }
+        var changed = false
+        let recordIDs = transactionHistory.filter {
+            $0.state == .submitted || $0.state == .broadcastUnknown
+        }.map(\.id)
+        for recordID in recordIDs {
+            guard let original = transactionHistory.first(where: { $0.id == recordID }) else {
+                continue
+            }
+            do {
+                let result = try await signer.browserRPC(
+                    method: "eth_getTransactionReceipt",
+                    params: [original.transactionHash]
+                )
+                guard let index = transactionHistory.firstIndex(where: { $0.id == recordID }) else {
+                    continue
+                }
+                transactionHistory[index].lastCheckedAt = Date()
+                if result is NSNull {
+                    changed = true
+                    continue
+                }
+                guard let receipt = result as? [String: Any],
+                      let status = receipt["status"] as? String else { continue }
+                transactionHistory[index].state = status.lowercased() == "0x1" ? .confirmed : .failed
+                transactionHistory[index].blockNumber = receipt["blockNumber"] as? String
+                transactionHistory[index].detail = nil
+                changed = true
+            } catch {
+                guard let index = transactionHistory.firstIndex(where: { $0.id == recordID }) else {
+                    continue
+                }
+                transactionHistory[index].lastCheckedAt = Date()
+                transactionHistory[index].detail = String(error.localizedDescription.prefix(512))
+                changed = true
+            }
+        }
+        if changed { persistActivity() }
+    }
+
     var statusText: String {
         if signer.isAvailable && !experimentalEnabled { return "Experimental feature is off" }
         if vaultState == .missing { return "Not created" }
@@ -525,7 +725,7 @@ final class WalletGateway: ObservableObject {
 
     private func persistPolicyTemplates() {
         if let data = try? JSONEncoder().encode(savedPolicyTemplates) {
-            UserDefaults.standard.set(data, forKey: policyTemplatesDefaultsKey)
+            userDefaults.set(data, forKey: policyTemplatesDefaultsKey)
         }
     }
 
@@ -538,7 +738,7 @@ final class WalletGateway: ObservableObject {
             contractRegistry.append(entry)
             contractRegistry.sort { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
             if let data = try? JSONEncoder().encode(contractRegistry) {
-                UserDefaults.standard.set(data, forKey: registryDefaultsKey)
+                userDefaults.set(data, forKey: registryDefaultsKey)
             }
             if changed { await clearPolicies() }
             lastError = nil
@@ -552,7 +752,7 @@ final class WalletGateway: ObservableObject {
     func removeContractRegistryEntry(id: String) async {
         contractRegistry.removeAll { $0.id == id }
         if let data = try? JSONEncoder().encode(contractRegistry) {
-            UserDefaults.standard.set(data, forKey: registryDefaultsKey)
+            userDefaults.set(data, forKey: registryDefaultsKey)
         }
         await clearPolicies()
     }
@@ -636,6 +836,7 @@ final class WalletGateway: ObservableObject {
                 "The experimental browser provider accepts Sepolia native transfers only; contract calldata and signing methods are disabled."
             )
         }
+        let browserSource = WalletRequestSource.browser(origin: normalizedOrigin)
         let preparedResult = await perform(tool: "wallet_prepare_transaction", arguments: [
             "network_id": Self.sepoliaNetworkID,
             "account_id": accounts.first(where: { $0.chain == .evm })?.id ?? "",
@@ -646,7 +847,7 @@ final class WalletGateway: ObservableObject {
             // Testnet-only ceiling. The exact native sheet still displays and
             // approves the authoritative simulated fee before execution.
             "maximum_fee_base_units": "10000000000000000",
-        ])
+        ], source: browserSource)
         if let message = preparedResult["error"] as? String { throw Error.policyDenied(message) }
         guard let intentID = preparedResult["intent_id"] as? String else {
             throw Error.invalidArguments("The wallet did not return a transaction intent.")
@@ -663,7 +864,11 @@ final class WalletGateway: ObservableObject {
             cancelConfirmation(intentID: intentID)
             throw Error.approvalRequired("The website grant was revoked before signing.")
         }
-        let result = await perform(tool: "wallet_execute_transaction", arguments: ["intent_id": intentID])
+        let result = await perform(
+            tool: "wallet_execute_transaction",
+            arguments: ["intent_id": intentID],
+            source: browserSource
+        )
         if let message = result["error"] as? String { throw Error.policyDenied(message) }
         guard let hash = result["transaction_hash"] as? String else {
             throw Error.invalidArguments("The Sepolia RPC did not return a transaction hash.")
@@ -716,7 +921,11 @@ final class WalletGateway: ObservableObject {
         return "\(scheme)://\(host)\(port)"
     }
 
-    func perform(tool: String, arguments: [String: Any]) async -> [String: Any] {
+    func perform(
+        tool: String,
+        arguments: [String: Any],
+        source: WalletRequestSource = .agent
+    ) async -> [String: Any] {
         do {
             if tool == "wallet_lock" {
                 lock()
@@ -734,9 +943,9 @@ final class WalletGateway: ObservableObject {
                 return ["text": text, "accounts": try dictionary(accounts)]
             case "wallet_get_balance", "wallet_get_activity":
                 return try await signer.performRead(tool: tool, arguments: arguments)
-            case "wallet_simulate_transaction": return try await simulate(arguments)
-            case "wallet_prepare_transaction": return response(for: try await prepare(arguments))
-            case "wallet_execute_transaction": return try await execute(arguments)
+            case "wallet_simulate_transaction": return try await simulate(arguments, source: source)
+            case "wallet_prepare_transaction": return response(for: try await prepare(arguments, source: source))
+            case "wallet_execute_transaction": return try await execute(arguments, source: source)
             default: throw Error.invalidArguments("Unknown wallet tool \(tool).")
             }
         } catch {
@@ -744,8 +953,20 @@ final class WalletGateway: ObservableObject {
         }
     }
 
-    private func prepare(_ arguments: [String: Any]) async throws -> WalletPreparedTransaction {
-        let request = try parsePrepareRequest(arguments)
+    private func prepare(
+        _ arguments: [String: Any],
+        source: WalletRequestSource
+    ) async throws -> WalletPreparedTransaction {
+        let now = Date()
+        prepared = prepared.filter { $0.value.expiresAt > now }
+        confirmedIntentIDs = confirmedIntentIDs.intersection(Set(prepared.keys))
+        if let pendingConfirmation, pendingConfirmation.expiresAt <= now {
+            self.pendingConfirmation = nil
+        }
+        guard prepared.count < Self.maximumPreparedIntents else {
+            throw Error.policyDenied("Too many wallet intents are pending for this session.")
+        }
+        let request = try parsePrepareRequest(arguments, source: source)
         let contract: WalletContractRegistryEntry?
         if request.action.type == .contractCall {
             guard let contractID = request.action.contractID,
@@ -764,10 +985,15 @@ final class WalletGateway: ObservableObject {
         let transaction = try await signer.prepare(request, contract: contract)
         guard transaction.networkID == request.networkID,
               transaction.accountID == request.accountID,
+              transaction.source == request.source,
               transaction.action == request.action,
               transaction.maximumFeeBaseUnits == request.maximumFeeBaseUnits,
               transaction.expiresAt.timeIntervalSince(transaction.createdAt) <= 120.5 else {
             throw Error.invalidArguments("WalletSigner returned a preparation for a different semantic request.")
+        }
+        if request.source.kind == .browser,
+           transaction.policyDecision == "allowed_by_session_policy" {
+            throw Error.policyDenied("Browser transactions require an exact confirmation.")
         }
         if transaction.policyDecision != "allowed_by_session_policy" {
             pendingConfirmation = transaction
@@ -778,7 +1004,10 @@ final class WalletGateway: ObservableObject {
         return transaction
     }
 
-    private func parsePrepareRequest(_ arguments: [String: Any]) throws -> WalletPrepareRequest {
+    private func parsePrepareRequest(
+        _ arguments: [String: Any],
+        source: WalletRequestSource
+    ) throws -> WalletPrepareRequest {
         guard let networkID = nonempty(arguments["network_id"]),
               networkID == Self.sepoliaNetworkID,
               let accountID = nonempty(arguments["account_id"]),
@@ -821,13 +1050,22 @@ final class WalletGateway: ObservableObject {
             action = .contractCall(contractID: contractID, function: function,
                                    arguments: typedArguments, valueBaseUnits: value)
         }
-        return WalletPrepareRequest(networkID: networkID, accountID: accountID,
-                                    action: action, maximumFeeBaseUnits: maximumFee)
+        return WalletPrepareRequest(
+            networkID: networkID,
+            accountID: accountID,
+            source: source,
+            action: action,
+            maximumFeeBaseUnits: maximumFee
+        )
     }
 
-    private func simulate(_ arguments: [String: Any]) async throws -> [String: Any] {
+    private func simulate(
+        _ arguments: [String: Any],
+        source: WalletRequestSource
+    ) async throws -> [String: Any] {
         guard let intentID = nonempty(arguments["intent_id"]),
-              let known = prepared[intentID], known.expiresAt > Date() else { throw Error.intentNotFound }
+              let known = prepared[intentID], known.expiresAt > Date(),
+              known.source == source else { throw Error.intentNotFound }
         let transaction = try await signer.simulate(intentID: intentID)
         guard transaction.id == known.id, transaction.digest == known.digest else {
             throw Error.policyDenied("The signer returned a different transaction during re-simulation.")
@@ -836,9 +1074,13 @@ final class WalletGateway: ObservableObject {
         return response(for: transaction)
     }
 
-    private func execute(_ arguments: [String: Any]) async throws -> [String: Any] {
+    private func execute(
+        _ arguments: [String: Any],
+        source: WalletRequestSource
+    ) async throws -> [String: Any] {
         guard let intentID = nonempty(arguments["intent_id"]),
-              let transaction = prepared[intentID], transaction.expiresAt > Date() else {
+              let transaction = prepared[intentID], transaction.expiresAt > Date(),
+              transaction.source == source else {
             throw Error.intentNotFound
         }
         if transaction.policyDecision != "allowed_by_session_policy" {
@@ -849,20 +1091,64 @@ final class WalletGateway: ObservableObject {
             try await signer.confirmExecution(intentID: intentID)
         }
         // The signer owns the bytes; execution accepts the opaque ID only.
-        let result = try await signer.execute(intentID: intentID)
+        let result: [String: Any]
+        do {
+            result = try await signer.execute(intentID: intentID)
+        } catch let Error.broadcastUnknown(transactionHash, message) {
+            recordActivity(
+                transaction: transaction,
+                transactionHash: transactionHash,
+                state: .broadcastUnknown,
+                detail: message
+            )
+            prepared[intentID] = nil
+            pendingConfirmation = nil
+            throw Error.broadcastUnknown(transactionHash: transactionHash, message: message)
+        }
         activePolicyStatuses = (try? await signer.listPolicies()) ?? activePolicyStatuses
         activePolicies = activePolicyStatuses.map(\.policy)
         prepared[intentID] = nil
         pendingConfirmation = nil
         if let hash = result["transaction_hash"] as? String {
-            transactionHistory.insert([
-                "hash": hash,
-                "summary": transaction.summary,
-                "status": result["status"] as? String ?? "submitted",
-                "date": ISO8601DateFormatter().string(from: Date()),
-            ], at: 0)
+            recordActivity(
+                transaction: transaction,
+                transactionHash: hash,
+                state: .submitted,
+                detail: nil
+            )
         }
         return result
+    }
+
+    private func recordActivity(
+        transaction: WalletPreparedTransaction,
+        transactionHash: String,
+        state: WalletActivityState,
+        detail: String?
+    ) {
+        let record = WalletActivityRecord(
+            id: transactionHash.lowercased(),
+            intentID: transaction.id,
+            transactionHash: transactionHash,
+            networkID: transaction.networkID,
+            accountID: transaction.accountID,
+            summary: transaction.summary,
+            submittedAt: Date(),
+            state: state,
+            blockNumber: nil,
+            lastCheckedAt: nil,
+            detail: detail.map { String($0.prefix(512)) }
+        )
+        transactionHistory.removeAll { $0.id == record.id }
+        transactionHistory.insert(record, at: 0)
+        if transactionHistory.count > 250 { transactionHistory.removeLast(transactionHistory.count - 250) }
+        persistActivity()
+    }
+
+    private func persistActivity() {
+        if let data = try? JSONEncoder().encode(transactionHistory) {
+            userDefaults.set(data, forKey: activityDefaultsKey)
+        }
     }
 
     private func response(for transaction: WalletPreparedTransaction) -> [String: Any] {
@@ -872,6 +1158,7 @@ final class WalletGateway: ObservableObject {
             "digest": transaction.digest,
             "network_id": transaction.networkID,
             "account_id": transaction.accountID,
+            "request_source": transaction.source.kind.rawValue,
             "decoded_effects": (try? dictionary(transaction.effects)) ?? [],
             "risk_flags": transaction.riskFlags.map(\.rawValue),
             "maximum_fee_base_units": transaction.maximumFeeBaseUnits,
@@ -882,6 +1169,7 @@ final class WalletGateway: ObservableObject {
             "nonce": transaction.nonce,
             "expires_at": transaction.expiresAt.timeIntervalSince1970,
         ]
+        if let origin = transaction.source.origin { result["request_origin"] = origin }
         if let contract = transaction.contract { result["contract"] = try? dictionary(contract) }
         return result
     }

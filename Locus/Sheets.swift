@@ -1278,6 +1278,7 @@ private struct WalletSettingsView: View {
     @State private var deletePresented = false
     @State private var policyPresented = false
     @State private var registryPresented = false
+    @State private var contractPolicyEntry: WalletContractRegistryEntry?
 
     var body: some View {
         ScrollView {
@@ -1299,6 +1300,7 @@ private struct WalletSettingsView: View {
             gateway.configureRPCURL(rpcURL)
             await gateway.refreshStatus()
             await gateway.checkRPCHealth()
+            await gateway.refreshTransactionHistory()
         }
         .onChange(of: rpcURL) { _, value in gateway.configureRPCURL(value) }
         .sheet(isPresented: $recoveryPresented) {
@@ -1309,6 +1311,9 @@ private struct WalletSettingsView: View {
         .sheet(isPresented: $deletePresented) { WalletVaultDeleteSheet(gateway: gateway) }
         .sheet(isPresented: $policyPresented) { WalletNativePolicySheet(gateway: gateway) }
         .sheet(isPresented: $registryPresented) { WalletContractRegistrySheet(gateway: gateway) }
+        .sheet(item: $contractPolicyEntry) { entry in
+            WalletContractPolicySheet(gateway: gateway, entry: entry)
+        }
         .sheet(item: Binding(
             get: { gateway.pendingBrowserOriginGrant },
             set: { value in if value == nil { gateway.denyBrowserOrigin() } }
@@ -1380,6 +1385,9 @@ private struct WalletSettingsView: View {
                             .foregroundStyle(LocusTheme.muted).textSelection(.enabled)
                         Text(account.chain == .evm ? "Sepolia signing available" : "Public account · signing is security gated")
                             .font(.locus(size: 8)).foregroundStyle(LocusTheme.textTertiary)
+                        Text(derivationPath(for: account.chain))
+                            .font(.system(size: 8, design: .monospaced))
+                            .foregroundStyle(LocusTheme.textTertiary)
                     }
                 }
             }
@@ -1415,7 +1423,7 @@ private struct WalletSettingsView: View {
             }
             Label("Native ETH transfer adapter active", systemImage: "checkmark.shield.fill")
                 .font(.locus(size: 9)).foregroundStyle(LocusTheme.success)
-            Label("Registered ABI calls use signer-produced calldata and exact confirmation. Autonomous ERC-20 and Uniswap adapters remain locked until separately reviewed.", systemImage: "checkmark.shield.fill")
+            Label("ERC-20 transfer/approval and one-command Universal Router exact-input calls receive reviewed semantics only when their verified ABI matches exactly.", systemImage: "checkmark.shield.fill")
                 .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
             Text(gateway.activePolicies.isEmpty
                  ? "No active budgets. Every Sepolia transfer requires exact confirmation."
@@ -1424,7 +1432,7 @@ private struct WalletSettingsView: View {
             ForEach(gateway.activePolicyStatuses) { status in
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Native ETH → \(status.policy.allowedRecipients.sorted().joined(separator: ", "))")
+                        Text("\(policyLabel(status.policy)) → \(status.policy.allowedRecipients.sorted().joined(separator: ", "))")
                             .font(.locus(size: 9, weight: .semibold)).lineLimit(1)
                         Text("Used \(status.spentBaseUnits) / \(status.policy.maximumSessionBaseUnits) wei · expires \(status.policy.expiresAt.formatted(date: .omitted, time: .shortened))")
                             .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
@@ -1458,8 +1466,16 @@ private struct WalletSettingsView: View {
                         Text(entry.checksumAddress).font(.system(size: 8, design: .monospaced))
                         Text("\(entry.permittedFunctions.count) approved method(s) · code \(entry.runtimeCodeHash.prefix(12))…")
                             .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                        if let adapterID = entry.reviewedAdapterID {
+                            Label(adapterLabel(adapterID), systemImage: "checkmark.shield.fill")
+                                .font(.locus(size: 8)).foregroundStyle(LocusTheme.success)
+                        }
                     }
                     Spacer()
+                    if entry.reviewedAdapterID != nil {
+                        Button("New budget") { contractPolicyEntry = entry }
+                            .font(.locus(size: 8)).disabled(gateway.status != .unlocked)
+                    }
                     Button("Remove", role: .destructive) {
                         Task { await gateway.removeContractRegistryEntry(id: entry.id) }
                     }.font(.locus(size: 8))
@@ -1471,13 +1487,30 @@ private struct WalletSettingsView: View {
 
     private var historyCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Transaction history").font(.locus(size: 12, weight: .semibold))
-            ForEach(Array(gateway.transactionHistory.enumerated()), id: \.offset) { _, item in
+            HStack {
+                Text("Transaction activity").font(.locus(size: 12, weight: .semibold))
+                Spacer()
+                Button("Refresh") { Task { await gateway.refreshTransactionHistory() } }
+                    .font(.locus(size: 8))
+            }
+            ForEach(gateway.transactionHistory) { item in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(item["summary"] ?? "Sepolia transaction").font(.locus(size: 9, weight: .semibold))
-                    Text(item["hash"] ?? "").font(.system(size: 8, design: .monospaced))
+                    Text(item.summary).font(.locus(size: 9, weight: .semibold))
+                    Text(item.transactionHash).font(.system(size: 8, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted).textSelection(.enabled)
-                    Text(item["status"] ?? "submitted").font(.locus(size: 8)).foregroundStyle(LocusTheme.success)
+                    HStack(spacing: 6) {
+                        Text(activityLabel(item.state)).font(.locus(size: 8, weight: .semibold))
+                            .foregroundStyle(activityColor(item.state))
+                        Text(item.submittedAt.formatted(date: .abbreviated, time: .shortened))
+                            .font(.locus(size: 8)).foregroundStyle(LocusTheme.textTertiary)
+                        if let block = item.blockNumber {
+                            Text("block \(block)").font(.system(size: 8, design: .monospaced))
+                                .foregroundStyle(LocusTheme.textTertiary)
+                        }
+                    }
+                    if let detail = item.detail {
+                        Text(detail).font(.locus(size: 8)).foregroundStyle(LocusTheme.warning)
+                    }
                 }
             }
         }
@@ -1487,10 +1520,10 @@ private struct WalletSettingsView: View {
     private var externalWalletsCard: some View {
         VStack(alignment: .leading, spacing: 9) {
             Text("External approval wallets").font(.locus(size: 12, weight: .semibold))
-            connector("MetaMask", detail: "EVM approval through MetaMask Connect.", destination: "https://docs.metamask.io/metamask-connect/")
-            connector("Phantom", detail: "User-approved Solana sessions through Phantom Connect.", destination: "https://docs.phantom.com/sdks/browser-sdk/index")
-            connector("Slush", detail: "Sui Wallet Standard and web-wallet approval.", destination: "https://my.slush.app/")
-            Text("External wallets always retain their own keys and confirmation experience.")
+            ForEach(WalletExternalConnectorCatalog.connectors) { descriptor in
+                connector(descriptor)
+            }
+            Text("Connector contracts and test-network boundaries are defined. Connection buttons remain closed until each transport dependency and callback path passes its security audit. External wallets always retain their own keys and confirmation experience.")
                 .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
         }
         .padding(14).locusCard(radius: 10)
@@ -1502,8 +1535,9 @@ private struct WalletSettingsView: View {
             rollout("1", "Native ETH on Sepolia", ready: true)
             rollout("2", "Registered ABI calls with exact confirmation", ready: true)
             rollout("3", "Session-scoped Sepolia browser provider", ready: gateway.browserProviderEnabled)
-            rollout("4", "EVM mainnet + MetaMask", ready: false)
-            rollout("5", "Solana/Phantom and Sui/Slush", ready: false)
+            rollout("4", "Reviewed ERC-20 and narrow Uniswap budgets", ready: true)
+            rollout("5", "External wallet connector foundations", ready: true)
+            rollout("6", "Mainnet, Solana, and Sui signing", ready: false)
             if gateway.isExperimentalEnabled && !gateway.browserProviderEnabled {
                 Text("Browser access has a separate experimental activation gate. Registered contract calls remain exact-confirmation-only until their effect adapters are reviewed.")
                     .font(.locus(size: 8)).foregroundStyle(LocusTheme.textTertiary)
@@ -1524,14 +1558,57 @@ private struct WalletSettingsView: View {
         .padding(14).locusCard(radius: 10)
     }
 
-    private func connector(_ name: String, detail: String, destination: String) -> some View {
+    private func connector(_ descriptor: WalletExternalConnectorDescriptor) -> some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(name).font(.locus(size: 10, weight: .semibold))
-                Text(detail).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                Text(descriptor.name).font(.locus(size: 10, weight: .semibold))
+                Text(descriptor.transport).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                Text("Foundation ready · external signing security gated")
+                    .font(.locus(size: 8, weight: .semibold)).foregroundStyle(LocusTheme.warning)
             }
             Spacer()
-            if let url = URL(string: destination) { Link("Setup guide", destination: url).font(.locus(size: 9)) }
+            Link("Setup guide", destination: descriptor.documentationURL).font(.locus(size: 9))
+        }
+    }
+
+    private func derivationPath(for chain: WalletChain) -> String {
+        switch chain {
+        case .evm: "Recovery path m/44'/60'/0'/0/0"
+        case .solana: "Recovery path m/44'/501'/0'/0'"
+        case .sui: "Recovery path m/44'/784'/0'/0'/0'"
+        }
+    }
+
+    private func policyLabel(_ policy: WalletSessionPolicy) -> String {
+        guard let adapterID = policy.allowedAdapterIDs.first else { return "Wallet budget" }
+        return adapterLabel(adapterID)
+    }
+
+    private func adapterLabel(_ adapterID: String) -> String {
+        switch adapterID {
+        case "native-eth-transfer-v1": "Native ETH"
+        case WalletReviewedAdapters.erc20: "ERC-20"
+        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn:
+            "Uniswap exact input"
+        default: "Reviewed adapter"
+        }
+    }
+
+    private func activityLabel(_ state: WalletActivityState) -> String {
+        switch state {
+        case .submitted: "Pending"
+        case .confirmed: "Confirmed"
+        case .failed: "Failed"
+        case .broadcastUnknown: "Broadcast uncertain"
+        }
+    }
+
+    private func activityColor(_ state: WalletActivityState) -> Color {
+        switch state {
+        case .confirmed: LocusTheme.success
+        case .submitted: LocusTheme.warning
+        case .failed: LocusTheme.coral
+        case .broadcastUnknown: LocusTheme.warning
         }
     }
 
@@ -1658,6 +1735,119 @@ private struct WalletNativePolicySheet: View {
     }
 }
 
+private struct WalletContractPolicySheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var gateway: WalletGateway
+    let entry: WalletContractRegistryEntry
+    @State private var counterparty = ""
+    @State private var inputToken = ""
+    @State private var perTransaction = ""
+    @State private var sessionCap = ""
+    @State private var feeCap = ""
+    @State private var durationMinutes = "30"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            Text("Authorize a reviewed contract budget")
+                .font(.locus(size: 16, weight: .bold))
+            Text("\(entry.label) · \(adapterName)")
+                .font(.locus(size: 10, weight: .semibold))
+            Text(entry.checksumAddress).font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(LocusTheme.muted).textSelection(.enabled)
+            Text("This authorization is bound to this registry ID, runtime code hash, adapter, token asset, counterparty, fee ceiling, and signer session.")
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+            if entry.reviewedAdapterID == WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn {
+                field("Input token address", placeholder: "0x…", text: $inputToken)
+            }
+            field(counterpartyTitle, placeholder: "0x…", text: $counterparty)
+            field("Maximum per action (token base units)", placeholder: "1000000", text: $perTransaction)
+            field("Total session budget (token base units)", placeholder: "5000000", text: $sessionCap)
+            field("Maximum fee per action (wei)", placeholder: "2000000000000000", text: $feeCap)
+            field("Expires after (minutes, max 480)", placeholder: "30", text: $durationMinutes)
+            Label(adapterWarning, systemImage: "shield.lefthalf.filled")
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.warning)
+            HStack {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                Button("Authorize budget") { activate() }.buttonStyle(.borderedProminent)
+                    .disabled(!valid)
+            }
+            if let error = gateway.lastError {
+                Text(error).font(.locus(size: 9)).foregroundStyle(LocusTheme.coral)
+            }
+        }
+        .padding(22).frame(width: 520)
+    }
+
+    private var adapterName: String {
+        switch entry.reviewedAdapterID {
+        case WalletReviewedAdapters.erc20: "ERC-20 transfer / finite approval"
+        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn:
+            "Universal Router V2 exact-input"
+        default: "Exact confirmation only"
+        }
+    }
+
+    private var counterpartyTitle: String {
+        entry.reviewedAdapterID == WalletReviewedAdapters.erc20
+            ? "Approved recipient or spender" : "Approved swap recipient"
+    }
+
+    private var adapterWarning: String {
+        if entry.reviewedAdapterID == WalletReviewedAdapters.erc20 {
+            return "Unlimited approvals and any unrecognized side effect still require exact confirmation."
+        }
+        return "Only one V2 exact-input command, a nonzero minimum output, the current account as recipient, and a 20-minute deadline are eligible."
+    }
+
+    private var assetAddress: String {
+        entry.reviewedAdapterID == WalletReviewedAdapters.erc20
+            ? entry.checksumAddress : inputToken
+    }
+
+    private var valid: Bool {
+        guard entry.reviewedAdapterID != nil,
+              isAddress(counterparty), isAddress(assetAddress),
+              WalletBaseUnits.normalize(perTransaction) != nil,
+              WalletBaseUnits.normalize(sessionCap) != nil,
+              WalletBaseUnits.normalize(feeCap) != nil,
+              let minutes = Int(durationMinutes), (1...480).contains(minutes),
+              gateway.accounts.contains(where: { $0.chain == .evm }) else { return false }
+        return WalletBaseUnits.lessThanOrEqual(perTransaction, sessionCap)
+    }
+
+    private func field(_ title: String, placeholder: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.locus(size: 9, weight: .semibold))
+            TextField(placeholder, text: text).textFieldStyle(.roundedBorder)
+        }
+    }
+
+    private func isAddress(_ value: String) -> Bool {
+        value.count == 42 && value.hasPrefix("0x")
+            && value.dropFirst(2).allSatisfy(\.isHexDigit)
+    }
+
+    private func activate() {
+        guard let account = gateway.accounts.first(where: { $0.chain == .evm }),
+              let adapterID = entry.reviewedAdapterID,
+              let minutes = Int(durationMinutes) else { return }
+        let policy = WalletSessionPolicy(
+            id: UUID().uuidString.lowercased(), accountID: account.id,
+            networkID: WalletGateway.sepoliaNetworkID,
+            allowedAssetIDs: [
+                "eip155:11155111/erc20:\(assetAddress.lowercased())"
+            ],
+            allowedRecipients: [counterparty], allowedContractIDs: [entry.id],
+            allowedAdapterIDs: [adapterID],
+            maximumTransactionBaseUnits: perTransaction,
+            maximumSessionBaseUnits: sessionCap, maximumFeeBaseUnits: feeCap,
+            expiresAt: Date().addingTimeInterval(TimeInterval(minutes * 60))
+        )
+        Task { if await gateway.activatePolicy(policy) { dismiss() } }
+    }
+}
+
 private struct WalletContractRegistrySheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
@@ -1718,6 +1908,11 @@ private struct WalletVaultBackupSheet: View {
                  ? "Enter the six requested words. Paste and clipboard actions are disabled."
                  : "This is the only time Locus shows the phrase. Keep it offline and private.")
                 .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+            if !confirming {
+                Text("This phrase belongs only to Locus Vault. Never enter a MetaMask, Phantom, Slush, or other wallet phrase here. Standard recovery paths: EVM m/44'/60'/0'/0/0 · Solana m/44'/501'/0'/0' · Sui m/44'/784'/0'/0'/0'.")
+                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if confirming {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                     ForEach(creation.verificationIndices, id: \.self) { index in
@@ -1831,6 +2026,10 @@ private struct WalletTransactionConfirmationSheet: View {
             } else {
                 row("Method", "Native ETH transfer")
                 row("Recipient", transaction.action.recipient ?? "Unknown")
+                if let amount = transaction.action.amountBaseUnits,
+                   let formatted = WalletAmountFormatter.ether(wei: amount) {
+                    row("Amount", "\(formatted) · \(amount) wei")
+                }
             }
             row("Effects", transaction.effects.map {
                 let destination = $0.spender.map { "spender \($0)" } ?? ($0.to ?? "unknown")

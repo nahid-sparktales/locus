@@ -557,6 +557,21 @@ mod tests {
     }
 
     #[test]
+    fn universal_router_outer_call_encodes_typed_bytes_array() {
+        let request = CString::new(
+            r#"{"normalized_abi":"[{\"type\":\"function\",\"name\":\"execute\",\"stateMutability\":\"payable\",\"inputs\":[{\"name\":\"commands\",\"type\":\"bytes\"},{\"name\":\"inputs\",\"type\":\"bytes[]\"},{\"name\":\"deadline\",\"type\":\"uint256\"}],\"outputs\":[]}]","function":"execute(bytes,bytes[],uint256)","arguments":[{"type":"bytes","value":"0x08"},{"type":"bytes[]","value":"[0x00]"},{"type":"uint256","value":"2000000000"}]}"#,
+        )
+        .unwrap();
+        let pointer = unsafe { locus_wallet_encode_contract_call_json(request.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(pointer) };
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(value["input"].as_str().unwrap().starts_with("0x3593564c"));
+    }
+
+    #[test]
     fn registered_abi_call_rejects_mismatched_argument_type() {
         let request = CString::new(
             r#"{"normalized_abi":"[{\"type\":\"function\",\"name\":\"set\",\"stateMutability\":\"nonpayable\",\"inputs\":[{\"name\":\"value\",\"type\":\"uint256\"}],\"outputs\":[]}]","function":"set(uint256)","arguments":[{"type":"address","value":"0x1111111111111111111111111111111111111111"}]}"#,
