@@ -2,7 +2,6 @@
 
 import math
 import sqlite3
-from types import ModuleType
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -419,7 +418,7 @@ def models(service: ServiceDependency) -> dict[str, Any]:
     return {"models": out, "current": service.core.model}
 
 
-def register_routes(router: APIRouter, _handlers: ModuleType) -> None:
+def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/provider", get_provider, methods=["GET"])
     router.add_api_route(
         "/api/model-router/decision", model_router_decision, methods=["POST"]

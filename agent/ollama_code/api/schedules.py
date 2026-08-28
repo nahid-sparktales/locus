@@ -4,7 +4,6 @@ import re
 import uuid
 from datetime import datetime
 from pathlib import Path
-from types import ModuleType
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -449,7 +448,7 @@ def companion_chat_dispatch(
     return _dispatch_companion_chat(service, body)
 
 
-def register_routes(router: APIRouter, _handlers: ModuleType) -> None:
+def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/schedules", schedule_list, methods=["GET"])
     router.add_api_route("/api/schedules", schedule_create, methods=["POST"])
     router.add_api_route(

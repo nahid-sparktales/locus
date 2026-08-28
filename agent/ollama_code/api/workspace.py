@@ -1,6 +1,5 @@
 """Workspace source-control inspection routes and handlers."""
 
-from types import ModuleType
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
@@ -41,6 +40,6 @@ def git_diff(
     )
 
 
-def register_routes(router: APIRouter, _handlers: ModuleType) -> None:
+def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/git/status", git_status, methods=["GET"])
     router.add_api_route("/api/git/diff", git_diff, methods=["GET"])

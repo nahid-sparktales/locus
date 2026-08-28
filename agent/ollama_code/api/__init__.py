@@ -1,7 +1,5 @@
 """Domain-owned route registration for the Locus backend."""
 
-from types import ModuleType
-
 from fastapi import APIRouter
 
 from . import (
@@ -33,10 +31,7 @@ _ROUTE_MODULES = (
 )
 
 
-def register_routes(router: APIRouter, handlers: ModuleType) -> None:
-    """Register direct domain handlers plus explicit compatibility handlers."""
+def register_routes(router: APIRouter) -> None:
+    """Register routes whose behavior is owned by each domain module."""
     for route_module in _ROUTE_MODULES:
-        if route_module in {chat_transport, extensions, runs}:
-            route_module.register_routes(router)
-        else:
-            route_module.register_routes(router, handlers)
+        route_module.register_routes(router)

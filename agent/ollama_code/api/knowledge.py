@@ -1,6 +1,5 @@
 """Workspace knowledge indexing and retrieval routes."""
 
-from types import ModuleType
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -154,7 +153,7 @@ def knowledge_delete_all(
     return {"ok": True}
 
 
-def register_routes(router: APIRouter, _handlers: ModuleType) -> None:
+def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/knowledge/status", knowledge_status, methods=["GET"])
     router.add_api_route("/api/knowledge/settings", knowledge_settings, methods=["POST"])
     router.add_api_route("/api/knowledge/reindex", knowledge_reindex, methods=["POST"])

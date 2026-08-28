@@ -2,7 +2,6 @@
 
 import re
 import uuid
-from types import ModuleType
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -528,7 +527,7 @@ def memory_reprocess(
     }
 
 
-def register_routes(router: APIRouter, _handlers: ModuleType) -> None:
+def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/context-snapshots", context_snapshots, methods=["GET"])
     router.add_api_route(
         "/api/context-snapshots/{snapshot_id}",

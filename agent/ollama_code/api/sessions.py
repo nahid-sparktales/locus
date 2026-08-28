@@ -3,7 +3,6 @@
 import sqlite3
 import uuid
 from pathlib import Path
-from types import ModuleType
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -664,7 +663,7 @@ def session_handoff(
         raise HTTPException(422, str(exc)) from exc
 
 
-def register_routes(router: APIRouter, _handlers: ModuleType) -> None:
+def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/sessions", sessions, methods=["GET"])
     router.add_api_route("/api/chat-folders", chat_folders, methods=["GET"])
     router.add_api_route("/api/chat-folders", chat_folder_create, methods=["POST"])

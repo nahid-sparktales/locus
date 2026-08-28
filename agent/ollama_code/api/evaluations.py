@@ -3,7 +3,6 @@
 import asyncio
 import uuid
 from pathlib import Path
-from types import ModuleType
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
@@ -211,7 +210,7 @@ def evaluation_cancel(
     return {"ok": True, "evaluation_id": evaluation_id, "state": "cancelling"}
 
 
-def register_routes(router: APIRouter, _handlers: ModuleType) -> None:
+def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/evaluations", evaluation_list, methods=["GET"])
     router.add_api_route("/api/evaluations", evaluation_create, methods=["POST"])
     router.add_api_route("/api/evaluations/{suite_id}", evaluation_detail, methods=["GET"])

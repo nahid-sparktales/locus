@@ -2171,7 +2171,7 @@ def _register_api_routes() -> None:
     """Compose domain-owned route maps with the legacy handler surface."""
     from .api import register_routes
 
-    register_routes(api, sys.modules[__name__])
+    register_routes(api)
 
 
 _register_api_routes()

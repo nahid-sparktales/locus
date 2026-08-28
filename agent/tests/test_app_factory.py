@@ -22,7 +22,8 @@ def _service(name: str):
         usage_summary=lambda **_options: {"service": name},
         read_only=False,
     )
-    return SimpleNamespace(core=core, run_store=run_store)
+    codex = SimpleNamespace(account=lambda **_options: {"service": name})
+    return SimpleNamespace(core=core, run_store=run_store, codex=codex)
 
 
 def _route_contract() -> list[str]:
@@ -88,6 +89,31 @@ def test_domain_owned_routes_keep_service_state_isolated(monkeypatch):
         assert second.get("/api/schedules").json()["schedules"] == [{"service": "second"}]
         assert first.get("/api/usage/summary").json() == {"service": "first"}
         assert second.get("/api/usage/summary").json() == {"service": "second"}
+    finally:
+        first.close()
+        second.close()
+
+
+def test_websocket_routes_keep_service_state_isolated():
+    first = TestClient(server.create_app(chat_service=_service("first"), auth_token="token"))
+    second = TestClient(server.create_app(chat_service=_service("second"), auth_token="token"))
+    try:
+        with first.websocket_connect(
+            "/ws/internal/codex", headers={"x-locus-token": "token"}
+        ) as websocket:
+            websocket.send_json({"op": "account"})
+            assert websocket.receive_json() == {
+                "type": "result",
+                "result": {"service": "first"},
+            }
+        with second.websocket_connect(
+            "/ws/internal/codex", headers={"x-locus-token": "token"}
+        ) as websocket:
+            websocket.send_json({"op": "account"})
+            assert websocket.receive_json() == {
+                "type": "result",
+                "result": {"service": "second"},
+            }
     finally:
         first.close()
         second.close()

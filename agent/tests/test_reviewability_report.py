@@ -72,7 +72,7 @@ def test_server_composition_helpers_are_not_treated_as_route_handlers() -> None:
     )
 
 
-def test_domain_owned_route_allowlist_matches_migrated_domains() -> None:
+def test_all_route_modules_register_only_domain_owned_callbacks() -> None:
     from ollama_code.api import (
         chat_transport,
         continuity,
@@ -104,4 +104,6 @@ def test_domain_owned_route_allowlist_matches_migrated_domains() -> None:
         handlers = set(
             report.ROUTE_HANDLER.findall(Path(module.__file__).read_text(encoding="utf-8"))
         )
-        assert handlers == report.DOMAIN_HANDLER_LEGACY_ALLOWLIST[Path(module.__file__).name]
+        assert handlers == report.DOMAIN_HANDLER_ALLOWLIST[Path(module.__file__).name]
+
+    assert report._registered_server_handlers() == set()

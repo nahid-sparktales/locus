@@ -25,7 +25,7 @@ APP_MODEL_STATE = re.compile(r"^\s{4}@Published\b")
 APP_MODEL_ACTION = re.compile(r"^\s{4}(?:static\s+)?func\s+([A-Za-z_][A-Za-z0-9_]*)")
 SERVER_FUNCTION = re.compile(r"^(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)")
 ROUTE_HANDLER = re.compile(r"handlers\.([A-Za-z_][A-Za-z0-9_]*)")
-DOMAIN_HANDLER_LEGACY_ALLOWLIST = {
+DOMAIN_HANDLER_ALLOWLIST = {
     "chat_transport.py": set(),
     "continuity.py": set(),
     "evaluations.py": set(),
@@ -251,8 +251,8 @@ def boundary_findings() -> list[Finding]:
                     "API modules must receive handlers/dependencies; they cannot import the composition root.",
                 )
             )
-        if path.name in DOMAIN_HANDLER_LEGACY_ALLOWLIST:
-            allowed = DOMAIN_HANDLER_LEGACY_ALLOWLIST[path.name]
+        if path.name in DOMAIN_HANDLER_ALLOWLIST:
+            allowed = DOMAIN_HANDLER_ALLOWLIST[path.name]
             unexpected = set(ROUTE_HANDLER.findall(source)) - allowed
             if unexpected:
                 findings.append(

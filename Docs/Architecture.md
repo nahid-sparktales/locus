@@ -40,9 +40,10 @@ presentation such as toasts or session activity.
 
 ## Local Python service
 
-`server.py` is the application composition root and compatibility handler
-surface. `create_app()` creates isolated FastAPI instances, and request-time
-dependencies resolve from the concrete request application.
+`server.py` is the application composition root and background turn runtime.
+`create_app()` creates isolated FastAPI instances, and request-time dependencies
+resolve from the concrete request application. HTTP and WebSocket callbacks are
+owned outside the composition root.
 
 - `chat_service.py` owns stateful chat and orchestration runtime behavior.
 - `api/dependencies.py` owns per-application service resolution.
@@ -61,17 +62,22 @@ dependencies resolve from the concrete request application.
   lifecycle HTTP behavior.
 - `api/schedules.py` owns schedule CRUD, occurrence dispatch, and companion
   chat dispatch HTTP behavior.
-- `api/runs.py` and `extensions.py` own their HTTP route maps and remain the
-  handler-ownership backlog.
-- `api/chat_transport.py` owns the WebSocket route map.
+- `api/runs.py` owns run, orchestration, task, usage, and durable MCP-task HTTP
+  behavior. Recovery dispatch receives the app-owned team runner through an
+  explicit request dependency.
+- `api/extensions.py` owns extension marketplace, plugin, skill, and MCP HTTP
+  behavior.
+- `api/chat_transport.py` owns authenticated chat and Codex-broker WebSocket
+  behavior; `chat_transport_runtime.py` owns the request-neutral event pump and
+  command-error primitive shared with turn execution.
 
 API modules resolve request-owned services through `api/dependencies.py` and
-must not import `server.py` or a module-global application. A temporary handler
-module parameter is allowed only for named compatibility handlers while a
-domain migrates. New routes and their ordinary request behavior belong in the
-matching domain module. `server.app` exists as the uvicorn/import compatibility
-entry point; tests and embedders should construct an isolated app with
-`create_app()`.
+must not import `server.py` or a module-global application. Route registration
+accepts only the router; passing the server module or registering one of its
+callbacks is an architecture regression. New routes and their ordinary request
+behavior belong in the matching domain module. `server.app` exists as the
+uvicorn/import compatibility entry point; tests and embedders should construct
+an isolated app with `create_app()`.
 
 ## Reviewable changes
 

@@ -1,6 +1,5 @@
 """System health, tool, permission, service, and configuration routes."""
 
-from types import ModuleType
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException
@@ -235,7 +234,7 @@ def reload_project_context(service: ServiceDependency) -> dict[str, Any]:
         raise _busy_http() from exc
 
 
-def register_routes(router: APIRouter, _handlers: ModuleType) -> None:
+def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/health", health, methods=["GET"])
     router.add_api_route("/api/tools", list_tools, methods=["GET"])
     router.add_api_route("/api/services", background_service_list, methods=["GET"])
