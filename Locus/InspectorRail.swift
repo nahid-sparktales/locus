@@ -158,7 +158,7 @@ struct InspectorRail: View {
                 .overlay(alignment: .topTrailing) {
                     // Changes lives in this menu, so its unseen dot surfaces
                     // here — the count itself waits in the menu title.
-                    if model.changesHaveUnseenUpdate {
+                    if model.gitWorkspace.changesHaveUnseenUpdate {
                         Circle()
                             .fill(LocusTheme.coral)
                             .frame(width: 5, height: 5)
@@ -177,8 +177,8 @@ struct InspectorRail: View {
     }
 
     private func menuTitle(for tab: InspectorTab) -> String {
-        if tab == .changes, model.changedFileCount > 0 {
-            return "\(tab.title) (\(model.changedFileCount))"
+        if tab == .changes, model.gitWorkspace.changedFileCount > 0 {
+            return "\(tab.title) (\(model.gitWorkspace.changedFileCount))"
         }
         if tab == .runs { return "Team Runs" }
         if tab == .router { return "Model Router" }
@@ -208,7 +208,7 @@ struct WorkspaceActionsMenu: View {
                 {
                     Button("Restore Worktree") { model.restoreActiveTaskCheckout() }
                 }
-            } else if model.isGitRepository {
+            } else if model.gitWorkspace.isGitRepository {
                 Button("Hand Off to Worktree") { model.handoffCurrentChat(to: .worktree) }
                     .disabled(model.isBusy || model.hasPendingPermission)
             }
@@ -227,14 +227,14 @@ struct WorkspaceActionsMenu: View {
                     model.newWorktreeSession(in: model.workspacePath, baseRef: "HEAD")
                 }
                 .accessibilityIdentifier("workspace.actions.worktree.head")
-                ForEach(model.localBranches, id: \.self) { branch in
+                ForEach(model.gitWorkspace.localBranches, id: \.self) { branch in
                     Button(branch) {
                         model.newWorktreeSession(in: model.workspacePath, baseRef: branch)
                     }
                     .accessibilityIdentifier("workspace.actions.worktree.branch.\(branch)")
                 }
             }
-            .disabled(!model.isGitRepository)
+            .disabled(!model.gitWorkspace.isGitRepository)
             .accessibilityIdentifier("workspace.actions.newWorktreeSession")
             Button("Start New Local Chat") {
                 model.newSession(in: model.workspacePath, environment: .local)

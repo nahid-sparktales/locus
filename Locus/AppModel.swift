@@ -411,96 +411,6 @@ final class AppModel: ObservableObject {
     @Published private(set) var activePlan: PlanDocument?
     let gitWorkspace = GitWorkspaceModel()
     private var gitWorkspaceBridge: AnyCancellable?
-    private(set) var gitChanges: [GitChange] {
-        get { gitWorkspace.gitChanges }
-        set { gitWorkspace.gitChanges = newValue }
-    }
-    private(set) var isRefreshingGitStatus: Bool {
-        get { gitWorkspace.isRefreshingGitStatus }
-        set { gitWorkspace.isRefreshingGitStatus = newValue }
-    }
-    private(set) var isGitRepository: Bool {
-        get { gitWorkspace.isGitRepository }
-        set { gitWorkspace.isGitRepository = newValue }
-    }
-    private(set) var lastGitRefreshFailed: Bool {
-        get { gitWorkspace.lastGitRefreshFailed }
-        set { gitWorkspace.lastGitRefreshFailed = newValue }
-    }
-    var commitMessage: String {
-        get { gitWorkspace.commitMessage }
-        set { gitWorkspace.commitMessage = newValue }
-    }
-    private(set) var isPerformingGitAction: Bool {
-        get { gitWorkspace.isPerformingGitAction }
-        set { gitWorkspace.isPerformingGitAction = newValue }
-    }
-    private(set) var isDraftingCommitMessage: Bool {
-        get { gitWorkspace.isDraftingCommitMessage }
-        set { gitWorkspace.isDraftingCommitMessage = newValue }
-    }
-    var pendingDiscard: GitChange? {
-        get { gitWorkspace.pendingDiscard }
-        set { gitWorkspace.pendingDiscard = newValue }
-    }
-    private(set) var changesHaveUnseenUpdate: Bool {
-        get { gitWorkspace.changesHaveUnseenUpdate }
-        set { gitWorkspace.changesHaveUnseenUpdate = newValue }
-    }
-    private(set) var selectedChangePath: String? {
-        get { gitWorkspace.selectedChangePath }
-        set { gitWorkspace.selectedChangePath = newValue }
-    }
-    private(set) var selectedChangeDiff: String? {
-        get { gitWorkspace.selectedChangeDiff }
-        set { gitWorkspace.selectedChangeDiff = newValue }
-    }
-    private(set) var selectedChangeParsedDiff: ParsedFileDiff? {
-        get { gitWorkspace.selectedChangeParsedDiff }
-        set { gitWorkspace.selectedChangeParsedDiff = newValue }
-    }
-    var selectedChangeShowsStaged: Bool {
-        get { gitWorkspace.selectedChangeShowsStaged }
-        set { gitWorkspace.selectedChangeShowsStaged = newValue }
-    }
-    private(set) var gitUpstream: String? {
-        get { gitWorkspace.gitUpstream }
-        set { gitWorkspace.gitUpstream = newValue }
-    }
-    private(set) var gitAhead: Int {
-        get { gitWorkspace.gitAhead }
-        set { gitWorkspace.gitAhead = newValue }
-    }
-    private(set) var gitBehind: Int {
-        get { gitWorkspace.gitBehind }
-        set { gitWorkspace.gitBehind = newValue }
-    }
-    private(set) var gitDetached: Bool {
-        get { gitWorkspace.gitDetached }
-        set { gitWorkspace.gitDetached = newValue }
-    }
-    private(set) var gitHasCommits: Bool {
-        get { gitWorkspace.gitHasCommits }
-        set { gitWorkspace.gitHasCommits = newValue }
-    }
-    private(set) var localBranches: [String] {
-        get { gitWorkspace.localBranches }
-        set { gitWorkspace.localBranches = newValue }
-    }
-    var pendingHunkDiscard: DiffHunk? {
-        get { gitWorkspace.pendingHunkDiscard }
-        set { gitWorkspace.pendingHunkDiscard = newValue }
-    }
-    private(set) var isSyncingRemote: Bool {
-        get { gitWorkspace.isSyncingRemote }
-        set { gitWorkspace.isSyncingRemote = newValue }
-    }
-    /// Whether origin looked like GitHub at the last check. Shows or hides
-    /// the PR button; the action itself re-reads the remote at click time.
-    private(set) var originIsGitHub: Bool {
-        get { gitWorkspace.originIsGitHub }
-        set { gitWorkspace.originIsGitHub = newValue }
-    }
     @Published var fileQuery = ""
     @Published private(set) var previewedFilePath: String?
     @Published private(set) var previewedFileContents: String?
@@ -535,10 +445,6 @@ final class AppModel: ObservableObject {
         }
     }
     @Published var workspaceFileIndex: [URL] = []
-    private(set) var gitBranch: String? {
-        get { gitWorkspace.gitBranch }
-        set { gitWorkspace.gitBranch = newValue }
-    }
     @Published var settings: AppSettings {
         didSet {
             scheduleWorkspacePersistence()
@@ -792,22 +698,6 @@ final class AppModel: ObservableObject {
     private var appliedWorkspacePath: String?
     private var sessionResetWatchdog: Task<Void, Never>?
     private var indexTask: Task<Void, Never>?
-    private var gitStatusTask: Task<Void, Never>? {
-        get { gitWorkspace.statusTask }
-        set { gitWorkspace.statusTask = newValue }
-    }
-    private var diffTask: Task<Void, Never>? {
-        get { gitWorkspace.diffTask }
-        set { gitWorkspace.diffTask = newValue }
-    }
-    private var commitDraftTask: Task<Void, Never>? {
-        get { gitWorkspace.commitDraftTask }
-        set { gitWorkspace.commitDraftTask = newValue }
-    }
-    private var originCheckedForWorkspace: String? {
-        get { gitWorkspace.originCheckedForWorkspace }
-        set { gitWorkspace.originCheckedForWorkspace = newValue }
-    }
     private var filePreviewTask: Task<Void, Never>?
     private var agentInstructionsTask: Task<Void, Never>?
     private var orchestrationRunsTasks: [String: (generation: Int, task: Task<OrchestrationRunsResponse, Error>)] = [:]
@@ -1054,6 +944,29 @@ final class AppModel: ObservableObject {
 
         backend = backendOverride ?? BackendService(
             baseURL: URL(string: loadedSettings.backendURL) ?? URL(string: "http://127.0.0.1:8791")!
+        )
+        gitWorkspace.configure(
+            backend: backend,
+            isUITesting: isUITesting,
+            workspacePath: { [weak self] in
+                self?.workspacePath ?? FileManager.default.homeDirectoryForCurrentUser.path
+            },
+            changesTabVisible: { [weak self] in
+                self?.inspectorTab == .changes && self?.inspectorCollapsed == false
+            },
+            commitDraftContext: { [weak self] in
+                GitWorkspaceModel.CommitDraftContext(
+                    useLocalModel: self?.settings.provider == .ollama && self?.isModelOnline == true,
+                    host: self?.ollamaHost ?? "",
+                    modelName: self?.selectedModel ?? ""
+                )
+            },
+            showToast: { [weak self] message in
+                self?.showToast(message)
+            },
+            didApplyStatus: { [weak self] previous, current in
+                self?.handleGitStatusApplied(previous: previous, current: current)
+            }
         )
 
         backend.onConnectionChange = { [weak self] connected in
@@ -2402,49 +2315,6 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([agentInstructionsURL])
     }
 
-    // MARK: - Git branch
-
-    private func refreshGitBranch() {
-        let root = workspacePath
-        Task { [weak self] in
-            let branch = await Task.detached(priority: .utility) {
-                Self.gitBranch(at: root)
-            }.value
-            guard let self, self.workspacePath == root else { return }
-            self.gitBranch = branch
-        }
-    }
-
-    nonisolated static func gitBranch(at root: String) -> String? {
-        var gitURL = URL(fileURLWithPath: root).appending(path: ".git")
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: gitURL.path, isDirectory: &isDirectory) else {
-            return nil
-        }
-        if !isDirectory.boolValue {
-            // Worktree/submodule: `.git` is a file containing "gitdir: <path>".
-            guard let pointer = try? String(contentsOf: gitURL, encoding: .utf8),
-                  let path = pointer
-                      .split(separator: "\n")
-                      .first(where: { $0.hasPrefix("gitdir:") })?
-                      .dropFirst("gitdir:".count)
-                      .trimmingCharacters(in: .whitespaces)
-            else { return nil }
-            gitURL = path.hasPrefix("/")
-                ? URL(fileURLWithPath: path)
-                : URL(fileURLWithPath: root).appending(path: path).standardizedFileURL
-        }
-        guard let head = try? String(
-            contentsOf: gitURL.appending(path: "HEAD"),
-            encoding: .utf8
-        ) else { return nil }
-        let trimmed = head.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("ref: refs/heads/") {
-            return String(trimmed.dropFirst("ref: refs/heads/".count))
-        }
-        return trimmed.isEmpty ? nil : String(trimmed.prefix(7))
-    }
-
     // MARK: - Notifications
 
     private func requestNotificationAuthorization() {
@@ -2577,7 +2447,7 @@ final class AppModel: ObservableObject {
         }
 
         await refreshExtensions()
-        refreshGitBranch()
+        gitWorkspace.refreshBranch()
     }
 
     // MARK: - Plugins, skills, and MCP
@@ -6549,7 +6419,7 @@ final class AppModel: ObservableObject {
                 activeTaskRecord = response.task
                 taskHasChanges = false
                 taskPatchBytes = 0
-                refreshGitStatus()
+                gitWorkspace.refreshStatus()
                 showToast(response.applied ? "Applied task changes to the workspace" : "No new task changes to apply")
             } catch {
                 showToast("Workspace left untouched: \(error.localizedDescription)")
@@ -6700,7 +6570,7 @@ final class AppModel: ObservableObject {
                 activeTaskRecord = response.task
                 sessionInfo = sessionInfo?.replacingTask(response.task)
                 if destination == "local" { reviewAndLandPresented = false }
-                refreshGitStatus()
+                gitWorkspace.refreshStatus()
                 if let detail = try? await backend.get(
                     "/api/tasks/\(task.id)", as: TaskDetailResponse.self
                 ) {
@@ -7441,7 +7311,7 @@ final class AppModel: ObservableObject {
                 if let runtime = taskWorkers[sessionID] {
                     runtime.sessionInfo = response.sessionInfo
                 }
-                refreshGitStatus()
+                gitWorkspace.refreshStatus()
                 await refreshMetadata()
                 showToast(
                     environment == .worktree
@@ -7468,7 +7338,7 @@ final class AppModel: ObservableObject {
                 )
                 activeTaskRecord = response.task
                 sessionInfo = sessionInfo?.replacingTask(response.task)
-                refreshGitBranch()
+                gitWorkspace.refreshBranch()
                 showToast("Created branch \(name) in the worktree")
             } catch {
                 showToast("Could not create branch: \(error.localizedDescription)")
@@ -9889,79 +9759,15 @@ final class AppModel: ObservableObject {
     /// Seven tab labels need almost the full inspector width; below this the
     /// icon-first strip keeps every target comfortably clickable.
 
-    /// Files changed in the workspace, for the Changes badge.
-    var changedFileCount: Int { gitChanges.count }
-
-    var gitChangeSummary: String {
-        guard !gitChanges.isEmpty else { return "No changes" }
-        var parts: [String] = []
-        let staged = gitChanges.filter(\.staged).count
-        let unstaged = gitChanges.filter { $0.unstaged && $0.status != .untracked }.count
-        let untracked = gitChanges.filter { $0.status == .untracked }.count
-        if staged > 0 { parts.append("\(staged) staged") }
-        if unstaged > 0 { parts.append("\(unstaged) modified") }
-        if untracked > 0 { parts.append("\(untracked) untracked") }
-        return parts.joined(separator: " · ")
-    }
-
-    /// Reloads the workspace's git status. Safe to call often; overlapping
-    /// requests collapse onto the newest.
-    func refreshGitStatus() {
-        // There is no agent behind a UI test, so a refresh would only empty the
-        // seeded change list.
-        guard !isUITesting else { return }
-        gitStatusTask?.cancel()
-        let root = workspacePath
-        isRefreshingGitStatus = true
-        gitStatusTask = Task { [weak self, backend] in
-            // A superseded (cancelled) request must not clear the spinner the
-            // newer request just turned on.
-            defer { if !Task.isCancelled { self?.isRefreshingGitStatus = false } }
-            do {
-                let response = try await backend.get(
-                    "/api/git/status",
-                    query: [URLQueryItem(name: "untracked", value: "all")],
-                    as: GitStatusResponse.self
-                )
-                guard !Task.isCancelled, let self, self.workspacePath == root else { return }
-                self.applyGitStatus(response)
-            } catch {
-                guard !Task.isCancelled, let self, self.workspacePath == root else { return }
-                self.applyGitStatusFailure()
-            }
-        }
-    }
-
-    func applyGitStatus(_ response: GitStatusResponse) {
-        let previous = Set(gitChanges.map(\.path))
-        let previousChanges = Dictionary(uniqueKeysWithValues: gitChanges.map { ($0.path, $0) })
-        gitChanges = response.files
-        isGitRepository = response.isRepo
-        lastGitRefreshFailed = false
-        if response.isRepo, let branch = response.branch {
-            gitBranch = branch
-        }
-        gitUpstream = response.upstream
-        gitAhead = response.ahead ?? 0
-        gitBehind = response.behind ?? 0
-        gitDetached = response.detached
-        gitHasCommits = response.hasCommits
-        if response.isRepo, originCheckedForWorkspace != workspacePath {
-            originCheckedForWorkspace = workspacePath
-            refreshOriginKind()
-        }
-        if Self.changesAreUnseen(
-            previous: previous,
-            current: response.files,
-            changesTabVisible: inspectorTab == .changes && !inspectorCollapsed
-        ) {
-            changesHaveUnseenUpdate = true
-        }
+    private func handleGitStatusApplied(
+        previous: [String: GitChange],
+        current: [GitChange]
+    ) {
         synchronizeSessionIdentity()
         guard sessionOverview.state.status == .running else { return }
         let now = Self.sessionTimestamp
-        for change in response.files {
-            let old = previousChanges[change.path]
+        for change in current {
+            let old = previous[change.path]
             let added = max((change.additions ?? 0) - (old?.additions ?? 0), 0)
             let removed = max((change.deletions ?? 0) - (old?.deletions ?? 0), 0)
             if old == nil, change.status == .added || change.status == .untracked {
@@ -9974,428 +9780,6 @@ final class AppModel: ObservableObject {
                     removed: removed,
                     at: now
                 ))
-            }
-        }
-    }
-
-    /// A transient failure (timeout, agent restarting) keeps the last known
-    /// list — emptying it here would render the "Nothing changed" state,
-    /// which reads as "your edits are gone". The tab shows a stale hint.
-    func applyGitStatusFailure() {
-        lastGitRefreshFailed = true
-    }
-
-    // MARK: - Git quick actions
-
-    private var gitClient: GitClient {
-        GitClient(workspaceRoot: workspacePath)
-    }
-
-    var stagedChangeCount: Int {
-        gitChanges.filter(\.staged).count
-    }
-
-    func stageChange(_ change: GitChange) {
-        performGitAction(["add", "--", change.path])
-    }
-
-    func unstageChange(_ change: GitChange) {
-        // In a repository with no commits yet `restore --staged` cannot
-        // resolve HEAD; `rm --cached` is the unstage for that state.
-        performGitAction(
-            ["restore", "--staged", "--", change.path],
-            fallback: ["rm", "--cached", "-q", "--", change.path]
-        )
-    }
-
-    func requestDiscard(_ change: GitChange) {
-        pendingDiscard = change
-    }
-
-    func discardConfirmed() {
-        guard let change = pendingDiscard else { return }
-        pendingDiscard = nil
-        if change.status == .untracked {
-            // The Trash, not `git clean`: recoverable beats gone.
-            let url = URL(fileURLWithPath: workspacePath).appending(path: change.path)
-            do {
-                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-                showToast("Moved \(change.name) to the Trash")
-            } catch {
-                showToast(error.localizedDescription)
-            }
-            refreshGitStatus()
-        } else {
-            performGitAction(
-                ["restore", "--staged", "--worktree", "--", change.path],
-                success: "Discarded changes to \(change.name)"
-            )
-        }
-    }
-
-    // MARK: - Branch, remote, and PR flow
-
-    /// Local branches, newest activity first, for the branch menu.
-    func loadLocalBranches() {
-        guard isGitRepository else { return }
-        let client = gitClient
-        Task { [weak self] in
-            let result = try? await client.run([
-                "for-each-ref", "refs/heads",
-                "--format=%(refname:short)", "--sort=-committerdate",
-            ])
-            guard let self, let result else { return }
-            localBranches = result.stdout
-                .split(separator: "\n")
-                .prefix(100)
-                .map(String.init)
-        }
-    }
-
-    /// `git switch -c`: safe on a dirty tree (edits ride along) and on an
-    /// unborn HEAD. `check-ref-format` stays the naming authority.
-    func createBranch(_ name: String) {
-        let branch = name.trimmingCharacters(in: .whitespaces)
-        if let problem = GitBranchName.validationError(branch) {
-            showToast(problem)
-            return
-        }
-        guard isGitRepository, !isPerformingGitAction else { return }
-        isPerformingGitAction = true
-        let client = gitClient
-        Task { [weak self] in
-            do {
-                try await client.run(["check-ref-format", "--branch", branch])
-                try await client.run(["switch", "-c", branch])
-                self?.showToast("Created and switched to \(branch)")
-            } catch {
-                self?.showToast(error.localizedDescription)
-            }
-            self?.isPerformingGitAction = false
-            self?.refreshGitStatus()
-        }
-    }
-
-    /// Plain `git switch`, no auto-stash: git itself refuses a switch that
-    /// would clobber local edits, and that refusal is surfaced verbatim —
-    /// the simplest behavior that can never lose work.
-    func switchBranch(_ name: String) {
-        guard isGitRepository, !isPerformingGitAction, name != gitBranch else { return }
-        performGitAction(["switch", name], success: "Switched to \(name)")
-    }
-
-    /// Push the current branch; publish it when no upstream exists yet.
-    func pushCurrentBranch() {
-        guard GitRemoteFeatures.isAvailable, isGitRepository,
-              !gitDetached, gitHasCommits, !isSyncingRemote,
-              let branch = gitBranch
-        else { return }
-        isSyncingRemote = true
-        let client = gitClient
-        let args = GitPushPlan.arguments(branch: branch, upstream: gitUpstream)
-        Task { [weak self] in
-            do {
-                try await client.run(args, timeout: 120)
-                self?.showToast(
-                    self?.gitUpstream == nil ? "Published \(branch)" : "Pushed \(branch)"
-                )
-            } catch {
-                var message = error.localizedDescription
-                if message.contains("rejected") || message.contains("non-fast-forward") {
-                    message += " — Fetch/pull first, or push from a terminal."
-                }
-                self?.showToast(message)
-            }
-            self?.isSyncingRemote = false
-            self?.refreshGitStatus()
-        }
-    }
-
-    func fetchRemote() {
-        guard GitRemoteFeatures.isAvailable, isGitRepository, !isSyncingRemote else { return }
-        isSyncingRemote = true
-        let client = gitClient
-        Task { [weak self] in
-            do {
-                try await client.run(["fetch"], timeout: 60)
-                self?.showToast("Fetched from the remote")
-            } catch {
-                self?.showToast(error.localizedDescription)
-            }
-            self?.isSyncingRemote = false
-            self?.refreshGitStatus()
-        }
-    }
-
-    /// `--ff-only`: the only merge-free, conflict-free pull. Its refusal
-    /// ("not possible to fast-forward") is honest and surfaced as-is.
-    func pullFastForwardOnly() {
-        guard GitRemoteFeatures.isAvailable, isGitRepository, !isSyncingRemote else { return }
-        isSyncingRemote = true
-        let client = gitClient
-        Task { [weak self] in
-            do {
-                let result = try await client.run(["pull", "--ff-only"], timeout: 120)
-                let summary = result.stdout.split(separator: "\n").last.map(String.init)
-                self?.showToast(summary?.nilIfEmpty ?? "Pulled fast-forward")
-            } catch {
-                self?.showToast(error.localizedDescription)
-            }
-            self?.isSyncingRemote = false
-            self?.refreshGitStatus()
-        }
-    }
-
-    /// Opens GitHub's compare page for the current branch — the human owns
-    /// the actual PR creation. Reads the remote at click time; non-GitHub
-    /// remotes never show the button, so a miss here only means the remote
-    /// changed since the last status.
-    func openPullRequest() {
-        guard let branch = gitBranch else { return }
-        let client = gitClient
-        Task { [weak self] in
-            guard let remote = try? await client.run(["remote", "get-url", "origin"]),
-                  let url = GitRemoteURL.githubCompareURL(
-                      remote: remote.stdout.trimmingCharacters(in: .whitespacesAndNewlines),
-                      branch: branch
-                  )
-            else {
-                self?.showToast("The origin remote is not a GitHub repository")
-                return
-            }
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    func refreshOriginKind() {
-        guard isGitRepository else { return }
-        let client = gitClient
-        Task { [weak self] in
-            let remote = (try? await client.run(["remote", "get-url", "origin"]))?
-                .stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard let self else { return }
-            originIsGitHub = GitRemoteURL.githubCompareURL(
-                remote: remote, branch: "x"
-            ) != nil
-        }
-    }
-
-    // MARK: - Per-hunk review
-
-    func stageHunk(_ hunk: DiffHunk) {
-        performHunkAction(hunk, scope: .unstaged, apply: ["apply", "--cached"])
-    }
-
-    func unstageHunk(_ hunk: DiffHunk) {
-        guard gitHasCommits else { return }
-        performHunkAction(hunk, scope: .staged, apply: ["apply", "--cached", "-R"])
-    }
-
-    func requestDiscardHunk(_ hunk: DiffHunk) {
-        pendingHunkDiscard = hunk
-    }
-
-    func discardHunkConfirmed() {
-        guard let hunk = pendingHunkDiscard else { return }
-        pendingHunkDiscard = nil
-        performHunkAction(hunk, scope: .unstaged, apply: ["apply", "-R"])
-    }
-
-    private enum HunkScope {
-        case staged
-        case unstaged
-    }
-
-    /// The shared mechanics: re-take the diff at click time, re-locate the
-    /// hunk (exact header, then content identity), synthesize the minimal
-    /// patch, and apply. A hunk that drifted is never applied — the diff
-    /// refreshes and the user reviews again.
-    private func performHunkAction(
-        _ hunk: DiffHunk,
-        scope: HunkScope,
-        apply applyArgs: [String]
-    ) {
-        guard isGitRepository, !isPerformingGitAction,
-              let path = selectedChangePath,
-              let change = gitChanges.first(where: { $0.path == path })
-        else { return }
-        isPerformingGitAction = true
-        let client = gitClient
-        let diffArgs = scope == .staged
-            ? ["diff", "-U3", "--cached", "--", path]
-            : ["diff", "-U3", "--", path]
-        Task { [weak self] in
-            defer {
-                self?.isPerformingGitAction = false
-                self?.refreshGitStatus()
-                self?.loadDiff(for: change)
-            }
-            do {
-                let fresh = try await client.run(diffArgs)
-                guard let parsed = ParsedFileDiff.parse(fresh.stdout),
-                      let located = parsed.matching(hunk),
-                      let patch = parsed.minimalPatch(for: located)
-                else {
-                    self?.showToast(
-                        "That change moved since the diff was read — review the refreshed diff"
-                    )
-                    return
-                }
-                do {
-                    try await client.run(applyArgs, stdin: Data(patch.utf8))
-                } catch {
-                    // The agent's own git may hold index.lock for a moment.
-                    try await Task.sleep(nanoseconds: 300_000_000)
-                    try await client.run(applyArgs, stdin: Data(patch.utf8))
-                }
-            } catch {
-                self?.showToast(error.localizedDescription)
-            }
-        }
-    }
-
-    func commitStaged() {
-        let message = commitMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty, stagedChangeCount > 0, !isPerformingGitAction else { return }
-        isPerformingGitAction = true
-        let client = gitClient
-        Task { [weak self] in
-            do {
-                let result = try await client.run(["commit", "-m", message])
-                self?.commitMessage = ""
-                let summary = result.stdout
-                    .split(separator: "\n")
-                    .first.map(String.init) ?? "Committed"
-                self?.showToast(summary)
-            } catch {
-                self?.showToast(error.localizedDescription)
-            }
-            self?.isPerformingGitAction = false
-            self?.refreshGitStatus()
-        }
-    }
-
-    /// Fills `commitMessage` with an on-device draft from the staged diff, or
-    /// a deterministic summary when no local model can draft. A second press
-    /// while drafting cancels the first.
-    func draftCommitMessage() {
-        if isDraftingCommitMessage {
-            commitDraftTask?.cancel()
-            isDraftingCommitMessage = false
-            return
-        }
-        let staged = gitChanges.filter(\.staged)
-        guard !staged.isEmpty else {
-            showToast("Stage a file first — the draft describes staged changes")
-            return
-        }
-        isDraftingCommitMessage = true
-        let client = gitClient
-        let useLocalModel = settings.provider == .ollama && isModelOnline
-        let host = ollamaHost
-        let modelName = selectedModel
-        commitDraftTask = Task { [weak self] in
-            var draft: String?
-            if useLocalModel {
-                let stat = (try? await client.run(["diff", "--cached", "--stat"]))?.stdout ?? ""
-                let diff = (try? await client.run(["diff", "--cached"]))?.stdout ?? ""
-                draft = await CommitMessageDrafter.draft(
-                    host: host,
-                    model: modelName,
-                    stat: stat,
-                    diff: String(diff.prefix(8_000))
-                )
-            }
-            guard let self, !Task.isCancelled else { return }
-            if draft == nil {
-                draft = CommitMessageDrafter.template(for: staged)
-                showToast(useLocalModel
-                    ? "The local model could not draft — used a summary instead"
-                    : "Drafted a summary — an AI draft needs local Ollama")
-            }
-            if let draft, !draft.isEmpty {
-                commitMessage = draft
-            }
-            isDraftingCommitMessage = false
-        }
-    }
-
-    private func performGitAction(
-        _ args: [String],
-        fallback: [String]? = nil,
-        success: String? = nil
-    ) {
-        guard isGitRepository, !isPerformingGitAction else { return }
-        isPerformingGitAction = true
-        let client = gitClient
-        Task { [weak self] in
-            do {
-                do {
-                    try await client.run(args)
-                } catch {
-                    guard let fallback else { throw error }
-                    try await client.run(fallback)
-                }
-                if let success { self?.showToast(success) }
-            } catch {
-                self?.showToast(error.localizedDescription)
-            }
-            self?.isPerformingGitAction = false
-            self?.refreshGitStatus()
-        }
-    }
-
-    /// Whether a status refresh brought in a change the user has not seen.
-    /// Only newly appearing paths count: a file that keeps being edited while
-    /// the tab is closed should not re-badge on every refresh.
-    nonisolated static func changesAreUnseen(
-        previous: Set<String>,
-        current: [GitChange],
-        changesTabVisible: Bool
-    ) -> Bool {
-        guard !changesTabVisible else { return false }
-        return current.contains { !previous.contains($0.path) }
-    }
-
-    /// Loads the diff for one file into `selectedChangeDiff`, plus the parsed
-    /// hunk model that powers per-hunk staging. A truncated diff renders but
-    /// parses to nil — hunk controls must never synthesize from partial text.
-    func loadDiff(for change: GitChange, staged: Bool? = nil) {
-        if let staged {
-            selectedChangeShowsStaged = staged
-        } else if selectedChangePath != change.path {
-            // A fresh selection starts on the side that has content; a mixed
-            // file keeps the scope its picker chose.
-            selectedChangeShowsStaged = change.staged && !change.unstaged
-        }
-        selectedChangePath = change.path
-        selectedChangeDiff = nil
-        selectedChangeParsedDiff = nil
-        diffTask?.cancel()
-        guard !isUITesting else {
-            seedUITestDiffIfNeeded(for: change)
-            return
-        }
-        let wantsStaged = change.staged && (!change.unstaged || selectedChangeShowsStaged)
-        diffTask = Task { [weak self] in
-            do {
-                let response = try await self?.backend.get(
-                    "/api/git/diff",
-                    query: [
-                        URLQueryItem(name: "path", value: change.path),
-                        URLQueryItem(name: "staged", value: wantsStaged ? "true" : "false"),
-                    ],
-                    as: GitDiffResponse.self
-                )
-                guard !Task.isCancelled, let self, let response else { return }
-                guard self.selectedChangePath == change.path else { return }
-                self.selectedChangeDiff = Self.cappedDiff(response)
-                if !response.truncated, !response.binary, let raw = response.raw {
-                    self.selectedChangeParsedDiff = ParsedFileDiff.parse(raw)
-                }
-            } catch {
-                guard !Task.isCancelled else { return }
-                self?.selectedChangeDiff = "Could not load the diff: \(error.localizedDescription)"
             }
         }
     }
@@ -10445,13 +9829,6 @@ final class AppModel: ObservableObject {
         let separator = draftText.isEmpty || draftText.hasSuffix(" ") ? "" : " "
         draftText += "\(separator)@\(relative) "
         showToast("Mentioned \(url.lastPathComponent)")
-    }
-
-    func clearSelectedChange() {
-        diffTask?.cancel()
-        selectedChangePath = nil
-        selectedChangeDiff = nil
-        selectedChangeParsedDiff = nil
     }
 
     /// Reveals a workspace-relative path in Finder.
@@ -10542,7 +9919,7 @@ final class AppModel: ObservableObject {
             runtimeUnavailable: agentRuntimePhase.isUnavailable,
             modelUnavailable: modelRuntimePhase.isUnavailable,
             lastRunFailed: state.lastRun?.outcome == .failed,
-            changedFileCount: changedFileCount,
+            changedFileCount: gitWorkspace.changedFileCount,
             hasPendingPlanSteps: state.plan.contains { $0.state != .done },
             hasTestFiles: workspaceContainsTests,
             projectKind: workspaceProjectKind,
@@ -10758,21 +10135,6 @@ final class AppModel: ObservableObject {
         loadContext(from: [url])
     }
 
-    /// DiffTextView builds one Text per line, so a huge diff has to be cut
-    /// before it reaches the view even though that stack is lazy.
-    static func cappedDiff(_ response: GitDiffResponse, maxLines: Int = 2_000) -> String {
-        if response.binary { return "Binary file — no textual diff." }
-        guard let raw = response.raw, !raw.isEmpty else {
-            return response.ok ? "No changes to show." : "Could not load the diff."
-        }
-        let lines = raw.split(separator: "\n", omittingEmptySubsequences: false)
-        guard lines.count > maxLines else {
-            return response.truncated ? raw + "\n… diff truncated by the agent." : raw
-        }
-        return lines.prefix(maxLines).joined(separator: "\n")
-            + "\n… \(lines.count - maxLines) more lines — open the file to see the rest."
-    }
-
     func selectInspectorTab(_ tab: InspectorTab, selecting runID: String? = nil) {
         // Manual checkpoints are a brief management task, not a surface that
         // needs to consume a persistent inspector tab. Keep the legacy enum
@@ -10792,8 +10154,8 @@ final class AppModel: ObservableObject {
         }
         if tab == .plan { planHasUnseenUpdate = false }
         if tab == .changes {
-            changesHaveUnseenUpdate = false
-            refreshGitStatus()
+            gitWorkspace.changesHaveUnseenUpdate = false
+            gitWorkspace.refreshStatus()
         }
         if tab == .files { refreshWorkspaceIndex() }
         if tab == .terminal {
@@ -12286,12 +11648,12 @@ final class AppModel: ObservableObject {
 
     private var sessionOverviewWorkspace: SessionWorkspaceIdentity {
         let path = workspacePath
-        let git: SessionWorkspaceIdentity.Git? = isGitRepository
+        let git: SessionWorkspaceIdentity.Git? = gitWorkspace.isGitRepository
             ? SessionWorkspaceIdentity.Git(
-                branch: gitBranch?.nilIfEmpty ?? "detached",
-                dirty: gitChanges.count,
-                ahead: gitAhead > 0 ? gitAhead : nil,
-                behind: gitBehind > 0 ? gitBehind : nil
+                branch: gitWorkspace.gitBranch?.nilIfEmpty ?? "detached",
+                dirty: gitWorkspace.gitChanges.count,
+                ahead: gitWorkspace.gitAhead > 0 ? gitWorkspace.gitAhead : nil,
+                behind: gitWorkspace.gitBehind > 0 ? gitWorkspace.gitBehind : nil
             )
             : nil
         return SessionWorkspaceIdentity(
@@ -12914,7 +12276,7 @@ final class AppModel: ObservableObject {
 
         case "workspace_changed":
             // The agent touched the tree; the Changes panel is now stale.
-            refreshGitStatus()
+            gitWorkspace.refreshStatus()
             scheduleWorkspaceKnowledgeReindex(workspacePath)
 
         case "extensions_changed", "mcp_status", "mcp_credential_refresh":
@@ -14000,7 +13362,7 @@ final class AppModel: ObservableObject {
             Task { await refreshContextFiles() }
         }
         touchWorkspaceProfile(path)
-        refreshGitBranch()
+        gitWorkspace.refreshBranch()
         refreshWorkspaceIndex(force: true)
     }
 
@@ -14465,18 +13827,18 @@ final class AppModel: ObservableObject {
         // The three newest inspector tabs read from state the agent normally
         // fills in. Without seeds they render their empty states and nothing
         // about them is assertable.
-        isGitRepository = true
-        gitBranch = "main"
-        gitUpstream = "origin/main"
-        gitAhead = 2
-        gitBehind = 1
-        gitHasCommits = true
-        localBranches = ["main", "ship-test"]
+        gitWorkspace.isGitRepository = true
+        gitWorkspace.gitBranch = "main"
+        gitWorkspace.gitUpstream = "origin/main"
+        gitWorkspace.gitAhead = 2
+        gitWorkspace.gitBehind = 1
+        gitWorkspace.gitHasCommits = true
+        gitWorkspace.localBranches = ["main", "ship-test"]
         // Remote features stay hidden in the seeded run unless a UI test asks
         // for them, so the suite also covers the sandboxed layout.
-        originIsGitHub =
+        gitWorkspace.originIsGitHub =
             ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_GITHUB_ORIGIN"] == "1"
-        gitChanges = [
+        gitWorkspace.gitChanges = [
             GitChange(
                 path: "Locus/AppModel.swift",
                 status: .modified,
@@ -14503,7 +13865,7 @@ final class AppModel: ObservableObject {
         if ProcessInfo.processInfo.environment[
             "LOCUS_UI_TESTING_PREFILL_RECOMMENDATION"
         ] == "1" {
-            gitChanges = []
+            gitWorkspace.gitChanges = []
         }
         indexedWorkspacePath = workspace
         workspaceFileIndex = [
@@ -14766,29 +14128,6 @@ final class AppModel: ObservableObject {
                 at: now - 372_000
             ))
         }
-    }
-
-    /// A deterministic two-hunk diff so the seeded Changes tab has assertable
-    /// per-hunk controls without a live agent behind it.
-    func seedUITestDiffIfNeeded(for change: GitChange) {
-        let raw = """
-        diff --git a/\(change.path) b/\(change.path)
-        index 1111111..2222222 100644
-        --- a/\(change.path)
-        +++ b/\(change.path)
-        @@ -1,3 +1,3 @@
-         let first = 1
-        -let second = 2
-        +let second = 22
-         let third = 3
-        @@ -10,3 +10,3 @@
-         let tenth = 10
-        -let eleventh = 11
-        +let eleventh = 111
-         let twelfth = 12
-        """
-        selectedChangeDiff = raw
-        selectedChangeParsedDiff = ParsedFileDiff.parse(raw)
     }
 
     private func seedUITestRunFixtureIfNeeded() {

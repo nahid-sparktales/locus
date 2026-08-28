@@ -2591,7 +2591,7 @@ final class AppModelTests: XCTestCase {
         let fresh = GitChange(path: "README.md", status: .modified)
 
         XCTAssertFalse(
-            AppModel.changesAreUnseen(
+            GitWorkspaceModel.changesAreUnseen(
                 previous: ["Locus/AppModel.swift"],
                 current: [seen, fresh],
                 changesTabVisible: true
@@ -2599,14 +2599,14 @@ final class AppModelTests: XCTestCase {
             "nothing is unseen while the user is looking straight at it"
         )
         XCTAssertTrue(
-            AppModel.changesAreUnseen(
+            GitWorkspaceModel.changesAreUnseen(
                 previous: ["Locus/AppModel.swift"],
                 current: [seen, fresh],
                 changesTabVisible: false
             )
         )
         XCTAssertFalse(
-            AppModel.changesAreUnseen(
+            GitWorkspaceModel.changesAreUnseen(
                 previous: ["Locus/AppModel.swift"],
                 current: [seen],
                 changesTabVisible: false
@@ -3186,16 +3186,16 @@ final class AppModelTests: XCTestCase {
             GitStatusResponse.self,
             from: Data(#"{"is_repo": true, "branch": "main", "files": [{"path": "a.swift"}]}"#.utf8)
         )
-        model.applyGitStatus(response)
-        XCTAssertEqual(model.gitChanges.map(\.path), ["a.swift"])
-        XCTAssertFalse(model.lastGitRefreshFailed)
+        model.gitWorkspace.applyStatus(response)
+        XCTAssertEqual(model.gitWorkspace.gitChanges.map(\.path), ["a.swift"])
+        XCTAssertFalse(model.gitWorkspace.lastGitRefreshFailed)
 
-        model.applyGitStatusFailure()
-        XCTAssertEqual(model.gitChanges.map(\.path), ["a.swift"], "a transient failure must not wipe the list")
-        XCTAssertTrue(model.lastGitRefreshFailed)
+        model.gitWorkspace.applyStatusFailure()
+        XCTAssertEqual(model.gitWorkspace.gitChanges.map(\.path), ["a.swift"], "a transient failure must not wipe the list")
+        XCTAssertTrue(model.gitWorkspace.lastGitRefreshFailed)
 
-        model.applyGitStatus(response)
-        XCTAssertFalse(model.lastGitRefreshFailed, "a successful refresh clears the stale flag")
+        model.gitWorkspace.applyStatus(response)
+        XCTAssertFalse(model.gitWorkspace.lastGitRefreshFailed, "a successful refresh clears the stale flag")
     }
 
     func testRemoteEndpointBaseURLNormalization() {

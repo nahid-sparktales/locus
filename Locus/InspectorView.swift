@@ -23,7 +23,7 @@ struct InspectorView: View {
                 case .plan:
                     InspectorPlanTab()
                 case .changes:
-                    InspectorChangesTab()
+                    InspectorChangesTab(gitWorkspace: model.gitWorkspace)
                 case .files:
                     InspectorFilesTab()
                 case .terminal:
@@ -1186,13 +1186,13 @@ private struct InspectorTextTabBadge: View {
 
     @ViewBuilder
     var body: some View {
-        if tab == .changes, model.changedFileCount > 0 {
-            Text(model.changedFileCount > 99 ? "99+" : "\(model.changedFileCount)")
+        if tab == .changes, model.gitWorkspace.changedFileCount > 0 {
+            Text(model.gitWorkspace.changedFileCount > 99 ? "99+" : "\(model.gitWorkspace.changedFileCount)")
                 .font(.locus(size: 7, weight: .bold))
                 .foregroundStyle(Color.white)
                 .padding(.horizontal, 3)
                 .frame(minHeight: 16)
-                .background(model.changesHaveUnseenUpdate ? LocusTheme.coral : LocusTheme.muted)
+                .background(model.gitWorkspace.changesHaveUnseenUpdate ? LocusTheme.coral : LocusTheme.muted)
                 .clipShape(Capsule())
                 .accessibilityHidden(true)
         } else if tab == .plan, model.planHasUnseenUpdate {
@@ -1237,11 +1237,11 @@ struct InspectorTabBadge: View {
     let tab: InspectorTab
 
     var body: some View {
-        if tab == .changes, model.changedFileCount > 0 {
+        if tab == .changes, model.gitWorkspace.changedFileCount > 0 {
             // Coral only while the change is still unseen; once you have opened
             // the tab the count stays but stops asking for attention.
-            let unseen = model.changesHaveUnseenUpdate
-            Text(model.changedFileCount > 99 ? "99+" : "\(model.changedFileCount)")
+            let unseen = model.gitWorkspace.changesHaveUnseenUpdate
+            Text(model.gitWorkspace.changedFileCount > 99 ? "99+" : "\(model.gitWorkspace.changedFileCount)")
                 .font(.locus(size: 7, weight: .bold))
                 .foregroundStyle(Color.white)
                 .padding(.horizontal, 3)
@@ -1252,8 +1252,8 @@ struct InspectorTabBadge: View {
                 .accessibilityElement()
                 .accessibilityLabel(
                     unseen
-                        ? "\(model.changedFileCount) changed files, new since you last looked"
-                        : "\(model.changedFileCount) changed files"
+                        ? "\(model.gitWorkspace.changedFileCount) changed files, new since you last looked"
+                        : "\(model.gitWorkspace.changedFileCount) changed files"
                 )
                 .accessibilityIdentifier("inspector.tab.changes.badge")
         } else if tab == .plan, model.planHasUnseenUpdate {
@@ -1972,18 +1972,18 @@ struct InspectorRunsTab: View {
                         if let calls = run.usage?["model_calls"]?.integer {
                             metricRow("Model calls", calls.formatted())
                         }
-                        if run.id == model.orchestrationRunID, !model.gitChanges.isEmpty {
+                        if run.id == model.orchestrationRunID, !model.gitWorkspace.gitChanges.isEmpty {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Changed files")
                                     .font(.locus(size: 8))
                                     .foregroundStyle(LocusTheme.muted)
-                                ForEach(model.gitChanges.prefix(8)) { change in
+                                ForEach(model.gitWorkspace.gitChanges.prefix(8)) { change in
                                     Text("\(change.status.marker)  \(change.path)")
                                         .font(.locus(size: 7, design: .monospaced))
                                         .lineLimit(1)
                                 }
-                                if model.gitChanges.count > 8 {
-                                    Text("+ \(model.gitChanges.count - 8) more")
+                                if model.gitWorkspace.gitChanges.count > 8 {
+                                    Text("+ \(model.gitWorkspace.gitChanges.count - 8) more")
                                         .font(.locus(size: 7))
                                         .foregroundStyle(LocusTheme.muted)
                                 }

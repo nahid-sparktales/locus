@@ -109,7 +109,7 @@ struct WorkspaceView: View {
                         .accessibilityHidden(true)
                     Text(URL(fileURLWithPath: model.workspacePath).lastPathComponent)
                         .accessibilityIdentifier("workspace.breadcrumb.path")
-                    if let branch = model.gitBranch {
+                    if let branch = model.gitWorkspace.gitBranch {
                         HStack(spacing: 3) {
                             Image(systemName: "arrow.triangle.branch")
                                 .font(.locus(size: 7))
