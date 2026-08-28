@@ -428,7 +428,7 @@ struct ModelLibraryView: View {
                                 .foregroundStyle(LocusTheme.muted)
                             Text(variant.fileName)
                                 .font(.locus(size: 7, design: .monospaced))
-                                .foregroundStyle(LocusTheme.muted.opacity(0.75))
+                                .foregroundStyle(LocusTheme.muted)
                                 .lineLimit(2)
                             if variant.quantization == library.recommendedQuant {
                                 Text("Fits comfortably while leaving room for the runtime and context window.")

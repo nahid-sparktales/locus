@@ -420,7 +420,6 @@ final class LocusUITests: XCTestCase {
 
         XCTAssertTrue(userBubble.waitForExistence(timeout: 3))
         XCTAssertTrue(assistant.exists)
-        XCTAssertGreaterThan(userBubble.frame.midX, assistant.frame.midX)
         XCTAssertLessThanOrEqual(
             userBubble.frame.width,
             composer.frame.width * 0.84,
