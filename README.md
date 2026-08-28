@@ -215,6 +215,9 @@ flutter build ios --simulator --no-codesign
 
 ## Architecture
 
+See [Architecture and ownership boundaries](Docs/Architecture.md) for the
+module map, dependency rules, and reviewability guardrails.
+
 The SwiftUI app owns the interface, workspace access, native terminal, Keychain integration, and permission surfaces. A bundled Python service owns agent orchestration, model streaming, tools, sessions, and run persistence. They communicate over authenticated REST and WebSocket endpoints bound to `127.0.0.1`.
 
 ChatGPT-plan requests use a pinned Codex App Server child process over local JSONL/stdio while keeping Locus's permission manager and tool set in control. In the direct download that child is the downloaded component; in the App Store build it is bundled. Either way the agent resolves it from one path that it re-checks on demand, so installing the component takes effect without restarting the agent or losing a session.

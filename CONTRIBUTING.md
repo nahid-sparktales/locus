@@ -66,6 +66,11 @@ change will be overwritten.
 
 ## What makes a good change
 
+- **Put new work behind an owner.** Follow the
+  [architecture and ownership boundaries](Docs/Architecture.md). `AppModel` and
+  `server.py` compose features; they are not default homes for new feature
+  state or route declarations. Run `python3 Tools/ReviewabilityReport.py` to
+  see the same advisory size and boundary signals shown in CI.
 - **Explain why in the commit message.** The history here is written to be read:
   what was wrong, and why the fix is shaped the way it is. A message that only
   restates the diff is less useful than the diff.
