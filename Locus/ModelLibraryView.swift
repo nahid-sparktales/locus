@@ -292,8 +292,15 @@ struct ModelLibraryView: View {
                         .accessibilityIdentifier("modelLibrary.searching")
                 } else {
                     Text("\(library.results.count)")
-                        .font(.locus(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundStyle(LocusTheme.ink)
+                        .font(.locus(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundStyle(LocusTheme.surfaceCard)
+                        .frame(minWidth: 24)
+                        .padding(.vertical, 3)
+                        .background {
+                            Capsule(style: .continuous)
+                                .fill(LocusTheme.ink)
+                        }
+                        .accessibilityLabel("\(library.results.count) models")
                         .accessibilityIdentifier("modelLibrary.resultCount")
                 }
             }
