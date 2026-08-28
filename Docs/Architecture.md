@@ -46,15 +46,22 @@ dependencies resolve from the concrete request application.
 
 - `chat_service.py` owns stateful chat and orchestration runtime behavior.
 - `api/dependencies.py` owns per-application service resolution.
+- `api/workspace.py` owns both the Git inspection route map and its request
+  handlers. `api/evaluations.py` owns evaluation CRUD and grading; its
+  long-running run/cancel handlers remain explicit compatibility dependencies
+  until evaluation execution moves as a separate behavior slice.
 - `api/system.py`, `providers.py`, `continuity.py`, `knowledge.py`,
-  `evaluations.py`, `sessions.py`, `schedules.py`, `runs.py`, `workspace.py`,
-  and `extensions.py` own the HTTP route map for their domains.
+  `sessions.py`, `schedules.py`, `runs.py`, and `extensions.py` own the HTTP
+  route map for their domains and are the remaining handler-ownership backlog.
 - `api/chat_transport.py` owns the WebSocket route map.
 
-API modules receive explicit handler/dependency surfaces and must not import
-`server.py` or a module-global application. New routes belong in the matching
-domain module. `server.app` exists as the uvicorn/import compatibility entry
-point; tests and embedders should construct an isolated app with `create_app()`.
+API modules resolve request-owned services through `api/dependencies.py` and
+must not import `server.py` or a module-global application. A temporary handler
+module parameter is allowed only for named compatibility handlers while a
+domain migrates. New routes and their ordinary request behavior belong in the
+matching domain module. `server.app` exists as the uvicorn/import compatibility
+entry point; tests and embedders should construct an isolated app with
+`create_app()`.
 
 ## Reviewable changes
 

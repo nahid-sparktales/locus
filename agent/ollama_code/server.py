@@ -46,7 +46,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse
 
-from . import __version__, gitinfo, proxy
+from . import __version__, proxy
 from .agent_config import AgentConfiguration
 from .api.dependencies import current_service, request_service_context
 from .api.dependencies import service_from_app as _service_from_app
@@ -77,7 +77,6 @@ from .devserver import DevServerError
 from .evaluations import (
     EvaluationError,
     EvaluationStore,
-    compare_results,
     grade_case,
     summarize_results,
 )
@@ -921,103 +920,12 @@ def mcp_task_cancel(task_id: str) -> dict[str, Any]:
         raise HTTPException(409, str(exc)) from exc
 
 
-# --------------------------------------------------------------- Evaluations
-
-
-def _evaluation_store() -> EvaluationStore:
-    _require_capability("evaluations")
-    return EvaluationStore(service().run_store)
-
-
-def evaluation_list(workspace: str = Query(default="")) -> dict[str, Any]:
-    return {"suites": _evaluation_store().list_suites(workspace)}
-
-
-def evaluation_create(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
-    try:
-        return {"ok": True, "suite": _evaluation_store().save_suite(body)}
-    except EvaluationError as exc:
-        raise HTTPException(422, str(exc)) from exc
-
-
-def evaluation_detail(suite_id: str) -> dict[str, Any]:
-    suite = _evaluation_store().get_suite(suite_id)
-    if suite is None:
-        raise HTTPException(404, "evaluation suite not found")
-    results = _evaluation_store().results(suite_id)
-    return {
-        "suite": suite, "results": results,
-        "summary": summarize_results(results), "comparison": compare_results(results),
-    }
-
-
-def evaluation_comparison(suite_id: str) -> dict[str, Any]:
-    if _evaluation_store().get_suite(suite_id) is None:
-        raise HTTPException(404, "evaluation suite not found")
-    results = _evaluation_store().results(suite_id)
-    return {"suite_id": suite_id, "configurations": compare_results(results)}
-
-
-def evaluation_export(suite_id: str, include_results: bool = Query(default=False)) -> dict[str, Any]:
-    suite = _evaluation_store().get_suite(suite_id)
-    if suite is None:
-        raise HTTPException(404, "evaluation suite not found")
-    export: dict[str, Any] = {"schema_version": 1, "suite": suite}
-    if include_results:
-        export["results"] = _evaluation_store().results(suite_id)
-    return export
-
-
-def evaluation_update(
-    suite_id: str, body: dict[str, Any] = Body(default_factory=dict)
-) -> dict[str, Any]:
-    try:
-        return {"ok": True, "suite": _evaluation_store().save_suite(body, suite_id)}
-    except EvaluationError as exc:
-        raise HTTPException(422, str(exc)) from exc
-
-
-def evaluation_delete(suite_id: str) -> dict[str, Any]:
-    if not _evaluation_store().delete_suite(suite_id):
-        raise HTTPException(404, "evaluation suite not found")
-    return {"ok": True, "id": suite_id}
-
-
-def evaluation_grade(
-    suite_id: str, body: dict[str, Any] = Body(default_factory=dict)
-) -> dict[str, Any]:
-    suite = _evaluation_store().get_suite(suite_id)
-    if suite is None:
-        raise HTTPException(404, "evaluation suite not found")
-    case_id = str(body.get("case_id") or "")
-    case = next((item for item in suite["cases"] if item["id"] == case_id), None)
-    if case is None:
-        raise HTTPException(404, "evaluation case not found")
-    checkout = str(body.get("checkout") or "")
-    source_root = Path(suite["workspace_root"]).resolve()
-    checkout_path = Path(checkout).resolve()
-    if checkout_path != source_root or str(case.get("mode")) != "read_only":
-        # Managed evaluation checkouts live outside the source root; require a
-        # known TaskCheckout record instead of accepting arbitrary paths.
-        task_id = str(body.get("task_id") or "")
-        task = TaskCheckoutStore.load(task_id) if task_id else None
-        if task is None or Path(task.execution_path).resolve() != checkout_path:
-            raise HTTPException(422, "checkout is not a managed evaluation task")
-    try:
-        result = grade_case(
-            case, checkout, str(body.get("output") or ""),
-            [str(item) for item in body.get("changed_paths") or []],
-        )
-    except EvaluationError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    return {"case_id": case_id, **result}
-
-
 async def evaluation_run(
     suite_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
     svc = service()
-    suite = _evaluation_store().get_suite(suite_id)
+    _require_capability("evaluations")
+    suite = EvaluationStore(svc.run_store).get_suite(suite_id)
     if suite is None:
         raise HTTPException(404, "evaluation suite not found")
     manifest = body.get("manifest")
@@ -3571,33 +3479,6 @@ def session_handoff(
         raise HTTPException(409, str(exc)) from exc
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(422, str(exc)) from exc
-
-
-def git_status(untracked: str = "normal") -> dict[str, Any]:
-    """Working-tree status for the Changes panel.
-
-    Sync `def` on purpose: Starlette runs it in the threadpool, so a slow git
-    never blocks the event loop or the WebSocket pump. Never gated on `busy` —
-    the panel needs to refresh precisely while the agent is editing.
-    """
-    return gitinfo.status(service().core.cwd, untracked=untracked)
-
-
-def git_diff(
-    path: str,
-    staged: bool = False,
-    context: int = 3,
-    max_bytes: int = gitinfo.MAX_DIFF_BYTES,
-) -> dict[str, Any]:
-    """Unified diff for one file. `path` is a query param because file paths
-    contain slashes."""
-    return gitinfo.file_diff(
-        service().core.cwd,
-        path=path,
-        staged=staged,
-        context=context,
-        max_bytes=max(1_000, min(max_bytes, gitinfo.MAX_DIFF_BYTES)),
-    )
 
 
 def list_tools() -> dict[str, Any]:

@@ -25,6 +25,10 @@ APP_MODEL_STATE = re.compile(r"^\s{4}@Published\b")
 APP_MODEL_ACTION = re.compile(r"^\s{4}(?:static\s+)?func\s+([A-Za-z_][A-Za-z0-9_]*)")
 SERVER_FUNCTION = re.compile(r"^(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)")
 ROUTE_HANDLER = re.compile(r"handlers\.([A-Za-z_][A-Za-z0-9_]*)")
+DOMAIN_HANDLER_LEGACY_ALLOWLIST = {
+    "workspace.py": set(),
+    "evaluations.py": {"evaluation_run", "evaluation_cancel"},
+}
 
 
 @dataclass(frozen=True)
@@ -238,6 +242,18 @@ def boundary_findings() -> list[Finding]:
                     "API modules must receive handlers/dependencies; they cannot import the composition root.",
                 )
             )
+        if path.name in DOMAIN_HANDLER_LEGACY_ALLOWLIST:
+            allowed = DOMAIN_HANDLER_LEGACY_ALLOWLIST[path.name]
+            unexpected = set(ROUTE_HANDLER.findall(source)) - allowed
+            if unexpected:
+                findings.append(
+                    Finding(
+                        "attention",
+                        _relative(path),
+                        "Domain-owned routes must register local handlers; "
+                        f"unexpected server handlers: {', '.join(sorted(unexpected))}.",
+                    )
+                )
     server = ROOT / "agent" / "ollama_code" / "server.py"
     for line_number, line in enumerate(
         server.read_text(encoding="utf-8").splitlines(), 1

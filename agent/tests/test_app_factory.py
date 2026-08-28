@@ -7,7 +7,7 @@ from ollama_code import server
 
 
 def _service(name: str):
-    core = SimpleNamespace(provider_state=lambda: {"provider": name})
+    core = SimpleNamespace(provider_state=lambda: {"provider": name}, cwd=name)
     return SimpleNamespace(core=core)
 
 
@@ -32,6 +32,24 @@ def test_create_app_keeps_service_state_isolated():
         first.close()
         second.close()
         unconfigured.close()
+
+
+def test_domain_owned_routes_keep_service_state_isolated(monkeypatch):
+    from ollama_code.api import workspace
+
+    monkeypatch.setattr(
+        workspace.gitinfo,
+        "status",
+        lambda root, **_options: {"ok": True, "workspace": root},
+    )
+    first = TestClient(server.create_app(chat_service=_service("first")))
+    second = TestClient(server.create_app(chat_service=_service("second")))
+    try:
+        assert first.get("/api/git/status").json()["workspace"] == "first"
+        assert second.get("/api/git/status").json()["workspace"] == "second"
+    finally:
+        first.close()
+        second.close()
 
 
 def test_public_route_contract_matches_snapshot():

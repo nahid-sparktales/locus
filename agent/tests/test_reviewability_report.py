@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from Tools import ReviewabilityReport as report
 
 
@@ -68,3 +70,19 @@ def test_server_composition_helpers_are_not_treated_as_route_handlers() -> None:
         )
         is None
     )
+
+
+def test_domain_owned_route_allowlist_matches_remaining_legacy_execution_handlers() -> None:
+    from ollama_code.api import evaluations, workspace
+
+    assert workspace.__file__ is not None
+    assert evaluations.__file__ is not None
+    workspace_handlers = set(
+        report.ROUTE_HANDLER.findall(Path(workspace.__file__).read_text(encoding="utf-8"))
+    )
+    evaluation_handlers = set(
+        report.ROUTE_HANDLER.findall(Path(evaluations.__file__).read_text(encoding="utf-8"))
+    )
+
+    assert workspace_handlers == report.DOMAIN_HANDLER_LEGACY_ALLOWLIST["workspace.py"]
+    assert evaluation_handlers == report.DOMAIN_HANDLER_LEGACY_ALLOWLIST["evaluations.py"]
