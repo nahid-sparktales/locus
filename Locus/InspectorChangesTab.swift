@@ -4,6 +4,7 @@ import SwiftUI
 /// the current conversation happened to touch.
 struct InspectorChangesTab: View {
     @EnvironmentObject private var model: AppModel
+    @ObservedObject var gitWorkspace: GitWorkspaceModel
     @State private var newBranchPresented = false
     @State private var newBranchName = ""
 
@@ -11,16 +12,17 @@ struct InspectorChangesTab: View {
         VStack(spacing: 0) {
             header
 
-            if model.gitChanges.isEmpty {
+            if gitWorkspace.gitChanges.isEmpty {
                 emptyState
             } else {
                 ScrollView {
                     LazyVStack(spacing: 4) {
-                        ForEach(Array(model.gitChanges.enumerated()), id: \.element.id) { index, change in
+                        ForEach(Array(gitWorkspace.gitChanges.enumerated()), id: \.element.id) { index, change in
                             GitChangeRow(
+                                gitWorkspace: gitWorkspace,
                                 change: change,
                                 index: index,
-                                isSelected: model.selectedChangePath == change.path
+                                isSelected: gitWorkspace.selectedChangePath == change.path
                             )
                             .environmentObject(model)
                         }
@@ -33,7 +35,7 @@ struct InspectorChangesTab: View {
                 commitArea
             }
 
-            if model.isGitRepository, !GitRemoteFeatures.isAvailable {
+            if gitWorkspace.isGitRepository, !GitRemoteFeatures.isAvailable {
                 Text(
                     "Push and pull need your SSH agent, which the App Store sandbox "
                     + "cannot reach — use the direct build or a terminal. Locus never uses Keychain."
@@ -47,32 +49,32 @@ struct InspectorChangesTab: View {
             }
         }
         .task(id: model.workspacePath) {
-            model.refreshGitStatus()
+            gitWorkspace.refreshStatus()
         }
         .alert(
-            "Discard changes to \(model.pendingDiscard?.name ?? "this file")?",
+            "Discard changes to \(gitWorkspace.pendingDiscard?.name ?? "this file")?",
             isPresented: Binding(
-                get: { model.pendingDiscard != nil },
-                set: { if !$0 { model.pendingDiscard = nil } }
+                get: { gitWorkspace.pendingDiscard != nil },
+                set: { if !$0 { gitWorkspace.pendingDiscard = nil } }
             )
         ) {
             Button("Cancel", role: .cancel) {}
-            Button("Discard", role: .destructive) { model.discardConfirmed() }
+            Button("Discard", role: .destructive) { gitWorkspace.discardConfirmed() }
                 .accessibilityIdentifier("changes.discard.confirm")
         } message: {
-            Text(model.pendingDiscard?.status == .untracked
+            Text(gitWorkspace.pendingDiscard?.status == .untracked
                 ? "This file is not tracked by git — it will move to the Trash."
                 : "Staged and unstaged edits to this file will be restored to the last committed version.")
         }
         .alert(
             "Discard this hunk?",
             isPresented: Binding(
-                get: { model.pendingHunkDiscard != nil },
-                set: { if !$0 { model.pendingHunkDiscard = nil } }
+                get: { gitWorkspace.pendingHunkDiscard != nil },
+                set: { if !$0 { gitWorkspace.pendingHunkDiscard = nil } }
             )
         ) {
             Button("Cancel", role: .cancel) {}
-            Button("Discard", role: .destructive) { model.discardHunkConfirmed() }
+            Button("Discard", role: .destructive) { gitWorkspace.discardHunkConfirmed() }
                 .accessibilityIdentifier("changes.discardHunk.confirm")
         } message: {
             Text(
@@ -85,7 +87,7 @@ struct InspectorChangesTab: View {
                 .accessibilityIdentifier("changes.branch.create.input")
             Button("Cancel", role: .cancel) { newBranchName = "" }
             Button("Create") {
-                model.createBranch(newBranchName)
+                gitWorkspace.createBranch(newBranchName)
                 newBranchName = ""
             }
             .disabled(GitBranchName.validationError(newBranchName) != nil)
@@ -98,7 +100,7 @@ struct InspectorChangesTab: View {
     /// Message field, AI draft, and commit — the write half of the tab.
     private var commitArea: some View {
         VStack(spacing: 8) {
-            TextField("Commit message", text: $model.commitMessage, axis: .vertical)
+            TextField("Commit message", text: $gitWorkspace.commitMessage, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.locus(size: 10))
                 .lineLimit(1...3)
@@ -109,10 +111,10 @@ struct InspectorChangesTab: View {
 
             HStack(spacing: 8) {
                 Button {
-                    model.draftCommitMessage()
+                    gitWorkspace.draftCommitMessage()
                 } label: {
                     HStack(spacing: 5) {
-                        if model.isDraftingCommitMessage {
+                        if gitWorkspace.isDraftingCommitMessage {
                             ProgressView().controlSize(.mini)
                             Text("Drafting…")
                         } else {
@@ -124,26 +126,26 @@ struct InspectorChangesTab: View {
                     .foregroundStyle(LocusTheme.muted)
                 }
                 .buttonStyle(.locus())
-                .disabled(model.stagedChangeCount == 0 && !model.isDraftingCommitMessage)
+                .disabled(gitWorkspace.stagedChangeCount == 0 && !gitWorkspace.isDraftingCommitMessage)
                 .help("Draft a message from the staged diff with the local model")
                 .accessibilityIdentifier("changes.draftMessage")
 
                 Spacer()
 
-                Text("\(model.stagedChangeCount) staged")
+                Text("\(gitWorkspace.stagedChangeCount) staged")
                     .font(.locus(size: 8, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
 
                 Button("Commit") {
-                    model.commitStaged()
+                    gitWorkspace.commitStaged()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(LocusTheme.ink)
                 .controlSize(.small)
                 .disabled(
-                    model.stagedChangeCount == 0
-                        || model.commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || model.isPerformingGitAction
+                    gitWorkspace.stagedChangeCount == 0
+                        || gitWorkspace.commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || gitWorkspace.isPerformingGitAction
                 )
                 .accessibilityIdentifier("changes.commit")
             }
@@ -157,7 +159,7 @@ struct InspectorChangesTab: View {
     private var header: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
-                if model.isGitRepository {
+                if gitWorkspace.isGitRepository {
                     branchControl
                 } else {
                     Text("WORKING TREE")
@@ -165,7 +167,7 @@ struct InspectorChangesTab: View {
                         .tracking(0.8)
                         .foregroundStyle(LocusTheme.muted)
                 }
-                Text(model.gitChangeSummary)
+                Text(gitWorkspace.gitChangeSummary)
                     .font(.locus(size: 11, weight: .bold))
                     .lineLimit(1)
                     .accessibilityIdentifier("changes.summary")
@@ -174,7 +176,7 @@ struct InspectorChangesTab: View {
 
             syncCluster
 
-            if model.lastGitRefreshFailed {
+            if gitWorkspace.lastGitRefreshFailed {
                 Image(systemName: "exclamationmark.triangle")
                     .font(.locus(size: 9, weight: .semibold))
                     .foregroundStyle(LocusTheme.warning)
@@ -182,11 +184,11 @@ struct InspectorChangesTab: View {
                     .accessibilityLabel("Change list may be stale")
                     .accessibilityIdentifier("changes.staleWarning")
             }
-            if model.isRefreshingGitStatus {
+            if gitWorkspace.isRefreshingGitStatus {
                 ProgressView().controlSize(.small)
             }
             Button {
-                model.refreshGitStatus()
+                gitWorkspace.refreshStatus()
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
@@ -219,10 +221,10 @@ struct InspectorChangesTab: View {
     /// the short SHA and the menu is disabled — there is no branch to leave.
     @ViewBuilder
     private var branchControl: some View {
-        if model.gitDetached {
+        if gitWorkspace.gitDetached {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.triangle.branch")
-                Text(model.gitBranch ?? "detached HEAD")
+                Text(gitWorkspace.gitBranch ?? "detached HEAD")
             }
             .font(.locus(size: 8, weight: .bold))
             .foregroundStyle(LocusTheme.muted)
@@ -230,17 +232,17 @@ struct InspectorChangesTab: View {
             .accessibilityIdentifier("changes.branch")
         } else {
             Menu {
-                ForEach(model.localBranches, id: \.self) { branch in
+                ForEach(gitWorkspace.localBranches, id: \.self) { branch in
                     Button {
-                        model.switchBranch(branch)
+                        gitWorkspace.switchBranch(branch)
                     } label: {
-                        if branch == model.gitBranch {
+                        if branch == gitWorkspace.gitBranch {
                             Label(branch, systemImage: "checkmark")
                         } else {
                             Text(branch)
                         }
                     }
-                    .disabled(branch == model.gitBranch)
+                    .disabled(branch == gitWorkspace.gitBranch)
                 }
                 Divider()
                 Button("New Branch…") { newBranchPresented = true }
@@ -248,7 +250,7 @@ struct InspectorChangesTab: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.triangle.branch")
-                    Text(model.gitBranch ?? "no branch")
+                    Text(gitWorkspace.gitBranch ?? "no branch")
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
                         .font(.locus(size: 6, weight: .bold))
@@ -263,26 +265,26 @@ struct InspectorChangesTab: View {
             // Menus have no will-open hook; hover precedes the click that
             // opens one, so the list is fresh by the time it shows.
             .onHover { hovering in
-                if hovering { model.loadLocalBranches() }
+                if hovering { gitWorkspace.loadLocalBranches() }
             }
-            .disabled(model.isPerformingGitAction)
+            .disabled(gitWorkspace.isPerformingGitAction)
             .help("Switch or create a branch")
-            .accessibilityLabel("Branch \(model.gitBranch ?? "unknown")")
+            .accessibilityLabel("Branch \(gitWorkspace.gitBranch ?? "unknown")")
             .accessibilityIdentifier("changes.branch")
         }
     }
 
     @ViewBuilder
     private var syncCluster: some View {
-        if model.isGitRepository, !model.gitDetached {
-            if model.gitAhead > 0 || model.gitBehind > 0 {
-                Text("↑\(model.gitAhead) ↓\(model.gitBehind)")
+        if gitWorkspace.isGitRepository, !gitWorkspace.gitDetached {
+            if gitWorkspace.gitAhead > 0 || gitWorkspace.gitBehind > 0 {
+                Text("↑\(gitWorkspace.gitAhead) ↓\(gitWorkspace.gitBehind)")
                     .font(.locus(size: 8, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
-                    .help("\(model.gitAhead) to push, \(model.gitBehind) to pull")
+                    .help("\(gitWorkspace.gitAhead) to push, \(gitWorkspace.gitBehind) to pull")
                     .accessibilityIdentifier("changes.sync.counts")
             }
-            if model.isSyncingRemote {
+            if gitWorkspace.isSyncingRemote {
                 ProgressView().controlSize(.mini)
             }
             if GitRemoteFeatures.isAvailable {
@@ -290,29 +292,29 @@ struct InspectorChangesTab: View {
                     symbol: "arrow.down.circle",
                     help: "Fetch from the remote",
                     identifier: "changes.fetch"
-                ) { model.fetchRemote() }
-                    .disabled(model.isSyncingRemote)
+                ) { gitWorkspace.fetchRemote() }
+                    .disabled(gitWorkspace.isSyncingRemote)
                 headerButton(
                     symbol: "arrow.down.to.line",
                     help: "Pull (fast-forward only)",
                     identifier: "changes.pull"
-                ) { model.pullFastForwardOnly() }
-                    .disabled(model.isSyncingRemote || model.gitBehind == 0)
+                ) { gitWorkspace.pullFastForwardOnly() }
+                    .disabled(gitWorkspace.isSyncingRemote || gitWorkspace.gitBehind == 0)
                 headerButton(
                     symbol: "arrow.up.circle",
-                    help: model.gitUpstream == nil
+                    help: gitWorkspace.gitUpstream == nil
                         ? "Publish this branch to origin"
-                        : "Push to \(model.gitUpstream ?? "the upstream")",
+                        : "Push to \(gitWorkspace.gitUpstream ?? "the upstream")",
                     identifier: "changes.push"
-                ) { model.pushCurrentBranch() }
-                    .disabled(model.isSyncingRemote || !model.gitHasCommits)
+                ) { gitWorkspace.pushCurrentBranch() }
+                    .disabled(gitWorkspace.isSyncingRemote || !gitWorkspace.gitHasCommits)
             }
-            if model.originIsGitHub, model.gitUpstream != nil {
+            if gitWorkspace.originIsGitHub, gitWorkspace.gitUpstream != nil {
                 headerButton(
                     symbol: "arrow.triangle.pull",
                     help: "Open a pull request on GitHub",
                     identifier: "changes.pr"
-                ) { model.openPullRequest() }
+                ) { gitWorkspace.openPullRequest() }
             }
         }
     }
@@ -336,9 +338,9 @@ struct InspectorChangesTab: View {
 
     private var emptyState: some View {
         InspectorPlaceholder(
-            symbol: model.isGitRepository ? "checkmark.circle" : "doc.text.magnifyingglass",
-            title: model.isGitRepository ? "Nothing changed" : "Not a git repository",
-            message: model.isGitRepository
+            symbol: gitWorkspace.isGitRepository ? "checkmark.circle" : "doc.text.magnifyingglass",
+            title: gitWorkspace.isGitRepository ? "Nothing changed" : "Not a git repository",
+            message: gitWorkspace.isGitRepository
                 ? "Edits to files in this workspace show up here, whoever made them."
                 : "Changes are read from git. Initialize a repository to review edits here.",
             identifier: "changes.empty"
@@ -350,6 +352,7 @@ struct InspectorChangesTab: View {
 /// and its diff inline.
 private struct GitChangeRow: View {
     @EnvironmentObject private var model: AppModel
+    @ObservedObject var gitWorkspace: GitWorkspaceModel
     let change: GitChange
     let index: Int
     let isSelected: Bool
@@ -360,9 +363,9 @@ private struct GitChangeRow: View {
             HStack(spacing: 4) {
                 Button {
                     if isSelected {
-                        model.clearSelectedChange()
+                        gitWorkspace.clearSelection()
                     } else {
-                        model.loadDiff(for: change)
+                        gitWorkspace.loadDiff(for: change)
                     }
                 } label: {
                     HStack(spacing: 8) {
@@ -417,8 +420,8 @@ private struct GitChangeRow: View {
                     if change.staged, change.unstaged {
                         diffScopePicker
                     }
-                    if let diff = model.selectedChangeDiff {
-                        if let parsed = model.selectedChangeParsedDiff,
+                    if let diff = gitWorkspace.selectedChangeDiff {
+                        if let parsed = gitWorkspace.selectedChangeParsedDiff,
                            !parsed.hunks.isEmpty, !parsed.isRenameOrCopy {
                             hunkList(parsed)
                         } else {
@@ -464,8 +467,8 @@ private struct GitChangeRow: View {
     /// actions always operate on the side the user is looking at.
     private var diffScopePicker: some View {
         Picker("Diff scope", selection: Binding(
-            get: { model.selectedChangeShowsStaged },
-            set: { model.loadDiff(for: change, staged: $0) }
+            get: { gitWorkspace.selectedChangeShowsStaged },
+            set: { gitWorkspace.loadDiff(for: change, staged: $0) }
         )) {
             Text("Unstaged").tag(false)
             Text("Staged").tag(true)
@@ -500,24 +503,24 @@ private struct GitChangeRow: View {
                                     : "changes.file.\(index).hunk.\(position).header"
                             )
                         Spacer(minLength: 4)
-                        if model.selectedChangeShowsStaged {
+                        if gitWorkspace.selectedChangeShowsStaged {
                             hunkButton(
                                 symbol: "minus.circle",
                                 help: "Unstage this hunk",
                                 identifier: "changes.file.\(index).hunk.\(position).unstage"
-                            ) { model.unstageHunk(hunk) }
-                                .disabled(!model.gitHasCommits)
+                            ) { gitWorkspace.unstageHunk(hunk) }
+                                .disabled(!gitWorkspace.gitHasCommits)
                         } else {
                             hunkButton(
                                 symbol: "plus.circle",
                                 help: "Stage this hunk",
                                 identifier: "changes.file.\(index).hunk.\(position).stage"
-                            ) { model.stageHunk(hunk) }
+                            ) { gitWorkspace.stageHunk(hunk) }
                             hunkButton(
                                 symbol: "arrow.uturn.backward",
                                 help: "Discard this hunk…",
                                 identifier: "changes.file.\(index).hunk.\(position).discard"
-                            ) { model.requestDiscardHunk(hunk) }
+                            ) { gitWorkspace.requestDiscardHunk(hunk) }
                         }
                     }
                     .padding(.horizontal, 10)
@@ -535,7 +538,7 @@ private struct GitChangeRow: View {
                 }
             }
         }
-        .disabled(model.isPerformingGitAction)
+        .disabled(gitWorkspace.isPerformingGitAction)
     }
 
     private func hunkButton(
@@ -564,22 +567,22 @@ private struct GitChangeRow: View {
                     symbol: "minus.circle",
                     help: "Unstage",
                     identifier: "changes.file.\(index).unstage"
-                ) { model.unstageChange(change) }
+                ) { gitWorkspace.unstageChange(change) }
             }
             if change.unstaged || change.status == .untracked {
                 actionButton(
                     symbol: "plus.circle",
                     help: "Stage",
                     identifier: "changes.file.\(index).stage"
-                ) { model.stageChange(change) }
+                ) { gitWorkspace.stageChange(change) }
             }
             actionButton(
                 symbol: "arrow.uturn.backward",
                 help: change.status == .untracked ? "Move to Trash…" : "Discard changes…",
                 identifier: "changes.file.\(index).discard"
-            ) { model.requestDiscard(change) }
+            ) { gitWorkspace.requestDiscard(change) }
         }
-        .disabled(model.isPerformingGitAction)
+        .disabled(gitWorkspace.isPerformingGitAction)
     }
 
     private func actionButton(

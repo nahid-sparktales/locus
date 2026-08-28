@@ -155,6 +155,89 @@ class FakeManagedRuntime:
         return {"status": "completed"}
 
 
+class StructuredManagedRuntime(FakeManagedRuntime):
+    def run_turn(self, *, text, event_handler, **_kwargs):
+        self.turn_texts.append(text)
+        for event in [
+            {
+                "method": "item/started",
+                "params": {"item": {"id": "reason-1", "type": "reasoning"}},
+            },
+            {
+                "method": "item/reasoning/summaryPartAdded",
+                "params": {"itemId": "reason-1", "summaryIndex": 0},
+            },
+            {
+                "method": "item/reasoning/summaryTextDelta",
+                "params": {
+                    "itemId": "reason-1", "summaryIndex": 0,
+                    "delta": "draft summary",
+                },
+            },
+            {
+                "method": "item/reasoning/textDelta",
+                "params": {"itemId": "reason-1", "delta": "private chain of thought"},
+            },
+            {
+                "method": "item/completed",
+                "params": {"item": {
+                    "id": "reason-1", "type": "reasoning",
+                    "summary": [
+                        {"type": "summary_text", "text": "**Loading skill**"},
+                        {"type": "summary_text", "text": "**Fetching data**"},
+                    ],
+                }},
+            },
+            {
+                "method": "item/started",
+                "params": {"item": {
+                    "id": "commentary-1", "type": "agentMessage",
+                    "phase": "commentary",
+                }},
+            },
+            {
+                "method": "item/agentMessage/delta",
+                "params": {"itemId": "commentary-1", "delta": "Using **weather**."},
+            },
+            {
+                "method": "item/completed",
+                "params": {"item": {
+                    "id": "commentary-1", "type": "agentMessage",
+                    "phase": "commentary", "text": "Using **weather** to check.",
+                }},
+            },
+            # Duplicate completion must not create a duplicate transcript row.
+            {
+                "method": "item/completed",
+                "params": {"item": {
+                    "id": "commentary-1", "type": "agentMessage",
+                    "phase": "commentary", "text": "Using **weather** to check.",
+                }},
+            },
+            {
+                "method": "item/agentMessage/delta",
+                "params": {"itemId": "final-1", "delta": "joined draft"},
+            },
+            {
+                "method": "item/completed",
+                "params": {"item": {
+                    "id": "final-1", "type": "agentMessage",
+                    "phase": "final_answer",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "- **Seoul:** 25°C\n- **Dubai:** 33°C",
+                    }],
+                }},
+            },
+            {
+                "method": "thread/tokenUsage/updated",
+                "params": {"tokenUsage": {"last": {"inputTokens": 6, "outputTokens": 4}}},
+            },
+        ]:
+            event_handler(event)
+        return {"status": "completed"}
+
+
 def _managed_core(tmp_path, runtime):
     core = AgentCore(cwd=str(tmp_path), config={})
     core.use_chatgpt(
@@ -192,11 +275,71 @@ def test_managed_reasoning_streams_only_provider_summary(tmp_path):
 
     core.run_turn("inspect", allow_tools=False)
 
-    thinking = "".join(event.get("text", "") for event in events if event["type"] == "thinking")
-    assert thinking == "Checked the workspace."
-    assert "private chain of thought" not in thinking
-    assistant = next(message for message in reversed(core.messages) if message["role"] == "assistant")
-    assert assistant["_display_reasoning"] == "Checked the workspace."
+    deltas = [event for event in events if event["type"] == "assistant_item_delta"]
+    assert "".join(event.get("text", "") for event in deltas) == (
+        "Checked the workspace.managed answer"
+    )
+    assert "private chain of thought" not in str(events)
+    stored = core.session.load(core.session.path)
+    reasoning = next(message for message in stored if message.get("_display_only"))
+    assert reasoning["_display_reasoning_sections"] == ["Checked the workspace."]
+    assert reasoning["_display_reasoning"] == "Checked the workspace."
+
+
+def test_managed_items_preserve_phases_sections_and_authoritative_completion(tmp_path):
+    runtime = StructuredManagedRuntime()
+    core = _managed_core(tmp_path, runtime)
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn("inspect", allow_tools=False)
+
+    starts = [event for event in events if event["type"] == "assistant_item_start"]
+    assert [(event["item_id"], event["kind"], event.get("phase")) for event in starts] == [
+        ("reason-1", "reasoning", None),
+        ("commentary-1", "message", "commentary"),
+        ("final-1", "message", "final_answer"),
+    ]
+    ends = [event for event in events if event["type"] == "assistant_item_end"]
+    assert ends[0]["sections"] == ["**Loading skill**", "**Fetching data**"]
+    assert ends[1]["phase"] == "commentary"
+    assert ends[1]["text"] == "Using **weather** to check."
+    assert ends[2]["phase"] == "final_answer"
+    assert ends[2]["text"].startswith("- **Seoul:**")
+    assert "joined draft" not in ends[2]["text"]
+    assert "private chain of thought" not in str(events)
+
+    stored = core.session.load(core.session.path)
+    assistant = [message for message in stored if message.get("role") == "assistant"]
+    assert len(assistant) == 3
+    assert assistant[0]["_display_reasoning_sections"] == [
+        "**Loading skill**", "**Fetching data**",
+    ]
+    assert assistant[1]["_phase"] == "commentary"
+    assert assistant[2]["_phase"] == "final_answer"
+    assert assistant[2]["content"].startswith("- **Seoul:**")
+    assert all(not message.get("_display_only") for message in core.messages)
+
+
+def test_managed_structured_history_survives_resume_without_reasoning_in_context(tmp_path):
+    runtime = StructuredManagedRuntime()
+    core = _managed_core(tmp_path, runtime)
+    core.run_turn("inspect", allow_tools=False)
+    session_id = core.session.session_id
+
+    core.start_new_session()
+    result = core.resume_session(session_id)
+
+    restored = result["data"]["messages"]
+    reasoning = next(message for message in restored if message.get("reasoning_sections"))
+    assert reasoning["reasoning_sections"] == ["**Loading skill**", "**Fetching data**"]
+    assert next(message for message in restored if message.get("phase") == "commentary")[
+        "item_id"
+    ] == "commentary-1"
+    assert next(message for message in restored if message.get("phase") == "final_answer")[
+        "content"
+    ].startswith("- **Seoul:**")
+    assert all(not message.get("_display_only") for message in core.messages)
 
 
 def test_missing_managed_history_rebuilds_from_canonical_transcript(tmp_path):

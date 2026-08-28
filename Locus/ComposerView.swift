@@ -39,6 +39,12 @@ struct ComposerView: View {
     @State private var editorWidth: CGFloat = 600
     @FocusState private var focused: Bool
 
+    private var accentFill: Color { model.effectiveAccent.fillColor }
+    private var accentAction: Color { model.accentActionColor }
+    private var accentInk: Color {
+        Color(nsColor: model.effectiveAccent.brandInkNSColor())
+    }
+
     private enum Popup {
         case slash([SlashCommand])
         case routing([TeamMentionTarget])
@@ -132,7 +138,7 @@ struct ComposerView: View {
                     RoundedRectangle(cornerRadius: 13, style: .continuous)
                         .stroke(
                             focused
-                                ? LocusTheme.signalDeep.opacity(0.72)
+                                ? accentAction.opacity(0.72)
                                 : LocusTheme.separator,
                             lineWidth: focused ? 1.5 : 1
                         )
@@ -141,7 +147,7 @@ struct ComposerView: View {
                 .chatPasteInterceptor(editorFocused: focused)
                 .shadow(
                     color: focused
-                        ? LocusTheme.signalDeep.opacity(0.1)
+                        ? accentAction.opacity(0.1)
                         : Color.black.opacity(0.08),
                     radius: focused ? 24 : 22,
                     y: 9
@@ -192,7 +198,7 @@ struct ComposerView: View {
             }
             if !model.justChatEnabled,
                WorkspaceIndex.activeMention(in: model.draftText) != nil {
-                model.refreshWorkspaceIndex()
+                model.workspaceFiles.refresh()
             }
         }
     }
@@ -231,7 +237,7 @@ struct ComposerView: View {
             }
             let matches = WorkspaceIndex.matches(
                 query: mention.query,
-                in: model.workspaceFileIndex,
+                in: model.workspaceFiles.files,
                 root: model.workspacePath
             )
             return matches.isEmpty ? nil : .mention(matches)
@@ -574,7 +580,7 @@ struct ComposerView: View {
                         .lineLimit(1)
                 }
                 .font(.locus(size: 9, weight: .semibold))
-                .foregroundStyle(model.teamModeEnabled ? LocusTheme.signalDeep : LocusTheme.muted)
+                .foregroundStyle(model.teamModeEnabled ? accentAction : LocusTheme.muted)
                 .padding(.horizontal, 8)
                 .frame(height: 24)
                     .background(LocusTheme.paperDeep.opacity(0.8))
@@ -761,9 +767,9 @@ struct ComposerView: View {
                     } label: {
                         Image(systemName: "tray.and.arrow.down.fill")
                             .font(.locus(size: 12, weight: .bold))
-                            .foregroundStyle(canSubmit ? LocusTheme.brandInk : LocusTheme.muted)
+                            .foregroundStyle(canSubmit ? accentInk : LocusTheme.muted)
                             .frame(width: 32, height: 32)
-                            .background(canSubmit ? LocusTheme.signal : LocusTheme.paperDeep)
+                            .background(canSubmit ? accentFill : LocusTheme.paperDeep)
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.locus())
@@ -778,11 +784,11 @@ struct ComposerView: View {
                 } label: {
                     Image(systemName: "arrow.up")
                         .font(.locus(size: 13, weight: .bold))
-                        .foregroundStyle(canSubmit ? LocusTheme.brandInk : LocusTheme.muted)
+                        .foregroundStyle(canSubmit ? accentInk : LocusTheme.muted)
                         .frame(width: 32, height: 32)
                         .background(
                             canSubmit
-                                ? LocusTheme.signal
+                                ? accentFill
                                 : LocusTheme.paperDeep.opacity(0.75)
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -790,7 +796,7 @@ struct ComposerView: View {
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
                                 .stroke(
                                     canSubmit
-                                        ? LocusTheme.signalDeep.opacity(0.45)
+                                        ? accentAction.opacity(0.45)
                                         : LocusTheme.line,
                                     lineWidth: 1
                                 )
@@ -1041,7 +1047,7 @@ struct ComposerView: View {
                     } else {
                         Image(systemName: symbol)
                             .font(.locus(size: 10))
-                            .foregroundStyle(warning ? LocusTheme.warning : LocusTheme.signalDeep)
+                            .foregroundStyle(warning ? LocusTheme.warning : accentAction)
                             .frame(width: 22, height: 22)
                     }
                     Text(title)

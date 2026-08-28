@@ -602,10 +602,9 @@ def test_extension_rest_contract_and_busy_conflict(tmp_path):
     core.mcp = _FakeMCP()
     core.tool_registry = ToolRegistry(core.extensions, core.mcp)
     service = server_mod.ChatService(core)
-    server_mod.app.state.service = service
-    server_mod.app.state.auth_token = ""
+    test_app = server_mod.create_app(chat_service=service)
 
-    with TestClient(server_mod.app) as client:
+    with TestClient(test_app) as client:
         added = client.post(
             "/api/extensions/marketplaces", json={"source": str(market), "name": "Fixture"}
         )

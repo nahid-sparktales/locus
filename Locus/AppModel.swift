@@ -409,34 +409,10 @@ final class AppModel: ObservableObject {
     /// is replaced by PlanApprovalPromptView, the way permission requests are.
     @Published private(set) var planApprovalPending = false
     @Published private(set) var activePlan: PlanDocument?
-    @Published private(set) var gitChanges: [GitChange] = []
-    @Published private(set) var isRefreshingGitStatus = false
-    @Published private(set) var isGitRepository = false
-    @Published private(set) var lastGitRefreshFailed = false
-    @Published var commitMessage = ""
-    @Published private(set) var isPerformingGitAction = false
-    @Published private(set) var isDraftingCommitMessage = false
-    @Published var pendingDiscard: GitChange?
-    @Published private(set) var changesHaveUnseenUpdate = false
-    @Published private(set) var selectedChangePath: String?
-    @Published private(set) var selectedChangeDiff: String?
-    @Published private(set) var selectedChangeParsedDiff: ParsedFileDiff?
-    @Published var selectedChangeShowsStaged = false
-    @Published private(set) var gitUpstream: String?
-    @Published private(set) var gitAhead = 0
-    @Published private(set) var gitBehind = 0
-    @Published private(set) var gitDetached = false
-    @Published private(set) var gitHasCommits = true
-    @Published private(set) var localBranches: [String] = []
-    @Published var pendingHunkDiscard: DiffHunk?
-    @Published private(set) var isSyncingRemote = false
-    /// Whether origin looked like GitHub at the last check. Shows or hides
-    /// the PR button; the action itself re-reads the remote at click time.
-    @Published private(set) var originIsGitHub = false
-    private var originCheckedForWorkspace: String?
-    @Published var fileQuery = ""
-    @Published private(set) var previewedFilePath: String?
-    @Published private(set) var previewedFileContents: String?
+    let gitWorkspace = GitWorkspaceModel()
+    let workspaceFiles = WorkspaceFileModel()
+    private var gitWorkspaceBridge: AnyCancellable?
+    private var workspaceFilesBridge: AnyCancellable?
     @Published private(set) var agentInstructionsExists = false
     @Published var agentInstructionsDraft = ""
     @Published private(set) var savedAgentInstructions = ""
@@ -467,8 +443,6 @@ final class AppModel: ObservableObject {
             settings.sidebarCollapsed = sidebarCollapsed
         }
     }
-    @Published var workspaceFileIndex: [URL] = []
-    @Published var gitBranch: String?
     @Published var settings: AppSettings {
         didSet {
             scheduleWorkspacePersistence()
@@ -657,6 +631,7 @@ final class AppModel: ObservableObject {
     private var streamingAssistantID: UUID?
     private var pendingTokens = ""
     private var pendingReasoning = ""
+    private var pendingReasoningSections: [Int: String] = [:]
     /// Rough size of the reply streamed since the last `session_info`, so the
     /// context meter moves during a turn instead of freezing at the pre-turn
     /// value. Reset whenever the backend supplies a real count.
@@ -720,11 +695,6 @@ final class AppModel: ObservableObject {
     private var workspaceToOpenAfterReconnect: String?
     private var appliedWorkspacePath: String?
     private var sessionResetWatchdog: Task<Void, Never>?
-    private var indexTask: Task<Void, Never>?
-    private var gitStatusTask: Task<Void, Never>?
-    private var diffTask: Task<Void, Never>?
-    private var commitDraftTask: Task<Void, Never>?
-    private var filePreviewTask: Task<Void, Never>?
     private var agentInstructionsTask: Task<Void, Never>?
     private var orchestrationRunsTasks: [String: (generation: Int, task: Task<OrchestrationRunsResponse, Error>)] = [:]
     private var orchestrationDetailTasks: [String: Task<OrchestrationRun, Error>] = [:]
@@ -737,7 +707,6 @@ final class AppModel: ObservableObject {
     private var restoredQueuedRunIDs: Set<String> = []
     private let lifecycleJournal: AppLifecycleJournal?
     private var pendingLifecycleRecovery: AppLifecycleRecovery?
-    private var indexedWorkspacePath: String?
     private var terminationObserver: NSObjectProtocol?
     private var activationObserver: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
@@ -971,6 +940,36 @@ final class AppModel: ObservableObject {
         backend = backendOverride ?? BackendService(
             baseURL: URL(string: loadedSettings.backendURL) ?? URL(string: "http://127.0.0.1:8791")!
         )
+        gitWorkspace.configure(
+            backend: backend,
+            isUITesting: isUITesting,
+            workspacePath: { [weak self] in
+                self?.workspacePath ?? FileManager.default.homeDirectoryForCurrentUser.path
+            },
+            changesTabVisible: { [weak self] in
+                self?.inspectorTab == .changes && self?.inspectorCollapsed == false
+            },
+            commitDraftContext: { [weak self] in
+                GitWorkspaceModel.CommitDraftContext(
+                    useLocalModel: self?.settings.provider == .ollama && self?.isModelOnline == true,
+                    host: self?.ollamaHost ?? "",
+                    modelName: self?.selectedModel ?? ""
+                )
+            },
+            showToast: { [weak self] message in
+                self?.showToast(message)
+            },
+            didApplyStatus: { [weak self] previous, current in
+                self?.handleGitStatusApplied(previous: previous, current: current)
+            }
+        )
+        workspaceFiles.configure(
+            isUITesting: isUITesting,
+            workspacePath: { [weak self] in
+                self?.workspacePath ?? FileManager.default.homeDirectoryForCurrentUser.path
+            },
+            canIndex: { [weak self] in self?.sessionInfo != nil }
+        )
 
         backend.onConnectionChange = { [weak self] connected in
             Task { @MainActor in
@@ -1013,6 +1012,12 @@ final class AppModel: ObservableObject {
                 self.objectWillChange.send()
                 self.announceComputerControlCapability()
             }
+        }
+        gitWorkspaceBridge = gitWorkspace.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        workspaceFilesBridge = workspaceFiles.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
         }
         simulatorControl.capabilityDidChange = { [weak self] in
             Task { @MainActor [weak self] in
@@ -2099,7 +2104,7 @@ final class AppModel: ObservableObject {
         profilePersistenceTask?.cancel()
         settingsPersistenceTask?.cancel()
         sessionResetWatchdog?.cancel()
-        indexTask?.cancel()
+        workspaceFiles.stop()
         knowledgeReindexTask?.cancel()
         knowledgeWatcher.stop()
         agentInstructionsTask?.cancel()
@@ -2128,36 +2133,6 @@ final class AppModel: ObservableObject {
             NSWorkspace.shared.notificationCenter.removeObserver($0)
         }
         privacyLockObservers.removeAll()
-    }
-
-    // MARK: - Workspace file index (@ mentions)
-
-    func refreshWorkspaceIndex(force: Bool = false) {
-        // UI tests run against a seeded index; a real scan of the runner's
-        // machine would replace it with whatever happens to be on disk.
-        guard !isUITesting else { return }
-        let root = workspacePath
-        // Before the agent reports a session, `workspacePath` falls back to the
-        // home directory. Walking all of it is slow, throws thousands of
-        // unrelated files at the browser, and is thrown away moments later when
-        // the real workspace arrives.
-        guard sessionInfo != nil else { return }
-        guard force || indexedWorkspacePath != root || workspaceFileIndex.isEmpty else { return }
-        indexTask?.cancel()
-        indexTask = Task { [weak self] in
-            let files = await Task.detached(priority: .utility) {
-                WorkspaceIndex.scan(root: root)
-            }.value
-            // Deliberately not gated on `Task.isCancelled`. A superseded scan
-            // of the same root returns the same answer, and throwing its result
-            // away is how the browser ended up reporting "0 of 0 files" with
-            // nothing scheduled to try again — the Files tab appearing and a
-            // session_info arriving are enough to cancel each other. Only a
-            // workspace change makes the result stale, so that is what we test.
-            guard let self, self.workspacePath == root else { return }
-            self.indexedWorkspacePath = root
-            self.workspaceFileIndex = files
-        }
     }
 
     private func watchWorkspaceKnowledge(_ root: String) {
@@ -2282,7 +2257,7 @@ final class AppModel: ObservableObject {
 
             self.agentInstructionsExists = true
             self.savedAgentInstructions = contents
-            self.refreshWorkspaceIndex(force: true)
+            self.workspaceFiles.refresh(force: true)
 
             do {
                 let _: ProjectContextReloadResponse = try await self.backend.post(
@@ -2313,49 +2288,6 @@ final class AppModel: ObservableObject {
     func revealAgentInstructionsInFinder() {
         guard agentInstructionsExists else { return }
         NSWorkspace.shared.activateFileViewerSelecting([agentInstructionsURL])
-    }
-
-    // MARK: - Git branch
-
-    private func refreshGitBranch() {
-        let root = workspacePath
-        Task { [weak self] in
-            let branch = await Task.detached(priority: .utility) {
-                Self.gitBranch(at: root)
-            }.value
-            guard let self, self.workspacePath == root else { return }
-            self.gitBranch = branch
-        }
-    }
-
-    nonisolated static func gitBranch(at root: String) -> String? {
-        var gitURL = URL(fileURLWithPath: root).appending(path: ".git")
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: gitURL.path, isDirectory: &isDirectory) else {
-            return nil
-        }
-        if !isDirectory.boolValue {
-            // Worktree/submodule: `.git` is a file containing "gitdir: <path>".
-            guard let pointer = try? String(contentsOf: gitURL, encoding: .utf8),
-                  let path = pointer
-                      .split(separator: "\n")
-                      .first(where: { $0.hasPrefix("gitdir:") })?
-                      .dropFirst("gitdir:".count)
-                      .trimmingCharacters(in: .whitespaces)
-            else { return nil }
-            gitURL = path.hasPrefix("/")
-                ? URL(fileURLWithPath: path)
-                : URL(fileURLWithPath: root).appending(path: path).standardizedFileURL
-        }
-        guard let head = try? String(
-            contentsOf: gitURL.appending(path: "HEAD"),
-            encoding: .utf8
-        ) else { return nil }
-        let trimmed = head.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("ref: refs/heads/") {
-            return String(trimmed.dropFirst("ref: refs/heads/".count))
-        }
-        return trimmed.isEmpty ? nil : String(trimmed.prefix(7))
     }
 
     // MARK: - Notifications
@@ -2490,7 +2422,7 @@ final class AppModel: ObservableObject {
         }
 
         await refreshExtensions()
-        refreshGitBranch()
+        gitWorkspace.refreshBranch()
     }
 
     // MARK: - Plugins, skills, and MCP
@@ -6462,7 +6394,7 @@ final class AppModel: ObservableObject {
                 activeTaskRecord = response.task
                 taskHasChanges = false
                 taskPatchBytes = 0
-                refreshGitStatus()
+                gitWorkspace.refreshStatus()
                 showToast(response.applied ? "Applied task changes to the workspace" : "No new task changes to apply")
             } catch {
                 showToast("Workspace left untouched: \(error.localizedDescription)")
@@ -6613,7 +6545,7 @@ final class AppModel: ObservableObject {
                 activeTaskRecord = response.task
                 sessionInfo = sessionInfo?.replacingTask(response.task)
                 if destination == "local" { reviewAndLandPresented = false }
-                refreshGitStatus()
+                gitWorkspace.refreshStatus()
                 if let detail = try? await backend.get(
                     "/api/tasks/\(task.id)", as: TaskDetailResponse.self
                 ) {
@@ -7354,7 +7286,7 @@ final class AppModel: ObservableObject {
                 if let runtime = taskWorkers[sessionID] {
                     runtime.sessionInfo = response.sessionInfo
                 }
-                refreshGitStatus()
+                gitWorkspace.refreshStatus()
                 await refreshMetadata()
                 showToast(
                     environment == .worktree
@@ -7381,7 +7313,7 @@ final class AppModel: ObservableObject {
                 )
                 activeTaskRecord = response.task
                 sessionInfo = sessionInfo?.replacingTask(response.task)
-                refreshGitBranch()
+                gitWorkspace.refreshBranch()
                 showToast("Created branch \(name) in the worktree")
             } catch {
                 showToast("Could not create branch: \(error.localizedDescription)")
@@ -9484,8 +9416,6 @@ final class AppModel: ObservableObject {
             || settings.proxyProviderProfileIDs != newSettings.proxyProviderProfileIDs
         let launchAtLoginChanged = settings.launchAtLogin != newSettings.launchAtLogin
         let mobileAccessChanged = settings.mobileAccessEnabled != newSettings.mobileAccessEnabled
-        let accentChanged = settings.accentPresetRaw != newSettings.accentPresetRaw
-            || settings.customAccentHex != newSettings.customAccentHex
         if launchAtLoginChanged {
             do {
                 try updateLaunchAtLogin(enabled: newSettings.launchAtLogin)
@@ -9499,7 +9429,6 @@ final class AppModel: ObservableObject {
         settings = newSettings
         appearancePreview = nil
         persistSettings()
-        if accentChanged { applyApplicationAccent() }
         if mobileAccessChanged {
             Task { await companionGateway.setEnabled(newSettings.mobileAccessEnabled) }
         }
@@ -9608,16 +9537,6 @@ final class AppModel: ObservableObject {
 
     func clearAppearancePreview() {
         appearancePreview = nil
-    }
-
-    /// The selected artwork is used by the Dock, app switcher, and About panel.
-    /// The bundled Finder icon stays the signed default, as required by macOS.
-    func applyApplicationAccent() {
-        let accent = settings.resolvedAccent
-        LocusAccentRuntime.shared.configure(accent)
-        NSApplication.shared.applicationIconImage = LocusBrandIcon.image(
-            accent: accent.logoNSColor
-        )
     }
 
     private func migrateTerminalSettingsIfNeeded() async {
@@ -9815,79 +9734,15 @@ final class AppModel: ObservableObject {
     /// Seven tab labels need almost the full inspector width; below this the
     /// icon-first strip keeps every target comfortably clickable.
 
-    /// Files changed in the workspace, for the Changes badge.
-    var changedFileCount: Int { gitChanges.count }
-
-    var gitChangeSummary: String {
-        guard !gitChanges.isEmpty else { return "No changes" }
-        var parts: [String] = []
-        let staged = gitChanges.filter(\.staged).count
-        let unstaged = gitChanges.filter { $0.unstaged && $0.status != .untracked }.count
-        let untracked = gitChanges.filter { $0.status == .untracked }.count
-        if staged > 0 { parts.append("\(staged) staged") }
-        if unstaged > 0 { parts.append("\(unstaged) modified") }
-        if untracked > 0 { parts.append("\(untracked) untracked") }
-        return parts.joined(separator: " · ")
-    }
-
-    /// Reloads the workspace's git status. Safe to call often; overlapping
-    /// requests collapse onto the newest.
-    func refreshGitStatus() {
-        // There is no agent behind a UI test, so a refresh would only empty the
-        // seeded change list.
-        guard !isUITesting else { return }
-        gitStatusTask?.cancel()
-        let root = workspacePath
-        isRefreshingGitStatus = true
-        gitStatusTask = Task { [weak self, backend] in
-            // A superseded (cancelled) request must not clear the spinner the
-            // newer request just turned on.
-            defer { if !Task.isCancelled { self?.isRefreshingGitStatus = false } }
-            do {
-                let response = try await backend.get(
-                    "/api/git/status",
-                    query: [URLQueryItem(name: "untracked", value: "all")],
-                    as: GitStatusResponse.self
-                )
-                guard !Task.isCancelled, let self, self.workspacePath == root else { return }
-                self.applyGitStatus(response)
-            } catch {
-                guard !Task.isCancelled, let self, self.workspacePath == root else { return }
-                self.applyGitStatusFailure()
-            }
-        }
-    }
-
-    func applyGitStatus(_ response: GitStatusResponse) {
-        let previous = Set(gitChanges.map(\.path))
-        let previousChanges = Dictionary(uniqueKeysWithValues: gitChanges.map { ($0.path, $0) })
-        gitChanges = response.files
-        isGitRepository = response.isRepo
-        lastGitRefreshFailed = false
-        if response.isRepo, let branch = response.branch {
-            gitBranch = branch
-        }
-        gitUpstream = response.upstream
-        gitAhead = response.ahead ?? 0
-        gitBehind = response.behind ?? 0
-        gitDetached = response.detached
-        gitHasCommits = response.hasCommits
-        if response.isRepo, originCheckedForWorkspace != workspacePath {
-            originCheckedForWorkspace = workspacePath
-            refreshOriginKind()
-        }
-        if Self.changesAreUnseen(
-            previous: previous,
-            current: response.files,
-            changesTabVisible: inspectorTab == .changes && !inspectorCollapsed
-        ) {
-            changesHaveUnseenUpdate = true
-        }
+    private func handleGitStatusApplied(
+        previous: [String: GitChange],
+        current: [GitChange]
+    ) {
         synchronizeSessionIdentity()
         guard sessionOverview.state.status == .running else { return }
         let now = Self.sessionTimestamp
-        for change in response.files {
-            let old = previousChanges[change.path]
+        for change in current {
+            let old = previous[change.path]
             let added = max((change.additions ?? 0) - (old?.additions ?? 0), 0)
             let removed = max((change.deletions ?? 0) - (old?.deletions ?? 0), 0)
             if old == nil, change.status == .added || change.status == .untracked {
@@ -9904,480 +9759,12 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// A transient failure (timeout, agent restarting) keeps the last known
-    /// list — emptying it here would render the "Nothing changed" state,
-    /// which reads as "your edits are gone". The tab shows a stale hint.
-    func applyGitStatusFailure() {
-        lastGitRefreshFailed = true
-    }
-
-    // MARK: - Git quick actions
-
-    private var gitClient: GitClient {
-        GitClient(workspaceRoot: workspacePath)
-    }
-
-    var stagedChangeCount: Int {
-        gitChanges.filter(\.staged).count
-    }
-
-    func stageChange(_ change: GitChange) {
-        performGitAction(["add", "--", change.path])
-    }
-
-    func unstageChange(_ change: GitChange) {
-        // In a repository with no commits yet `restore --staged` cannot
-        // resolve HEAD; `rm --cached` is the unstage for that state.
-        performGitAction(
-            ["restore", "--staged", "--", change.path],
-            fallback: ["rm", "--cached", "-q", "--", change.path]
-        )
-    }
-
-    func requestDiscard(_ change: GitChange) {
-        pendingDiscard = change
-    }
-
-    func discardConfirmed() {
-        guard let change = pendingDiscard else { return }
-        pendingDiscard = nil
-        if change.status == .untracked {
-            // The Trash, not `git clean`: recoverable beats gone.
-            let url = URL(fileURLWithPath: workspacePath).appending(path: change.path)
-            do {
-                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-                showToast("Moved \(change.name) to the Trash")
-            } catch {
-                showToast(error.localizedDescription)
-            }
-            refreshGitStatus()
-        } else {
-            performGitAction(
-                ["restore", "--staged", "--worktree", "--", change.path],
-                success: "Discarded changes to \(change.name)"
-            )
-        }
-    }
-
-    // MARK: - Branch, remote, and PR flow
-
-    /// Local branches, newest activity first, for the branch menu.
-    func loadLocalBranches() {
-        guard isGitRepository else { return }
-        let client = gitClient
-        Task { [weak self] in
-            let result = try? await client.run([
-                "for-each-ref", "refs/heads",
-                "--format=%(refname:short)", "--sort=-committerdate",
-            ])
-            guard let self, let result else { return }
-            localBranches = result.stdout
-                .split(separator: "\n")
-                .prefix(100)
-                .map(String.init)
-        }
-    }
-
-    /// `git switch -c`: safe on a dirty tree (edits ride along) and on an
-    /// unborn HEAD. `check-ref-format` stays the naming authority.
-    func createBranch(_ name: String) {
-        let branch = name.trimmingCharacters(in: .whitespaces)
-        if let problem = GitBranchName.validationError(branch) {
-            showToast(problem)
-            return
-        }
-        guard isGitRepository, !isPerformingGitAction else { return }
-        isPerformingGitAction = true
-        let client = gitClient
-        Task { [weak self] in
-            do {
-                try await client.run(["check-ref-format", "--branch", branch])
-                try await client.run(["switch", "-c", branch])
-                self?.showToast("Created and switched to \(branch)")
-            } catch {
-                self?.showToast(error.localizedDescription)
-            }
-            self?.isPerformingGitAction = false
-            self?.refreshGitStatus()
-        }
-    }
-
-    /// Plain `git switch`, no auto-stash: git itself refuses a switch that
-    /// would clobber local edits, and that refusal is surfaced verbatim —
-    /// the simplest behavior that can never lose work.
-    func switchBranch(_ name: String) {
-        guard isGitRepository, !isPerformingGitAction, name != gitBranch else { return }
-        performGitAction(["switch", name], success: "Switched to \(name)")
-    }
-
-    /// Push the current branch; publish it when no upstream exists yet.
-    func pushCurrentBranch() {
-        guard GitRemoteFeatures.isAvailable, isGitRepository,
-              !gitDetached, gitHasCommits, !isSyncingRemote,
-              let branch = gitBranch
-        else { return }
-        isSyncingRemote = true
-        let client = gitClient
-        let args = GitPushPlan.arguments(branch: branch, upstream: gitUpstream)
-        Task { [weak self] in
-            do {
-                try await client.run(args, timeout: 120)
-                self?.showToast(
-                    self?.gitUpstream == nil ? "Published \(branch)" : "Pushed \(branch)"
-                )
-            } catch {
-                var message = error.localizedDescription
-                if message.contains("rejected") || message.contains("non-fast-forward") {
-                    message += " — Fetch/pull first, or push from a terminal."
-                }
-                self?.showToast(message)
-            }
-            self?.isSyncingRemote = false
-            self?.refreshGitStatus()
-        }
-    }
-
-    func fetchRemote() {
-        guard GitRemoteFeatures.isAvailable, isGitRepository, !isSyncingRemote else { return }
-        isSyncingRemote = true
-        let client = gitClient
-        Task { [weak self] in
-            do {
-                try await client.run(["fetch"], timeout: 60)
-                self?.showToast("Fetched from the remote")
-            } catch {
-                self?.showToast(error.localizedDescription)
-            }
-            self?.isSyncingRemote = false
-            self?.refreshGitStatus()
-        }
-    }
-
-    /// `--ff-only`: the only merge-free, conflict-free pull. Its refusal
-    /// ("not possible to fast-forward") is honest and surfaced as-is.
-    func pullFastForwardOnly() {
-        guard GitRemoteFeatures.isAvailable, isGitRepository, !isSyncingRemote else { return }
-        isSyncingRemote = true
-        let client = gitClient
-        Task { [weak self] in
-            do {
-                let result = try await client.run(["pull", "--ff-only"], timeout: 120)
-                let summary = result.stdout.split(separator: "\n").last.map(String.init)
-                self?.showToast(summary?.nilIfEmpty ?? "Pulled fast-forward")
-            } catch {
-                self?.showToast(error.localizedDescription)
-            }
-            self?.isSyncingRemote = false
-            self?.refreshGitStatus()
-        }
-    }
-
-    /// Opens GitHub's compare page for the current branch — the human owns
-    /// the actual PR creation. Reads the remote at click time; non-GitHub
-    /// remotes never show the button, so a miss here only means the remote
-    /// changed since the last status.
-    func openPullRequest() {
-        guard let branch = gitBranch else { return }
-        let client = gitClient
-        Task { [weak self] in
-            guard let remote = try? await client.run(["remote", "get-url", "origin"]),
-                  let url = GitRemoteURL.githubCompareURL(
-                      remote: remote.stdout.trimmingCharacters(in: .whitespacesAndNewlines),
-                      branch: branch
-                  )
-            else {
-                self?.showToast("The origin remote is not a GitHub repository")
-                return
-            }
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    func refreshOriginKind() {
-        guard isGitRepository else { return }
-        let client = gitClient
-        Task { [weak self] in
-            let remote = (try? await client.run(["remote", "get-url", "origin"]))?
-                .stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard let self else { return }
-            originIsGitHub = GitRemoteURL.githubCompareURL(
-                remote: remote, branch: "x"
-            ) != nil
-        }
-    }
-
-    // MARK: - Per-hunk review
-
-    func stageHunk(_ hunk: DiffHunk) {
-        performHunkAction(hunk, scope: .unstaged, apply: ["apply", "--cached"])
-    }
-
-    func unstageHunk(_ hunk: DiffHunk) {
-        guard gitHasCommits else { return }
-        performHunkAction(hunk, scope: .staged, apply: ["apply", "--cached", "-R"])
-    }
-
-    func requestDiscardHunk(_ hunk: DiffHunk) {
-        pendingHunkDiscard = hunk
-    }
-
-    func discardHunkConfirmed() {
-        guard let hunk = pendingHunkDiscard else { return }
-        pendingHunkDiscard = nil
-        performHunkAction(hunk, scope: .unstaged, apply: ["apply", "-R"])
-    }
-
-    private enum HunkScope {
-        case staged
-        case unstaged
-    }
-
-    /// The shared mechanics: re-take the diff at click time, re-locate the
-    /// hunk (exact header, then content identity), synthesize the minimal
-    /// patch, and apply. A hunk that drifted is never applied — the diff
-    /// refreshes and the user reviews again.
-    private func performHunkAction(
-        _ hunk: DiffHunk,
-        scope: HunkScope,
-        apply applyArgs: [String]
-    ) {
-        guard isGitRepository, !isPerformingGitAction,
-              let path = selectedChangePath,
-              let change = gitChanges.first(where: { $0.path == path })
-        else { return }
-        isPerformingGitAction = true
-        let client = gitClient
-        let diffArgs = scope == .staged
-            ? ["diff", "-U3", "--cached", "--", path]
-            : ["diff", "-U3", "--", path]
-        Task { [weak self] in
-            defer {
-                self?.isPerformingGitAction = false
-                self?.refreshGitStatus()
-                self?.loadDiff(for: change)
-            }
-            do {
-                let fresh = try await client.run(diffArgs)
-                guard let parsed = ParsedFileDiff.parse(fresh.stdout),
-                      let located = parsed.matching(hunk),
-                      let patch = parsed.minimalPatch(for: located)
-                else {
-                    self?.showToast(
-                        "That change moved since the diff was read — review the refreshed diff"
-                    )
-                    return
-                }
-                do {
-                    try await client.run(applyArgs, stdin: Data(patch.utf8))
-                } catch {
-                    // The agent's own git may hold index.lock for a moment.
-                    try await Task.sleep(nanoseconds: 300_000_000)
-                    try await client.run(applyArgs, stdin: Data(patch.utf8))
-                }
-            } catch {
-                self?.showToast(error.localizedDescription)
-            }
-        }
-    }
-
-    func commitStaged() {
-        let message = commitMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty, stagedChangeCount > 0, !isPerformingGitAction else { return }
-        isPerformingGitAction = true
-        let client = gitClient
-        Task { [weak self] in
-            do {
-                let result = try await client.run(["commit", "-m", message])
-                self?.commitMessage = ""
-                let summary = result.stdout
-                    .split(separator: "\n")
-                    .first.map(String.init) ?? "Committed"
-                self?.showToast(summary)
-            } catch {
-                self?.showToast(error.localizedDescription)
-            }
-            self?.isPerformingGitAction = false
-            self?.refreshGitStatus()
-        }
-    }
-
-    /// Fills `commitMessage` with an on-device draft from the staged diff, or
-    /// a deterministic summary when no local model can draft. A second press
-    /// while drafting cancels the first.
-    func draftCommitMessage() {
-        if isDraftingCommitMessage {
-            commitDraftTask?.cancel()
-            isDraftingCommitMessage = false
-            return
-        }
-        let staged = gitChanges.filter(\.staged)
-        guard !staged.isEmpty else {
-            showToast("Stage a file first — the draft describes staged changes")
-            return
-        }
-        isDraftingCommitMessage = true
-        let client = gitClient
-        let useLocalModel = settings.provider == .ollama && isModelOnline
-        let host = ollamaHost
-        let modelName = selectedModel
-        commitDraftTask = Task { [weak self] in
-            var draft: String?
-            if useLocalModel {
-                let stat = (try? await client.run(["diff", "--cached", "--stat"]))?.stdout ?? ""
-                let diff = (try? await client.run(["diff", "--cached"]))?.stdout ?? ""
-                draft = await CommitMessageDrafter.draft(
-                    host: host,
-                    model: modelName,
-                    stat: stat,
-                    diff: String(diff.prefix(8_000))
-                )
-            }
-            guard let self, !Task.isCancelled else { return }
-            if draft == nil {
-                draft = CommitMessageDrafter.template(for: staged)
-                showToast(useLocalModel
-                    ? "The local model could not draft — used a summary instead"
-                    : "Drafted a summary — an AI draft needs local Ollama")
-            }
-            if let draft, !draft.isEmpty {
-                commitMessage = draft
-            }
-            isDraftingCommitMessage = false
-        }
-    }
-
-    private func performGitAction(
-        _ args: [String],
-        fallback: [String]? = nil,
-        success: String? = nil
-    ) {
-        guard isGitRepository, !isPerformingGitAction else { return }
-        isPerformingGitAction = true
-        let client = gitClient
-        Task { [weak self] in
-            do {
-                do {
-                    try await client.run(args)
-                } catch {
-                    guard let fallback else { throw error }
-                    try await client.run(fallback)
-                }
-                if let success { self?.showToast(success) }
-            } catch {
-                self?.showToast(error.localizedDescription)
-            }
-            self?.isPerformingGitAction = false
-            self?.refreshGitStatus()
-        }
-    }
-
-    /// Whether a status refresh brought in a change the user has not seen.
-    /// Only newly appearing paths count: a file that keeps being edited while
-    /// the tab is closed should not re-badge on every refresh.
-    nonisolated static func changesAreUnseen(
-        previous: Set<String>,
-        current: [GitChange],
-        changesTabVisible: Bool
-    ) -> Bool {
-        guard !changesTabVisible else { return false }
-        return current.contains { !previous.contains($0.path) }
-    }
-
-    /// Loads the diff for one file into `selectedChangeDiff`, plus the parsed
-    /// hunk model that powers per-hunk staging. A truncated diff renders but
-    /// parses to nil — hunk controls must never synthesize from partial text.
-    func loadDiff(for change: GitChange, staged: Bool? = nil) {
-        if let staged {
-            selectedChangeShowsStaged = staged
-        } else if selectedChangePath != change.path {
-            // A fresh selection starts on the side that has content; a mixed
-            // file keeps the scope its picker chose.
-            selectedChangeShowsStaged = change.staged && !change.unstaged
-        }
-        selectedChangePath = change.path
-        selectedChangeDiff = nil
-        selectedChangeParsedDiff = nil
-        diffTask?.cancel()
-        guard !isUITesting else {
-            seedUITestDiffIfNeeded(for: change)
-            return
-        }
-        let wantsStaged = change.staged && (!change.unstaged || selectedChangeShowsStaged)
-        diffTask = Task { [weak self] in
-            do {
-                let response = try await self?.backend.get(
-                    "/api/git/diff",
-                    query: [
-                        URLQueryItem(name: "path", value: change.path),
-                        URLQueryItem(name: "staged", value: wantsStaged ? "true" : "false"),
-                    ],
-                    as: GitDiffResponse.self
-                )
-                guard !Task.isCancelled, let self, let response else { return }
-                guard self.selectedChangePath == change.path else { return }
-                self.selectedChangeDiff = Self.cappedDiff(response)
-                if !response.truncated, !response.binary, let raw = response.raw {
-                    self.selectedChangeParsedDiff = ParsedFileDiff.parse(raw)
-                }
-            } catch {
-                guard !Task.isCancelled else { return }
-                self?.selectedChangeDiff = "Could not load the diff: \(error.localizedDescription)"
-            }
-        }
-    }
-
-    /// Files matching the browser's query. O(n) over a capped index, so this
-    /// stays on the main thread rather than adding a task per keystroke.
-    var filteredWorkspaceFiles: [URL] {
-        WorkspaceIndex.matches(
-            query: fileQuery,
-            in: workspaceFileIndex,
-            root: workspacePath,
-            limit: 200
-        )
-    }
-
-    /// Reads a workspace file for the inline peek.
-    func previewFile(_ url: URL) {
-        previewedFilePath = WorkspaceIndex.relativePath(url, root: workspacePath)
-        previewedFileContents = nil
-        filePreviewTask?.cancel()
-        filePreviewTask = Task { [weak self] in
-            let result = await Task.detached(priority: .userInitiated) { () -> String in
-                guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
-                      (values.fileSize ?? 0) <= 256_000
-                else { return "This file is larger than 256 KB." }
-                guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
-                      let text = String(data: data, encoding: .utf8)
-                else { return "This file is not readable as UTF-8 text." }
-                return text
-            }.value
-            guard !Task.isCancelled, let self else { return }
-            guard self.previewedFilePath == WorkspaceIndex.relativePath(url, root: self.workspacePath)
-            else { return }
-            self.previewedFileContents = result
-        }
-    }
-
-    func closeFilePreview() {
-        filePreviewTask?.cancel()
-        previewedFilePath = nil
-        previewedFileContents = nil
-    }
-
     /// Inserts an `@path` mention into the composer draft.
     func mentionFileInComposer(_ url: URL) {
         let relative = WorkspaceIndex.relativePath(url, root: workspacePath)
         let separator = draftText.isEmpty || draftText.hasSuffix(" ") ? "" : " "
         draftText += "\(separator)@\(relative) "
         showToast("Mentioned \(url.lastPathComponent)")
-    }
-
-    func clearSelectedChange() {
-        diffTask?.cancel()
-        selectedChangePath = nil
-        selectedChangeDiff = nil
-        selectedChangeParsedDiff = nil
     }
 
     /// Reveals a workspace-relative path in Finder.
@@ -10451,7 +9838,7 @@ final class AppModel: ObservableObject {
             return
         }
         selectInspectorTab(.files)
-        previewFile(url)
+        workspaceFiles.preview(url)
     }
 
     func prefillSessionSuggestion(_ suggestion: String) {
@@ -10468,7 +9855,7 @@ final class AppModel: ObservableObject {
             runtimeUnavailable: agentRuntimePhase.isUnavailable,
             modelUnavailable: modelRuntimePhase.isUnavailable,
             lastRunFailed: state.lastRun?.outcome == .failed,
-            changedFileCount: changedFileCount,
+            changedFileCount: gitWorkspace.changedFileCount,
             hasPendingPlanSteps: state.plan.contains { $0.state != .done },
             hasTestFiles: workspaceContainsTests,
             projectKind: workspaceProjectKind,
@@ -10593,8 +9980,8 @@ final class AppModel: ObservableObject {
     }
 
     private var workspaceProjectKind: LocusProjectKind {
-        let names = workspaceFileIndex.map { $0.lastPathComponent.lowercased() }
-        let paths = workspaceFileIndex.map { $0.path.lowercased() }
+        let names = workspaceFiles.files.map { $0.lastPathComponent.lowercased() }
+        let paths = workspaceFiles.files.map { $0.path.lowercased() }
         if names.contains("package.swift") || paths.contains(where: { $0.hasSuffix(".swift") }) {
             return .swift
         }
@@ -10610,7 +9997,7 @@ final class AppModel: ObservableObject {
     }
 
     private var workspaceContainsTests: Bool {
-        workspaceFileIndex.contains { url in
+        workspaceFiles.files.contains { url in
             let path = url.path.lowercased()
             let name = url.lastPathComponent.lowercased()
             return path.contains("/tests/")
@@ -10684,21 +10071,6 @@ final class AppModel: ObservableObject {
         loadContext(from: [url])
     }
 
-    /// DiffTextView builds one Text per line, so a huge diff has to be cut
-    /// before it reaches the view even though that stack is lazy.
-    static func cappedDiff(_ response: GitDiffResponse, maxLines: Int = 2_000) -> String {
-        if response.binary { return "Binary file — no textual diff." }
-        guard let raw = response.raw, !raw.isEmpty else {
-            return response.ok ? "No changes to show." : "Could not load the diff."
-        }
-        let lines = raw.split(separator: "\n", omittingEmptySubsequences: false)
-        guard lines.count > maxLines else {
-            return response.truncated ? raw + "\n… diff truncated by the agent." : raw
-        }
-        return lines.prefix(maxLines).joined(separator: "\n")
-            + "\n… \(lines.count - maxLines) more lines — open the file to see the rest."
-    }
-
     func selectInspectorTab(_ tab: InspectorTab, selecting runID: String? = nil) {
         // Manual checkpoints are a brief management task, not a surface that
         // needs to consume a persistent inspector tab. Keep the legacy enum
@@ -10718,10 +10090,10 @@ final class AppModel: ObservableObject {
         }
         if tab == .plan { planHasUnseenUpdate = false }
         if tab == .changes {
-            changesHaveUnseenUpdate = false
-            refreshGitStatus()
+            gitWorkspace.changesHaveUnseenUpdate = false
+            gitWorkspace.refreshStatus()
         }
-        if tab == .files { refreshWorkspaceIndex() }
+        if tab == .files { workspaceFiles.refresh() }
         if tab == .terminal {
             terminal.configure(
                 workspacePath: workspacePath,
@@ -11890,21 +11262,25 @@ final class AppModel: ObservableObject {
         guard let type = event["type"] as? String else { return }
         let previous = taskConversationStates[runtime.sessionID]
         var state = previous?.state ?? runtime.executionState
-        if type == "message_start" {
+        if type == "message_start" || type == "assistant_item_start" {
             state = .running
             runtime.streamingBlockID = UUID()
             runtime.streamingText = ""
             runtime.streamingReasoning = ""
         }
-        if type == "token" {
+        if type == "token"
+            || (type == "assistant_item_delta" && event["kind"] as? String == "message")
+        {
             if runtime.streamingBlockID == nil { runtime.streamingBlockID = UUID() }
             runtime.streamingText += event["text"] as? String ?? ""
         }
-        if type == "thinking" {
+        if type == "thinking"
+            || (type == "assistant_item_delta" && event["kind"] as? String == "reasoning")
+        {
             if runtime.streamingBlockID == nil { runtime.streamingBlockID = UUID() }
             runtime.streamingReasoning += event["text"] as? String ?? ""
         }
-        if type == "message_end" {
+        if type == "message_end" || type == "assistant_item_end" {
             runtime.streamingBlockID = nil
             runtime.streamingText = ""
             runtime.streamingReasoning = ""
@@ -12005,7 +11381,7 @@ final class AppModel: ObservableObject {
                 state: state
             )
         }
-        if (type == "message_start" || type == "orchestration_started" || type == "turn_done"),
+        if (type == "message_start" || type == "assistant_item_start" || type == "orchestration_started" || type == "turn_done"),
            persistenceEnabled {
             Task { await refreshMetadata() }
         }
@@ -12208,12 +11584,12 @@ final class AppModel: ObservableObject {
 
     private var sessionOverviewWorkspace: SessionWorkspaceIdentity {
         let path = workspacePath
-        let git: SessionWorkspaceIdentity.Git? = isGitRepository
+        let git: SessionWorkspaceIdentity.Git? = gitWorkspace.isGitRepository
             ? SessionWorkspaceIdentity.Git(
-                branch: gitBranch?.nilIfEmpty ?? "detached",
-                dirty: gitChanges.count,
-                ahead: gitAhead > 0 ? gitAhead : nil,
-                behind: gitBehind > 0 ? gitBehind : nil
+                branch: gitWorkspace.gitBranch?.nilIfEmpty ?? "detached",
+                dirty: gitWorkspace.gitChanges.count,
+                ahead: gitWorkspace.gitAhead > 0 ? gitWorkspace.gitAhead : nil,
+                behind: gitWorkspace.gitBehind > 0 ? gitWorkspace.gitBehind : nil
             )
             : nil
         return SessionWorkspaceIdentity(
@@ -12496,7 +11872,7 @@ final class AppModel: ObservableObject {
     private func sessionActivityPath(in values: [String]) -> String? {
         let root = workspacePath.hasSuffix("/") ? workspacePath : workspacePath + "/"
         for value in values where !value.isEmpty {
-            if let indexed = workspaceFileIndex
+            if let indexed = workspaceFiles.files
                 .map({ WorkspaceIndex.relativePath($0, root: workspacePath) })
                 .filter({ value.contains($0) })
                 .max(by: { $0.count < $1.count }) {
@@ -12611,6 +11987,102 @@ final class AppModel: ObservableObject {
                   let info = decode(SessionInfo.self, from: raw)
             else { return }
             applySessionStarted(info, reason: event["reason"] as? String)
+
+        case "assistant_item_start":
+            guard let itemID = event["item_id"] as? String, !itemID.isEmpty,
+                  let kind = event["kind"] as? String,
+                  kind == "message" || kind == "reasoning"
+            else { return }
+            if let existing = blocks.first(where: { $0.sourceItemID == itemID }),
+               !existing.isStreaming
+            {
+                break
+            }
+            if let runtime = taskWorkers[currentSessionID] {
+                runtime.executionState = .running
+                runtime.startedAt = runtime.startedAt ?? Date()
+                runtime.streamingBlockID = nil
+                runtime.streamingText = ""
+                runtime.streamingReasoning = ""
+                updateBackgroundChatState(runtime)
+            }
+            let phase = kind == "message"
+                ? AssistantPhase.resolved(event["phase"] as? String)
+                : nil
+            let id = startAssistantStream(sourceItemID: itemID, phase: phase)
+            taskWorkers[currentSessionID]?.streamingBlockID = id
+
+        case "assistant_item_delta":
+            guard let itemID = event["item_id"] as? String, !itemID.isEmpty,
+                  let kind = event["kind"] as? String,
+                  kind == "message" || kind == "reasoning",
+                  let text = event["text"] as? String, !text.isEmpty
+            else { return }
+            let existing = blocks.first(where: { $0.sourceItemID == itemID })
+            if existing?.isStreaming == false { break }
+            if existing == nil {
+                let phase = kind == "message"
+                    ? AssistantPhase.resolved(event["phase"] as? String)
+                    : nil
+                startAssistantStream(sourceItemID: itemID, phase: phase)
+            }
+            guard let block = blocks.first(where: { $0.sourceItemID == itemID }),
+                  block.id == streamingAssistantID
+            else { break }
+            if kind == "reasoning" {
+                enqueueReasoning(text, sectionIndex: event["section_index"] as? Int ?? 0)
+            } else {
+                enqueueToken(text)
+            }
+
+        case "assistant_item_end":
+            guard let itemID = event["item_id"] as? String, !itemID.isEmpty,
+                  let kind = event["kind"] as? String,
+                  kind == "message" || kind == "reasoning"
+            else { return }
+            if blocks.first(where: { $0.sourceItemID == itemID }) == nil {
+                let phase = kind == "message"
+                    ? AssistantPhase.resolved(event["phase"] as? String)
+                    : nil
+                startAssistantStream(sourceItemID: itemID, phase: phase)
+            }
+            flushPendingTokens()
+            guard let index = blocks.firstIndex(where: { $0.sourceItemID == itemID }) else {
+                break
+            }
+            let wasStreaming = blocks[index].isStreaming
+            let authoritativeText = kind == "message" ? event["text"] as? String : nil
+            let sections = kind == "reasoning"
+                ? (event["sections"] as? [String] ?? [])
+                : nil
+            if let phase = event["phase"] as? String, kind == "message" {
+                blocks[index].assistantPhase = AssistantPhase.resolved(phase)
+            }
+            if blocks[index].id == streamingAssistantID {
+                commitStreamingReply(
+                    blocks[index].id,
+                    finished: true,
+                    authoritativeText: authoritativeText,
+                    authoritativeReasoningSections: sections
+                )
+                streamingAssistantID = nil
+            } else {
+                if let authoritativeText { blocks[index].text = authoritativeText }
+                if let sections {
+                    blocks[index].reasoningSections = sections.isEmpty ? nil : sections
+                    blocks[index].reasoningText = sections.joined(separator: "\n\n").nilIfEmpty
+                }
+                blocks[index].isStreaming = false
+            }
+            if wasStreaming, let runtime = taskWorkers[currentSessionID] {
+                runtime.streamingBlockID = nil
+                runtime.streamingText = ""
+                runtime.streamingReasoning = ""
+            }
+            if wasStreaming, kind == "message" {
+                sessionOverview.emit(.message(role: .assistant, at: Self.sessionTimestamp))
+            }
+            if wasStreaming { streamRevision += 1 }
 
         case "message_start":
             if let runtime = taskWorkers[currentSessionID] {
@@ -12740,7 +12212,7 @@ final class AppModel: ObservableObject {
 
         case "workspace_changed":
             // The agent touched the tree; the Changes panel is now stale.
-            refreshGitStatus()
+            gitWorkspace.refreshStatus()
             scheduleWorkspaceKnowledgeReindex(workspacePath)
 
         case "extensions_changed", "mcp_status", "mcp_credential_refresh":
@@ -13591,7 +13063,16 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func startAssistantStream() {
+    @discardableResult
+    private func startAssistantStream(
+        sourceItemID: String? = nil,
+        phase: AssistantPhase? = nil
+    ) -> UUID {
+        if let sourceItemID,
+           let existing = blocks.first(where: { $0.sourceItemID == sourceItemID }) {
+            if existing.isStreaming { streamingAssistantID = existing.id }
+            return existing.id
+        }
         flushPendingTokens()
         if let current = streamingAssistantID {
             commitStreamingReply(current, finished: true)
@@ -13599,8 +13080,15 @@ final class AppModel: ObservableObject {
         let id = UUID()
         streamingAssistantID = id
         isBusy = true
-        blocks.append(ChatBlock(id: id, kind: .assistant, isStreaming: true))
+        blocks.append(ChatBlock(
+            id: id,
+            kind: .assistant,
+            assistantPhase: phase,
+            sourceItemID: sourceItemID,
+            isStreaming: true
+        ))
         streamingReply.begin(id: id)
+        return id
     }
 
     /// No assistant bubble may stay in the streaming state once the turn is
@@ -13614,12 +13102,24 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func commitStreamingReply(_ id: UUID, finished: Bool) {
-        guard let snapshot = streamingReply.finish(id: id),
+    private func commitStreamingReply(
+        _ id: UUID,
+        finished: Bool,
+        authoritativeText: String? = nil,
+        authoritativeReasoningSections: [String]? = nil
+    ) {
+        guard let snapshot = streamingReply.finish(
+            id: id,
+            authoritativeText: authoritativeText,
+            authoritativeReasoningSections: authoritativeReasoningSections
+        ),
               let index = blocks.firstIndex(where: { $0.id == id })
         else { return }
         blocks[index].text = snapshot.text
         blocks[index].reasoningText = snapshot.reasoning.nilIfEmpty
+        blocks[index].reasoningSections = snapshot.reasoningSections.isEmpty
+            ? nil
+            : snapshot.reasoningSections
         if finished { blocks[index].isStreaming = false }
     }
 
@@ -13717,6 +13217,12 @@ final class AppModel: ObservableObject {
         scheduleStreamFlush()
     }
 
+    private func enqueueReasoning(_ text: String, sectionIndex: Int) {
+        guard !text.isEmpty else { return }
+        pendingReasoningSections[max(sectionIndex, 0), default: ""] += text
+        scheduleStreamFlush()
+    }
+
     /// A single publication on the next display refresh keeps text growth and
     /// native scroll anchoring on the same visual frame.
     private func scheduleStreamFlush() {
@@ -13725,17 +13231,26 @@ final class AppModel: ObservableObject {
 
     private func flushPendingTokens() {
         streamFlushDriver.cancelPending()
-        guard !pendingTokens.isEmpty || !pendingReasoning.isEmpty,
+        guard !pendingTokens.isEmpty || !pendingReasoning.isEmpty
+                || !pendingReasoningSections.isEmpty,
               streamingAssistantID != nil
         else {
             pendingTokens = ""
             pendingReasoning = ""
+            pendingReasoningSections = [:]
             return
         }
         streamingReply.append(text: pendingTokens, reasoning: pendingReasoning)
-        streamedCharsThisTurn += pendingTokens.count + pendingReasoning.count
+        var publishedCharacters = pendingTokens.count + pendingReasoning.count
+        for index in pendingReasoningSections.keys.sorted() {
+            let delta = pendingReasoningSections[index] ?? ""
+            streamingReply.appendReasoning(delta, sectionIndex: index)
+            publishedCharacters += delta.count
+        }
+        streamedCharsThisTurn += publishedCharacters
         pendingTokens = ""
         pendingReasoning = ""
+        pendingReasoningSections = [:]
     }
 
     private func updateSession(_ session: SessionSummary, body: [String: Any], success: String) {
@@ -13783,8 +13298,8 @@ final class AppModel: ObservableObject {
             Task { await refreshContextFiles() }
         }
         touchWorkspaceProfile(path)
-        refreshGitBranch()
-        refreshWorkspaceIndex(force: true)
+        gitWorkspace.refreshBranch()
+        workspaceFiles.refresh(force: true)
     }
 
     /// Restores the model a workspace was last used with, through the account
@@ -14168,6 +13683,48 @@ final class AppModel: ObservableObject {
                 ),
             ]
         }
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_CODEX_TRANSCRIPT_FIXTURE"] == "1" {
+            blocks = [
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000301")!,
+                    kind: .user,
+                    text: "Check Austin and Jerusalem"
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000302")!,
+                    kind: .assistant,
+                    sourceItemID: "reason-fixture",
+                    reasoningText: "**Planning data retrieval**\n\n**Checking forecast parsing**",
+                    reasoningSections: [
+                        "**Planning data retrieval**",
+                        "**Checking forecast parsing**",
+                    ]
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000303")!,
+                    kind: .assistant,
+                    text: "I’ll check both locations now.",
+                    assistantPhase: .commentary,
+                    sourceItemID: "commentary-fixture"
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000304")!,
+                    kind: .assistant,
+                    text: "- **Austin:** Sunny and hot.\n- **Jerusalem:** Warm and dry.",
+                    assistantPhase: .finalAnswer,
+                    sourceItemID: "final-fixture"
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000305")!,
+                    kind: .note,
+                    completion: TurnCompletion(
+                        outcome: .complete,
+                        mode: .work,
+                        durationMilliseconds: 1_000
+                    )
+                ),
+            ]
+        }
         extensions = ExtensionsResponse(
             capabilities: ExtensionCapabilities(),
             marketplaces: [],
@@ -14206,18 +13763,18 @@ final class AppModel: ObservableObject {
         // The three newest inspector tabs read from state the agent normally
         // fills in. Without seeds they render their empty states and nothing
         // about them is assertable.
-        isGitRepository = true
-        gitBranch = "main"
-        gitUpstream = "origin/main"
-        gitAhead = 2
-        gitBehind = 1
-        gitHasCommits = true
-        localBranches = ["main", "ship-test"]
+        gitWorkspace.isGitRepository = true
+        gitWorkspace.gitBranch = "main"
+        gitWorkspace.gitUpstream = "origin/main"
+        gitWorkspace.gitAhead = 2
+        gitWorkspace.gitBehind = 1
+        gitWorkspace.gitHasCommits = true
+        gitWorkspace.localBranches = ["main", "ship-test"]
         // Remote features stay hidden in the seeded run unless a UI test asks
         // for them, so the suite also covers the sandboxed layout.
-        originIsGitHub =
+        gitWorkspace.originIsGitHub =
             ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_GITHUB_ORIGIN"] == "1"
-        gitChanges = [
+        gitWorkspace.gitChanges = [
             GitChange(
                 path: "Locus/AppModel.swift",
                 status: .modified,
@@ -14244,16 +13801,16 @@ final class AppModel: ObservableObject {
         if ProcessInfo.processInfo.environment[
             "LOCUS_UI_TESTING_PREFILL_RECOMMENDATION"
         ] == "1" {
-            gitChanges = []
+            gitWorkspace.gitChanges = []
         }
-        indexedWorkspacePath = workspace
-        workspaceFileIndex = [
+        let seededWorkspaceFiles = [
             "README.md",
             "Locus/AppModel.swift",
             "Locus/InspectorView.swift",
             "Locus/TerminalSession.swift",
             "docs/terminal.md",
         ].map { URL(fileURLWithPath: workspace).appending(path: $0) }
+        workspaceFiles.seed(seededWorkspaceFiles, workspacePath: workspace)
         agentInstructionsExists = true
         savedAgentInstructions = "# Workspace instructions\n\n- Keep changes focused.\n"
         agentInstructionsDraft = savedAgentInstructions
@@ -14507,29 +14064,6 @@ final class AppModel: ObservableObject {
                 at: now - 372_000
             ))
         }
-    }
-
-    /// A deterministic two-hunk diff so the seeded Changes tab has assertable
-    /// per-hunk controls without a live agent behind it.
-    func seedUITestDiffIfNeeded(for change: GitChange) {
-        let raw = """
-        diff --git a/\(change.path) b/\(change.path)
-        index 1111111..2222222 100644
-        --- a/\(change.path)
-        +++ b/\(change.path)
-        @@ -1,3 +1,3 @@
-         let first = 1
-        -let second = 2
-        +let second = 22
-         let third = 3
-        @@ -10,3 +10,3 @@
-         let tenth = 10
-        -let eleventh = 11
-        +let eleventh = 111
-         let twelfth = 12
-        """
-        selectedChangeDiff = raw
-        selectedChangeParsedDiff = ParsedFileDiff.parse(raw)
     }
 
     private func seedUITestRunFixtureIfNeeded() {
@@ -15285,11 +14819,15 @@ final class AppModel: ObservableObject {
                     historyIndex: index
                 )
             case "assistant" where !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || !(message.reasoning?.isEmpty ?? true):
+                || !(message.reasoning?.isEmpty ?? true)
+                || !(message.reasoningSections?.isEmpty ?? true):
                 ChatBlock(
                     kind: .assistant,
                     text: message.content,
+                    assistantPhase: message.phase,
+                    sourceItemID: message.itemID,
                     reasoningText: message.reasoning,
+                    reasoningSections: message.reasoningSections,
                     historyIndex: index
                 )
             case "tool":
@@ -15367,7 +14905,7 @@ private enum ChatExportRenderer {
                 } else {
                     lines.append(message.content)
                 }
-                if let reasoning = message.reasoning, !reasoning.isEmpty {
+                if let reasoning = resolvedReasoning(for: message) {
                     lines.append("")
                     lines.append("<details><summary>Reasoning</summary>")
                     lines.append("")
@@ -15405,7 +14943,7 @@ private enum ChatExportRenderer {
         for message in document.messages {
             lines.append(textHeading(for: message))
             lines.append(message.content)
-            if let reasoning = message.reasoning, !reasoning.isEmpty {
+            if let reasoning = resolvedReasoning(for: message) {
                 lines.append("Reasoning:")
                 lines.append(reasoning)
             }
@@ -15481,7 +15019,7 @@ private enum ChatExportRenderer {
         for message in document.messages {
             append(textHeading(for: message) + "\n", font: heading, spacing: 3)
             append(message.content + "\n", font: message.role == "tool" ? mono : body, spacing: 8)
-            if let reasoning = message.reasoning, !reasoning.isEmpty {
+            if let reasoning = resolvedReasoning(for: message) {
                 append("Reasoning\n", font: heading, color: secondary, spacing: 2)
                 append(reasoning + "\n", font: detail, color: secondary, spacing: 8)
             }
@@ -15525,7 +15063,7 @@ private enum ChatExportRenderer {
     private static func markdownHeading(for message: ChatExportMessage) -> String {
         switch message.role {
         case "user": "## You"
-        case "assistant": "## Locus"
+        case "assistant": message.phase == .commentary ? "## Locus — Commentary" : "## Locus"
         case "tool": "### Tool: \(message.name?.nilIfEmpty ?? "tool")"
         default: "## \(message.role.capitalized)"
         }
@@ -15534,10 +15072,18 @@ private enum ChatExportRenderer {
     private static func textHeading(for message: ChatExportMessage) -> String {
         switch message.role {
         case "user": "YOU"
-        case "assistant": "LOCUS"
+        case "assistant": message.phase == .commentary ? "LOCUS — COMMENTARY" : "LOCUS"
         case "tool": "TOOL — \(message.name?.nilIfEmpty ?? "tool")"
         default: message.role.uppercased()
         }
+    }
+
+    private static func resolvedReasoning(for message: ChatExportMessage) -> String? {
+        let sections = (message.reasoningSections ?? []).filter {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        if !sections.isEmpty { return sections.joined(separator: "\n\n") }
+        return message.reasoning?.nilIfEmpty
     }
 
     private static func decodedAttachmentData(_ value: String) -> Data? {

@@ -6,8 +6,9 @@ import SwiftUI
 /// indentation is the scarcest thing on screen.
 struct InspectorFilesTab: View {
     @EnvironmentObject private var model: AppModel
+    @ObservedObject var workspaceFiles: WorkspaceFileModel
 
-    private var files: [URL] { model.filteredWorkspaceFiles }
+    private var files: [URL] { workspaceFiles.filteredFiles }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,8 +17,9 @@ struct InspectorFilesTab: View {
             if files.isEmpty {
                 InspectorPlaceholder(
                     symbol: "folder",
-                    title: model.fileQuery.isEmpty ? "No files indexed" : "No matching files",
-                    message: model.fileQuery.isEmpty
+                    title: workspaceFiles.query.isEmpty
+                        ? "No files indexed" : "No matching files",
+                    message: workspaceFiles.query.isEmpty
                         ? "Locus indexes the text files in your workspace so you can attach them without leaving the conversation."
                         : "Nothing in this workspace matches that search.",
                     identifier: "files.empty"
@@ -26,7 +28,11 @@ struct InspectorFilesTab: View {
                 ScrollView {
                     LazyVStack(spacing: 2) {
                         ForEach(Array(files.enumerated()), id: \.element) { index, url in
-                            WorkspaceFileRow(url: url, index: index)
+                            WorkspaceFileRow(
+                                workspaceFiles: workspaceFiles,
+                                url: url,
+                                index: index
+                            )
                                 .environmentObject(model)
                         }
                     }
@@ -35,12 +41,12 @@ struct InspectorFilesTab: View {
                 }
             }
 
-            if let path = model.previewedFilePath {
+            if let path = workspaceFiles.previewedPath {
                 filePeek(path)
             }
         }
         .task(id: model.workspacePath) {
-            model.refreshWorkspaceIndex()
+            workspaceFiles.refresh()
         }
     }
 
@@ -50,13 +56,13 @@ struct InspectorFilesTab: View {
                 Image(systemName: "magnifyingglass")
                     .font(.locus(size: 10))
                     .foregroundStyle(LocusTheme.muted)
-                TextField("Search files", text: $model.fileQuery)
+                TextField("Search files", text: $workspaceFiles.query)
                     .textFieldStyle(.plain)
                     .font(.locus(size: 11))
                     .accessibilityIdentifier("files.search")
-                if !model.fileQuery.isEmpty {
+                if !workspaceFiles.query.isEmpty {
                     Button {
-                        model.fileQuery = ""
+                        workspaceFiles.query = ""
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                     }
@@ -75,13 +81,13 @@ struct InspectorFilesTab: View {
             }
 
             HStack(spacing: 8) {
-                Text("\(files.count) of \(model.workspaceFileIndex.count) files")
+                Text("\(files.count) of \(workspaceFiles.files.count) files")
                     .font(.locus(size: 8))
                     .foregroundStyle(LocusTheme.muted)
                     .accessibilityIdentifier("files.count")
                 Spacer()
                 Button {
-                    model.refreshWorkspaceIndex(force: true)
+                    workspaceFiles.refresh(force: true)
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
@@ -120,7 +126,7 @@ struct InspectorFilesTab: View {
                     .truncationMode(.head)
                 Spacer()
                 Button {
-                    model.closeFilePreview()
+                    workspaceFiles.closePreview()
                 } label: {
                     Image(systemName: "xmark")
                         .font(.locus(size: 9, weight: .semibold))
@@ -133,7 +139,7 @@ struct InspectorFilesTab: View {
             .padding(.horizontal, 12)
             .frame(height: 30)
 
-            if let contents = model.previewedFileContents {
+            if let contents = workspaceFiles.previewedContents {
                 ScrollView {
                     CodeBlockView(language: (path as NSString).pathExtension, code: contents)
                         .padding(.horizontal, 10)
@@ -156,6 +162,7 @@ struct InspectorFilesTab: View {
 
 private struct WorkspaceFileRow: View {
     @EnvironmentObject private var model: AppModel
+    @ObservedObject var workspaceFiles: WorkspaceFileModel
     let url: URL
     let index: Int
 
@@ -163,11 +170,11 @@ private struct WorkspaceFileRow: View {
         WorkspaceIndex.relativePath(url, root: model.workspacePath)
     }
 
-    private var isSelected: Bool { model.previewedFilePath == relativePath }
+    private var isSelected: Bool { workspaceFiles.previewedPath == relativePath }
 
     var body: some View {
         Button {
-            if isSelected { model.closeFilePreview() } else { model.previewFile(url) }
+            if isSelected { workspaceFiles.closePreview() } else { workspaceFiles.preview(url) }
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "doc.text")

@@ -866,6 +866,19 @@ final class LocusUITests: XCTestCase {
             choice.click()
             XCTAssertEqual(picker.value as? String, value)
         }
+        let blueAccent = anyElement("settings.accentColor.blue")
+        let pinkAccent = anyElement("settings.accentColor.pink")
+        let logoPreview = anyElement("settings.accentColor.preview")
+        XCTAssertTrue(blueAccent.exists)
+        XCTAssertTrue(pinkAccent.exists)
+        XCTAssertTrue(logoPreview.exists)
+        blueAccent.click()
+        XCTAssertEqual(blueAccent.value as? String, "Selected")
+        XCTAssertEqual(logoPreview.label, "Current Locus logo, Blue")
+        pinkAccent.click()
+        XCTAssertEqual(pinkAccent.value as? String, "Selected")
+        XCTAssertEqual(blueAccent.value as? String, "Not selected")
+        XCTAssertEqual(logoPreview.label, "Current Locus logo, Pink")
         teamProgress.click()
         contextUsage.click()
 
@@ -881,6 +894,7 @@ final class LocusUITests: XCTestCase {
         let dark = anyElement("settings.appearance.dark")
         XCTAssertTrue(dark.waitForExistence(timeout: 3))
         XCTAssertEqual(anyElement("settings.appearance").value as? String, "dark")
+        XCTAssertEqual(anyElement("settings.accentColor.pink").value as? String, "Selected")
         XCTAssertTrue(anyElement("settings.showTeamProgressInHeader").exists)
         XCTAssertTrue(anyElement("settings.showContextUsageInHeader").exists)
         app.buttons["settings.cancel"].click()
@@ -2203,6 +2217,15 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }
 
+    private func relaunchWithCodexTranscriptFixture(mode: String = "expanded") {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_CODEX_TRANSCRIPT_FIXTURE"] = "1"
+        app.launchEnvironment["LOCUS_UI_TESTING_THINKING_MODE"] = mode
+        app.launchEnvironment["LOCUS_UI_TESTING_TOOL_ACTIVITY_MODE"] = "collapsed"
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+    }
+
     private func relaunchWithRunFixture(
         _ fixture: String,
         uncleanRecovery: Bool = false,
@@ -2515,6 +2538,37 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement(
             "thinkingActivity.entry.00000000-0000-0000-0000-000000000204.0"
         ).exists)
+    }
+
+    func testCodexTranscriptKeepsReasoningCommentaryAndFinalListSeparate() {
+        relaunchWithCodexTranscriptFixture()
+
+        let group = anyElement(
+            "thinkingActivity.group.00000000-0000-0000-0000-000000000301"
+        )
+        XCTAssertTrue(group.waitForExistence(timeout: 3))
+        XCTAssertTrue(group.label.contains("2 updates"))
+        XCTAssertTrue(anyElement(
+            "thinkingActivity.entry.00000000-0000-0000-0000-000000000302.0"
+        ).waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement(
+            "thinkingActivity.entry.00000000-0000-0000-0000-000000000302.1"
+        ).exists)
+
+        XCTAssertTrue(app.staticTexts["Planning data retrieval"].exists)
+        XCTAssertTrue(app.staticTexts["Checking forecast parsing"].exists)
+        XCTAssertFalse(app.staticTexts["**Planning data retrieval**"].exists)
+        XCTAssertFalse(app.staticTexts["**Checking forecast parsing**"].exists)
+
+        XCTAssertTrue(anyElement(
+            "message.00000000-0000-0000-0000-000000000303"
+        ).exists)
+        XCTAssertTrue(anyElement(
+            "message.00000000-0000-0000-0000-000000000304"
+        ).exists)
+        XCTAssertTrue(app.staticTexts["I’ll check both locations now."].exists)
+        XCTAssertTrue(app.staticTexts["Austin: Sunny and hot."].exists)
+        XCTAssertTrue(app.staticTexts["Jerusalem: Warm and dry."].exists)
     }
 
     func testReviewAndLandShowsDiffChecksAndBothDestinations() {

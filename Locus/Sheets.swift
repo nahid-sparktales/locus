@@ -2699,16 +2699,23 @@ struct SettingsView: View {
                     }
 
                     HStack(spacing: 12) {
-                        Image(
-                            nsImage: LocusBrandIcon.image(
-                                accent: draft.resolvedAccent.logoNSColor,
-                                size: 128
+                        ZStack {
+                            Image(
+                                nsImage: LocusBrandIcon.image(
+                                    accent: draft.resolvedAccent.logoNSColor,
+                                    size: 128
+                                )
                             )
-                        )
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(width: 38, height: 38)
-                        .accessibilityHidden(true)
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: 38, height: 38)
+                            // Generated NSImages are otherwise free to retain
+                            // their previous SwiftUI image node while dragging.
+                            .id(draft.resolvedAccent)
+                        }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Current Locus logo, \(draft.resolvedAccent.title)")
+                        .accessibilityIdentifier("settings.accentColor.preview")
 
                         ColorPicker(
                             "Choose any colour",
@@ -2725,7 +2732,7 @@ struct SettingsView: View {
                         }
                     }
 
-                    Text("The Dock logo, buttons, highlights, status accents, and Locus icons all update together. Your choice is saved automatically.")
+                    Text("Buttons, highlights, status accents, and in-app Locus marks update together. Your choice is saved automatically.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -3267,6 +3274,7 @@ struct SettingsView: View {
                     .resizable()
                     .interpolation(.high)
                     .frame(width: 44, height: 44)
+                    .id(accent)
                 Text(preset.title)
                     .font(.system(.caption, design: .default, weight: .medium))
                     .foregroundStyle(selected ? LocusTheme.accentAction : LocusTheme.textSecondary)

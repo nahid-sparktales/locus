@@ -57,79 +57,6 @@ enum AssistantSegment: Hashable {
     }
 }
 
-/// Block-level markdown structure for a visible segment: fenced code blocks
-/// become dedicated cards, everything else stays inline-markdown paragraphs.
-enum MarkdownFragment: Hashable {
-    case text(String)
-    case code(language: String?, body: String)
-
-    static func parse(_ text: String) -> [MarkdownFragment] {
-        var fragments: [MarkdownFragment] = []
-        var textLines: [String] = []
-        var codeLines: [String] = []
-        var codeLanguage: String?
-        var insideFence = false
-
-        func flushText() {
-            let joined = textLines.joined(separator: "\n")
-            if !joined.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                fragments.append(.text(joined))
-            }
-            textLines = []
-        }
-
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("```") {
-                if insideFence {
-                    fragments.append(.code(
-                        language: codeLanguage,
-                        body: codeLines.joined(separator: "\n")
-                    ))
-                    codeLines = []
-                    insideFence = false
-                } else {
-                    flushText()
-                    let language = trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces)
-                    codeLanguage = language.isEmpty ? nil : language
-                    insideFence = true
-                }
-            } else if insideFence {
-                codeLines.append(String(line))
-            } else {
-                textLines.append(String(line))
-            }
-        }
-        if insideFence {
-            fragments.append(.code(language: codeLanguage, body: codeLines.joined(separator: "\n")))
-        } else {
-            flushText()
-        }
-        return fragments
-    }
-}
-
-/// Finished replies are immutable. Parsing them again because an unrelated
-/// app setting or hover state changed is pure main-thread work, so retain the
-/// completed block structure for the lifetime of the process.
-@MainActor
-private enum FinishedMarkdownCache {
-    private static var values: [String: [MarkdownFragment]] = [:]
-    private static var order: [String] = []
-    private static let limit = 128
-
-    static func fragments(for text: String) -> [MarkdownFragment] {
-        if let cached = values[text] { return cached }
-        let parsed = MarkdownFragment.parse(text)
-        values[text] = parsed
-        order.append(text)
-        if order.count > limit {
-            values.removeValue(forKey: order.removeFirst())
-        }
-        return parsed
-    }
-}
-
 /// Heuristic for tool output that is a unified diff, so the Changes inspector
 /// and tool cards can color it like Claude Code's diff view.
 enum DiffDetector {
@@ -154,14 +81,21 @@ struct MessageContentView: View {
     let text: String
     let isStreaming: Bool
     var reasoningText: String? = nil
+    var reasoningSections: [String]? = nil
+    var workspacePath: String? = nil
     var thinkingVisibility: ThinkingVisibility = .collapsed
 
     var body: some View {
         let nativeReasoning = reasoningText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let hasReasoningSections = reasoningSections?.contains {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        } == true
         VStack(alignment: .leading, spacing: 14) {
-            if !nativeReasoning.isEmpty, thinkingVisibility != .hidden {
+            if (!nativeReasoning.isEmpty || hasReasoningSections), thinkingVisibility != .hidden {
                 ThinkingSegmentView(
                     text: nativeReasoning,
+                    sections: reasoningSections ?? [],
+                    workspacePath: workspacePath,
                     isActive: isStreaming && text.isEmpty,
                     forceExpanded: thinkingVisibility == .expanded
                 )
@@ -176,9 +110,6 @@ struct MessageContentView: View {
 
     @ViewBuilder
     private func streamingAnswer(nativeReasoning: String) -> some View {
-        // Provider/inline reasoning arrives on its separate channel. Keeping
-        // the active answer as one plain Text avoids reparsing an ever-growing
-        // Markdown document for every 50 ms batch.
         if text.isEmpty {
             if nativeReasoning.isEmpty || thinkingVisibility == .hidden {
                 HStack(spacing: 7) {
@@ -191,11 +122,7 @@ struct MessageContentView: View {
                 .accessibilityIdentifier("message.thinking.hiddenIndicator")
             }
         } else {
-            Text(text)
-                .font(.locus(size: 13))
-                .foregroundStyle(LocusTheme.inkSoft)
-                .lineSpacing(5)
-                .textSelection(.enabled)
+            StreamingMarkdownBodyView(text: text, workspacePath: workspacePath)
         }
     }
 
@@ -207,45 +134,23 @@ struct MessageContentView: View {
             case .thinking(let body, _):
                 ThinkingSegmentView(
                     text: body,
+                    workspacePath: workspacePath,
                     isActive: false,
                     forceExpanded: thinkingVisibility == .expanded
                 )
             case .visible(let body):
-                MarkdownBodyView(text: body)
+                MarkdownBodyView(text: body, workspacePath: workspacePath)
             }
         }
     }
 }
 
-/// A complete Markdown answer body. Keeping this separate from assistant
-/// reasoning also lets user-authored prompts use the same high-quality prose,
-/// list, table, and code presentation without treating user text as reasoning.
-struct MarkdownBodyView: View {
-    let text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ForEach(
-                Array(FinishedMarkdownCache.fragments(for: text).enumerated()),
-                id: \.offset
-            ) { _, fragment in
-                switch fragment {
-                case .text(let value):
-                    InlineMarkdownText(value)
-                case .code(let language, let code):
-                    CodeBlockView(language: language, code: code)
-                }
-            }
-        }
-    }
-}
-
-/// The active reply bypasses SwiftUI Text layout. TextKit receives only the
-/// newly appended UTF-16 suffix, so a 100 KB answer does not relayout its
-/// entire String on every provider chunk.
+/// The active reply reparses on the streaming coalescer's cadence and discards
+/// stale results, so provider chunks never trigger synchronous Markdown work.
 struct StreamingMessageContentView: View {
     @ObservedObject var reply: StreamingReplyState
     let thinkingVisibility: ThinkingVisibility
+    var workspacePath: String? = nil
 
     var body: some View {
         let snapshot = reply.snapshot
@@ -253,8 +158,10 @@ struct StreamingMessageContentView: View {
             if !snapshot.reasoning.isEmpty, thinkingVisibility != .hidden {
                 StreamingThinkingSegmentView(
                     text: snapshot.reasoning,
+                    sections: snapshot.reasoningSections,
                     isActive: snapshot.text.isEmpty,
-                    forceExpanded: thinkingVisibility == .expanded
+                    forceExpanded: thinkingVisibility == .expanded,
+                    workspacePath: workspacePath
                 )
             }
             if snapshot.text.isEmpty {
@@ -267,12 +174,7 @@ struct StreamingMessageContentView: View {
                     }
                 }
             } else {
-                StreamingPlainTextView(
-                    text: snapshot.text,
-                    font: .systemFont(ofSize: 13),
-                    color: NSColor(LocusTheme.inkSoft),
-                    lineSpacing: 5
-                )
+                StreamingMarkdownBodyView(text: snapshot.text, workspacePath: workspacePath)
                 Capsule()
                     .fill(LocusTheme.signalDeep)
                     .frame(width: 9, height: 2)
@@ -284,8 +186,10 @@ struct StreamingMessageContentView: View {
 
 private struct StreamingThinkingSegmentView: View {
     let text: String
+    let sections: [String]
     let isActive: Bool
     let forceExpanded: Bool
+    var workspacePath: String? = nil
     @State private var expanded = false
 
     private var isOpen: Bool { expanded || isActive || forceExpanded }
@@ -315,11 +219,10 @@ private struct StreamingThinkingSegmentView: View {
             .disabled(forceExpanded)
 
             if isOpen {
-                StreamingPlainTextView(
-                    text: text,
-                    font: .systemFont(ofSize: 11),
-                    color: NSColor(LocusTheme.muted),
-                    lineSpacing: 4
+                ReasoningSectionsView(
+                    sections: displaySections,
+                    workspacePath: workspacePath,
+                    streaming: true
                 )
                 .padding(.horizontal, 13)
                 .padding(.bottom, 12)
@@ -331,6 +234,11 @@ private struct StreamingThinkingSegmentView: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(LocusTheme.line.opacity(0.8), lineWidth: 1)
         }
+    }
+
+    private var displaySections: [String] {
+        let nonempty = sections.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return nonempty.isEmpty ? [text] : nonempty
     }
 }
 
@@ -431,6 +339,8 @@ final class AppendOnlyTextView: NSTextView {
 /// Expanded mode the card is pinned open and the per-block toggle disabled.
 struct ThinkingSegmentView: View {
     let text: String
+    var sections: [String] = []
+    var workspacePath: String? = nil
     let isActive: Bool
     var forceExpanded = false
     @State private var expanded = false
@@ -468,12 +378,11 @@ struct ThinkingSegmentView: View {
             .accessibilityIdentifier("message.thinking.toggle")
 
             if isOpen {
-                Text(text)
-                    .font(.locus(size: 11))
-                    .foregroundStyle(LocusTheme.muted)
-                    .lineSpacing(4)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                ReasoningSectionsView(
+                    sections: displaySections,
+                    workspacePath: workspacePath,
+                    streaming: false
+                )
                     .padding(.horizontal, 13)
                     .padding(.bottom, 12)
             }
@@ -485,363 +394,42 @@ struct ThinkingSegmentView: View {
                 .stroke(LocusTheme.line.opacity(0.8), lineWidth: 1)
         }
     }
-}
 
-struct MarkdownListItem: Hashable {
-    let text: String
-    let checked: Bool?
-}
-
-/// Semantic prose blocks inside the non-code portions of a response. This is
-/// deliberately small and deterministic rather than a web renderer: it covers
-/// the structures coding assistants produce most often while retaining native
-/// text selection, accessibility, and macOS link handling.
-enum MarkdownProseBlock: Hashable {
-    case heading(level: Int, text: String)
-    case paragraph(String)
-    case unordered([MarkdownListItem])
-    case ordered(start: Int, items: [String])
-    case quote(String)
-    case rule
-    case table(headers: [String], rows: [[String]])
-
-    static func parse(_ text: String) -> [MarkdownProseBlock] {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        var blocks: [MarkdownProseBlock] = []
-        var paragraph: [String] = []
-        var index = 0
-
-        func flushParagraph() {
-            guard !paragraph.isEmpty else { return }
-            blocks.append(.paragraph(paragraph.joined(separator: "\n")))
-            paragraph = []
-        }
-
-        while index < lines.count {
-            let line = lines[index]
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty {
-                flushParagraph()
-                index += 1
-                continue
-            }
-
-            if let level = headingLevel(line) {
-                flushParagraph()
-                blocks.append(.heading(
-                    level: level,
-                    text: String(line.drop(while: { $0 == "#" || $0 == " " }))
-                ))
-                index += 1
-                continue
-            }
-
-            if isRule(trimmed) {
-                flushParagraph()
-                blocks.append(.rule)
-                index += 1
-                continue
-            }
-
-            if index + 1 < lines.count,
-               let headers = tableCells(line),
-               isTableDivider(lines[index + 1], count: headers.count)
-            {
-                flushParagraph()
-                var rows: [[String]] = []
-                index += 2
-                while index < lines.count,
-                      let cells = tableCells(lines[index]),
-                      !lines[index].trimmingCharacters(in: .whitespaces).isEmpty
-                {
-                    rows.append(normalized(cells, count: headers.count))
-                    index += 1
-                }
-                blocks.append(.table(headers: headers, rows: rows))
-                continue
-            }
-
-            if quoteText(line) != nil {
-                flushParagraph()
-                var quoteLines: [String] = []
-                while index < lines.count, let value = quoteText(lines[index]) {
-                    quoteLines.append(value)
-                    index += 1
-                }
-                blocks.append(.quote(quoteLines.joined(separator: "\n")))
-                continue
-            }
-
-            if unorderedItem(line) != nil {
-                flushParagraph()
-                var items: [MarkdownListItem] = []
-                while index < lines.count, let item = unorderedItem(lines[index]) {
-                    items.append(item)
-                    index += 1
-                }
-                blocks.append(.unordered(items))
-                continue
-            }
-
-            if let first = orderedItem(line) {
-                flushParagraph()
-                var items = [first.text]
-                let start = first.number
-                index += 1
-                while index < lines.count, let item = orderedItem(lines[index]) {
-                    items.append(item.text)
-                    index += 1
-                }
-                blocks.append(.ordered(start: start, items: items))
-                continue
-            }
-
-            paragraph.append(line)
-            index += 1
-        }
-        flushParagraph()
-        return blocks
-    }
-
-    private static func headingLevel(_ line: String) -> Int? {
-        let hashes = line.prefix(while: { $0 == "#" }).count
-        guard hashes > 0, hashes <= 6,
-              line.dropFirst(hashes).first == " " else { return nil }
-        return hashes
-    }
-
-    private static func isRule(_ line: String) -> Bool {
-        let compact = line.filter { !$0.isWhitespace }
-        guard compact.count >= 3, let first = compact.first,
-              first == "-" || first == "_" || first == "*" else { return false }
-        return compact.allSatisfy { $0 == first }
-    }
-
-    private static func unorderedItem(_ line: String) -> MarkdownListItem? {
-        let value = line.trimmingCharacters(in: .whitespaces)
-        guard value.count >= 2,
-              ["- ", "* ", "+ "].contains(where: { value.hasPrefix($0) })
-        else { return nil }
-        var body = String(value.dropFirst(2))
-        var checked: Bool?
-        if body.hasPrefix("[ ] ") {
-            checked = false
-            body.removeFirst(4)
-        } else if body.lowercased().hasPrefix("[x] ") {
-            checked = true
-            body.removeFirst(4)
-        }
-        return MarkdownListItem(text: body, checked: checked)
-    }
-
-    private static func orderedItem(_ line: String) -> (number: Int, text: String)? {
-        let value = line.trimmingCharacters(in: .whitespaces)
-        let digits = value.prefix(while: { $0.isNumber })
-        guard let number = Int(digits), !digits.isEmpty else { return nil }
-        let suffix = value.dropFirst(digits.count)
-        guard suffix.hasPrefix(". ") || suffix.hasPrefix(") ") else { return nil }
-        return (number, String(suffix.dropFirst(2)))
-    }
-
-    private static func quoteText(_ line: String) -> String? {
-        let value = line.trimmingCharacters(in: .whitespaces)
-        guard value.hasPrefix(">") else { return nil }
-        return String(value.dropFirst().drop(while: { $0 == " " }))
-    }
-
-    private static func tableCells(_ line: String) -> [String]? {
-        let value = line.trimmingCharacters(in: .whitespaces)
-        guard value.contains("|") else { return nil }
-        var cells = value.split(separator: "|", omittingEmptySubsequences: false).map {
-            $0.trimmingCharacters(in: .whitespaces)
-        }
-        if value.hasPrefix("|") { cells.removeFirst() }
-        if value.hasSuffix("|") { cells.removeLast() }
-        return cells.count >= 2 ? cells : nil
-    }
-
-    private static func isTableDivider(_ line: String, count: Int) -> Bool {
-        guard let cells = tableCells(line), cells.count == count else { return false }
-        return cells.allSatisfy { cell in
-            let core = cell.trimmingCharacters(in: CharacterSet(charactersIn: ":"))
-            return core.count >= 3 && core.allSatisfy { $0 == "-" }
-        }
-    }
-
-    private static func normalized(_ cells: [String], count: Int) -> [String] {
-        if cells.count == count { return cells }
-        if cells.count > count { return Array(cells.prefix(count)) }
-        return cells + Array(repeating: "", count: count - cells.count)
+    private var displaySections: [String] {
+        let nonempty = sections.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return nonempty.isEmpty ? [text] : nonempty
     }
 }
 
-/// Paragraph text with native inline Markdown and block-level hierarchy close
-/// to Codex and Claude: crisp headings, readable lists, task state, quotes,
-/// dividers, and horizontally safe tables.
-struct InlineMarkdownText: View {
-    let text: String
-    init(_ text: String) { self.text = text }
+private struct ReasoningSectionsView: View {
+    let sections: [String]
+    let workspacePath: String?
+    let streaming: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(MarkdownProseBlock.parse(text).enumerated()), id: \.offset) { _, block in
-                switch block {
-                case .heading(let level, let value):
-                    Text(inline(value))
-                        .font(.locus(
-                            size: level == 1 ? 20 : (level == 2 ? 17 : 14),
-                            weight: level <= 2 ? .bold : .semibold
-                        ))
-                        .tracking(level <= 2 ? -0.25 : 0)
-                        .foregroundStyle(LocusTheme.ink)
-                        .padding(.top, level == 1 ? 7 : 4)
-                        .textSelection(.enabled)
-
-                case .paragraph(let value):
-                    prose(value)
-
-                case .unordered(let items):
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                            HStack(alignment: .firstTextBaseline, spacing: 9) {
-                                if let checked = item.checked {
-                                    Image(systemName: checked ? "checkmark.circle.fill" : "circle")
-                                        .font(.locus(size: 10, weight: .semibold))
-                                        .foregroundStyle(checked ? LocusTheme.success : LocusTheme.muted)
-                                        .frame(width: 12)
-                                } else {
-                                    Circle()
-                                        .fill(LocusTheme.inkSoft)
-                                        .frame(width: 4, height: 4)
-                                        .frame(width: 12)
-                                }
-                                prose(item.text)
-                            }
-                        }
-                    }
-                    .padding(.leading, 2)
-
-                case .ordered(let start, let items):
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(Array(items.enumerated()), id: \.offset) { offset, item in
-                            HStack(alignment: .firstTextBaseline, spacing: 9) {
-                                Text("\(start + offset).")
-                                    .font(.locus(size: 11, weight: .semibold, design: .monospaced))
-                                    .foregroundStyle(LocusTheme.muted)
-                                    .frame(minWidth: 20, alignment: .trailing)
-                                prose(item)
-                            }
-                        }
-                    }
-
-                case .quote(let value):
-                    HStack(alignment: .top, spacing: 11) {
-                        Capsule()
-                            .fill(LocusTheme.lineStrong.opacity(0.75))
-                            .frame(width: 3)
-                        prose(value)
-                            .foregroundStyle(LocusTheme.muted)
-                    }
-                    .padding(.vertical, 2)
-
-                case .rule:
+        VStack(alignment: .leading, spacing: 9) {
+            ForEach(Array(sections.enumerated()), id: \.offset) { index, section in
+                if streaming {
+                    StreamingMarkdownBodyView(
+                        text: section,
+                        workspacePath: workspacePath,
+                        density: .compact
+                    )
+                } else {
+                    MarkdownBodyView(
+                        text: section,
+                        workspacePath: workspacePath,
+                        density: .compact
+                    )
+                }
+                if index < sections.count - 1 {
                     Rectangle()
-                        .fill(LocusTheme.line)
+                        .fill(LocusTheme.line.opacity(0.75))
                         .frame(height: 1)
-                        .padding(.vertical, 4)
-
-                case .table(let headers, let rows):
-                    MarkdownTableView(headers: headers, rows: rows)
                 }
             }
         }
-        .tint(LocusTheme.signalDeep)
-    }
-
-    private func prose(_ value: String) -> some View {
-        Text(inline(value))
-            .font(.locus(size: 13))
-            .foregroundStyle(LocusTheme.inkSoft)
-            .lineSpacing(5)
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func inline(_ value: String) -> AttributedString {
-        var result = (try? AttributedString(
-            markdown: value,
-            options: AttributedString.MarkdownParsingOptions(
-                interpretedSyntax: .inlineOnlyPreservingWhitespace
-            )
-        )) ?? AttributedString(value)
-        for run in result.runs {
-            guard run.inlinePresentationIntent?.contains(.code) == true else { continue }
-            result[run.range].font = .locus(size: 12, weight: .medium, design: .monospaced)
-            result[run.range].foregroundColor = LocusTheme.ink
-            result[run.range].backgroundColor = LocusTheme.paperDeep
-        }
-        return result
-    }
-}
-
-private struct MarkdownTableView: View {
-    let headers: [String]
-    let rows: [[String]]
-    private let cellWidth: CGFloat = 154
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 0) {
-                row(headers, header: true)
-                Rectangle().fill(LocusTheme.lineStrong.opacity(0.8)).frame(height: 1)
-                ForEach(Array(rows.enumerated()), id: \.offset) { index, cells in
-                    row(cells, header: false)
-                        .background(index.isMultiple(of: 2) ? Color.clear : LocusTheme.paperDeep.opacity(0.28))
-                    if index < rows.count - 1 {
-                        Rectangle().fill(LocusTheme.line.opacity(0.7)).frame(height: 1)
-                    }
-                }
-            }
-            .background(LocusTheme.white)
-            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(LocusTheme.line, lineWidth: 1)
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Table with \(headers.count) columns and \(rows.count) rows")
-    }
-
-    private func row(_ cells: [String], header: Bool) -> some View {
-        HStack(spacing: 0) {
-            ForEach(Array(cells.enumerated()), id: \.offset) { index, cell in
-                let showsDivider = index != cells.indices.last
-                Text(inline(cell))
-                    .font(.locus(size: 11, weight: header ? .semibold : .regular))
-                    .foregroundStyle(header ? LocusTheme.ink : LocusTheme.inkSoft)
-                    .lineLimit(4)
-                    .textSelection(.enabled)
-                    .frame(width: cellWidth, alignment: .leading)
-                    .frame(minHeight: 34, alignment: .leading)
-                    .padding(.horizontal, 10)
-                    .overlay(alignment: .trailing) {
-                        if showsDivider {
-                            Rectangle().fill(LocusTheme.line.opacity(0.7)).frame(width: 1)
-                        }
-                    }
-            }
-        }
-        .background(header ? LocusTheme.paperDeep.opacity(0.75) : Color.clear)
-    }
-
-    private func inline(_ value: String) -> AttributedString {
-        (try? AttributedString(
-            markdown: value,
-            options: AttributedString.MarkdownParsingOptions(
-                interpretedSyntax: .inlineOnlyPreservingWhitespace
-            )
-        )) ?? AttributedString(value)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

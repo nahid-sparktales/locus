@@ -68,7 +68,6 @@ struct LocusApp: App {
                     appDelegate.lifecycle = lifecycle
                     lifecycle.connect(model: model)
                     updates.setRelaunchHandler(lifecycle)
-                    model.applyApplicationAccent()
                 }
                 .preferredColorScheme(model.effectiveAppearance.colorScheme)
                 .accentColor(model.accentActionColor)

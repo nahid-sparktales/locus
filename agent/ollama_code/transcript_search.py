@@ -32,7 +32,7 @@ from .sessions import (
     strip_prompt_decoration,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_PATH = APP_DIR / "transcript-index.sqlite3"
 MAX_MESSAGE_CHARS = 100_000
 MAX_QUERY_CHARS = 500
@@ -107,7 +107,8 @@ class TranscriptIndex:
                 );
                 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
                     content, session_id UNINDEXED, message_index UNINDEXED,
-                    role UNINDEXED, tokenize='unicode61'
+                    role UNINDEXED, phase UNINDEXED, item_id UNINDEXED,
+                    reasoning_sections UNINDEXED, tokenize='unicode61'
                 );
                 """
             )
@@ -221,7 +222,7 @@ class TranscriptIndex:
             else:
                 # Shrunk or replaced (restore, rewrite): re-read from zero.
                 self._forget(session_id)
-        rows: list[tuple[str, str, int, str]] = []
+        rows: list[tuple[str, str, int, str, str, str, str]] = []
         consumed = start_byte
         with path.open("rb") as handle:
             handle.seek(start_byte)
@@ -252,19 +253,32 @@ class TranscriptIndex:
                 if role not in _INDEXED_ROLES:
                     continue
                 content = message.get("content")
-                if not isinstance(content, str) or not content.strip():
+                content = content if isinstance(content, str) else ""
+                sections = [
+                    str(section)
+                    for section in message.get("_display_reasoning_sections") or []
+                    if str(section).strip()
+                ]
+                if not content.strip() and sections:
+                    content = "\n\n".join(sections)
+                if not content.strip():
                     continue
                 if role == "user":
                     content = strip_prompt_decoration(content)
                     if not content:
                         continue
-                rows.append((content[:MAX_MESSAGE_CHARS], session_id, position, role))
+                rows.append((
+                    content[:MAX_MESSAGE_CHARS], session_id, position, role,
+                    str(message.get("_phase") or ""),
+                    str(message.get("_item_id") or ""),
+                    json.dumps(sections, ensure_ascii=False) if sections else "",
+                ))
         with self._connect() as connection:
-            for content, sid, position, role in rows:
+            for content, sid, position, role, phase, item_id, sections in rows:
                 connection.execute(
-                    "INSERT INTO messages_fts(content, session_id, message_index, role)"
-                    " VALUES(?, ?, ?, ?)",
-                    (content, sid, position, role),
+                    "INSERT INTO messages_fts(content, session_id, message_index, role,"
+                    " phase, item_id, reasoning_sections) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                    (content, sid, position, role, phase, item_id, sections),
                 )
             connection.execute(
                 """INSERT INTO sessions(
@@ -304,7 +318,8 @@ class TranscriptIndex:
             per_session: dict[str, int] = {}
             with self._lock, self._connect() as connection:
                 rows = connection.execute(
-                    f"""SELECT session_id, message_index, role, bm25(messages_fts) AS rank,
+                    f"""SELECT session_id, message_index, role, phase, item_id,
+                               reasoning_sections, bm25(messages_fts) AS rank,
                                snippet(messages_fts, 0, '{_SNIPPET_START}',
                                        '{_SNIPPET_END}', '…', 24) AS snippet
                         FROM messages_fts WHERE messages_fts MATCH ?
@@ -325,7 +340,14 @@ class TranscriptIndex:
                 per_session[session_id] = per_session.get(session_id, 0) + 1
                 snippet, highlights = _split_snippet(str(row["snippet"] or ""))
                 entry = meta.get(session_id, {})
-                results.append({
+                reasoning_sections: list[str] = []
+                try:
+                    decoded_sections = json.loads(str(row["reasoning_sections"] or "[]"))
+                    if isinstance(decoded_sections, list):
+                        reasoning_sections = [str(value) for value in decoded_sections]
+                except json.JSONDecodeError:
+                    pass
+                result = {
                     "session_id": session_id,
                     "title": entry.get("title"),
                     "pinned": bool(entry.get("pinned", False)),
@@ -335,7 +357,14 @@ class TranscriptIndex:
                     "snippet": snippet,
                     "highlights": highlights,
                     "score": 1.0 / (position + 1),
-                })
+                }
+                if row["phase"]:
+                    result["phase"] = str(row["phase"])
+                if row["item_id"]:
+                    result["item_id"] = str(row["item_id"])
+                if reasoning_sections:
+                    result["reasoning_sections"] = reasoning_sections
+                results.append(result)
                 if len(results) >= limit:
                     break
         return {

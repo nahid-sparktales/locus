@@ -1,0 +1,710 @@
+import Combine
+import Foundation
+
+struct AppToast: Identifiable, Equatable {
+    let id = UUID()
+    let message: String
+    let systemImage: String
+    let actionTitle: String?
+
+    init(
+        message: String,
+        systemImage: String = "checkmark",
+        actionTitle: String? = nil
+    ) {
+        self.message = message
+        self.systemImage = systemImage
+        self.actionTitle = actionTitle
+    }
+}
+
+struct StreamingReplySnapshot: Equatable {
+    var id: UUID?
+    var text = ""
+    var reasoning = ""
+    var reasoningSections: [String] = []
+    var turnCharacterCount = 0
+
+    var isActive: Bool { id != nil }
+}
+
+/// Token-level state lives outside AppModel's published transcript array.
+/// Consequently an append invalidates only the active row and token label,
+/// rather than every historical row, sidebar and composer.
+@MainActor
+final class StreamingReplyState: ObservableObject {
+    @Published private(set) var snapshot = StreamingReplySnapshot()
+
+    func begin(id: UUID) {
+        var next = snapshot
+        next.id = id
+        next.text = ""
+        next.reasoning = ""
+        next.reasoningSections = []
+        snapshot = next
+    }
+
+    func append(text: String, reasoning: String) {
+        guard snapshot.id != nil, !text.isEmpty || !reasoning.isEmpty else { return }
+        var next = snapshot
+        next.text += text
+        next.reasoning += reasoning
+        next.turnCharacterCount += text.count + reasoning.count
+        snapshot = next
+    }
+
+    func appendReasoning(_ text: String, sectionIndex: Int) {
+        guard snapshot.id != nil, !text.isEmpty else { return }
+        var next = snapshot
+        let index = max(sectionIndex, 0)
+        while next.reasoningSections.count <= index {
+            next.reasoningSections.append("")
+        }
+        next.reasoningSections[index] += text
+        next.reasoning = next.reasoningSections.joined(separator: "\n\n")
+        next.turnCharacterCount += text.count
+        snapshot = next
+    }
+
+    func finish(
+        id: UUID,
+        authoritativeText: String? = nil,
+        authoritativeReasoningSections: [String]? = nil
+    ) -> StreamingReplySnapshot? {
+        guard snapshot.id == id else { return nil }
+        var finished = snapshot
+        if let authoritativeText {
+            finished.text = authoritativeText
+        }
+        if let authoritativeReasoningSections {
+            finished.reasoningSections = authoritativeReasoningSections
+            finished.reasoning = authoritativeReasoningSections.joined(separator: "\n\n")
+        }
+        snapshot = StreamingReplySnapshot(
+            id: nil,
+            text: "",
+            reasoning: "",
+            reasoningSections: [],
+            turnCharacterCount: finished.turnCharacterCount
+        )
+        return finished
+    }
+
+    func resetTurn() {
+        snapshot = StreamingReplySnapshot()
+    }
+}
+
+struct HealthResponse: Codable {
+    let ok: Bool
+    let version: String?
+    let ollama: Bool
+    let host: String?
+    let model: String?
+    let error: String?
+    let updateAvailable: Bool?
+}
+
+struct HistoryMessage: Codable {
+    let role: String
+    let content: String
+    let name: String?
+    let reasoning: String?
+    let reasoningSections: [String]?
+    let phase: AssistantPhase?
+    let itemID: String?
+    let runID: String?
+
+    var teamRunID: String? { runID }
+
+    private enum CodingKeys: String, CodingKey {
+        case role, content, name, reasoning, phase
+        case reasoningSections = "reasoning_sections"
+        case itemID = "item_id"
+        case runID = "run_id"
+        case legacyTeamRunID = "team_run_id"
+    }
+
+    // A single null-content tool message must not fail an entire resume.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        role = try container.decodeIfPresent(String.self, forKey: .role) ?? ""
+        content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
+        name = try? container.decodeIfPresent(String.self, forKey: .name)
+        reasoning = try? container.decodeIfPresent(String.self, forKey: .reasoning)
+        reasoningSections = try? container.decodeIfPresent([String].self, forKey: .reasoningSections)
+        phase = try? container.decodeIfPresent(AssistantPhase.self, forKey: .phase)
+        itemID = try? container.decodeIfPresent(String.self, forKey: .itemID)
+        runID = (try? container.decodeIfPresent(String.self, forKey: .runID))
+            ?? (try? container.decodeIfPresent(String.self, forKey: .legacyTeamRunID))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(role, forKey: .role)
+        try container.encode(content, forKey: .content)
+        try container.encodeIfPresent(name, forKey: .name)
+        try container.encodeIfPresent(reasoning, forKey: .reasoning)
+        try container.encodeIfPresent(reasoningSections, forKey: .reasoningSections)
+        try container.encodeIfPresent(phase, forKey: .phase)
+        try container.encodeIfPresent(itemID, forKey: .itemID)
+        try container.encodeIfPresent(runID, forKey: .runID)
+    }
+}
+
+enum ToolStatus: String, Codable {
+    case awaitingPermission
+    case running
+    case done
+    case error
+    case denied
+}
+
+struct ToolPayload: Codable, Hashable {
+    var toolID: String
+    var tool: String
+    var summary: String
+    var detail: String
+    var status: ToolStatus
+    var requestID: String?
+    var result: String?
+}
+
+/// The status a compact tool-activity row presents for a group. Active work
+/// wins over earlier failures, while terminal groups preserve the most useful
+/// attention state instead of reading as successfully complete.
+enum ToolActivityAggregateStatus: Equatable {
+    case awaitingPermission
+    case running
+    case error
+    case denied
+    case done
+
+    init(tools: [ToolPayload]) {
+        if tools.contains(where: { $0.status == .awaitingPermission }) {
+            self = .awaitingPermission
+        } else if tools.contains(where: { $0.status == .running }) {
+            self = .running
+        } else if tools.contains(where: { $0.status == .error }) {
+            self = .error
+        } else if tools.contains(where: { $0.status == .denied }) {
+            self = .denied
+        } else {
+            self = .done
+        }
+    }
+}
+
+struct ChatBlock: Identifiable, Codable, Hashable {
+    enum Kind: String, Codable {
+        case user
+        case assistant
+        case tool
+        case note
+        case error
+    }
+
+    var id: UUID
+    var kind: Kind
+    var text: String
+    /// Codex App Server phase for visible assistant-message items. A missing
+    /// value is a legacy answer and therefore behaves as final output.
+    var assistantPhase: AssistantPhase?
+    /// Provider item identity used to reconcile starts, deltas, duplicate
+    /// completions, and authoritative final content without guessing from text.
+    var sourceItemID: String?
+    /// Native provider reasoning, kept separate from visible answer text.
+    /// Optional decoding keeps existing checkpoints readable.
+    var reasoningText: String?
+    /// Ordered Codex reasoning summaries. The legacy flattened field remains
+    /// encoded beside these sections so older checkpoints stay readable.
+    var reasoningSections: [String]?
+    var isStreaming: Bool
+    var tool: ToolPayload?
+    /// Present only for the quiet end-of-turn note rendered after a run.
+    /// Optional keeps checkpoints written by older Locus releases decodable.
+    var completion: TurnCompletion?
+    /// Links a request to its durable run. Ordinary Solo rows remain unchanged
+    /// because their activity panel stays hidden until delegation begins.
+    var runID: String?
+    var teamRunID: String? {
+        get { runID }
+        set { runID = newValue }
+    }
+    /// Position in the restored message array, so a cross-session search hit
+    /// can address this block even after empty messages were dropped.
+    /// Optional decoding keeps existing checkpoints.
+    var historyIndex: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, text, assistantPhase, sourceItemID
+        case reasoningText, reasoningSections, isStreaming, tool, completion, historyIndex
+        case runID = "run_id"
+        case legacyRunID = "runID"
+        case legacyTeamRunID = "teamRunID"
+    }
+
+    init(
+        id: UUID = UUID(),
+        kind: Kind,
+        text: String = "",
+        assistantPhase: AssistantPhase? = nil,
+        sourceItemID: String? = nil,
+        reasoningText: String? = nil,
+        reasoningSections: [String]? = nil,
+        isStreaming: Bool = false,
+        tool: ToolPayload? = nil,
+        completion: TurnCompletion? = nil,
+        runID: String? = nil,
+        teamRunID: String? = nil,
+        historyIndex: Int? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+        self.text = text
+        self.assistantPhase = assistantPhase
+        self.sourceItemID = sourceItemID
+        self.reasoningText = reasoningText
+        self.reasoningSections = reasoningSections
+        self.isStreaming = isStreaming
+        self.tool = tool
+        self.completion = completion
+        self.runID = runID ?? teamRunID
+        self.historyIndex = historyIndex
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        kind = try container.decode(Kind.self, forKey: .kind)
+        text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
+        assistantPhase = try container.decodeIfPresent(AssistantPhase.self, forKey: .assistantPhase)
+        sourceItemID = try container.decodeIfPresent(String.self, forKey: .sourceItemID)
+        reasoningText = try container.decodeIfPresent(String.self, forKey: .reasoningText)
+        reasoningSections = try container.decodeIfPresent([String].self, forKey: .reasoningSections)
+        isStreaming = try container.decodeIfPresent(Bool.self, forKey: .isStreaming) ?? false
+        tool = try container.decodeIfPresent(ToolPayload.self, forKey: .tool)
+        completion = try container.decodeIfPresent(TurnCompletion.self, forKey: .completion)
+        runID = try container.decodeIfPresent(String.self, forKey: .runID)
+            ?? container.decodeIfPresent(String.self, forKey: .legacyRunID)
+            ?? container.decodeIfPresent(String.self, forKey: .legacyTeamRunID)
+        historyIndex = try container.decodeIfPresent(Int.self, forKey: .historyIndex)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(text, forKey: .text)
+        try container.encodeIfPresent(assistantPhase, forKey: .assistantPhase)
+        try container.encodeIfPresent(sourceItemID, forKey: .sourceItemID)
+        let compatibleReasoning = reasoningText
+            ?? reasoningSections?.joined(separator: "\n\n").nilIfEmpty
+        try container.encodeIfPresent(compatibleReasoning, forKey: .reasoningText)
+        try container.encodeIfPresent(reasoningSections, forKey: .reasoningSections)
+        try container.encode(isStreaming, forKey: .isStreaming)
+        try container.encodeIfPresent(tool, forKey: .tool)
+        try container.encodeIfPresent(completion, forKey: .completion)
+        try container.encodeIfPresent(runID, forKey: .runID)
+        try container.encodeIfPresent(historyIndex, forKey: .historyIndex)
+    }
+
+    var resolvedReasoningSections: [String] {
+        let sections = (reasoningSections ?? []).filter {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        if !sections.isEmpty { return sections }
+        guard let reasoningText,
+              !reasoningText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return [] }
+        return [reasoningText]
+    }
+}
+
+/// A stable presentation-only projection of transcript blocks. Tool calls and
+/// completed reasoning can become request-level activity groups while the
+/// stored blocks remain untouched.
+enum TranscriptPresentationItem: Identifiable, Equatable {
+    enum ID: Hashable {
+        case block(UUID)
+        case toolGroup(UUID)
+        case thinkingGroup(UUID)
+    }
+
+    case block(ChatBlock)
+    case toolGroup(id: UUID, tools: [ToolPayload])
+    case thinkingGroup(id: UUID, entries: [ThinkingPresentationEntry])
+
+    var id: ID {
+        switch self {
+        case .block(let block): .block(block.id)
+        case .toolGroup(let id, _): .toolGroup(id)
+        case .thinkingGroup(let id, _): .thinkingGroup(id)
+        }
+    }
+}
+
+/// One provider-supplied reasoning segment inside a request-level thought
+/// group. The source block and ordinal keep SwiftUI identity stable without
+/// changing the persisted transcript model.
+struct ThinkingPresentationEntry: Identifiable, Equatable {
+    struct ID: Hashable {
+        let sourceBlockID: UUID
+        let ordinal: Int
+    }
+
+    let id: ID
+    let text: String
+}
+
+enum TranscriptPresentation {
+    static func items(
+        from blocks: [ChatBlock],
+        toolVisibility: ToolActivityVisibility,
+        thinkingVisibility: ThinkingVisibility
+    ) -> [TranscriptPresentationItem] {
+        var items: [TranscriptPresentationItem] = []
+        var requestBlocks: [ChatBlock] = []
+        var requestID: UUID?
+
+        func flushRequest() {
+            guard !requestBlocks.isEmpty else { return }
+            let tools = requestBlocks.compactMap(\.tool)
+            let groupID = requestID ?? requestBlocks.first(where: { $0.tool != nil })?.id
+            var assistantProjections: [UUID: AssistantProjection] = [:]
+            for block in requestBlocks where block.kind == .assistant && !block.isStreaming {
+                assistantProjections[block.id] = assistantProjection(for: block)
+            }
+            let thinkingEntries = requestBlocks.flatMap { block in
+                assistantProjections[block.id]?.thinkingEntries ?? []
+            }
+            let thinkingGroupID = requestID
+                ?? thinkingEntries.first?.id.sourceBlockID
+            var insertedGroup = false
+            var insertedThinkingGroup = false
+
+            for block in requestBlocks {
+                if block.kind == .tool {
+                    if toolVisibility == .verbose {
+                        items.append(.block(block))
+                    } else if !insertedGroup, let groupID, !tools.isEmpty {
+                        items.append(.toolGroup(id: groupID, tools: tools))
+                        insertedGroup = true
+                    }
+                    continue
+                }
+
+                if let projection = assistantProjections[block.id] {
+                    if !projection.thinkingEntries.isEmpty,
+                       !insertedThinkingGroup,
+                       thinkingVisibility != .hidden,
+                       let thinkingGroupID
+                    {
+                        items.append(.thinkingGroup(
+                            id: thinkingGroupID,
+                            entries: thinkingEntries
+                        ))
+                        insertedThinkingGroup = true
+                    }
+                    if let visibleBlock = projection.visibleBlock {
+                        items.append(.block(visibleBlock))
+                    }
+                    continue
+                }
+
+                if isCompletedEmptyAssistant(block) { continue }
+                items.append(.block(block))
+            }
+            requestBlocks.removeAll(keepingCapacity: true)
+        }
+
+        for block in blocks {
+            if block.kind == .user {
+                flushRequest()
+                items.append(.block(block))
+                requestID = block.id
+            } else if block.completion != nil {
+                flushRequest()
+                items.append(.block(block))
+                requestID = nil
+            } else {
+                requestBlocks.append(block)
+            }
+        }
+        flushRequest()
+        return items
+    }
+
+    private struct AssistantProjection {
+        let thinkingEntries: [ThinkingPresentationEntry]
+        let visibleBlock: ChatBlock?
+    }
+
+    private static func assistantProjection(for block: ChatBlock) -> AssistantProjection {
+        var thinkingEntries: [ThinkingPresentationEntry] = []
+        var ordinal = 0
+
+        func appendThinking(_ text: String) {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            thinkingEntries.append(ThinkingPresentationEntry(
+                id: .init(sourceBlockID: block.id, ordinal: ordinal),
+                text: trimmed
+            ))
+            ordinal += 1
+        }
+
+        for section in block.resolvedReasoningSections {
+            appendThinking(section)
+        }
+
+        let segments = AssistantSegment.parse(block.text)
+        let containsInlineThinking = segments.contains { segment in
+            if case .thinking = segment { return true }
+            return false
+        }
+        var visibleSegments: [String] = []
+        for segment in segments {
+            switch segment {
+            case .thinking(let text, _):
+                appendThinking(text)
+            case .visible(let text):
+                visibleSegments.append(text)
+            }
+        }
+
+        var visibleBlock = block
+        visibleBlock.reasoningText = nil
+        visibleBlock.reasoningSections = nil
+        if containsInlineThinking {
+            visibleBlock.text = visibleSegments.joined(separator: "\n\n")
+        }
+        if visibleBlock.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return AssistantProjection(thinkingEntries: thinkingEntries, visibleBlock: nil)
+        }
+        return AssistantProjection(thinkingEntries: thinkingEntries, visibleBlock: visibleBlock)
+    }
+
+    private static func isCompletedEmptyAssistant(_ block: ChatBlock) -> Bool {
+        guard block.kind == .assistant, !block.isStreaming else { return false }
+        return block.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && block.resolvedReasoningSections.isEmpty
+    }
+}
+
+/// One `/api/sessions/search` hit — a message position inside a saved session.
+struct TranscriptSearchHit: Codable, Hashable, Identifiable {
+    let sessionID: String
+    let title: String?
+    let pinned: Bool
+    let mtime: Double
+    let messageIndex: Int
+    let role: String
+    let snippet: String
+    let phase: AssistantPhase?
+    let itemID: String?
+    let reasoningSections: [String]?
+    /// `[start, length]` character ranges inside `snippet` to emphasize.
+    let highlights: [[Int]]
+    let score: Double
+
+    var id: String { "\(sessionID):\(messageIndex)" }
+
+    enum CodingKeys: String, CodingKey {
+        case title, pinned, mtime, role, snippet, phase, highlights, score
+        case sessionID = "session_id"
+        case messageIndex = "message_index"
+        case itemID = "item_id"
+        case reasoningSections = "reasoning_sections"
+    }
+
+    /// The first term the index actually matched — by construction it appears
+    /// verbatim in the message text, so it can drive the in-conversation find.
+    var firstMatchedTerm: String? {
+        guard let range = stringRange(of: highlights.first) else { return nil }
+        return String(snippet[range])
+    }
+
+    /// Highlight offsets are Python `str` positions — Unicode scalars, not
+    /// Swift's grapheme clusters — so index math must run on the scalar view
+    /// or any emoji in a snippet shifts every later highlight.
+    func stringRange(of highlight: [Int]?) -> Range<String.Index>? {
+        guard let highlight, highlight.count == 2 else { return nil }
+        let scalars = snippet.unicodeScalars
+        guard let start = scalars.index(
+            scalars.startIndex, offsetBy: highlight[0], limitedBy: scalars.endIndex
+        ), let end = scalars.index(
+            start, offsetBy: highlight[1], limitedBy: scalars.endIndex
+        ) else { return nil }
+        return start..<end
+    }
+}
+
+struct TranscriptSearchResponse: Codable {
+    let query: String
+    let indexing: Bool
+    let results: [TranscriptSearchHit]
+}
+
+struct ContextFile: Identifiable, Codable, Hashable {
+    let id: UUID
+    let url: URL
+    var content: String
+    var isIncluded: Bool
+    var modificationDate: Date?
+    var issue: String?
+
+    init(
+        id: UUID = UUID(),
+        url: URL,
+        content: String = "",
+        isIncluded: Bool = true,
+        modificationDate: Date? = nil,
+        issue: String? = nil
+    ) {
+        self.id = id
+        self.url = url
+        self.content = content
+        self.isIncluded = isIncluded
+        self.modificationDate = modificationDate
+        self.issue = issue
+    }
+
+    var name: String { url.lastPathComponent }
+    var displayPath: String { url.path(percentEncoded: false) }
+    var estimatedTokens: Int { max(content.count / 4, 1) }
+    var isAvailable: Bool { issue == nil && !content.isEmpty }
+
+    enum CodingKeys: String, CodingKey {
+        case id, url, isIncluded
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        url = try container.decode(URL.self, forKey: .url)
+        content = ""
+        isIncluded = try container.decodeIfPresent(Bool.self, forKey: .isIncluded) ?? true
+        modificationDate = nil
+        issue = nil
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(url, forKey: .url)
+        try container.encode(isIncluded, forKey: .isIncluded)
+    }
+}
+
+enum ChatAttachmentKind: String, Hashable, Sendable {
+    case text
+    case image
+    case applicationSnapshot = "application_snapshot"
+}
+
+struct ApplicationSnapshotContext: Hashable, Sendable {
+    let bundleIdentifier: String
+    let processIdentifier: Int32
+    let applicationName: String
+    let windowTitle: String
+    let windowIdentifier: UInt32?
+    let accessibilityText: String
+    let iconData: Data?
+}
+
+/// An explicitly selected, one-message input for the composer, valid in every
+/// mode. Unlike a Work context pack, these attachments do not grant access to
+/// their path or to any neighboring workspace files, and they are removed
+/// after a successful send.
+struct ChatAttachment: Identifiable, Hashable, Sendable {
+    let id: UUID
+    let url: URL
+    let kind: ChatAttachmentKind
+    let textContent: String?
+    let imageData: Data?
+    let mimeType: String?
+    let issue: String?
+    let applicationContext: ApplicationSnapshotContext?
+    /// Display name for content with no real file behind it (pasted images);
+    /// the synthesized `url` then only provides Hashable/dedupe identity.
+    let overrideName: String?
+
+    init(
+        id: UUID = UUID(),
+        url: URL,
+        kind: ChatAttachmentKind,
+        textContent: String? = nil,
+        imageData: Data? = nil,
+        mimeType: String? = nil,
+        issue: String? = nil,
+        overrideName: String? = nil,
+        applicationContext: ApplicationSnapshotContext? = nil
+    ) {
+        self.id = id
+        self.url = url
+        self.kind = kind
+        self.textContent = textContent
+        self.imageData = imageData
+        self.mimeType = mimeType
+        self.issue = issue
+        self.overrideName = overrideName
+        self.applicationContext = applicationContext
+    }
+
+    static func pasted(
+        imageData: Data,
+        mimeType: String,
+        date: Date = Date(),
+        nameStem: String = "Pasted image"
+    ) -> ChatAttachment {
+        let stamp = date.formatted(
+            Date.FormatStyle()
+                .year().month(.twoDigits).day(.twoDigits)
+                .hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits)
+        )
+        let fileExtension = mimeType.split(separator: "/").last.map(String.init) ?? "png"
+        let identity = UUID()
+        return ChatAttachment(
+            id: identity,
+            url: URL(fileURLWithPath: "/dev/null/pasted-\(identity.uuidString).\(fileExtension)"),
+            kind: .image,
+            imageData: imageData,
+            mimeType: mimeType,
+            overrideName: "\(nameStem) \(stamp).\(fileExtension)"
+        )
+    }
+
+    var name: String { overrideName ?? url.lastPathComponent }
+    var isAvailable: Bool {
+        guard issue == nil else { return false }
+        switch kind {
+        case .text: return !(textContent?.isEmpty ?? true)
+        case .image: return !(imageData?.isEmpty ?? true) && mimeType != nil
+        case .applicationSnapshot:
+            return !(imageData?.isEmpty ?? true)
+                && mimeType == "image/png"
+                && applicationContext != nil
+        }
+    }
+
+    var detail: String {
+        if let issue { return issue }
+        switch kind {
+        case .text:
+            return "\(max((textContent?.count ?? 0) / 4, 1).formatted()) estimated tokens"
+        case .image:
+            return ByteCountFormatter.string(
+                fromByteCount: Int64(imageData?.count ?? 0),
+                countStyle: .file
+            )
+        case .applicationSnapshot:
+            let bytes = ByteCountFormatter.string(
+                fromByteCount: Int64(imageData?.count ?? 0),
+                countStyle: .file
+            )
+            let title = applicationContext?.windowTitle.nilIfEmpty
+            return [title, bytes].compactMap { $0 }.joined(separator: " · ")
+        }
+    }
+}
