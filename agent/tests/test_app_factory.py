@@ -19,6 +19,7 @@ def _service(name: str):
     )
     run_store = SimpleNamespace(
         schedules=lambda: [{"service": name}],
+        usage_summary=lambda **_options: {"service": name},
         read_only=False,
     )
     return SimpleNamespace(core=core, run_store=run_store)
@@ -81,18 +82,12 @@ def test_domain_owned_routes_keep_service_state_isolated(monkeypatch):
         assert second.get("/api/knowledge/status").json()["workspace"] == "second"
         assert first.get("/api/sessions").json()["current"] == "first-session"
         assert second.get("/api/sessions").json()["current"] == "second-session"
-        assert first.get("/api/context-snapshots").json()["snapshots"] == [
-            {"workspace": "first"}
-        ]
-        assert second.get("/api/context-snapshots").json()["snapshots"] == [
-            {"workspace": "second"}
-        ]
-        assert first.get("/api/schedules").json()["schedules"] == [
-            {"service": "first"}
-        ]
-        assert second.get("/api/schedules").json()["schedules"] == [
-            {"service": "second"}
-        ]
+        assert first.get("/api/context-snapshots").json()["snapshots"] == [{"workspace": "first"}]
+        assert second.get("/api/context-snapshots").json()["snapshots"] == [{"workspace": "second"}]
+        assert first.get("/api/schedules").json()["schedules"] == [{"service": "first"}]
+        assert second.get("/api/schedules").json()["schedules"] == [{"service": "second"}]
+        assert first.get("/api/usage/summary").json() == {"service": "first"}
+        assert second.get("/api/usage/summary").json() == {"service": "second"}
     finally:
         first.close()
         second.close()

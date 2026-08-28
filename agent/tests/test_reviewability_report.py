@@ -79,6 +79,7 @@ def test_domain_owned_route_allowlist_matches_migrated_domains() -> None:
         extensions,
         knowledge,
         providers,
+        runs,
         schedules,
         sessions,
         system,
@@ -90,6 +91,7 @@ def test_domain_owned_route_allowlist_matches_migrated_domains() -> None:
         evaluations,
         extensions,
         providers,
+        runs,
         system,
         knowledge,
         sessions,
@@ -98,10 +100,6 @@ def test_domain_owned_route_allowlist_matches_migrated_domains() -> None:
     ):
         assert module.__file__ is not None
         handlers = set(
-            report.ROUTE_HANDLER.findall(
-                Path(module.__file__).read_text(encoding="utf-8")
-            )
+            report.ROUTE_HANDLER.findall(Path(module.__file__).read_text(encoding="utf-8"))
         )
-        assert handlers == report.DOMAIN_HANDLER_LEGACY_ALLOWLIST[
-            Path(module.__file__).name
-        ]
+        assert handlers == report.DOMAIN_HANDLER_LEGACY_ALLOWLIST[Path(module.__file__).name]

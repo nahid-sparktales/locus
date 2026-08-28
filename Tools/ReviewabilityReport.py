@@ -31,6 +31,7 @@ DOMAIN_HANDLER_LEGACY_ALLOWLIST = {
     "extensions.py": set(),
     "knowledge.py": set(),
     "providers.py": set(),
+    "runs.py": set(),
     "schedules.py": set(),
     "sessions.py": set(),
     "system.py": set(),
