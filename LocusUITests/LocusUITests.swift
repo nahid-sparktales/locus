@@ -474,19 +474,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testArchivedSessionsFilter() {
-        anyElement("sidebar.more").click()
-        let archivedToggle = menuItem(
-            "sidebar.showArchived",
-            title: "Archived Sessions"
-        )
-        let archivedCommandExists = archivedToggle.waitForExistence(timeout: 2)
-        if archivedCommandExists {
-            archivedToggle.click()
-        } else {
-            // macOS 15 can omit this one SwiftUI command from AX. Its native
-            // key equivalent remains available while the menu is open.
-            app.typeKey("a", modifierFlags: [.command, .shift])
-        }
+        app.typeKey("a", modifierFlags: [.command, .shift])
         XCTAssertTrue(app.buttons["session.seed-archived"].waitForExistence(timeout: 3))
     }
 

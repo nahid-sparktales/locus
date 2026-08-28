@@ -134,6 +134,11 @@ struct LocusApp: App {
                 Button("Clear Saved Sessions…") { model.requestClearSavedSessions() }
                     .disabled(model.isClearingSessions)
                     .accessibilityIdentifier("menu.clearSessions")
+                Button("Archived Sessions") {
+                    model.setShowArchived(!model.showArchivedSessions)
+                }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+                .accessibilityIdentifier("menu.showArchived")
                 Button("Browse Hugging Face Models") { model.modelLibraryPresented = true }
                     .accessibilityIdentifier("menu.modelLibrary")
                 Button("Review Changes") { model.selectInspectorTab(.changes) }
