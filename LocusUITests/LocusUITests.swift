@@ -2356,6 +2356,9 @@ final class LocusUITests: XCTestCase {
         // must move the transcript by the same amount as a gesture over its
         // scrollbar or empty background.
         let messageYBeforeWheel = firstMessage.frame.minY
+        let messageWheelCoordinate = firstMessage.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)
+        )
         var messageMoved = false
         // XCUITest occasionally drops the first synthetic wheel packet on
         // macOS 15. Keep the retries bounded and alternate direction so the
@@ -2366,7 +2369,7 @@ final class LocusUITests: XCTestCase {
                 messageMoved = true
                 break
             }
-            firstMessage.scroll(byDeltaX: 0, deltaY: delta)
+            messageWheelCoordinate.scroll(byDeltaX: 0, deltaY: delta)
             messageMoved = waitUntil(timeout: 1.5) {
                 // A short row can leave the accessibility viewport entirely;
                 // that is conclusive evidence that its owning transcript moved.
