@@ -27,7 +27,7 @@ SERVER_FUNCTION = re.compile(r"^(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)")
 ROUTE_HANDLER = re.compile(r"handlers\.([A-Za-z_][A-Za-z0-9_]*)")
 DOMAIN_HANDLER_LEGACY_ALLOWLIST = {
     "workspace.py": set(),
-    "evaluations.py": {"evaluation_run", "evaluation_cancel"},
+    "evaluations.py": set(),
 }
 
 

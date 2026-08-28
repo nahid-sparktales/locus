@@ -1797,6 +1797,64 @@ def test_evaluation_crud_routes_preserve_suite_contract(client, tmp_path):
     assert client.get(f"/api/evaluations/{suite_id}").status_code == 404
 
 
+def test_evaluation_execution_routes_use_feature_runtime_and_app_runner(
+    client, tmp_path, monkeypatch,
+):
+    from ollama_code.evaluation_runtime import run_evaluation_suite
+
+    payload = {
+        "name": "Team smoke",
+        "workspace_root": str(tmp_path),
+        "cases": [
+            {
+                "id": "case-1",
+                "name": "Inspect",
+                "prompt": "Inspect the fixture.",
+                "mode": "read_only",
+                "target": "team",
+                "assertions": [],
+            }
+        ],
+    }
+    suite_id = client.post("/api/evaluations", json=payload).json()["suite"]["id"]
+    service = client.app.state.service
+    queued: dict[str, object] = {}
+
+    def start_turn(loop, call, *args):
+        queued.update({"loop": loop, "call": call, "args": args})
+        return True
+
+    monkeypatch.setattr(service, "start_turn", start_turn)
+    response = client.post(
+        f"/api/evaluations/{suite_id}/run",
+        json={"manifest": {}},
+    )
+
+    assert response.status_code == 200
+    evaluation_id = response.json()["evaluation_id"]
+    assert queued["call"] is run_evaluation_suite
+    args = queued["args"]
+    assert isinstance(args, tuple)
+    assert args[0] is service
+    assert args[4] == evaluation_id
+    assert args[5] is client.app.state.evaluation_team_runner
+
+    interrupted: list[bool] = []
+    service.active_evaluation_id = evaluation_id
+    service.active_evaluation_core = SimpleNamespace(
+        interrupt=lambda: interrupted.append(True)
+    )
+    cancelled = client.post(f"/api/evaluations/runs/{evaluation_id}/cancel")
+
+    assert cancelled.json() == {
+        "ok": True,
+        "evaluation_id": evaluation_id,
+        "state": "cancelling",
+    }
+    assert service.core._interrupt.is_set()
+    assert interrupted == [True]
+
+
 def test_schedule_crud_and_manual_dispatch_preserve_foreground_chat(client, tmp_path):
     foreground = client.app.state.service.core.session.session_id
     now = time.time()

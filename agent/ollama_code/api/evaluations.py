@@ -1,13 +1,16 @@
 """Evaluation suite CRUD, grading, and execution routes."""
 
+import asyncio
+import uuid
 from pathlib import Path
 from types import ModuleType
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import ChatService
+from ..evaluation_runtime import run_evaluation_suite
 from ..evaluations import (
     EvaluationError,
     EvaluationStore,
@@ -25,6 +28,10 @@ def _store(service: ChatService) -> EvaluationStore:
     if not capability_enabled("evaluations"):
         raise HTTPException(404, "capability is disabled: evaluations")
     return EvaluationStore(service.run_store)
+
+
+def _busy_http() -> HTTPException:
+    return HTTPException(409, "agent is busy — interrupt the current turn first")
 
 
 def evaluation_list(
@@ -132,7 +139,79 @@ def evaluation_grade(
     return {"case_id": case_id, **result}
 
 
-def register_routes(router: APIRouter, handlers: ModuleType) -> None:
+async def evaluation_run(
+    suite_id: str,
+    request: Request,
+    service: ServiceDependency,
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    store = _store(service)
+    suite = store.get_suite(suite_id)
+    if suite is None:
+        raise HTTPException(404, "evaluation suite not found")
+    manifest = body.get("manifest")
+    raw_manifests = body.get("manifests")
+    manifests = (
+        {
+            str(team_id): dict(value)
+            for team_id, value in raw_manifests.items()
+            if str(team_id) and isinstance(value, dict)
+        }
+        if isinstance(raw_manifests, dict)
+        else {}
+    )
+    if len(manifests) > 32:
+        raise HTTPException(422, "an evaluation run may reference at most 32 teams")
+    needs_team = any(
+        str(case.get("target") or "team") == "team" for case in suite["cases"]
+    )
+    missing_team = any(
+        str(case.get("target") or "team") == "team"
+        and not (
+            isinstance(manifest, dict)
+            or str(case.get("team_id") or "") in manifests
+            or (not str(case.get("team_id") or "") and len(manifests) == 1)
+        )
+        for case in suite["cases"]
+    )
+    if needs_team and missing_team:
+        raise HTTPException(422, "team evaluation cases require a configured team manifest")
+    if not isinstance(manifest, dict):
+        manifest = {}
+    if service.busy:
+        raise _busy_http()
+    team_runner = getattr(request.app.state, "evaluation_team_runner", None)
+    if not callable(team_runner):
+        raise HTTPException(503, "evaluation execution is not configured")
+    loop = asyncio.get_running_loop()
+    evaluation_id = uuid.uuid4().hex
+    if not service.start_turn(
+        loop,
+        run_evaluation_suite,
+        service,
+        suite,
+        dict(manifest),
+        manifests,
+        evaluation_id,
+        team_runner,
+    ):
+        raise _busy_http()
+    return {"ok": True, "evaluation_id": evaluation_id, "state": "queued"}
+
+
+def evaluation_cancel(
+    evaluation_id: str,
+    service: ServiceDependency,
+) -> dict[str, Any]:
+    if service.active_evaluation_id != evaluation_id:
+        raise HTTPException(409, "that evaluation is not currently running")
+    service.core.interrupt()
+    if service.active_evaluation_core is not None:
+        service.active_evaluation_core.interrupt()
+    return {"ok": True, "evaluation_id": evaluation_id, "state": "cancelling"}
+
+
+def register_routes(router: APIRouter, _handlers: ModuleType) -> None:
     router.add_api_route("/api/evaluations", evaluation_list, methods=["GET"])
     router.add_api_route("/api/evaluations", evaluation_create, methods=["POST"])
     router.add_api_route("/api/evaluations/{suite_id}", evaluation_detail, methods=["GET"])
@@ -150,10 +229,10 @@ def register_routes(router: APIRouter, handlers: ModuleType) -> None:
         "/api/evaluations/{suite_id}/grade", evaluation_grade, methods=["POST"]
     )
     router.add_api_route(
-        "/api/evaluations/{suite_id}/run", handlers.evaluation_run, methods=["POST"]
+        "/api/evaluations/{suite_id}/run", evaluation_run, methods=["POST"]
     )
     router.add_api_route(
         "/api/evaluations/runs/{evaluation_id}/cancel",
-        handlers.evaluation_cancel,
+        evaluation_cancel,
         methods=["POST"],
     )

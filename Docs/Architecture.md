@@ -47,9 +47,9 @@ dependencies resolve from the concrete request application.
 - `chat_service.py` owns stateful chat and orchestration runtime behavior.
 - `api/dependencies.py` owns per-application service resolution.
 - `api/workspace.py` owns both the Git inspection route map and its request
-  handlers. `api/evaluations.py` owns evaluation CRUD and grading; its
-  long-running run/cancel handlers remain explicit compatibility dependencies
-  until evaluation execution moves as a separate behavior slice.
+  handlers. `api/evaluations.py` owns evaluation HTTP behavior, while
+  `evaluation_runtime.py` owns suite execution and receives the team runner
+  through the concrete application composition boundary.
 - `api/system.py`, `providers.py`, `continuity.py`, `knowledge.py`,
   `sessions.py`, `schedules.py`, `runs.py`, and `extensions.py` own the HTTP
   route map for their domains and are the remaining handler-ownership backlog.
