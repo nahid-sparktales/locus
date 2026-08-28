@@ -198,7 +198,7 @@ struct ComposerView: View {
             }
             if !model.justChatEnabled,
                WorkspaceIndex.activeMention(in: model.draftText) != nil {
-                model.refreshWorkspaceIndex()
+                model.workspaceFiles.refresh()
             }
         }
     }
@@ -237,7 +237,7 @@ struct ComposerView: View {
             }
             let matches = WorkspaceIndex.matches(
                 query: mention.query,
-                in: model.workspaceFileIndex,
+                in: model.workspaceFiles.files,
                 root: model.workspacePath
             )
             return matches.isEmpty ? nil : .mention(matches)

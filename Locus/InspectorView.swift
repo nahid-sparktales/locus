@@ -25,7 +25,7 @@ struct InspectorView: View {
                 case .changes:
                     InspectorChangesTab(gitWorkspace: model.gitWorkspace)
                 case .files:
-                    InspectorFilesTab()
+                    InspectorFilesTab(workspaceFiles: model.workspaceFiles)
                 case .terminal:
                     InspectorTerminalTab()
                 case .preview:

@@ -410,10 +410,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var planApprovalPending = false
     @Published private(set) var activePlan: PlanDocument?
     let gitWorkspace = GitWorkspaceModel()
+    let workspaceFiles = WorkspaceFileModel()
     private var gitWorkspaceBridge: AnyCancellable?
-    @Published var fileQuery = ""
-    @Published private(set) var previewedFilePath: String?
-    @Published private(set) var previewedFileContents: String?
+    private var workspaceFilesBridge: AnyCancellable?
     @Published private(set) var agentInstructionsExists = false
     @Published var agentInstructionsDraft = ""
     @Published private(set) var savedAgentInstructions = ""
@@ -444,7 +443,6 @@ final class AppModel: ObservableObject {
             settings.sidebarCollapsed = sidebarCollapsed
         }
     }
-    @Published var workspaceFileIndex: [URL] = []
     @Published var settings: AppSettings {
         didSet {
             scheduleWorkspacePersistence()
@@ -697,8 +695,6 @@ final class AppModel: ObservableObject {
     private var workspaceToOpenAfterReconnect: String?
     private var appliedWorkspacePath: String?
     private var sessionResetWatchdog: Task<Void, Never>?
-    private var indexTask: Task<Void, Never>?
-    private var filePreviewTask: Task<Void, Never>?
     private var agentInstructionsTask: Task<Void, Never>?
     private var orchestrationRunsTasks: [String: (generation: Int, task: Task<OrchestrationRunsResponse, Error>)] = [:]
     private var orchestrationDetailTasks: [String: Task<OrchestrationRun, Error>] = [:]
@@ -711,7 +707,6 @@ final class AppModel: ObservableObject {
     private var restoredQueuedRunIDs: Set<String> = []
     private let lifecycleJournal: AppLifecycleJournal?
     private var pendingLifecycleRecovery: AppLifecycleRecovery?
-    private var indexedWorkspacePath: String?
     private var terminationObserver: NSObjectProtocol?
     private var activationObserver: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
@@ -968,6 +963,13 @@ final class AppModel: ObservableObject {
                 self?.handleGitStatusApplied(previous: previous, current: current)
             }
         )
+        workspaceFiles.configure(
+            isUITesting: isUITesting,
+            workspacePath: { [weak self] in
+                self?.workspacePath ?? FileManager.default.homeDirectoryForCurrentUser.path
+            },
+            canIndex: { [weak self] in self?.sessionInfo != nil }
+        )
 
         backend.onConnectionChange = { [weak self] connected in
             Task { @MainActor in
@@ -1012,6 +1014,9 @@ final class AppModel: ObservableObject {
             }
         }
         gitWorkspaceBridge = gitWorkspace.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        workspaceFilesBridge = workspaceFiles.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         simulatorControl.capabilityDidChange = { [weak self] in
@@ -2099,7 +2104,7 @@ final class AppModel: ObservableObject {
         profilePersistenceTask?.cancel()
         settingsPersistenceTask?.cancel()
         sessionResetWatchdog?.cancel()
-        indexTask?.cancel()
+        workspaceFiles.stop()
         knowledgeReindexTask?.cancel()
         knowledgeWatcher.stop()
         agentInstructionsTask?.cancel()
@@ -2128,36 +2133,6 @@ final class AppModel: ObservableObject {
             NSWorkspace.shared.notificationCenter.removeObserver($0)
         }
         privacyLockObservers.removeAll()
-    }
-
-    // MARK: - Workspace file index (@ mentions)
-
-    func refreshWorkspaceIndex(force: Bool = false) {
-        // UI tests run against a seeded index; a real scan of the runner's
-        // machine would replace it with whatever happens to be on disk.
-        guard !isUITesting else { return }
-        let root = workspacePath
-        // Before the agent reports a session, `workspacePath` falls back to the
-        // home directory. Walking all of it is slow, throws thousands of
-        // unrelated files at the browser, and is thrown away moments later when
-        // the real workspace arrives.
-        guard sessionInfo != nil else { return }
-        guard force || indexedWorkspacePath != root || workspaceFileIndex.isEmpty else { return }
-        indexTask?.cancel()
-        indexTask = Task { [weak self] in
-            let files = await Task.detached(priority: .utility) {
-                WorkspaceIndex.scan(root: root)
-            }.value
-            // Deliberately not gated on `Task.isCancelled`. A superseded scan
-            // of the same root returns the same answer, and throwing its result
-            // away is how the browser ended up reporting "0 of 0 files" with
-            // nothing scheduled to try again — the Files tab appearing and a
-            // session_info arriving are enough to cancel each other. Only a
-            // workspace change makes the result stale, so that is what we test.
-            guard let self, self.workspacePath == root else { return }
-            self.indexedWorkspacePath = root
-            self.workspaceFileIndex = files
-        }
     }
 
     private func watchWorkspaceKnowledge(_ root: String) {
@@ -2282,7 +2257,7 @@ final class AppModel: ObservableObject {
 
             self.agentInstructionsExists = true
             self.savedAgentInstructions = contents
-            self.refreshWorkspaceIndex(force: true)
+            self.workspaceFiles.refresh(force: true)
 
             do {
                 let _: ProjectContextReloadResponse = try await self.backend.post(
@@ -9784,45 +9759,6 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Files matching the browser's query. O(n) over a capped index, so this
-    /// stays on the main thread rather than adding a task per keystroke.
-    var filteredWorkspaceFiles: [URL] {
-        WorkspaceIndex.matches(
-            query: fileQuery,
-            in: workspaceFileIndex,
-            root: workspacePath,
-            limit: 200
-        )
-    }
-
-    /// Reads a workspace file for the inline peek.
-    func previewFile(_ url: URL) {
-        previewedFilePath = WorkspaceIndex.relativePath(url, root: workspacePath)
-        previewedFileContents = nil
-        filePreviewTask?.cancel()
-        filePreviewTask = Task { [weak self] in
-            let result = await Task.detached(priority: .userInitiated) { () -> String in
-                guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
-                      (values.fileSize ?? 0) <= 256_000
-                else { return "This file is larger than 256 KB." }
-                guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
-                      let text = String(data: data, encoding: .utf8)
-                else { return "This file is not readable as UTF-8 text." }
-                return text
-            }.value
-            guard !Task.isCancelled, let self else { return }
-            guard self.previewedFilePath == WorkspaceIndex.relativePath(url, root: self.workspacePath)
-            else { return }
-            self.previewedFileContents = result
-        }
-    }
-
-    func closeFilePreview() {
-        filePreviewTask?.cancel()
-        previewedFilePath = nil
-        previewedFileContents = nil
-    }
-
     /// Inserts an `@path` mention into the composer draft.
     func mentionFileInComposer(_ url: URL) {
         let relative = WorkspaceIndex.relativePath(url, root: workspacePath)
@@ -9902,7 +9838,7 @@ final class AppModel: ObservableObject {
             return
         }
         selectInspectorTab(.files)
-        previewFile(url)
+        workspaceFiles.preview(url)
     }
 
     func prefillSessionSuggestion(_ suggestion: String) {
@@ -10044,8 +9980,8 @@ final class AppModel: ObservableObject {
     }
 
     private var workspaceProjectKind: LocusProjectKind {
-        let names = workspaceFileIndex.map { $0.lastPathComponent.lowercased() }
-        let paths = workspaceFileIndex.map { $0.path.lowercased() }
+        let names = workspaceFiles.files.map { $0.lastPathComponent.lowercased() }
+        let paths = workspaceFiles.files.map { $0.path.lowercased() }
         if names.contains("package.swift") || paths.contains(where: { $0.hasSuffix(".swift") }) {
             return .swift
         }
@@ -10061,7 +9997,7 @@ final class AppModel: ObservableObject {
     }
 
     private var workspaceContainsTests: Bool {
-        workspaceFileIndex.contains { url in
+        workspaceFiles.files.contains { url in
             let path = url.path.lowercased()
             let name = url.lastPathComponent.lowercased()
             return path.contains("/tests/")
@@ -10157,7 +10093,7 @@ final class AppModel: ObservableObject {
             gitWorkspace.changesHaveUnseenUpdate = false
             gitWorkspace.refreshStatus()
         }
-        if tab == .files { refreshWorkspaceIndex() }
+        if tab == .files { workspaceFiles.refresh() }
         if tab == .terminal {
             terminal.configure(
                 workspacePath: workspacePath,
@@ -11936,7 +11872,7 @@ final class AppModel: ObservableObject {
     private func sessionActivityPath(in values: [String]) -> String? {
         let root = workspacePath.hasSuffix("/") ? workspacePath : workspacePath + "/"
         for value in values where !value.isEmpty {
-            if let indexed = workspaceFileIndex
+            if let indexed = workspaceFiles.files
                 .map({ WorkspaceIndex.relativePath($0, root: workspacePath) })
                 .filter({ value.contains($0) })
                 .max(by: { $0.count < $1.count }) {
@@ -13363,7 +13299,7 @@ final class AppModel: ObservableObject {
         }
         touchWorkspaceProfile(path)
         gitWorkspace.refreshBranch()
-        refreshWorkspaceIndex(force: true)
+        workspaceFiles.refresh(force: true)
     }
 
     /// Restores the model a workspace was last used with, through the account
@@ -13867,14 +13803,14 @@ final class AppModel: ObservableObject {
         ] == "1" {
             gitWorkspace.gitChanges = []
         }
-        indexedWorkspacePath = workspace
-        workspaceFileIndex = [
+        let seededWorkspaceFiles = [
             "README.md",
             "Locus/AppModel.swift",
             "Locus/InspectorView.swift",
             "Locus/TerminalSession.swift",
             "docs/terminal.md",
         ].map { URL(fileURLWithPath: workspace).appending(path: $0) }
+        workspaceFiles.seed(seededWorkspaceFiles, workspacePath: workspace)
         agentInstructionsExists = true
         savedAgentInstructions = "# Workspace instructions\n\n- Keep changes focused.\n"
         agentInstructionsDraft = savedAgentInstructions
