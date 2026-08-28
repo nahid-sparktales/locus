@@ -29,12 +29,22 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import Body, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Body,
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import JSONResponse
 
 from . import __version__, gitinfo, proxy
@@ -227,10 +237,13 @@ async def lifespan(app: FastAPI):
             svc.core.close()
 
 
-app = FastAPI(title="ollama-code", version=__version__, lifespan=lifespan)
+api = APIRouter()
+_NO_REQUEST = object()
+_request_service: ContextVar[ChatService | None | object] = ContextVar(
+    "request_service", default=_NO_REQUEST
+)
 
 
-@app.middleware("http")
 async def block_browser_origins(request: Request, call_next):
     """Reject any request that carries a browser Origin.
 
@@ -241,11 +254,11 @@ async def block_browser_origins(request: Request, call_next):
     cannot forge it; the native app sends none.
     """
     origin = request.headers.get("origin")
-    if origin and origin not in _allowed_origins():
+    if origin and origin not in _allowed_origins(request.app):
         return JSONResponse(
             {"detail": "cross-origin requests are not allowed"}, status_code=403
         )
-    token = str(getattr(app.state, "auth_token", "") or "")
+    token = str(getattr(request.app.state, "auth_token", "") or "")
     if token and request.headers.get("x-locus-token") != token:
         return JSONResponse({"detail": "local agent authentication failed"}, status_code=401)
     content_length = request.headers.get("content-length")
@@ -255,18 +268,34 @@ async def block_browser_origins(request: Request, call_next):
                 return JSONResponse({"detail": "request body is too large"}, status_code=413)
         except ValueError:
             return JSONResponse({"detail": "invalid content-length"}, status_code=400)
-    return await call_next(request)
+    request_token = _request_service.set(
+        getattr(request.app.state, "service", None)
+    )
+    try:
+        return await call_next(request)
+    finally:
+        _request_service.reset(request_token)
 
 
-def _allowed_origins() -> set[str]:
-    return set(getattr(app.state, "allowed_origins", set()))
+def _allowed_origins(application: FastAPI) -> set[str]:
+    return set(getattr(application.state, "allowed_origins", set()))
 
 
-def service() -> ChatService:
-    svc: ChatService | None = getattr(app.state, "service", None)
+def _service_from_app(application: FastAPI) -> ChatService:
+    svc: ChatService | None = getattr(application.state, "service", None)
     if svc is None:
         raise HTTPException(503, "agent service is not ready")
     return svc
+
+
+def service() -> ChatService:
+    """Return the current request's service, with a legacy direct-call fallback."""
+    svc = _request_service.get()
+    if svc is _NO_REQUEST:
+        return _service_from_app(app)
+    if svc is None:
+        raise HTTPException(503, "agent service is not ready")
+    return svc  # type: ignore[return-value]
 
 
 def _require_capability(name: str) -> None:
@@ -277,7 +306,7 @@ def _require_capability(name: str) -> None:
 # --------------------------------------------------------------------- REST
 
 
-@app.get("/api/health")
+@api.get("/api/health")
 def health() -> dict[str, Any]:
     svc = service()
     if svc.core.provider == "chatgpt":
@@ -306,7 +335,7 @@ def health() -> dict[str, Any]:
     }
 
 
-@app.get("/api/provider")
+@api.get("/api/provider")
 def get_provider() -> dict[str, Any]:
     return service().core.provider_state()
 
@@ -358,7 +387,7 @@ def _continuity_store() -> ContinuityStore:
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.get("/api/context-snapshots")
+@api.get("/api/context-snapshots")
 def context_snapshots(
     workspace: str = Query(default=""),
     limit: int = Query(default=50, ge=1, le=100),
@@ -370,7 +399,7 @@ def context_snapshots(
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.put("/api/context-snapshots/{snapshot_id}")
+@api.put("/api/context-snapshots/{snapshot_id}")
 def context_snapshot_update(
     snapshot_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -386,7 +415,7 @@ def context_snapshot_update(
     return {"ok": True, "snapshot": snapshot}
 
 
-@app.delete("/api/context-snapshots/{snapshot_id}")
+@api.delete("/api/context-snapshots/{snapshot_id}")
 def context_snapshot_delete(
     snapshot_id: str, workspace: str = Query(default="")
 ) -> dict[str, Any]:
@@ -400,7 +429,7 @@ def context_snapshot_delete(
     return {"ok": True}
 
 
-@app.delete("/api/context-snapshots")
+@api.delete("/api/context-snapshots")
 def context_snapshots_clear(workspace: str = Query(default="")) -> dict[str, Any]:
     target = _memory_workspace(workspace)
     try:
@@ -409,7 +438,7 @@ def context_snapshots_clear(workspace: str = Query(default="")) -> dict[str, Any
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.get("/api/skill-observations")
+@api.get("/api/skill-observations")
 def skill_observations(
     workspace: str = Query(default=""),
     status: str = Query(default=""),
@@ -425,7 +454,7 @@ def skill_observations(
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.put("/api/skill-observations/{observation_id}")
+@api.put("/api/skill-observations/{observation_id}")
 def skill_observation_update(
     observation_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -439,7 +468,7 @@ def skill_observation_update(
     return {"ok": True, "observation": observation}
 
 
-@app.delete("/api/skill-observations/{observation_id}")
+@api.delete("/api/skill-observations/{observation_id}")
 def skill_observation_delete(
     observation_id: str, workspace: str = Query(default="")
 ) -> dict[str, Any]:
@@ -453,7 +482,7 @@ def skill_observation_delete(
     return {"ok": True}
 
 
-@app.get("/api/skill-observations/export")
+@api.get("/api/skill-observations/export")
 def skill_observation_export(workspace: str = Query(default="")) -> dict[str, Any]:
     target = _memory_workspace(workspace)
     try:
@@ -462,12 +491,12 @@ def skill_observation_export(workspace: str = Query(default="")) -> dict[str, An
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.get("/api/knowledge/status")
+@api.get("/api/knowledge/status")
 def knowledge_status(workspace: str = Query(default="")) -> dict[str, Any]:
     return _knowledge_store(workspace).settings()
 
 
-@app.post("/api/knowledge/settings")
+@api.post("/api/knowledge/settings")
 def knowledge_settings(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     store = _knowledge_store(str(body.get("workspace") or ""))
     enabled = body.get("enabled") if isinstance(body.get("enabled"), bool) else None
@@ -487,13 +516,13 @@ def knowledge_settings(body: dict[str, Any] = Body(default_factory=dict)) -> dic
     )
 
 
-@app.post("/api/knowledge/reindex")
+@api.post("/api/knowledge/reindex")
 def knowledge_reindex(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     store = _knowledge_store(str(body.get("workspace") or ""))
     return store.reindex()
 
 
-@app.post("/api/knowledge/changes")
+@api.post("/api/knowledge/changes")
 def knowledge_changes(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     store = _knowledge_store(str(body.get("workspace") or ""))
     raw = body.get("paths")
@@ -502,7 +531,7 @@ def knowledge_changes(body: dict[str, Any] = Body(default_factory=dict)) -> dict
     return store.reindex(changed_paths=[str(item) for item in raw[:5_000]])
 
 
-@app.get("/api/knowledge/search")
+@api.get("/api/knowledge/search")
 def knowledge_search(
     query: str = Query(min_length=1, max_length=2_000),
     workspace: str = Query(default=""),
@@ -514,7 +543,7 @@ def knowledge_search(
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.get("/api/knowledge/memories")
+@api.get("/api/knowledge/memories")
 def knowledge_memories(workspace: str = Query(default="")) -> dict[str, Any]:
     target = _memory_workspace(workspace)
     return {"memories": _memory_vault(target).list(
@@ -522,7 +551,7 @@ def knowledge_memories(workspace: str = Query(default="")) -> dict[str, Any]:
     )}
 
 
-@app.post("/api/knowledge/memories")
+@api.post("/api/knowledge/memories")
 def knowledge_memory_create(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     try:
         target = _memory_workspace(str(body.get("workspace") or ""))
@@ -534,7 +563,7 @@ def knowledge_memory_create(body: dict[str, Any] = Body(default_factory=dict)) -
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.put("/api/knowledge/memories/{memory_id}")
+@api.put("/api/knowledge/memories/{memory_id}")
 def knowledge_memory_update(
     memory_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -550,7 +579,7 @@ def knowledge_memory_update(
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.delete("/api/knowledge/memories/{memory_id}")
+@api.delete("/api/knowledge/memories/{memory_id}")
 def knowledge_memory_delete(memory_id: str, workspace: str = Query(default="")) -> dict[str, Any]:
     target = _memory_workspace(workspace)
     if not _memory_vault(target).delete(memory_id):
@@ -558,7 +587,7 @@ def knowledge_memory_delete(memory_id: str, workspace: str = Query(default="")) 
     return {"ok": True, "id": memory_id}
 
 
-@app.delete("/api/knowledge")
+@api.delete("/api/knowledge")
 def knowledge_delete_all(workspace: str = Query(default="")) -> dict[str, Any]:
     target = _memory_workspace(workspace)
     _knowledge_store(target).delete_all()
@@ -569,7 +598,7 @@ def knowledge_delete_all(workspace: str = Query(default="")) -> dict[str, Any]:
 # --------------------------------------------------------------- Agent memory
 
 
-@app.get("/api/memory/status")
+@api.get("/api/memory/status")
 def memory_status(
     workspace: str = Query(default=""), agent_id: str = Query(default="primary")
 ) -> dict[str, Any]:
@@ -577,7 +606,7 @@ def memory_status(
     return _memory_vault(target).status(workspace=target, agent_id=agent_id)
 
 
-@app.get("/api/memory")
+@api.get("/api/memory")
 def memory_list(
     workspace: str = Query(default=""),
     agent_id: str = Query(default="primary"),
@@ -589,7 +618,7 @@ def memory_list(
     )}
 
 
-@app.post("/api/memory")
+@api.post("/api/memory")
 def memory_create(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     target = _memory_workspace(str(body.get("workspace") or ""))
     try:
@@ -611,7 +640,7 @@ def memory_create(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.delete("/api/memory")
+@api.delete("/api/memory")
 def memory_delete_all(
     workspace: str = Query(default=""), agent_id: str = Query(default="primary")
 ) -> dict[str, Any]:
@@ -620,7 +649,7 @@ def memory_delete_all(
     return {"ok": True, "deleted": count}
 
 
-@app.put("/api/memory/{memory_id}")
+@api.put("/api/memory/{memory_id}")
 def memory_update(
     memory_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -635,7 +664,7 @@ def memory_update(
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.post("/api/memory/{memory_id}/approve")
+@api.post("/api/memory/{memory_id}/approve")
 def memory_approve(
     memory_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -655,7 +684,7 @@ def memory_approve(
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.delete("/api/memory/{memory_id}")
+@api.delete("/api/memory/{memory_id}")
 def memory_delete(
     memory_id: str,
     workspace: str = Query(default=""),
@@ -673,7 +702,7 @@ def memory_delete(
     return {"ok": True, "id": memory_id}
 
 
-@app.get("/api/memory/search")
+@api.get("/api/memory/search")
 def memory_search(
     query: str = Query(min_length=1, max_length=2_000),
     workspace: str = Query(default=""),
@@ -698,7 +727,7 @@ def memory_search(
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.get("/api/memory/export")
+@api.get("/api/memory/export")
 def memory_export(
     workspace: str = Query(default=""), agent_id: str = Query(default="primary")
 ) -> dict[str, Any]:
@@ -706,7 +735,7 @@ def memory_export(
     return _memory_vault(target).export(workspace=target, agent_id=agent_id)
 
 
-@app.post("/api/memory/import")
+@api.post("/api/memory/import")
 def memory_import(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     target = _memory_workspace(str(body.get("workspace") or ""))
     document = body.get("document")
@@ -722,7 +751,7 @@ def memory_import(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.post("/api/memory/{memory_id}/feedback")
+@api.post("/api/memory/{memory_id}/feedback")
 def memory_feedback(
     memory_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -738,7 +767,7 @@ def memory_feedback(
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.post("/api/model-router/decision")
+@api.post("/api/model-router/decision")
 def model_router_decision(
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
@@ -749,7 +778,7 @@ def model_router_decision(
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.post("/api/model-router/sample")
+@api.post("/api/model-router/sample")
 def model_router_sample(
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
@@ -785,7 +814,7 @@ def model_router_sample(
     return {"ok": True, "route_id": route_id}
 
 
-@app.post("/api/memory/maintenance/run")
+@api.post("/api/memory/maintenance/run")
 def memory_maintenance(
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
@@ -796,7 +825,7 @@ def memory_maintenance(
     )
 
 
-@app.get("/api/memory/diagnostics")
+@api.get("/api/memory/diagnostics")
 def memory_diagnostics(
     workspace: str = Query(default=""), agent_id: str = Query(default="primary")
 ) -> dict[str, Any]:
@@ -827,7 +856,7 @@ def memory_diagnostics(
     }
 
 
-@app.post("/api/memory/reprocess")
+@api.post("/api/memory/reprocess")
 def memory_reprocess(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     """Analyze one retained chat into review-only candidates without tool payloads."""
     session_id = str(body.get("session_id") or "")
@@ -921,7 +950,7 @@ def memory_reprocess(body: dict[str, Any] = Body(default_factory=dict)) -> dict[
 # ------------------------------------------------------------ Durable MCP tasks
 
 
-@app.get("/api/mcp/tasks")
+@api.get("/api/mcp/tasks")
 def mcp_task_list(
     run_id: str = Query(default=""), nonterminal: bool = Query(default=False)
 ) -> dict[str, Any]:
@@ -933,7 +962,7 @@ def mcp_task_list(
     }
 
 
-@app.post("/api/mcp/tasks/{task_id}/lookup")
+@api.post("/api/mcp/tasks/{task_id}/lookup")
 def mcp_task_lookup(task_id: str) -> dict[str, Any]:
     _require_capability("modern_mcp")
     try:
@@ -942,7 +971,7 @@ def mcp_task_lookup(task_id: str) -> dict[str, Any]:
         raise HTTPException(409, str(exc)) from exc
 
 
-@app.post("/api/mcp/tasks/{task_id}/cancel")
+@api.post("/api/mcp/tasks/{task_id}/cancel")
 def mcp_task_cancel(task_id: str) -> dict[str, Any]:
     _require_capability("modern_mcp")
     try:
@@ -959,12 +988,12 @@ def _evaluation_store() -> EvaluationStore:
     return EvaluationStore(service().run_store)
 
 
-@app.get("/api/evaluations")
+@api.get("/api/evaluations")
 def evaluation_list(workspace: str = Query(default="")) -> dict[str, Any]:
     return {"suites": _evaluation_store().list_suites(workspace)}
 
 
-@app.post("/api/evaluations")
+@api.post("/api/evaluations")
 def evaluation_create(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     try:
         return {"ok": True, "suite": _evaluation_store().save_suite(body)}
@@ -972,7 +1001,7 @@ def evaluation_create(body: dict[str, Any] = Body(default_factory=dict)) -> dict
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.get("/api/evaluations/{suite_id}")
+@api.get("/api/evaluations/{suite_id}")
 def evaluation_detail(suite_id: str) -> dict[str, Any]:
     suite = _evaluation_store().get_suite(suite_id)
     if suite is None:
@@ -984,7 +1013,7 @@ def evaluation_detail(suite_id: str) -> dict[str, Any]:
     }
 
 
-@app.get("/api/evaluations/{suite_id}/comparison")
+@api.get("/api/evaluations/{suite_id}/comparison")
 def evaluation_comparison(suite_id: str) -> dict[str, Any]:
     if _evaluation_store().get_suite(suite_id) is None:
         raise HTTPException(404, "evaluation suite not found")
@@ -992,7 +1021,7 @@ def evaluation_comparison(suite_id: str) -> dict[str, Any]:
     return {"suite_id": suite_id, "configurations": compare_results(results)}
 
 
-@app.get("/api/evaluations/{suite_id}/export")
+@api.get("/api/evaluations/{suite_id}/export")
 def evaluation_export(suite_id: str, include_results: bool = Query(default=False)) -> dict[str, Any]:
     suite = _evaluation_store().get_suite(suite_id)
     if suite is None:
@@ -1003,7 +1032,7 @@ def evaluation_export(suite_id: str, include_results: bool = Query(default=False
     return export
 
 
-@app.put("/api/evaluations/{suite_id}")
+@api.put("/api/evaluations/{suite_id}")
 def evaluation_update(
     suite_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -1013,14 +1042,14 @@ def evaluation_update(
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.delete("/api/evaluations/{suite_id}")
+@api.delete("/api/evaluations/{suite_id}")
 def evaluation_delete(suite_id: str) -> dict[str, Any]:
     if not _evaluation_store().delete_suite(suite_id):
         raise HTTPException(404, "evaluation suite not found")
     return {"ok": True, "id": suite_id}
 
 
-@app.post("/api/evaluations/{suite_id}/grade")
+@api.post("/api/evaluations/{suite_id}/grade")
 def evaluation_grade(
     suite_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -1051,7 +1080,7 @@ def evaluation_grade(
     return {"case_id": case_id, **result}
 
 
-@app.post("/api/evaluations/{suite_id}/run")
+@api.post("/api/evaluations/{suite_id}/run")
 async def evaluation_run(
     suite_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -1093,7 +1122,7 @@ async def evaluation_run(
     return {"ok": True, "evaluation_id": evaluation_id, "state": "queued"}
 
 
-@app.post("/api/evaluations/runs/{evaluation_id}/cancel")
+@api.post("/api/evaluations/runs/{evaluation_id}/cancel")
 def evaluation_cancel(evaluation_id: str) -> dict[str, Any]:
     svc = service()
     if svc.active_evaluation_id != evaluation_id:
@@ -1481,7 +1510,7 @@ def _chatgpt_account_payload(
     }
 
 
-@app.get("/api/chatgpt/account")
+@api.get("/api/chatgpt/account")
 def chatgpt_account(
     refresh: bool = Query(default=False),
     account_id: str = Query(default=""),
@@ -1489,7 +1518,7 @@ def chatgpt_account(
     return _chatgpt_account_payload(service(), refresh=refresh, home_id=account_id)
 
 
-@app.post("/api/chatgpt/login/start")
+@api.post("/api/chatgpt/login/start")
 def chatgpt_login_start(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
     manager = _chatgpt_manager(svc, str(body.get("account_id") or ""))
@@ -1504,7 +1533,7 @@ def chatgpt_login_start(body: dict[str, Any] = Body(default_factory=dict)) -> di
     }
 
 
-@app.post("/api/chatgpt/login/cancel")
+@api.post("/api/chatgpt/login/cancel")
 def chatgpt_login_cancel(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     login_id = str(body.get("login_id") or "").strip()
     if not login_id:
@@ -1518,7 +1547,7 @@ def chatgpt_login_cancel(body: dict[str, Any] = Body(default_factory=dict)) -> d
     return _chatgpt_account_payload(svc, home_id=home_id)
 
 
-@app.post("/api/chatgpt/logout")
+@api.post("/api/chatgpt/logout")
 def chatgpt_logout(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
     home_id = str(body.get("account_id") or "")
@@ -1538,7 +1567,7 @@ def chatgpt_logout(body: dict[str, Any] = Body(default_factory=dict)) -> dict[st
     return _chatgpt_account_payload(svc, home_id=home_id)
 
 
-@app.get("/api/chatgpt/models")
+@api.get("/api/chatgpt/models")
 def chatgpt_models(account_id: str = Query(default="")) -> dict[str, Any]:
     svc = service()
     account = _chatgpt_account_payload(svc, home_id=account_id)
@@ -1585,7 +1614,7 @@ def _chatgpt_efforts(row: dict[str, Any]) -> list[dict[str, str]]:
     return efforts
 
 
-@app.get("/api/chatgpt/usage")
+@api.get("/api/chatgpt/usage")
 def chatgpt_usage(account_id: str = Query(default="")) -> dict[str, Any]:
     svc = service()
     account = _chatgpt_account_payload(svc, home_id=account_id)
@@ -1610,7 +1639,7 @@ def chatgpt_usage(account_id: str = Query(default="")) -> dict[str, Any]:
     }
 
 
-@app.post("/api/provider")
+@api.post("/api/provider")
 def set_provider(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     """Switch between the local runtime and a hosted endpoint.
 
@@ -1710,7 +1739,7 @@ def _apply_provider(svc: ChatService, body: dict[str, Any]) -> dict[str, Any]:
     return svc.core.provider_state()
 
 
-@app.get("/api/models")
+@api.get("/api/models")
 def models() -> dict[str, Any]:
     svc = service()
     if svc.core.provider == "chatgpt":
@@ -1807,7 +1836,7 @@ def models() -> dict[str, Any]:
     return {"models": out, "current": svc.core.model}
 
 
-@app.get("/api/sessions")
+@api.get("/api/sessions")
 def sessions(
     include_archived: bool = False,
     limit: int = Query(100, ge=1, le=500),
@@ -1824,13 +1853,13 @@ def sessions(
     }
 
 
-@app.get("/api/chat-folders")
+@api.get("/api/chat-folders")
 def chat_folders(workspace: str = Query("", max_length=4096)) -> dict[str, Any]:
     snapshot = ChatOrganizationStore.snapshot(workspace or None)
     return {"version": snapshot["version"], "folders": snapshot["folders"]}
 
 
-@app.post("/api/chat-folders")
+@api.post("/api/chat-folders")
 def chat_folder_create(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     workspace = body.get("workspace")
     name = body.get("name")
@@ -1851,7 +1880,7 @@ def chat_folder_create(body: dict[str, Any] = Body(default_factory=dict)) -> dic
     return {"ok": True, "folder": folder}
 
 
-@app.patch("/api/chat-folders/{folder_id}")
+@api.patch("/api/chat-folders/{folder_id}")
 def chat_folder_update(
     folder_id: str, body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
@@ -1880,7 +1909,7 @@ def chat_folder_update(
     return {"ok": True, "folder": folder}
 
 
-@app.delete("/api/chat-folders/{folder_id}")
+@api.delete("/api/chat-folders/{folder_id}")
 def chat_folder_delete(folder_id: str) -> dict[str, Any]:
     try:
         result = ChatOrganizationStore.delete_folder(folder_id)
@@ -1926,7 +1955,7 @@ def _transcript_index() -> TranscriptIndex:
 
 # Declared before ``GET /api/sessions/{session_id}``: FastAPI matches routes in
 # declaration order, and "search" must not be captured as a session id.
-@app.get("/api/sessions/search")
+@api.get("/api/sessions/search")
 def sessions_search(
     query: str = Query(min_length=1, max_length=500),
     limit: int = Query(20, ge=1, le=50),
@@ -1938,7 +1967,7 @@ def sessions_search(
         raise HTTPException(422, str(e)) from e
 
 
-@app.post("/api/sessions/new")
+@api.post("/api/sessions/new")
 def session_new(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     """Start a fresh saved session, preserving the previous transcript on disk."""
     svc = service()
@@ -2011,7 +2040,7 @@ def session_new(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, 
         raise HTTPException(409, str(e)) from e
 
 
-@app.delete("/api/sessions")
+@api.delete("/api/sessions")
 def sessions_clear() -> dict[str, Any]:
     """Move every saved session except the active one to the recovery folder."""
     svc = service()
@@ -2035,7 +2064,7 @@ def sessions_clear() -> dict[str, Any]:
         raise _busy_http() from e
 
 
-@app.delete("/api/sessions/{session_id}")
+@api.delete("/api/sessions/{session_id}")
 def session_delete(session_id: str) -> dict[str, Any]:
     """Move one chat to recovery, replacing it first when it is active."""
     svc = service()
@@ -2063,7 +2092,7 @@ def session_delete(session_id: str) -> dict[str, Any]:
         raise _busy_http() from e
 
 
-@app.post("/api/sessions/restore")
+@api.post("/api/sessions/restore")
 def sessions_restore(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     """Undo a clear: move a trash batch (default the newest) back."""
     svc = service()
@@ -2080,7 +2109,7 @@ def sessions_restore(body: dict[str, Any] = Body(default_factory=dict)) -> dict[
         raise _busy_http() from e
 
 
-@app.get("/api/sessions/{session_id}")
+@api.get("/api/sessions/{session_id}")
 def session_detail(session_id: str) -> dict[str, Any]:
     path = SessionStore.path_for(session_id)
     if path is None:
@@ -2114,7 +2143,7 @@ def session_detail(session_id: str) -> dict[str, Any]:
     }
 
 
-@app.get("/api/sessions/{session_id}/export-data")
+@api.get("/api/sessions/{session_id}/export-data")
 def session_export_data(
     session_id: str,
     include_reasoning: bool = False,
@@ -2146,7 +2175,7 @@ def session_export_data(
     }
 
 
-@app.patch("/api/sessions/{session_id}/organization")
+@api.patch("/api/sessions/{session_id}/organization")
 def session_organization_update(
     session_id: str, body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
@@ -2168,7 +2197,7 @@ def session_organization_update(
     return {"ok": True, "placement": placement}
 
 
-@app.get("/api/sessions/{session_id}/organization")
+@api.get("/api/sessions/{session_id}/organization")
 def session_organization(session_id: str) -> dict[str, Any]:
     path = SessionStore.path_for(session_id)
     if path is None:
@@ -2187,7 +2216,7 @@ def session_organization(session_id: str) -> dict[str, Any]:
     return {"ok": True, "placement": placement}
 
 
-@app.post("/api/sessions/{session_id}/duplicate")
+@api.post("/api/sessions/{session_id}/duplicate")
 def session_duplicate(
     session_id: str, body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
@@ -2542,14 +2571,14 @@ def _dispatch_schedule(
         raise HTTPException(status, str(detail)) from exc
 
 
-@app.get("/api/schedules")
+@api.get("/api/schedules")
 def schedule_list() -> dict[str, Any]:
     _require_capability("durable_runs")
     store = service().run_store
     return {"schedules": store.schedules(), "read_only": store.read_only}
 
 
-@app.post("/api/schedules")
+@api.post("/api/schedules")
 def schedule_create(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     _require_capability("durable_runs")
     try:
@@ -2558,7 +2587,7 @@ def schedule_create(body: dict[str, Any] = Body(default_factory=dict)) -> dict[s
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.patch("/api/schedules/{schedule_id}")
+@api.patch("/api/schedules/{schedule_id}")
 def schedule_update(
     schedule_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -2576,7 +2605,7 @@ def schedule_update(
         raise HTTPException(status, str(exc)) from exc
 
 
-@app.delete("/api/schedules/{schedule_id}")
+@api.delete("/api/schedules/{schedule_id}")
 def schedule_delete(schedule_id: str) -> dict[str, Any]:
     _require_capability("durable_runs")
     try:
@@ -2586,7 +2615,7 @@ def schedule_delete(schedule_id: str) -> dict[str, Any]:
     return {"ok": True, "id": schedule_id}
 
 
-@app.get("/api/schedules/{schedule_id}/occurrences")
+@api.get("/api/schedules/{schedule_id}/occurrences")
 def schedule_occurrence_list(
     schedule_id: str, limit: int = Query(default=20, ge=1, le=100)
 ) -> dict[str, Any]:
@@ -2597,7 +2626,7 @@ def schedule_occurrence_list(
     return {"occurrences": store.schedule_occurrences(schedule_id, limit=limit)}
 
 
-@app.post("/api/schedules/{schedule_id}/pause")
+@api.post("/api/schedules/{schedule_id}/pause")
 def schedule_pause(
     schedule_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -2610,7 +2639,7 @@ def schedule_pause(
         raise HTTPException(404, str(exc)) from exc
 
 
-@app.post("/api/schedules/{schedule_id}/dispatch")
+@api.post("/api/schedules/{schedule_id}/dispatch")
 def schedule_dispatch(
     schedule_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -2623,7 +2652,7 @@ def schedule_dispatch(
     )
 
 
-@app.post("/api/companion/chats")
+@api.post("/api/companion/chats")
 def companion_chat_dispatch(
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
@@ -2635,15 +2664,15 @@ def companion_chat_dispatch(
 # ------------------------------------------------------- Durable orchestrations
 
 
-@app.get("/api/usage/summary")
+@api.get("/api/usage/summary")
 def usage_summary(since: float = Query(default=0.0, ge=0.0)) -> dict[str, Any]:
     """Spend and token rollups over data already on disk — a view, not a bill."""
     _require_capability("durable_runs")
     return service().run_store.usage_summary(since=since)
 
 
-@app.get("/api/runs")
-@app.get("/api/orchestrations")
+@api.get("/api/runs")
+@api.get("/api/orchestrations")
 def orchestration_list(
     session_id: str = Query(default="", max_length=160),
     states: str = Query(default="", max_length=500),
@@ -2673,7 +2702,7 @@ def orchestration_list(
     }
 
 
-@app.post("/api/runs/queue")
+@api.post("/api/runs/queue")
 def run_queue(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     _require_capability("durable_runs")
     session_id = str(body.get("session_id") or "")
@@ -2696,7 +2725,7 @@ def run_queue(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, An
     )
 
 
-@app.patch("/api/runs/{run_id}/queue")
+@api.patch("/api/runs/{run_id}/queue")
 def run_queue_update(
     run_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -2710,7 +2739,7 @@ def run_queue_update(
         raise HTTPException(409, str(exc)) from exc
 
 
-@app.post("/api/runs/{run_id}/retry")
+@api.post("/api/runs/{run_id}/retry")
 def run_retry(run_id: str) -> dict[str, Any]:
     store = service().run_store
     original = store.run(run_id)
@@ -2738,8 +2767,8 @@ def run_retry(run_id: str) -> dict[str, Any]:
     )
 
 
-@app.get("/api/runs/{run_id}")
-@app.get("/api/orchestrations/{run_id}")
+@api.get("/api/runs/{run_id}")
+@api.get("/api/orchestrations/{run_id}")
 def orchestration_detail(run_id: str) -> dict[str, Any]:
     _require_capability("durable_runs")
     value = service().run_store.run(run_id)
@@ -2748,8 +2777,8 @@ def orchestration_detail(run_id: str) -> dict[str, Any]:
     return value
 
 
-@app.patch("/api/runs/{run_id}")
-@app.patch("/api/orchestrations/{run_id}")
+@api.patch("/api/runs/{run_id}")
+@api.patch("/api/orchestrations/{run_id}")
 def orchestration_update(
     run_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -2762,8 +2791,8 @@ def orchestration_update(
         raise HTTPException(404, str(exc)) from exc
 
 
-@app.get("/api/runs/{run_id}/events")
-@app.get("/api/orchestrations/{run_id}/events")
+@api.get("/api/runs/{run_id}/events")
+@api.get("/api/orchestrations/{run_id}/events")
 def orchestration_events(
     run_id: str,
     after_seq: int = Query(default=0, ge=0),
@@ -2782,8 +2811,8 @@ def orchestration_events(
     }
 
 
-@app.get("/api/runs/{run_id}/export")
-@app.get("/api/orchestrations/{run_id}/export")
+@api.get("/api/runs/{run_id}/export")
+@api.get("/api/orchestrations/{run_id}/export")
 def orchestration_export(
     run_id: str,
     include_content: bool = Query(default=False),
@@ -2795,8 +2824,8 @@ def orchestration_export(
         raise HTTPException(404, str(exc)) from exc
 
 
-@app.post("/api/runs/{run_id}/otlp")
-@app.post("/api/orchestrations/{run_id}/otlp")
+@api.post("/api/runs/{run_id}/otlp")
+@api.post("/api/orchestrations/{run_id}/otlp")
 def orchestration_otlp(
     run_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -2815,7 +2844,7 @@ def orchestration_otlp(
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.post("/api/orchestrations/{run_id}/pause")
+@api.post("/api/orchestrations/{run_id}/pause")
 def orchestration_pause(run_id: str) -> dict[str, Any]:
     _require_capability("recovery_controls")
     svc = service()
@@ -2843,7 +2872,7 @@ def orchestration_pause(run_id: str) -> dict[str, Any]:
     return {"ok": True, "run_id": run_id, "state": "pausing"}
 
 
-@app.post("/api/orchestrations/{run_id}/cancel")
+@api.post("/api/orchestrations/{run_id}/cancel")
 def orchestration_cancel(run_id: str) -> dict[str, Any]:
     _require_capability("recovery_controls")
     svc = service()
@@ -2874,7 +2903,7 @@ def orchestration_cancel(run_id: str) -> dict[str, Any]:
     return {"ok": True, "run_id": run_id, "state": "cancelled"}
 
 
-@app.post("/api/orchestrations/{run_id}/discard")
+@api.post("/api/orchestrations/{run_id}/discard")
 def orchestration_discard(run_id: str) -> dict[str, Any]:
     _require_capability("recovery_controls")
     svc = service()
@@ -2894,7 +2923,7 @@ def orchestration_discard(run_id: str) -> dict[str, Any]:
         raise HTTPException(404, str(exc)) from exc
 
 
-@app.post("/api/orchestrations/{run_id}/reconcile-worker-exit")
+@api.post("/api/orchestrations/{run_id}/reconcile-worker-exit")
 def orchestration_reconcile_worker_exit(
     run_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -2919,7 +2948,7 @@ def orchestration_reconcile_worker_exit(
     return updated
 
 
-@app.post("/api/orchestrations/{run_id}/dispatch-decision")
+@api.post("/api/orchestrations/{run_id}/dispatch-decision")
 def orchestration_dispatch_decision(
     run_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -3028,14 +3057,14 @@ async def _resume_orchestration(
     }
 
 
-@app.post("/api/orchestrations/{run_id}/resume")
+@api.post("/api/orchestrations/{run_id}/resume")
 async def orchestration_resume(
     run_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
     return await _resume_orchestration(run_id, body, action="resume")
 
 
-@app.post("/api/orchestrations/{run_id}/run-with-locus")
+@api.post("/api/orchestrations/{run_id}/run-with-locus")
 async def orchestration_run_with_locus(
     run_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -3048,7 +3077,7 @@ async def orchestration_run_with_locus(
     return await _resume_orchestration(run_id, body, action="run_with_locus")
 
 
-@app.post("/api/orchestrations/{run_id}/recovery-assessment")
+@api.post("/api/orchestrations/{run_id}/recovery-assessment")
 def orchestration_recovery_assessment(
     run_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -3102,14 +3131,14 @@ def orchestration_recovery_assessment(
     }
 
 
-@app.post("/api/orchestrations/{run_id}/jobs/{job_id}/retry")
+@api.post("/api/orchestrations/{run_id}/jobs/{job_id}/retry")
 async def orchestration_retry_job(
     run_id: str, job_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
     return await _resume_orchestration(run_id, {**body, "job_id": job_id}, action="retry")
 
 
-@app.post("/api/orchestrations/{run_id}/agents/{node_id:path}/stop")
+@api.post("/api/orchestrations/{run_id}/agents/{node_id:path}/stop")
 def orchestration_stop_agent_branch(run_id: str, node_id: str) -> dict[str, Any]:
     """Stop one active read-only subtree while sibling branches keep running."""
     _require_capability("recovery_controls")
@@ -3123,7 +3152,7 @@ def orchestration_stop_agent_branch(run_id: str, node_id: str) -> dict[str, Any]
     }
 
 
-@app.post("/api/orchestrations/{run_id}/agents/{node_id:path}/retry")
+@api.post("/api/orchestrations/{run_id}/agents/{node_id:path}/retry")
 async def orchestration_retry_agent_branch(
     run_id: str, node_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -3133,28 +3162,28 @@ async def orchestration_retry_agent_branch(
     )
 
 
-@app.post("/api/orchestrations/{run_id}/jobs/{job_id}/reassign")
+@api.post("/api/orchestrations/{run_id}/jobs/{job_id}/reassign")
 async def orchestration_reassign_job(
     run_id: str, job_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
     return await _resume_orchestration(run_id, {**body, "job_id": job_id}, action="reassign")
 
 
-@app.post("/api/orchestrations/{run_id}/replay")
+@api.post("/api/orchestrations/{run_id}/replay")
 async def orchestration_replay(
     run_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
     return await _resume_orchestration(run_id, body, action="replay")
 
 
-@app.post("/api/orchestrations/{run_id}/duplicate")
+@api.post("/api/orchestrations/{run_id}/duplicate")
 async def orchestration_duplicate(
     run_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
     return await _resume_orchestration(run_id, body, action="duplicate")
 
 
-@app.get("/api/tasks/{task_id}")
+@api.get("/api/tasks/{task_id}")
 def task_detail(task_id: str) -> dict[str, Any]:
     """Return task metadata and its complete baseline-relative binary patch."""
     task = TaskCheckoutStore.load(task_id)
@@ -3173,7 +3202,7 @@ def task_detail(task_id: str) -> dict[str, Any]:
     }
 
 
-@app.get("/api/tasks/{task_id}/landing/preflight")
+@api.get("/api/tasks/{task_id}/landing/preflight")
 def task_landing_preflight(task_id: str) -> dict[str, Any]:
     task = TaskCheckoutStore.load(task_id)
     if task is None:
@@ -3190,7 +3219,7 @@ _LANDING_CHECK_PROCESSES: dict[str, subprocess.Popen[bytes]] = {}
 _LANDING_CHECK_CANCELLED: set[str] = set()
 
 
-@app.post("/api/tasks/{task_id}/checks")
+@api.post("/api/tasks/{task_id}/checks")
 def task_landing_checks(
     task_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -3307,7 +3336,7 @@ def task_landing_checks(
     }
 
 
-@app.post("/api/runs/{run_id}/cancel")
+@api.post("/api/runs/{run_id}/cancel")
 def run_cancel(run_id: str) -> dict[str, Any]:
     """Cancel a queued run or an executing landing check without guessing its owner."""
     with _LANDING_CHECK_LOCK:
@@ -3329,7 +3358,7 @@ def run_cancel(run_id: str) -> dict[str, Any]:
     return {"ok": True}
 
 
-@app.post("/api/tasks/{task_id}/landing")
+@api.post("/api/tasks/{task_id}/landing")
 def task_land(
     task_id: str, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
@@ -3397,7 +3426,7 @@ def task_land(
         raise HTTPException(409, str(exc)) from exc
 
 
-@app.post("/api/tasks/{task_id}/apply")
+@api.post("/api/tasks/{task_id}/apply")
 def task_apply(task_id: str) -> dict[str, Any]:
     """Apply only after a complete dry run; leave source changes unstaged."""
     svc = service()
@@ -3423,7 +3452,7 @@ def task_apply(task_id: str) -> dict[str, Any]:
         raise HTTPException(409, str(exc)) from exc
 
 
-@app.post("/api/tasks/{task_id}/branch")
+@api.post("/api/tasks/{task_id}/branch")
 def task_create_branch(
     task_id: str,
     body: dict[str, Any] = Body(default_factory=dict),
@@ -3445,7 +3474,7 @@ def task_create_branch(
         raise HTTPException(409, str(exc)) from exc
 
 
-@app.post("/api/tasks/{task_id}/snapshot")
+@api.post("/api/tasks/{task_id}/snapshot")
 def task_snapshot(task_id: str) -> dict[str, Any]:
     try:
         existing = TaskCheckoutStore.load(task_id)
@@ -3461,7 +3490,7 @@ def task_snapshot(task_id: str) -> dict[str, Any]:
         raise HTTPException(409, str(exc)) from exc
 
 
-@app.post("/api/tasks/{task_id}/restore")
+@api.post("/api/tasks/{task_id}/restore")
 def task_restore(task_id: str) -> dict[str, Any]:
     try:
         existing = TaskCheckoutStore.load(task_id)
@@ -3476,7 +3505,7 @@ def task_restore(task_id: str) -> dict[str, Any]:
         raise HTTPException(409, str(exc)) from exc
 
 
-@app.delete("/api/tasks/{task_id}")
+@api.delete("/api/tasks/{task_id}")
 def task_cleanup(task_id: str) -> dict[str, Any]:
     """Archive a managed checkout behind a restorable Git snapshot."""
     svc = service()
@@ -3501,7 +3530,7 @@ def task_cleanup(task_id: str) -> dict[str, Any]:
         raise HTTPException(409, str(exc)) from exc
 
 
-@app.patch("/api/sessions/{session_id}")
+@api.patch("/api/sessions/{session_id}")
 def session_metadata_update(
     session_id: str,
     body: dict[str, Any] = Body(default_factory=dict),
@@ -3556,7 +3585,7 @@ def session_metadata_update(
 session_update = session_metadata_update
 
 
-@app.post("/api/sessions/{session_id}/resume")
+@api.post("/api/sessions/{session_id}/resume")
 def session_resume(session_id: str) -> dict[str, Any]:
     svc = service()
     try:
@@ -3602,7 +3631,7 @@ def session_resume(session_id: str) -> dict[str, Any]:
     }
 
 
-@app.post("/api/sessions/{session_id}/handoff")
+@api.post("/api/sessions/{session_id}/handoff")
 def session_handoff(
     session_id: str,
     body: dict[str, Any] = Body(default_factory=dict),
@@ -3687,7 +3716,7 @@ def session_handoff(
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.get("/api/git/status")
+@api.get("/api/git/status")
 def git_status(untracked: str = "normal") -> dict[str, Any]:
     """Working-tree status for the Changes panel.
 
@@ -3698,7 +3727,7 @@ def git_status(untracked: str = "normal") -> dict[str, Any]:
     return gitinfo.status(service().core.cwd, untracked=untracked)
 
 
-@app.get("/api/git/diff")
+@api.get("/api/git/diff")
 def git_diff(
     path: str,
     staged: bool = False,
@@ -3716,7 +3745,7 @@ def git_diff(
     )
 
 
-@app.get("/api/tools")
+@api.get("/api/tools")
 def list_tools() -> dict[str, Any]:
     registry = service().core.tool_registry
     registry.refresh()
@@ -3746,12 +3775,12 @@ def _extension_failure(exc: ExtensionError) -> HTTPException:
     return HTTPException(422, str(exc))
 
 
-@app.get("/api/extensions")
+@api.get("/api/extensions")
 def get_extensions() -> dict[str, Any]:
     return _extension_snapshot(service())
 
 
-@app.get("/api/extensions/catalog")
+@api.get("/api/extensions/catalog")
 def get_extension_catalog(
     query: str = Query("", max_length=500),
     marketplace_id: str = Query("", max_length=200),
@@ -3762,7 +3791,7 @@ def get_extension_catalog(
     }
 
 
-@app.get("/api/extensions/catalog/trust")
+@api.get("/api/extensions/catalog/trust")
 def inspect_extension_plugin(
     marketplace_id: str = Query(..., max_length=200),
     plugin: str = Query(..., max_length=200),
@@ -3773,7 +3802,7 @@ def inspect_extension_plugin(
         raise _extension_failure(exc) from exc
 
 
-@app.post("/api/extensions/marketplaces")
+@api.post("/api/extensions/marketplaces")
 def add_extension_marketplace(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     try:
         value = service().core.extensions.add_marketplace(
@@ -3788,7 +3817,7 @@ def add_extension_marketplace(body: dict[str, Any] = Body(default_factory=dict))
         raise _extension_failure(exc) from exc
 
 
-@app.post("/api/extensions/marketplaces/{marketplace_id}/refresh")
+@api.post("/api/extensions/marketplaces/{marketplace_id}/refresh")
 def refresh_extension_marketplace(marketplace_id: str) -> dict[str, Any]:
     try:
         value = service().core.extensions.refresh_marketplace(marketplace_id)
@@ -3798,7 +3827,7 @@ def refresh_extension_marketplace(marketplace_id: str) -> dict[str, Any]:
         raise _extension_failure(exc) from exc
 
 
-@app.delete("/api/extensions/marketplaces/{marketplace_id}")
+@api.delete("/api/extensions/marketplaces/{marketplace_id}")
 def delete_extension_marketplace(marketplace_id: str) -> dict[str, Any]:
     try:
         service().core.extensions.remove_marketplace(marketplace_id)
@@ -3808,7 +3837,7 @@ def delete_extension_marketplace(marketplace_id: str) -> dict[str, Any]:
         raise _extension_failure(exc) from exc
 
 
-@app.post("/api/extensions/plugins/install")
+@api.post("/api/extensions/plugins/install")
 def install_extension_plugin(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
     try:
@@ -3829,7 +3858,7 @@ def install_extension_plugin(body: dict[str, Any] = Body(default_factory=dict)) 
         raise _extension_failure(exc) from exc
 
 
-@app.post("/api/extensions/plugins/enable")
+@api.post("/api/extensions/plugins/enable")
 def enable_extension_plugin(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
     try:
@@ -3849,7 +3878,7 @@ def enable_extension_plugin(body: dict[str, Any] = Body(default_factory=dict)) -
         raise _extension_failure(exc) from exc
 
 
-@app.post("/api/extensions/plugins/update")
+@api.post("/api/extensions/plugins/update")
 def update_extension_plugin(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
     try:
@@ -3867,7 +3896,7 @@ def update_extension_plugin(body: dict[str, Any] = Body(default_factory=dict)) -
         raise _extension_failure(exc) from exc
 
 
-@app.post("/api/extensions/plugins/rollback")
+@api.post("/api/extensions/plugins/rollback")
 def rollback_extension_plugin(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
     try:
@@ -3882,7 +3911,7 @@ def rollback_extension_plugin(body: dict[str, Any] = Body(default_factory=dict))
         raise _extension_failure(exc) from exc
 
 
-@app.delete("/api/extensions/plugins/{plugin_id:path}")
+@api.delete("/api/extensions/plugins/{plugin_id:path}")
 def uninstall_extension_plugin(plugin_id: str) -> dict[str, Any]:
     svc = service()
     try:
@@ -3897,7 +3926,7 @@ def uninstall_extension_plugin(plugin_id: str) -> dict[str, Any]:
         raise _extension_failure(exc) from exc
 
 
-@app.post("/api/extensions/skills/import")
+@api.post("/api/extensions/skills/import")
 def import_extension_skill(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
     try:
@@ -3915,7 +3944,7 @@ def import_extension_skill(body: dict[str, Any] = Body(default_factory=dict)) ->
         raise _extension_failure(exc) from exc
 
 
-@app.post("/api/extensions/skills/enable")
+@api.post("/api/extensions/skills/enable")
 def enable_extension_skill(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
     try:
@@ -3934,7 +3963,7 @@ def enable_extension_skill(body: dict[str, Any] = Body(default_factory=dict)) ->
         raise _extension_failure(exc) from exc
 
 
-@app.delete("/api/extensions/skills/{skill_id:path}")
+@api.delete("/api/extensions/skills/{skill_id:path}")
 def remove_extension_skill(skill_id: str) -> dict[str, Any]:
     svc = service()
     try:
@@ -3948,7 +3977,7 @@ def remove_extension_skill(skill_id: str) -> dict[str, Any]:
         raise _extension_failure(exc) from exc
 
 
-@app.post("/api/extensions/mcp")
+@api.post("/api/extensions/mcp")
 def upsert_extension_mcp(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
     try:
@@ -3965,7 +3994,7 @@ def upsert_extension_mcp(body: dict[str, Any] = Body(default_factory=dict)) -> d
         raise _extension_failure(exc) from exc
 
 
-@app.post("/api/extensions/mcp/presets/materialize")
+@api.post("/api/extensions/mcp/presets/materialize")
 def materialize_extension_mcp_preset(
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
@@ -3985,7 +4014,7 @@ def materialize_extension_mcp_preset(
         raise _extension_failure(exc) from exc
 
 
-@app.post("/api/extensions/mcp/enable")
+@api.post("/api/extensions/mcp/enable")
 def enable_extension_mcp(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
     try:
@@ -4005,7 +4034,7 @@ def enable_extension_mcp(body: dict[str, Any] = Body(default_factory=dict)) -> d
         raise _extension_failure(exc) from exc
 
 
-@app.post("/api/extensions/mcp/credentials")
+@api.post("/api/extensions/mcp/credentials")
 def set_extension_mcp_credentials(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
     server_id = str(body.get("id") or "")
@@ -4019,7 +4048,7 @@ def set_extension_mcp_credentials(body: dict[str, Any] = Body(default_factory=di
     return {"ok": True, "id": server_id, "has_credentials": bool(values)}
 
 
-@app.post("/api/extensions/mcp/policy")
+@api.post("/api/extensions/mcp/policy")
 def set_extension_mcp_policy(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
     try:
@@ -4038,7 +4067,7 @@ def set_extension_mcp_policy(body: dict[str, Any] = Body(default_factory=dict)) 
         raise _extension_failure(exc) from exc
 
 
-@app.post("/api/extensions/mcp/test")
+@api.post("/api/extensions/mcp/test")
 def test_extension_mcp(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
     server_id = str(body.get("id") or "")
@@ -4048,7 +4077,7 @@ def test_extension_mcp(body: dict[str, Any] = Body(default_factory=dict)) -> dic
         raise _extension_failure(exc) from exc
 
 
-@app.post("/api/extensions/mcp/reconnect")
+@api.post("/api/extensions/mcp/reconnect")
 def reconnect_extension_mcp(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
     server_id = str(body.get("id") or "")
@@ -4069,7 +4098,7 @@ def reconnect_extension_mcp(body: dict[str, Any] = Body(default_factory=dict)) -
     }
 
 
-@app.delete("/api/extensions/mcp/{server_id:path}")
+@api.delete("/api/extensions/mcp/{server_id:path}")
 def delete_extension_mcp(server_id: str) -> dict[str, Any]:
     svc = service()
     try:
@@ -4087,13 +4116,13 @@ def delete_extension_mcp(server_id: str) -> dict[str, Any]:
 # --------------------------------------------------- Managed background work
 
 
-@app.get("/api/services")
+@api.get("/api/services")
 def background_service_list() -> dict[str, Any]:
     """List task-independent servers, watchers, and workers owned by Locus."""
     return {"services": service().dev_servers.status()}
 
 
-@app.post("/api/services")
+@api.post("/api/services")
 def background_service_start(
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
@@ -4116,7 +4145,7 @@ def background_service_start(
         raise HTTPException(422, str(exc)) from exc
 
 
-@app.delete("/api/services/{name}")
+@api.delete("/api/services/{name}")
 def background_service_stop(name: str) -> dict[str, Any]:
     stopped = service().dev_servers.stop(name)
     if not stopped:
@@ -4124,12 +4153,12 @@ def background_service_stop(name: str) -> dict[str, Any]:
     return {"ok": True, "stopped": stopped}
 
 
-@app.get("/api/permissions")
+@api.get("/api/permissions")
 def get_permissions() -> dict[str, Any]:
     return service().core.perms.state()
 
 
-@app.post("/api/permissions")
+@api.post("/api/permissions")
 def set_permissions(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
     try:
@@ -4165,12 +4194,12 @@ def _config_state(core: AgentCore) -> dict[str, Any]:
     }
 
 
-@app.get("/api/config")
+@api.get("/api/config")
 def get_config() -> dict[str, Any]:
     return _config_state(service().core)
 
 
-@app.post("/api/config")
+@api.post("/api/config")
 def post_config(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     svc = service()
     # Checked before anything is applied: `set_model` and `set_cwd` both have
@@ -4253,7 +4282,7 @@ def _apply_config(svc: ChatService, body: dict[str, Any]) -> dict[str, Any]:
     return _config_state(svc.core)
 
 
-@app.post("/api/context/reload")
+@api.post("/api/context/reload")
 def reload_project_context() -> dict[str, Any]:
     """Reload AGENTS.md/compatible project context after an editor save."""
     svc = service()
@@ -6152,19 +6181,19 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         _command_error(svc, str(mtype or "unknown"), f"unknown message type: {mtype}")
 
 
-@app.websocket("/ws/internal/codex")
+@api.websocket("/ws/internal/codex")
 async def ws_codex_broker(ws: WebSocket) -> None:
     """Authenticated duplex broker for isolated team worker processes."""
     origin = ws.headers.get("origin")
     if origin:
         await ws.close(code=1008, reason="browser connections are not allowed")
         return
-    token = str(getattr(app.state, "auth_token", "") or "")
+    token = str(getattr(ws.app.state, "auth_token", "") or "")
     if not token or ws.headers.get("x-locus-token") != token:
         await ws.close(code=1008, reason="internal broker authentication failed")
         return
     await ws.accept()
-    svc = service()
+    svc = _service_from_app(ws.app)
     # A worker must never cause another helper to launch behind the broker.
     if isinstance(svc.codex, CodexBrokerClient):
         await ws.send_json({"type": "error", "message": "nested ChatGPT brokers are forbidden"})
@@ -6285,21 +6314,21 @@ async def ws_codex_broker(ws: WebSocket) -> None:
         return
 
 
-@app.websocket("/ws/chat")
+@api.websocket("/ws/chat")
 async def ws_chat(ws: WebSocket) -> None:
     # Same-origin rule as the HTTP routes: a browser page must never be able
     # to open the agent socket. WebSocket handshakes always carry Origin when
     # they come from a page.
     origin = ws.headers.get("origin")
-    if origin and origin not in _allowed_origins():
+    if origin and origin not in _allowed_origins(ws.app):
         await ws.close(code=1008, reason="cross-origin connections are not allowed")
         return
-    token = str(getattr(app.state, "auth_token", "") or "")
+    token = str(getattr(ws.app.state, "auth_token", "") or "")
     if token and ws.headers.get("x-locus-token") != token:
         await ws.close(code=1008, reason="local agent authentication failed")
         return
     await ws.accept()
-    svc = service()
+    svc = _service_from_app(ws.app)
     previous_ws = svc.ws
     previous_pump = svc.event_pump
     # Publish the replacement before closing the old socket. Its finally block
@@ -6372,6 +6401,31 @@ def _is_loopback_bind(host: str) -> bool:
         return ipaddress.ip_address(host.strip("[]")).is_loopback
     except ValueError:
         return False
+
+
+def create_app(
+    *,
+    chat_service: ChatService | None = None,
+    auth_token: str = "",
+    allowed_origins: set[str] | None = None,
+) -> FastAPI:
+    """Build an isolated HTTP/WebSocket application around one chat service."""
+    application = FastAPI(
+        title="ollama-code",
+        version=__version__,
+        lifespan=lifespan,
+    )
+    application.state.service = chat_service
+    application.state.auth_token = auth_token
+    application.state.allowed_origins = set(allowed_origins or ())
+    application.middleware("http")(block_browser_origins)
+    application.include_router(api)
+    return application
+
+
+# Compatibility entry point for uvicorn and callers that import `server.app`.
+# Tests and embedders should prefer create_app() so state never crosses cases.
+app = create_app()
 
 
 # -------------------------------------------------------------------- main

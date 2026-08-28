@@ -1734,8 +1734,10 @@ def client(tmp_path, monkeypatch):
         {"name": "test-model", "context_length": 32768},
     ])
     core.messages = [core.system_message()]
-    server_mod.app.state.service = server_mod.ChatService(core)
-    with TestClient(server_mod.app) as c:
+    test_app = server_mod.create_app(
+        chat_service=server_mod.ChatService(core)
+    )
+    with TestClient(test_app) as c:
         yield c
 
 

@@ -1,0 +1,40 @@
+from pathlib import Path
+from types import SimpleNamespace
+
+from fastapi.testclient import TestClient
+
+from ollama_code import server
+
+
+def _service(name: str):
+    core = SimpleNamespace(provider_state=lambda: {"provider": name})
+    return SimpleNamespace(core=core)
+
+
+def _route_contract() -> list[str]:
+    contract = []
+    for route in server.api.routes:
+        methods = getattr(route, "methods", None)
+        method = ",".join(sorted(methods)) if methods else "WEBSOCKET"
+        contract.append(f"{method} {route.path}")
+    return contract
+
+
+def test_create_app_keeps_service_state_isolated():
+    first = TestClient(server.create_app(chat_service=_service("first")))
+    second = TestClient(server.create_app(chat_service=_service("second")))
+    unconfigured = TestClient(server.create_app())
+    try:
+        assert first.get("/api/provider").json() == {"provider": "first"}
+        assert second.get("/api/provider").json() == {"provider": "second"}
+        assert unconfigured.get("/api/provider").status_code == 503
+    finally:
+        first.close()
+        second.close()
+        unconfigured.close()
+
+
+def test_public_route_contract_matches_snapshot():
+    snapshot = Path(__file__).parent / "fixtures" / "server-routes.txt"
+    expected = snapshot.read_text(encoding="utf-8").splitlines()
+    assert _route_contract() == expected
