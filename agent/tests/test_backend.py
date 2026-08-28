@@ -27,6 +27,7 @@ from ollama_code import config as config_mod
 from ollama_code import core as core_module
 from ollama_code import server as server_mod
 from ollama_code import sessions as sessions_mod
+from ollama_code.chat_transport_runtime import event_pump
 from ollama_code.continuity import ContinuityStore
 from ollama_code.core import AgentCore
 from ollama_code.ollama import ChatResponse, OllamaError, process_chunk
@@ -4729,7 +4730,7 @@ def test_terminal_event_is_not_sent_until_turn_slot_is_idle(tmp_path):
                 self.events.append(event)
 
         socket = Socket()
-        pump = asyncio.create_task(server_mod._event_pump(service, socket))
+        pump = asyncio.create_task(event_pump(service, socket))
         service.queue_event({"type": "turn_done", "reason": "interrupted"})
         await asyncio.sleep(0)
         assert socket.events == []

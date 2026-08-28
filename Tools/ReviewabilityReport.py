@@ -26,6 +26,7 @@ APP_MODEL_ACTION = re.compile(r"^\s{4}(?:static\s+)?func\s+([A-Za-z_][A-Za-z0-9_
 SERVER_FUNCTION = re.compile(r"^(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)")
 ROUTE_HANDLER = re.compile(r"handlers\.([A-Za-z_][A-Za-z0-9_]*)")
 DOMAIN_HANDLER_LEGACY_ALLOWLIST = {
+    "chat_transport.py": set(),
     "continuity.py": set(),
     "evaluations.py": set(),
     "extensions.py": set(),
