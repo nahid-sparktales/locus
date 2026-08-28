@@ -21,6 +21,8 @@ Feature ownership currently includes:
 
 - `GitWorkspaceModel`: Git status, diff selection, branch and remote state,
   staging, hunk operations, commit drafting, and the tasks that perform them.
+- `WorkspaceFileModel`: workspace file indexing, query and preview state, and
+  the scan/preview tasks whose results are scoped to one workspace.
 - `BrowserService`, `TerminalSession`, `ApplicationContextService`, and
   `SimulatorControlService`: platform-specific runtime state with independent
   lifetimes.
@@ -62,7 +64,8 @@ Route moves retain the contract snapshot; feature ownership moves retain
 characterization tests until consumers use the new boundary directly.
 
 `python3 Tools/ReviewabilityReport.py` reports large production files, large
-diff slices, and architecture-boundary drift. Its thresholds are advisory:
-they surface review questions but never fail CI. A large file is not itself a
-defect; adding another unrelated responsibility to one is the signal to stop
-and choose an owner.
+diff slices, architecture-boundary drift, and additions of published state or
+view-facing actions to `AppModel` and registered route handlers to `server.py`.
+Its findings are advisory: they surface review questions but never fail CI. A
+large file is not itself a defect; adding another unrelated responsibility to
+one is the signal to stop and choose an owner.

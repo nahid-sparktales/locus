@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,12 @@ FILE_ATTENTION_LINES = 1_500
 CHANGE_WARNING_LINES = 400
 CHANGE_TOTAL_WARNING_LINES = 1_500
 MAX_FILE_FINDINGS = 15
+APP_MODEL_PATH = "Locus/AppModel.swift"
+SERVER_PATH = "agent/ollama_code/server.py"
+APP_MODEL_STATE = re.compile(r"^\s{4}@Published\b")
+APP_MODEL_ACTION = re.compile(r"^\s{4}(?:static\s+)?func\s+([A-Za-z_][A-Za-z0-9_]*)")
+SERVER_FUNCTION = re.compile(r"^(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)")
+ROUTE_HANDLER = re.compile(r"handlers\.([A-Za-z_][A-Za-z0-9_]*)")
 
 
 @dataclass(frozen=True)
@@ -145,6 +152,79 @@ def change_findings(base: str) -> tuple[list[Finding], str]:
     )
 
 
+def _added_lines(patch: str) -> list[str]:
+    return [
+        line[1:]
+        for line in patch.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    ]
+
+
+def _registered_server_handlers() -> set[str]:
+    handlers: set[str] = set()
+    for path in (ROOT / "agent" / "ollama_code" / "api").glob("*.py"):
+        handlers.update(ROUTE_HANDLER.findall(path.read_text(encoding="utf-8")))
+    return handlers
+
+
+def _composition_root_patch_finding(
+    path: str,
+    patch: str,
+    *,
+    registered_server_handlers: set[str] | None = None,
+) -> Finding | None:
+    added = _added_lines(patch)
+    if path == APP_MODEL_PATH:
+        state_count = sum(bool(APP_MODEL_STATE.match(line)) for line in added)
+        action_count = sum(bool(APP_MODEL_ACTION.match(line)) for line in added)
+        if not state_count and not action_count:
+            return None
+        parts = []
+        if state_count:
+            parts.append(f"{state_count} published state declaration(s)")
+        if action_count:
+            parts.append(f"{action_count} view-facing action(s)")
+        return Finding(
+            "attention",
+            path,
+            f"Adds {' and '.join(parts)}; put feature state and actions in a feature owner.",
+        )
+    if path == SERVER_PATH:
+        registered = registered_server_handlers or set()
+        handler_names = {
+            match.group(1)
+            for line in added
+            if (match := SERVER_FUNCTION.match(line)) and match.group(1) in registered
+        }
+        if not handler_names:
+            return None
+        return Finding(
+            "attention",
+            path,
+            f"Adds {len(handler_names)} registered API handler(s); put behavior in the owning domain module.",
+        )
+    return None
+
+
+def composition_root_findings(base: str) -> list[Finding]:
+    if not _valid_base(base):
+        return []
+    handlers = _registered_server_handlers()
+    findings: list[Finding] = []
+    for path in (APP_MODEL_PATH, SERVER_PATH):
+        result = _git("diff", "--unified=0", f"{base}...HEAD", "--", path)
+        if result.returncode != 0:
+            continue
+        finding = _composition_root_patch_finding(
+            path,
+            result.stdout,
+            registered_server_handlers=handlers,
+        )
+        if finding is not None:
+            findings.append(finding)
+    return findings
+
+
 def boundary_findings() -> list[Finding]:
     findings: list[Finding] = []
     api_root = ROOT / "agent" / "ollama_code" / "api"
@@ -177,6 +257,7 @@ def render(base: str) -> str:
     changes, comparison = change_findings(base)
     groups = (
         ("Architecture boundaries", boundary_findings()),
+        ("Composition-root growth", composition_root_findings(base)),
         ("Change slice", changes),
         ("Large production files", file_findings()),
     )

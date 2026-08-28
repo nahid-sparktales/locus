@@ -16,6 +16,8 @@ Say if you exercised it in the running app. -->
       or the PR explains why the boundary should change
 - [ ] The advisory `Tools/ReviewabilityReport.py` signals were reviewed; large
       files or diffs are intentional and independently understandable
+- [ ] New feature state/actions were kept out of `AppModel`, and new API
+      handlers were kept out of `server.py`
 - [ ] `xcodegen generate` run if `project.yml` or the file layout changed, and the
       regenerated `Locus.xcodeproj/project.pbxproj` is committed
 - [ ] No credential, key, token, or absolute local path added — including in a
