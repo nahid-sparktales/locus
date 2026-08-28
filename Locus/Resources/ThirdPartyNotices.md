@@ -108,6 +108,19 @@ The native terminal uses SwiftTerm 1.18.0 at commit
 - License: MIT
 - License text: `ThirdPartyLicenses/SwiftTerm-1.18.0/LICENSE`
 
+## Swift Markdown and Swift CMark
+
+Transcript rendering uses Swift Markdown 0.8.0 at commit
+`3c6f9523da3a1ec2fd829673e472d95b8097a3b8` and its Swift CMark 0.8.0 GFM
+parser at commit `924936d0427cb25a61169739a7660230bffa6ea6`.
+
+- Sources: https://github.com/swiftlang/swift-markdown/releases/tag/0.8.0 and
+  https://github.com/swiftlang/swift-cmark/releases/tag/0.8.0
+- Licenses: Apache License 2.0 with Runtime Library Exception and BSD-style
+  permissive component licenses
+- License texts: `ThirdPartyLicenses/SwiftMarkdown-0.8.0/LICENSE` and
+  `ThirdPartyLicenses/SwiftCMark-0.8.0/COPYING`
+
 ## ios-mcp-server Simulator bridge
 
 Direct-download builds include a minimal native touch and accessibility bridge

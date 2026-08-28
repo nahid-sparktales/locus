@@ -257,10 +257,12 @@ final class FeatureLogicTests: XCTestCase {
     }
 
     private func companionFixture() throws -> [String: Any] {
-        let fixtureURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("ProtocolFixtures/companion-v1.json")
+        let fixtureURL = try XCTUnwrap(
+            Bundle(for: FeatureLogicTests.self).url(
+                forResource: "companion-v1",
+                withExtension: "json"
+            )
+        )
         return try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL)) as? [String: Any]
         )
@@ -588,62 +590,107 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(segments[1], .thinking(text: "plan", isComplete: true))
     }
 
-    // MARK: - Markdown fragments
+    // MARK: - Swift Markdown rendering model
 
-    func testFencedCodeBlocksBecomeCodeFragments() {
-        let fragments = MarkdownFragment.parse(
-            "Before\n```swift\nlet x = 1\n```\nAfter"
+    func testFencedTildeIndentedAndIncompleteCodeBlocksArePreserved() {
+        let blocks = MarkdownDocumentParser.parse(
+            "Before\n```swift\nlet x = 1\n```\n~~~diff\n-old\n+new\n~~~\n\n    indented\n"
         )
-        XCTAssertEqual(fragments.count, 3)
-        XCTAssertEqual(fragments[0], .text("Before"))
-        XCTAssertEqual(fragments[1], .code(language: "swift", body: "let x = 1"))
-        XCTAssertEqual(fragments[2], .text("After"))
+        XCTAssertEqual(blocks.count, 4)
+        XCTAssertEqual(blocks[0], .paragraph([.init(text: "Before")]))
+        XCTAssertEqual(blocks[1], .code(language: "swift", body: "let x = 1\n"))
+        XCTAssertEqual(blocks[2], .code(language: "diff", body: "-old\n+new\n"))
+        XCTAssertEqual(blocks[3], .code(language: nil, body: "indented\n"))
+
+        XCTAssertEqual(
+            MarkdownDocumentParser.parse("```\nraw"),
+            [.code(language: nil, body: "raw\n")]
+        )
     }
 
-    func testUnterminatedFenceStillProducesCode() {
-        let fragments = MarkdownFragment.parse("```\nraw")
-        XCTAssertEqual(fragments, [.code(language: nil, body: "raw")])
-    }
-
-    func testMarkdownProseRecognizesAssistantStyleBlocks() {
-        let blocks = MarkdownProseBlock.parse(
+    func testGFMParserRecognizesNestedAssistantStyleBlocks() {
+        let blocks = MarkdownDocumentParser.parse(
             """
             ## Result
 
-            - [x] Parsed Markdown
+            - [x] Parsed **Markdown**
+              - Nested `detail`
             - [ ] Verify layout
 
             3. First numbered item
             4. Second numbered item
 
             > Keep the interface calm.
+            >
+            > - Even in a nested quote.
 
             | Surface | State |
-            | --- | --- |
+            | :--- | ---: |
             | Composer | Ready |
 
             ---
             """
         )
 
-        XCTAssertEqual(blocks[0], .heading(level: 2, text: "Result"))
-        XCTAssertEqual(
-            blocks[1],
-            .unordered([
-                MarkdownListItem(text: "Parsed Markdown", checked: true),
-                MarkdownListItem(text: "Verify layout", checked: false),
-            ])
-        )
-        XCTAssertEqual(
-            blocks[2],
-            .ordered(start: 3, items: ["First numbered item", "Second numbered item"])
-        )
-        XCTAssertEqual(blocks[3], .quote("Keep the interface calm."))
-        XCTAssertEqual(
-            blocks[4],
-            .table(headers: ["Surface", "State"], rows: [["Composer", "Ready"]])
-        )
+        guard case .heading(level: 2, runs: let heading) = blocks[0] else {
+            return XCTFail("Expected heading")
+        }
+        XCTAssertEqual(heading.map(\.text).joined(), "Result")
+        guard case .unordered(let tasks) = blocks[1] else { return XCTFail("Expected task list") }
+        XCTAssertEqual(tasks.map(\.checked), [true, false])
+        XCTAssertTrue(tasks[0].blocks.contains { if case .unordered = $0 { true } else { false } })
+        guard case .ordered(start: 3, items: let ordered) = blocks[2] else {
+            return XCTFail("Expected ordered list")
+        }
+        XCTAssertEqual(ordered.count, 2)
+        guard case .quote(let quote) = blocks[3] else { return XCTFail("Expected quote") }
+        XCTAssertTrue(quote.contains { if case .unordered = $0 { true } else { false } })
+        guard case .table(let headers, let alignments, let rows) = blocks[4] else {
+            return XCTFail("Expected table")
+        }
+        XCTAssertEqual(headers.map { $0.map(\.text).joined() }, ["Surface", "State"])
+        XCTAssertEqual(alignments, [.left, .right])
+        XCTAssertEqual(rows[0].map { $0.map(\.text).joined() }, ["Composer", "Ready"])
         XCTAssertEqual(blocks[5], .rule)
+    }
+
+    func testInlineGFMFormattingEscapesEntitiesBreaksLinksAndImages() {
+        let blocks = MarkdownDocumentParser.parse(
+            "**bold** *emphasis* ~~gone~~ `code` &amp; \\*literal\\*  \nnext [site](https://example.com) ![chart](chart.png)"
+        )
+        guard case .paragraph(let runs) = blocks.first else { return XCTFail("Expected paragraph") }
+        XCTAssertTrue(runs.contains { $0.text == "bold" && $0.style.contains(.strong) })
+        XCTAssertTrue(runs.contains { $0.text == "emphasis" && $0.style.contains(.emphasis) })
+        XCTAssertTrue(runs.contains { $0.text == "gone" && $0.style.contains(.strikethrough) })
+        XCTAssertTrue(runs.contains { $0.text == "code" && $0.style.contains(.code) })
+        XCTAssertTrue(runs.map(\.text).joined().contains("& *literal*\nnext"))
+        XCTAssertTrue(runs.contains { $0.destination == "https://example.com" })
+        XCTAssertTrue(runs.contains { $0.isImage && $0.destination == "chart.png" })
+    }
+
+    func testRawHTMLIsLiteralAndUnsafeLinksAreRejected() {
+        XCTAssertEqual(
+            MarkdownDocumentParser.parse("<script>alert('no')</script>"),
+            [.rawText("<script>alert('no')</script>\n")]
+        )
+        XCTAssertNil(MarkdownLinkPolicy.safeURL("javascript:alert(1)", workspacePath: "/tmp/project"))
+        XCTAssertEqual(
+            MarkdownLinkPolicy.safeURL("https://example.com", workspacePath: nil)?.scheme,
+            "https"
+        )
+        XCTAssertNil(MarkdownLinkPolicy.workspaceImageURL("/tmp/outside.png", workspacePath: "/tmp/project"))
+        XCTAssertEqual(
+            MarkdownLinkPolicy.workspaceImageURL("images/chart.png", workspacePath: "/tmp/project")?.path,
+            "/tmp/project/images/chart.png"
+        )
+    }
+
+    func testLongUnbrokenMarkdownContentIsPreserved() {
+        let value = String(repeating: "x", count: 100_000)
+        guard case .paragraph(let runs) = MarkdownDocumentParser.parse(value).first else {
+            return XCTFail("Expected paragraph")
+        }
+        XCTAssertEqual(runs.map(\.text).joined(), value)
     }
 
     func testCodeHighlighterPreservesSourceAndClassifiesCommonTokens() {
@@ -954,6 +1001,7 @@ final class FeatureLogicTests: XCTestCase {
         let dark = try XCTUnwrap(NSAppearance(named: .darkAqua))
         let lightBackground = NSColor(srgbRed: 0.953, green: 0.945, blue: 0.918, alpha: 1)
         let darkBackground = NSColor(srgbRed: 0.090, green: 0.090, blue: 0.075, alpha: 1)
+        var renderedLogoAccents: Set<String> = []
 
         for preset in LocusAccentPreset.allCases {
             let accent = LocusAccentSelection(
@@ -972,7 +1020,85 @@ final class FeatureLogicTests: XCTestCase {
                 LocusBrandIcon.image(accent: accent.logoNSColor, size: 128).size,
                 NSSize(width: 128, height: 128)
             )
+            let image = LocusBrandIcon.image(accent: accent.logoNSColor, size: 128)
+            let data = try XCTUnwrap(image.tiffRepresentation)
+            let bitmap = try XCTUnwrap(NSBitmapImageRep(data: data))
+            let sampledAccent = try XCTUnwrap(
+                bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh * 14 / 128)
+            )
+            renderedLogoAccents.insert(try XCTUnwrap(
+                LocusAccentSelection.hexString(for: sampledAccent)
+            ))
         }
+        XCTAssertEqual(
+            renderedLogoAccents.count,
+            LocusAccentPreset.allCases.count,
+            "Each newly selected accent must produce visibly distinct logo artwork"
+        )
+    }
+
+    func testAccentThemeColorsRefreshInsteadOfKeepingTheFirstSelection() throws {
+        let previous = LocusAccentRuntime.shared.currentSelection()
+        defer { LocusAccentRuntime.shared.configure(previous) }
+        let appearance = try XCTUnwrap(NSAppearance(named: .darkAqua))
+        let lime = LocusAccentSelection(
+            rawValue: LocusAccentPreset.lime.rawValue,
+            customHex: LocusAccentSelection.defaultCustomHex
+        )
+        let pink = LocusAccentSelection(
+            rawValue: LocusAccentPreset.pink.rawValue,
+            customHex: LocusAccentSelection.defaultCustomHex
+        )
+
+        LocusAccentRuntime.shared.configure(lime)
+        let limeFill = LocusTheme.signal
+        let limeAction = LocusTheme.signalDeep
+        LocusAccentRuntime.shared.configure(pink)
+        let pinkFill = LocusTheme.signal
+        let pinkAction = LocusTheme.signalDeep
+
+        var resolvedLimeFill: NSColor?
+        var resolvedLimeAction: NSColor?
+        var resolvedPinkFill: NSColor?
+        var resolvedPinkAction: NSColor?
+        appearance.performAsCurrentDrawingAppearance {
+            resolvedLimeFill = NSColor(limeFill)
+            resolvedLimeAction = NSColor(limeAction)
+            resolvedPinkFill = NSColor(pinkFill)
+            resolvedPinkAction = NSColor(pinkAction)
+        }
+
+        assertColor(try XCTUnwrap(resolvedLimeFill), hex: 0xC9F54A)
+        assertColor(try XCTUnwrap(resolvedPinkFill), hex: 0xFF5FA2)
+        XCTAssertNotEqual(
+            LocusAccentSelection.hexString(for: try XCTUnwrap(resolvedLimeAction)),
+            LocusAccentSelection.hexString(for: try XCTUnwrap(resolvedPinkAction)),
+            "Composer and other long-lived surfaces must receive the new action colour"
+        )
+    }
+
+    @MainActor
+    func testAssistantOutputMarkerRendersTheSelectedAccent() throws {
+        func sampledAccent(_ preset: LocusAccentPreset) throws -> String {
+            let accent = LocusAccentSelection(
+                rawValue: preset.rawValue,
+                customHex: LocusAccentSelection.defaultCustomHex
+            )
+            let renderer = ImageRenderer(content: LocusMessageMarker(accent: accent))
+            renderer.scale = 1
+            renderer.proposedSize = ProposedViewSize(width: 20, height: 20)
+            let image = try XCTUnwrap(renderer.nsImage)
+            let data = try XCTUnwrap(image.tiffRepresentation)
+            let bitmap = try XCTUnwrap(NSBitmapImageRep(data: data))
+            let color = try XCTUnwrap(bitmap.colorAt(x: 3, y: 10))
+            return try XCTUnwrap(LocusAccentSelection.hexString(for: color))
+        }
+
+        XCTAssertNotEqual(
+            try sampledAccent(.blue),
+            try sampledAccent(.pink),
+            "The icon beside completed assistant output must redraw for the selected accent"
+        )
     }
 
     func testSettingsLevelDefaultsToStandardAndRoundTripsAdvanced() throws {
@@ -3716,6 +3842,40 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(restored.runID, "run-42")
         XCTAssertTrue(String(decoding: try JSONEncoder().encode(block), as: UTF8.self)
             .contains("run_id"))
+    }
+
+    func testStructuredTranscriptFieldsRoundTripAndLegacyReasoningStillDecodes() throws {
+        let block = ChatBlock(
+            kind: .assistant,
+            text: "Checking now.",
+            assistantPhase: .commentary,
+            sourceItemID: "msg-42",
+            reasoningText: "**First**\n\n**Second**",
+            reasoningSections: ["**First**", "**Second**"]
+        )
+        let encoded = try JSONEncoder().encode(block)
+        let restored = try JSONDecoder().decode(ChatBlock.self, from: encoded)
+        XCTAssertEqual(restored.assistantPhase, .commentary)
+        XCTAssertEqual(restored.sourceItemID, "msg-42")
+        XCTAssertEqual(restored.reasoningSections, ["**First**", "**Second**"])
+        XCTAssertEqual(restored.reasoningText, "**First**\n\n**Second**")
+
+        let history = try JSONDecoder().decode(
+            HistoryMessage.self,
+            from: Data(#"{"role":"assistant","content":"Done","phase":"final_answer","item_id":"msg-7","reasoning_sections":["One","Two"],"reasoning":"One\n\nTwo"}"#.utf8)
+        )
+        XCTAssertEqual(history.phase, .finalAnswer)
+        XCTAssertEqual(history.itemID, "msg-7")
+        XCTAssertEqual(history.reasoningSections, ["One", "Two"])
+        XCTAssertEqual(history.reasoning, "One\n\nTwo")
+
+        let legacy = try JSONDecoder().decode(
+            ChatBlock.self,
+            from: Data(#"{"id":"00000000-0000-0000-0000-000000000999","kind":"assistant","text":"","reasoningText":"Legacy"}"#.utf8)
+        )
+        XCTAssertEqual(legacy.reasoningText, "Legacy")
+        XCTAssertNil(legacy.reasoningSections)
+        XCTAssertNil(legacy.assistantPhase)
     }
 
     func testSessionInfoDecodesManagedTaskMetadataTolerantly() throws {

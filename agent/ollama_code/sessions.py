@@ -683,6 +683,8 @@ class SessionStore:
             role = str(message.get("role") or "")
             if role not in {"user", "assistant", "tool"}:
                 continue
+            if message.get("_display_only") and not include_reasoning:
+                continue
             item: dict[str, Any] = {"role": role}
             if role == "user":
                 item["content"] = strip_prompt_decoration(str(message.get("content") or ""))
@@ -706,7 +708,20 @@ class SessionStore:
                         item["attachments"] = attachments
             elif role == "assistant":
                 item["content"] = str(message.get("content") or "")
+                phase = str(message.get("_phase") or "")
+                item_id = str(message.get("_item_id") or "")
+                if phase:
+                    item["phase"] = phase
+                if item_id:
+                    item["item_id"] = item_id
                 if include_reasoning:
+                    sections = [
+                        str(section)
+                        for section in message.get("_display_reasoning_sections") or []
+                        if str(section)
+                    ]
+                    if sections:
+                        item["reasoning_sections"] = sections
                     reasoning = str(
                         message.get("_display_reasoning")
                         or message.get("reasoning_content")

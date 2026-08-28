@@ -523,7 +523,11 @@ private struct BackgroundChatPane: View {
                         .frame(maxWidth: .infinity, minHeight: 180)
                 } else {
                     ForEach(blocks) { block in
-                        PassiveChatBlockView(block: block)
+                        PassiveChatBlockView(
+                            block: block,
+                            accent: model.effectiveAccent,
+                            workspacePath: model.workspacePath
+                        )
                     }
                 }
             }
@@ -598,6 +602,8 @@ private struct BackgroundChatPane: View {
 
 private struct PassiveChatBlockView: View {
     let block: ChatBlock
+    let accent: LocusAccentSelection
+    let workspacePath: String
 
     var body: some View {
         switch block.kind {
@@ -614,11 +620,13 @@ private struct PassiveChatBlockView: View {
             }
         case .assistant:
             HStack(alignment: .top, spacing: 9) {
-                LocusMessageMarker()
+                LocusMessageMarker(accent: accent)
                 MessageContentView(
                     text: block.text,
                     isStreaming: block.isStreaming,
                     reasoningText: block.reasoningText,
+                    reasoningSections: block.reasoningSections,
+                    workspacePath: workspacePath,
                     thinkingVisibility: .collapsed
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2302,13 +2310,17 @@ private struct ConversationView: View {
             {
                 ActiveAssistantBlockView(
                     reply: streamingReply,
-                    thinkingVisibility: model.thinkingVisibility
+                    thinkingVisibility: model.thinkingVisibility,
+                    accent: model.effectiveAccent,
+                    workspacePath: model.workspacePath
                 )
                 .id(block.id)
             } else {
                 MessageBlockView(
                     block: block,
                     thinkingVisibility: model.thinkingVisibility,
+                    accent: model.effectiveAccent,
+                    workspacePath: model.workspacePath,
                     actionsDisabled: model.isBusy || model.hasPendingPermission,
                     canRewind: model.canRewind(to: block),
                     canRegenerate: model.canRegenerate(block),
@@ -2820,7 +2832,7 @@ private struct EmptyConversationView: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            BrandMark(compact: true)
+            BrandMark(accent: model.effectiveAccent, compact: true)
                 .padding(.bottom, 6)
 
             Text("How can I help with \(workspaceName)?")
@@ -2894,14 +2906,17 @@ private struct EmptyConversationView: View {
 private struct ActiveAssistantBlockView: View {
     @ObservedObject var reply: StreamingReplyState
     let thinkingVisibility: ThinkingVisibility
+    let accent: LocusAccentSelection
+    let workspacePath: String
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            LocusMessageMarker()
+            LocusMessageMarker(accent: accent)
                 .accessibilityIdentifier("message.streamingAssistant.marker")
             StreamingMessageContentView(
                 reply: reply,
-                thinkingVisibility: thinkingVisibility
+                thinkingVisibility: thinkingVisibility,
+                workspacePath: workspacePath
             )
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -2909,19 +2924,29 @@ private struct ActiveAssistantBlockView: View {
     }
 }
 
-private struct LocusMessageMarker: View {
+struct LocusMessageMarker: View {
+    let accent: LocusAccentSelection
+
+    private var fill: Color { accent.fillColor }
+    private var action: Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            accent.actionNSColor(for: appearance)
+        })
+    }
+    private var ink: Color { Color(nsColor: accent.brandInkNSColor()) }
+
     var body: some View {
         RoundedRectangle(cornerRadius: 5, style: .continuous)
-            .fill(LocusTheme.signal)
+            .fill(fill)
             .frame(width: 20, height: 20)
             .overlay {
                 Image(systemName: "sparkle")
                     .font(.locus(size: 9, weight: .bold))
-                    .foregroundStyle(LocusTheme.brandInk)
+                    .foregroundStyle(ink)
             }
             .overlay {
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .stroke(LocusTheme.signalDeep.opacity(0.4), lineWidth: 1)
+                    .stroke(action.opacity(0.4), lineWidth: 1)
             }
             .accessibilityHidden(true)
     }
@@ -2933,6 +2958,8 @@ private struct MessageBlockView: View, Equatable {
     @FocusState private var actionsFocused: Bool
     let block: ChatBlock
     let thinkingVisibility: ThinkingVisibility
+    let accent: LocusAccentSelection
+    let workspacePath: String
     let actionsDisabled: Bool
     let canRewind: Bool
     let canRegenerate: Bool
@@ -2944,6 +2971,8 @@ private struct MessageBlockView: View, Equatable {
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.block == rhs.block
             && lhs.thinkingVisibility == rhs.thinkingVisibility
+            && lhs.accent == rhs.accent
+            && lhs.workspacePath == rhs.workspacePath
             && lhs.actionsDisabled == rhs.actionsDisabled
             && lhs.canRewind == rhs.canRewind
             && lhs.canRegenerate == rhs.canRegenerate
@@ -2956,7 +2985,7 @@ private struct MessageBlockView: View, Equatable {
                 HStack(alignment: .top) {
                     Spacer(minLength: 68)
                     VStack(alignment: .trailing, spacing: 4) {
-                        MarkdownBodyView(text: block.text)
+                        MarkdownBodyView(text: block.text, workspacePath: workspacePath)
                             .padding(.horizontal, 13)
                             .padding(.vertical, 11)
                             .background(LocusTheme.paperDeep.opacity(0.88))
@@ -2974,7 +3003,7 @@ private struct MessageBlockView: View, Equatable {
 
             case .assistant:
                 HStack(alignment: .top, spacing: 10) {
-                    LocusMessageMarker()
+                    LocusMessageMarker(accent: accent)
                         .accessibilityIdentifier("message.\(block.id.uuidString).marker")
                     VStack(alignment: .leading, spacing: 5) {
                     if block.text.isEmpty,
@@ -2987,6 +3016,8 @@ private struct MessageBlockView: View, Equatable {
                             text: block.text,
                             isStreaming: block.isStreaming,
                             reasoningText: block.reasoningText,
+                            reasoningSections: block.reasoningSections,
+                            workspacePath: workspacePath,
                             thinkingVisibility: thinkingVisibility
                         )
                         if block.isStreaming {
@@ -3407,11 +3438,7 @@ private struct ThinkingActivityView: View {
             if isOpen {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                        Text(entry.text)
-                            .font(.locus(size: 10))
-                            .foregroundStyle(LocusTheme.muted)
-                            .lineSpacing(3)
-                            .textSelection(.enabled)
+                        MarkdownBodyView(text: entry.text, density: .compact)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(10)
                             .accessibilityIdentifier(

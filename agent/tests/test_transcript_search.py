@@ -64,6 +64,32 @@ def test_message_index_matches_session_detail_positions(tmp_path):
     assert messages[hit["message_index"]]["content"] == "the meteorite-ledger detail"
 
 
+def test_structured_assistant_fields_and_reasoning_sections_are_searchable(tmp_path):
+    _write_session(str(tmp_path), [
+        {
+            "role": "assistant",
+            "content": "Checking the forecast",
+            "_phase": "commentary",
+            "_item_id": "msg-weather",
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "_display_only": True,
+            "_item_id": "reason-weather",
+            "_display_reasoning_sections": ["Planning retrieval", "Parsing aurora-weather"],
+        },
+    ])
+    index = TranscriptIndex()
+
+    commentary = index.search("forecast")["results"][0]
+    assert commentary["phase"] == "commentary"
+    assert commentary["item_id"] == "msg-weather"
+    reasoning = index.search("aurora-weather")["results"][0]
+    assert reasoning["item_id"] == "reason-weather"
+    assert reasoning["reasoning_sections"] == ["Planning retrieval", "Parsing aurora-weather"]
+
+
 def test_appended_messages_are_indexed_by_tail_sync(tmp_path):
     store = _write_session(str(tmp_path), [
         {"role": "user", "content": "opening line"},

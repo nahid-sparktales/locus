@@ -1631,12 +1631,30 @@ struct ChatExportAttachment: Codable, Hashable {
     }
 }
 
+enum AssistantPhase: String, Codable, Hashable {
+    case commentary
+    case finalAnswer = "final_answer"
+
+    static func resolved(_ rawValue: String?) -> AssistantPhase {
+        rawValue.flatMap(AssistantPhase.init(rawValue:)) ?? .finalAnswer
+    }
+}
+
 struct ChatExportMessage: Codable, Hashable {
     let role: String
     let content: String
     let name: String?
     let reasoning: String?
+    let reasoningSections: [String]?
+    let phase: AssistantPhase?
+    let itemID: String?
     let attachments: [ChatExportAttachment]?
+
+    enum CodingKeys: String, CodingKey {
+        case role, content, name, reasoning, phase, attachments
+        case reasoningSections = "reasoning_sections"
+        case itemID = "item_id"
+    }
 }
 
 struct ChatExportDocument: Codable, Hashable {
@@ -1736,6 +1754,7 @@ struct StreamingReplySnapshot: Equatable {
     var id: UUID?
     var text = ""
     var reasoning = ""
+    var reasoningSections: [String] = []
     var turnCharacterCount = 0
 
     var isActive: Bool { id != nil }
@@ -1753,6 +1772,7 @@ final class StreamingReplyState: ObservableObject {
         next.id = id
         next.text = ""
         next.reasoning = ""
+        next.reasoningSections = []
         snapshot = next
     }
 
@@ -1765,13 +1785,38 @@ final class StreamingReplyState: ObservableObject {
         snapshot = next
     }
 
-    func finish(id: UUID) -> StreamingReplySnapshot? {
+    func appendReasoning(_ text: String, sectionIndex: Int) {
+        guard snapshot.id != nil, !text.isEmpty else { return }
+        var next = snapshot
+        let index = max(sectionIndex, 0)
+        while next.reasoningSections.count <= index {
+            next.reasoningSections.append("")
+        }
+        next.reasoningSections[index] += text
+        next.reasoning = next.reasoningSections.joined(separator: "\n\n")
+        next.turnCharacterCount += text.count
+        snapshot = next
+    }
+
+    func finish(
+        id: UUID,
+        authoritativeText: String? = nil,
+        authoritativeReasoningSections: [String]? = nil
+    ) -> StreamingReplySnapshot? {
         guard snapshot.id == id else { return nil }
-        let finished = snapshot
+        var finished = snapshot
+        if let authoritativeText {
+            finished.text = authoritativeText
+        }
+        if let authoritativeReasoningSections {
+            finished.reasoningSections = authoritativeReasoningSections
+            finished.reasoning = authoritativeReasoningSections.joined(separator: "\n\n")
+        }
         snapshot = StreamingReplySnapshot(
             id: nil,
             text: "",
             reasoning: "",
+            reasoningSections: [],
             turnCharacterCount: finished.turnCharacterCount
         )
         return finished
@@ -1797,12 +1842,17 @@ struct HistoryMessage: Codable {
     let content: String
     let name: String?
     let reasoning: String?
+    let reasoningSections: [String]?
+    let phase: AssistantPhase?
+    let itemID: String?
     let runID: String?
 
     var teamRunID: String? { runID }
 
     private enum CodingKeys: String, CodingKey {
-        case role, content, name, reasoning
+        case role, content, name, reasoning, phase
+        case reasoningSections = "reasoning_sections"
+        case itemID = "item_id"
         case runID = "run_id"
         case legacyTeamRunID = "team_run_id"
     }
@@ -1814,6 +1864,9 @@ struct HistoryMessage: Codable {
         content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
         name = try? container.decodeIfPresent(String.self, forKey: .name)
         reasoning = try? container.decodeIfPresent(String.self, forKey: .reasoning)
+        reasoningSections = try? container.decodeIfPresent([String].self, forKey: .reasoningSections)
+        phase = try? container.decodeIfPresent(AssistantPhase.self, forKey: .phase)
+        itemID = try? container.decodeIfPresent(String.self, forKey: .itemID)
         runID = (try? container.decodeIfPresent(String.self, forKey: .runID))
             ?? (try? container.decodeIfPresent(String.self, forKey: .legacyTeamRunID))
     }
@@ -1824,6 +1877,9 @@ struct HistoryMessage: Codable {
         try container.encode(content, forKey: .content)
         try container.encodeIfPresent(name, forKey: .name)
         try container.encodeIfPresent(reasoning, forKey: .reasoning)
+        try container.encodeIfPresent(reasoningSections, forKey: .reasoningSections)
+        try container.encodeIfPresent(phase, forKey: .phase)
+        try container.encodeIfPresent(itemID, forKey: .itemID)
         try container.encodeIfPresent(runID, forKey: .runID)
     }
 }
@@ -1883,9 +1939,18 @@ struct ChatBlock: Identifiable, Codable, Hashable {
     var id: UUID
     var kind: Kind
     var text: String
+    /// Codex App Server phase for visible assistant-message items. A missing
+    /// value is a legacy answer and therefore behaves as final output.
+    var assistantPhase: AssistantPhase?
+    /// Provider item identity used to reconcile starts, deltas, duplicate
+    /// completions, and authoritative final content without guessing from text.
+    var sourceItemID: String?
     /// Native provider reasoning, kept separate from visible answer text.
     /// Optional decoding keeps existing checkpoints readable.
     var reasoningText: String?
+    /// Ordered Codex reasoning summaries. The legacy flattened field remains
+    /// encoded beside these sections so older checkpoints stay readable.
+    var reasoningSections: [String]?
     var isStreaming: Bool
     var tool: ToolPayload?
     /// Present only for the quiet end-of-turn note rendered after a run.
@@ -1904,7 +1969,8 @@ struct ChatBlock: Identifiable, Codable, Hashable {
     var historyIndex: Int?
 
     private enum CodingKeys: String, CodingKey {
-        case id, kind, text, reasoningText, isStreaming, tool, completion, historyIndex
+        case id, kind, text, assistantPhase, sourceItemID
+        case reasoningText, reasoningSections, isStreaming, tool, completion, historyIndex
         case runID = "run_id"
         case legacyRunID = "runID"
         case legacyTeamRunID = "teamRunID"
@@ -1914,7 +1980,10 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         id: UUID = UUID(),
         kind: Kind,
         text: String = "",
+        assistantPhase: AssistantPhase? = nil,
+        sourceItemID: String? = nil,
         reasoningText: String? = nil,
+        reasoningSections: [String]? = nil,
         isStreaming: Bool = false,
         tool: ToolPayload? = nil,
         completion: TurnCompletion? = nil,
@@ -1925,7 +1994,10 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         self.id = id
         self.kind = kind
         self.text = text
+        self.assistantPhase = assistantPhase
+        self.sourceItemID = sourceItemID
         self.reasoningText = reasoningText
+        self.reasoningSections = reasoningSections
         self.isStreaming = isStreaming
         self.tool = tool
         self.completion = completion
@@ -1938,7 +2010,10 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         kind = try container.decode(Kind.self, forKey: .kind)
         text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
+        assistantPhase = try container.decodeIfPresent(AssistantPhase.self, forKey: .assistantPhase)
+        sourceItemID = try container.decodeIfPresent(String.self, forKey: .sourceItemID)
         reasoningText = try container.decodeIfPresent(String.self, forKey: .reasoningText)
+        reasoningSections = try container.decodeIfPresent([String].self, forKey: .reasoningSections)
         isStreaming = try container.decodeIfPresent(Bool.self, forKey: .isStreaming) ?? false
         tool = try container.decodeIfPresent(ToolPayload.self, forKey: .tool)
         completion = try container.decodeIfPresent(TurnCompletion.self, forKey: .completion)
@@ -1953,12 +2028,28 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         try container.encode(id, forKey: .id)
         try container.encode(kind, forKey: .kind)
         try container.encode(text, forKey: .text)
-        try container.encodeIfPresent(reasoningText, forKey: .reasoningText)
+        try container.encodeIfPresent(assistantPhase, forKey: .assistantPhase)
+        try container.encodeIfPresent(sourceItemID, forKey: .sourceItemID)
+        let compatibleReasoning = reasoningText
+            ?? reasoningSections?.joined(separator: "\n\n").nilIfEmpty
+        try container.encodeIfPresent(compatibleReasoning, forKey: .reasoningText)
+        try container.encodeIfPresent(reasoningSections, forKey: .reasoningSections)
         try container.encode(isStreaming, forKey: .isStreaming)
         try container.encodeIfPresent(tool, forKey: .tool)
         try container.encodeIfPresent(completion, forKey: .completion)
         try container.encodeIfPresent(runID, forKey: .runID)
         try container.encodeIfPresent(historyIndex, forKey: .historyIndex)
+    }
+
+    var resolvedReasoningSections: [String] {
+        let sections = (reasoningSections ?? []).filter {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        if !sections.isEmpty { return sections }
+        guard let reasoningText,
+              !reasoningText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return [] }
+        return [reasoningText]
     }
 }
 
@@ -2095,8 +2186,8 @@ enum TranscriptPresentation {
             ordinal += 1
         }
 
-        if let nativeReasoning = block.reasoningText {
-            appendThinking(nativeReasoning)
+        for section in block.resolvedReasoningSections {
+            appendThinking(section)
         }
 
         let segments = AssistantSegment.parse(block.text)
@@ -2116,6 +2207,7 @@ enum TranscriptPresentation {
 
         var visibleBlock = block
         visibleBlock.reasoningText = nil
+        visibleBlock.reasoningSections = nil
         if containsInlineThinking {
             visibleBlock.text = visibleSegments.joined(separator: "\n\n")
         }
@@ -2128,8 +2220,7 @@ enum TranscriptPresentation {
     private static func isCompletedEmptyAssistant(_ block: ChatBlock) -> Bool {
         guard block.kind == .assistant, !block.isStreaming else { return false }
         return block.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && (block.reasoningText ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && block.resolvedReasoningSections.isEmpty
     }
 }
 
@@ -2142,6 +2233,9 @@ struct TranscriptSearchHit: Codable, Hashable, Identifiable {
     let messageIndex: Int
     let role: String
     let snippet: String
+    let phase: AssistantPhase?
+    let itemID: String?
+    let reasoningSections: [String]?
     /// `[start, length]` character ranges inside `snippet` to emphasize.
     let highlights: [[Int]]
     let score: Double
@@ -2149,9 +2243,11 @@ struct TranscriptSearchHit: Codable, Hashable, Identifiable {
     var id: String { "\(sessionID):\(messageIndex)" }
 
     enum CodingKeys: String, CodingKey {
-        case title, pinned, mtime, role, snippet, highlights, score
+        case title, pinned, mtime, role, snippet, phase, highlights, score
         case sessionID = "session_id"
         case messageIndex = "message_index"
+        case itemID = "item_id"
+        case reasoningSections = "reasoning_sections"
     }
 
     /// The first term the index actually matched — by construction it appears

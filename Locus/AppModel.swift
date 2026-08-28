@@ -657,6 +657,7 @@ final class AppModel: ObservableObject {
     private var streamingAssistantID: UUID?
     private var pendingTokens = ""
     private var pendingReasoning = ""
+    private var pendingReasoningSections: [Int: String] = [:]
     /// Rough size of the reply streamed since the last `session_info`, so the
     /// context meter moves during a turn instead of freezing at the pre-turn
     /// value. Reset whenever the backend supplies a real count.
@@ -9484,8 +9485,6 @@ final class AppModel: ObservableObject {
             || settings.proxyProviderProfileIDs != newSettings.proxyProviderProfileIDs
         let launchAtLoginChanged = settings.launchAtLogin != newSettings.launchAtLogin
         let mobileAccessChanged = settings.mobileAccessEnabled != newSettings.mobileAccessEnabled
-        let accentChanged = settings.accentPresetRaw != newSettings.accentPresetRaw
-            || settings.customAccentHex != newSettings.customAccentHex
         if launchAtLoginChanged {
             do {
                 try updateLaunchAtLogin(enabled: newSettings.launchAtLogin)
@@ -9499,7 +9498,6 @@ final class AppModel: ObservableObject {
         settings = newSettings
         appearancePreview = nil
         persistSettings()
-        if accentChanged { applyApplicationAccent() }
         if mobileAccessChanged {
             Task { await companionGateway.setEnabled(newSettings.mobileAccessEnabled) }
         }
@@ -9608,16 +9606,6 @@ final class AppModel: ObservableObject {
 
     func clearAppearancePreview() {
         appearancePreview = nil
-    }
-
-    /// The selected artwork is used by the Dock, app switcher, and About panel.
-    /// The bundled Finder icon stays the signed default, as required by macOS.
-    func applyApplicationAccent() {
-        let accent = settings.resolvedAccent
-        LocusAccentRuntime.shared.configure(accent)
-        NSApplication.shared.applicationIconImage = LocusBrandIcon.image(
-            accent: accent.logoNSColor
-        )
     }
 
     private func migrateTerminalSettingsIfNeeded() async {
@@ -11890,21 +11878,25 @@ final class AppModel: ObservableObject {
         guard let type = event["type"] as? String else { return }
         let previous = taskConversationStates[runtime.sessionID]
         var state = previous?.state ?? runtime.executionState
-        if type == "message_start" {
+        if type == "message_start" || type == "assistant_item_start" {
             state = .running
             runtime.streamingBlockID = UUID()
             runtime.streamingText = ""
             runtime.streamingReasoning = ""
         }
-        if type == "token" {
+        if type == "token"
+            || (type == "assistant_item_delta" && event["kind"] as? String == "message")
+        {
             if runtime.streamingBlockID == nil { runtime.streamingBlockID = UUID() }
             runtime.streamingText += event["text"] as? String ?? ""
         }
-        if type == "thinking" {
+        if type == "thinking"
+            || (type == "assistant_item_delta" && event["kind"] as? String == "reasoning")
+        {
             if runtime.streamingBlockID == nil { runtime.streamingBlockID = UUID() }
             runtime.streamingReasoning += event["text"] as? String ?? ""
         }
-        if type == "message_end" {
+        if type == "message_end" || type == "assistant_item_end" {
             runtime.streamingBlockID = nil
             runtime.streamingText = ""
             runtime.streamingReasoning = ""
@@ -12005,7 +11997,7 @@ final class AppModel: ObservableObject {
                 state: state
             )
         }
-        if (type == "message_start" || type == "orchestration_started" || type == "turn_done"),
+        if (type == "message_start" || type == "assistant_item_start" || type == "orchestration_started" || type == "turn_done"),
            persistenceEnabled {
             Task { await refreshMetadata() }
         }
@@ -12611,6 +12603,102 @@ final class AppModel: ObservableObject {
                   let info = decode(SessionInfo.self, from: raw)
             else { return }
             applySessionStarted(info, reason: event["reason"] as? String)
+
+        case "assistant_item_start":
+            guard let itemID = event["item_id"] as? String, !itemID.isEmpty,
+                  let kind = event["kind"] as? String,
+                  kind == "message" || kind == "reasoning"
+            else { return }
+            if let existing = blocks.first(where: { $0.sourceItemID == itemID }),
+               !existing.isStreaming
+            {
+                break
+            }
+            if let runtime = taskWorkers[currentSessionID] {
+                runtime.executionState = .running
+                runtime.startedAt = runtime.startedAt ?? Date()
+                runtime.streamingBlockID = nil
+                runtime.streamingText = ""
+                runtime.streamingReasoning = ""
+                updateBackgroundChatState(runtime)
+            }
+            let phase = kind == "message"
+                ? AssistantPhase.resolved(event["phase"] as? String)
+                : nil
+            let id = startAssistantStream(sourceItemID: itemID, phase: phase)
+            taskWorkers[currentSessionID]?.streamingBlockID = id
+
+        case "assistant_item_delta":
+            guard let itemID = event["item_id"] as? String, !itemID.isEmpty,
+                  let kind = event["kind"] as? String,
+                  kind == "message" || kind == "reasoning",
+                  let text = event["text"] as? String, !text.isEmpty
+            else { return }
+            let existing = blocks.first(where: { $0.sourceItemID == itemID })
+            if existing?.isStreaming == false { break }
+            if existing == nil {
+                let phase = kind == "message"
+                    ? AssistantPhase.resolved(event["phase"] as? String)
+                    : nil
+                startAssistantStream(sourceItemID: itemID, phase: phase)
+            }
+            guard let block = blocks.first(where: { $0.sourceItemID == itemID }),
+                  block.id == streamingAssistantID
+            else { break }
+            if kind == "reasoning" {
+                enqueueReasoning(text, sectionIndex: event["section_index"] as? Int ?? 0)
+            } else {
+                enqueueToken(text)
+            }
+
+        case "assistant_item_end":
+            guard let itemID = event["item_id"] as? String, !itemID.isEmpty,
+                  let kind = event["kind"] as? String,
+                  kind == "message" || kind == "reasoning"
+            else { return }
+            if blocks.first(where: { $0.sourceItemID == itemID }) == nil {
+                let phase = kind == "message"
+                    ? AssistantPhase.resolved(event["phase"] as? String)
+                    : nil
+                startAssistantStream(sourceItemID: itemID, phase: phase)
+            }
+            flushPendingTokens()
+            guard let index = blocks.firstIndex(where: { $0.sourceItemID == itemID }) else {
+                break
+            }
+            let wasStreaming = blocks[index].isStreaming
+            let authoritativeText = kind == "message" ? event["text"] as? String : nil
+            let sections = kind == "reasoning"
+                ? (event["sections"] as? [String] ?? [])
+                : nil
+            if let phase = event["phase"] as? String, kind == "message" {
+                blocks[index].assistantPhase = AssistantPhase.resolved(phase)
+            }
+            if blocks[index].id == streamingAssistantID {
+                commitStreamingReply(
+                    blocks[index].id,
+                    finished: true,
+                    authoritativeText: authoritativeText,
+                    authoritativeReasoningSections: sections
+                )
+                streamingAssistantID = nil
+            } else {
+                if let authoritativeText { blocks[index].text = authoritativeText }
+                if let sections {
+                    blocks[index].reasoningSections = sections.isEmpty ? nil : sections
+                    blocks[index].reasoningText = sections.joined(separator: "\n\n").nilIfEmpty
+                }
+                blocks[index].isStreaming = false
+            }
+            if wasStreaming, let runtime = taskWorkers[currentSessionID] {
+                runtime.streamingBlockID = nil
+                runtime.streamingText = ""
+                runtime.streamingReasoning = ""
+            }
+            if wasStreaming, kind == "message" {
+                sessionOverview.emit(.message(role: .assistant, at: Self.sessionTimestamp))
+            }
+            if wasStreaming { streamRevision += 1 }
 
         case "message_start":
             if let runtime = taskWorkers[currentSessionID] {
@@ -13591,7 +13679,16 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func startAssistantStream() {
+    @discardableResult
+    private func startAssistantStream(
+        sourceItemID: String? = nil,
+        phase: AssistantPhase? = nil
+    ) -> UUID {
+        if let sourceItemID,
+           let existing = blocks.first(where: { $0.sourceItemID == sourceItemID }) {
+            if existing.isStreaming { streamingAssistantID = existing.id }
+            return existing.id
+        }
         flushPendingTokens()
         if let current = streamingAssistantID {
             commitStreamingReply(current, finished: true)
@@ -13599,8 +13696,15 @@ final class AppModel: ObservableObject {
         let id = UUID()
         streamingAssistantID = id
         isBusy = true
-        blocks.append(ChatBlock(id: id, kind: .assistant, isStreaming: true))
+        blocks.append(ChatBlock(
+            id: id,
+            kind: .assistant,
+            assistantPhase: phase,
+            sourceItemID: sourceItemID,
+            isStreaming: true
+        ))
         streamingReply.begin(id: id)
+        return id
     }
 
     /// No assistant bubble may stay in the streaming state once the turn is
@@ -13614,12 +13718,24 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func commitStreamingReply(_ id: UUID, finished: Bool) {
-        guard let snapshot = streamingReply.finish(id: id),
+    private func commitStreamingReply(
+        _ id: UUID,
+        finished: Bool,
+        authoritativeText: String? = nil,
+        authoritativeReasoningSections: [String]? = nil
+    ) {
+        guard let snapshot = streamingReply.finish(
+            id: id,
+            authoritativeText: authoritativeText,
+            authoritativeReasoningSections: authoritativeReasoningSections
+        ),
               let index = blocks.firstIndex(where: { $0.id == id })
         else { return }
         blocks[index].text = snapshot.text
         blocks[index].reasoningText = snapshot.reasoning.nilIfEmpty
+        blocks[index].reasoningSections = snapshot.reasoningSections.isEmpty
+            ? nil
+            : snapshot.reasoningSections
         if finished { blocks[index].isStreaming = false }
     }
 
@@ -13717,6 +13833,12 @@ final class AppModel: ObservableObject {
         scheduleStreamFlush()
     }
 
+    private func enqueueReasoning(_ text: String, sectionIndex: Int) {
+        guard !text.isEmpty else { return }
+        pendingReasoningSections[max(sectionIndex, 0), default: ""] += text
+        scheduleStreamFlush()
+    }
+
     /// A single publication on the next display refresh keeps text growth and
     /// native scroll anchoring on the same visual frame.
     private func scheduleStreamFlush() {
@@ -13725,17 +13847,26 @@ final class AppModel: ObservableObject {
 
     private func flushPendingTokens() {
         streamFlushDriver.cancelPending()
-        guard !pendingTokens.isEmpty || !pendingReasoning.isEmpty,
+        guard !pendingTokens.isEmpty || !pendingReasoning.isEmpty
+                || !pendingReasoningSections.isEmpty,
               streamingAssistantID != nil
         else {
             pendingTokens = ""
             pendingReasoning = ""
+            pendingReasoningSections = [:]
             return
         }
         streamingReply.append(text: pendingTokens, reasoning: pendingReasoning)
-        streamedCharsThisTurn += pendingTokens.count + pendingReasoning.count
+        var publishedCharacters = pendingTokens.count + pendingReasoning.count
+        for index in pendingReasoningSections.keys.sorted() {
+            let delta = pendingReasoningSections[index] ?? ""
+            streamingReply.appendReasoning(delta, sectionIndex: index)
+            publishedCharacters += delta.count
+        }
+        streamedCharsThisTurn += publishedCharacters
         pendingTokens = ""
         pendingReasoning = ""
+        pendingReasoningSections = [:]
     }
 
     private func updateSession(_ session: SessionSummary, body: [String: Any], success: String) {
@@ -14159,6 +14290,48 @@ final class AppModel: ObservableObject {
                 ),
                 ChatBlock(
                     id: UUID(uuidString: "00000000-0000-0000-0000-000000000205")!,
+                    kind: .note,
+                    completion: TurnCompletion(
+                        outcome: .complete,
+                        mode: .work,
+                        durationMilliseconds: 1_000
+                    )
+                ),
+            ]
+        }
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_CODEX_TRANSCRIPT_FIXTURE"] == "1" {
+            blocks = [
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000301")!,
+                    kind: .user,
+                    text: "Check Austin and Jerusalem"
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000302")!,
+                    kind: .assistant,
+                    sourceItemID: "reason-fixture",
+                    reasoningText: "**Planning data retrieval**\n\n**Checking forecast parsing**",
+                    reasoningSections: [
+                        "**Planning data retrieval**",
+                        "**Checking forecast parsing**",
+                    ]
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000303")!,
+                    kind: .assistant,
+                    text: "I’ll check both locations now.",
+                    assistantPhase: .commentary,
+                    sourceItemID: "commentary-fixture"
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000304")!,
+                    kind: .assistant,
+                    text: "- **Austin:** Sunny and hot.\n- **Jerusalem:** Warm and dry.",
+                    assistantPhase: .finalAnswer,
+                    sourceItemID: "final-fixture"
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000305")!,
                     kind: .note,
                     completion: TurnCompletion(
                         outcome: .complete,
@@ -15285,11 +15458,15 @@ final class AppModel: ObservableObject {
                     historyIndex: index
                 )
             case "assistant" where !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || !(message.reasoning?.isEmpty ?? true):
+                || !(message.reasoning?.isEmpty ?? true)
+                || !(message.reasoningSections?.isEmpty ?? true):
                 ChatBlock(
                     kind: .assistant,
                     text: message.content,
+                    assistantPhase: message.phase,
+                    sourceItemID: message.itemID,
                     reasoningText: message.reasoning,
+                    reasoningSections: message.reasoningSections,
                     historyIndex: index
                 )
             case "tool":
@@ -15367,7 +15544,7 @@ private enum ChatExportRenderer {
                 } else {
                     lines.append(message.content)
                 }
-                if let reasoning = message.reasoning, !reasoning.isEmpty {
+                if let reasoning = resolvedReasoning(for: message) {
                     lines.append("")
                     lines.append("<details><summary>Reasoning</summary>")
                     lines.append("")
@@ -15405,7 +15582,7 @@ private enum ChatExportRenderer {
         for message in document.messages {
             lines.append(textHeading(for: message))
             lines.append(message.content)
-            if let reasoning = message.reasoning, !reasoning.isEmpty {
+            if let reasoning = resolvedReasoning(for: message) {
                 lines.append("Reasoning:")
                 lines.append(reasoning)
             }
@@ -15481,7 +15658,7 @@ private enum ChatExportRenderer {
         for message in document.messages {
             append(textHeading(for: message) + "\n", font: heading, spacing: 3)
             append(message.content + "\n", font: message.role == "tool" ? mono : body, spacing: 8)
-            if let reasoning = message.reasoning, !reasoning.isEmpty {
+            if let reasoning = resolvedReasoning(for: message) {
                 append("Reasoning\n", font: heading, color: secondary, spacing: 2)
                 append(reasoning + "\n", font: detail, color: secondary, spacing: 8)
             }
@@ -15525,7 +15702,7 @@ private enum ChatExportRenderer {
     private static func markdownHeading(for message: ChatExportMessage) -> String {
         switch message.role {
         case "user": "## You"
-        case "assistant": "## Locus"
+        case "assistant": message.phase == .commentary ? "## Locus — Commentary" : "## Locus"
         case "tool": "### Tool: \(message.name?.nilIfEmpty ?? "tool")"
         default: "## \(message.role.capitalized)"
         }
@@ -15534,10 +15711,18 @@ private enum ChatExportRenderer {
     private static func textHeading(for message: ChatExportMessage) -> String {
         switch message.role {
         case "user": "YOU"
-        case "assistant": "LOCUS"
+        case "assistant": message.phase == .commentary ? "LOCUS — COMMENTARY" : "LOCUS"
         case "tool": "TOOL — \(message.name?.nilIfEmpty ?? "tool")"
         default: message.role.uppercased()
         }
+    }
+
+    private static func resolvedReasoning(for message: ChatExportMessage) -> String? {
+        let sections = (message.reasoningSections ?? []).filter {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        if !sections.isEmpty { return sections.joined(separator: "\n\n") }
+        return message.reasoning?.nilIfEmpty
     }
 
     private static func decodedAttachmentData(_ value: String) -> Data? {

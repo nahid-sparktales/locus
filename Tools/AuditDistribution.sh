@@ -50,6 +50,16 @@ resolved="${repo_root}/Locus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
     echo "error: Sparkle is not pinned to the audited 2.9.4 revision" >&2
     exit 1
 }
+[[ -f "${resolved}" ]] \
+    && /usr/bin/grep -Fq -- "3c6f9523da3a1ec2fd829673e472d95b8097a3b8" "${resolved}" || {
+    echo "error: Swift Markdown is not pinned to the audited 0.8.0 revision" >&2
+    exit 1
+}
+[[ -f "${resolved}" ]] \
+    && /usr/bin/grep -Fq -- "924936d0427cb25a61169739a7660230bffa6ea6" "${resolved}" || {
+    echo "error: Swift CMark is not pinned to the audited 0.8.0 revision" >&2
+    exit 1
+}
 [[ -f "${resources}/CodexAppServerProvenance.txt" ]] || {
     echo "error: Codex App Server provenance is missing" >&2
     exit 1
@@ -143,6 +153,8 @@ fi
 for notice in \
     "| websockets | 17.0 |" \
     "SwiftTerm 1.18.0" \
+    "Swift Markdown 0.8.0" \
+    "Swift CMark 0.8.0" \
     "Sparkle 2.9.4" \
     "ios-mcp-server Simulator bridge" \
     "Anthropic Frontend Design" \
@@ -157,6 +169,8 @@ done
 
 for required in \
     "SwiftTerm-1.18.0/LICENSE" \
+    "SwiftMarkdown-0.8.0/LICENSE" \
+    "SwiftCMark-0.8.0/COPYING" \
     "Sparkle-2.9.4/LICENSE" \
     "builtin-skills-anthropic/LICENSE" \
     "builtin-skills-vercel/LICENSE" \

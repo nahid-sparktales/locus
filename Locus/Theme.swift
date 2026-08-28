@@ -28,7 +28,7 @@ enum AppAppearance: String, CaseIterable, Codable, Identifiable {
 
 /// The five ready-made Locus brand colours. A custom value is stored separately
 /// so presets remain a small, stable set while the colour picker stays open-ended.
-enum LocusAccentPreset: String, CaseIterable, Identifiable {
+enum LocusAccentPreset: String, CaseIterable, Identifiable, Sendable {
     case lime
     case blue
     case purple
@@ -72,7 +72,7 @@ enum LocusAccentPreset: String, CaseIterable, Identifiable {
     }
 }
 
-struct LocusAccentSelection: Hashable {
+struct LocusAccentSelection: Hashable, Sendable {
     static let customRawValue = "custom"
     static let defaultCustomHex = "4A90FF"
 
@@ -354,21 +354,28 @@ enum LocusTheme {
     static let line = adaptive(\.line)
     static let lineStrong = adaptive(\.lineStrong)
     static let muted = adaptive(\.muted)
-    static let signal = accentAdaptive { selection, _ in selection.fillNSColor }
+    // Accent-backed colors must be recomputed when a view's body updates.
+    // Keeping one static Color lets SwiftUI cache the first dynamic-provider
+    // resolution in long-lived surfaces such as the composer.
+    static var signal: Color {
+        accentAdaptive { selection, _ in selection.fillNSColor }
+    }
     /// Resolve from Locus's saved theme directly. `Color.accentColor` can fall
     /// back to the user's macOS accent inside nested panes, which made active
     /// folders, focus outlines, context labels, and Ready dots turn orange.
-    static let signalDeep = accentAdaptive { selection, appearance in
-        selection.actionNSColor(for: appearance)
+    static var signalDeep: Color {
+        accentAdaptive { selection, appearance in
+            selection.actionNSColor(for: appearance)
+        }
     }
     static let coral = adaptive(\.coral)
     static let danger = adaptive(\.danger)
     static let blue = adaptive(\.blue)
-    static let success = signalDeep
+    static var success: Color { signalDeep }
     static let warning = adaptive(\.warning)
     static let permissionInk = adaptive(\.permissionInk)
     static let permissionMuted = adaptive(\.permissionMuted)
-    static let successSoft = signal.opacity(0.18)
+    static var successSoft: Color { signal.opacity(0.18) }
 
     // Semantic roles. The legacy names above remain source-compatible while
     // screens migrate; new UI should describe the purpose of a color rather
@@ -382,18 +389,20 @@ enum LocusTheme {
     static let surfaceCard = white
     static let separator = line
     static let separatorStrong = lineStrong
-    static let accentFill = signal
-    static let accentAction = signalDeep
-    static let successForeground = success
+    static var accentFill: Color { signal }
+    static var accentAction: Color { signalDeep }
+    static var successForeground: Color { success }
     static let warningForeground = warning
     static let dangerForeground = danger
-    static let selectionFill = signal
+    static var selectionFill: Color { signal }
     static let focusRing = blue
 
     /// Artwork drawn on the chosen signal colour automatically uses whichever
     /// ink has stronger contrast, including for arbitrary custom colours.
-    static let brandInk = accentAdaptive { selection, _ in
-        selection.brandInkNSColor()
+    static var brandInk: Color {
+        accentAdaptive { selection, _ in
+            selection.brandInkNSColor()
+        }
     }
 
     static func palette(for appearance: NSAppearance) -> Palette {
@@ -411,8 +420,12 @@ enum LocusTheme {
     private static func accentAdaptive(
         _ resolve: @escaping @Sendable (LocusAccentSelection, NSAppearance) -> NSColor
     ) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
-            resolve(LocusAccentRuntime.shared.currentSelection(), appearance)
+        // Bind each newly evaluated view body to the selection that triggered
+        // it. The NSColor remains appearance-aware, but an older SwiftUI Color
+        // can no longer silently change identity underneath a cached view node.
+        let selection = LocusAccentRuntime.shared.currentSelection()
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            resolve(selection, appearance)
         })
     }
 
@@ -708,19 +721,23 @@ struct LocusRecommendationCard: View {
 }
 
 struct BrandMark: View {
+    let accent: LocusAccentSelection
     var compact = false
+
+    private var fill: Color { accent.fillColor }
+    private var ink: Color { Color(nsColor: accent.brandInkNSColor()) }
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: compact ? 8 : 10, style: .continuous)
-                .fill(LocusTheme.signal)
+                .fill(fill)
             HStack(spacing: compact ? 2.5 : 3) {
                 Capsule()
-                    .fill(LocusTheme.brandInk)
+                    .fill(ink)
                     .frame(width: compact ? 3 : 3.5, height: compact ? 12.5 : 15)
                     .rotationEffect(.degrees(24))
                 Capsule()
-                    .fill(LocusTheme.brandInk)
+                    .fill(ink)
                     .frame(width: compact ? 3 : 3.5, height: compact ? 12.5 : 15)
                     .rotationEffect(.degrees(24))
             }
@@ -728,7 +745,7 @@ struct BrandMark: View {
         .frame(width: compact ? 30 : 36, height: compact ? 30 : 36)
         .overlay {
             RoundedRectangle(cornerRadius: compact ? 8 : 10, style: .continuous)
-                .stroke(LocusTheme.brandInk, lineWidth: 1.5)
+                .stroke(ink, lineWidth: 1.5)
         }
         .shadow(color: .black.opacity(0.16), radius: 0, x: 2, y: 2)
         .rotationEffect(.degrees(-2.5))

@@ -286,7 +286,7 @@ struct SessionSidebarView: View {
 
     private var header: some View {
         HStack(spacing: 9) {
-            BrandMark(compact: true)
+            BrandMark(accent: model.effectiveAccent, compact: true)
 
             Text("Locus")
                 .font(.locus(size: 14, weight: .bold))

@@ -60,6 +60,7 @@
 		3DAC82E08795459837842303 /* WalletGatewayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E76206A025463F2FC7DDC557 /* WalletGatewayTests.swift */; };
 		3E8FCEE6168C5A89B6B45BC1 /* InspectorAgentsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E2B58EEFFFA7A86BC2AF7F6 /* InspectorAgentsTab.swift */; };
 		3EB73A207975893878E53D8B /* MessageContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA164EE10426EF2AD4E606A /* MessageContent.swift */; };
+		3F1986732F6154797F51186C /* companion-v1.json in Resources */ = {isa = PBXBuildFile; fileRef = 7128A98CCDB47A9F298DEF81 /* companion-v1.json */; };
 		3F59DF9C3CD4ED07F3AE4650 /* ModelLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CB88F08135C226D4D6AFF6A /* ModelLibraryView.swift */; };
 		404AF919F8C0790788D0A26B /* GitClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06DD9A63C8FBDB42368F8A0C /* GitClient.swift */; };
 		40561D5047FB26D8CD99CC03 /* BrowserPrivacyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9883AE14C329FB66B714D523 /* BrowserPrivacyTests.swift */; };
@@ -91,6 +92,7 @@
 		5D914095E6D957ED600CADDA /* InspectorChangesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCCD81AAF0691EDC3F6B0D64 /* InspectorChangesTab.swift */; };
 		62A955375EBFA6E5A70A6C85 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0204C24A0102A8D20E3A23CE /* Theme.swift */; };
 		646013AB15E7DD4264876516 /* WalletSignerProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 530DCDEFEDCBE87B25169CB8 /* WalletSignerProtocol.swift */; };
+		647CCF1ABDC75CDB8654F08D /* MarkdownRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0E25B0D308D2D499E48D903 /* MarkdownRenderer.swift */; };
 		66859836FE528C753ABAEB49 /* AgentTeams.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F997982C2B7C5C5A6F8CB20 /* AgentTeams.swift */; };
 		66A30BB69235E00B6848C2E1 /* PermissionPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28BF95EE575D10DBDE8FA1B3 /* PermissionPromptView.swift */; };
 		6777453D22A87B5DF2E89B0C /* ShortcutsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CBA85D1FB7286E08482ED76 /* ShortcutsSheet.swift */; };
@@ -101,6 +103,7 @@
 		6B8C81F231B42B30A028CD8E /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1784B6FA8992300112DCC986 /* JSONValue.swift */; };
 		6CB6F6C625981B438BD534AB /* AppModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C41E39F35E0F75A05095B5EC /* AppModelTests.swift */; };
 		6FDB5F37C36EE733A8A7DD43 /* UsageDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5CC6B3A08FFA65A82439731 /* UsageDashboardView.swift */; };
+		709506A38AE20076DCF1FA06 /* MarkdownRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0E25B0D308D2D499E48D903 /* MarkdownRenderer.swift */; };
 		7161D1119A9B7183F6843C62 /* AgentTeamsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29912FD4FFA8E9056AD4FCA2 /* AgentTeamsSettingsView.swift */; };
 		74A5BCF6953128864737A070 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2D4CA41C622A34E45EF21F54 /* Assets.xcassets */; };
 		75FF0B7CA9E8580EE2585DE0 /* CodexComponentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111E527F52DFD9F5F6EC39D9 /* CodexComponentTests.swift */; };
@@ -165,6 +168,7 @@
 		C6C03C9466FF039AB3E93407 /* WalletSignerXPCClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9506793B59FF339DD8E1CB39 /* WalletSignerXPCClient.swift */; };
 		C702DDBC94CDC2241F409353 /* UsageDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5CC6B3A08FFA65A82439731 /* UsageDashboardView.swift */; };
 		C73AEAE5F4ED2878667A47D9 /* WalletRPCClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07AB72AB3D46BF6E5B8EDC2 /* WalletRPCClient.swift */; };
+		C755E9C57FC1680139CAB3AC /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = 9868F34AD92ED12B87B9379D /* Markdown */; };
 		CB22892B835E59A99C4FA35D /* LocusApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCCEF7CD29A9C6F9C3E1472F /* LocusApp.swift */; };
 		CB539BDAB01E69E8E2AB8C83 /* AccountEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7FD1471F0D2805148D40887 /* AccountEditorView.swift */; };
 		CC01B1F497617D1F1B57C824 /* BrowserInteractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60A24FCB395145B7670EAC9D /* BrowserInteractionTests.swift */; };
@@ -193,6 +197,7 @@
 		E9C0EF3C309C45C946A1D4E5 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5118157AFFA0FF82EDCA5BED /* AppModel.swift */; };
 		E9F4EF0EA873C28080008298 /* GitWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6D865DBE30EBEB947619172 /* GitWorkflowTests.swift */; };
 		F01F72892D90A52009E99BC3 /* SessionSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A37D5FE4583645B552296C /* SessionSidebarView.swift */; };
+		F0DF0200B55D32C37B6BDCF5 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = 82F2A7B7EB6BA0936D71CFE1 /* Markdown */; };
 		F100D0F33CAF95DEF9D4CBB2 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = E3429FDEB1467233710D294D /* Sparkle */; };
 		F36F2DB334F0BE4F7BA377E1 /* InspectorRail.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D508444E398AA3AB5441198 /* InspectorRail.swift */; };
 		F495BADBD40BA2D9FCE6229F /* CompanionGateway.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41CE2B724F913964929108E5 /* CompanionGateway.swift */; };
@@ -301,6 +306,7 @@
 		66094C6E78704DAC44D56838 /* ApplicationContextService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationContextService.swift; sourceTree = "<group>"; };
 		6B79DE5F9CB391F43F1F5534 /* BrowserServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserServiceTests.swift; sourceTree = "<group>"; };
 		70017AB3BFB7BC69CBD1CC85 /* BrowserAnnotationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserAnnotationView.swift; sourceTree = "<group>"; };
+		7128A98CCDB47A9F298DEF81 /* companion-v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "companion-v1.json"; sourceTree = "<group>"; };
 		731F4ECD2268E698A675A53D /* ComputerControlService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputerControlService.swift; sourceTree = "<group>"; };
 		732FC22F62A01058F817D500 /* SimulatorBridgeProvenance.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = SimulatorBridgeProvenance.txt; sourceTree = "<group>"; };
 		73FB5B7D276424050FE55E24 /* LocusUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocusUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -331,6 +337,7 @@
 		AE116E00D831A9EE4433A893 /* DiffHunks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffHunks.swift; sourceTree = "<group>"; };
 		AEFB9A10F8784355D5344D95 /* Locus.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Locus.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B082AFE6729F96D2D8606AC9 /* WorkspaceIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceIndex.swift; sourceTree = "<group>"; };
+		B0E25B0D308D2D499E48D903 /* MarkdownRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownRenderer.swift; sourceTree = "<group>"; };
 		B2E919D274EF4890562BF10C /* WalletSignerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletSignerService.swift; sourceTree = "<group>"; };
 		B2F29AE63F7A646BB5043E54 /* ProxyConfigurator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyConfigurator.swift; sourceTree = "<group>"; };
 		B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendProcess.swift; sourceTree = "<group>"; };
@@ -370,6 +377,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				CFC8F309CF6EE4A8460009CE /* SwiftTerm in Frameworks */,
+				C755E9C57FC1680139CAB3AC /* Markdown in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -379,6 +387,7 @@
 			files = (
 				F100D0F33CAF95DEF9D4CBB2 /* Sparkle in Frameworks */,
 				C5736B3BD783A1DE33364A2D /* SwiftTerm in Frameworks */,
+				F0DF0200B55D32C37B6BDCF5 /* Markdown in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -406,6 +415,14 @@
 				B2E919D274EF4890562BF10C /* WalletSignerService.swift */,
 			);
 			path = WalletSignerService;
+			sourceTree = "<group>";
+		};
+		3BBD6B3A6ACA29B7CC67AE5C /* ProtocolFixtures */ = {
+			isa = PBXGroup;
+			children = (
+				7128A98CCDB47A9F298DEF81 /* companion-v1.json */,
+			);
+			path = ProtocolFixtures;
 			sourceTree = "<group>";
 		};
 		60C7C16567C3B98966E012C1 /* LocusTests */ = {
@@ -439,6 +456,7 @@
 				C96467D02BE1CF8D4751A10D /* LocusMASUITests */,
 				60C7C16567C3B98966E012C1 /* LocusTests */,
 				88C72357FA5D8FFEC5FDDFC5 /* LocusUITests */,
+				3BBD6B3A6ACA29B7CC67AE5C /* ProtocolFixtures */,
 				34A9963E9E05F814D9E8E3B4 /* WalletSignerService */,
 				1034C21D9930A5F35D463962 /* Products */,
 			);
@@ -504,6 +522,7 @@
 				1784B6FA8992300112DCC986 /* JSONValue.swift */,
 				C55065A982A7FB563B8DEA87 /* LocalRuntimeCoordinator.swift */,
 				BCCEF7CD29A9C6F9C3E1472F /* LocusApp.swift */,
+				B0E25B0D308D2D499E48D903 /* MarkdownRenderer.swift */,
 				8FA164EE10426EF2AD4E606A /* MessageContent.swift */,
 				E8FCD4DB1FD5A4E1FD862797 /* ModelLibraryService.swift */,
 				4CB88F08135C226D4D6AFF6A /* ModelLibraryView.swift */,
@@ -584,6 +603,7 @@
 			packageProductDependencies = (
 				E3429FDEB1467233710D294D /* Sparkle */,
 				172252A812CB84F95F5EB77F /* SwiftTerm */,
+				82F2A7B7EB6BA0936D71CFE1 /* Markdown */,
 			);
 			productName = Locus;
 			productReference = AEFB9A10F8784355D5344D95 /* Locus.app */;
@@ -661,6 +681,7 @@
 			name = LocusMAS;
 			packageProductDependencies = (
 				686B3EAC6E28055CC5FC4658 /* SwiftTerm */,
+				9868F34AD92ED12B87B9379D /* Markdown */,
 			);
 			productName = LocusMAS;
 			productReference = 3D09F5FF64508E5EFEF22945 /* LocusMAS.app */;
@@ -671,6 +692,7 @@
 			buildConfigurationList = 2A3122EA61774C96D036B4DE /* Build configuration list for PBXNativeTarget "LocusTests" */;
 			buildPhases = (
 				256081274D06E154354DD857 /* Sources */,
+				CD405C4513159972E22E8AD4 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -712,6 +734,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				71A93B87BB2EB1092EC93562 /* XCRemoteSwiftPackageReference "Sparkle" */,
+				006DEA2DD2C06B424CDD3916 /* XCRemoteSwiftPackageReference "swift-markdown" */,
 				F1CD2D12670F3438EF1099CE /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -740,6 +763,14 @@
 				E49310B926DA762DF5516B6D /* SimulatorBridgeProvenance.txt in Resources */,
 				ADB8ADEC8EBFF7A805964166 /* ThirdPartyLicenses in Resources */,
 				A2B5CFEF11A4602ED851F805 /* ThirdPartyNotices.md in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CD405C4513159972E22E8AD4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3F1986732F6154797F51186C /* companion-v1.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -980,6 +1011,7 @@
 				6B8C81F231B42B30A028CD8E /* JSONValue.swift in Sources */,
 				B302C713CDCD5A21C3CF431C /* LocalRuntimeCoordinator.swift in Sources */,
 				CB22892B835E59A99C4FA35D /* LocusApp.swift in Sources */,
+				647CCF1ABDC75CDB8654F08D /* MarkdownRenderer.swift in Sources */,
 				3EB73A207975893878E53D8B /* MessageContent.swift in Sources */,
 				09B6A5BCCC8803A5F53316D4 /* ModelLibraryService.swift in Sources */,
 				CC34DB49F0794EFC59213A34 /* ModelLibraryView.swift in Sources */,
@@ -1066,6 +1098,7 @@
 				250B9526FD10F326BF1C685D /* JSONValue.swift in Sources */,
 				0A965E4BA7E9E795E29F861E /* LocalRuntimeCoordinator.swift in Sources */,
 				974C1A68A4A333CDDECAC3A9 /* LocusApp.swift in Sources */,
+				709506A38AE20076DCF1FA06 /* MarkdownRenderer.swift in Sources */,
 				0FCA7915F1F08420BB34DDC0 /* MessageContent.swift in Sources */,
 				78B4B59BB52C09E38B5C39CB /* ModelLibraryService.swift in Sources */,
 				3F59DF9C3CD4ED07F3AE4650 /* ModelLibraryView.swift in Sources */,
@@ -1758,6 +1791,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		006DEA2DD2C06B424CDD3916 /* XCRemoteSwiftPackageReference "swift-markdown" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/swiftlang/swift-markdown.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.8.0;
+			};
+		};
 		71A93B87BB2EB1092EC93562 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sparkle-project/Sparkle.git";
@@ -1786,6 +1827,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = F1CD2D12670F3438EF1099CE /* XCRemoteSwiftPackageReference "SwiftTerm" */;
 			productName = SwiftTerm;
+		};
+		82F2A7B7EB6BA0936D71CFE1 /* Markdown */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 006DEA2DD2C06B424CDD3916 /* XCRemoteSwiftPackageReference "swift-markdown" */;
+			productName = Markdown;
+		};
+		9868F34AD92ED12B87B9379D /* Markdown */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 006DEA2DD2C06B424CDD3916 /* XCRemoteSwiftPackageReference "swift-markdown" */;
+			productName = Markdown;
 		};
 		E3429FDEB1467233710D294D /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;

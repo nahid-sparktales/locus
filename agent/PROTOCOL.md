@@ -781,6 +781,36 @@ Provider signatures and redacted reasoning are never sent.
 `message_start … message_end` pair wraps each model call, so a multi-tool turn
 contains several pairs.
 
+These events remain the compatibility protocol for existing providers. Managed
+Codex App Server turns use the structured assistant-item events below instead.
+
+### `assistant_item_start` / `assistant_item_delta` / `assistant_item_end`
+
+Structured assistant streaming preserves the Codex App Server item lifecycle
+instead of flattening every assistant item into one string:
+
+```json
+{ "type": "assistant_item_start", "item_id": "msg_1",
+  "kind": "message", "phase": "commentary" }
+{ "type": "assistant_item_delta", "item_id": "msg_1",
+  "kind": "message", "phase": "commentary", "text": "Checking…" }
+{ "type": "assistant_item_end", "item_id": "msg_1",
+  "kind": "message", "phase": "commentary", "text": "Checking…" }
+```
+
+`kind` is `message` or `reasoning`. Message `phase` is `commentary` or
+`final_answer`; a missing or unknown phase resolves to `final_answer`.
+Reasoning deltas additionally carry `section_index`, and their completed event
+contains the authoritative ordered `sections` array. Only public reasoning
+summaries are emitted; private reasoning text and redacted payloads are never
+sent.
+
+The completed item is authoritative and may replace its accumulated deltas.
+Clients must tolerate a missed start, ignore duplicate completions and late
+deltas, and retain commentary and final-answer items as distinct transcript
+rows in original order. Reasoning items are display-only and must not be sent
+back to a provider as conversation context.
+
 ### `plan_ready`
 
 Emitted after the permission-free `submit_plan` tool succeeds. It is a final

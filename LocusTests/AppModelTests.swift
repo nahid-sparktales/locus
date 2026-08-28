@@ -2981,6 +2981,107 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testStructuredAssistantItemsKeepReasoningCommentaryAndFinalAnswerSeparate() {
+        let model = AppModel(startImmediately: false)
+
+        model.handleEventForTesting([
+            "type": "assistant_item_start", "item_id": "reason-1", "kind": "reasoning",
+        ])
+        model.handleEventForTesting([
+            "type": "assistant_item_delta", "item_id": "reason-1", "kind": "reasoning",
+            "section_index": 0, "text": "draft",
+        ])
+        model.handleEventForTesting([
+            "type": "assistant_item_end", "item_id": "reason-1", "kind": "reasoning",
+            "sections": ["**Loading skill**", "**Fetching data**"],
+        ])
+        model.handleEventForTesting([
+            "type": "assistant_item_start", "item_id": "commentary-1", "kind": "message",
+            "phase": "commentary",
+        ])
+        model.handleEventForTesting([
+            "type": "assistant_item_delta", "item_id": "commentary-1", "kind": "message",
+            "phase": "commentary", "text": "Using **weather**.",
+        ])
+        model.handleEventForTesting([
+            "type": "assistant_item_end", "item_id": "commentary-1", "kind": "message",
+            "phase": "commentary", "text": "Using **weather** to check.",
+        ])
+        model.handleEventForTesting([
+            "type": "assistant_item_delta", "item_id": "final-1", "kind": "message",
+            "text": "joined draft",
+        ])
+        model.handleEventForTesting([
+            "type": "assistant_item_end", "item_id": "final-1", "kind": "message",
+            "phase": "final_answer", "text": "- **Seoul:** 25°C\n- **Dubai:** 33°C",
+        ])
+
+        XCTAssertEqual(model.blocks.count, 3)
+        XCTAssertEqual(model.blocks[0].sourceItemID, "reason-1")
+        XCTAssertEqual(model.blocks[0].reasoningSections, ["**Loading skill**", "**Fetching data**"])
+        XCTAssertEqual(model.blocks[0].reasoningText, "**Loading skill**\n\n**Fetching data**")
+        XCTAssertEqual(model.blocks[1].assistantPhase, .commentary)
+        XCTAssertEqual(model.blocks[1].text, "Using **weather** to check.")
+        XCTAssertEqual(model.blocks[2].assistantPhase, .finalAnswer)
+        XCTAssertEqual(model.blocks[2].text, "- **Seoul:** 25°C\n- **Dubai:** 33°C")
+        XCTAssertFalse(model.blocks.contains(where: \.isStreaming))
+
+        let presentation = TranscriptPresentation.items(
+            from: model.blocks,
+            toolVisibility: .collapsed,
+            thinkingVisibility: .collapsed
+        )
+        guard case .thinkingGroup(_, let entries) = presentation.first else {
+            return XCTFail("reasoning should remain a distinct thought-process group")
+        }
+        XCTAssertEqual(entries.map(\.text), ["**Loading skill**", "**Fetching data**"])
+        XCTAssertEqual(presentation.compactMap { item -> AssistantPhase? in
+            guard case .block(let block) = item else { return nil }
+            return block.assistantPhase
+        }, [.commentary, .finalAnswer])
+    }
+
+    @MainActor
+    func testStructuredItemCompletionIsAuthoritativeAndIdempotent() {
+        let model = AppModel(startImmediately: false)
+        let completion: [String: Any] = [
+            "type": "assistant_item_end", "item_id": "final-1", "kind": "message",
+            "text": "- first item",
+        ]
+
+        model.handleEventForTesting([
+            "type": "assistant_item_delta", "item_id": "final-1", "kind": "message",
+            "text": "partial without a start",
+        ])
+        model.handleEventForTesting(completion)
+        model.handleEventForTesting(completion)
+
+        XCTAssertEqual(model.blocks.count, 1)
+        XCTAssertEqual(model.blocks[0].text, "- first item")
+        XCTAssertEqual(model.blocks[0].sourceItemID, "final-1")
+        XCTAssertEqual(model.blocks[0].assistantPhase, .finalAnswer)
+    }
+
+    @MainActor
+    func testInterruptedStructuredItemFinalizesPartialSections() {
+        let model = AppModel(startImmediately: false)
+        model.handleEventForTesting([
+            "type": "assistant_item_start", "item_id": "reason-partial", "kind": "reasoning",
+        ])
+        model.handleEventForTesting([
+            "type": "assistant_item_delta", "item_id": "reason-partial", "kind": "reasoning",
+            "section_index": 0, "text": "**Partial summary**",
+        ])
+
+        model.handleEventForTesting(["type": "turn_done", "reason": "interrupted"])
+
+        XCTAssertEqual(model.blocks.count, 1)
+        XCTAssertEqual(model.blocks[0].sourceItemID, "reason-partial")
+        XCTAssertEqual(model.blocks[0].reasoningSections, ["**Partial summary**"])
+        XCTAssertFalse(model.blocks[0].isStreaming)
+    }
+
+    @MainActor
     func testHundredKilobyteStreamIsCoalescedIntoOneActiveRow() async throws {
         let model = AppModel(startImmediately: false)
         let historical = (0..<160).map { index in
