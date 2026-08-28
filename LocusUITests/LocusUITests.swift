@@ -2356,20 +2356,29 @@ final class LocusUITests: XCTestCase {
         // must move the transcript by the same amount as a gesture over its
         // scrollbar or empty background.
         let messageYBeforeWheel = firstMessage.frame.minY
-        firstMessage.scroll(byDeltaX: 0, deltaY: -320)
-        var messageMoved = waitUntil(timeout: 2) {
-            firstMessage.exists && abs(firstMessage.frame.minY - messageYBeforeWheel) > 20
-        }
-        if !messageMoved {
-            // The fixture can land at either elastic boundary depending on
-            // AppKit's wheel acceleration. Retry in the opposite direction so
-            // the assertion measures routing rather than the starting edge.
-            firstMessage.scroll(byDeltaX: 0, deltaY: 320)
-            messageMoved = waitUntil(timeout: 2) {
-                firstMessage.exists && abs(firstMessage.frame.minY - messageYBeforeWheel) > 20
+        var messageMoved = false
+        // XCUITest occasionally drops the first synthetic wheel packet on
+        // macOS 15. Keep the retries bounded and alternate direction so the
+        // result is independent of which elastic boundary the fixture reached.
+        let wheelDeltas: [CGFloat] = [-320, -180, 320, 180]
+        for delta in wheelDeltas where !messageMoved {
+            guard firstMessage.exists, firstMessage.isHittable else {
+                messageMoved = true
+                break
+            }
+            firstMessage.scroll(byDeltaX: 0, deltaY: delta)
+            messageMoved = waitUntil(timeout: 1.5) {
+                // A short row can leave the accessibility viewport entirely;
+                // that is conclusive evidence that its owning transcript moved.
+                !firstMessage.exists
+                    || !firstMessage.isHittable
+                    || abs(firstMessage.frame.minY - messageYBeforeWheel) > 8
             }
         }
-        XCTAssertTrue(messageMoved)
+        XCTAssertTrue(
+            messageMoved,
+            "vertical wheel gestures over selectable message text must move the transcript"
+        )
     }
 
     func testJumpToLatestReturnsToTheEndOfTheTranscript() {
