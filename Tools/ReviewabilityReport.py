@@ -28,6 +28,7 @@ ROUTE_HANDLER = re.compile(r"handlers\.([A-Za-z_][A-Za-z0-9_]*)")
 DOMAIN_HANDLER_LEGACY_ALLOWLIST = {
     "continuity.py": set(),
     "evaluations.py": set(),
+    "extensions.py": set(),
     "knowledge.py": set(),
     "providers.py": set(),
     "schedules.py": set(),

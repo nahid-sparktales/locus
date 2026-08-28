@@ -36,4 +36,7 @@ _ROUTE_MODULES = (
 def register_routes(router: APIRouter, handlers: ModuleType) -> None:
     """Register direct domain handlers plus explicit compatibility handlers."""
     for route_module in _ROUTE_MODULES:
-        route_module.register_routes(router, handlers)
+        if route_module is extensions:
+            route_module.register_routes(router)
+        else:
+            route_module.register_routes(router, handlers)

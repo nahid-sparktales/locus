@@ -76,6 +76,7 @@ def test_domain_owned_route_allowlist_matches_migrated_domains() -> None:
     from ollama_code.api import (
         continuity,
         evaluations,
+        extensions,
         knowledge,
         providers,
         schedules,
@@ -87,6 +88,7 @@ def test_domain_owned_route_allowlist_matches_migrated_domains() -> None:
     for module in (
         workspace,
         evaluations,
+        extensions,
         providers,
         system,
         knowledge,
