@@ -409,31 +409,98 @@ final class AppModel: ObservableObject {
     /// is replaced by PlanApprovalPromptView, the way permission requests are.
     @Published private(set) var planApprovalPending = false
     @Published private(set) var activePlan: PlanDocument?
-    @Published private(set) var gitChanges: [GitChange] = []
-    @Published private(set) var isRefreshingGitStatus = false
-    @Published private(set) var isGitRepository = false
-    @Published private(set) var lastGitRefreshFailed = false
-    @Published var commitMessage = ""
-    @Published private(set) var isPerformingGitAction = false
-    @Published private(set) var isDraftingCommitMessage = false
-    @Published var pendingDiscard: GitChange?
-    @Published private(set) var changesHaveUnseenUpdate = false
-    @Published private(set) var selectedChangePath: String?
-    @Published private(set) var selectedChangeDiff: String?
-    @Published private(set) var selectedChangeParsedDiff: ParsedFileDiff?
-    @Published var selectedChangeShowsStaged = false
-    @Published private(set) var gitUpstream: String?
-    @Published private(set) var gitAhead = 0
-    @Published private(set) var gitBehind = 0
-    @Published private(set) var gitDetached = false
-    @Published private(set) var gitHasCommits = true
-    @Published private(set) var localBranches: [String] = []
-    @Published var pendingHunkDiscard: DiffHunk?
-    @Published private(set) var isSyncingRemote = false
+    let gitWorkspace = GitWorkspaceModel()
+    private var gitWorkspaceBridge: AnyCancellable?
+    private(set) var gitChanges: [GitChange] {
+        get { gitWorkspace.gitChanges }
+        set { gitWorkspace.gitChanges = newValue }
+    }
+    private(set) var isRefreshingGitStatus: Bool {
+        get { gitWorkspace.isRefreshingGitStatus }
+        set { gitWorkspace.isRefreshingGitStatus = newValue }
+    }
+    private(set) var isGitRepository: Bool {
+        get { gitWorkspace.isGitRepository }
+        set { gitWorkspace.isGitRepository = newValue }
+    }
+    private(set) var lastGitRefreshFailed: Bool {
+        get { gitWorkspace.lastGitRefreshFailed }
+        set { gitWorkspace.lastGitRefreshFailed = newValue }
+    }
+    var commitMessage: String {
+        get { gitWorkspace.commitMessage }
+        set { gitWorkspace.commitMessage = newValue }
+    }
+    private(set) var isPerformingGitAction: Bool {
+        get { gitWorkspace.isPerformingGitAction }
+        set { gitWorkspace.isPerformingGitAction = newValue }
+    }
+    private(set) var isDraftingCommitMessage: Bool {
+        get { gitWorkspace.isDraftingCommitMessage }
+        set { gitWorkspace.isDraftingCommitMessage = newValue }
+    }
+    var pendingDiscard: GitChange? {
+        get { gitWorkspace.pendingDiscard }
+        set { gitWorkspace.pendingDiscard = newValue }
+    }
+    private(set) var changesHaveUnseenUpdate: Bool {
+        get { gitWorkspace.changesHaveUnseenUpdate }
+        set { gitWorkspace.changesHaveUnseenUpdate = newValue }
+    }
+    private(set) var selectedChangePath: String? {
+        get { gitWorkspace.selectedChangePath }
+        set { gitWorkspace.selectedChangePath = newValue }
+    }
+    private(set) var selectedChangeDiff: String? {
+        get { gitWorkspace.selectedChangeDiff }
+        set { gitWorkspace.selectedChangeDiff = newValue }
+    }
+    private(set) var selectedChangeParsedDiff: ParsedFileDiff? {
+        get { gitWorkspace.selectedChangeParsedDiff }
+        set { gitWorkspace.selectedChangeParsedDiff = newValue }
+    }
+    var selectedChangeShowsStaged: Bool {
+        get { gitWorkspace.selectedChangeShowsStaged }
+        set { gitWorkspace.selectedChangeShowsStaged = newValue }
+    }
+    private(set) var gitUpstream: String? {
+        get { gitWorkspace.gitUpstream }
+        set { gitWorkspace.gitUpstream = newValue }
+    }
+    private(set) var gitAhead: Int {
+        get { gitWorkspace.gitAhead }
+        set { gitWorkspace.gitAhead = newValue }
+    }
+    private(set) var gitBehind: Int {
+        get { gitWorkspace.gitBehind }
+        set { gitWorkspace.gitBehind = newValue }
+    }
+    private(set) var gitDetached: Bool {
+        get { gitWorkspace.gitDetached }
+        set { gitWorkspace.gitDetached = newValue }
+    }
+    private(set) var gitHasCommits: Bool {
+        get { gitWorkspace.gitHasCommits }
+        set { gitWorkspace.gitHasCommits = newValue }
+    }
+    private(set) var localBranches: [String] {
+        get { gitWorkspace.localBranches }
+        set { gitWorkspace.localBranches = newValue }
+    }
+    var pendingHunkDiscard: DiffHunk? {
+        get { gitWorkspace.pendingHunkDiscard }
+        set { gitWorkspace.pendingHunkDiscard = newValue }
+    }
+    private(set) var isSyncingRemote: Bool {
+        get { gitWorkspace.isSyncingRemote }
+        set { gitWorkspace.isSyncingRemote = newValue }
+    }
     /// Whether origin looked like GitHub at the last check. Shows or hides
     /// the PR button; the action itself re-reads the remote at click time.
-    @Published private(set) var originIsGitHub = false
-    private var originCheckedForWorkspace: String?
+    private(set) var originIsGitHub: Bool {
+        get { gitWorkspace.originIsGitHub }
+        set { gitWorkspace.originIsGitHub = newValue }
+    }
     @Published var fileQuery = ""
     @Published private(set) var previewedFilePath: String?
     @Published private(set) var previewedFileContents: String?
@@ -468,7 +535,10 @@ final class AppModel: ObservableObject {
         }
     }
     @Published var workspaceFileIndex: [URL] = []
-    @Published var gitBranch: String?
+    private(set) var gitBranch: String? {
+        get { gitWorkspace.gitBranch }
+        set { gitWorkspace.gitBranch = newValue }
+    }
     @Published var settings: AppSettings {
         didSet {
             scheduleWorkspacePersistence()
@@ -722,9 +792,22 @@ final class AppModel: ObservableObject {
     private var appliedWorkspacePath: String?
     private var sessionResetWatchdog: Task<Void, Never>?
     private var indexTask: Task<Void, Never>?
-    private var gitStatusTask: Task<Void, Never>?
-    private var diffTask: Task<Void, Never>?
-    private var commitDraftTask: Task<Void, Never>?
+    private var gitStatusTask: Task<Void, Never>? {
+        get { gitWorkspace.statusTask }
+        set { gitWorkspace.statusTask = newValue }
+    }
+    private var diffTask: Task<Void, Never>? {
+        get { gitWorkspace.diffTask }
+        set { gitWorkspace.diffTask = newValue }
+    }
+    private var commitDraftTask: Task<Void, Never>? {
+        get { gitWorkspace.commitDraftTask }
+        set { gitWorkspace.commitDraftTask = newValue }
+    }
+    private var originCheckedForWorkspace: String? {
+        get { gitWorkspace.originCheckedForWorkspace }
+        set { gitWorkspace.originCheckedForWorkspace = newValue }
+    }
     private var filePreviewTask: Task<Void, Never>?
     private var agentInstructionsTask: Task<Void, Never>?
     private var orchestrationRunsTasks: [String: (generation: Int, task: Task<OrchestrationRunsResponse, Error>)] = [:]
@@ -1014,6 +1097,9 @@ final class AppModel: ObservableObject {
                 self.objectWillChange.send()
                 self.announceComputerControlCapability()
             }
+        }
+        gitWorkspaceBridge = gitWorkspace.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
         }
         simulatorControl.capabilityDidChange = { [weak self] in
             Task { @MainActor [weak self] in
