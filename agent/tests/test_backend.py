@@ -54,10 +54,12 @@ def ctx(tmp_path):
 
 
 def test_context_and_observation_settings_endpoints(client, tmp_path, monkeypatch):
+    from ollama_code.api import continuity as continuity_api
+
     workspace = client.app.state.service.core.workspace_root \
         or client.app.state.service.core.cwd
     store = ContinuityStore(tmp_path / "continuity.sqlite3", key=b"e" * 32)
-    monkeypatch.setattr(server_mod, "_continuity_store", lambda: store)
+    monkeypatch.setattr(continuity_api, "_continuity_store", lambda: store)
     snapshot = store.save_snapshot(
         workspace, "session-endpoint", {"goal": "preserve context"}
     )

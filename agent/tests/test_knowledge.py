@@ -3,7 +3,17 @@ from __future__ import annotations
 import pytest
 
 from ollama_code.knowledge import KnowledgeError, KnowledgeStore, workspace_database
+from ollama_code.knowledge_runtime import knowledge_store
 from ollama_code.tools import ToolContext, execute_tool
+
+
+def test_explicit_workspace_knowledge_does_not_require_request_service(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    store = knowledge_store(None, str(workspace))
+
+    assert store.root == workspace.resolve()
 
 
 def test_workspace_knowledge_indexes_searches_and_cites_lines(tmp_path) -> None:

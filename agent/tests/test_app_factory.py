@@ -47,7 +47,7 @@ def test_create_app_keeps_service_state_isolated():
 
 
 def test_domain_owned_routes_keep_service_state_isolated(monkeypatch):
-    from ollama_code.api import knowledge, workspace
+    from ollama_code.api import continuity, knowledge, workspace
 
     monkeypatch.setattr(
         workspace.gitinfo,
@@ -61,6 +61,13 @@ def test_domain_owned_routes_keep_service_state_isolated(monkeypatch):
             settings=lambda: {"workspace": service.core.cwd}
         ),
     )
+    monkeypatch.setattr(
+        continuity,
+        "_continuity_store",
+        lambda: SimpleNamespace(
+            list_snapshots=lambda workspace, **_options: [{"workspace": workspace}]
+        ),
+    )
     first = TestClient(server.create_app(chat_service=_service("first")))
     second = TestClient(server.create_app(chat_service=_service("second")))
     try:
@@ -70,6 +77,12 @@ def test_domain_owned_routes_keep_service_state_isolated(monkeypatch):
         assert second.get("/api/knowledge/status").json()["workspace"] == "second"
         assert first.get("/api/sessions").json()["current"] == "first-session"
         assert second.get("/api/sessions").json()["current"] == "second-session"
+        assert first.get("/api/context-snapshots").json()["snapshots"] == [
+            {"workspace": "first"}
+        ]
+        assert second.get("/api/context-snapshots").json()["snapshots"] == [
+            {"workspace": "second"}
+        ]
     finally:
         first.close()
         second.close()

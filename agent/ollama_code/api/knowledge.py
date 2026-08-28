@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import ChatService
 from ..knowledge import KnowledgeError, KnowledgeStore
+from ..knowledge_runtime import knowledge_store
 from ..memory import MemoryError
 from ..memory_runtime import memory_vault, memory_workspace
 from .dependencies import get_service
@@ -18,9 +19,8 @@ ServiceDependency = Annotated[ChatService, Depends(get_service)]
 def _knowledge_store(service: ChatService, workspace: str = "") -> KnowledgeStore:
     if not capability_enabled("workspace_knowledge"):
         raise HTTPException(404, "capability is disabled: workspace_knowledge")
-    target = workspace.strip() or service.core.workspace_root or service.core.cwd
     try:
-        return KnowledgeStore(target)
+        return knowledge_store(service, workspace)
     except KnowledgeError as exc:
         raise HTTPException(422, str(exc)) from exc
 
