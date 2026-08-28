@@ -14,10 +14,6 @@ struct InspectorBrowserTab: View {
             browser: model.browser,
             sessionID: model.currentSessionID,
             homeURL: model.normalizedPreviewURL,
-            viewportRaw: Binding(
-                get: { model.settings.browserViewportRaw },
-                set: { model.settings.browserViewportRaw = $0 }
-            ),
             onAttachToChat: { [weak model] data in
                 model?.addPastedImages(
                     [(data: data, mimeType: "image/png")],
@@ -38,7 +34,6 @@ struct BrowserPanel: View {
     @ObservedObject var browser: BrowserService
     let sessionID: String
     let homeURL: URL?
-    @Binding var viewportRaw: String
     /// Receives the flattened, annotated capture and reports whether the
     /// composer accepted it. A closure rather than an AppModel dependency, so
     /// the panel stays previewable and its redraws stay scoped to the
@@ -59,19 +54,10 @@ struct BrowserPanel: View {
     /// finding nothing before they have typed anything.
     @State private var findMatched: Bool?
     @State private var colorScheme = BrowserPageAppearance.automatic.rawValue
-    @State private var canvasFits = true
-    @State private var canvasScale: CGFloat = 1
     @State private var historyOpen = false
     @State private var downloadsOpen = false
     @FocusState private var addressFocused: Bool
     @FocusState private var findFocused: Bool
-
-    /// The menu's own label: the preset name, plus a marker when the tab is
-    /// also pretending to be a phone.
-    private var viewportLabel: String {
-        let name = BrowserViewport(rawValue: viewportRaw)?.title ?? "Desktop"
-        return snapshot?.emulatesDevice == true ? "\(name) · device" : name
-    }
 
     private var snapshot: BrowserService.TabSnapshot? {
         browser.activeSnapshot(for: sessionID)
@@ -86,16 +72,14 @@ struct BrowserPanel: View {
             let compact = proxy.size.width < 480 && !isExpanded
             VStack(spacing: 0) {
                 if compact {
-                    compactControlsBar
+                    compactTabBar
                 } else {
-                    controlsBar
                     tabChips
                 }
                 toolbar
                 if addressFocused, !addressSuggestions.isEmpty { addressSuggestionBar }
                 if findOpen { findBar }
                 progressLine
-                canvasControls
                 if let prompt = browser.autofillPrompt,
                    prompt.sessionID == sessionID
                 {
@@ -308,18 +292,6 @@ struct BrowserPanel: View {
                     .help("New tab (⌘T)")
                     .accessibilityLabel("New browser tab")
                     .accessibilityIdentifier("browser.tabs.new")
-                    Button {
-                        browser.userReopenClosedTab(sessionID: sessionID)
-                    } label: {
-                        Image(systemName: "arrow.uturn.backward")
-                            .font(.locus(size: 9, weight: .semibold))
-                            .foregroundStyle(LocusTheme.muted)
-                            .frame(width: 20, height: 20)
-                    }
-                    .buttonStyle(.locus())
-                    .disabled(!browser.canReopenClosedTab(sessionID: sessionID))
-                    .help("Reopen recently closed tab")
-                    .accessibilityLabel("Reopen recently closed browser tab")
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
@@ -478,6 +450,8 @@ struct BrowserPanel: View {
                 .accessibilityIdentifier("browser.reload")
             }
 
+            siteMenu
+
             TextField("Search or enter address", text: $draft)
                 .textFieldStyle(.roundedBorder)
                 .font(.locus(size: 9, design: .monospaced))
@@ -486,18 +460,12 @@ struct BrowserPanel: View {
                 .accessibilityLabel("Address")
                 .accessibilityIdentifier("browser.url")
 
-            Button(action: navigateToDraft) {
-                Image(systemName: "return").font(.locus(size: 10, weight: .semibold))
-            }
-            .buttonStyle(.locus())
-            .foregroundStyle(draft.isEmpty ? LocusTheme.muted : LocusTheme.ink)
-            .disabled(draft.isEmpty)
-            .help("Go")
-            .accessibilityLabel("Go")
-            .accessibilityIdentifier("browser.go")
+            pageActionsMenu
+            expandButton
         }
         .padding(.horizontal, 10)
-        .frame(height: 36)
+        .frame(height: 38)
+        .background(LocusTheme.paperDeep.opacity(0.72))
     }
 
     @ViewBuilder
@@ -518,7 +486,7 @@ struct BrowserPanel: View {
     @ViewBuilder
     private var content: some View {
         if let host = browser.activeHost(for: sessionID), snapshot?.url.isEmpty == false {
-            BorrowedWebView(host: host, fit: canvasFits, scale: canvasScale)
+            BorrowedWebView(host: host)
                 .accessibilityLabel("Web page")
                 .background(Color(nsColor: .windowBackgroundColor))
         } else {
@@ -543,123 +511,14 @@ struct BrowserPanel: View {
             return "Type an address above to browse."
         }
         if let homeURL {
-            return "Enter an address, or press Go to open \(homeURL.absoluteString).\n\nThe agent browses here too: pages it opens appear in this panel."
+            return "Enter an address, or press ↵ to open \(homeURL.absoluteString).\n\nThe agent browses here too: pages it opens appear in this panel."
         }
         return "Enter an address to browse.\n\nThe agent browses here too: pages it opens appear in this panel."
     }
 
-    /// Viewport, capture, drawer, open-external and expand — one compact bar
-    /// at the very top, above the tab chips, so the chips sit directly on the
-    /// address bar they steer and the page owns everything below.
-    private var controlsBar: some View {
-        HStack(spacing: 8) {
-            Menu {
-                ForEach(BrowserViewport.allCases) { preset in
-                    Button {
-                        viewportRaw = preset.rawValue
-                        browser.defaultViewport = preset.size
-                        browser.userSetViewport(preset.size, sessionID: sessionID)
-                    } label: {
-                        let size = preset.size
-                        let label = "\(preset.title)  \(Int(size.width))×\(Int(size.height))"
-                        if viewportRaw == preset.rawValue {
-                            Label(label, systemImage: "checkmark")
-                        } else {
-                            Text(label)
-                        }
-                    }
-                }
-
-                Divider()
-
-                // The agent can turn this on by itself through browser_resize;
-                // showing it here is what stops a spoofed user agent from being
-                // an invisible difference between what the page serves the
-                // person and what it serves the screenshot.
-                Toggle(
-                    "Emulate mobile device",
-                    isOn: Binding(
-                        get: { snapshot?.emulatesDevice ?? false },
-                        set: { browser.userSetDeviceEmulation($0, sessionID: sessionID) }
-                    )
-                )
-                .accessibilityIdentifier("browser.device")
-
-                Divider()
-
-                Picker(
-                    "Appearance",
-                    selection: Binding(
-                        get: { colorScheme },
-                        set: { scheme in
-                            colorScheme = scheme
-                            browser.userSetColorScheme(scheme, sessionID: sessionID)
-                        }
-                    )
-                ) {
-                    Text("Automatic").tag(BrowserPageAppearance.automatic.rawValue)
-                    Text("Light").tag("light")
-                    Text("Dark").tag("dark")
-                }
-                .pickerStyle(.inline)
-                .accessibilityIdentifier("browser.colorScheme")
-            } label: {
-                Label(viewportLabel, systemImage: "rectangle.ratio.3.to.4")
-                    .font(.locus(size: 8, weight: .semibold))
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .foregroundStyle(LocusTheme.muted)
-            .help("Emulated viewport and device for the agent's screenshots")
-            .accessibilityIdentifier("browser.viewport")
-
-            if let zoom = snapshot?.pageZoom, abs(zoom - 1) > 0.001 {
-                Button {
-                    browser.userSetPageZoom(1, sessionID: sessionID)
-                } label: {
-                    Text("\(Int((zoom * 100).rounded()))%")
-                        .font(.locus(size: 8, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
-                }
-                .buttonStyle(.locus())
-                .help("Page zoom — click to reset (⌘0)")
-                .accessibilityLabel("Page zoom \(Int((zoom * 100).rounded())) percent")
-                .accessibilityIdentifier("browser.zoom")
-            }
-
-            Spacer()
-
-            siteMenu
-            browserActivityButtons
-            pageActionsMenu
-
-            if let onToggleExpand {
-                Button {
-                    onToggleExpand()
-                } label: {
-                    Image(
-                        systemName: isExpanded
-                            ? "arrow.down.right.and.arrow.up.left"
-                            : "arrow.up.left.and.arrow.down.right"
-                    )
-                    .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.ink)
-                }
-                .buttonStyle(.locus())
-                .help(isExpanded ? "Restore panel size" : "Expand in window")
-                .accessibilityLabel(isExpanded ? "Restore panel size" : "Expand in window")
-                .accessibilityIdentifier("browser.expand")
-            }
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 30)
-        .background(LocusTheme.paperDeep)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
-        }
-    }
-
-    private var compactControlsBar: some View {
+    /// Narrow panels trade the horizontal strip for one familiar tab menu.
+    /// Navigation and page actions remain in the single toolbar below.
+    private var compactTabBar: some View {
         HStack(spacing: 8) {
             Menu {
                 ForEach(sessionTabs) { tab in
@@ -689,10 +548,14 @@ struct BrowserPanel: View {
             .accessibilityLabel("Browser tabs")
 
             Spacer(minLength: 0)
-            siteMenu
-            browserActivityButtons
-            pageActionsMenu
-            expandButton
+            Button(action: newTabFocusingAddress) {
+                Image(systemName: "plus")
+                    .font(.locus(size: 9, weight: .semibold))
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.locus())
+            .help("New tab (⌘T)")
+            .accessibilityLabel("New browser tab")
         }
         .padding(.horizontal, 10)
         .frame(height: 34)
@@ -751,85 +614,97 @@ struct BrowserPanel: View {
         .accessibilityIdentifier("browser.siteInfo")
     }
 
-    private var browserActivityButtons: some View {
-        HStack(spacing: 4) {
-            Button { historyOpen.toggle() } label: {
-                Image(systemName: "clock.arrow.circlepath").frame(width: 24, height: 24)
-            }
-            .buttonStyle(.locus())
-            .popover(isPresented: $historyOpen, arrowEdge: .bottom) {
-                BrowserQuickHistory(
-                    store: browser.activityStore,
-                    open: { url in
-                        draft = url
-                        navigateToDraft()
-                        historyOpen = false
-                    }
-                )
-            }
-            .help("Browsing history")
-            .accessibilityLabel("Browsing history")
-
-            Button { downloadsOpen.toggle() } label: {
-                ZStack(alignment: .topTrailing) {
-                    Image(systemName: "arrow.down.circle").frame(width: 24, height: 24)
-                    if browser.activityStore.downloads.contains(where: { $0.state == .running }) {
-                        Circle().fill(LocusTheme.signalDeep).frame(width: 6, height: 6)
-                    }
-                }
-            }
-            .buttonStyle(.locus())
-            .popover(isPresented: $downloadsOpen, arrowEdge: .bottom) {
-                BrowserQuickDownloads(browser: browser, store: browser.activityStore)
-            }
-            .help("Downloads")
-            .accessibilityLabel("Downloads")
-
-            BrowserVaultStatusButton(vault: browser.autofillVault)
-        }
-        .font(.locus(size: 10))
-        .foregroundStyle(LocusTheme.muted)
-    }
-
     private var pageActionsMenu: some View {
         Menu {
             Button("Find on Page…", systemImage: "magnifyingglass") { openFind() }
                 .disabled(snapshot?.url.isEmpty != false)
             Button("Capture and Attach…", systemImage: "camera") { captureForAnnotation() }
                 .disabled(isCapturing || snapshot?.url.isEmpty != false)
+
+            Divider()
+
+            Button("History", systemImage: "clock.arrow.circlepath") {
+                historyOpen = true
+            }
+            Button("Downloads", systemImage: "arrow.down.circle") {
+                downloadsOpen = true
+            }
+            Button(
+                browser.autofillVault.isUnlocked ? "Lock Autofill" : "Unlock Autofill",
+                systemImage: browser.autofillVault.isUnlocked ? "lock.fill" : "lock.open"
+            ) {
+                if browser.autofillVault.isUnlocked {
+                    browser.autofillVault.lock()
+                } else {
+                    Task { await browser.autofillVault.unlock(reason: "Unlock Locus Autofill") }
+                }
+            }
+            Button("Reopen Closed Tab", systemImage: "arrow.uturn.backward") {
+                browser.userReopenClosedTab(sessionID: sessionID)
+            }
+            .disabled(!browser.canReopenClosedTab(sessionID: sessionID))
+
+            Divider()
+
             Button(drawerOpen ? "Hide Console and Network" : "Show Console and Network", systemImage: "terminal") {
                 drawerOpen.toggle()
             }
-            Divider()
             Button("Open in Default Browser", systemImage: "arrow.up.right.square") {
                 browser.openCurrentTabExternally(sessionID: sessionID)
             }
             .disabled(snapshot == nil)
+
+            Divider()
+
+            Menu("Page Appearance") {
+                ForEach(BrowserPageAppearance.allCases) { appearance in
+                    Button {
+                        colorScheme = appearance.rawValue
+                        browser.userSetColorScheme(appearance.rawValue, sessionID: sessionID)
+                    } label: {
+                        if colorScheme == appearance.rawValue {
+                            Label(appearance.title, systemImage: "checkmark")
+                        } else {
+                            Text(appearance.title)
+                        }
+                    }
+                }
+            }
+            Toggle("Emulate Mobile Device", isOn: Binding(
+                get: { snapshot?.emulatesDevice ?? false },
+                set: { browser.userSetDeviceEmulation($0, sessionID: sessionID) }
+            ))
+            .accessibilityIdentifier("browser.device")
+            if let zoom = snapshot?.pageZoom, abs(zoom - 1) > 0.001 {
+                Button("Reset Page Zoom (\(Int((zoom * 100).rounded()))%)", systemImage: "1.magnifyingglass") {
+                    browser.userSetPageZoom(1, sessionID: sessionID)
+                }
+            }
             Button(browser.webInspectorEnabled ? "Disable Web Inspector" : "Allow Web Inspector", systemImage: "hammer") {
                 browser.webInspectorEnabled.toggle()
                 browser.activeHost(for: sessionID)?.webView.isInspectable = browser.webInspectorEnabled
             }
-            Divider()
-            Menu("Viewport and Device") {
-                ForEach(BrowserViewport.allCases) { preset in
-                    Button("\(preset.title)  \(Int(preset.size.width))×\(Int(preset.size.height))") {
-                        viewportRaw = preset.rawValue
-                        browser.defaultViewport = preset.size
-                        browser.userSetViewport(preset.size, sessionID: sessionID)
-                    }
-                }
-                Toggle("Emulate Mobile Device", isOn: Binding(
-                    get: { snapshot?.emulatesDevice ?? false },
-                    set: { browser.userSetDeviceEmulation($0, sessionID: sessionID) }
-                ))
-            }
         } label: {
-            Label("Page", systemImage: "ellipsis.circle")
-                .font(.locus(size: 9, weight: .semibold))
+            Image(systemName: "ellipsis.circle")
+                .font(.locus(size: 11, weight: .semibold))
+                .frame(width: 26, height: 26)
         }
         .menuStyle(.borderlessButton)
-        .help("Page actions and developer tools")
+        .help("Page actions")
         .accessibilityIdentifier("browser.pageActions")
+        .popover(isPresented: $historyOpen, arrowEdge: .bottom) {
+            BrowserQuickHistory(
+                store: browser.activityStore,
+                open: { url in
+                    draft = url
+                    navigateToDraft()
+                    historyOpen = false
+                }
+            )
+        }
+        .popover(isPresented: $downloadsOpen, arrowEdge: .bottom) {
+            BrowserQuickDownloads(browser: browser, store: browser.activityStore)
+        }
     }
 
     @ViewBuilder
@@ -845,39 +720,8 @@ struct BrowserPanel: View {
             .buttonStyle(.locus())
             .help(isExpanded ? "Restore panel size" : "Expand browser")
             .accessibilityLabel(isExpanded ? "Restore panel size" : "Expand browser")
-            .accessibilityIdentifier("browser.expand.compact")
+            .accessibilityIdentifier("browser.expand")
         }
-    }
-
-    private var canvasControls: some View {
-        HStack(spacing: 7) {
-            Button("Fit") { canvasFits = true }
-                .buttonStyle(.locus())
-                .foregroundStyle(canvasFits ? LocusTheme.ink : LocusTheme.muted)
-            Button("100%") { canvasFits = false; canvasScale = 1 }
-                .buttonStyle(.locus())
-            Button { canvasFits = false; canvasScale = max(0.25, canvasScale - 0.1) } label: {
-                Image(systemName: "minus.magnifyingglass")
-            }.buttonStyle(.locus()).accessibilityLabel("Zoom canvas out")
-            Text(canvasFits ? "Fit" : "\(Int((canvasScale * 100).rounded()))%")
-                .font(.locus(size: 8, weight: .semibold, design: .monospaced))
-                .frame(width: 36)
-            Button { canvasFits = false; canvasScale = min(2, canvasScale + 0.1) } label: {
-                Image(systemName: "plus.magnifyingglass")
-            }.buttonStyle(.locus()).accessibilityLabel("Zoom canvas in")
-            Spacer()
-            if let host = browser.activeHost(for: sessionID) {
-                Text("\(Int(host.viewport.width))×\(Int(host.viewport.height))")
-                    .font(.locus(size: 8, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
-            }
-            expandButton
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 28)
-        .background(LocusTheme.paperDeep.opacity(0.86))
-        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
-        .accessibilityIdentifier("browser.canvasControls")
     }
 
     private var addressSuggestions: [BrowserHistoryEntry] {
@@ -947,128 +791,47 @@ struct BrowserPanel: View {
 
 // MARK: - Borrowing the live web view
 
-/// Shows the service-owned `WKWebView` without ever creating one. `lend` steals
-/// safely, so the only rule that matters is: never park a view this container
-/// no longer owns — SwiftUI does not order a successor's lend against this
-/// view's teardown within a transaction, and an unconditional park would yank
-/// the page back out of whoever borrowed it since.
-private final class BrowserCanvasClipView: NSClipView {
-    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
-        var result = super.constrainBoundsRect(proposedBounds)
-        guard let documentView else { return result }
-        if documentView.frame.width < result.width {
-            result.origin.x = (documentView.frame.width - result.width) / 2
-        }
-        if documentView.frame.height < result.height {
-            result.origin.y = (documentView.frame.height - result.height) / 2
-        }
-        return result
-    }
-}
-
+/// Shows the service-owned `WKWebView` without ever creating one. The web view
+/// is the canvas: resizing the inspector changes the page viewport immediately,
+/// while WebKit's own scroll view handles both axes for overflowing pages.
 @MainActor
 final class BrowserCanvasContainer: NSView {
-    private let scrollView = NSScrollView()
-    fileprivate let canvas = NSView()
     weak var host: OffscreenWebHost?
-    var fits = true
-    var requestedScale: CGFloat = 1
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        let clip = BrowserCanvasClipView()
-        clip.drawsBackground = true
-        clip.backgroundColor = .windowBackgroundColor
-        scrollView.contentView = clip
-        scrollView.documentView = canvas
-        scrollView.drawsBackground = true
-        scrollView.backgroundColor = .windowBackgroundColor
-        scrollView.hasHorizontalScroller = true
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.allowsMagnification = true
-        scrollView.minMagnification = 0.25
-        scrollView.maxMagnification = 2
-        addSubview(scrollView)
-    }
-
-    required init?(coder: NSCoder) { nil }
 
     override func layout() {
         super.layout()
-        scrollView.frame = bounds
-        applyScale()
+        guard let host, bounds.width > 0, bounds.height > 0 else { return }
+        host.setViewport(bounds.size)
     }
 
-    func display(_ newHost: OffscreenWebHost, fits: Bool, scale: CGFloat) {
+    func display(_ newHost: OffscreenWebHost) {
         if let host, host !== newHost { parkIfStillOwner() }
         host = newHost
-        self.fits = fits
-        requestedScale = min(2, max(0.25, scale))
-        canvas.frame = NSRect(origin: .zero, size: newHost.viewport)
-        newHost.lend(to: canvas, preservingViewport: true)
+        newHost.lend(to: self)
         needsLayout = true
         layoutSubtreeIfNeeded()
     }
 
     func parkIfStillOwner() {
-        guard let host, host.webView.superview === canvas else { return }
+        guard let host, host.webView.superview === self else { return }
         host.park()
         self.host = nil
-    }
-
-    private func applyScale() {
-        guard let host, bounds.width > 0, bounds.height > 0 else { return }
-        let available = CGSize(
-            width: max(1, bounds.width - 4),
-            height: max(1, bounds.height - 4)
-        )
-        let fitScale = min(
-            available.width / host.viewport.width,
-            available.height / host.viewport.height
-        )
-        let target = min(2, max(0.25, fits ? fitScale : requestedScale))
-        guard abs(scrollView.magnification - target) > 0.001 else { return }
-        scrollView.setMagnification(
-            target,
-            centeredAt: CGPoint(x: host.viewport.width / 2, y: host.viewport.height / 2)
-        )
     }
 }
 
 struct BorrowedWebView: NSViewRepresentable {
     let host: OffscreenWebHost
-    var fit = true
-    var scale: CGFloat = 1
 
     func makeNSView(context: Context) -> BrowserCanvasContainer {
         BrowserCanvasContainer()
     }
 
     func updateNSView(_ container: BrowserCanvasContainer, context: Context) {
-        container.display(host, fits: fit, scale: scale)
+        container.display(host)
     }
 
     static func dismantleNSView(_ container: BrowserCanvasContainer, coordinator: ()) {
         container.parkIfStillOwner()
-    }
-}
-
-private struct BrowserVaultStatusButton: View {
-    @ObservedObject var vault: BrowserAutofillVault
-
-    var body: some View {
-        Button {
-            if vault.isUnlocked { vault.lock() }
-            else { Task { await vault.unlock(reason: "Unlock Locus Autofill") } }
-        } label: {
-            Image(systemName: vault.isUnlocked ? "lock.open.fill" : "lock.fill")
-                .frame(width: 24, height: 24)
-        }
-        .buttonStyle(.locus())
-        .help(vault.isUnlocked ? "Autofill unlocked — click to lock" : "Unlock Autofill")
-        .accessibilityLabel(vault.isUnlocked ? "Lock Autofill" : "Unlock Autofill")
-        .accessibilityIdentifier("browser.vault")
     }
 }
 

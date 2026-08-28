@@ -116,19 +116,13 @@ final class OffscreenWebHost {
     /// Move the web view into a visible container. Only one container may hold
     /// it at a time — `NSView` has a single superview, so lending it twice
     /// takes it away from the first borrower.
-    func lend(to container: NSView, preservingViewport: Bool = false) {
+    func lend(to container: NSView) {
         if webView.superview !== container {
             webView.removeFromSuperview()
             container.addSubview(webView)
         }
-        if preservingViewport {
-            container.frame.size = viewport
-            webView.frame = NSRect(origin: .zero, size: viewport)
-            webView.autoresizingMask = []
-        } else {
-            webView.frame = container.bounds
-            webView.autoresizingMask = [.width, .height]
-        }
+        webView.frame = container.bounds
+        webView.autoresizingMask = [.width, .height]
     }
 
     /// Return the web view to the off-screen panel, restoring the emulated
@@ -149,9 +143,10 @@ final class OffscreenWebHost {
         webView.pauseAllMediaPlayback(completionHandler: nil)
     }
 
-    /// Resize the emulated viewport. The visible fixed-canvas borrower also
-    /// keeps this exact size; it may magnify the canvas, but never relayouts
-    /// the page to match the inspector panel.
+    /// Resize the viewport. A visible borrower calls this as its bounds change,
+    /// so page layout follows the space the person gives the browser. While
+    /// parked, browser tools and presets use the same path for deterministic
+    /// off-screen screenshots.
     func setViewport(_ size: CGSize) {
         let clamped = CGSize(
             width: max(120, min(size.width, 4_000)),

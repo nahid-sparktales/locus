@@ -696,7 +696,7 @@ final class FeatureLogicTests: XCTestCase {
     // MARK: - Inspector chrome
 
     func testInspectorTabsAreStableAndUnique() {
-        XCTAssertEqual(InspectorTab.allCases.count, 11)
+        XCTAssertEqual(InspectorTab.allCases.count, 12)
         let raws = InspectorTab.allCases.map(\.rawValue)
         XCTAssertEqual(Set(raws).count, raws.count)
         XCTAssertEqual(Set(InspectorTab.allCases.map(\.symbol)).count, raws.count)
@@ -708,6 +708,7 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(InspectorTab(rawValue: "runs"), .runs)
         XCTAssertEqual(InspectorTab(rawValue: "agents"), .agents)
         XCTAssertEqual(InspectorTab(rawValue: "notes"), .notes)
+        XCTAssertEqual(InspectorTab(rawValue: "simulator"), .simulator)
         XCTAssertEqual(InspectorTab.plan.title, "Overview")
         XCTAssertEqual(InspectorTab.plan.symbol, "rectangle.grid.2x2")
         XCTAssertEqual(InspectorTab.notes.title, "Notes")
@@ -725,7 +726,7 @@ final class FeatureLogicTests: XCTestCase {
     func testInspectorShortcutsPreserveExistingKeysAndAddNotesOnNine() {
         XCTAssertEqual(
             InspectorTab.allCases.map(\.shortcutKey),
-            ["1", "2", "3", "4", "5", "9", "6", "7", "8", nil, nil]
+            ["1", "2", "3", "4", "5", nil, "9", "6", "7", "8", nil, nil]
         )
     }
 

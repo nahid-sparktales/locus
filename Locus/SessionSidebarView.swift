@@ -823,10 +823,10 @@ struct SessionSidebarView: View {
             Button("Session Checkpoints…") { model.checkpointPresented = true }
                 .accessibilityIdentifier("sidebar.checkpoints")
             Divider()
-            Toggle("Show Archived Sessions", isOn: Binding(
-                get: { model.showArchivedSessions },
-                set: { model.setShowArchived($0) }
-            ))
+            Button("Archived Sessions") {
+                model.setShowArchived(!model.showArchivedSessions)
+            }
+            .accessibilityValue(model.showArchivedSessions ? "Shown" : "Hidden")
             .accessibilityIdentifier("sidebar.showArchived")
             Button(model.isClearingSessions ? "Clearing Saved Sessions…" : "Clear Saved Sessions…") {
                 model.requestClearSavedSessions()

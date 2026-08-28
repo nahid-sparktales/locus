@@ -70,7 +70,8 @@ struct WorkspaceView: View {
             }
 
             ConversationView(streamingReply: model.streamingReply)
-                .frame(maxHeight: .infinity)
+                .frame(minHeight: 0, maxHeight: .infinity)
+                .clipped()
 
             if shouldShowWorkStatus {
                 WorkStatusStrip(streamingReply: model.streamingReply)
@@ -2375,6 +2376,20 @@ private struct ConversationView: View {
 }
 
 struct TranscriptScrollMetrics {
+    static func dominantVerticalWheelDelta(
+        scrollingDeltaX: CGFloat,
+        scrollingDeltaY: CGFloat,
+        legacyDeltaX: CGFloat,
+        legacyDeltaY: CGFloat
+    ) -> CGFloat? {
+        // Synthetic wheels and older AppKit releases can leave the precise
+        // scrolling deltas at zero while still populating deltaX/deltaY.
+        let deltaX = scrollingDeltaX == 0 ? legacyDeltaX : scrollingDeltaX
+        let deltaY = scrollingDeltaY == 0 ? legacyDeltaY : scrollingDeltaY
+        guard abs(deltaY) > 0, abs(deltaY) >= abs(deltaX) else { return nil }
+        return deltaY
+    }
+
     static func bottomDistance(
         documentBounds: CGRect,
         visibleRect: CGRect,
@@ -2471,11 +2486,14 @@ final class TranscriptScrollCoordinator: ObservableObject {
             let point = candidate.convert(event.locationInWindow, from: nil)
             guard candidate.bounds.contains(point) else { return event }
 
-            let vertical = abs(event.scrollingDeltaY)
-            let horizontal = abs(event.scrollingDeltaX)
-            if vertical > 0, vertical >= horizontal {
+            if let deltaY = TranscriptScrollMetrics.dominantVerticalWheelDelta(
+                scrollingDeltaX: event.scrollingDeltaX,
+                scrollingDeltaY: event.scrollingDeltaY,
+                legacyDeltaX: event.deltaX,
+                legacyDeltaY: event.deltaY
+            ) {
                 self.isRoutingVerticalWheel = true
-                self.wheelMoved(deltaY: event.scrollingDeltaY)
+                self.wheelMoved(deltaY: deltaY)
             }
             guard self.isRoutingVerticalWheel else { return event }
 

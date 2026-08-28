@@ -89,6 +89,7 @@ struct BrowserSettingsView: View {
                 }
             }
             .formStyle(.grouped)
+            .accessibilityIdentifier("settings.browser.root")
             .navigationDestination(for: BrowserSettingsRoute.self) { route in
                 destination(route)
                     .navigationTitle(route.title)
@@ -235,6 +236,7 @@ struct BrowserSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .accessibilityIdentifier("settings.browser.controls")
     }
 }
 

@@ -2157,6 +2157,7 @@ struct SettingsView: View {
                     .foregroundStyle(LocusTheme.textTertiary)
                 TextField("Search settings", text: $settingsSearch)
                     .textFieldStyle(.plain)
+                    .accessibilityLabel("Search settings")
                     .accessibilityIdentifier("settings.search")
                 if !settingsSearch.isEmpty {
                     Button {
@@ -2199,6 +2200,7 @@ struct SettingsView: View {
                 .padding(.horizontal, 8)
                 .padding(.bottom, 12)
             }
+            .accessibilityIdentifier("settings.navigation")
 
             VStack(alignment: .leading, spacing: 7) {
                 Text("SETTINGS LEVEL")
@@ -2346,6 +2348,8 @@ struct SettingsView: View {
                     KeyboardShortcutsSettingsView()
                 }
             }
+            .id(model.settingsPage)
+            .accessibilityIdentifier("settings.content.\(model.settingsPage.accessibilityKey)")
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onChange(of: pendingSearchAnchor) { _, anchor in
                 guard let anchor else { return }
@@ -2952,6 +2956,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .accessibilityIdentifier("settings.\(model.settingsPage.accessibilityKey).content")
     }
 
     private func localModelRow(_ localModel: ModelInfo) -> some View {
