@@ -30,6 +30,7 @@ DOMAIN_HANDLER_LEGACY_ALLOWLIST = {
     "evaluations.py": set(),
     "knowledge.py": set(),
     "providers.py": set(),
+    "schedules.py": set(),
     "sessions.py": set(),
     "system.py": set(),
     "workspace.py": set(),

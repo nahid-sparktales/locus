@@ -17,7 +17,11 @@ def _service(name: str):
         workspace_root=name,
         session=SimpleNamespace(session_id=f"{name}-session"),
     )
-    return SimpleNamespace(core=core)
+    run_store = SimpleNamespace(
+        schedules=lambda: [{"service": name}],
+        read_only=False,
+    )
+    return SimpleNamespace(core=core, run_store=run_store)
 
 
 def _route_contract() -> list[str]:
@@ -82,6 +86,12 @@ def test_domain_owned_routes_keep_service_state_isolated(monkeypatch):
         ]
         assert second.get("/api/context-snapshots").json()["snapshots"] == [
             {"workspace": "second"}
+        ]
+        assert first.get("/api/schedules").json()["schedules"] == [
+            {"service": "first"}
+        ]
+        assert second.get("/api/schedules").json()["schedules"] == [
+            {"service": "second"}
         ]
     finally:
         first.close()

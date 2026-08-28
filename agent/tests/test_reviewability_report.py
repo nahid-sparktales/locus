@@ -78,6 +78,7 @@ def test_domain_owned_route_allowlist_matches_migrated_domains() -> None:
         evaluations,
         knowledge,
         providers,
+        schedules,
         sessions,
         system,
         workspace,
@@ -91,6 +92,7 @@ def test_domain_owned_route_allowlist_matches_migrated_domains() -> None:
         knowledge,
         sessions,
         continuity,
+        schedules,
     ):
         assert module.__file__ is not None
         handlers = set(

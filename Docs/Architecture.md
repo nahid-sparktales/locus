@@ -59,8 +59,10 @@ dependencies resolve from the concrete request application.
   `knowledge_runtime.py`, `memory_runtime.py`, and `session_runtime.py`.
 - `api/continuity.py` owns context snapshots, skill observations, and memory
   lifecycle HTTP behavior.
-- `api/schedules.py`, `runs.py`, and `extensions.py` own their HTTP route maps
-  and remain the handler-ownership backlog.
+- `api/schedules.py` owns schedule CRUD, occurrence dispatch, and companion
+  chat dispatch HTTP behavior.
+- `api/runs.py` and `extensions.py` own their HTTP route maps and remain the
+  handler-ownership backlog.
 - `api/chat_transport.py` owns the WebSocket route map.
 
 API modules resolve request-owned services through `api/dependencies.py` and
