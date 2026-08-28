@@ -4,6 +4,18 @@
 
 ### Added
 
+- **Locus Vault is now an in-app Sepolia Wallet Hub for the private alpha.**
+  Signed direct-download builds can review risks and enable the feature in
+  Settings without Terminal setup, create or unlock the isolated vault,
+  receive through a locally generated ERC-681 QR, refresh a locked-safe public
+  balance, follow activity on Sepolia Etherscan, and copy redacted diagnostics.
+  Agent budgets are now presented as spending rules with exact decimal
+  ETH-to-wei input. Browser access remains a separate confirmed opt-in: Locus
+  revokes pending work and origins before reloading tabs, publishes a frozen
+  EIP-6963 provider with a fresh UUID per page, and still requires exact native
+  confirmation for every website transaction. The Mac App Store build keeps
+  all wallet gates forced off.
+
 - **ChatGPT-plan chats now answer the way Codex does.** A new per-account
   "Codex-native mode" (on by default) runs Work, Plan, and Build turns under
   the model's own Codex prompt and Codex-shaped tools — `shell`,

@@ -867,7 +867,10 @@ final class AppModel: ObservableObject {
 
         let migrateLegacyBuildMode = !loadedSettings.adaptiveWorkMigrationCompleted
         loadedSettings.adaptiveWorkMigrationCompleted = true
-        if migrateLegacyBuildMode, persistenceEnabled,
+        let migrateLegacyWalletFeatureAccess = loadedSettings.migrateLegacyWalletFeatureAccess(
+            environment: ProcessInfo.processInfo.environment
+        )
+        if (migrateLegacyBuildMode || migrateLegacyWalletFeatureAccess), persistenceEnabled,
            let data = try? JSONEncoder().encode(loadedSettings)
         {
             defaults.set(data, forKey: "Locus.settings")
@@ -1146,6 +1149,10 @@ final class AppModel: ObservableObject {
         }
         #endif
         walletGateway.configureRPCURL(loadedSettings.walletSepoliaRPCURL)
+        walletGateway.applyFeatureAccess(
+            walletEnabled: loadedSettings.walletAlphaEnabled,
+            browserEnabled: loadedSettings.walletBrowserProviderEnabled
+        )
         browser.configureWalletGateway(walletGateway)
         walletGateway.onBrowserAuthorizationNeeded = { [weak self] in
             self?.presentSettings(.wallet)
@@ -9396,6 +9403,10 @@ final class AppModel: ObservableObject {
             || settings.terminalLoginShell != newSettings.terminalLoginShell
         let browserEnabledChanged = settings.browserEnabled != newSettings.browserEnabled
         let walletRPCChanged = settings.walletSepoliaRPCURL != newSettings.walletSepoliaRPCURL
+        let walletFeatureAccessChanged = settings.walletAlphaEnabled
+            != newSettings.walletAlphaEnabled
+            || settings.walletBrowserProviderEnabled
+                != newSettings.walletBrowserProviderEnabled
         let browserHistoryAccessChanged = settings.browserHistoryAccessRaw
             != newSettings.browserHistoryAccessRaw
         let browserProfileChanged = settings.browserPersistProfile
@@ -9436,6 +9447,14 @@ final class AppModel: ObservableObject {
         applyBrowserSettings(newSettings)
         if walletRPCChanged {
             walletGateway.configureRPCURL(newSettings.walletSepoliaRPCURL)
+        }
+        if walletFeatureAccessChanged {
+            walletGateway.applyFeatureAccess(
+                walletEnabled: newSettings.walletAlphaEnabled,
+                browserEnabled: newSettings.walletBrowserProviderEnabled
+            )
+            browser.applyWalletProviderAccess(reloadTabs: true)
+            refreshWalletCapabilities()
         }
 
         if browserEnabledChanged || browserHistoryAccessChanged {

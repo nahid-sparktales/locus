@@ -1734,7 +1734,9 @@ struct SettingsView: View {
                 case .wallet:
                     WalletSettingsView(
                         gateway: model.walletGateway,
-                        rpcURL: $draft.walletSepoliaRPCURL
+                        rpcURL: $draft.walletSepoliaRPCURL,
+                        alphaEnabled: $draft.walletAlphaEnabled,
+                        browserEnabled: $draft.walletBrowserProviderEnabled
                     )
                 case .accounts: accountsPage
                 case .agents:
@@ -1896,6 +1898,8 @@ struct SettingsView: View {
             draft.browserExternalPermissionRaw, draft.browserCameraPermissionRaw,
             draft.browserMicrophonePermissionRaw,
             draft.walletSepoliaRPCURL,
+            draft.walletAlphaEnabled.description,
+            draft.walletBrowserProviderEnabled.description,
         ].joined(separator: "\u{1F}")
     }
 

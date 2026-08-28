@@ -43,9 +43,12 @@ private final class FakeWalletSigner: WalletSignerClient {
     var policyID: String?
     var executionError: WalletGateway.Error?
     var browserRPCResponse: Any = "0x1"
+    var balanceBaseUnits = "1234500000000000000"
+    var reportedVaultState: WalletVaultState?
 
     func signerStatus() async throws -> WalletSignerStatus {
-        WalletSignerStatus(protocolVersion: 1, vaultState: sessionID == nil ? .locked : .unlocked,
+        WalletSignerStatus(protocolVersion: 1,
+                           vaultState: reportedVaultState ?? (sessionID == nil ? .locked : .unlocked),
                            sessionID: sessionID, accounts: try await listAccounts())
     }
     func beginVaultCreation() async throws -> WalletVaultCreation {
@@ -107,7 +110,7 @@ private final class FakeWalletSigner: WalletSignerClient {
     func browserRPC(method: String, params: [Any]) async throws -> Any { browserRPCResponse }
 
     func performRead(tool: String, arguments: [String: Any]) async throws -> [String: Any] {
-        ["text": "ok"]
+        ["text": "ok", "balance_base_units": balanceBaseUnits]
     }
 
     func configureRPCURL(_ value: String) {}
@@ -142,7 +145,9 @@ final class WalletGatewayTests: XCTestCase {
     private func prepared(
         riskFlags: [WalletRiskFlag] = [],
         adapterID: String? = "native-eth-transfer-v1",
-        expiresAt: Date = Date().addingTimeInterval(120)
+        expiresAt: Date = Date().addingTimeInterval(120),
+        simulationSucceeded: Bool = true,
+        policyDecision: String = ""
     ) -> WalletPreparedTransaction {
         WalletPreparedTransaction(
             id: "intent-1", digest: "digest", networkID: WalletGateway.sepoliaNetworkID,
@@ -151,8 +156,8 @@ final class WalletGatewayTests: XCTestCase {
             summary: "Transfer", effects: [], riskFlags: riskFlags, contract: nil,
             adapterID: adapterID, budgetAssetID: "slip44:60", spendBaseUnits: "10",
             maximumFeeBaseUnits: "20", feeQuoteBaseUnits: "15", simulation: "Success",
-            simulationSucceeded: true, nonce: "1", createdAt: Date(), expiresAt: expiresAt,
-            policyDecision: "", policyID: nil
+            simulationSucceeded: simulationSucceeded, nonce: "1", createdAt: Date(),
+            expiresAt: expiresAt, policyDecision: policyDecision, policyID: nil
         )
     }
 
@@ -401,6 +406,26 @@ final class WalletGatewayTests: XCTestCase {
         ) else { return XCTFail("Browser-originated transactions must require exact confirmation") }
     }
 
+    func testFailedExpiredMismatchedAndDeniedTransactionsCannotBeConfirmed() {
+        let gateway = WalletGateway(
+            signer: UnavailableWalletSignerClient(),
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"]
+        )
+        XCTAssertTrue(gateway.isTransactionConfirmable(prepared()))
+        XCTAssertFalse(gateway.isTransactionConfirmable(prepared(
+            expiresAt: Date().addingTimeInterval(-1)
+        )))
+        XCTAssertFalse(gateway.isTransactionConfirmable(prepared(
+            simulationSucceeded: false
+        )))
+        XCTAssertFalse(gateway.isTransactionConfirmable(prepared(
+            riskFlags: [.codeHashMismatch]
+        )))
+        XCTAssertFalse(gateway.isTransactionConfirmable(prepared(
+            policyDecision: "denied_by_signer"
+        )))
+    }
+
     func testPolicyUsesUnsignedBaseUnitCaps() {
         XCTAssertEqual(WalletPolicyEngine.evaluate(
             transaction: prepared(), policy: policy(), spentThisSession: "5"
@@ -490,6 +515,125 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(WalletAmountFormatter.ether(wei: "1234500000000000000"), "1.2345 ETH")
         XCTAssertEqual(WalletAmountFormatter.ether(wei: "1"), "0.000000000000000001 ETH")
         XCTAssertNil(WalletAmountFormatter.ether(wei: "1.5"))
+    }
+
+    func testHumanEtherParserProducesCanonicalWeiWithoutFloatingPoint() {
+        XCTAssertEqual(WalletAmountFormatter.wei(fromEther: "0"), "0")
+        XCTAssertEqual(WalletAmountFormatter.wei(fromEther: "1"), "1000000000000000000")
+        XCTAssertEqual(WalletAmountFormatter.wei(fromEther: "1.2345"), "1234500000000000000")
+        XCTAssertEqual(WalletAmountFormatter.wei(fromEther: ".5"), "500000000000000000")
+        XCTAssertEqual(WalletAmountFormatter.wei(fromEther: "1."), "1000000000000000000")
+        XCTAssertEqual(WalletAmountFormatter.wei(fromEther: "0.000000000000000001"), "1")
+        XCTAssertNil(WalletAmountFormatter.wei(fromEther: "0.0000000000000000001"))
+        XCTAssertNil(WalletAmountFormatter.wei(fromEther: " 1"))
+        XCTAssertNil(WalletAmountFormatter.wei(fromEther: "+1"))
+        XCTAssertNil(WalletAmountFormatter.wei(fromEther: "1e3"))
+        XCTAssertNil(WalletAmountFormatter.wei(fromEther: "١"))
+    }
+
+    func testReceiveURIUsesERC681SepoliaChainWithoutAmount() {
+        XCTAssertEqual(
+            WalletReceiveURI.erc681(address: "0xabc"),
+            "ethereum:0xabc@11155111"
+        )
+        XCTAssertFalse(WalletReceiveURI.erc681(address: "0xabc").contains("?value="))
+    }
+
+    func testWalletFeatureSettingsMigrateEnvironmentOnceAndAppStoreStaysOff() {
+        var direct = AppSettings()
+        XCTAssertTrue(direct.migrateLegacyWalletFeatureAccess(environment: [
+            "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
+            "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
+        ], isDirectDownload: true))
+        XCTAssertTrue(direct.walletAlphaEnabled)
+        XCTAssertTrue(direct.walletBrowserProviderEnabled)
+        XCTAssertFalse(direct.migrateLegacyWalletFeatureAccess(
+            environment: [:], isDirectDownload: true
+        ))
+        XCTAssertTrue(direct.walletAlphaEnabled, "persisted in-app access becomes authoritative")
+
+        var appStore = AppSettings()
+        XCTAssertTrue(appStore.migrateLegacyWalletFeatureAccess(environment: [
+            "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
+            "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
+        ], isDirectDownload: false))
+        XCTAssertFalse(appStore.walletAlphaEnabled)
+        XCTAssertFalse(appStore.walletBrowserProviderEnabled)
+        let effective = AppSettings.effectiveWalletFeatureAccess(
+            walletEnabled: true, browserEnabled: true, isDirectDownload: false
+        )
+        XCTAssertFalse(effective.walletEnabled)
+        XCTAssertFalse(effective.browserEnabled)
+    }
+
+    func testWalletHubStateCoversBuildAccessSetupBackupLockAndReady() async {
+        let signer = FakeWalletSigner()
+        let unavailable = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            buildSupportsWalletAlpha: false
+        )
+        XCTAssertEqual(unavailable.hubState, .unavailableBuild)
+
+        let gateway = WalletGateway(signer: signer, environment: [:])
+        XCTAssertEqual(gateway.hubState, .alphaDisabled)
+        signer.reportedVaultState = .missing
+        gateway.applyFeatureAccess(walletEnabled: true, browserEnabled: false)
+        await gateway.refreshStatus()
+        XCTAssertEqual(gateway.hubState, .setupRequired)
+        signer.reportedVaultState = .awaitingBackup
+        await gateway.refreshStatus()
+        XCTAssertEqual(gateway.hubState, .backupIncomplete)
+        signer.reportedVaultState = .locked
+        await gateway.refreshStatus()
+        XCTAssertEqual(gateway.hubState, .locked)
+        signer.reportedVaultState = nil
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        XCTAssertEqual(gateway.hubState, .ready)
+    }
+
+    func testDisablingAlphaLocksAndRevokesButRetainsReceiveSnapshot() async {
+        let signer = FakeWalletSigner()
+        let gateway = WalletGateway(signer: signer, environment: [
+            "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
+            "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
+        ])
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        await gateway.refreshAccountSnapshots()
+        let grant = Task { await gateway.requestBrowserAccounts(origin: "https://dapp.test") }
+        await Task.yield()
+        gateway.approveBrowserOrigin()
+        _ = await grant.value
+        XCTAssertEqual(gateway.approvedBrowserOrigins, ["https://dapp.test"])
+
+        gateway.applyFeatureAccess(walletEnabled: false, browserEnabled: false)
+
+        XCTAssertEqual(gateway.status, .locked)
+        XCTAssertNil(gateway.capability)
+        XCTAssertEqual(gateway.accounts.first?.address, "0xabc")
+        XCTAssertEqual(gateway.accountSnapshots.first?.balanceBaseUnits, signer.balanceBaseUnits)
+        XCTAssertTrue(gateway.approvedBrowserOrigins.isEmpty)
+        XCTAssertTrue(gateway.browserAccounts(origin: "https://dapp.test").isEmpty)
+    }
+
+    func testDiagnosticsAreCategorizedAndExcludeWalletIdentifiers() async {
+        let signer = FakeWalletSigner()
+        let gateway = WalletGateway(signer: signer, environment: [
+            "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
+            "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
+        ])
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        await gateway.refreshAccountSnapshots()
+        await gateway.checkRPCHealth()
+        let snapshot = gateway.diagnosticSnapshot()
+        let text = snapshot.text()
+        XCTAssertEqual(snapshot.rpcHealthCategory, "healthy")
+        XCTAssertFalse(text.contains("0xabc"))
+        XCTAssertFalse(text.contains("dapp.test"))
+        XCTAssertFalse(text.contains(signer.balanceBaseUnits))
     }
 
     @MainActor
@@ -766,6 +910,9 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertTrue(script.contains("name: 'Locus Vault'"))
         XCTAssertTrue(script.contains("typeof globalThis.ethereum === 'undefined'"))
         XCTAssertTrue(script.contains("pending.size >= 32"))
+        XCTAssertTrue(script.contains("crypto?.randomUUID"))
+        XCTAssertTrue(script.contains("Object.freeze"))
+        XCTAssertFalse(script.contains("535b3a6d-22e8-4f91-8a6f-bc9c6b2cafe1"))
         XCTAssertFalse(script.contains("isMetaMask"))
         XCTAssertFalse(script.contains("isPhantom"))
     }

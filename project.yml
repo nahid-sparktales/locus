@@ -190,6 +190,19 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.tests
         GENERATE_INFOPLIST_FILE: YES
+  LocusWalletChainTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: LocusWalletChainTests
+    dependencies:
+      - target: Locus
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.wallet-chain-tests
+        GENERATE_INFOPLIST_FILE: YES
+        LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/WalletSignerCore/target/aarch64-apple-darwin/release"
+        OTHER_LDFLAGS: "$(inherited) -llocus_wallet_signer_core"
   LocusUITests:
     type: bundle.ui-testing
     platform: macOS
@@ -215,6 +228,18 @@ targets:
         TEST_TARGET_NAME: LocusMAS
         GENERATE_INFOPLIST_FILE: YES
 schemes:
+  WalletChainIntegration:
+    build:
+      targets:
+        Locus: all
+        LocusWalletChainTests: [test]
+    test:
+      config: Debug
+      environmentVariables:
+        LOCUS_ANVIL_RPC_URL: "$(LOCUS_ANVIL_RPC_URL)"
+        LOCUS_ANVIL_VERSION: "$(LOCUS_ANVIL_VERSION)"
+      targets:
+        - LocusWalletChainTests
   LocusMAS:
     build:
       targets:

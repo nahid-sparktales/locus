@@ -227,6 +227,11 @@ struct LocusApp: App {
             SettingsView(presentationContext: .sheet)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(LocusTheme.surfaceCanvas)
+        case "wallet":
+            SettingsView(presentationContext: .sheet)
+                .onAppear { model.settingsPage = .wallet }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(LocusTheme.surfaceCanvas)
         case "browser":
             BrowserPanel(
                 browser: model.browser,

@@ -1,5 +1,72 @@
 import Foundation
 
+enum WalletHubState: Equatable, Sendable {
+    case unavailableBuild
+    case alphaDisabled
+    case setupRequired
+    case backupIncomplete
+    case locked
+    case ready
+    case error
+}
+
+struct WalletAccountSnapshot: Identifiable, Equatable, Sendable {
+    enum Freshness: String, Equatable, Sendable {
+        case notLoaded = "not_loaded"
+        case current
+        case stale
+    }
+
+    var id: String { "\(accountID):\(networkID):\(assetID)" }
+    let accountID: String
+    let chain: WalletChain
+    let address: String
+    let label: String
+    let networkID: String
+    let assetID: String
+    let symbol: String
+    var balanceBaseUnits: String?
+    var refreshedAt: Date?
+    var freshness: Freshness
+}
+
+struct WalletDiagnosticSnapshot: Codable, Equatable, Sendable {
+    let appVersion: String
+    let buildVersion: String
+    let macOSVersion: String
+    let signerProtocolVersion: Int
+    let signerReachability: String
+    let walletBuildAvailable: Bool
+    let walletEnabled: Bool
+    let browserProviderEnabled: Bool
+    let vaultState: String
+    let rpcHealthCategory: String
+    let submittedActivityCount: Int
+    let confirmedActivityCount: Int
+    let failedActivityCount: Int
+    let uncertainActivityCount: Int
+
+    func text() -> String {
+        [
+            "Locus \(appVersion) (\(buildVersion))",
+            "macOS: \(macOSVersion)",
+            "Wallet signer: protocol \(signerProtocolVersion) · \(signerReachability)",
+            "Feature access: build=\(walletBuildAvailable) wallet=\(walletEnabled) browser=\(browserProviderEnabled)",
+            "Vault: \(vaultState)",
+            "RPC health: \(rpcHealthCategory)",
+            "Activity: submitted=\(submittedActivityCount) confirmed=\(confirmedActivityCount) failed=\(failedActivityCount) uncertain=\(uncertainActivityCount)",
+        ].joined(separator: "\n")
+    }
+}
+
+enum WalletReceiveURI {
+    static let sepoliaChainID = "11155111"
+
+    static func erc681(address: String) -> String {
+        "ethereum:\(address)@\(sepoliaChainID)"
+    }
+}
+
 enum WalletExternalConnectorKind: String, Codable, CaseIterable, Sendable {
     case metamask
     case phantom
@@ -109,6 +176,26 @@ struct WalletActivityRecord: Codable, Equatable, Identifiable, Sendable {
 }
 
 enum WalletAmountFormatter {
+    /// Parses a human ETH amount without locale, floating point, exponent
+    /// notation, signs, or non-ASCII digits. The returned string is canonical
+    /// wei and is suitable for policy and signing payloads.
+    static func wei(fromEther value: String) -> String? {
+        guard !value.isEmpty,
+              value.utf8.allSatisfy({ (48...57).contains($0) || $0 == 46 }) else {
+            return nil
+        }
+        let components = value.split(separator: ".", omittingEmptySubsequences: false)
+        guard components.count <= 2 else { return nil }
+        let whole = String(components[0])
+        let fraction = components.count == 2 ? String(components[1]) : ""
+        guard !whole.isEmpty || !fraction.isEmpty,
+              whole.utf8.allSatisfy({ (48...57).contains($0) }),
+              fraction.utf8.allSatisfy({ (48...57).contains($0) }),
+              fraction.count <= 18 else { return nil }
+        let paddedFraction = fraction + String(repeating: "0", count: 18 - fraction.count)
+        return WalletBaseUnits.normalize((whole.isEmpty ? "0" : whole) + paddedFraction)
+    }
+
     static func ether(wei: String) -> String? {
         guard let normalized = WalletBaseUnits.normalize(wei) else { return nil }
         let padded = String(repeating: "0", count: max(0, 19 - normalized.count)) + normalized
@@ -262,7 +349,7 @@ enum WalletPolicyEngine {
             transaction.spendBaseUnits, policy.maximumTransactionBaseUnits
         ), let total = WalletBaseUnits.add(spentThisSession, transaction.spendBaseUnits),
            WalletBaseUnits.lessThanOrEqual(total, policy.maximumSessionBaseUnits) else {
-            return .requiresApproval("The transaction exceeds its base-unit budget.")
+            return .requiresApproval("The transaction exceeds its base-unit spending rule.")
         }
         guard WalletBaseUnits.lessThanOrEqual(
             transaction.maximumFeeBaseUnits, policy.maximumFeeBaseUnits
@@ -406,11 +493,14 @@ final class WalletGateway: ObservableObject {
     @Published private(set) var contractRegistry: [WalletContractRegistryEntry] = []
     @Published private(set) var savedPolicyTemplates: [WalletPolicyTemplate] = []
     @Published private(set) var pendingBrowserOriginGrant: WalletBrowserOriginGrant?
+    @Published private(set) var accountSnapshots: [WalletAccountSnapshot] = []
+    @Published private(set) var approvedBrowserOrigins: [String] = []
+    @Published private(set) var walletEnabled: Bool
+    @Published private(set) var browserProviderEnabled: Bool
 
     private let signer: WalletSignerClient
     private let userDefaults: UserDefaults
-    private let experimentalEnabled: Bool
-    let browserProviderEnabled: Bool
+    let buildSupportsWalletAlpha: Bool
     private var prepared: [String: WalletPreparedTransaction] = [:]
     private var confirmedIntentIDs: Set<String> = []
     private let registryDefaultsKey = "LocusWalletContractRegistryV1"
@@ -420,17 +510,22 @@ final class WalletGateway: ObservableObject {
     private var browserIntentOrigins: [String: String] = [:]
     private var browserGrantContinuation: CheckedContinuation<Bool, Never>?
     private var confirmationContinuations: [String: CheckedContinuation<Bool, Never>] = [:]
+    private var uiFixtureHubState: WalletHubState?
     var onBrowserAuthorizationNeeded: (() -> Void)?
     var onBrowserGrantsRevoked: ((String?) -> Void)?
 
     init(signer: WalletSignerClient? = nil,
          environment: [String: String] = ProcessInfo.processInfo.environment,
-         userDefaults: UserDefaults = .standard) {
+         userDefaults: UserDefaults = .standard,
+         buildSupportsWalletAlpha: Bool = AppSettings.walletAlphaSupportedByCurrentBuild) {
         let signer = signer ?? WalletSignerClientFactory.make()
         self.signer = signer
         self.userDefaults = userDefaults
-        experimentalEnabled = environment["LOCUS_ENABLE_EXPERIMENTAL_WALLET"] == "1"
-        browserProviderEnabled = experimentalEnabled
+        self.buildSupportsWalletAlpha = buildSupportsWalletAlpha
+        let legacyWalletEnabled = buildSupportsWalletAlpha
+            && environment["LOCUS_ENABLE_EXPERIMENTAL_WALLET"] == "1"
+        walletEnabled = legacyWalletEnabled
+        browserProviderEnabled = legacyWalletEnabled
             && environment["LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER"] == "1"
         status = signer.isAvailable ? .locked : .securityReviewRequired
         if let data = userDefaults.data(forKey: registryDefaultsKey),
@@ -450,6 +545,9 @@ final class WalletGateway: ObservableObject {
             transactionHistory = Array(activity.prefix(250))
         }
         signer.invalidationHandler = { [weak self] in self?.handleSignerInvalidation() }
+        #if DEBUG
+        configureUIFixture(environment: environment)
+        #endif
     }
 
     private static func sanitizedRegistryEntry(
@@ -472,7 +570,7 @@ final class WalletGateway: ObservableObject {
     }
 
     var agentToolingAvailable: Bool {
-        experimentalEnabled && signer.isAvailable && status == .unlocked && signer.sessionID != nil
+        walletEnabled && signer.isAvailable && status == .unlocked && signer.sessionID != nil
     }
 
     var capability: [String: Any]? {
@@ -487,17 +585,35 @@ final class WalletGateway: ObservableObject {
     }
 
     var canAuthorizeSession: Bool {
-        experimentalEnabled && signer.isAvailable && vaultState == .locked
+        walletEnabled && signer.isAvailable && vaultState == .locked
     }
 
     var canCreateVault: Bool {
-        experimentalEnabled && signer.isAvailable && vaultState == .missing
+        walletEnabled && signer.isAvailable && vaultState == .missing
     }
 
-    var isExperimentalEnabled: Bool { experimentalEnabled }
+    var isExperimentalEnabled: Bool { walletEnabled }
     var signerAvailable: Bool { signer.isAvailable }
 
+    var hubState: WalletHubState {
+        if let uiFixtureHubState { return uiFixtureHubState }
+        guard buildSupportsWalletAlpha else { return .unavailableBuild }
+        guard walletEnabled else { return .alphaDisabled }
+        guard signer.isAvailable else { return .error }
+        return switch vaultState {
+        case .missing: .setupRequired
+        case .awaitingBackup: .backupIncomplete
+        case .locked: .locked
+        case .unlocked: status == .unlocked ? .ready : .locked
+        }
+    }
+
     func refreshStatus() async {
+        guard uiFixtureHubState == nil else { return }
+        guard buildSupportsWalletAlpha, walletEnabled else {
+            status = signer.isAvailable ? .locked : .securityReviewRequired
+            return
+        }
         guard signer.isAvailable else {
             status = .securityReviewRequired
             vaultState = .missing
@@ -507,6 +623,7 @@ final class WalletGateway: ObservableObject {
             let signerStatus = try await signer.signerStatus()
             vaultState = signerStatus.vaultState
             accounts = signerStatus.accounts
+            synchronizeAccountSnapshots(with: signerStatus.accounts)
             status = signerStatus.vaultState == .unlocked ? .unlocked : .locked
             lastError = nil
         } catch {
@@ -538,6 +655,7 @@ final class WalletGateway: ObservableObject {
             vaultCreation = nil
             vaultState = signerStatus.vaultState
             accounts = signerStatus.accounts
+            synchronizeAccountSnapshots(with: signerStatus.accounts)
             status = .locked
             lastError = nil
             return true
@@ -553,6 +671,7 @@ final class WalletGateway: ObservableObject {
             vaultCreation = nil
             vaultState = signerStatus.vaultState
             accounts = signerStatus.accounts
+            synchronizeAccountSnapshots(with: signerStatus.accounts)
         } catch {
             lastError = error.localizedDescription
         }
@@ -565,6 +684,7 @@ final class WalletGateway: ObservableObject {
             lock()
             vaultState = signerStatus.vaultState
             accounts = signerStatus.accounts
+            synchronizeAccountSnapshots(with: signerStatus.accounts)
             lastError = nil
             return true
         } catch {
@@ -574,11 +694,13 @@ final class WalletGateway: ObservableObject {
     }
 
     func checkRPCHealth() async {
+        guard uiFixtureHubState == nil else { return }
         do { rpcHealthText = try await signer.rpcHealth() }
         catch { rpcHealthText = error.localizedDescription }
     }
 
     func refreshTransactionHistory() async {
+        guard uiFixtureHubState == nil else { return }
         guard signer.isAvailable else { return }
         var changed = false
         let recordIDs = transactionHistory.filter {
@@ -620,7 +742,8 @@ final class WalletGateway: ObservableObject {
     }
 
     var statusText: String {
-        if signer.isAvailable && !experimentalEnabled { return "Experimental feature is off" }
+        if !buildSupportsWalletAlpha { return "Direct download required" }
+        if signer.isAvailable && !walletEnabled { return "Private alpha is off" }
         if vaultState == .missing { return "Not created" }
         if vaultState == .awaitingBackup { return "Backup not confirmed" }
         return switch status {
@@ -634,6 +757,269 @@ final class WalletGateway: ObservableObject {
         signer.configureRPCURL(value)
     }
 
+    func applyFeatureAccess(walletEnabled: Bool, browserEnabled: Bool) {
+        let effective = AppSettings.effectiveWalletFeatureAccess(
+            walletEnabled: walletEnabled,
+            browserEnabled: browserEnabled,
+            isDirectDownload: buildSupportsWalletAlpha
+        )
+        let walletWasEnabled = self.walletEnabled
+        let browserWasEnabled = browserProviderEnabled
+        self.walletEnabled = effective.walletEnabled
+        browserProviderEnabled = effective.browserEnabled
+
+        if walletWasEnabled && !effective.walletEnabled {
+            lock()
+        } else if browserWasEnabled && !effective.browserEnabled {
+            revokeAllBrowserGrants()
+        }
+
+        guard effective.walletEnabled else { return }
+        Task { @MainActor [weak self] in
+            await self?.refreshStatus()
+            await self?.refreshAccountSnapshots()
+        }
+    }
+
+    func refreshAccountSnapshots() async {
+        guard uiFixtureHubState == nil else { return }
+        guard buildSupportsWalletAlpha, walletEnabled, signer.isAvailable else { return }
+        do {
+            let publicAccounts = try await signer.listAccounts()
+            accounts = publicAccounts
+            synchronizeAccountSnapshots(with: publicAccounts)
+            for account in publicAccounts where account.chain == .evm {
+                do {
+                    let result = try await signer.performRead(
+                        tool: "wallet_get_balance",
+                        arguments: ["account_id": account.id]
+                    )
+                    guard let balance = result["balance_base_units"] as? String,
+                          WalletBaseUnits.normalize(balance) != nil,
+                          let index = accountSnapshots.firstIndex(where: {
+                              $0.accountID == account.id
+                                  && $0.networkID == Self.sepoliaNetworkID
+                          }) else { continue }
+                    accountSnapshots[index].balanceBaseUnits = WalletBaseUnits.normalize(balance)
+                    accountSnapshots[index].refreshedAt = Date()
+                    accountSnapshots[index].freshness = .current
+                } catch {
+                    guard let index = accountSnapshots.firstIndex(where: {
+                        $0.accountID == account.id
+                            && $0.networkID == Self.sepoliaNetworkID
+                    }) else { continue }
+                    accountSnapshots[index].freshness = accountSnapshots[index].balanceBaseUnits == nil
+                        ? .notLoaded : .stale
+                }
+            }
+        } catch {
+            accountSnapshots = accountSnapshots.map { snapshot in
+                var stale = snapshot
+                if stale.balanceBaseUnits != nil { stale.freshness = .stale }
+                return stale
+            }
+        }
+    }
+
+    func diagnosticSnapshot(
+        bundle: Bundle = .main,
+        processInfo: ProcessInfo = .processInfo
+    ) -> WalletDiagnosticSnapshot {
+        let category: String
+        let normalizedHealth = rpcHealthText.lowercased()
+        if normalizedHealth.contains("healthy") {
+            category = "healthy"
+        } else if normalizedHealth == "not checked" {
+            category = "not_checked"
+        } else {
+            category = "unavailable"
+        }
+        return WalletDiagnosticSnapshot(
+            appVersion: bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+                ?? "unknown",
+            buildVersion: bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+                ?? "unknown",
+            macOSVersion: processInfo.operatingSystemVersionString,
+            signerProtocolVersion: Self.protocolVersion,
+            signerReachability: signer.isAvailable ? "reachable" : "unavailable",
+            walletBuildAvailable: buildSupportsWalletAlpha,
+            walletEnabled: walletEnabled,
+            browserProviderEnabled: browserProviderEnabled,
+            vaultState: vaultState.rawValue,
+            rpcHealthCategory: category,
+            submittedActivityCount: transactionHistory.count { $0.state == .submitted },
+            confirmedActivityCount: transactionHistory.count { $0.state == .confirmed },
+            failedActivityCount: transactionHistory.count { $0.state == .failed },
+            uncertainActivityCount: transactionHistory.count { $0.state == .broadcastUnknown }
+        )
+    }
+
+    private func synchronizeAccountSnapshots(with publicAccounts: [WalletAccount]) {
+        let previous = Dictionary(uniqueKeysWithValues: accountSnapshots.map { ($0.id, $0) })
+        accountSnapshots = publicAccounts.map { account in
+            let networkID: String
+            let assetID: String
+            let symbol: String
+            switch account.chain {
+            case .evm:
+                networkID = Self.sepoliaNetworkID
+                assetID = "slip44:60"
+                symbol = "ETH"
+            case .solana:
+                networkID = account.networkIDs.first ?? "solana:devnet"
+                assetID = "slip44:501"
+                symbol = "SOL"
+            case .sui:
+                networkID = account.networkIDs.first ?? "sui:testnet"
+                assetID = "sui:native"
+                symbol = "SUI"
+            }
+            let id = "\(account.id):\(networkID):\(assetID)"
+            let cached = previous[id]
+            return WalletAccountSnapshot(
+                accountID: account.id,
+                chain: account.chain,
+                address: account.address,
+                label: account.label,
+                networkID: networkID,
+                assetID: assetID,
+                symbol: symbol,
+                balanceBaseUnits: cached?.balanceBaseUnits,
+                refreshedAt: cached?.refreshedAt,
+                freshness: cached?.freshness ?? .notLoaded
+            )
+        }
+    }
+
+    #if DEBUG
+    /// Deterministic, secret-free states for UI coverage. Production builds do
+    /// not compile this path, and it is accepted only in the UI-test process.
+    private func configureUIFixture(environment: [String: String]) {
+        guard environment["LOCUS_UI_TESTING"] == "1",
+              let fixture = environment["LOCUS_UI_TESTING_WALLET_FIXTURE"] else { return }
+
+        let evmAddress = "0x8Ba1f109551bD432803012645Ac136ddd64DBA72"
+        let evm = WalletAccount(
+            id: "wallet-fixture-evm", chain: .evm, address: evmAddress,
+            label: "Sepolia account", networkIDs: [Self.sepoliaNetworkID]
+        )
+        let solana = WalletAccount(
+            id: "wallet-fixture-solana", chain: .solana,
+            address: "9xQeWvG816bUx9EPfEzphDFTeGmQqoZ8VjPzM8YjWm7k",
+            label: "Solana address", networkIDs: ["solana:devnet"]
+        )
+        let sui = WalletAccount(
+            id: "wallet-fixture-sui", chain: .sui,
+            address: "0x1111111111111111111111111111111111111111111111111111111111111111",
+            label: "Sui address", networkIDs: ["sui:testnet"]
+        )
+
+        switch fixture {
+        case "disabled":
+            uiFixtureHubState = .alphaDisabled
+            return
+        case "setup":
+            uiFixtureHubState = .setupRequired
+            vaultState = .missing
+            status = .locked
+            return
+        case "backup":
+            uiFixtureHubState = .backupIncomplete
+            vaultState = .awaitingBackup
+            status = .locked
+            return
+        case "error":
+            uiFixtureHubState = .error
+            lastError = "The UI fixture is showing the recoverable wallet error state."
+            return
+        case "locked":
+            uiFixtureHubState = .locked
+            vaultState = .locked
+            status = .locked
+        case "ready", "activity", "origin", "transaction":
+            uiFixtureHubState = .ready
+            vaultState = .unlocked
+            status = .unlocked
+        default:
+            return
+        }
+
+        accounts = [evm, solana, sui]
+        synchronizeAccountSnapshots(with: accounts)
+        if let index = accountSnapshots.firstIndex(where: { $0.chain == .evm }) {
+            accountSnapshots[index].balanceBaseUnits = "12500000000000000"
+            accountSnapshots[index].refreshedAt = Date().addingTimeInterval(-45)
+            accountSnapshots[index].freshness = .current
+        }
+        rpcHealthText = "Sepolia · healthy"
+
+        if fixture == "ready" || fixture == "activity" {
+            let policy = WalletSessionPolicy(
+                id: "wallet-fixture-policy", accountID: evm.id,
+                networkID: Self.sepoliaNetworkID,
+                allowedAssetIDs: ["slip44:60"],
+                allowedRecipients: ["0x1111111111111111111111111111111111111111"],
+                allowedContractIDs: [], allowedAdapterIDs: ["native-eth-transfer-v1"],
+                maximumTransactionBaseUnits: "5000000000000000",
+                maximumSessionBaseUnits: "10000000000000000",
+                maximumFeeBaseUnits: "1000000000000000",
+                expiresAt: Date().addingTimeInterval(1_800)
+            )
+            activePolicies = [policy]
+            activePolicyStatuses = [WalletActivePolicyStatus(
+                policy: policy, spentBaseUnits: "2500000000000000"
+            )]
+        }
+
+        if fixture == "activity" {
+            transactionHistory = [
+                WalletActivityRecord(
+                    id: "wallet-fixture-activity-confirmed", intentID: "fixture-intent-1",
+                    transactionHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    networkID: Self.sepoliaNetworkID, accountID: evm.id,
+                    summary: "Sent 0.002 Sepolia ETH", submittedAt: Date().addingTimeInterval(-420),
+                    state: .confirmed, blockNumber: "0x53a10", lastCheckedAt: Date(), detail: nil
+                ),
+                WalletActivityRecord(
+                    id: "wallet-fixture-activity-pending", intentID: "fixture-intent-2",
+                    transactionHash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    networkID: Self.sepoliaNetworkID, accountID: evm.id,
+                    summary: "Sent 0.001 Sepolia ETH", submittedAt: Date().addingTimeInterval(-75),
+                    state: .submitted, blockNumber: nil, lastCheckedAt: Date(), detail: nil
+                ),
+            ]
+        } else if fixture == "origin" {
+            pendingBrowserOriginGrant = WalletBrowserOriginGrant(
+                id: UUID(), origin: "https://pay.example.com"
+            )
+        } else if fixture == "transaction" {
+            pendingConfirmation = WalletPreparedTransaction(
+                id: "wallet-fixture-confirmation", digest: "0xfixture-digest",
+                networkID: Self.sepoliaNetworkID, accountID: evm.id,
+                source: .browser(origin: "https://pay.example.com"),
+                action: .nativeTransfer(
+                    recipient: "0x1111111111111111111111111111111111111111",
+                    amountBaseUnits: "10000000000000000"
+                ),
+                summary: "Send 0.01 Sepolia ETH",
+                effects: [WalletDecodedEffect(
+                    id: "wallet-fixture-effect", kind: "native_transfer",
+                    assetID: "slip44:60", amountBaseUnits: "10000000000000000",
+                    from: evmAddress, to: "0x1111111111111111111111111111111111111111",
+                    spender: nil
+                )],
+                riskFlags: [], contract: nil, adapterID: "native-eth-transfer-v1",
+                budgetAssetID: "slip44:60", spendBaseUnits: "10000000000000000",
+                maximumFeeBaseUnits: "1000000000000000",
+                feeQuoteBaseUnits: "42000000000000", simulation: "Transfer succeeds",
+                simulationSucceeded: true, nonce: "7", createdAt: Date(),
+                expiresAt: Date().addingTimeInterval(120),
+                policyDecision: "Browser transactions require exact confirmation.", policyID: nil
+            )
+        }
+    }
+    #endif
+
     func lock() {
         signer.lock()
         activePolicies.removeAll()
@@ -643,7 +1029,6 @@ final class WalletGateway: ObservableObject {
         pendingConfirmation = nil
         revokeAllBrowserGrants()
         resolveAllConfirmationWaiters(approved: false)
-        accounts.removeAll()
         status = signer.isAvailable ? .locked : .securityReviewRequired
         if vaultState == .unlocked { vaultState = .locked }
     }
@@ -656,17 +1041,17 @@ final class WalletGateway: ObservableObject {
         pendingConfirmation = nil
         revokeAllBrowserGrants()
         resolveAllConfirmationWaiters(approved: false)
-        accounts.removeAll()
         status = signer.isAvailable ? .locked : .securityReviewRequired
         if vaultState == .unlocked { vaultState = .locked }
     }
 
     @discardableResult
     func authorizeSession() async -> Bool {
-        guard experimentalEnabled, signer.isAvailable else { return false }
+        guard walletEnabled, signer.isAvailable else { return false }
         do {
             try await signer.authorizeSession()
             accounts = try await signer.listAccounts()
+            synchronizeAccountSnapshots(with: accounts)
             guard signer.sessionID != nil else { throw Error.vaultLocked }
             status = .unlocked
             vaultState = .unlocked
@@ -757,8 +1142,16 @@ final class WalletGateway: ObservableObject {
         await clearPolicies()
     }
 
+    func isTransactionConfirmable(_ transaction: WalletPreparedTransaction) -> Bool {
+        transaction.expiresAt > Date()
+            && transaction.simulationSucceeded
+            && !transaction.riskFlags.contains(.codeHashMismatch)
+            && !transaction.policyDecision.lowercased().contains("denied")
+    }
+
     func confirm(intentID: String) {
-        guard let transaction = prepared[intentID], transaction.expiresAt > Date() else { return }
+        guard let transaction = prepared[intentID],
+              isTransactionConfirmable(transaction) else { return }
         confirmedIntentIDs.insert(intentID)
         confirmationContinuations.removeValue(forKey: intentID)?.resume(returning: true)
         if pendingConfirmation?.id == intentID { pendingConfirmation = nil }
@@ -793,6 +1186,7 @@ final class WalletGateway: ObservableObject {
     func approveBrowserOrigin() {
         guard let request = pendingBrowserOriginGrant else { return }
         browserOriginGrants.insert(request.origin)
+        approvedBrowserOrigins = browserOriginGrants.sorted()
         pendingBrowserOriginGrant = nil
         browserGrantContinuation?.resume(returning: true)
         browserGrantContinuation = nil
@@ -807,6 +1201,7 @@ final class WalletGateway: ObservableObject {
     func revokeBrowserOrigin(_ origin: String) {
         guard let normalized = Self.normalizedWebOrigin(origin) else { return }
         browserOriginGrants.remove(normalized)
+        approvedBrowserOrigins = browserOriginGrants.sorted()
         if pendingBrowserOriginGrant?.origin == normalized { denyBrowserOrigin() }
         for intentID in browserIntentOrigins.compactMap({ $0.value == normalized ? $0.key : nil }) {
             cancelConfirmation(intentID: intentID)
@@ -897,6 +1292,7 @@ final class WalletGateway: ObservableObject {
     private func revokeAllBrowserGrants() {
         let hadGrants = !browserOriginGrants.isEmpty || pendingBrowserOriginGrant != nil
         browserOriginGrants.removeAll()
+        approvedBrowserOrigins = []
         for intentID in browserIntentOrigins.keys { cancelConfirmation(intentID: intentID) }
         browserIntentOrigins.removeAll()
         pendingBrowserOriginGrant = nil
@@ -929,7 +1325,7 @@ final class WalletGateway: ObservableObject {
         do {
             if tool == "wallet_lock" {
                 lock()
-                return ["text": "Locus Vault locked; intents, policies, and budgets were cleared."]
+                return ["text": "Locus Vault locked; intents, policies, and spending rules were cleared."]
             }
             guard agentToolingAvailable else {
                 throw signer.isAvailable ? Error.vaultLocked : Error.signerUnavailable
@@ -1194,6 +1590,11 @@ enum LocusWalletProviderScript {
       const pending = new Map();
       const listeners = new Map();
       let sequence = 0;
+      const providerUUID = globalThis.crypto?.randomUUID?.() ||
+        'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, character => {
+          const random = Math.floor(Math.random() * 16);
+          return (character === 'x' ? random : (random & 0x3) | 0x8).toString(16);
+        });
 
       const emit = (event, value) => {
         for (const callback of listeners.get(event) || []) {
@@ -1249,10 +1650,12 @@ enum LocusWalletProviderScript {
         configurable: false, enumerable: false,
         value: emit,
       });
-      globalThis.locusVault = provider;
+      Object.defineProperty(globalThis, 'locusVault', {
+        configurable: false, enumerable: false, writable: false, value: provider,
+      });
       const detail = Object.freeze({
         info: Object.freeze({
-          uuid: '535b3a6d-22e8-4f91-8a6f-bc9c6b2cafe1',
+          uuid: providerUUID,
           name: 'Locus Vault',
           icon: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"%3E%3Crect width="32" height="32" rx="8" fill="%236d5dfc"/%3E%3Cpath d="M9 8v16h14v-3H13V8z" fill="white"/%3E%3C/svg%3E',
           rdns: 'io.sparktales.locus'
