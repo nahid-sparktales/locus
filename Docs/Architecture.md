@@ -50,9 +50,12 @@ dependencies resolve from the concrete request application.
   handlers. `api/evaluations.py` owns evaluation HTTP behavior, while
   `evaluation_runtime.py` owns suite execution and receives the team runner
   through the concrete application composition boundary.
-- `api/system.py`, `providers.py`, `continuity.py`, `knowledge.py`,
-  `sessions.py`, `schedules.py`, `runs.py`, and `extensions.py` own the HTTP
-  route map for their domains and are the remaining handler-ownership backlog.
+- `api/system.py` owns health, tools, permissions, configuration, and managed
+  service handlers. `api/providers.py` owns provider selection, model discovery,
+  routing samples, and ChatGPT account handlers.
+- `api/continuity.py`, `knowledge.py`, `sessions.py`, `schedules.py`, `runs.py`,
+  and `extensions.py` own the HTTP route map for their domains and are the
+  remaining handler-ownership backlog.
 - `api/chat_transport.py` owns the WebSocket route map.
 
 API modules resolve request-owned services through `api/dependencies.py` and

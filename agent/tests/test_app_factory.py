@@ -7,7 +7,14 @@ from ollama_code import server
 
 
 def _service(name: str):
-    core = SimpleNamespace(provider_state=lambda: {"provider": name}, cwd=name)
+    core = SimpleNamespace(
+        provider_state=lambda: {"provider": name},
+        provider="ollama",
+        client=SimpleNamespace(check=lambda: None),
+        host=f"https://{name}.invalid",
+        model=name,
+        cwd=name,
+    )
     return SimpleNamespace(core=core)
 
 
@@ -28,6 +35,9 @@ def test_create_app_keeps_service_state_isolated():
         assert first.get("/api/provider").json() == {"provider": "first"}
         assert second.get("/api/provider").json() == {"provider": "second"}
         assert unconfigured.get("/api/provider").status_code == 503
+        assert first.get("/api/health").json()["model"] == "first"
+        assert second.get("/api/health").json()["model"] == "second"
+        assert unconfigured.get("/api/health").status_code == 503
     finally:
         first.close()
         second.close()

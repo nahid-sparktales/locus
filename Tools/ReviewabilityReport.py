@@ -28,6 +28,8 @@ ROUTE_HANDLER = re.compile(r"handlers\.([A-Za-z_][A-Za-z0-9_]*)")
 DOMAIN_HANDLER_LEGACY_ALLOWLIST = {
     "workspace.py": set(),
     "evaluations.py": set(),
+    "providers.py": set(),
+    "system.py": set(),
 }
 
 
