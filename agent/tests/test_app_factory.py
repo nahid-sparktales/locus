@@ -14,6 +14,8 @@ def _service(name: str):
         host=f"https://{name}.invalid",
         model=name,
         cwd=name,
+        workspace_root=name,
+        session=SimpleNamespace(session_id=f"{name}-session"),
     )
     return SimpleNamespace(core=core)
 
@@ -45,18 +47,29 @@ def test_create_app_keeps_service_state_isolated():
 
 
 def test_domain_owned_routes_keep_service_state_isolated(monkeypatch):
-    from ollama_code.api import workspace
+    from ollama_code.api import knowledge, workspace
 
     monkeypatch.setattr(
         workspace.gitinfo,
         "status",
         lambda root, **_options: {"ok": True, "workspace": root},
     )
+    monkeypatch.setattr(
+        knowledge,
+        "_knowledge_store",
+        lambda service, _workspace="": SimpleNamespace(
+            settings=lambda: {"workspace": service.core.cwd}
+        ),
+    )
     first = TestClient(server.create_app(chat_service=_service("first")))
     second = TestClient(server.create_app(chat_service=_service("second")))
     try:
         assert first.get("/api/git/status").json()["workspace"] == "first"
         assert second.get("/api/git/status").json()["workspace"] == "second"
+        assert first.get("/api/knowledge/status").json()["workspace"] == "first"
+        assert second.get("/api/knowledge/status").json()["workspace"] == "second"
+        assert first.get("/api/sessions").json()["current"] == "first-session"
+        assert second.get("/api/sessions").json()["current"] == "second-session"
     finally:
         first.close()
         second.close()

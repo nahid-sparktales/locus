@@ -53,9 +53,12 @@ dependencies resolve from the concrete request application.
 - `api/system.py` owns health, tools, permissions, configuration, and managed
   service handlers. `api/providers.py` owns provider selection, model discovery,
   routing samples, and ChatGPT account handlers.
-- `api/continuity.py`, `knowledge.py`, `sessions.py`, `schedules.py`, `runs.py`,
-  and `extensions.py` own the HTTP route map for their domains and are the
-  remaining handler-ownership backlog.
+- `api/knowledge.py` owns workspace knowledge and approved-memory HTTP behavior.
+  `api/sessions.py` owns session lifecycle and chat-organization HTTP behavior;
+  shared request-independent state lives in `memory_runtime.py` and
+  `session_runtime.py`.
+- `api/continuity.py`, `schedules.py`, `runs.py`, and `extensions.py` own their
+  HTTP route maps and remain the handler-ownership backlog.
 - `api/chat_transport.py` owns the WebSocket route map.
 
 API modules resolve request-owned services through `api/dependencies.py` and

@@ -73,9 +73,16 @@ def test_server_composition_helpers_are_not_treated_as_route_handlers() -> None:
 
 
 def test_domain_owned_route_allowlist_matches_migrated_domains() -> None:
-    from ollama_code.api import evaluations, providers, system, workspace
+    from ollama_code.api import (
+        evaluations,
+        knowledge,
+        providers,
+        sessions,
+        system,
+        workspace,
+    )
 
-    for module in (workspace, evaluations, providers, system):
+    for module in (workspace, evaluations, providers, system, knowledge, sessions):
         assert module.__file__ is not None
         handlers = set(
             report.ROUTE_HANDLER.findall(

@@ -29,6 +29,18 @@ class WorktreeError(RuntimeError):
     pass
 
 
+def is_git_workspace(workspace: str) -> bool:
+    result = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=workspace,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=10,
+        check=False,
+    )
+    return result.returncode == 0
+
+
 @dataclass
 class TaskCheckout:
     id: str
@@ -747,4 +759,10 @@ def _git_input(cwd: Path, data: bytes, *arguments: str) -> subprocess.CompletedP
     )
 
 
-__all__ = ["TASKS_DIR", "TaskCheckout", "TaskCheckoutStore", "WorktreeError"]
+__all__ = [
+    "TASKS_DIR",
+    "TaskCheckout",
+    "TaskCheckoutStore",
+    "WorktreeError",
+    "is_git_workspace",
+]

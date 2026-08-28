@@ -13,7 +13,6 @@ import argparse
 import asyncio
 import base64
 import binascii
-import hashlib
 import ipaddress
 import logging
 import os
@@ -70,7 +69,9 @@ from .core import AgentCore
 from .evaluation_runtime import EvaluationTeamRunner
 from .extensions import ExtensionError
 from .knowledge import KnowledgeError, KnowledgeStore
-from .memory import MemoryError, MemoryVault, format_memory_results
+from .memory import MemoryError, format_memory_results
+from .memory_runtime import memory_vault as _domain_memory_vault
+from .memory_runtime import memory_workspace as _domain_memory_workspace
 from .ollama import OllamaError
 from .orchestration import (
     AgentProfile,
@@ -84,22 +85,27 @@ from .orchestration import (
     parse_manifest,
     writer_prompt_for_job,
 )
-from .runstore import ACTIVE_NONRECOVERABLE_STATES, RunStoreError
+from .runstore import RunStoreError
 from .schedules import timezone as schedule_timezone
+from .session_runtime import session_has_active_run
 from .sessions import (
     MAX_SESSION_LINE_BYTES,
-    ChatOrganizationStore,
     SessionMeta,
     SessionStore,
     SessionTooLargeError,
     strip_prompt_decoration,
-    update_session_metadata,
 )
 from .solo_swarm import SoloSwarmError, SoloSwarmExecutor, snapshot_route
 from .telemetry import TelemetryError, send_otlp, traceparent_for_run
 from .tools import truncate_output
-from .transcript_search import TranscriptIndex, TranscriptSearchError
-from .worktrees import TaskCheckout, TaskCheckoutStore, WorktreeError
+from .worktrees import (
+    TaskCheckout,
+    TaskCheckoutStore,
+    WorktreeError,
+)
+from .worktrees import (
+    is_git_workspace as _is_git_workspace,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -283,32 +289,12 @@ def _knowledge_store(workspace: str = "") -> KnowledgeStore:
         raise HTTPException(422, str(exc)) from exc
 
 
-def _memory_vault(workspace: str = "") -> MemoryVault:
-    """Open the encrypted vault and migrate legacy plaintext workspace notes."""
-    vault = MemoryVault()
-    target = workspace.strip()
-    if target:
-        try:
-            legacy = KnowledgeStore(target)
-            for memory in legacy.list_memories():
-                identifier = "legacy-" + hashlib.sha256(
-                    f"{Path(target).resolve()}|{memory['id']}".encode()
-                ).hexdigest()[:40]
-                vault.save(
-                    {**memory, "scope": "workspace", "status": "approved"},
-                    identifier,
-                    workspace=target,
-                )
-                legacy.delete_memory(memory["id"])
-        except (KnowledgeError, MemoryError, OSError):
-            # A failed migration leaves the legacy record intact and visible
-            # through a later retry; it is never deleted before encryption.
-            pass
-    return vault
+def _memory_vault(workspace: str = ""):
+    return _domain_memory_vault(workspace)
 
 
 def _memory_workspace(workspace: str = "") -> str:
-    return workspace.strip() or service().core.workspace_root or service().core.cwd
+    return _domain_memory_workspace(service(), workspace)
 
 
 def _continuity_store() -> ContinuityStore:
@@ -412,100 +398,6 @@ def skill_observation_export(workspace: str = Query(default="")) -> dict[str, An
         return _continuity_store().export_observations(target)
     except ContinuityError as exc:
         raise HTTPException(422, str(exc)) from exc
-
-
-def knowledge_status(workspace: str = Query(default="")) -> dict[str, Any]:
-    return _knowledge_store(workspace).settings()
-
-
-def knowledge_settings(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
-    store = _knowledge_store(str(body.get("workspace") or ""))
-    enabled = body.get("enabled") if isinstance(body.get("enabled"), bool) else None
-    embedding_model = (
-        str(body.get("embedding_model") or "") if "embedding_model" in body else None
-    )
-    ollama_host = str(body.get("ollama_host") or "") if "ollama_host" in body else None
-    if "exclusions" in body and not isinstance(body.get("exclusions"), list):
-        raise HTTPException(422, "knowledge exclusions must be a list of glob patterns")
-    exclusions = (
-        [str(item) for item in body.get("exclusions") or []]
-        if "exclusions" in body else None
-    )
-    return store.configure(
-        enabled=enabled, embedding_model=embedding_model, ollama_host=ollama_host,
-        exclusions=exclusions,
-    )
-
-
-def knowledge_reindex(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
-    store = _knowledge_store(str(body.get("workspace") or ""))
-    return store.reindex()
-
-
-def knowledge_changes(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
-    store = _knowledge_store(str(body.get("workspace") or ""))
-    raw = body.get("paths")
-    if not isinstance(raw, list):
-        raise HTTPException(422, "paths must be an array")
-    return store.reindex(changed_paths=[str(item) for item in raw[:5_000]])
-
-
-def knowledge_search(
-    query: str = Query(min_length=1, max_length=2_000),
-    workspace: str = Query(default=""),
-    limit: int = Query(default=8, ge=1, le=20),
-) -> dict[str, Any]:
-    try:
-        return {"results": _knowledge_store(workspace).search(query, limit=limit)}
-    except KnowledgeError as exc:
-        raise HTTPException(422, str(exc)) from exc
-
-
-def knowledge_memories(workspace: str = Query(default="")) -> dict[str, Any]:
-    target = _memory_workspace(workspace)
-    return {"memories": _memory_vault(target).list(
-        workspace=target, status="approved", scopes=["workspace"]
-    )}
-
-
-def knowledge_memory_create(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
-    try:
-        target = _memory_workspace(str(body.get("workspace") or ""))
-        memory = _memory_vault(target).save(
-            {**body, "scope": "workspace", "status": "approved"}, workspace=target
-        )
-        return {"ok": True, "memory": memory}
-    except (KnowledgeError, MemoryError) as exc:
-        raise HTTPException(422, str(exc)) from exc
-
-
-def knowledge_memory_update(
-    memory_id: str, body: dict[str, Any] = Body(default_factory=dict)
-) -> dict[str, Any]:
-    try:
-        target = _memory_workspace(str(body.get("workspace") or ""))
-        memory = _memory_vault(target).save(
-            {**body, "scope": "workspace", "status": "approved"},
-            memory_id,
-            workspace=target,
-        )
-        return {"ok": True, "memory": memory}
-    except (KnowledgeError, MemoryError) as exc:
-        raise HTTPException(422, str(exc)) from exc
-
-
-def knowledge_memory_delete(memory_id: str, workspace: str = Query(default="")) -> dict[str, Any]:
-    target = _memory_workspace(workspace)
-    if not _memory_vault(target).delete(memory_id):
-        raise HTTPException(404, "workspace memory not found")
-    return {"ok": True, "id": memory_id}
-
-
-def knowledge_delete_all(workspace: str = Query(default="")) -> dict[str, Any]:
-    target = _memory_workspace(workspace)
-    _knowledge_store(target).delete_all()
-    _memory_vault(target).delete_all(workspace=target, scopes=["workspace"])
-    return {"ok": True}
 
 
 # --------------------------------------------------------------- Agent memory
@@ -829,449 +721,10 @@ def mcp_task_cancel(task_id: str) -> dict[str, Any]:
         raise HTTPException(409, str(exc)) from exc
 
 
-def sessions(
-    include_archived: bool = False,
-    limit: int = Query(100, ge=1, le=500),
-    query: str = Query("", max_length=500),
-) -> dict[str, Any]:
-    svc = service()
-    return {
-        "sessions": SessionStore.summaries(
-            limit=limit,
-            include_archived=include_archived,
-            query=query,
-        ),
-        "current": svc.core.session.session_id,
-    }
-
-
-def chat_folders(workspace: str = Query("", max_length=4096)) -> dict[str, Any]:
-    snapshot = ChatOrganizationStore.snapshot(workspace or None)
-    return {"version": snapshot["version"], "folders": snapshot["folders"]}
-
-
-def chat_folder_create(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
-    workspace = body.get("workspace")
-    name = body.get("name")
-    if not isinstance(workspace, str) or not workspace.strip():
-        raise HTTPException(422, "workspace is required")
-    if not isinstance(name, str):
-        raise HTTPException(422, "folder name must be a string")
-    parent_id = body.get("parent_id")
-    if parent_id is not None and not isinstance(parent_id, str):
-        raise HTTPException(422, "parent_id must be a string or null")
-    index = body.get("index")
-    if index is not None and (not isinstance(index, int) or index < 0):
-        raise HTTPException(422, "index must be a non-negative integer")
-    try:
-        folder = ChatOrganizationStore.create_folder(workspace, name, parent_id, index)
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    return {"ok": True, "folder": folder}
-
-
-def chat_folder_update(
-    folder_id: str, body: dict[str, Any] = Body(default_factory=dict),
-) -> dict[str, Any]:
-    unknown = set(body) - {"name", "parent_id", "index"}
-    if unknown:
-        raise HTTPException(422, f"unknown folder field: {sorted(unknown)[0]}")
-    name = body.get("name")
-    if name is not None and not isinstance(name, str):
-        raise HTTPException(422, "folder name must be a string")
-    parent_value: str | None | object = ...
-    if "parent_id" in body:
-        parent_value = body.get("parent_id")
-        if parent_value is not None and not isinstance(parent_value, str):
-            raise HTTPException(422, "parent_id must be a string or null")
-    index = body.get("index")
-    if index is not None and (not isinstance(index, int) or index < 0):
-        raise HTTPException(422, "index must be a non-negative integer")
-    try:
-        folder = ChatOrganizationStore.update_folder(
-            folder_id, name=name, parent_id=parent_value, index=index,
-        )
-    except KeyError as exc:
-        raise HTTPException(404, "folder not found") from exc
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    return {"ok": True, "folder": folder}
-
-
-def chat_folder_delete(folder_id: str) -> dict[str, Any]:
-    try:
-        result = ChatOrganizationStore.delete_folder(folder_id)
-    except KeyError as exc:
-        raise HTTPException(404, "folder not found") from exc
-    return {"ok": True, **result}
-
-
-_TRANSCRIPT_INDEX: TranscriptIndex | None = None
-_TRANSCRIPT_INDEX_LOCK = threading.Lock()
-
-
-def _session_has_active_run(session_id: str) -> bool:
-    active_states = ACTIVE_NONRECOVERABLE_STATES | {"waiting_dispatch_approval"}
-    return any(
-        str(run.get("state") or "") in active_states
-        for run in service().run_store.list_runs(session_id=session_id, limit=20)
-    )
-
 
 def _require_task_idle(task: TaskCheckout) -> None:
-    if task.session_id and _session_has_active_run(task.session_id):
+    if task.session_id and session_has_active_run(service().run_store, task.session_id):
         raise HTTPException(409, "wait for this chat to stop before changing its checkout")
-
-
-def _transcript_index() -> TranscriptIndex:
-    """Process-wide index instance, rebuilt if the data home moved (tests).
-
-    Sync endpoints run on a threadpool, so two first-touch requests race this
-    initializer; unlocked, each would build its own instance over the same
-    database — separate RLocks, so nothing serializes their syncs, and every
-    transcript indexes twice.
-    """
-    global _TRANSCRIPT_INDEX
-    from . import transcript_search as transcript_search_mod
-
-    with _TRANSCRIPT_INDEX_LOCK:
-        if _TRANSCRIPT_INDEX is None \
-                or _TRANSCRIPT_INDEX.path != transcript_search_mod.DEFAULT_PATH:
-            _TRANSCRIPT_INDEX = TranscriptIndex()
-        return _TRANSCRIPT_INDEX
-
-
-# Declared before ``GET /api/sessions/{session_id}``: FastAPI matches routes in
-# declaration order, and "search" must not be captured as a session id.
-def sessions_search(
-    query: str = Query(min_length=1, max_length=500),
-    limit: int = Query(20, ge=1, le=50),
-) -> dict[str, Any]:
-    _require_capability("transcript_search")
-    try:
-        return _transcript_index().search(query, limit=limit)
-    except TranscriptSearchError as e:
-        raise HTTPException(422, str(e)) from e
-
-
-def session_new(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
-    """Start a fresh saved session, preserving the previous transcript on disk."""
-    svc = service()
-    try:
-        with svc.state_mutation():
-            reason = str(body.get("reason") or "new_session")
-            cwd_value = body.get("cwd")
-            if cwd_value is not None and not isinstance(cwd_value, str):
-                raise HTTPException(422, "cwd must be a string")
-            raw_environment = body.get("environment")
-            if raw_environment is not None and raw_environment not in {"local", "worktree"}:
-                raise HTTPException(422, "environment must be local or worktree")
-            environment = str(raw_environment or "local")
-            base_ref = body.get("base_ref", "HEAD")
-            if not isinstance(base_ref, str) or len(base_ref) > 240:
-                raise HTTPException(422, "base_ref must be a Git ref")
-            retention_limit = body.get("worktree_retention_limit", 15)
-            if not isinstance(retention_limit, int) or not 0 <= retention_limit <= 100:
-                raise HTTPException(422, "worktree_retention_limit must be between 0 and 100")
-            if svc.current_task is not None:
-                try:
-                    svc.core.leave_task_checkout(svc.current_task.workspace_root)
-                except ValueError:
-                    pass
-                svc.current_task = None
-            info = svc.core.new_session(reason=reason, cwd=str(cwd_value or "") or None)
-            session_id = str(info.get("session_id") or "")
-            workspace_root = svc.core.workspace_root
-            if environment == "worktree":
-                if not _is_git_workspace(workspace_root):
-                    raise HTTPException(422, "worktree chats require a Git repository")
-                task = TaskCheckoutStore.create(
-                    workspace_root,
-                    session_id,
-                    base_ref=base_ref,
-                    session_id=session_id,
-                )
-                svc.current_task = task
-                svc.core.enter_task_checkout(
-                    task.execution_path, task.workspace_root, task.as_dict()
-                )
-                SessionMeta.update(
-                    session_id,
-                    task=task.as_dict(),
-                    workspace_root=task.workspace_root,
-                    execution_path=task.execution_path,
-                    environment={
-                        "type": "worktree",
-                        "isolation": "managed_worktree",
-                        "worktree_id": task.id,
-                        "starting_ref": task.starting_ref,
-                    },
-                )
-                if retention_limit > 0:
-                    TaskCheckoutStore.prune(limit=retention_limit, protected_ids={task.id})
-                info = svc.core.session_info()
-            else:
-                SessionMeta.update(
-                    session_id,
-                    workspace_root=workspace_root,
-                    execution_path=workspace_root,
-                    environment={"type": "local", "isolation": "local"},
-                )
-            return {"ok": True, "reason": reason, "session_info": info}
-    except AgentBusyError as e:
-        raise _busy_http() from e
-    except ValueError as e:
-        raise HTTPException(422, str(e)) from e
-    except WorktreeError as e:
-        raise HTTPException(409, str(e)) from e
-
-
-def sessions_clear() -> dict[str, Any]:
-    """Move every saved session except the active one to the recovery folder."""
-    svc = service()
-    active_session = svc.core.session.session_id
-    if any(
-        path.stem != active_session and _session_has_active_run(path.stem)
-        for path in SessionStore.list_sessions()
-    ):
-        raise HTTPException(409, "wait for background chats to stop before clearing sessions")
-    try:
-        with svc.state_mutation():
-            result = svc.core.clear_saved_sessions()
-            # The search index duplicates transcript text; a mass clear must
-            # not leave that copy behind until the next sync prunes it.
-            try:
-                _transcript_index().delete_all()
-            except (OSError, sqlite3.DatabaseError):
-                pass
-            return {"ok": True, "job_active": False, **result}
-    except AgentBusyError as e:
-        raise _busy_http() from e
-
-
-def session_delete(session_id: str) -> dict[str, Any]:
-    """Move one chat to recovery, replacing it first when it is active."""
-    svc = service()
-    if SessionStore.path_for(session_id) is None:
-        raise HTTPException(404, f"session not found: {session_id}")
-    if _session_has_active_run(session_id):
-        raise HTTPException(409, "wait for this chat to stop before deleting it")
-    try:
-        with svc.state_mutation():
-            deleted_active = session_id == svc.core.session.session_id
-            replacement = None
-            if deleted_active:
-                replacement = svc.core.new_session(reason="deleted_active")
-            count, recovery_path = SessionStore.move_to_trash([session_id])
-            if count != 1:
-                raise HTTPException(500, "the chat could not be moved to recovery")
-            return {
-                "ok": True,
-                "id": session_id,
-                "trash_batch": Path(recovery_path).name,
-                "deleted_active": deleted_active,
-                "replacement_session_info": replacement,
-            }
-    except AgentBusyError as e:
-        raise _busy_http() from e
-
-
-def sessions_restore(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
-    """Undo a clear: move a trash batch (default the newest) back."""
-    svc = service()
-    try:
-        with svc.state_mutation():
-            batch = str(body.get("batch") or "") or None
-            restored_ids = SessionStore.restore_from_trash_details(batch)
-            return {
-                "ok": True,
-                "restored": len(restored_ids),
-                "session_ids": restored_ids,
-            }
-    except AgentBusyError as e:
-        raise _busy_http() from e
-
-
-def session_detail(session_id: str) -> dict[str, Any]:
-    path = SessionStore.path_for(session_id)
-    if path is None:
-        raise HTTPException(404, f"session not found: {session_id}")
-    header = SessionStore.provenance(path)
-    meta = SessionMeta.get(session_id)
-    try:
-        messages = SessionStore.load(path)
-    except SessionTooLargeError as e:
-        raise HTTPException(413, str(e)) from e
-    activity = SessionStore.agent_activity(path)
-    return {
-        "id": session_id,
-        "messages": AgentCore.sanitize_messages(messages),
-        "preview": SessionStore.preview(path),
-        "title": meta.get("title"),
-        "pinned": bool(meta.get("pinned", False)),
-        "archived": bool(meta.get("archived", False)),
-        "cwd": header.get("cwd"),
-        "model": header.get("model"),
-        "started": header.get("started"),
-        "task": meta.get("task"),
-        "team": meta.get("team"),
-        "workspace_root": meta.get("workspace_root"),
-        "execution_path": meta.get("execution_path"),
-        "environment": meta.get("environment"),
-        "agent_activities": activity["activities"],
-        "orchestration_state": activity.get("orchestration_state"),
-        "orchestration_run_id": activity.get("run_id"),
-        "worker_id": activity.get("worker_id"),
-    }
-
-
-def session_export_data(
-    session_id: str,
-    include_reasoning: bool = False,
-    include_tool_details: bool = False,
-    include_attachments: bool = True,
-) -> dict[str, Any]:
-    path = SessionStore.path_for(session_id)
-    if path is None:
-        raise HTTPException(404, f"session not found: {session_id}")
-    provenance = SessionStore.provenance(path)
-    meta = SessionMeta.get(session_id)
-    try:
-        messages = SessionStore.export_messages(
-            path,
-            include_reasoning=include_reasoning,
-            include_tool_details=include_tool_details,
-            include_attachments=include_attachments,
-        )
-    except SessionTooLargeError as exc:
-        raise HTTPException(413, str(exc)) from exc
-    return {
-        "id": session_id,
-        "title": meta.get("title") or SessionStore.preview(path),
-        "cwd": provenance.get("cwd"),
-        "model": provenance.get("model"),
-        "provider": provenance.get("provider"),
-        "started": provenance.get("started"),
-        "messages": messages,
-    }
-
-
-def session_organization_update(
-    session_id: str, body: dict[str, Any] = Body(default_factory=dict),
-) -> dict[str, Any]:
-    unknown = set(body) - {"folder_id", "index"}
-    if unknown:
-        raise HTTPException(422, f"unknown organization field: {sorted(unknown)[0]}")
-    folder_id = body.get("folder_id")
-    if folder_id is not None and not isinstance(folder_id, str):
-        raise HTTPException(422, "folder_id must be a string or null")
-    index = body.get("index")
-    if index is not None and (not isinstance(index, int) or index < 0):
-        raise HTTPException(422, "index must be a non-negative integer")
-    try:
-        placement = ChatOrganizationStore.move_session(session_id, folder_id, index)
-    except KeyError as exc:
-        raise HTTPException(404, "session not found") from exc
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    return {"ok": True, "placement": placement}
-
-
-def session_organization(session_id: str) -> dict[str, Any]:
-    path = SessionStore.path_for(session_id)
-    if path is None:
-        raise HTTPException(404, "session not found")
-    placement = ChatOrganizationStore.placement(session_id)
-    if placement is None:
-        workspace = str(SessionStore.header(path).get("cwd") or "")
-        placement = {
-            "session_id": session_id,
-            "workspace": (
-                ChatOrganizationStore._canonical_workspace(workspace) if workspace else ""
-            ),
-            "folder_id": None,
-            "order": 0,
-        }
-    return {"ok": True, "placement": placement}
-
-
-def session_duplicate(
-    session_id: str, body: dict[str, Any] = Body(default_factory=dict),
-) -> dict[str, Any]:
-    mode = str(body.get("mode") or "conversation")
-    if mode not in {"conversation", "worktree"}:
-        raise HTTPException(422, "mode must be conversation or worktree")
-    source_path = SessionStore.path_for(session_id)
-    if source_path is None:
-        raise HTTPException(404, f"session not found: {session_id}")
-    svc = service()
-    if _session_has_active_run(session_id) or (
-        session_id == svc.core.session.session_id and svc.busy
-    ):
-        raise HTTPException(409, "wait for this chat to stop before duplicating it")
-    source_meta = SessionMeta.get(session_id)
-    source_task: TaskCheckout | None = None
-    if mode == "worktree":
-        if source_meta.get("archived"):
-            raise HTTPException(409, "restore the source chat before duplicating its worktree")
-        task_value = source_meta.get("task")
-        task_id = str(task_value.get("id") or "") if isinstance(task_value, dict) else ""
-        source_task = TaskCheckoutStore.load(task_id) if task_id else None
-        if source_task is None or not Path(source_task.execution_path).is_dir():
-            raise HTTPException(409, "restore the source worktree before duplicating it")
-    clone: SessionStore | None = None
-    child: TaskCheckout | None = None
-    try:
-        clone = SessionStore.duplicate(source_path)
-        title = str(source_meta.get("title") or SessionStore.preview(source_path)).strip()
-        fields: dict[str, Any] = {
-            "title": f"{title} Copy"[:120],
-            "team": source_meta.get("team"),
-        }
-        workspace = str(SessionStore.header(source_path).get("cwd") or "")
-        if mode == "worktree" and source_task is not None:
-            child = TaskCheckoutStore.fork(source_task, f"duplicate-{uuid.uuid4().hex}")
-            child.session_id = clone.session_id
-            child.state = "queued"
-            child.save()
-            fields.update({
-                "task": child.as_dict(),
-                "workspace_root": child.workspace_root,
-                "execution_path": child.execution_path,
-                "environment": {
-                    "type": "worktree",
-                    "isolation": "managed_worktree",
-                    "worktree_id": child.id,
-                    "starting_ref": child.starting_ref,
-                },
-            })
-        else:
-            fields.update({
-                "workspace_root": workspace,
-                "execution_path": workspace,
-                "environment": {"type": "local", "isolation": "local"},
-            })
-        SessionMeta.update(clone.session_id, **fields)
-        ChatOrganizationStore.clone_placement(session_id, clone.session_id)
-    except (OSError, ValueError, WorktreeError, SessionTooLargeError) as exc:
-        if child is not None:
-            try:
-                TaskCheckoutStore.snapshot_and_remove(child.id)
-            except WorktreeError:
-                pass
-        if clone is not None:
-            clone.path.unlink(missing_ok=True)
-            SessionMeta.forget([clone.session_id])
-            ChatOrganizationStore.detach_sessions([clone.session_id])
-        status = 413 if isinstance(exc, SessionTooLargeError) else 409
-        raise HTTPException(status, str(exc)) from exc
-    summary = next(
-        (item for item in SessionStore.summaries(limit=500, include_archived=True)
-         if item["id"] == clone.session_id),
-        None,
-    )
-    return {"ok": True, "session": summary, "mode": mode}
-
 
 # ------------------------------------------------------------ Scheduled tasks
 
@@ -2460,188 +1913,39 @@ def task_cleanup(task_id: str) -> dict[str, Any]:
         raise HTTPException(409, str(exc)) from exc
 
 
+
+def session_new(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    """Compatibility entry point for direct callers outside FastAPI."""
+    from .api.sessions import session_new as handler
+
+    return handler(service(), body)
+
+
+def sessions_clear() -> dict[str, Any]:
+    """Compatibility entry point for direct callers outside FastAPI."""
+    from .api.sessions import sessions_clear as handler
+
+    return handler(service())
+
+
+def session_detail(session_id: str) -> dict[str, Any]:
+    """Compatibility entry point for direct callers outside FastAPI."""
+    from .api.sessions import session_detail as handler
+
+    return handler(session_id)
+
+
 def session_metadata_update(
     session_id: str,
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
-    """Set a session's title, pinned or archived flag."""
-    if SessionStore.find(session_id) is None:
-        raise HTTPException(404, f"session not found: {session_id}")
-    unknown = set(body) - {"title", "pinned", "archived"}
-    if unknown:
-        raise HTTPException(422, f"unknown session field: {sorted(unknown)[0]}")
+    """Compatibility entry point for direct callers outside FastAPI."""
+    from .api.sessions import session_metadata_update as handler
 
-    title = body.get("title")
-    if title is not None and not isinstance(title, str):
-        raise HTTPException(422, "title must be a string")
-    for field in ("pinned", "archived"):
-        value = body.get(field)
-        if value is not None and not isinstance(value, bool):
-            raise HTTPException(422, f"{field} must be true or false")
-
-    archived = body.get("archived")
-    if archived and session_id == service().core.session.session_id:
-        # Archiving the conversation you are in would hide it from the very
-        # list it is active in.
-        raise HTTPException(409, "start a new session before archiving the active one")
-    if archived and _session_has_active_run(session_id):
-        raise HTTPException(409, "wait for this chat to stop before archiving it")
-
-    state = update_session_metadata(
-        session_id,
-        title=title,
-        pinned=body.get("pinned"),
-        archived=archived,
-    )
-    meta = SessionMeta.get(session_id)
-    task_value = meta.get("task")
-    task_id = str(task_value.get("id") or "") if isinstance(task_value, dict) else ""
-    task = TaskCheckoutStore.load(task_id) if task_id else None
-    if task is not None and isinstance(body.get("pinned"), bool):
-        task.pinned = bool(body["pinned"])
-        task.save()
-        SessionMeta.update(session_id, task=task.as_dict())
-    if task is not None and archived and Path(task.execution_path).is_dir():
-        try:
-            snapshot = TaskCheckoutStore.snapshot_and_remove(task.id)
-            SessionMeta.update(session_id, task=snapshot["task"])
-        except WorktreeError as exc:
-            raise HTTPException(409, str(exc)) from exc
-    return {"ok": True, "id": session_id, **state}
+    return handler(session_id, service(), body)
 
 
-#: Historical name kept for callers that imported it directly.
 session_update = session_metadata_update
-
-
-def session_resume(session_id: str) -> dict[str, Any]:
-    svc = service()
-    try:
-        with svc.state_mutation():
-            result = svc.core.resume_session(session_id)
-            meta = SessionMeta.get(session_id)
-            task_value = meta.get("task")
-            task_id = str(task_value.get("id") or "") if isinstance(task_value, dict) else ""
-            task = TaskCheckoutStore.load(task_id) if task_id else None
-            environment = meta.get("environment")
-            is_worktree = isinstance(environment, dict) and (
-                environment.get("type") == "worktree"
-                or environment.get("isolation") == "managed_worktree"
-            )
-            svc.current_task = task if is_worktree else None
-            if task is not None and is_worktree:
-                if not Path(task.execution_path).is_dir():
-                    raise HTTPException(409, "the chat worktree is archived and must be restored")
-                svc.core.enter_task_checkout(
-                    task.execution_path,
-                    task.workspace_root,
-                    task.as_dict(),
-                )
-    except AgentBusyError as e:
-        raise _busy_http() from e
-    except FileNotFoundError as e:
-        raise HTTPException(404, str(e)) from e
-    except SessionTooLargeError as e:
-        raise HTTPException(413, str(e)) from e
-    except ValueError as e:
-        raise HTTPException(422, str(e)) from e
-    path = SessionStore.path_for(session_id)
-    activity = SessionStore.agent_activity(path) if path is not None else {"activities": []}
-    return {
-        "ok": True,
-        "text": result.get("text"),
-        "messages": (result.get("data") or {}).get("messages", []),
-        "session_info": svc.core.session_info(),
-        "agent_activities": activity["activities"],
-        "orchestration_state": activity.get("orchestration_state"),
-        "orchestration_run_id": activity.get("run_id"),
-        "worker_id": activity.get("worker_id"),
-    }
-
-
-def session_handoff(
-    session_id: str,
-    body: dict[str, Any] = Body(default_factory=dict),
-) -> dict[str, Any]:
-    """Move an idle chat and its code between Local and its managed worktree."""
-    target = body.get("environment")
-    if target not in {"local", "worktree"}:
-        raise HTTPException(422, "environment must be local or worktree")
-    svc = service()
-    try:
-        with svc.state_mutation():
-            if svc.core.session.session_id != session_id:
-                svc.core.resume_session(session_id)
-            meta = SessionMeta.get(session_id)
-            workspace_root = str(
-                meta.get("workspace_root") or SessionStore.header(
-                    SessionStore.path_for(session_id)  # type: ignore[arg-type]
-                ).get("cwd") or ""
-            )
-            if not workspace_root or not Path(workspace_root).is_dir():
-                raise HTTPException(409, "the chat's local workspace is unavailable")
-            task_value = meta.get("task")
-            task_id = str(task_value.get("id") or "") if isinstance(task_value, dict) else ""
-            task = TaskCheckoutStore.load(task_id) if task_id else None
-            result: dict[str, Any] = {"applied": False, "paths": []}
-            if target == "local":
-                if task is not None and Path(task.execution_path).is_dir():
-                    result = task.apply()
-                svc.core.leave_task_checkout(workspace_root)
-                svc.current_task = None
-                SessionMeta.update(
-                    session_id,
-                    task=task.as_dict() if task else task_value,
-                    workspace_root=workspace_root,
-                    execution_path=workspace_root,
-                    environment={
-                        "type": "local",
-                        "isolation": "local",
-                        "worktree_id": task.id if task else "",
-                    },
-                )
-            else:
-                if not _is_git_workspace(workspace_root):
-                    raise HTTPException(422, "worktree chats require a Git repository")
-                if task is None:
-                    task = TaskCheckoutStore.create(
-                        workspace_root,
-                        session_id,
-                        base_ref=str(body.get("base_ref") or "HEAD"),
-                        session_id=session_id,
-                    )
-                else:
-                    task = TaskCheckoutStore.refresh_from_workspace(task.id)
-                svc.current_task = task
-                svc.core.enter_task_checkout(
-                    task.execution_path, task.workspace_root, task.as_dict()
-                )
-                SessionMeta.update(
-                    session_id,
-                    task=task.as_dict(),
-                    workspace_root=task.workspace_root,
-                    execution_path=task.execution_path,
-                    environment={
-                        "type": "worktree",
-                        "isolation": "managed_worktree",
-                        "worktree_id": task.id,
-                        "starting_ref": task.starting_ref,
-                    },
-                )
-            return {
-                "ok": True,
-                "environment": target,
-                "session_info": svc.core.session_info(),
-                "task": task.as_dict() if task else None,
-                **result,
-            }
-    except AgentBusyError as exc:
-        raise _busy_http() from exc
-    except WorktreeError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    except (FileNotFoundError, ValueError) as exc:
-        raise HTTPException(422, str(exc)) from exc
-
 
 def _extension_snapshot(svc: ChatService) -> dict[str, Any]:
     snapshot = svc.core.extensions.snapshot()
@@ -4506,18 +3810,6 @@ def _restore_writer_route(core: AgentCore, snapshot: dict[str, Any]) -> None:
         )
         core.max_iterations = snapshot["max_iterations"]
     core._emit_info()
-
-
-def _is_git_workspace(workspace: str) -> bool:
-    result = subprocess.run(
-        ["git", "rev-parse", "--is-inside-work-tree"],
-        cwd=workspace,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=10,
-        check=False,
-    )
-    return result.returncode == 0
 
 
 def _task_diff(svc: ChatService, workspace_root: str, execution_path: str) -> str:
