@@ -47,7 +47,13 @@ Native wallet tools may also call a method from a contract added under
 canonical function signature, typed string arguments, and optional native
 value. `WalletSigner.xpc` re-encodes the call from the normalized ABI, checks
 the selector, and requires exact confirmation. Unknown contract effects cannot
-use an autonomous budget.
+use an autonomous budget. A verified ABI can be classified automatically for
+the reviewed ERC-20 transfer/finite-approval adapter or the separate narrow
+Universal Router V2 exact-input adapter. Those calls become policy-eligible
+only after you authorize an exact contract, asset, counterparty, amount, fee,
+and expiry budget in Wallet Settings. Unlimited approvals, extra router
+commands, allow-revert, zero minimum output, native wrapping, and stale swaps
+still require exact confirmation.
 
 ## Lock or turn it off
 
@@ -74,4 +80,7 @@ recoverable only with the 24-word phrase.
   unknown autonomous contract effects are disabled.
 - Saved policy templates contain no authorization and must be approved again
   after each launch.
+- External MetaMask, Phantom, and Slush connector definitions are present, but
+  their live connection buttons remain security gated. Never enter one of
+  those wallets' recovery phrases into Locus.
 - The Mac App Store build intentionally does not contain `WalletSigner.xpc`.

@@ -297,6 +297,15 @@ actor WalletSepoliaRPCClient {
             }
             selectors.append(String(digest.prefix(10)).lowercased())
         }
+        let reviewedAdapterID = WalletReviewedAdapters.classify(
+            normalizedABI: normalizedABI, permittedFunctions: functions
+        )
+        if let requestedAdapterID = draft.reviewedAdapterID,
+           requestedAdapterID != reviewedAdapterID {
+            throw WalletGateway.Error.invalidArguments(
+                "The requested adapter does not match the verified ABI and permitted methods."
+            )
+        }
         return WalletContractRegistryEntry(
             id: draft.id.trimmingCharacters(in: .whitespacesAndNewlines),
             networkID: draft.networkID,
@@ -307,7 +316,7 @@ actor WalletSepoliaRPCClient {
             runtimeCodeHash: runtimeCodeHash.lowercased(),
             permittedFunctions: functions,
             permittedSelectors: selectors,
-            reviewedAdapterID: draft.reviewedAdapterID,
+            reviewedAdapterID: reviewedAdapterID,
             verifiedAt: Date()
         )
     }
@@ -403,31 +412,57 @@ actor WalletSepoliaRPCClient {
 
     private func rpc(method: String, params: [Any]) async throws -> Any {
         let id = nextID
-        nextID += 1
+        nextID = nextID == Int.max ? 1 : nextID + 1
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 20
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
+        let body = try JSONSerialization.data(withJSONObject: [
             "jsonrpc": "2.0", "id": id, "method": method, "params": params,
         ])
+        guard body.count <= 256 * 1024 else {
+            throw WalletRPCError.invalidResponse("request exceeded the 256 KiB wallet limit")
+        }
+        request.httpBody = body
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw WalletRPCError.invalidResponse("HTTP request failed")
         }
+        guard data.count <= 1_048_576 else {
+            throw WalletRPCError.invalidResponse("response exceeded the 1 MiB wallet limit")
+        }
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw WalletRPCError.invalidResponse("response is not JSON-RPC")
         }
-        if let error = object["error"] as? [String: Any] {
+        guard object["jsonrpc"] as? String == "2.0",
+              let responseID = object["id"] as? NSNumber,
+              CFGetTypeID(responseID) != CFBooleanGetTypeID(),
+              responseID.decimalValue == Decimal(id) else {
+            throw WalletRPCError.invalidResponse("JSON-RPC version or response ID did not match the request")
+        }
+        let hasResult = object.keys.contains("result")
+        let hasError = object.keys.contains("error")
+        guard hasResult != hasError else {
+            throw WalletRPCError.invalidResponse("response must contain exactly one of result or error")
+        }
+        if hasError {
+            guard let error = object["error"] as? [String: Any],
+                  let code = error["code"] as? NSNumber,
+                  CFGetTypeID(code) != CFBooleanGetTypeID(),
+                  code.decimalValue == Decimal(code.intValue),
+                  let rawMessage = error["message"] as? String else {
+                throw WalletRPCError.invalidResponse("error payload was malformed")
+            }
+            let message = String(rawMessage.prefix(512))
             throw WalletRPCError.rpc(
-                code: error["code"] as? Int ?? -1,
-                message: error["message"] as? String ?? "Unknown RPC failure"
+                code: code.intValue,
+                message: message
             )
         }
-        guard object.keys.contains("result") else {
-            throw WalletRPCError.invalidResponse("response has no result")
+        guard let result = object["result"] else {
+            throw WalletRPCError.invalidResponse("result payload was missing")
         }
-        return object["result"] as Any
+        return result
     }
 
     private static func validatedEndpoint(_ value: String) -> URL? {

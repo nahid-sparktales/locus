@@ -86,7 +86,8 @@ private struct SignerActivePolicy {
 
 private enum SignerUnsignedInteger {
     static func normalize(_ value: String) -> String? {
-        guard !value.isEmpty, value.allSatisfy(\.isNumber) else { return nil }
+        guard !value.isEmpty,
+              value.utf8.allSatisfy({ (48...57).contains($0) }) else { return nil }
         let trimmed = value.drop(while: { $0 == "0" })
         return trimmed.isEmpty ? "0" : String(trimmed)
     }
@@ -255,6 +256,9 @@ private final class WalletVaultStore {
 }
 
 final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
+    private static let protocolVersion = 1
+    private static let maximumPreparedIntents = 32
+    private static let maximumActivePolicies = 32
     private let queue = DispatchQueue(label: "io.sparktales.locus.wallet-signer")
     private let store = WalletVaultStore()
     private var pendingEntropy: Data?
@@ -264,6 +268,13 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     private var activeSessionID: String?
     private var preparedIntents: [String: StoredEVMIntent] = [:]
     private var activePolicies: [String: SignerActivePolicy] = [:]
+
+    func invalidateConnection() {
+        queue.async {
+            self.lockInMemory()
+            self.clearPending()
+        }
+    }
 
     func status(reply: @escaping (Data) -> Void) {
         queue.async { reply(self.encoded(self.currentStatus())) }
@@ -362,12 +373,13 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
 
     func encodeEVMContract(_ request: Data, reply: @escaping (Data) -> Void) {
         queue.async {
-            guard self.unlockedEntropy != nil else {
-                return reply(self.error("Locus Vault is locked."))
-            }
             do {
-                let request = try JSONDecoder().decode(WalletContractEncodingRequest.self, from: request)
-                reply(self.encoded(try self.authoritativeContractEncoding(request)))
+                let authorized: WalletAuthorizedRequest<WalletContractEncodingRequest> =
+                    try self.authorized(request)
+                guard authorized.source == .agent else {
+                    throw self.signerError("Browser requests cannot register or encode contract calls.")
+                }
+                reply(self.encoded(try self.authoritativeContractEncoding(authorized.payload)))
             } catch {
                 reply(self.error("Contract encoding failed: \(error.localizedDescription)"))
             }
@@ -376,11 +388,20 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
 
     func prepareEVM(_ request: Data, reply: @escaping (Data) -> Void) {
         queue.async {
-            guard let entropy = self.unlockedEntropy else {
-                return reply(self.error("Locus Vault is locked."))
-            }
             do {
-                let packet = try JSONDecoder().decode(WalletEVMPreparationPacket.self, from: request)
+                let authorized: WalletAuthorizedRequest<WalletEVMPreparationPacket> =
+                    try self.authorized(request)
+                let packet = authorized.payload
+                guard packet.request.source == authorized.source else {
+                    throw self.signerError("The request source changed before signer preparation.")
+                }
+                guard let entropy = self.unlockedEntropy else {
+                    throw self.signerError("Locus Vault is locked.")
+                }
+                self.expireIntents()
+                guard self.preparedIntents.count < Self.maximumPreparedIntents else {
+                    throw self.signerError("Too many wallet intents are pending for this session.")
+                }
                 let intent: StoredEVMIntent
                 switch packet.request.action.type {
                 case .nativeTransfer:
@@ -399,8 +420,13 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     func simulateEVM(_ request: Data, reply: @escaping (Data) -> Void) {
         queue.async {
             do {
-                let recheck = try JSONDecoder().decode(WalletEVMRecheckPacket.self, from: request)
+                let authorized: WalletAuthorizedRequest<WalletEVMRecheckPacket> =
+                    try self.authorized(request)
+                let recheck = authorized.payload
                 var intent = try self.validatedIntent(for: recheck)
+                guard intent.prepared.source == authorized.source else {
+                    throw self.signerError("The request source changed before transaction recheck.")
+                }
                 intent.prepared = self.rechecked(intent.prepared, using: recheck)
                 self.preparedIntents[recheck.intentID] = intent
                 reply(self.encoded(intent.prepared))
@@ -410,31 +436,48 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         }
     }
 
-    func confirmEVM(_ intentID: String, reply: @escaping (Data) -> Void) {
+    func confirmEVM(_ request: Data, reply: @escaping (Data) -> Void) {
         queue.async {
-            guard var intent = self.preparedIntents[intentID],
-                  intent.prepared.expiresAt > Date() else {
-                return reply(self.error("The prepared transaction is missing or expired."))
+            do {
+                let authorized: WalletAuthorizedRequest<String> = try self.authorized(request)
+                guard var intent = self.preparedIntents[authorized.payload],
+                      intent.prepared.expiresAt > Date(),
+                      intent.prepared.source == authorized.source else {
+                    throw self.signerError("The prepared transaction is missing, expired, or belongs to another source.")
+                }
+                intent.explicitlyApproved = true
+                self.preparedIntents[authorized.payload] = intent
+                reply(self.encoded(intent.prepared))
+            } catch {
+                reply(self.error("Transaction confirmation failed: \(error.localizedDescription)"))
             }
-            intent.explicitlyApproved = true
-            self.preparedIntents[intentID] = intent
-            reply(self.encoded(intent.prepared))
         }
     }
 
     func executeEVM(_ request: Data, reply: @escaping (Data) -> Void) {
         queue.async {
-            guard let entropy = self.unlockedEntropy else {
-                return reply(self.error("Locus Vault is locked."))
-            }
             do {
-                let recheck = try JSONDecoder().decode(WalletEVMRecheckPacket.self, from: request)
+                let authorized: WalletAuthorizedRequest<WalletEVMRecheckPacket> =
+                    try self.authorized(request)
+                guard let entropy = self.unlockedEntropy else {
+                    throw self.signerError("Locus Vault is locked.")
+                }
+                let recheck = authorized.payload
                 let validated = try self.validatedIntent(for: recheck)
+                guard validated.prepared.source == authorized.source else {
+                    throw self.signerError("The transaction belongs to another request source.")
+                }
                 let automaticPolicyID: String?
                 if validated.explicitlyApproved {
                     automaticPolicyID = nil
                 } else {
-                    automaticPolicyID = try self.validAutomaticPolicyID(for: validated.prepared)
+                    let currentPolicyID = try self.validAutomaticPolicyID(for: validated.prepared)
+                    guard currentPolicyID == validated.prepared.policyID else {
+                        throw self.signerError(
+                            "The autonomous policy changed after transaction preparation."
+                        )
+                    }
+                    automaticPolicyID = currentPolicyID
                 }
                 // Consume before signing. If signing or broadcasting later
                 // fails, this exact intent can never be replayed.
@@ -463,12 +506,19 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
 
     func activatePolicy(_ request: Data, reply: @escaping (Data) -> Void) {
         queue.async {
-            guard self.unlockedEntropy != nil else {
-                return reply(self.error("Locus Vault is locked."))
-            }
             do {
-                let policy = try JSONDecoder().decode(WalletSessionPolicy.self, from: request)
+                let authorized: WalletAuthorizedRequest<WalletSessionPolicy> =
+                    try self.authorized(request)
+                guard authorized.source == .agent else {
+                    throw self.signerError("Browser origins cannot activate autonomous policies.")
+                }
+                let policy = authorized.payload
                 try self.validatePolicy(policy)
+                self.expirePolicies()
+                guard self.activePolicies[policy.id] != nil
+                        || self.activePolicies.count < Self.maximumActivePolicies else {
+                    throw self.signerError("Too many wallet policies are active for this session.")
+                }
                 self.activePolicies[policy.id] = SignerActivePolicy(
                     policy: policy, spentBaseUnits: "0"
                 )
@@ -479,17 +529,33 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         }
     }
 
-    func listPolicies(reply: @escaping (Data) -> Void) {
+    func listPolicies(_ request: Data, reply: @escaping (Data) -> Void) {
         queue.async {
-            self.expirePolicies()
-            reply(self.encoded(self.policyStatuses()))
+            do {
+                let authorized = try self.authorizedSession(request)
+                guard authorized.source == .agent else {
+                    throw self.signerError("Browser origins cannot inspect autonomous policies.")
+                }
+                self.expirePolicies()
+                reply(self.encoded(self.policyStatuses()))
+            } catch {
+                reply(self.error("Policy listing failed: \(error.localizedDescription)"))
+            }
         }
     }
 
-    func clearPolicies(reply: @escaping (Data) -> Void) {
+    func clearPolicies(_ request: Data, reply: @escaping (Data) -> Void) {
         queue.async {
-            self.activePolicies.removeAll(keepingCapacity: false)
-            reply(self.encoded([WalletActivePolicyStatus]()))
+            do {
+                let authorized = try self.authorizedSession(request)
+                guard authorized.source == .agent else {
+                    throw self.signerError("Browser origins cannot clear autonomous policies.")
+                }
+                self.activePolicies.removeAll(keepingCapacity: false)
+                reply(self.encoded([WalletActivePolicyStatus]()))
+            } catch {
+                reply(self.error("Policy clearing failed: \(error.localizedDescription)"))
+            }
         }
     }
 
@@ -522,7 +588,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         else if pendingEntropy != nil { state = .awaitingBackup }
         else { state = store.exists ? .locked : .missing }
         return WalletSignerStatus(
-            protocolVersion: 1,
+            protocolVersion: Self.protocolVersion,
             vaultState: state,
             sessionID: activeSessionID,
             accounts: (try? store.accounts()) ?? []
@@ -593,6 +659,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             digest: rust.digest,
             networkID: packet.request.networkID,
             accountID: packet.request.accountID,
+            source: packet.request.source,
             action: packet.request.action,
             summary: "Send \(amount) wei on Sepolia to \(recipient)",
             effects: [WalletDecodedEffect(
@@ -607,7 +674,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             createdAt: now, expiresAt: now.addingTimeInterval(120),
             policyDecision: "exact_confirmation_required", policyID: nil
         )
-        if let policyID = try? validAutomaticPolicyID(for: prepared) {
+        if packet.request.source.kind == .agent,
+           let policyID = try? validAutomaticPolicyID(for: prepared) {
             prepared.policyDecision = "allowed_by_session_policy"
             prepared.policyID = policyID
         }
@@ -677,9 +745,10 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             function: packet.request.action.function ?? "", abiDigest: entry.abiDigest,
             runtimeCodeHash: entry.runtimeCodeHash
         )
-        let prepared = WalletPreparedTransaction(
+        var prepared = WalletPreparedTransaction(
             id: intentID, digest: rust.digest, networkID: packet.request.networkID,
-            accountID: packet.request.accountID, action: packet.request.action,
+            accountID: packet.request.accountID, source: packet.request.source,
+            action: packet.request.action,
             summary: "Call \(entry.label).\(packet.request.action.function ?? "unknown") on Sepolia",
             effects: decoded.effects, riskFlags: decoded.riskFlags, contract: identity,
             adapterID: decoded.adapterID, budgetAssetID: decoded.budgetAssetID,
@@ -690,8 +759,11 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             createdAt: now, expiresAt: now.addingTimeInterval(120),
             policyDecision: "exact_confirmation_required", policyID: nil
         )
-        // Contract policies are intentionally unavailable until their effect
-        // adapter and budget semantics pass a separate security gate.
+        if packet.request.source.kind == .agent,
+           let policyID = try? validAutomaticPolicyID(for: prepared) {
+            prepared.policyDecision = "allowed_by_session_policy"
+            prepared.policyID = policyID
+        }
         return StoredEVMIntent(transaction: packet.transaction, prepared: prepared)
     }
 
@@ -755,6 +827,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     ) -> (effects: [WalletDecodedEffect], riskFlags: [WalletRiskFlag],
           adapterID: String?, budgetAssetID: String, spendBaseUnits: String) {
         let tokenAsset = "eip155:11155111/erc20:\(entry.checksumAddress.lowercased())"
+        let reviewedAdapterID = WalletReviewedAdapters.validatedID(for: entry)
         var effects: [WalletDecodedEffect] = []
         var riskFlags: [WalletRiskFlag] = [.unknownEffect]
         var adapterID: String?
@@ -770,7 +843,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 spender: nil
             )]
             riskFlags = []
-            adapterID = entry.reviewedAdapterID == "erc20-v1" ? "erc20-v1" : nil
+            adapterID = reviewedAdapterID == WalletReviewedAdapters.erc20
+                ? WalletReviewedAdapters.erc20 : nil
             budgetAssetID = tokenAsset
             spendBaseUnits = amount
         } else if action.function == "approve(address,uint256)", action.arguments.count == 2,
@@ -783,9 +857,30 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 spender: action.arguments[0].value
             )]
             riskFlags = amount == Self.maximumUInt256Decimal ? [.unlimitedApproval] : []
-            adapterID = entry.reviewedAdapterID == "erc20-v1" ? "erc20-v1" : nil
+            adapterID = reviewedAdapterID == WalletReviewedAdapters.erc20
+                ? WalletReviewedAdapters.erc20 : nil
             budgetAssetID = tokenAsset
             spendBaseUnits = amount
+        } else if reviewedAdapterID == WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
+                  let swap = WalletUniversalRouterV2Adapter.decode(
+                    action: action, accountAddress: account.address
+                  ) {
+            effects = [
+                WalletDecodedEffect(
+                    id: "\(intentID):uniswap-spend", kind: "token_swap_exact_in",
+                    assetID: swap.inputAssetID, amountBaseUnits: swap.amountIn,
+                    from: account.address, to: entry.checksumAddress, spender: nil
+                ),
+                WalletDecodedEffect(
+                    id: "\(intentID):uniswap-minimum-receive", kind: "minimum_receive",
+                    assetID: swap.outputAssetID, amountBaseUnits: swap.minimumAmountOut,
+                    from: entry.checksumAddress, to: swap.recipient, spender: nil
+                ),
+            ]
+            riskFlags = []
+            adapterID = WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn
+            budgetAssetID = swap.inputAssetID
+            spendBaseUnits = swap.amountIn
         } else {
             effects = [WalletDecodedEffect(
                 id: "\(intentID):contract-call", kind: "contract_call",
@@ -799,6 +894,10 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 amountBaseUnits: nativeValue, from: account.address,
                 to: entry.checksumAddress, spender: nil
             ))
+            // Reviewed token and swap adapters cover no native-value side
+            // effect. Such calls remain available only by exact confirmation.
+            riskFlags.append(.unknownEffect)
+            adapterID = nil
         }
         return (effects, riskFlags, adapterID, budgetAssetID, spendBaseUnits)
     }
@@ -808,16 +907,17 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
 
     private func validatePolicy(_ policy: WalletSessionPolicy) throws {
         let accounts = try store.accounts()
-        guard !policy.id.isEmpty,
+        guard !policy.id.isEmpty, policy.id.count <= 128,
               policy.networkID == "eip155:11155111",
               accounts.contains(where: { $0.id == policy.accountID && $0.chain == .evm }),
               policy.expiresAt > Date(),
               policy.expiresAt <= Date().addingTimeInterval(8 * 60 * 60),
-              policy.allowedAssetIDs == ["slip44:60"],
-              policy.allowedAdapterIDs == ["native-eth-transfer-v1"],
-              policy.allowedContractIDs.isEmpty,
               !policy.allowedRecipients.isEmpty,
+              policy.allowedRecipients.count <= 32,
               policy.allowedRecipients.allSatisfy(Self.isEVMAddress),
+              policy.allowedAssetIDs.count == 1,
+              policy.allowedAdapterIDs.count == 1,
+              policy.allowedContractIDs.count <= 1,
               SignerUnsignedInteger.normalize(policy.maximumTransactionBaseUnits) != nil,
               SignerUnsignedInteger.normalize(policy.maximumSessionBaseUnits) != nil,
               SignerUnsignedInteger.normalize(policy.maximumFeeBaseUnits) != nil,
@@ -825,28 +925,50 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                   policy.maximumTransactionBaseUnits, policy.maximumSessionBaseUnits
               ) else {
             throw signerError(
-                "Phase-one policies must be Sepolia native-ETH budgets for explicit recipient addresses and expire within eight hours."
+                "Wallet policies require one reviewed adapter and asset, explicit EVM counterparties, bounded base-unit budgets, and an expiry within eight hours."
             )
+        }
+        let adapterID = policy.allowedAdapterIDs.first!
+        let nativePolicy = adapterID == "native-eth-transfer-v1"
+            && policy.allowedAssetIDs == ["slip44:60"]
+            && policy.allowedContractIDs.isEmpty
+        let contractPolicy = [
+            WalletReviewedAdapters.erc20,
+            WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
+        ].contains(adapterID)
+            && policy.allowedContractIDs.count == 1
+            && policy.allowedAssetIDs.allSatisfy(Self.isSepoliaERC20AssetID)
+        guard nativePolicy || contractPolicy else {
+            throw signerError("The policy does not match a supported reviewed adapter shape.")
         }
     }
 
     private func validAutomaticPolicyID(for transaction: WalletPreparedTransaction) throws -> String {
         expirePolicies()
-        guard transaction.adapterID == "native-eth-transfer-v1",
-              transaction.budgetAssetID == "slip44:60",
+        guard transaction.source.kind == .agent,
+              let adapterID = transaction.adapterID,
+              ["native-eth-transfer-v1", WalletReviewedAdapters.erc20,
+               WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn].contains(adapterID),
               transaction.riskFlags.isEmpty,
-              let recipient = transaction.action.recipient else {
+              let counterparties = policyCounterparties(for: transaction),
+              !counterparties.isEmpty else {
             throw signerError("This transaction has no reviewed autonomous effect adapter.")
         }
         for active in activePolicies.values.sorted(by: { $0.policy.id < $1.policy.id }) {
             let policy = active.policy
+            let contractMatches = transaction.contract.map {
+                policy.allowedContractIDs.contains($0.registryID)
+            } ?? policy.allowedContractIDs.isEmpty
             guard policy.accountID == transaction.accountID,
                   policy.networkID == transaction.networkID,
                   policy.allowedAssetIDs.contains(transaction.budgetAssetID),
-                  policy.allowedAdapterIDs.contains("native-eth-transfer-v1"),
-                  policy.allowedRecipients.contains(where: {
-                      $0.caseInsensitiveCompare(recipient) == .orderedSame
+                  policy.allowedAdapterIDs.contains(adapterID),
+                  counterparties.allSatisfy({ counterparty in
+                      policy.allowedRecipients.contains(where: {
+                          $0.caseInsensitiveCompare(counterparty) == .orderedSame
+                      })
                   }),
+                  contractMatches,
                   SignerUnsignedInteger.lessThanOrEqual(
                       transaction.spendBaseUnits, policy.maximumTransactionBaseUnits
                   ),
@@ -864,6 +986,31 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             return policy.id
         }
         throw signerError("No active signer policy covers this exact transaction.")
+    }
+
+    private func policyCounterparties(for transaction: WalletPreparedTransaction) -> [String]? {
+        switch transaction.adapterID {
+        case "native-eth-transfer-v1":
+            return transaction.action.recipient.map { [$0] }
+        case WalletReviewedAdapters.erc20:
+            let values = transaction.effects.compactMap { effect -> String? in
+                if effect.kind == "token_transfer" { return effect.to }
+                if effect.kind == "approval" || effect.kind == "approval_revoke" {
+                    return effect.spender
+                }
+                return nil
+            }
+            return values
+        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn:
+            guard transaction.action.arguments.count == 3,
+                  let deadline = UInt64(transaction.action.arguments[2].value),
+                  deadline >= UInt64(max(0, Date().timeIntervalSince1970.rounded(.down))) else {
+                return nil
+            }
+            return transaction.effects.filter { $0.kind == "minimum_receive" }.compactMap(\.to)
+        default:
+            return nil
+        }
     }
 
     private func reserveBudget(for transaction: WalletPreparedTransaction, policyID: String) throws {
@@ -885,6 +1032,11 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         activePolicies = activePolicies.filter { $0.value.policy.expiresAt > now }
     }
 
+    private func expireIntents() {
+        let now = Date()
+        preparedIntents = preparedIntents.filter { $0.value.prepared.expiresAt > now }
+    }
+
     private func policyStatuses() -> [WalletActivePolicyStatus] {
         activePolicies.values.map(\.status).sorted { $0.policy.expiresAt < $1.policy.expiresAt }
     }
@@ -893,7 +1045,14 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         value.count == 42 && value.hasPrefix("0x") && value.dropFirst(2).allSatisfy(\.isHexDigit)
     }
 
+    private static func isSepoliaERC20AssetID(_ value: String) -> Bool {
+        let prefix = "eip155:11155111/erc20:"
+        guard value.hasPrefix(prefix) else { return false }
+        return isEVMAddress(String(value.dropFirst(prefix.count)))
+    }
+
     private func validatedIntent(for recheck: WalletEVMRecheckPacket) throws -> StoredEVMIntent {
+        expireIntents()
         guard let intent = preparedIntents[recheck.intentID] else {
             throw signerError("The prepared transaction is missing or already consumed.")
         }
@@ -925,7 +1084,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     ) -> WalletPreparedTransaction {
         WalletPreparedTransaction(
             id: prepared.id, digest: prepared.digest, networkID: prepared.networkID,
-            accountID: prepared.accountID, action: prepared.action, summary: prepared.summary,
+            accountID: prepared.accountID, source: prepared.source,
+            action: prepared.action, summary: prepared.summary,
             effects: prepared.effects, riskFlags: prepared.riskFlags, contract: prepared.contract,
             adapterID: prepared.adapterID, budgetAssetID: prepared.budgetAssetID,
             spendBaseUnits: prepared.spendBaseUnits,
@@ -998,6 +1158,52 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     private func signerError(_ message: String) -> NSError {
         NSError(domain: "WalletSigner", code: 3,
                 userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    private func authorized<Payload: Codable & Equatable & Sendable>(
+        _ request: Data
+    ) throws -> WalletAuthorizedRequest<Payload> {
+        let authorized = try JSONDecoder().decode(WalletAuthorizedRequest<Payload>.self, from: request)
+        guard authorized.protocolVersion == Self.protocolVersion,
+              let activeSessionID,
+              unlockedEntropy != nil,
+              authorized.sessionID == activeSessionID,
+              validSource(authorized.source) else {
+            throw signerError("The wallet session is missing, stale, or belongs to another client.")
+        }
+        return authorized
+    }
+
+    private func authorizedSession(_ request: Data) throws -> WalletSessionRequest {
+        let authorized = try JSONDecoder().decode(WalletSessionRequest.self, from: request)
+        guard authorized.protocolVersion == Self.protocolVersion,
+              let activeSessionID,
+              unlockedEntropy != nil,
+              authorized.sessionID == activeSessionID,
+              validSource(authorized.source) else {
+            throw signerError("The wallet session is missing, stale, or belongs to another client.")
+        }
+        return authorized
+    }
+
+    private func validSource(_ source: WalletRequestSource) -> Bool {
+        switch source.kind {
+        case .agent:
+            return source.origin == nil
+        case .browser:
+            guard let origin = source.origin,
+                  let components = URLComponents(string: origin),
+                  let scheme = components.scheme?.lowercased(),
+                  ["http", "https"].contains(scheme),
+                  let host = components.host?.lowercased(), !host.isEmpty,
+                  components.path.isEmpty, components.query == nil, components.fragment == nil else {
+                return false
+            }
+            let standardPort = (scheme == "https" && components.port == 443)
+                || (scheme == "http" && components.port == 80)
+            let port = components.port.map { standardPort ? "" : ":\($0)" } ?? ""
+            return origin == "\(scheme)://\(host)\(port)"
+        }
     }
 
     private func lockInMemory() {

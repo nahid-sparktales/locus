@@ -17,7 +17,11 @@ Direct-download builds now ship the private, sandboxed `WalletSigner.xpc`
 service. The service has no network entitlement, seals the 256-bit vault
 entropy with AES-GCM, protects its wrapping key with device-only Keychain user
 presence, and keeps decrypted material, intents, policies, and budgets only in
-its memory. The Mac App Store target does not embed the signer.
+its memory. It validates the signed Locus host before accepting XPC, creates a
+separate signer instance for every connection, requires the active session and
+request source on every privileged message, bounds pending state, and clears
+secrets when that connection ends. The Mac App Store target does not embed the
+signer.
 
 The experimental runtime gate is still off by default. Activation and recovery
 instructions are in [WalletActivation.md](WalletActivation.md).
@@ -41,11 +45,15 @@ Before the signer can satisfy the native protocol, it must:
    public accounts, native EVM Sepolia transactions, signer-owned budgets,
    registered ABI calls with signer-owned calldata and exact confirmation, and
    a session-scoped EIP-1193/EIP-6963 provider for Sepolia native transfers.
-2. **Security gated:** autonomous reviewed ERC-20 and Uniswap effect adapters
-   and their pinned testnet acceptance fixtures.
-3. **Security gated:** EVM mainnet and MetaMask Connect.
-4. **Security gated:** Solana signing and Phantom Connect.
-5. **Security gated:** Sui signing and Slush Wallet Standard.
+2. **Implemented behind experimental gates:** signer-derived ERC-20 semantics
+   and a separate, narrow Universal Router V2 exact-input adapter, each with
+   exact contract, asset, counterparty, fee, cumulative budget, and expiry
+   constraints. Unknown effects and unlimited approvals stay exact-confirmation.
+3. **Foundation implemented, live connection gated:** MetaMask Connect metadata
+   and Sepolia boundary, followed by Phantom Connect on devnet and Slush Wallet
+   Standard on Sui testnet. External wallets retain their keys and confirmation.
+4. **Security gated:** EVM mainnet and live MetaMask connection.
+5. **Security gated:** native Solana/Sui signing and live Phantom/Slush connections.
 
 Each mainnet gate remains off until local-chain integration tests, dependency and SBOM review, secret scanning, threat-model review, and an external security audit have passed.
 
@@ -53,3 +61,7 @@ The current RustSec audit reports no vulnerability advisories. It does report
 two transitive maintenance warnings (`derivative` 2.2.0 and `paste` 1.0.15);
 those crates are captured in the locked SBOM and must be removed or explicitly
 accepted during the dependency review before any mainnet gate can open.
+
+The formal trust boundaries, adapter language, adversarial checks, release
+criteria, and incident procedure are in
+[WalletThreatModel.md](WalletThreatModel.md).
