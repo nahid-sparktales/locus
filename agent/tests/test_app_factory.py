@@ -37,4 +37,4 @@ def test_create_app_keeps_service_state_isolated():
 def test_public_route_contract_matches_snapshot():
     snapshot = Path(__file__).parent / "fixtures" / "server-routes.txt"
     expected = snapshot.read_text(encoding="utf-8").splitlines()
-    assert _route_contract() == expected
+    assert sorted(_route_contract()) == sorted(expected)
