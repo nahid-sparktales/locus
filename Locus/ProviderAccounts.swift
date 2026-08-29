@@ -177,6 +177,51 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// The reasoning efforts one of this provider's models accepts, weakest
+    /// first, or empty when the model has no effort control at all.
+    ///
+    /// Empty is a real answer, not a gap: most models take no effort parameter,
+    /// and sending one to them is an error rather than a no-op. The picker is
+    /// hidden entirely for those, which is why this must not guess — an
+    /// unlisted model gets an empty list and no control.
+    ///
+    /// `.chatGPT` is deliberately absent. A ChatGPT plan reports its own
+    /// efforts through the account's model catalog, which is authoritative and
+    /// already withholds the ones the helper cannot serve; a second static copy
+    /// here could only go stale against it.
+    ///
+    /// Verify against vendor documentation when adding a model.
+    func publishedReasoningEfforts(for model: String) -> [String] {
+        let name = model.lowercased()
+        switch self {
+        case .claude:
+            // Effort is generally available on the Claude 5 family and takes
+            // the place of the retired token budget. Haiku 4.5 rejects the
+            // parameter outright, so it gets no control rather than a default.
+            if name.hasPrefix("claude-opus-5")
+                || name.hasPrefix("claude-sonnet-5")
+                || name.hasPrefix("claude-fable-5") {
+                return ["low", "medium", "high", "xhigh", "max"]
+            }
+            return []
+        case .codex:
+            // OpenAI's reasoning models take `reasoning_effort`; the 4.1 line
+            // and other non-reasoning models do not.
+            if name.hasPrefix("gpt-5") || name.hasPrefix("o3") || name.hasPrefix("o4") {
+                return ["minimal", "low", "medium", "high"]
+            }
+            return []
+        case .chatGPT:
+            return []
+        case .kimi, .kimiCode:
+            return []
+        case .custom:
+            // Someone else's deployment; only they know what it accepts, and a
+            // rejected parameter would fail the turn rather than degrade.
+            return []
+        }
+    }
+
     /// A model this provider will accept for a one-token connection probe.
     var probeModel: String { curatedModels.first ?? "" }
 
@@ -322,6 +367,7 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
     /// Codex-native parity for this ChatGPT account: the agent uses Codex's
     /// own prompt and tools, with no Locus memory or skills. Optional so
     /// accounts stored before this existed decode unchanged; nil reads as on.
+    /// Accounts created since then start at `false` — see the initialiser.
     var codexNativeMode: Bool?
     /// Whether the model may call OpenAI's web search on this account.
     /// Optional for the same migration reason; nil reads as off.
@@ -364,6 +410,15 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
         } else {
             self.codexHomeID = codexHomeID
         }
+        // Same reasoning for the contract the account answers under. A ChatGPT
+        // account built in code is a new one, and a new one runs Locus's own
+        // prompt, tools, memory, and skills. Decoding bypasses this initialiser,
+        // so an account stored before this keeps its nil — and nil still reads
+        // as Codex-native, which is what leaves every account already signed in
+        // answering exactly as it did rather than silently changing contract.
+        if kind == .chatGPT {
+            self.codexNativeMode = false
+        }
     }
 
     /// An unknown kind resolves to `.custom`, which keeps the account usable:
@@ -396,8 +451,11 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
     /// is the pre-multi-account home, which is exactly what nil should mean.
     var codexHomeIdentifier: String { codexHomeID ?? "" }
 
-    /// Parity mode defaults to on: a ChatGPT account answers like Codex until
-    /// the user turns Locus's own prompt and tools back on.
+    /// Whether this account answers like Codex rather than under the Locus
+    /// contract. New accounts are created with parity off, so they arrive with
+    /// Locus's prompt, tools, memory, and skills. nil is the pre-existing
+    /// account that never made the choice, and it keeps reading as on: that is
+    /// what stops an upgrade from re-routing a conversation already in flight.
     var codexNativeModeEnabled: Bool { codexNativeMode ?? true }
 
     /// Web search stays off until the user opts in to sending queries out.

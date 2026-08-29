@@ -1423,6 +1423,73 @@ struct OrchestrationEvent: Identifiable, Codable, Hashable {
     func text(_ key: String) -> String? { values[key]?.string }
 }
 
+/// What a run actually did, folded out of its own durable event log.
+///
+/// The Runs panel used to answer "which files did this touch?" from live git
+/// status, which meant a run that had already finished showed nothing at all.
+/// Every fact here is already persisted per run — `tool_result` carries the tool
+/// name, its outcome, and `file_effects` — so history reads the same as a run
+/// that is still going.
+struct RunWork: Equatable {
+    struct FileChange: Identifiable, Equatable {
+        let path: String
+        /// Reader-facing wording, not the wire value: `created` or `edited`.
+        let effect: String
+        var id: String { path }
+    }
+
+    struct Command: Identifiable, Equatable {
+        let id: String
+        let summary: String
+        let ok: Bool
+    }
+
+    var files: [FileChange] = []
+    var commands: [Command] = []
+    /// Tools the run ran. The count a reader recognises as "how much happened",
+    /// and the fallback for runs recorded before the agent reported it.
+    var toolSteps = 0
+    /// Set when delegation could not be armed at all, which reads nothing like
+    /// an agent that simply saw no reason to split the work.
+    var delegationUnavailable = false
+    var isEmpty: Bool { files.isEmpty && commands.isEmpty }
+
+    init() {}
+
+    init(events: [OrchestrationEvent]) {
+        var effects: [String: String] = [:]
+        var order: [String] = []
+        for event in events where !event.isTransientStream {
+            if event.type == "note",
+               event.values["solo_swarm_unavailable"]?.boolean == true {
+                delegationUnavailable = true
+            }
+            guard event.type == "tool_result" else { continue }
+            toolSteps += 1
+            let ok = event.values["ok"]?.boolean ?? true
+            if event.text("tool") == "bash", let summary = event.text("summary") {
+                commands.append(Command(id: event.id, summary: summary, ok: ok))
+            }
+            guard ok, case .array(let raw)? = event.values["file_effects"] else { continue }
+            for item in raw {
+                guard case .object(let object) = item,
+                      let path = object["path"]?.string, !path.isEmpty else { continue }
+                if effects[path] == nil { order.append(path) }
+                // A file created and then edited in the same run is still new to
+                // the reader, so "create" is the fact worth keeping.
+                if effects[path] != "create" {
+                    effects[path] = object["effect"]?.string ?? "edit"
+                }
+            }
+        }
+        files = order.compactMap { path in
+            // A file the run deleted is not something to list and offer to open.
+            guard let effect = effects[path], effect != "delete" else { return nil }
+            return FileChange(path: path, effect: effect == "create" ? "created" : "edited")
+        }
+    }
+}
+
 struct AgentJobAttempt: Identifiable, Codable, Hashable {
     let runID: String
     let jobID: String

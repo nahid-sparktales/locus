@@ -9,7 +9,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 MIN_INTERVAL_SECONDS = 15 * 60
 MAX_INTERVAL_SECONDS = 365 * 24 * 60 * 60
-SCHEDULE_MODES = {"ask", "work", "plan", "build"}
+#: "build" is the retired GSD mode, kept so existing schedule rows still load.
+SCHEDULE_MODES = {"ask", "work", "plan", "grill", "build"}
 SCHEDULE_RUNNERS = {"solo", "solo_swarm", "team"}
 SCHEDULE_ENVIRONMENTS = {"local", "worktree"}
 SCHEDULE_PROVIDERS = {"ollama", "remote", "chatgpt"}
@@ -78,7 +79,7 @@ def normalize_schedule(value: Any, *, now: float) -> dict[str, Any]:
         raise ScheduleValidationError("workspace_root is required")
     mode = str(value.get("mode") or "work").strip().lower()
     if mode not in SCHEDULE_MODES:
-        raise ScheduleValidationError("mode must be ask, work, plan, or build")
+        raise ScheduleValidationError("mode must be ask, work, plan, or grill")
     environment = str(value.get("execution_environment") or "local").strip().lower()
     if environment not in SCHEDULE_ENVIRONMENTS:
         raise ScheduleValidationError("execution_environment must be local or worktree")

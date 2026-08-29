@@ -248,6 +248,9 @@ class ChatService:
                 "completion_tokens": event["completion_tokens"],
                 "metered_tokens": event["prompt_tokens"] + event["completion_tokens"],
                 "model_calls": event["model_calls"],
+                # Tool steps are the root's own work; workers report their
+                # spend as model calls, not as steps in this turn.
+                "tool_steps": max(int(event.get("tool_steps") or 0), 0),
                 "root_prompt_tokens": root_prompt,
                 "root_completion_tokens": root_completion,
                 "worker_prompt_tokens": worker_usage["prompt_tokens"],

@@ -3223,6 +3223,25 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(account.codexReasoningEffortValue, "", "empty means the model default")
     }
 
+    func testNewChatGPTAccountStartsOnTheLocusContract() {
+        // A ChatGPT account created now answers with Locus's prompt, tools,
+        // memory, and skills. The value is stamped by the initialiser rather
+        // than by the accessor's fallback, which is what lets the test above
+        // keep its nil — an account added before this keeps answering as it did.
+        let account = ProviderAccount(kind: .chatGPT, name: "New")
+
+        XCTAssertEqual(account.codexNativeMode, false)
+        XCTAssertFalse(account.codexNativeModeEnabled, "new accounts use Locus tools")
+    }
+
+    func testNonChatGPTAccountsCarryNoParityChoice() {
+        // Parity is a ChatGPT-only contract; nothing should be stamped on the
+        // other kinds, where the field has no meaning.
+        let account = ProviderAccount(kind: .claude, name: "Work")
+
+        XCTAssertNil(account.codexNativeMode)
+    }
+
     func testCodexNativeParityFieldsRoundTrip() throws {
         var account = ProviderAccount(kind: .chatGPT, name: "Personal")
         account.codexNativeMode = false
@@ -3800,6 +3819,66 @@ final class FeatureLogicTests: XCTestCase {
             from: JSONEncoder().encode(updated)
         )
         XCTAssertTrue(roundTrip.resolvedSoloSwarmEnabled)
+    }
+
+    func testWorkspaceProfilesFromBeforeReasoningEffortStillDecode() throws {
+        let legacy = """
+        [{"path":"/tmp/ws","lastOpened":0,"model":"claude-opus-5","mode":"build",
+          "previewURL":"","contextFiles":[],"draft":""}]
+        """
+        let restored = try JSONDecoder().decode(
+            [WorkspaceProfile].self,
+            from: Data(legacy.utf8)
+        )
+        XCTAssertNil(restored[0].reasoningEffort, "no choice means the account's default")
+
+        var updated = restored[0]
+        updated.reasoningEffort = "xhigh"
+        let roundTrip = try JSONDecoder().decode(
+            WorkspaceProfile.self,
+            from: JSONEncoder().encode(updated)
+        )
+        XCTAssertEqual(roundTrip.reasoningEffort, "xhigh")
+    }
+
+    func testPublishedReasoningEffortsCoverOnlyModelsThatAcceptThem() {
+        // Effort is generally available across the Claude 5 family.
+        XCTAssertEqual(
+            ProviderKind.claude.publishedReasoningEfforts(for: "claude-opus-5"),
+            ["low", "medium", "high", "xhigh", "max"]
+        )
+        XCTAssertEqual(
+            ProviderKind.claude.publishedReasoningEfforts(for: "claude-sonnet-5"),
+            ["low", "medium", "high", "xhigh", "max"]
+        )
+        // Haiku rejects the parameter outright, so it gets no control at all
+        // rather than a control that fails the turn.
+        XCTAssertTrue(
+            ProviderKind.claude.publishedReasoningEfforts(for: "claude-haiku-4-5").isEmpty
+        )
+
+        // OpenAI's reasoning models take an effort; the 4.1 line does not.
+        XCTAssertEqual(
+            ProviderKind.codex.publishedReasoningEfforts(for: "gpt-5.6"),
+            ["minimal", "low", "medium", "high"]
+        )
+        XCTAssertEqual(
+            ProviderKind.codex.publishedReasoningEfforts(for: "o3"),
+            ["minimal", "low", "medium", "high"]
+        )
+        XCTAssertTrue(ProviderKind.codex.publishedReasoningEfforts(for: "gpt-4.1").isEmpty)
+
+        // A ChatGPT plan reports its own efforts through the account catalog;
+        // a static copy here could only go stale against it.
+        XCTAssertTrue(
+            ProviderKind.chatGPT.publishedReasoningEfforts(for: "gpt-5.3-codex").isEmpty
+        )
+        // Someone else's deployment, and an unknown model, get nothing.
+        XCTAssertTrue(ProviderKind.custom.publishedReasoningEfforts(for: "anything").isEmpty)
+        XCTAssertTrue(ProviderKind.kimi.publishedReasoningEfforts(for: "kimi-k3").isEmpty)
+        XCTAssertTrue(
+            ProviderKind.claude.publishedReasoningEfforts(for: "not-a-model").isEmpty
+        )
     }
 
     func testSettingsCarryTheActiveAccountAndOldOnesDecodeWithout() throws {
@@ -5578,5 +5657,116 @@ final class FeatureLogicTests: XCTestCase {
     func testSplitWorkspaceAlwaysResolvesToSideBySidePresentation() {
         XCTAssertEqual(ChatWorkspacePresentation.resolve(isSplit: false), .single)
         XCTAssertEqual(ChatWorkspacePresentation.resolve(isSplit: true), .sideBySide)
+    }
+
+    // MARK: - RunWork
+
+    /// Events arrive over the wire, so build them the way the app does rather
+    /// than reaching past the decoder.
+    private func runEvents(_ raw: [[String: Any]]) throws -> [OrchestrationEvent] {
+        let data = try JSONSerialization.data(withJSONObject: raw)
+        return try JSONDecoder().decode([OrchestrationEvent].self, from: data)
+    }
+
+    func testRunWorkReadsFilesAndCommandsFromToolResults() throws {
+        let events = try runEvents([
+            ["seq": 1, "type": "run_started"],
+            [
+                "seq": 2, "type": "tool_result", "tool": "write_file", "ok": true,
+                "event_id": "a", "summary": "write app.py (20 lines)",
+                "file_effects": [["path": "app.py", "effect": "create"]],
+            ],
+            [
+                "seq": 3, "type": "tool_result", "tool": "bash", "ok": true,
+                "event_id": "b", "summary": "$ pytest",
+            ],
+            [
+                "seq": 4, "type": "tool_result", "tool": "multi_edit", "ok": true,
+                "event_id": "c", "summary": "edit app.py",
+                "file_effects": [
+                    ["path": "app.py", "effect": "edit"],
+                    ["path": "util.py", "effect": "edit"],
+                ],
+            ],
+            ["seq": 5, "type": "turn_done"],
+        ])
+
+        let work = RunWork(events: events)
+
+        XCTAssertEqual(work.toolSteps, 3)
+        // A file created and later edited in the same run still reads as new.
+        XCTAssertEqual(
+            work.files,
+            [
+                RunWork.FileChange(path: "app.py", effect: "created"),
+                RunWork.FileChange(path: "util.py", effect: "edited"),
+            ]
+        )
+        XCTAssertEqual(work.commands.map(\.summary), ["$ pytest"])
+        XCTAssertFalse(work.isEmpty)
+        XCTAssertFalse(work.delegationUnavailable)
+    }
+
+    func testRunWorkIgnoresFailedEffectsAndDeletions() throws {
+        let events = try runEvents([
+            [
+                "seq": 1, "type": "tool_result", "tool": "write_file", "ok": false,
+                "event_id": "a", "summary": "write blocked.py",
+                "file_effects": [["path": "blocked.py", "effect": "create"]],
+            ],
+            [
+                "seq": 2, "type": "tool_result", "tool": "bash", "ok": false,
+                "event_id": "b", "summary": "$ false",
+            ],
+            [
+                "seq": 3, "type": "tool_result", "tool": "delete_file", "ok": true,
+                "event_id": "c", "summary": "delete old.py",
+                "file_effects": [["path": "old.py", "effect": "delete"]],
+            ],
+        ])
+
+        let work = RunWork(events: events)
+
+        // A call that did not succeed wrote nothing, and a deleted file is not
+        // something to list and offer to open.
+        XCTAssertTrue(work.files.isEmpty)
+        XCTAssertEqual(work.toolSteps, 3)
+        XCTAssertEqual(work.commands.map(\.ok), [false])
+    }
+
+    func testRunWorkSeparatesUnavailableDelegationFromAnAgentDecliningIt() throws {
+        let quiet = RunWork(events: try runEvents([
+            ["seq": 1, "type": "note", "text": "Nothing to split here."],
+        ]))
+        XCTAssertFalse(quiet.delegationUnavailable)
+
+        let broken = RunWork(events: try runEvents([[
+            "seq": 1, "type": "note",
+            "text": "The selected provider does not support Solo delegation.",
+            "solo_swarm_unavailable": true,
+        ]]))
+        XCTAssertTrue(broken.delegationUnavailable)
+    }
+
+    func testRunWorkOfATurnThatOnlyTalkedIsEmpty() throws {
+        let work = RunWork(events: try runEvents([
+            ["seq": 1, "type": "run_started"],
+            ["seq": 2, "type": "turn_done"],
+        ]))
+        XCTAssertTrue(work.isEmpty)
+        XCTAssertEqual(work.toolSteps, 0)
+    }
+
+    func testDisplayUserTextDropsTheComposerDecoration() {
+        let decorated = """
+        [Locus mode: Build]
+
+        Implement the request completely using the Get Shit Done method.
+
+        User request:
+        make a stock checker
+        """
+        XCTAssertEqual(AppModel.displayUserText(decorated), "make a stock checker")
+        XCTAssertEqual(AppModel.displayUserText("plain ask"), "plain ask")
     }
 }

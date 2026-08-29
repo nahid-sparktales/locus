@@ -1518,6 +1518,28 @@ def test_provider_endpoint_carries_the_account_identity(client):
     assert client.post("/api/provider", json={"provider": "ollama"}).json()["account_label"] == ""
 
 
+def test_provider_endpoint_carries_the_reasoning_effort(client):
+    body = client.post("/api/provider", json={
+        "provider": "remote",
+        "base_url": "https://api.anthropic.com/v1",
+        "api_key": "sk-ant-secret",
+        "model": "claude-opus-5",
+        "auth_style": "anthropic",
+        "reasoning_effort": "high",
+    }).json()
+    assert body["remote_reasoning_effort"] == "high"
+
+    # "" is a real choice — the model's own default — and has to clear the
+    # previous one rather than read as an absent field.
+    cleared = client.post("/api/provider", json={
+        "provider": "remote",
+        "base_url": "https://api.anthropic.com/v1",
+        "model": "claude-opus-5",
+        "reasoning_effort": "",
+    }).json()
+    assert cleared["remote_reasoning_effort"] == ""
+
+
 # ------------------------------------------------------------------------ git
 
 
@@ -4684,6 +4706,7 @@ def test_solo_swarm_turn_combines_root_and_worker_usage_without_changing_context
             "type": "turn_done",
             "reason": "complete",
             "model_calls": 1,
+            "tool_steps": 6,
             "prompt_tokens": 200,
             "completion_tokens": 80,
             "provider": "ollama",
@@ -4702,6 +4725,8 @@ def test_solo_swarm_turn_combines_root_and_worker_usage_without_changing_context
         "completion_tokens": 110,
         "metered_tokens": 430,
         "model_calls": 4,
+        # The root's own steps; workers report model calls, not steps.
+        "tool_steps": 6,
         "root_prompt_tokens": 200,
         "root_completion_tokens": 80,
         "worker_prompt_tokens": 120,
@@ -6273,6 +6298,65 @@ def test_anthropic_output_cap_matches_the_room_reserved_for_it(tmp_path):
     assert options == {"max_tokens": core._reply_room()}
     assert options["max_tokens"] == 8_192, "the cap Anthropic is given, not 4096"
     assert "num_ctx" not in options, "meaningless in an OpenAI-style body"
+
+
+def test_anthropic_reasoning_effort_rides_inside_output_config(tmp_path):
+    """Anthropic carries effort in `output_config`, not at the top level, and
+    the token budget still has to travel with it."""
+    core = _remote_core(tmp_path, base_url="https://api.anthropic.com/v1")
+    core.config["published_context_window"] = 200_000
+    core.refresh_context_limit()
+    core.config["remote_reasoning_effort"] = "xhigh"
+
+    options = core.chat_options()
+
+    assert options == {
+        "max_tokens": core._reply_room(),
+        "output_config": {"effort": "xhigh"},
+    }
+    assert "reasoning_effort" not in options, "that is the OpenAI spelling"
+
+
+def test_openai_style_reasoning_effort_is_sent_top_level(tmp_path):
+    core = _remote_core(tmp_path)
+    core.config["remote_reasoning_effort"] = "low"
+
+    options = core.chat_options()
+
+    assert options == {"reasoning_effort": "low"}
+    assert "output_config" not in options, "that is the Anthropic spelling"
+
+
+def test_no_reasoning_effort_sends_no_effort_field(tmp_path):
+    """A model without an effort control rejects the field rather than ignoring
+    it, so an empty setting has to mean "send nothing" — not "send empty"."""
+    core = _remote_core(tmp_path)
+    core.config["remote_reasoning_effort"] = ""
+
+    assert core.chat_options() is None
+
+
+def test_switching_endpoints_drops_the_previous_effort(tmp_path):
+    """An effort belongs to the model that advertised it. Carrying "xhigh" to a
+    host that rejects the field would fail the turn outright."""
+    core = _remote_core(tmp_path)
+    core.config["remote_reasoning_effort"] = "high"
+
+    core.use_remote(base_url="https://api.anthropic.com/v1", api_key="k")
+
+    assert core.config["remote_reasoning_effort"] == ""
+
+
+def test_reselecting_the_same_endpoint_keeps_the_effort(tmp_path):
+    """"Missing means keep" — re-applying the same route must not silently
+    reset a choice the user made."""
+    core = _remote_core(tmp_path)
+    base = str(core.config["remote_base_url"])
+    core.config["remote_reasoning_effort"] = "high"
+
+    core.use_remote(base_url=base, api_key="k")
+
+    assert core.config["remote_reasoning_effort"] == "high"
 
 
 def test_a_pinned_window_that_spills_to_the_cpu_is_backed_off(tmp_path):

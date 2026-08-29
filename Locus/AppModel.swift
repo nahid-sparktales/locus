@@ -1280,6 +1280,87 @@ final class AppModel: ObservableObject {
         )
     }
 
+    // MARK: - Reasoning effort
+
+    /// The efforts the current route accepts, weakest first, or empty when it
+    /// has no effort control. Empty is what hides the header picker.
+    ///
+    /// A ChatGPT plan answers for itself: its catalog is fetched from the
+    /// account's own model list and already withholds efforts the helper
+    /// cannot serve. Every other account falls back to the published table.
+    /// Local Ollama has no account and no effort control.
+    var reasoningEffortOptions: [String] {
+        guard let account = activeAccount else { return [] }
+        let model = routedModel(for: account)
+        if account.kind == .chatGPT {
+            var efforts = accountModelCatalogs[account.id]?
+                .first(where: { $0.id == model })?
+                .supportedReasoningEfforts?
+                .map(\.effort) ?? []
+            // Keep a stored choice selectable even when the catalog drops it,
+            // so the picker never silently disagrees with what is being sent.
+            let current = resolvedReasoningEffort
+            if !current.isEmpty, !efforts.contains(current) { efforts.append(current) }
+            return efforts
+        }
+        return account.kind.publishedReasoningEfforts(for: model)
+    }
+
+    /// The effort this route will actually request: the workspace's own choice,
+    /// then the account's default, then "" for the model's default.
+    ///
+    /// nil and "" are different answers here. nil is a workspace that has never
+    /// chosen, which defers to the account; "" is a workspace that chose Auto,
+    /// which has to beat an account default or picking Auto would do nothing on
+    /// the one kind of account that has one.
+    var resolvedReasoningEffort: String {
+        if let workspace = currentWorkspaceReasoningEffort { return workspace }
+        return activeAccount?.codexReasoningEffortValue ?? ""
+    }
+
+    /// The override stored against the workspace currently open, if any.
+    private var currentWorkspaceReasoningEffort: String? {
+        let path = workspacePath
+        return workspaceProfiles.first {
+            SessionSummary.canonicalWorkspacePath($0.path) == path
+        }?.reasoningEffort
+    }
+
+    /// Records the effort for this workspace and re-sends the route so the next
+    /// turn uses it. Effort is applied per turn on every provider, so this never
+    /// restarts a conversation — only the prompt cache pays, by re-reading the
+    /// prefix once.
+    func setReasoningEffort(_ effort: String) {
+        guard effort != resolvedReasoningEffort else { return }
+        let path = workspacePath
+        if let index = workspaceProfiles.firstIndex(where: {
+            SessionSummary.canonicalWorkspacePath($0.path) == path
+        }) {
+            workspaceProfiles[index].reasoningEffort = effort
+            persistWorkspaceProfiles()
+        } else {
+            // No profile yet — the workspace has not been recorded. Writing the
+            // whole profile is what creates it, and it carries the effort along.
+            pendingReasoningEffort = effort
+            persistCurrentWorkspaceProfile()
+        }
+        pendingReasoningEffort = nil
+        Task { _ = await applyProvider(announce: false) }
+    }
+
+    /// Carries an effort into `persistCurrentWorkspaceProfile` for a workspace
+    /// that has no stored profile yet.
+    private var pendingReasoningEffort: String?
+
+    /// Test seam: the effort picker reads a catalog fetched from the account's
+    /// own model list, and unit tests have no backend to fetch one from.
+    func applyAccountModelCatalogForTesting(
+        _ models: [ChatGPTModelsResponse.Model],
+        for account: UUID
+    ) {
+        accountModelCatalogs[account] = models
+    }
+
     func isLocalModelHidden(_ name: String) -> Bool {
         settings.hiddenLocalModels.contains {
             $0.caseInsensitiveCompare(name) == .orderedSame
@@ -9678,7 +9759,9 @@ final class AppModel: ObservableObject {
                 // missing field, so omitting one would freeze a stale choice.
                 "native_mode": account.codexNativeModeEnabled,
                 "web_search": account.codexWebSearchEnabled,
-                "reasoning_effort": account.codexReasoningEffortValue,
+                // The workspace's own choice when it has one, else the
+                // account's default — the header picker overrides the editor.
+                "reasoning_effort": effortToSend(for: account),
             ]
         }
         return [
@@ -9704,8 +9787,39 @@ final class AppModel: ObservableObject {
             "context_window": account.contextWindow ?? 0,
             "published_context_window":
                 account.kind.publishedContextWindow(for: account.preferredModel) ?? 0,
+            // Always sent, like the ChatGPT route's copy: "" is a real choice
+            // meaning the model's default, and omitting the key would leave a
+            // cleared effort reading as "keep whatever was set before".
+            "reasoning_effort": effortToSend(for: account),
             "verify": verify,
         ]
+    }
+
+    /// The effort to actually request, or "" when this model will not take the
+    /// one that is stored.
+    ///
+    /// The stored choice belongs to the workspace, not to the account, so it
+    /// outlives a switch between them: "max" set on a Claude model is still
+    /// there when the same workspace routes to a ChatGPT plan, which tops out
+    /// at "xhigh". An effort a model does not accept fails the turn rather than
+    /// being ignored, so it is filtered here rather than sent hopefully.
+    private func effortToSend(for account: ProviderAccount) -> String {
+        let effort = resolvedReasoningEffort
+        guard !effort.isEmpty else { return "" }
+        let model = routedModel(for: account)
+        guard account.kind == .chatGPT else {
+            return account.kind.publishedReasoningEfforts(for: model)
+                .contains(effort) ? effort : ""
+        }
+        // The catalog arrives asynchronously, and a backend older than
+        // effort reporting sends no efforts at all. With nothing to check
+        // against, the helper is the authority — pass the choice through
+        // rather than silently dropping what the user asked for.
+        guard let supported = accountModelCatalogs[account.id]?
+            .first(where: { $0.id == model })?
+            .supportedReasoningEfforts
+        else { return effort }
+        return supported.contains { $0.effort == effort } ? effort : ""
     }
 
     /// Pushes the chosen provider to the local agent. The key travels from the
@@ -13663,6 +13777,9 @@ final class AppModel: ObservableObject {
             previewURL: settings.previewURL,
             contextFiles: contextFiles,
             draft: draftText,
+            reasoningEffort: pendingReasoningEffort ?? workspaceProfiles.first(where: {
+                SessionSummary.canonicalWorkspacePath($0.path) == path
+            })?.reasoningEffort,
             soloSwarmEnabled: soloSwarmEnabled,
             landingCheckCommands: workspaceProfiles.first(where: {
                 SessionSummary.canonicalWorkspacePath($0.path) == path
@@ -14454,17 +14571,68 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// The tool trail of a Solo turn that wrote code and ran it: two files, two
+    /// commands, one of which failed. Everything the Overview's file list and
+    /// the Activity timeline read comes from events shaped exactly like these.
+    private func soloWorkFixtureEvents(runID: String, start: Double) -> [[String: Any]] {
+        [
+            [
+                "event_id": "seed-work-1", "run_id": runID, "seq": 3,
+                "occurred_at": start + 12,
+                "type": "tool_result", "id": "call-1", "tool": "write_file",
+                "summary": "write stock_checker.py (77 lines)",
+                "result": "Wrote /tmp/stock_checker.py (2210 chars, 78 lines).",
+                "ok": true, "denied": false,
+                "file_effects": [["path": "stock_checker.py", "effect": "create"]],
+            ],
+            [
+                "event_id": "seed-work-2", "run_id": runID, "seq": 4,
+                "occurred_at": start + 31,
+                "type": "tool_result", "id": "call-2", "tool": "bash",
+                "summary": "$ python3 -m unittest test_stock_checker.py",
+                "result": "[stderr]\nImportError: no module named stock_checker\n\n[exit code 1]",
+                "ok": false, "denied": false,
+            ],
+            [
+                "event_id": "seed-work-3", "run_id": runID, "seq": 5,
+                "occurred_at": start + 48,
+                "type": "tool_result", "id": "call-3", "tool": "multi_edit",
+                "summary": "edit stock_checker.py (5 changes)",
+                "result": "Edited /tmp/stock_checker.py: applied 5 edit(s).",
+                "ok": true, "denied": false,
+                "file_effects": [
+                    ["path": "stock_checker.py", "effect": "edit"],
+                    ["path": "test_stock_checker.py", "effect": "create"],
+                ],
+            ],
+            [
+                "event_id": "seed-work-4", "run_id": runID, "seq": 6,
+                "occurred_at": start + 96,
+                "type": "tool_result", "id": "call-4", "tool": "bash",
+                "summary": "$ python3 -m unittest test_stock_checker.py",
+                "result": "Ran 4 tests in 0.01s\n\nOK",
+                "ok": true, "denied": false,
+            ],
+        ]
+    }
+
     private func seedUITestRunFixtureIfNeeded() {
         guard let fixture = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_RUN_FIXTURE"],
               [
                 "completed", "recoverable", "dispatcher-repair", "dispatch-plan",
                 "activity", "swarm-live", "swarm-recoverable",
                 "solo-swarm-live", "solo-swarm-completed", "solo-swarm-empty",
+                "solo-swarm-work",
               ].contains(fixture)
         else { return }
         let isSoloSwarmFixture = fixture.hasPrefix("solo-swarm-")
+        // A Solo turn that did real work by itself: no workers, but files
+        // written and commands run. The panel's most common case, and the one
+        // that used to render as an empty Activity list and a single model call.
+        let soloWithoutWorkers = ["solo-swarm-empty", "solo-swarm-work"].contains(fixture)
         let state: TeamRunState = switch fixture {
-        case "completed", "solo-swarm-completed", "solo-swarm-empty": .completed
+        case "completed", "solo-swarm-completed", "solo-swarm-empty", "solo-swarm-work":
+            .completed
         case "recoverable", "swarm-recoverable": .interrupted
         case "dispatch-plan": .waitingDispatchApproval
         case "activity": .failed
@@ -14472,7 +14640,7 @@ final class AppModel: ObservableObject {
         default: .dispatching
         }
         let lastSequence = ["dispatcher-repair", "dispatch-plan"].contains(fixture) ? 1 : 1_200
-        let swarmAttempts: [AgentJobAttempt]? = if isSoloSwarmFixture && fixture != "solo-swarm-empty" {
+        let swarmAttempts: [AgentJobAttempt]? = if isSoloSwarmFixture && !soloWithoutWorkers {
             [
                 AgentJobAttempt(
                     runID: "seed-run",
@@ -14584,9 +14752,11 @@ final class AppModel: ObservableObject {
                 "model_calls": .number(3),
                 "root_prompt_tokens": .number(260),
                 "root_completion_tokens": .number(90),
-                "worker_prompt_tokens": .number(fixture == "solo-swarm-empty" ? 0 : 180),
-                "worker_completion_tokens": .number(fixture == "solo-swarm-empty" ? 0 : 60),
-                "worker_model_calls": .number(fixture == "solo-swarm-empty" ? 0 : 2),
+                "worker_prompt_tokens": .number(soloWithoutWorkers ? 0 : 180),
+                "worker_completion_tokens": .number(soloWithoutWorkers ? 0 : 60),
+                "worker_model_calls": .number(soloWithoutWorkers ? 0 : 2),
+                "metered_tokens": .number(22_901),
+                "tool_steps": .number(fixture == "solo-swarm-work" ? 4 : 0),
             ] : ["model_calls": .number(12)],
             manifest: isSoloSwarmFixture ? ["solo_swarm": .bool(true)] : nil,
             jobCount: isSoloSwarmFixture ? (swarmAttempts?.count ?? 0) : 4,
@@ -14615,7 +14785,7 @@ final class AppModel: ObservableObject {
         if fixture == "activity" {
             return
         }
-        let rawEvents: [[String: Any]]
+        var rawEvents: [[String: Any]]
         if isSoloSwarmFixture {
             rawEvents = [
                 [
@@ -14630,14 +14800,21 @@ final class AppModel: ObservableObject {
                     "event_id": "seed-event-2",
                     "run_id": run.id,
                     "seq": 2,
-                    "type": fixture == "solo-swarm-empty" ? "turn_done" : "agent_spawned",
+                    "type": soloWithoutWorkers ? "turn_done" : "agent_spawned",
                     "node_id": "/root/inventory-api",
                     "parent_node_id": "/root",
                     "depth": 1,
-                    "agent_name": "Inventory API reader",
-                    "goal": "Verify the inventory API contract",
+                    // Worker identity belongs only to a run that spawned one;
+                    // carrying it on a turn_done made the terminal row describe
+                    // a worker that never existed.
+                    "agent_name": soloWithoutWorkers ? "" : "Inventory API reader",
+                    "goal": soloWithoutWorkers ? "" : "Verify the inventory API contract",
+                    "reason": soloWithoutWorkers ? "complete" : "",
                 ],
             ]
+            if fixture == "solo-swarm-work" {
+                rawEvents += soloWorkFixtureEvents(runID: run.id, start: run.createdAt)
+            }
         } else if fixture.hasPrefix("swarm-") {
             rawEvents = [[
                 "event_id": "seed-event-1",
@@ -15189,7 +15366,11 @@ final class AppModel: ObservableObject {
             .nilIfEmpty ?? "locus-session"
     }
 
-    nonisolated private static func displayUserText(_ content: String) -> String {
+    /// The user's own words, with the composer's `[Locus mode: …]` wrapper and
+    /// context sections removed. The transcript has always shown this; the Runs
+    /// panel showed the raw decorated prompt, so the request itself was the part
+    /// that got truncated away.
+    nonisolated static func displayUserText(_ content: String) -> String {
         guard let range = content.range(of: "User request:\n", options: .backwards) else {
             return content
         }

@@ -276,12 +276,14 @@ The `chatgpt` variant requires `account_id`, with optional `account_label` and
 primary service's bundled Codex App Server and never falls back to `remote`.
 It also accepts three optional settings with "missing means keep" semantics,
 so an older client re-selecting the account never resets them: `native_mode`
-(bool, default true), `web_search` (bool, default false), and
+(bool, default true when the field is absent — note that Locus itself always
+sends the field, and sends `false` for newly created accounts),
+`web_search` (bool, default false), and
 `reasoning_effort` (string, `""` = the model's default, applied per turn —
 changing it never restarts the helper thread). `GET` echoes them back as
 `chatgpt_native_mode`, `chatgpt_web_search`, and `chatgpt_reasoning_effort`.
 
-With `native_mode` on (Codex-native parity, the default), interactive solo
+With `native_mode` on (Codex-native parity, the wire default), interactive solo
 Work/Plan/Build turns run under the model's own Codex base prompt instead of
 the Locus system prompt: `thread/start` omits `baseInstructions` and
 `personality`, AGENTS.md rides in `developerInstructions`, the environment
@@ -1069,7 +1071,15 @@ The terminal also carries this turn's spend and provenance — `prompt_tokens`
 and `completion_tokens` (deltas for the turn, not conversation totals),
 `provider`, `model`, `account_label` (empty for local Ollama),
 `workspace_root`, and `session_id`. The fields are additive; old clients
-ignore them. The server persists solo turns with nonzero tokens into the run
+ignore them.
+`tool_steps` counts the tools this turn actually ran, which is the number a
+reader recognises as "how much work happened". It exists because `model_calls`
+does not mean the same thing on both routes: the local loop makes one provider
+request per iteration, while a ChatGPT App Server turn is a single thread call
+that may run twenty tools inside it. On that route `model_calls` is derived from
+the helper's per-call `thread/tokenUsage/updated` reports, and token deltas are
+summed across them rather than read from the final snapshot — reading only the
+last one billed a whole turn at one request's cost. The server persists solo turns with nonzero tokens into the run
 store's `turn_usage` table for `GET /api/usage/summary`; orchestrated runs
 account usage in their own run records instead.
 A `session_info` event follows immediately.

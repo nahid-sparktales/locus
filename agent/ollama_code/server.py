@@ -507,7 +507,14 @@ def _run_user_turn(
                 virtual_tools=svc.core.solo_worker_virtual_tools,
             )
         except SoloSwarmError as exc:
-            svc.emit({"type": "note", "text": str(exc)})
+            # Durable, so the Runs panel can tell "the agent saw no reason to
+            # delegate" apart from "delegation was never available here". The
+            # two used to look identical once the note scrolled away.
+            svc.emit({
+                "type": "note",
+                "text": str(exc),
+                "solo_swarm_unavailable": True,
+            })
     svc.active_solo_swarm = swarm
     svc.core.tool_ctx.delegate_read_only = swarm.execute if swarm is not None else None
     svc.core.tool_registry.set_solo_swarm_enabled(swarm is not None)
@@ -1890,7 +1897,10 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             _command_error(svc, str(mtype), "Message is too large to process safely.")
             return
         mode = str(msg.get("mode") or "").strip().lower()
-        if mode not in {"", "ask", "work", "plan", "build"}:
+        # "build" is the retired GSD raw value. It stays accepted so an older
+        # desktop build, a legacy schedule row, or a replayed transcript is not
+        # rejected mid-flight; `AgentCore.configure_agent` maps it to work.
+        if mode not in {"", "ask", "work", "plan", "grill", "build"}:
             _command_error(svc, str(mtype), "Unknown conversation mode.")
             return
         just_chat = mode == "ask"

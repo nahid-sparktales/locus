@@ -51,6 +51,14 @@
 
 ### Changed
 
+- **New ChatGPT plans now answer with Locus's tools.** Adding a ChatGPT account
+  starts it under the Locus contract — Locus's own prompt and tool registry,
+  with approved memories, cross-chat context, and the skill index — instead of
+  Codex-native parity. ChatGPT accounts you already added are untouched and
+  keep answering exactly as they did; flipping that switch restarts a
+  conversation's server-side context, so it stays your call. "Codex-native
+  mode" is still one toggle away in the account editor, for either direction.
+
 - **Reasoning and tool activity now stay in transcript order.** Collapsed mode
   uses quiet inline summary disclosures at each real activity boundary, while
   Expanded reasoning and Verbose tools retain their detailed cards. Each turn

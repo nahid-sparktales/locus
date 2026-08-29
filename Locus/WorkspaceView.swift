@@ -7,6 +7,7 @@ struct WorkspaceView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var modelPickerPresented = false
+    @State private var effortPickerPresented = false
     @State private var teamProgressPresented = false
     let sidebarVisible: Bool
     let showSidebar: () -> Void
@@ -180,6 +181,10 @@ struct WorkspaceView: View {
                     .accessibilityIdentifier("workspace.reviewAndLand")
             }
 
+            if !model.reasoningEffortOptions.isEmpty {
+                effortPicker
+            }
+
             Button {
                 modelPickerPresented.toggle()
             } label: {
@@ -233,6 +238,104 @@ struct WorkspaceView: View {
         .overlay(alignment: .bottom) {
             Rectangle().fill(LocusTheme.line).frame(height: 1)
         }
+    }
+
+    /// How hard the current model should think, beside the model it applies to.
+    ///
+    /// Only rendered when the route advertises efforts at all — most models
+    /// take no effort parameter, and a disabled control for them would be
+    /// permanent dead chrome for anyone on a local model.
+    private var effortPicker: some View {
+        Button {
+            effortPickerPresented.toggle()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "gauge.with.dots.needle.33percent")
+                    .font(.locus(size: 9, weight: .semibold))
+                    .foregroundStyle(LocusTheme.muted)
+                Text(effortLabel)
+                    .font(.locus(size: 9, weight: .semibold))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.locus(size: 8, weight: .semibold))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 28)
+            .background(LocusTheme.white.opacity(0.78))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(LocusTheme.line, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.locus())
+        .help("Reasoning effort · \(effortLabel)")
+        .accessibilityLabel("Reasoning effort, \(effortLabel)")
+        .accessibilityIdentifier("workspace.effortPicker")
+        .frame(height: 28)
+        .popover(isPresented: $effortPickerPresented, arrowEdge: .top) {
+            effortPopover
+        }
+    }
+
+    /// "Auto" rather than "Default": the closed chip has no room to say what
+    /// the default is, and Auto reads as a choice the model makes.
+    private var effortLabel: String {
+        let effort = model.resolvedReasoningEffort
+        return effort.isEmpty ? "Auto" : effort.capitalized
+    }
+
+    private var effortPopover: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Reasoning effort")
+                .font(.locus(size: 10, weight: .bold))
+
+            effortRow(effort: "", title: "Auto")
+            ForEach(model.reasoningEffortOptions, id: \.self) { effort in
+                effortRow(effort: effort, title: effort.capitalized)
+            }
+
+            Divider().overlay(LocusTheme.line)
+
+            Text(
+                "Applies to this workspace and takes effect on the next message. "
+                + "Higher efforts think longer and cost more."
+            )
+            .font(.locus(size: 8))
+            .foregroundStyle(LocusTheme.muted)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(width: 240)
+        .background(LocusTheme.white)
+        .accessibilityIdentifier("workspace.effortPicker.popover")
+    }
+
+    private func effortRow(effort: String, title: String) -> some View {
+        let selected = model.resolvedReasoningEffort == effort
+        return Button {
+            model.setReasoningEffort(effort)
+            effortPickerPresented = false
+        } label: {
+            HStack(spacing: 8) {
+                Text(title)
+                Spacer(minLength: 12)
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.locus(size: 8, weight: .bold))
+                }
+            }
+            .font(.locus(size: 9, weight: .semibold))
+            .foregroundStyle(LocusTheme.inkSoft)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            .background(selected ? LocusTheme.paperDeep : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.locus())
+        .accessibilityIdentifier("workspace.effortPicker.\(effort.isEmpty ? "auto" : effort)")
     }
 
     private var shouldShowWorkStatus: Bool {

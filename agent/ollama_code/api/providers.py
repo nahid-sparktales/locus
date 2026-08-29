@@ -320,6 +320,7 @@ def _apply_provider(service: ChatService, body: dict[str, Any]) -> dict[str, Any
     raw_style = body.get("auth_style")
     raw_label = body.get("account_label")
     raw_lists = body.get("lists_models")
+    raw_effort = body.get("reasoning_effort")
     try:
         service.core.use_remote(
             base_url=base_url,
@@ -330,6 +331,7 @@ def _apply_provider(service: ChatService, body: dict[str, Any]) -> dict[str, Any
             lists_models=None if raw_lists is None else bool(raw_lists),
             context_window_tokens=body.get("context_window"),
             published_context_window=body.get("published_context_window"),
+            reasoning_effort=None if raw_effort is None else str(raw_effort),
         )
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
