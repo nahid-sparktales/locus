@@ -1,0 +1,9 @@
+# Design-system audit baseline: the number of existing violations
+# each rule is allowed. New violations fail CI; removing them and
+# rerunning Tools/AuditDesignSystem.sh --update-baseline lowers these.
+swiftui-point-fonts 6
+appkit-small-fonts 3
+plain-button-styles 19
+custom-animations 0
+move-transitions 0
+repeat-forever 0
