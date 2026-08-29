@@ -33,6 +33,16 @@ _WORKSPACE_READ_TOOLS = {
 }
 _WORKSPACE_WRITE_TOOLS = {"write_file", "edit_file", "multi_edit", "apply_patch", "notes_update"}
 _SHELL_TOOLS = {"bash", "background_service"}
+_READ_ONLY_BUILTIN_TOOLS = {
+    *_WORKSPACE_READ_TOOLS,
+    *_SAFE_EXTENSION_TOOLS,
+    "search_memory",
+    "web_fetch",
+}
+_PARALLEL_SAFE_BUILTIN_TOOLS = {
+    "read_file", "glob", "grep", "list_dir", "git_status", "git_diff",
+    "search_workspace_knowledge", "search_memory", "web_fetch", "read_skill_file",
+}
 
 
 def _base_schemas(access_ceiling: str = "workspace_write") -> list[dict[str, Any]]:
@@ -924,8 +934,6 @@ class ToolRegistry:
 
     def _user_allows(self, name: str) -> bool:
         policy = self._user_capability_policy
-        if name == "delegate_read_only" and not policy.get("workspace_read", True):
-            return False
         if name in _WORKSPACE_READ_TOOLS and not policy.get("workspace_read", True):
             return False
         if name in _WORKSPACE_WRITE_TOOLS and not policy.get("workspace_write", True):
@@ -1413,6 +1421,37 @@ class ToolRegistry:
         if policy in {"ask", "prompt", "disabled"}:
             return False
         return annotation_safe
+
+    def is_read_only_tool(self, name: str) -> bool:
+        """Whether a Solo worker may receive ``name`` while Plan mode is locked.
+
+        Permission-free and read-only are intentionally different concepts:
+        ``web_fetch`` asks in normal Ask mode but does not mutate user state,
+        while ``todo_write`` is permission-free and does mutate the root chat.
+        """
+        if name in _READ_ONLY_BUILTIN_TOOLS:
+            return True
+        info = self.tool_info(name)
+        if not info:
+            return False
+        annotations = info.get("annotations") if isinstance(info.get("annotations"), dict) else {}
+        return (
+            annotations.get("readOnlyHint") is True
+            and annotations.get("destructiveHint") is not True
+        )
+
+    def is_parallel_safe_tool(self, name: str) -> bool:
+        """Whether separate Solo workers may execute this tool concurrently."""
+        if name in _PARALLEL_SAFE_BUILTIN_TOOLS:
+            return True
+        info = self.tool_info(name)
+        if not info or info.get("origin") != "mcp":
+            return False
+        annotations = info.get("annotations") if isinstance(info.get("annotations"), dict) else {}
+        return (
+            annotations.get("readOnlyHint") is True
+            and annotations.get("destructiveHint") is not True
+        )
 
     def _allows_mcp_item(
         self,

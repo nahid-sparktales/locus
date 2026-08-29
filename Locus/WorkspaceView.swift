@@ -2206,8 +2206,10 @@ private struct ConversationView: View {
                         EmptyConversationView()
                             .environmentObject(model)
                     } else {
-                        ForEach(presentationItems) { item in
-                            presentationRow(item)
+                        let items = presentationItems
+                        let markerIDs = TranscriptPresentation.assistantMarkerBlockIDs(in: items)
+                        ForEach(items) { item in
+                            presentationRow(item, assistantMarkerBlockIDs: markerIDs)
                         }
                     }
                     Color.clear
@@ -2278,10 +2280,16 @@ private struct ConversationView: View {
     }
 
     @ViewBuilder
-    private func presentationRow(_ item: TranscriptPresentationItem) -> some View {
+    private func presentationRow(
+        _ item: TranscriptPresentationItem,
+        assistantMarkerBlockIDs: Set<UUID>
+    ) -> some View {
         switch item {
         case .block(let block):
-            blockRow(block)
+            blockRow(
+                block,
+                showsAssistantMarker: assistantMarkerBlockIDs.contains(block.id)
+            )
         case .toolGroup(let id, let tools):
             ToolActivityView(
                 groupID: id,
@@ -2303,7 +2311,10 @@ private struct ConversationView: View {
         }
     }
 
-    private func blockRow(_ block: ChatBlock) -> some View {
+    private func blockRow(
+        _ block: ChatBlock,
+        showsAssistantMarker: Bool
+    ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             if block.kind == .assistant,
                block.id == model.activeStreamingAssistantID
@@ -2312,7 +2323,9 @@ private struct ConversationView: View {
                     reply: streamingReply,
                     thinkingVisibility: model.thinkingVisibility,
                     accent: model.effectiveAccent,
-                    workspacePath: model.workspacePath
+                    workspacePath: model.workspacePath,
+                    showsMarker: showsAssistantMarker,
+                    onOpenWorkspaceReference: model.openWorkspaceReference
                 )
                 .id(block.id)
             } else {
@@ -2324,10 +2337,18 @@ private struct ConversationView: View {
                     actionsDisabled: model.isBusy || model.hasPendingPermission,
                     canRewind: model.canRewind(to: block),
                     canRegenerate: model.canRegenerate(block),
-                    onCopy: { model.copyMessage(block.text) },
+                    showsAssistantMarker: showsAssistantMarker,
+                    onCopy: { format in
+                        if block.kind == .assistant {
+                            model.copyResponse(block.text, format: format)
+                        } else {
+                            model.copyMessage(block.text)
+                        }
+                    },
                     onUseAsDraft: { model.useAsDraft(block.text) },
                     onRewind: { model.rewind(to: block) },
-                    onRegenerate: { model.retryLastResponse() }
+                    onRegenerate: { model.retryLastResponse() },
+                    onOpenWorkspaceReference: model.openWorkspaceReference
                 )
                 .equatable()
             }
@@ -2908,19 +2929,33 @@ private struct ActiveAssistantBlockView: View {
     let thinkingVisibility: ThinkingVisibility
     let accent: LocusAccentSelection
     let workspacePath: String
+    let showsMarker: Bool
+    let onOpenWorkspaceReference: (WorkspaceArtifactReference) -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            LocusMessageMarker(accent: accent)
-                .accessibilityIdentifier("message.streamingAssistant.marker")
+            assistantMarker
             StreamingMessageContentView(
                 reply: reply,
                 thinkingVisibility: thinkingVisibility,
-                workspacePath: workspacePath
+                workspacePath: workspacePath,
+                onOpenWorkspaceReference: onOpenWorkspaceReference
             )
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .accessibilityIdentifier("message.streamingAssistant")
+    }
+
+    @ViewBuilder
+    private var assistantMarker: some View {
+        if showsMarker {
+            LocusMessageMarker(accent: accent)
+                .accessibilityIdentifier("message.streamingAssistant.marker")
+        } else {
+            Color.clear
+                .frame(width: 20, height: 20)
+                .accessibilityHidden(true)
+        }
     }
 }
 
@@ -2955,6 +2990,7 @@ struct LocusMessageMarker: View {
 private struct MessageBlockView: View, Equatable {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
+    @State private var responseCopied = false
     @FocusState private var actionsFocused: Bool
     let block: ChatBlock
     let thinkingVisibility: ThinkingVisibility
@@ -2963,10 +2999,12 @@ private struct MessageBlockView: View, Equatable {
     let actionsDisabled: Bool
     let canRewind: Bool
     let canRegenerate: Bool
-    let onCopy: () -> Void
+    let showsAssistantMarker: Bool
+    let onCopy: (ResponseCopyFormat) -> Void
     let onUseAsDraft: () -> Void
     let onRewind: () -> Void
     let onRegenerate: () -> Void
+    let onOpenWorkspaceReference: (WorkspaceArtifactReference) -> Void
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.block == rhs.block
@@ -2976,6 +3014,7 @@ private struct MessageBlockView: View, Equatable {
             && lhs.actionsDisabled == rhs.actionsDisabled
             && lhs.canRewind == rhs.canRewind
             && lhs.canRegenerate == rhs.canRegenerate
+            && lhs.showsAssistantMarker == rhs.showsAssistantMarker
     }
 
     var body: some View {
@@ -2985,7 +3024,11 @@ private struct MessageBlockView: View, Equatable {
                 HStack(alignment: .top) {
                     Spacer(minLength: 68)
                     VStack(alignment: .trailing, spacing: 4) {
-                        MarkdownBodyView(text: block.text, workspacePath: workspacePath)
+                        MarkdownBodyView(
+                            text: block.text,
+                            workspacePath: workspacePath,
+                            onOpenWorkspaceReference: onOpenWorkspaceReference
+                        )
                             .padding(.horizontal, 13)
                             .padding(.vertical, 11)
                             .background(LocusTheme.paperDeep.opacity(0.88))
@@ -3003,8 +3046,7 @@ private struct MessageBlockView: View, Equatable {
 
             case .assistant:
                 HStack(alignment: .top, spacing: 10) {
-                    LocusMessageMarker(accent: accent)
-                        .accessibilityIdentifier("message.\(block.id.uuidString).marker")
+                    assistantMarker
                     VStack(alignment: .leading, spacing: 5) {
                     if block.text.isEmpty,
                        (block.reasoningText?.isEmpty ?? true),
@@ -3018,7 +3060,8 @@ private struct MessageBlockView: View, Equatable {
                             reasoningText: block.reasoningText,
                             reasoningSections: block.reasoningSections,
                             workspacePath: workspacePath,
-                            thinkingVisibility: thinkingVisibility
+                            thinkingVisibility: thinkingVisibility,
+                            onOpenWorkspaceReference: onOpenWorkspaceReference
                         )
                         if block.isStreaming {
                             Capsule()
@@ -3071,7 +3114,10 @@ private struct MessageBlockView: View, Equatable {
         .accessibilityIdentifier(blockAccessibilityIdentifier)
         .contextMenu {
             if block.kind == .user || block.kind == .assistant {
-                Button("Copy Message", action: onCopy)
+                Button("Copy Message") { onCopy(.plainText) }
+                if block.kind == .assistant {
+                    Button("Copy as Markdown") { onCopy(.markdown) }
+                }
                 Button("Use as Draft", action: onUseAsDraft)
                     .disabled(actionsDisabled)
             }
@@ -3095,11 +3141,23 @@ private struct MessageBlockView: View, Equatable {
             : "turnCompletion.\(block.id.uuidString)"
     }
 
+    @ViewBuilder
+    private var assistantMarker: some View {
+        if showsAssistantMarker {
+            LocusMessageMarker(accent: accent)
+                .accessibilityIdentifier("message.\(block.id.uuidString).marker")
+        } else {
+            Color.clear
+                .frame(width: 20, height: 20)
+                .accessibilityHidden(true)
+        }
+    }
+
     private func messageActionBar(name: String) -> some View {
         HStack(spacing: 1) {
             messageActions
         }
-        .frame(height: 23)
+        .frame(height: 25)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(name) message actions")
         .accessibilityIdentifier("message.\(block.id.uuidString).actions")
@@ -3107,10 +3165,14 @@ private struct MessageBlockView: View, Equatable {
 
     @ViewBuilder
     private var messageActions: some View {
-        if block.kind == .user || block.kind == .assistant {
+        if block.kind == .assistant, !AssistantSegment.copyableText(from: block.text).isEmpty {
+            responseCopyButton
+        } else if block.kind == .user {
             actionButton("doc.on.doc", help: "Copy message", identifier: "copy") {
-                onCopy()
+                onCopy(.plainText)
             }
+        }
+        if block.kind == .user || block.kind == .assistant {
             actionButton("arrow.turn.down.right", help: "Use as draft", identifier: "useAsDraft") {
                 onUseAsDraft()
             }
@@ -3127,6 +3189,66 @@ private struct MessageBlockView: View, Equatable {
                 onRegenerate()
             }
         }
+    }
+
+    private var responseCopyButton: some View {
+        HStack(spacing: 1) {
+            Button {
+                copyResponse(as: .plainText)
+            } label: {
+                Label(
+                    responseCopied ? "Copied" : "Copy",
+                    systemImage: responseCopied ? "checkmark" : "doc.on.doc"
+                )
+                .font(.locus(size: 9, weight: .semibold))
+                .foregroundStyle(responseCopied ? LocusTheme.success : LocusTheme.muted)
+                .padding(.horizontal, 8)
+                .frame(minWidth: 62, minHeight: 22)
+                .background(LocusTheme.paperDeep.opacity(responseCopied ? 0.92 : 0.68))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+            .buttonStyle(.locus())
+            .focused($actionsFocused)
+            .help(responseCopied ? "Response copied" : "Copy full response as plain text")
+            .accessibilityLabel(responseCopied ? "Response copied" : "Copy response")
+            .accessibilityIdentifier("message.\(block.id.uuidString).copy")
+
+            Menu {
+                Button("Copy as Plain Text") {
+                    copyResponse(as: .plainText)
+                }
+                .accessibilityIdentifier("message.\(block.id.uuidString).copyFormat.plainText")
+
+                Button("Copy as Markdown") {
+                    copyResponse(as: .markdown)
+                }
+                .accessibilityIdentifier("message.\(block.id.uuidString).copyFormat.markdown")
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.locus(size: 8, weight: .semibold))
+                    .foregroundStyle(LocusTheme.muted)
+                    .frame(width: 22, height: 22)
+                    .background(LocusTheme.paperDeep.opacity(0.68))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Choose response copy format")
+            .accessibilityLabel("Response copy formats")
+            .accessibilityIdentifier("message.\(block.id.uuidString).copyFormats")
+        }
+        .task(id: responseCopied) {
+            guard responseCopied else { return }
+            try? await Task.sleep(for: .seconds(1.6))
+            guard !Task.isCancelled else { return }
+            responseCopied = false
+        }
+    }
+
+    private func copyResponse(as format: ResponseCopyFormat) {
+        onCopy(format)
+        responseCopied = true
     }
 
     private func actionButton(

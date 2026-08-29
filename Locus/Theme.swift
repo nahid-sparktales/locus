@@ -753,15 +753,102 @@ struct BrandMark: View {
     }
 }
 
-/// Local MCP brand marks. Known providers receive a recognizable color and
-/// glyph; custom servers receive a deterministic monogram instead of the same
-/// generic network icon everywhere. Keeping these local avoids fetching
-/// favicons merely because Settings was opened.
-struct MCPLogo: View {
-    let name: String
-    var url: String? = nil
-    var presetID: String? = nil
+enum ThirdPartyProviderID: String, Hashable {
+    case openAI
+    case anthropic
+    case kimi
+    case ollama
+    case huggingFace
+    case lmStudio
+    case vLLM
+    case google
+    case metaMask
+    case phantom
+    case slush
+    case context7
+    case github
+    case sentry
+    case supabase
+    case custom
+}
+
+/// A single source of truth for third-party identity throughout Settings.
+/// Marks are rendered locally so opening Settings never leaks provider names
+/// through favicon requests or depends on the network.
+struct ProviderBrandIdentity: Hashable {
+    let id: ThirdPartyProviderID
+    let displayName: String
+    let aliases: [String]
+    let fallbackMonogram: String
+
+    static func resolve(
+        name: String,
+        url: String? = nil,
+        presetID: String? = nil
+    ) -> ProviderBrandIdentity {
+        let identity = [presetID, name, url]
+            .compactMap { $0 }
+            .joined(separator: " ")
+            .lowercased()
+
+        let known: [(ThirdPartyProviderID, String, [String], String)] = [
+            (.openAI, "OpenAI", ["openai", "chatgpt", "codex", "gpt-"], "AI"),
+            (.anthropic, "Anthropic", ["anthropic", "claude"], "A"),
+            (.kimi, "Moonshot AI", ["moonshot", "kimi"], "K"),
+            (.ollama, "Ollama", ["ollama"], "O"),
+            (.huggingFace, "Hugging Face", ["huggingface", "hf.co"], "HF"),
+            (.lmStudio, "LM Studio", ["lm studio", "lmstudio"], "LM"),
+            (.vLLM, "vLLM", ["vllm"], "vL"),
+            (.google, "Google", ["google"], "G"),
+            (.metaMask, "MetaMask", ["metamask"], "M"),
+            (.phantom, "Phantom", ["phantom"], "P"),
+            (.slush, "Slush", ["slush"], "S"),
+            (.context7, "Context7", ["context7"], "7"),
+            (.github, "GitHub", ["github", "githubcopilot"], "GH"),
+            (.sentry, "Sentry", ["sentry"], "S"),
+            (.supabase, "Supabase", ["supabase"], "S"),
+        ]
+
+        if let match = known.first(where: { candidate in
+            candidate.2.contains(where: identity.contains)
+        }) {
+            return ProviderBrandIdentity(
+                id: match.0,
+                displayName: match.1,
+                aliases: match.2,
+                fallbackMonogram: match.3
+            )
+        }
+
+        let words = name.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        let letters = words.prefix(2).compactMap(\.first)
+        let value = letters.isEmpty ? Array(name.prefix(2)) : letters
+        return ProviderBrandIdentity(
+            id: .custom,
+            displayName: name.isEmpty ? "Custom provider" : name,
+            aliases: [],
+            fallbackMonogram: String(value).uppercased()
+        )
+    }
+}
+
+struct ProviderLogo: View {
+    let identity: ProviderBrandIdentity
     var size: CGFloat = 26
+
+    init(name: String, url: String? = nil, presetID: String? = nil, size: CGFloat = 26) {
+        self.identity = ProviderBrandIdentity.resolve(name: name, url: url, presetID: presetID)
+        self.size = size
+    }
+
+    init(kind: ProviderKind, name: String? = nil, url: String? = nil, size: CGFloat = 26) {
+        self.identity = ProviderBrandIdentity.resolve(
+            name: name ?? kind.title,
+            url: url ?? kind.defaultBaseURL,
+            presetID: kind.rawValue
+        )
+        self.size = size
+    }
 
     private enum Mark {
         case text(String)
@@ -782,65 +869,49 @@ struct MCPLogo: View {
         Color(red: 0.12, green: 0.48, blue: 0.65),
     ]
 
-    private var identity: String {
-        [presetID, name, url]
-            .compactMap { $0 }
-            .joined(separator: " ")
-            .lowercased()
-    }
-
-    private var initials: String {
-        let words = name.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-        let letters = words.prefix(2).compactMap(\.first)
-        let value = letters.isEmpty ? Array(name.prefix(2)) : letters
-        return String(value).uppercased()
-    }
-
     private var style: Style {
-        if identity.contains("context7") {
-            return Style(
-                background: Color(red: 0.34, green: 0.27, blue: 0.95),
-                foreground: .white,
-                mark: .text("7")
-            )
-        }
-        if identity.contains("github") || identity.contains("githubcopilot") {
-            return Style(
-                background: Color(red: 0.12, green: 0.13, blue: 0.15),
-                foreground: .white,
-                mark: .text("GH")
-            )
-        }
-        if identity.contains("sentry") {
-            return Style(
-                background: Color(red: 0.43, green: 0.35, blue: 0.69),
-                foreground: .white,
-                mark: .symbol("scope")
-            )
-        }
-        if identity.contains("supabase") {
-            return Style(
-                background: Color(red: 0.24, green: 0.81, blue: 0.56),
-                foreground: Color(red: 0.04, green: 0.19, blue: 0.15),
-                mark: .symbol("bolt.fill")
-            )
-        }
-        if identity.contains("openai") {
-            return Style(
-                background: Color(red: 0.08, green: 0.09, blue: 0.09),
-                foreground: .white,
-                mark: .symbol("sparkles")
-            )
-        }
-
-        let index = identity.utf8.reduce(0) {
+        switch identity.id {
+        case .openAI:
+            return Style(background: Color(red: 0.08, green: 0.09, blue: 0.09), foreground: .white, mark: .symbol("sparkles"))
+        case .anthropic:
+            return Style(background: Color(red: 0.83, green: 0.68, blue: 0.50), foreground: Color(red: 0.18, green: 0.12, blue: 0.08), mark: .text("A"))
+        case .kimi:
+            return Style(background: Color(red: 0.22, green: 0.36, blue: 0.88), foreground: .white, mark: .text("K"))
+        case .ollama:
+            return Style(background: Color(red: 0.11, green: 0.12, blue: 0.13), foreground: .white, mark: .symbol("circle.grid.2x2.fill"))
+        case .huggingFace:
+            return Style(background: Color(red: 1.00, green: 0.78, blue: 0.18), foreground: Color(red: 0.30, green: 0.21, blue: 0.03), mark: .text("HF"))
+        case .lmStudio:
+            return Style(background: Color(red: 0.22, green: 0.23, blue: 0.28), foreground: .white, mark: .text("LM"))
+        case .vLLM:
+            return Style(background: Color(red: 0.13, green: 0.53, blue: 0.74), foreground: .white, mark: .text("vL"))
+        case .google:
+            return Style(background: Color.white, foreground: Color(red: 0.18, green: 0.48, blue: 0.89), mark: .text("G"))
+        case .metaMask:
+            return Style(background: Color(red: 0.96, green: 0.47, blue: 0.20), foreground: .white, mark: .text("M"))
+        case .phantom:
+            return Style(background: Color(red: 0.38, green: 0.31, blue: 0.92), foreground: .white, mark: .text("P"))
+        case .slush:
+            return Style(background: Color(red: 0.17, green: 0.60, blue: 0.92), foreground: .white, mark: .text("S"))
+        case .context7:
+            return Style(background: Color(red: 0.34, green: 0.27, blue: 0.95), foreground: .white, mark: .text("7"))
+        case .github:
+            return Style(background: Color(red: 0.12, green: 0.13, blue: 0.15), foreground: .white, mark: .text("GH"))
+        case .sentry:
+            return Style(background: Color(red: 0.43, green: 0.35, blue: 0.69), foreground: .white, mark: .symbol("scope"))
+        case .supabase:
+            return Style(background: Color(red: 0.24, green: 0.81, blue: 0.56), foreground: Color(red: 0.04, green: 0.19, blue: 0.15), mark: .symbol("bolt.fill"))
+        case .custom:
+            let seed = identity.displayName.lowercased()
+            let index = seed.utf8.reduce(0) {
             ($0 &* 31 &+ Int($1)) % Self.fallbackColors.count
+            }
+            return Style(
+                background: Self.fallbackColors[index],
+                foreground: .white,
+                mark: .text(identity.fallbackMonogram)
+            )
         }
-        return Style(
-            background: Self.fallbackColors[index],
-            foreground: .white,
-            mark: .text(initials)
-        )
     }
 
     var body: some View {
@@ -865,6 +936,70 @@ struct MCPLogo: View {
         }
         .shadow(color: .black.opacity(0.12), radius: 1, y: 1)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(name) logo")
+        .accessibilityLabel("\(identity.displayName) logo")
+        .accessibilityIdentifier("provider.logo.\(identity.id.rawValue)")
+    }
+}
+
+/// Backward-compatible MCP wrapper. It deliberately shares the provider
+/// registry so the same third-party has one mark throughout the app.
+struct MCPLogo: View {
+    let name: String
+    var url: String? = nil
+    var presetID: String? = nil
+    var size: CGFloat = 26
+
+    var body: some View {
+        ProviderLogo(name: name, url: url, presetID: presetID, size: size)
+    }
+}
+
+struct SettingsAdvancedLabel: View {
+    var detail: String
+
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Advanced")
+                    .fontWeight(.semibold)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } icon: {
+            Image(systemName: "slider.horizontal.3")
+                .foregroundStyle(LocusTheme.accentAction)
+                .frame(width: 24)
+        }
+        .padding(.vertical, 3)
+    }
+}
+
+struct SettingsAdvancedDisclosureRow: View {
+    @Binding var isExpanded: Bool
+    var detail: String
+
+    var body: some View {
+        Button {
+            withAnimation(LocusMotion.content) {
+                isExpanded.toggle()
+            }
+        } label: {
+            HStack(spacing: 10) {
+                SettingsAdvancedLabel(detail: detail)
+                Spacer(minLength: 12)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Advanced")
+        .accessibilityHint(detail)
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
     }
 }

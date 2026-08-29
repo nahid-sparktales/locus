@@ -474,10 +474,12 @@ def _run_user_turn(
         continuity_context=continuity_context,
     )
     swarm: SoloSwarmExecutor | None = None
-    workspace_read_allowed = configuration.capability_policy.workspace_read
-    if solo_swarm_enabled and not just_chat and workspace_read_allowed:
+    if solo_swarm_enabled and not just_chat:
         knowledge_search = None
-        if capability_enabled("workspace_knowledge"):
+        if (
+            capability_enabled("workspace_knowledge")
+            and configuration.capability_policy.workspace_read
+        ):
             workspace = svc.core.workspace_root or svc.core.cwd
 
             def knowledge_search(query: str) -> Any:
@@ -489,14 +491,23 @@ def _run_user_turn(
                 emit=svc.emit,
                 should_stop=svc.core._should_stop_stream,
                 knowledge_search=knowledge_search,
+                tool_schemas=svc.core.solo_worker_tool_schemas,
+                tool_execute=lambda name, arguments, call_id, event_context, lock: (
+                    svc.core.run_solo_worker_tool(
+                        name,
+                        arguments,
+                        call_id,
+                        svc.decide,
+                        event_context=event_context,
+                        execution_lock=lock,
+                    )
+                ),
+                tool_is_read_only=svc.core.solo_worker_tool_is_read_only,
+                tool_is_parallel_safe=svc.core.solo_worker_tool_is_parallel_safe,
+                virtual_tools=svc.core.solo_worker_virtual_tools,
             )
         except SoloSwarmError as exc:
             svc.emit({"type": "note", "text": str(exc)})
-    elif solo_swarm_enabled and not just_chat:
-        svc.emit({
-            "type": "note",
-            "text": "Solo stayed single-agent because workspace reading is disabled.",
-        })
     svc.active_solo_swarm = swarm
     svc.core.tool_ctx.delegate_read_only = swarm.execute if swarm is not None else None
     svc.core.tool_registry.set_solo_swarm_enabled(swarm is not None)

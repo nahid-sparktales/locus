@@ -83,20 +83,6 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     }
 }
 
-enum SettingsLevel: String, CaseIterable, Codable, Identifiable {
-    case standard
-    case advanced
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .standard: "Standard"
-        case .advanced: "Advanced"
-        }
-    }
-}
-
 enum SettingsNavigationGroup: String, CaseIterable, Identifiable {
     case app = "App"
     case models = "Models"
@@ -135,7 +121,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .appearance: "paintbrush"
         case .chat: "bubble.left.and.bubble.right"
         case .network: "network"
-        case .browser: "safari"
+        case .browser: "globe"
         case .wallet: "wallet.bifold"
         case .accounts: "person.crop.circle"
         case .agents: "person.3.sequence.fill"
@@ -165,10 +151,6 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .browser, .wallet, .extensions, .permissions, .network: .tools
         case .developer, .updates, .shortcuts: .system
         }
-    }
-
-    var minimumLevel: SettingsLevel {
-        self == .developer ? .advanced : .standard
     }
 
     var mutationPolicy: SettingsMutationPolicy {
@@ -204,7 +186,7 @@ struct SettingsSearchDescriptor: Identifiable, Hashable {
     let title: String
     let keywords: [String]
     let anchor: String
-    let minimumLevel: SettingsLevel
+    let isAdvanced: Bool
 
     init(
         _ id: String,
@@ -212,14 +194,14 @@ struct SettingsSearchDescriptor: Identifiable, Hashable {
         title: String,
         keywords: [String] = [],
         anchor: String? = nil,
-        minimumLevel: SettingsLevel = .standard
+        isAdvanced: Bool = false
     ) {
         self.id = id
         self.page = page
         self.title = title
         self.keywords = keywords
         self.anchor = anchor ?? id
-        self.minimumLevel = minimumLevel
+        self.isAdvanced = isAdvanced
     }
 
     func matches(_ query: String) -> Bool {
@@ -239,8 +221,19 @@ struct SettingsSearchDescriptor: Identifiable, Hashable {
         .init("settings.thinkingVisibility", page: .chat, title: "Reasoning display", keywords: ["thinking", "collapsed"]),
         .init("settings.toolActivityVisibility", page: .chat, title: "Tool activity display", keywords: ["tools", "collapsed"]),
         .init("settings.accounts.add", page: .accounts, title: "Provider accounts", keywords: ["API", "model", "Ollama"]),
-        .init("settings.wallet.status", page: .wallet, title: "Locus Vault", keywords: ["crypto", "Phantom", "MetaMask", "Slush", "Sui", "Solana", "EVM"]),
-        .init("settings.localContextWindow", page: .accounts, title: "Local context window", keywords: ["tokens", "Ollama"], minimumLevel: .advanced),
+        .init("settings.wallet.status", page: .wallet, title: "Locus Vault", keywords: ["crypto", "account", "lock", "unlock"]),
+        .init("settings.wallet.connectors", page: .wallet, title: "External wallets", keywords: ["Phantom", "MetaMask", "Slush", "Sui", "Solana", "EVM"]),
+        .init("settings.wallet.rpc-url", page: .wallet, title: "Wallet network connection", keywords: ["Sepolia", "RPC", "endpoint"], isAdvanced: true),
+        .init("settings.wallet.policies", page: .wallet, title: "Wallet budgets and contracts", keywords: ["ABI", "registry", "policy"], isAdvanced: true),
+        .init("settings.localContextWindow", page: .accounts, title: "Local context window", keywords: ["tokens", "Ollama"], isAdvanced: true),
+        .init("settings.agents.primary", page: .agents, title: "Primary agent", keywords: ["behavior", "model"]),
+        .init("settings.agents.quickTeam", page: .agents, title: "Create a quick team", keywords: ["dispatcher", "specialist"]),
+        .init("settings.agents.scheduler", page: .agents, title: "Agent scheduler", keywords: ["concurrency", "simultaneous"], isAdvanced: true),
+        .init("settings.agents.evaluations", page: .agents, title: "Evaluation Lab", keywords: ["suite", "benchmark"], isAdvanced: true),
+        .init("settings.memory.saved", page: .knowledge, title: "Saved memory", keywords: ["approved", "remember", "inbox"]),
+        .init("settings.memory.context", page: .knowledge, title: "Cross-chat handoffs", keywords: ["snapshots", "context"]),
+        .init("settings.memory.index", page: .knowledge, title: "Workspace search index", keywords: ["knowledge", "Ollama", "embedding"], isAdvanced: true),
+        .init("settings.memory.health", page: .knowledge, title: "Memory health", keywords: ["diagnostics", "maintenance"], isAdvanced: true),
         .init("settings.browserEnabled", page: .browser, title: "Built-in browser", keywords: ["web", "privacy"]),
         .init("settings.browser.passwords", page: .browser, title: "Passwords and Autofill", keywords: ["login", "credentials", "save", "fill"]),
         .init("settings.browser.contacts", page: .browser, title: "Contact information", keywords: ["address", "email", "phone", "autofill"]),
@@ -250,12 +243,12 @@ struct SettingsSearchDescriptor: Identifiable, Hashable {
         .init("settings.browser.permissions", page: .browser, title: "Site permissions", keywords: ["camera", "microphone", "popups", "JavaScript", "uploads"]),
         .init("settings.browser.siteData", page: .browser, title: "Cookies and site data", keywords: ["cache", "storage", "clear"]),
         .init("settings.browser.import", page: .browser, title: "Import browser data", keywords: ["CSV", "vCard", "JSON"]),
-        .init("settings.browser.webInspector", page: .browser, title: "Browser Web Inspector", keywords: ["Safari", "developer", "debug"], minimumLevel: .advanced),
+        .init("settings.browser.webInspector", page: .browser, title: "Browser Web Inspector", keywords: ["developer", "debug"], isAdvanced: true),
         .init("settings.permissionMode", page: .permissions, title: "Agent permissions", keywords: ["approval", "full access"]),
         .init("settings.proxyMode", page: .network, title: "Outbound proxy", keywords: ["SOCKS5", "HTTP", "network"]),
-        .init("settings.maxIterations", page: .developer, title: "Maximum tool steps", keywords: ["agent", "iterations"], minimumLevel: .advanced),
-        .init("settings.terminalShell", page: .developer, title: "Terminal shell", keywords: ["zsh", "login"], minimumLevel: .advanced),
-        .init("settings.backendURL", page: .developer, title: "Local agent runtime", keywords: ["backend", "diagnostics"], minimumLevel: .advanced),
+        .init("settings.maxIterations", page: .developer, title: "Maximum tool steps", keywords: ["agent", "iterations"], isAdvanced: true),
+        .init("settings.terminalShell", page: .developer, title: "Terminal shell", keywords: ["zsh", "login"], isAdvanced: true),
+        .init("settings.backendURL", page: .developer, title: "Local agent runtime", keywords: ["backend", "diagnostics"], isAdvanced: true),
         .init("settings.automaticUpdateChecks", page: .updates, title: "Software updates", keywords: ["automatic", "version"]),
         .init("settings.shortcuts", page: .shortcuts, title: "Keyboard shortcuts", keywords: ["commands", "hotkeys"]),
     ]

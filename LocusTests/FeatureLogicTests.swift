@@ -590,6 +590,158 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(segments[1], .thinking(text: "plan", isComplete: true))
     }
 
+    func testResponseCopyUsesTheCompleteVisibleAnswer() {
+        let paragraphs = (1...80).map { "Paragraph \($0)" }.joined(separator: "\n\n")
+        let source = "<think>private reasoning</think>\n# Result\n\n\(paragraphs)\n"
+
+        let copied = AssistantSegment.copyableText(from: source)
+
+        XCTAssertEqual(copied, "# Result\n\n\(paragraphs)")
+        XCTAssertFalse(copied.contains("private reasoning"))
+        XCTAssertTrue(copied.hasSuffix("Paragraph 80"), "the response must not be truncated")
+    }
+
+    func testResponseCopyOffersPlainTextAndSourceFaithfulMarkdown() {
+        let source = """
+        <think>private reasoning</think>
+        # Result
+
+        Read **the [guide](https://example.com/guide)**.
+
+        - First
+        - [x] Complete
+
+        > Quoted line
+
+        ```swift
+        let value = 42
+        ```
+
+        | Name | Value |
+        | --- | --- |
+        | Answer | 42 |
+
+        ![Plot](images/plot.png)
+        """
+
+        XCTAssertEqual(
+            ResponseCopyPayload.text(from: source, format: .markdown),
+            source.replacingOccurrences(
+                of: "<think>private reasoning</think>\n",
+                with: ""
+            )
+        )
+        XCTAssertEqual(
+            ResponseCopyPayload.text(from: source, format: .plainText),
+            """
+            Result
+
+            Read the guide (https://example.com/guide).
+
+            • First
+            [x] Complete
+
+            > Quoted line
+
+            let value = 42
+
+            Name\tValue
+            Answer\t42
+
+            Plot (images/plot.png)
+            """
+        )
+    }
+
+    func testQuoteSelectionAppendsWithoutReplacingTheDraft() {
+        let selection = "  first line\n\nsecond line  "
+
+        XCTAssertEqual(
+            QuoteSelectionFormatter.appending(selection, to: ""),
+            "> first line\n>\n> second line\n\n"
+        )
+        XCTAssertEqual(
+            QuoteSelectionFormatter.appending(selection, to: "My question"),
+            "My question\n\n> first line\n>\n> second line\n\n"
+        )
+        XCTAssertEqual(
+            QuoteSelectionFormatter.appending(" \n ", to: "Keep me"),
+            "Keep me"
+        )
+    }
+
+    func testPlainTextCopyPreservesNestedNumberedLists() {
+        XCTAssertEqual(
+            MarkdownPlainTextRenderer.render(
+                """
+                3. Parent
+                   - Nested child
+                4. Second
+                """
+            ),
+            """
+            3. Parent
+
+               • Nested child
+            4. Second
+            """
+        )
+    }
+
+    @MainActor
+    func testQuotedSelectionRemainsInTheModelDuringAnActiveRun() {
+        let model = AppModel(startImmediately: false)
+        model.draftText = "Existing draft"
+        model.isBusy = true
+
+        model.quoteSelectionInComposer("selected output")
+
+        XCTAssertEqual(model.draftText, "Existing draft\n\n> selected output\n\n")
+        XCTAssertTrue(model.isBusy, "quoting must not interfere with the active run")
+    }
+
+    func testLongOutputPolicyCountsLogicalLinesWithoutTheFenceTerminator() {
+        let code = (1...25).map { "line \($0)" }.joined(separator: "\n") + "\n"
+        let lines = LongOutputPolicy.codeLines(code)
+
+        XCTAssertEqual(lines.count, 25)
+        XCTAssertEqual(Array(lines.prefix(LongOutputPolicy.codePreviewLineCount)).last, "line 12")
+        XCTAssertGreaterThan(lines.count, LongOutputPolicy.codeCollapseThreshold)
+        XCTAssertEqual(LongOutputPolicy.tableCollapseThreshold, 10)
+        XCTAssertEqual(LongOutputPolicy.tablePreviewRowCount, 5)
+    }
+
+    func testOneAssistantMarkerIsAssignedPerResponse() {
+        let firstUser = ChatBlock(kind: .user, text: "First request")
+        let commentary = ChatBlock(kind: .assistant, text: "Checking files")
+        let finalAnswer = ChatBlock(kind: .assistant, text: "Finished")
+        let completion = ChatBlock(
+            kind: .note,
+            completion: TurnCompletion(
+                outcome: .complete,
+                mode: .work,
+                durationMilliseconds: 1_000
+            )
+        )
+        let secondUser = ChatBlock(kind: .user, text: "Second request")
+        let secondAnswer = ChatBlock(kind: .assistant, text: "Done again")
+        let items = [
+            TranscriptPresentationItem.block(firstUser),
+            .thinkingGroup(id: firstUser.id, entries: []),
+            .block(commentary),
+            .toolGroup(id: firstUser.id, tools: []),
+            .block(finalAnswer),
+            .block(completion),
+            .block(secondUser),
+            .block(secondAnswer),
+        ]
+
+        XCTAssertEqual(
+            TranscriptPresentation.assistantMarkerBlockIDs(in: items),
+            Set([commentary.id, secondAnswer.id])
+        )
+    }
+
     // MARK: - Swift Markdown rendering model
 
     func testFencedTildeIndentedAndIncompleteCodeBlocksArePreserved() {
@@ -683,6 +835,202 @@ final class FeatureLogicTests: XCTestCase {
             MarkdownLinkPolicy.workspaceImageURL("images/chart.png", workspacePath: "/tmp/project")?.path,
             "/tmp/project/images/chart.png"
         )
+    }
+
+    func testResponseSelectionCopiesMarkdownAsOneStructuredDocument() {
+        let blocks = MarkdownDocumentParser.parse(
+            """
+            Intro
+
+            - Alpha
+            - [x] Done
+
+            3. Third
+            4. Fourth
+
+            > Quoted
+
+            | Name | Value |
+            | --- | --- |
+            | A | B |
+
+            ```text
+              one\t2
+            ```
+
+            After
+            """
+        )
+        let spans = MarkdownSelectionProjection.spans(for: blocks).values.sorted {
+            TranscriptSelectionProjection.pathIsBefore($0.treePath, $1.treePath)
+        }
+        guard let first = spans.first, let last = spans.last else {
+            return XCTFail("Expected selectable Markdown leaves")
+        }
+        let selection = TranscriptSelection(
+            anchor: .init(spanID: first.id, utf16Offset: 0),
+            focus: .init(spanID: last.id, utf16Offset: last.utf16Length)
+        )
+
+        XCTAssertEqual(
+            TranscriptSelectionProjection.text(for: selection, spans: spans),
+            """
+            Intro
+
+            • Alpha
+            [x] Done
+
+            3. Third
+            4. Fourth
+
+            > Quoted
+
+            Name\tValue
+            A\tB
+
+              one\t2
+
+            After
+            """
+        )
+    }
+
+    func testResponseSelectionSupportsReverseUnicodeRangesAndCollapsedProjections() {
+        let first = TranscriptSelectionSpan(
+            treePath: [0],
+            displayedText: "A🙂B",
+            separatorBefore: "",
+            copyPrefix: ""
+        )
+        let second = TranscriptSelectionSpan(
+            treePath: [1],
+            displayedText: "café",
+            separatorBefore: "\n",
+            copyPrefix: "• "
+        )
+        let forward = TranscriptSelection(
+            anchor: .init(spanID: first.id, utf16Offset: 1),
+            focus: .init(spanID: second.id, utf16Offset: second.utf16Length)
+        )
+        let reverse = TranscriptSelection(anchor: forward.focus, focus: forward.anchor)
+
+        XCTAssertEqual(
+            TranscriptSelectionProjection.text(for: forward, spans: [second, first]),
+            "🙂B\n• café"
+        )
+        XCTAssertEqual(
+            TranscriptSelectionProjection.text(for: reverse, spans: [first, second]),
+            "🙂B\n• café"
+        )
+        XCTAssertEqual(
+            TranscriptSelectionProjection.ranges(for: reverse, spans: [first, second]),
+            [first.id: NSRange(location: 1, length: 3), second.id: NSRange(location: 0, length: 4)]
+        )
+
+        let collapsed = TranscriptSelectionSpan(
+            treePath: [2],
+            displayedText: "line 1\nline 2\nhidden",
+            separatorBefore: "\n\n",
+            copyPrefix: ""
+        ).displaying("line 1\nline 2")
+        let visibleOnly = TranscriptSelection(
+            anchor: .init(spanID: collapsed.id, utf16Offset: 0),
+            focus: .init(spanID: collapsed.id, utf16Offset: collapsed.utf16Length)
+        )
+        XCTAssertEqual(
+            TranscriptSelectionProjection.text(for: visibleOnly, spans: [collapsed]),
+            "line 1\nline 2"
+        )
+    }
+
+    func testWorkspaceArtifactReferencesAreContainedClassifiedAndLocationAware() throws {
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory
+            .appendingPathComponent("locus-artifact-\(UUID().uuidString)", isDirectory: true)
+        let workspace = base.appendingPathComponent("workspace", isDirectory: true)
+        let sources = workspace.appendingPathComponent("Sources", isDirectory: true)
+        let outside = base.appendingPathComponent("outside.txt")
+        try fileManager.createDirectory(at: sources, withIntermediateDirectories: true)
+        try Data("outside".utf8).write(to: outside)
+        defer { try? fileManager.removeItem(at: base) }
+
+        let source = sources.appendingPathComponent("File.swift")
+        let image = workspace.appendingPathComponent("chart.png")
+        let sheet = workspace.appendingPathComponent("results.xlsx")
+        try Data("let value = 1\n".utf8).write(to: source)
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: image)
+        try Data([0x50, 0x4B]).write(to: sheet)
+        try fileManager.createSymbolicLink(
+            at: workspace.appendingPathComponent("escape.txt"),
+            withDestinationURL: outside
+        )
+
+        XCTAssertEqual(
+            WorkspacePathReferenceParser.parse("Sources/File.swift:12:4"),
+            .init(path: "Sources/File.swift", location: .init(line: 12, column: 4))
+        )
+        XCTAssertEqual(
+            WorkspacePathReferenceParser.parse("Sources/File.swift#L8C2"),
+            .init(path: "Sources/File.swift", location: .init(line: 8, column: 2))
+        )
+
+        let reference = try XCTUnwrap(
+            WorkspaceArtifactReference.classify(
+                "Sources/File.swift:12:4",
+                workspacePath: workspace.path
+            )
+        )
+        XCTAssertEqual(reference.kind, .source)
+        XCTAssertEqual(reference.relativePath, "Sources/File.swift")
+        XCTAssertEqual(reference.sourceLocation, .init(line: 12, column: 4))
+        XCTAssertEqual(
+            WorkspaceArtifactReference.fromNavigationURL(
+                reference.navigationURL,
+                workspacePath: workspace.path
+            ),
+            reference
+        )
+        XCTAssertEqual(
+            WorkspaceArtifactReference.classify("chart.png", workspacePath: workspace.path)?.kind,
+            .image
+        )
+        XCTAssertEqual(
+            WorkspaceArtifactReference.classify("results.xlsx", workspacePath: workspace.path)?.kind,
+            .spreadsheet
+        )
+        XCTAssertNil(
+            WorkspaceArtifactReference.classify("missing.pdf", workspacePath: workspace.path)
+        )
+        XCTAssertNil(
+            WorkspaceArtifactReference.classify("escape.txt", workspacePath: workspace.path),
+            "a workspace symlink must not escape the workspace boundary"
+        )
+        XCTAssertNil(
+            WorkspaceArtifactReference.classify(
+                "https://example.com/chart.png",
+                workspacePath: workspace.path
+            ),
+            "remote media must never be auto-loaded as a local artifact"
+        )
+        XCTAssertNil(
+            MarkdownLinkPolicy.workspaceImageURL(
+                "https://example.com/chart.png",
+                workspacePath: workspace.path
+            )
+        )
+    }
+
+    @MainActor
+    func testWorkspacePreviewPublishesAndClearsSourceLocation() {
+        let model = WorkspaceFileModel()
+        model.configure(isUITesting: true, workspacePath: { "/tmp/project" }, canIndex: { true })
+        model.preview(URL(fileURLWithPath: "/tmp/project/File.swift"), line: 18, column: 6)
+
+        XCTAssertEqual(model.previewedPath, "File.swift")
+        XCTAssertEqual(model.previewedLocation, .init(line: 18, column: 6))
+
+        model.closePreview()
+        XCTAssertNil(model.previewedLocation)
     }
 
     func testLongUnbrokenMarkdownContentIsPreserved() {
@@ -1101,28 +1449,16 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
-    func testSettingsLevelDefaultsToStandardAndRoundTripsAdvanced() throws {
-        XCTAssertEqual(AppSettings().resolvedSettingsLevel, .standard)
-        XCTAssertEqual(
-            try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
-                .resolvedSettingsLevel,
-            .standard
-        )
-        XCTAssertEqual(
-            try JSONDecoder().decode(
-                AppSettings.self,
-                from: Data(#"{"settingsLevelRaw":"future"}"#.utf8)
-            ).resolvedSettingsLevel,
-            .standard
-        )
-
-        var settings = AppSettings()
-        settings.settingsLevelRaw = SettingsLevel.advanced.rawValue
+    func testLegacySettingsLevelKeyIsIgnored() throws {
         let restored = try JSONDecoder().decode(
             AppSettings.self,
-            from: JSONEncoder().encode(settings)
+            from: Data(#"{"settingsLevelRaw":"advanced"}"#.utf8)
         )
-        XCTAssertEqual(restored.resolvedSettingsLevel, .advanced)
+        XCTAssertEqual(restored.backendURL, AppSettings().backendURL)
+        XCTAssertEqual(restored.appearanceRaw, AppSettings().appearanceRaw)
+        XCTAssertEqual(restored.provider, AppSettings().provider)
+        let encoded = try XCTUnwrap(String(data: JSONEncoder().encode(restored), encoding: .utf8))
+        XCTAssertFalse(encoded.contains("settingsLevelRaw"))
     }
 
     func testSettingsPagesUseTheExpectedGroupsAndDisclosureLevels() {
@@ -1142,10 +1478,7 @@ final class FeatureLogicTests: XCTestCase {
             SettingsPage.allCases.filter { $0.navigationGroup == .system },
             [.developer, .updates, .shortcuts]
         )
-        XCTAssertEqual(
-            SettingsPage.allCases.filter { $0.minimumLevel == .advanced },
-            [.developer]
-        )
+        XCTAssertTrue(SettingsPage.allCases.contains(.developer))
     }
 
     func testSettingsSearchMetadataIsUniqueAndIndexesAdvancedControls() {
@@ -1156,13 +1489,41 @@ final class FeatureLogicTests: XCTestCase {
         let contextResult = try? XCTUnwrap(
             descriptors.first { $0.id == "settings.localContextWindow" }
         )
-        XCTAssertEqual(contextResult?.minimumLevel, .advanced)
+        XCTAssertEqual(contextResult?.isAdvanced, true)
         XCTAssertEqual(contextResult?.page, .accounts)
         XCTAssertTrue(contextResult?.matches("tokens") == true)
         XCTAssertTrue(
             descriptors.filter { $0.matches("diagnostics") }
-                .allSatisfy { $0.minimumLevel == .advanced }
+                .allSatisfy { $0.isAdvanced }
         )
+    }
+
+    func testProviderBrandIdentityResolvesKnownAndCustomProviders() {
+        XCTAssertEqual(
+            ProviderBrandIdentity.resolve(name: "Claude Max").id,
+            .anthropic
+        )
+        XCTAssertEqual(
+            ProviderBrandIdentity.resolve(
+                name: "Custom endpoint",
+                url: "https://example.endpoints.huggingface.cloud"
+            ).id,
+            .huggingFace
+        )
+        XCTAssertEqual(
+            ProviderBrandIdentity.resolve(name: "Local LM Studio").id,
+            .lmStudio
+        )
+        XCTAssertEqual(
+            ProviderBrandIdentity.resolve(name: "test vllm").id,
+            .vLLM
+        )
+
+        let first = ProviderBrandIdentity.resolve(name: "Acme inference")
+        let second = ProviderBrandIdentity.resolve(name: "Acme inference")
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.id, .custom)
+        XCTAssertEqual(first.fallbackMonogram, "AI")
     }
 
     func testSettingsMutationPolicyStagesOnlyRiskyPages() {
@@ -2391,7 +2752,7 @@ final class FeatureLogicTests: XCTestCase {
 
     func testBrowserHasItsOwnSettingsDestination() {
         XCTAssertTrue(SettingsPage.allCases.contains(.browser))
-        XCTAssertEqual(SettingsPage.browser.symbol, "safari")
+        XCTAssertEqual(SettingsPage.browser.symbol, "globe")
         XCTAssertEqual(SettingsPage.browser.accessibilityKey, "browser")
     }
 
