@@ -773,3 +773,80 @@ def test_parity_schemas_add_submit_plan_only_in_plan_mode(tmp_path):
     assert "delegate_read_only" in {
         item["function"]["name"] for item in start["tools"]
     }
+
+
+class MeteredManagedRuntime(FakeManagedRuntime):
+    """A helper that bills each model call separately, as the real one does."""
+
+    def __init__(self, *, total=None, calls=2, tools=()):
+        super().__init__()
+        self.total = total
+        self.calls = calls
+        self.tools = list(tools)
+
+    def run_turn(self, *, text, event_handler, tool_handler=None, **_kwargs):
+        self.turn_texts.append(text)
+        if tool_handler is not None:
+            for name, arguments in self.tools:
+                tool_handler(name, arguments, f"call-{name}")
+        for index in range(self.calls):
+            usage = {"last": {"inputTokens": 100, "outputTokens": 10 + index}}
+            if self.total is not None:
+                usage["total"] = self.total
+            event_handler({
+                "method": "thread/tokenUsage/updated",
+                "params": {"tokenUsage": usage},
+            })
+        event_handler({
+            "method": "item/agentMessage/delta",
+            "params": {"delta": "done"},
+        })
+        return {"status": "completed"}
+
+
+def _turn_done(core, runtime, text="do the work", **kwargs):
+    events = []
+    core.on_event(events.append)
+    core.run_turn(text, **kwargs)
+    return next(event for event in events if event["type"] == "turn_done")
+
+
+def test_managed_turn_counts_every_model_call_and_tool_step(tmp_path):
+    """A managed turn used to report one model call however much it did."""
+    # Two tools keeps this under FINAL_ANSWER_TOOL_FLOOR, so the turn is
+    # exactly one thread call's worth of work and the arithmetic stays legible.
+    runtime = MeteredManagedRuntime(
+        calls=3, tools=[("list_dir", {}), ("glob", {"pattern": "*"})]
+    )
+    core = _managed_core(tmp_path, runtime)
+
+    terminal = _turn_done(core, runtime)
+
+    assert terminal["model_calls"] == 3
+    assert terminal["tool_steps"] == 2
+    assert terminal["prompt_tokens"] == 300
+    assert terminal["completion_tokens"] == 10 + 11 + 12
+
+
+def test_managed_turn_prefers_a_server_reported_total(tmp_path):
+    runtime = MeteredManagedRuntime(
+        calls=2, total={"inputTokens": 900, "outputTokens": 90}
+    )
+    core = _managed_core(tmp_path, runtime)
+
+    terminal = _turn_done(core, runtime, allow_tools=False)
+
+    assert terminal["prompt_tokens"] == 900
+    assert terminal["completion_tokens"] == 90
+    assert terminal["model_calls"] == 2
+    assert terminal["tool_steps"] == 0
+
+
+def test_managed_turn_without_usage_updates_still_reports_one_call(tmp_path):
+    runtime = MeteredManagedRuntime(calls=0)
+    core = _managed_core(tmp_path, runtime)
+
+    terminal = _turn_done(core, runtime, allow_tools=False)
+
+    assert terminal["model_calls"] == 1
+    assert terminal["tool_steps"] == 0

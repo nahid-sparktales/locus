@@ -1608,6 +1608,21 @@ final class AppModelTests: XCTestCase {
         return model.providerAccounts.first { $0.id == account.id } ?? account
     }
 
+    /// A minimal profile for the workspace under test. Seeded explicitly because
+    /// profiles are read from the real defaults even with persistence off.
+    private func seededProfile(path: String) -> WorkspaceProfile {
+        WorkspaceProfile(
+            path: path,
+            lastOpened: Date(),
+            model: "",
+            accountID: nil,
+            mode: .build,
+            previewURL: "",
+            contextFiles: [],
+            draft: ""
+        )
+    }
+
     @MainActor
     private func providerHandoffService(
         host: String = "provider-handoff.test"
@@ -1883,8 +1898,9 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(body["account_id"] as? String, account.id.uuidString)
         XCTAssertEqual(body["codex_home_id"] as? String, account.codexHomeIdentifier)
         // All three always travel: the backend keeps its current value for a
-        // missing field, so omitting one would freeze a stale choice.
-        XCTAssertEqual(body["native_mode"] as? Bool, true)
+        // missing field, so omitting one would freeze a stale choice. A newly
+        // created account routes under the Locus contract, so parity is off.
+        XCTAssertEqual(body["native_mode"] as? Bool, false)
         XCTAssertEqual(body["web_search"] as? Bool, false)
         XCTAssertEqual(body["reasoning_effort"] as? String, "")
     }
@@ -1903,6 +1919,114 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(body["native_mode"] as? Bool, false)
         XCTAssertEqual(body["web_search"] as? Bool, true)
         XCTAssertEqual(body["reasoning_effort"] as? String, "xhigh")
+    }
+
+    @MainActor
+    func testRemoteRouteSendsAnEffortOnlyForModelsThatAcceptOne() {
+        // Sending an effort to a model without an effort control fails the turn
+        // rather than being ignored, so the value is filtered against the same
+        // published table the picker is drawn from.
+        let model = AppModel(startImmediately: false)
+        let account = seedAccount(
+            model,
+            kind: .claude,
+            name: "Work",
+            preferredModel: "claude-opus-5"
+        )
+        model.settings.activeAccountID = account.id.uuidString
+        // Seeded explicitly: profiles are read from the real defaults even with
+        // persistence off, so leaving this to the machine's own state would make
+        // the test pass or fail depending on which workspaces it has open.
+        model.workspaceProfiles = [seededProfile(path: model.workspacePath)]
+
+        XCTAssertEqual(
+            model.providerRequestBody()["reasoning_effort"] as? String, "",
+            "no choice yet means the model's own default"
+        )
+
+        model.setReasoningEffort("xhigh")
+        XCTAssertEqual(model.providerRequestBody()["reasoning_effort"] as? String, "xhigh")
+
+        // The same stored choice against a model that takes no effort sends
+        // nothing at all, instead of a value that endpoint would reject.
+        var haiku = account
+        haiku.preferredModel = "claude-haiku-4-5"
+        model.saveProviderAccount(haiku, apiKey: nil)
+
+        XCTAssertEqual(model.providerRequestBody()["reasoning_effort"] as? String, "")
+        XCTAssertTrue(
+            model.reasoningEffortOptions.isEmpty,
+            "and the header picker is hidden for it"
+        )
+    }
+
+    @MainActor
+    func testChoosingAutoOverridesTheAccountsOwnDefaultEffort() {
+        // The regression test for nil-versus-empty. A workspace that has never
+        // chosen defers to the account; one that chose Auto has to beat it, or
+        // picking Auto on a ChatGPT account with a stored effort does nothing.
+        let model = AppModel(startImmediately: false)
+        var account = ProviderAccount(kind: .chatGPT, name: "Work")
+        account.preferredModel = "gpt-5.3-codex"
+        account.codexReasoningEffort = "high"
+        model.saveProviderAccount(account, apiKey: nil)
+        model.settings.activeAccountID = account.id.uuidString
+        model.workspaceProfiles = [seededProfile(path: model.workspacePath)]
+
+        XCTAssertEqual(
+            model.resolvedReasoningEffort, "high",
+            "no workspace choice defers to the account"
+        )
+
+        model.setReasoningEffort("")
+
+        XCTAssertEqual(model.resolvedReasoningEffort, "")
+        XCTAssertEqual(
+            model.providerRequestBody()["reasoning_effort"] as? String, "",
+            "and the model's own default is what gets sent"
+        )
+    }
+
+    @MainActor
+    func testAnEffortTheChatGPTCatalogDoesNotListIsNotSent() {
+        // The choice belongs to the workspace, so it outlives a switch between
+        // accounts: "max" set on a Claude model is still stored when the same
+        // workspace routes to a ChatGPT plan, which tops out at "xhigh".
+        let model = AppModel(startImmediately: false)
+        var account = ProviderAccount(kind: .chatGPT, name: "Work")
+        account.preferredModel = "gpt-5.3-codex"
+        model.saveProviderAccount(account, apiKey: nil)
+        model.settings.activeAccountID = account.id.uuidString
+        var profile = seededProfile(path: model.workspacePath)
+        profile.reasoningEffort = "max"
+        model.workspaceProfiles = [profile]
+
+        // With no catalog yet there is nothing to check against, and the helper
+        // is the authority — the choice travels rather than being dropped.
+        XCTAssertEqual(model.providerRequestBody()["reasoning_effort"] as? String, "max")
+
+        model.applyAccountModelCatalogForTesting(
+            [
+                ChatGPTModelsResponse.Model(
+                    id: "gpt-5.3-codex",
+                    displayName: "GPT-5.3 Codex",
+                    description: "",
+                    isDefault: true,
+                    supportedReasoningEfforts: [
+                        .init(effort: "low", description: nil),
+                        .init(effort: "high", description: nil),
+                        .init(effort: "xhigh", description: nil),
+                    ],
+                    defaultReasoningEffort: "high"
+                )
+            ],
+            for: account.id
+        )
+
+        XCTAssertEqual(
+            model.providerRequestBody()["reasoning_effort"] as? String, "",
+            "an effort this model rejects would fail the turn, so send none"
+        )
     }
 
     @MainActor

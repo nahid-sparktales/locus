@@ -619,6 +619,10 @@ struct SummaryRow: View {
     let identifier: String
     var accessibilityLabel: String? = nil
     var help: String? = nil
+    /// Middle by default, because most rows are paths and the tail — the file
+    /// name — is what identifies them. A row whose label reads left to right,
+    /// like a shell command, needs the head kept instead.
+    var truncation: Text.TruncationMode = .middle
     var action: (() -> Void)? = nil
 
     init(
@@ -630,6 +634,7 @@ struct SummaryRow: View {
         identifier: String,
         accessibilityLabel: String? = nil,
         help: String? = nil,
+        truncation: Text.TruncationMode = .middle,
         action: (() -> Void)? = nil
     ) {
         self.icon = icon
@@ -640,6 +645,7 @@ struct SummaryRow: View {
         self.identifier = identifier
         self.accessibilityLabel = accessibilityLabel
         self.help = help
+        self.truncation = truncation
         self.action = action
     }
 
@@ -672,7 +678,7 @@ struct SummaryRow: View {
                 .font(.locus(size: 10, weight: .semibold))
                 .foregroundStyle(LocusTheme.ink)
                 .lineLimit(1)
-                .truncationMode(.middle)
+                .truncationMode(truncation)
             Spacer(minLength: 6)
             if let meta {
                 Text(meta)

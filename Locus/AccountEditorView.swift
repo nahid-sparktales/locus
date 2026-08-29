@@ -21,7 +21,10 @@ struct AccountEditorView: View {
     @State private var testResult: String?
     @State private var testFailed = false
     @State private var contextWindow = ""
-    @State private var nativeMode = true
+    // Overwritten from the account on appear; the initial value only decides
+    // what a new ChatGPT account paints for one frame, so it matches the
+    // initialiser's default rather than contradicting it.
+    @State private var nativeMode = false
     @State private var webSearch = false
     @State private var reasoningEffort = ""
     @State private var focusedField: FocusedField?
@@ -273,7 +276,7 @@ struct AccountEditorView: View {
 
             Toggle("Codex-native mode", isOn: $nativeMode)
                 .accessibilityIdentifier("accountEditor.chatGPT.nativeMode")
-            Text("Answers match OpenAI's Codex: native prompt and tools, no Locus memory or skills on this account's chats. Changing this restarts conversation context.")
+            Text("Off by default: this account's chats use Locus's prompt, tools, memory, and skills. Turn it on to match OpenAI's Codex instead — native prompt and tools, and no Locus memory or skills here. Changing this restarts conversation context.")
                 .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)

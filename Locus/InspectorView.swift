@@ -1415,6 +1415,7 @@ struct InspectorRunsTab: View {
     @State private var filter = ""
     @State private var draftPlan: DispatchPlan?
     @State private var showTechnicalLog = false
+    @State private var requestExpanded = false
     @State private var telemetryContentRunID: String?
 
     var body: some View {
@@ -1487,6 +1488,9 @@ struct InspectorRunsTab: View {
             HStack(spacing: 8) {
                 Image(systemName: "point.3.connected.trianglepath.dotted")
                     .foregroundStyle(LocusTheme.signalDeep)
+                    // Decoration beside the panel's own title: unhidden, it is
+                    // exposed with its raw SF Symbol name as its label.
+                    .accessibilityHidden(true)
                 Text("RUNS")
                     .font(.locus(size: 8, weight: .bold))
                     .tracking(0.7)
@@ -2072,59 +2076,17 @@ struct InspectorRunsTab: View {
     }
 
     private func soloSwarmOverview(_ run: OrchestrationRun) -> some View {
-        ScrollView {
+        let work = runWork(run)
+        return ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                overviewCard("REQUEST", symbol: "text.bubble") {
-                    Text(run.request.isEmpty ? "No request was recorded." : run.request)
-                        .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.inkSoft)
-                        .lineLimit(8)
-                }
-
-                overviewCard("SWARM STATUS", symbol: "circle.hexagongrid.fill") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        metricRow("State", run.state.replacingOccurrences(of: "_", with: " ").capitalized)
-                        metricRow("Workers", "\(swarmCompletedCount(run)) of \(swarmWorkerCount(run)) completed")
-                        metricRow("Duration", runDuration(run))
-                        if let calls = swarmModelCalls(run) {
-                            metricRow("Model calls", calls.formatted())
-                        }
-                        if let tokens = swarmTotalTokens(run) {
-                            metricRow("Total tokens", tokens.formatted())
-                        }
-                    }
-                }
-
-                overviewCard("WORKERS", symbol: "person.fill") {
-                    if usesLiveSwarmWorkers(run) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(model.agentActivities.filter { $0.depth == 1 }) { activity in
-                                liveSwarmWorkerRow(activity)
-                            }
-                        }
-                    } else if !agentTreeAttempts(run).isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(agentTreeAttempts(run)) { attempt in
-                                swarmAttemptRow(attempt)
-                            }
-                        }
-                    } else {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(run.state == "running"
-                                ? "No workers delegated yet"
-                                : "This run did not delegate any workers")
-                                .font(.locus(size: 9, weight: .semibold))
-                            Text("The primary agent can finish a Solo request itself when parallel investigation would not help.")
-                                .font(.locus(size: 8))
-                                .foregroundStyle(LocusTheme.muted)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .accessibilityIdentifier("runs.soloSwarm.noWorkers")
-                    }
-                }
-
+                runSummaryStrip(run, work: work)
+                requestCard(run)
+                whatHappenedCard(run, work: work)
+                workersCard(run, work: work)
                 if swarmHasUsageBreakdown(run) {
-                    overviewCard("USAGE", symbol: "gauge") {
+                    // A breakdown of numbers the strip already reports, so it
+                    // opens on demand rather than competing with them.
+                    DisclosureGroup("Token breakdown") {
                         VStack(alignment: .leading, spacing: 6) {
                             metricRow(
                                 "Primary agent",
@@ -2134,13 +2096,17 @@ struct InspectorRunsTab: View {
                                 "Solo workers",
                                 "\(swarmWorkerTokens(run).formatted()) tokens"
                             )
+                            if let calls = swarmModelCalls(run) {
+                                metricRow("Model calls", calls.formatted())
+                            }
                             if let calls = run.usage?["worker_model_calls"]?.integer {
                                 metricRow("Worker model calls", calls.formatted())
                             }
                         }
+                        .padding(.top, 6)
                     }
+                    .font(.locus(size: 8, weight: .semibold))
                 }
-
                 technicalDetails(run)
             }
             .padding(12)
@@ -2150,27 +2116,12 @@ struct InspectorRunsTab: View {
     }
 
     private func soloOverview(_ run: OrchestrationRun) -> some View {
-        ScrollView {
+        let work = runWork(run)
+        return ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                overviewCard("REQUEST", symbol: "text.bubble") {
-                    Text(run.request.isEmpty ? "No request was recorded." : run.request)
-                        .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.inkSoft)
-                        .lineLimit(8)
-                }
-                overviewCard("RESULT", symbol: "checkmark.seal") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        metricRow("State", run.state.replacingOccurrences(of: "_", with: " ").capitalized)
-                        metricRow("Duration", runDuration(run))
-                        if let calls = run.usage?["model_calls"]?.integer {
-                            metricRow("Model calls", calls.formatted())
-                        }
-                        if let prompt = run.usage?["prompt_tokens"]?.integer,
-                           let completion = run.usage?["completion_tokens"]?.integer {
-                            metricRow("Tokens", (prompt + completion).formatted())
-                        }
-                    }
-                }
+                runSummaryStrip(run, work: work)
+                requestCard(run)
+                whatHappenedCard(run, work: work)
                 technicalDetails(run)
             }
             .padding(12)
@@ -2179,20 +2130,286 @@ struct InspectorRunsTab: View {
         .accessibilityIdentifier("runs.solo.overview")
     }
 
+    /// The four numbers that answer "what happened here?" before any card does.
+    ///
+    /// Sized through `Font.locus`, which maps everything below 11 point onto one
+    /// semantic style: the previous rows asked for 7, 8 and 9 point and all three
+    /// rendered identically, so a duration and a token count carried exactly the
+    /// same weight. Crossing the 11-point boundary buys a real step in the ramp
+    /// without opting out of Dynamic Type.
+    private func runSummaryStrip(_ run: OrchestrationRun, work: RunWork) -> some View {
+        let files = work.files.count
+        let tokens = swarmTotalTokens(run)
+        return ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 10) {
+                summaryStat(runDuration(run), "Duration")
+                summaryStat(runStepCount(run, work: work).formatted(), "Steps")
+                summaryStat(files.formatted(), files == 1 ? "File" : "Files")
+                summaryStat(
+                    tokens?.formatted(.number.notation(.compactName)) ?? "—", "Tokens"
+                )
+            }
+            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 10) {
+                GridRow {
+                    summaryStat(runDuration(run), "Duration")
+                    summaryStat(runStepCount(run, work: work).formatted(), "Steps")
+                }
+                GridRow {
+                    summaryStat(files.formatted(), files == 1 ? "File" : "Files")
+                    summaryStat(
+                        tokens?.formatted(.number.notation(.compactName)) ?? "—", "Tokens"
+                    )
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .summaryCardChrome()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("runs.summaryStrip")
+    }
+
+    private func summaryStat(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(value)
+                .font(.locus(size: 15, weight: .semibold))
+                .foregroundStyle(LocusTheme.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(label.uppercased())
+                .font(.locus(size: 7, weight: .bold))
+                .tracking(0.5)
+                .foregroundStyle(LocusTheme.textSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // One element, one phrase: read as "Steps, 4" rather than as two
+        // unrelated fragments. A collapsed element does not carry a separate
+        // accessibility value, so the number belongs in the label.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label), \(value)")
+        .accessibilityIdentifier("runs.summaryStat.\(label.lowercased())")
+    }
+
+    /// The request as the person typed it. `run.request` is the composer's
+    /// decorated prompt, which opens with a mode header and several paragraphs
+    /// of standing instruction — clamping that showed the boilerplate and cut
+    /// off the only part anyone came to read. The transcript already strips it.
+    private func requestCard(_ run: OrchestrationRun) -> some View {
+        let text = AppModel.displayUserText(run.request)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let clamped = text.count > 220 || text.contains("\n")
+        return overviewCard("REQUEST", symbol: "text.bubble") {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(text.isEmpty ? "No request was recorded." : text)
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.textSecondary)
+                    .lineLimit(requestExpanded ? nil : 3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                if clamped, !text.isEmpty {
+                    Button(requestExpanded ? "Show less" : "Show more") {
+                        withAnimation(LocusMotion.content) { requestExpanded.toggle() }
+                    }
+                    .buttonStyle(.locus())
+                    .font(.locus(size: 8, weight: .semibold))
+                    .accessibilityIdentifier("runs.request.expand")
+                }
+            }
+        }
+    }
+
+    /// Files written and commands run, rebuilt from the run's own events. The
+    /// panel used to answer this from live git status, so it went blank the
+    /// moment you opened a run that had already finished.
+    @ViewBuilder
+    private func whatHappenedCard(_ run: OrchestrationRun, work: RunWork) -> some View {
+        overviewCard("WHAT HAPPENED", symbol: "hammer") {
+            if work.isEmpty {
+                Text(run.state == "running"
+                    ? "Nothing recorded yet."
+                    : "This run wrote no files and ran no commands.")
+                    .font(.locus(size: 8))
+                    .foregroundStyle(LocusTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("runs.work.empty")
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    if !work.files.isEmpty {
+                        workSubhead("Files", work.files.count)
+                        SummaryList(
+                            work.files,
+                            identifierPrefix: "runs.work.file",
+                            noun: "file"
+                        ) { _, change in
+                            SummaryRow(
+                                icon: .forPath(change.path),
+                                label: change.path,
+                                meta: change.effect,
+                                identifier: "runs.work.file.\(change.path)",
+                                help: change.path,
+                                action: fileOpener(run, path: change.path)
+                            )
+                        }
+                    }
+                    if !work.commands.isEmpty {
+                        workSubhead("Commands", work.commands.count)
+                        SummaryList(
+                            work.commands,
+                            identifierPrefix: "runs.work.command",
+                            noun: "command"
+                        ) { _, command in
+                            SummaryRow(
+                                icon: .process,
+                                label: command.summary,
+                                meta: command.ok ? nil : "failed",
+                                metaColor: LocusTheme.dangerForeground,
+                                identifier: "runs.work.command.\(command.id)",
+                                help: command.summary,
+                                // A command reads from the left; keeping its
+                                // tail made two different `python3 -m unittest`
+                                // invocations render as the same row.
+                                truncation: .tail
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func workSubhead(_ title: String, _ count: Int) -> some View {
+        HStack(spacing: 5) {
+            Text(title.uppercased())
+                .font(.locus(size: 7, weight: .bold))
+                .tracking(0.5)
+            Text(count.formatted())
+                .font(.locus(size: 7, design: .monospaced))
+        }
+        .foregroundStyle(LocusTheme.textSecondary)
+    }
+
+    /// Only offered where activating it is safe and meaningful: the run has to
+    /// belong to the workspace that is open, or the path resolves somewhere else
+    /// entirely.
+    private func fileOpener(_ run: OrchestrationRun, path: String) -> (() -> Void)? {
+        guard let root = run.workspaceRoot, root == model.workspacePath else { return nil }
+        return { model.openSessionFile(path) }
+    }
+
+    /// Workers earn a card when there were any. When there were none, the fact
+    /// belongs in one line — and it has to say *which* kind of none it was: the
+    /// agent seeing no reason to split the work reads nothing like delegation
+    /// having been unavailable, and the two used to be indistinguishable.
+    @ViewBuilder
+    private func workersCard(_ run: OrchestrationRun, work: RunWork) -> some View {
+        if usesLiveSwarmWorkers(run) {
+            overviewCard("WORKERS", symbol: "person.fill") {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(model.agentActivities.filter { $0.depth == 1 }) { activity in
+                        liveSwarmWorkerRow(activity)
+                    }
+                }
+            }
+        } else if !agentTreeAttempts(run).isEmpty {
+            overviewCard(
+                "WORKERS · \(swarmCompletedCount(run)) OF \(swarmWorkerCount(run))",
+                symbol: "person.fill"
+            ) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(agentTreeAttempts(run)) { attempt in
+                        swarmAttemptRow(attempt)
+                    }
+                }
+            }
+        } else {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: work.delegationUnavailable
+                    ? "exclamationmark.triangle" : "person.slash")
+                    .font(.locus(size: 8))
+                    .foregroundStyle(work.delegationUnavailable
+                        ? LocusTheme.warningForeground : LocusTheme.textTertiary)
+                Text(workersEmptyText(run, work: work))
+                    .font(.locus(size: 8))
+                    .foregroundStyle(LocusTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("runs.soloSwarm.noWorkers")
+        }
+    }
+
+    private func workersEmptyText(_ run: OrchestrationRun, work: RunWork) -> String {
+        if work.delegationUnavailable {
+            return "Delegation was unavailable for this run, so the agent worked alone."
+        }
+        if run.state == "running" { return "No workers delegated yet." }
+        return "This run did not delegate any workers — the primary agent can finish "
+            + "a Solo request itself when parallel investigation would not help."
+    }
+
+    /// Tool steps: what the run did, rather than how many times a provider was
+    /// asked. `usage.tool_steps` is authoritative when the agent reported it;
+    /// runs recorded before that field existed are counted from their own
+    /// persisted tool results, so history reads correctly too.
+    private func runStepCount(_ run: OrchestrationRun, work: RunWork) -> Int {
+        if let steps = run.usage?["tool_steps"]?.integer, steps > 0 { return steps }
+        return work.toolSteps
+    }
+
+    private func runWork(_ run: OrchestrationRun) -> RunWork {
+        RunWork(events: model.orchestrationEvents)
+    }
+
     private func technicalDetails(_ run: OrchestrationRun) -> some View {
         DisclosureGroup("Technical details") {
             VStack(alignment: .leading, spacing: 5) {
                 Text("Run ID · \(run.id)")
                 Text("Saved events · \(run.lastSequence)")
+                Text("Started · \(runTimestamp(run.createdAt))")
+                if let ended = run.completedAt {
+                    Text("Ended · \(runTimestamp(ended))")
+                }
+                if let model = runModelLabel(run) {
+                    Text("Model · \(model)")
+                }
+                if let root = run.workspaceRoot, !root.isEmpty {
+                    Text("Workspace · \(root)")
+                }
+                if let environment = run.executionEnvironment, !environment.isEmpty {
+                    Text("Environment · \(environment)")
+                }
+                if let trace = run.traceID, !trace.isEmpty {
+                    Text("Trace · \(trace)")
+                }
                 if let checkpoint = run.checkpoint {
                     Text("Checkpoint · \(checkpoint.kind.replacingOccurrences(of: "_", with: " "))")
                 }
             }
             .font(.locus(size: 7, design: .monospaced))
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(LocusTheme.textTertiary)
+            .textSelection(.enabled)
             .padding(.top, 6)
         }
         .font(.locus(size: 8, weight: .semibold))
+        .accessibilityIdentifier("runs.technicalDetails")
+    }
+
+    private func runTimestamp(_ value: Double) -> String {
+        Date(timeIntervalSince1970: value)
+            .formatted(date: .abbreviated, time: .standard)
+    }
+
+    /// Provider and model are reported on the turn's terminal event, which the
+    /// run row itself does not carry.
+    private func runModelLabel(_ run: OrchestrationRun) -> String? {
+        guard let terminal = model.orchestrationEvents.last(where: {
+            $0.type == "turn_done" || $0.type == "orchestration_completed"
+        }) else { return nil }
+        let name = terminal.text("model") ?? ""
+        let provider = terminal.text("provider") ?? ""
+        let label = [provider, name].filter { !$0.isEmpty }.joined(separator: " · ")
+        return label.isEmpty ? nil : label
     }
 
     private func usesLiveSwarmWorkers(_ run: OrchestrationRun) -> Bool {
@@ -2351,7 +2568,10 @@ struct InspectorRunsTab: View {
                 TextField("Filter run activity", text: $filter)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("runs.filter")
-                Toggle("Technical log", isOn: $showTechnicalLog)
+                // Renamed from "Technical log": with the list above now
+                // showing the run's actual work, this is the raw firehose you
+                // reach for to debug, not the only way to see anything at all.
+                Toggle("Raw events", isOn: $showTechnicalLog)
                     .toggleStyle(.checkbox)
                     .font(.locus(size: 8, weight: .semibold))
                     .accessibilityIdentifier("runs.technicalLog")
@@ -2371,7 +2591,7 @@ struct InspectorRunsTab: View {
                                 .font(.locus(size: 9, weight: .semibold))
                             Text(filter.isEmpty
                                 ? "Events will appear here as this run progresses."
-                                : "Try a different search term or open the technical log.")
+                                : "Try a different search term, or switch on Raw events.")
                                 .font(.locus(size: 8))
                                 .foregroundStyle(LocusTheme.muted)
                                 .multilineTextAlignment(.center)
@@ -2384,27 +2604,42 @@ struct InspectorRunsTab: View {
                                 Text(group.title.uppercased())
                                     .font(.locus(size: 7, weight: .bold))
                                     .tracking(0.6)
-                                    .foregroundStyle(LocusTheme.muted)
+                                    .foregroundStyle(LocusTheme.textSecondary)
                                     .padding(.horizontal, 12)
                                     .padding(.top, 10)
                                     .padding(.bottom, 4)
                                 ForEach(group.events) { event in
                                     HStack(alignment: .top, spacing: 8) {
                                         Image(systemName: friendlyEventSymbol(event))
-                                            .foregroundStyle(color(for: event.type))
+                                            .foregroundStyle(eventColor(event))
                                             .frame(width: 14)
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(friendlyEventTitle(event))
                                                 .font(.locus(size: 9, weight: .semibold))
                                             Text(friendlyEventDetail(event))
                                                 .font(.locus(size: 8))
-                                                .foregroundStyle(LocusTheme.inkSoft)
-                                                .lineLimit(6)
+                                                .foregroundStyle(LocusTheme.textSecondary)
+                                                .lineLimit(4)
                                         }
-                                        Spacer(minLength: 0)
+                                        Spacer(minLength: 6)
+                                        // Offsets, not clock times: what a
+                                        // reader wants from a run's timeline is
+                                        // how long it took to get here.
+                                        if let offset = eventOffset(event, in: run) {
+                                            Text(offset)
+                                                .font(.locus(size: 7, design: .monospaced))
+                                                .foregroundStyle(LocusTheme.textTertiary)
+                                                .accessibilityLabel("at \(offset)")
+                                        }
                                     }
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 8)
+                                    // Spelled out rather than combined: a
+                                    // combined row reports an empty label here,
+                                    // which reads as an undescribed element.
+                                    .accessibilityElement(children: .ignore)
+                                    .accessibilityLabel(activityRowLabel(event, in: run))
+                                    .accessibilityIdentifier("runs.activity.event.\(event.id)")
                                     Divider().padding(.leading, 34)
                                 }
                             }
@@ -2426,14 +2661,14 @@ struct InspectorRunsTab: View {
             Label(title, systemImage: symbol)
                 .font(.locus(size: 8, weight: .bold))
                 .tracking(0.5)
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(LocusTheme.textSecondary)
             content()
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(LocusTheme.white.opacity(0.58))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay { RoundedRectangle(cornerRadius: 8).stroke(LocusTheme.line) }
+        // The same chrome as the Overview tab's summary cards, so the two
+        // surfaces read as siblings instead of as two nearly-identical recipes.
+        .summaryCardChrome()
     }
 
     private func metricRow(_ title: String, _ value: String) -> some View {
@@ -2943,13 +3178,23 @@ struct InspectorRunsTab: View {
     }
 
     private var activityGroups: [ActivityGroup] {
-        let visible = filteredEvents.filter(isUserFacingEvent)
+        let visible = withoutRedundantWork(filteredEvents.filter(isUserFacingEvent))
+        // Phase headings describe a team's shape. A solo turn that delegated
+        // nothing has one phase, and filing its whole timeline under a "Solo
+        // workers" heading described workers that never existed.
+        if isSoloRun, agentTreeAttempts(model.selectedOrchestrationRun).isEmpty {
+            return visible.isEmpty ? [] : [ActivityGroup(title: "Timeline", events: visible)]
+        }
         let order = ["Solo workers", "Planning", "Approval", "Specialists", "Coding jobs", "Review", "Complete"]
         let grouped = Dictionary(grouping: visible, by: activityPhase)
         return order.compactMap { title in
             guard let events = grouped[title], !events.isEmpty else { return nil }
             return ActivityGroup(title: title, events: events)
         }
+    }
+
+    private func agentTreeAttempts(_ run: OrchestrationRun?) -> [AgentJobAttempt] {
+        run.map(agentTreeAttempts) ?? []
     }
 
     private func runPhases(_ run: OrchestrationRun) -> [RunPhase] {
@@ -2991,6 +3236,24 @@ struct InspectorRunsTab: View {
         return "\(state) · \(run.completedJobCount ?? 0) of \(total) \(unit)"
     }
 
+    private func activityRowLabel(_ event: OrchestrationEvent, in run: OrchestrationRun) -> String {
+        [
+            friendlyEventTitle(event),
+            friendlyEventDetail(event),
+            eventOffset(event, in: run).map { "at \($0)" },
+        ]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+    }
+
+    private func eventOffset(_ event: OrchestrationEvent, in run: OrchestrationRun) -> String? {
+        guard let occurred = event.occurredAt else { return nil }
+        let seconds = Int(occurred.timeIntervalSince1970 - run.createdAt)
+        guard seconds >= 0 else { return nil }
+        return String(format: "+%d:%02d", seconds / 60, seconds % 60)
+    }
+
     private func runDuration(_ run: OrchestrationRun) -> String {
         let end = run.completedAt ?? run.updatedAt
         let seconds = max(Int(end - run.createdAt), 0)
@@ -3005,8 +3268,13 @@ struct InspectorRunsTab: View {
         }
     }
 
+    /// A solo run is a team run's opposite: it emits no `agent_*` and no
+    /// `orchestration_*` events, so the team-shaped allow-list below could only
+    /// ever match its two lifecycle rows. The turn's tools *are* its activity,
+    /// which is why the useful list used to live behind the raw-events switch.
     private func isUserFacingEvent(_ event: OrchestrationEvent) -> Bool {
-        event.type == "error"
+        if isSoloRun, soloWorkEventTypes.contains(event.type) { return true }
+        return event.type == "error"
             || ["run_started", "agent_spawned", "agent_branch_stopped",
                 "swarm_telemetry", "turn_done", "note"].contains(event.type)
             || event.type == "permission_request"
@@ -3015,6 +3283,35 @@ struct InspectorRunsTab: View {
             || event.type == "task_changes"
             || event.type.hasPrefix("agent_job_")
             || event.type.hasPrefix("orchestration_")
+    }
+
+    private var isSoloRun: Bool {
+        model.selectedOrchestrationRun?.runKind == "solo"
+    }
+
+    private var soloWorkEventTypes: Set<String> {
+        ["tool_result", "tool_call_proposed", "workspace_changed"]
+    }
+
+    /// `tool_call_proposed` and `tool_result` are a pair; showing both doubles
+    /// the list without adding a fact. The proposal survives only when no result
+    /// followed it — a call that was denied, or one the turn was stopped during,
+    /// which is exactly the case worth seeing. `workspace_changed` is dropped
+    /// outright: the Overview's file list says the same thing with the paths.
+    private func withoutRedundantWork(
+        _ events: [OrchestrationEvent]
+    ) -> [OrchestrationEvent] {
+        guard isSoloRun else { return events }
+        let resolved = Set(
+            events.filter { $0.type == "tool_result" }.compactMap { $0.text("id") }
+        )
+        return events.filter { event in
+            switch event.type {
+            case "workspace_changed": false
+            case "tool_call_proposed": !resolved.contains(event.text("id") ?? "")
+            default: true
+            }
+        }
     }
 
     private func activityPhase(_ event: OrchestrationEvent) -> String {
@@ -3076,11 +3373,20 @@ struct InspectorRunsTab: View {
             ? "Team run completed" : "Team run stopped"
         case "task_changes": "Workspace changes are ready"
         case "error": "Run error"
+        case "tool_result", "tool_call_proposed":
+            event.text("summary")?.nilIfEmpty ?? event.text("tool") ?? "Tool call"
         default: event.title
         }
     }
 
     private func friendlyEventDetail(_ event: OrchestrationEvent) -> String {
+        if event.type == "tool_result" {
+            if event.values["denied"]?.boolean == true { return "Denied" }
+            return event.text("result")?.nilIfEmpty ?? "Completed"
+        }
+        if event.type == "tool_call_proposed" {
+            return event.text("detail")?.nilIfEmpty ?? "Never ran"
+        }
         let agent = event.text("agent_name")
         let model = event.text("model")
         let route = [agent, model].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
@@ -3094,12 +3400,31 @@ struct InspectorRunsTab: View {
     }
 
     private func friendlyEventSymbol(_ event: OrchestrationEvent) -> String {
+        if event.type == "tool_call_proposed" { return "circle.dotted" }
+        if event.type == "tool_result" {
+            if event.values["denied"]?.boolean == true { return "hand.raised.circle.fill" }
+            return event.values["ok"]?.boolean == false
+                ? "exclamationmark.circle.fill" : "checkmark.circle.fill"
+        }
         if event.type.contains("completed") { return "checkmark.circle.fill" }
         if event.type.contains("incomplete") || event.type.contains("paused") { return "pause.circle.fill" }
         if event.type.contains("error") || event.type.contains("rejected") { return "exclamationmark.circle.fill" }
         if event.type.contains("permission") { return "lock.circle.fill" }
         if event.type.contains("plan") { return "list.bullet.clipboard.fill" }
         return "circle.inset.filled"
+    }
+
+    /// `tool_result` carries its outcome in a flag, not in its type name, so
+    /// the type-based palette painted a failed command the same green as a
+    /// successful one.
+    private func eventColor(_ event: OrchestrationEvent) -> Color {
+        if event.type == "tool_result" {
+            if event.values["denied"]?.boolean == true { return LocusTheme.warning }
+            return event.values["ok"]?.boolean == false
+                ? LocusTheme.coral : LocusTheme.success
+        }
+        if event.type == "tool_call_proposed" { return LocusTheme.muted }
+        return color(for: event.type)
     }
 
     private func color(for type: String) -> Color {

@@ -359,6 +359,11 @@ struct WorkspaceProfile: Identifiable, Codable, Hashable {
     var previewURL: String
     var contextFiles: [ContextFile]
     var draft: String
+    /// The reasoning effort this workspace was last used with, overriding the
+    /// account's own default. Optional, so profiles saved before it decode
+    /// unchanged; nil and "" both fall back to the account, then to the
+    /// model's default.
+    var reasoningEffort: String? = nil
     /// Deprecated compatibility field. Solo now delegates adaptively without
     /// a per-workspace switch.
     var soloSwarmEnabled: Bool? = nil

@@ -550,7 +550,10 @@ class AgentCore:
             fallback_instructions=fallback_instructions,
         )
         self.agent_id = str(agent_id or "primary")[:128]
-        self.agent_mode = mode if mode in {"ask", "work", "plan", "build"} else "work"
+        # Keep "grill" listed: `sessions.py` drops the mode-instruction section
+        # for ask/work only, so an unlisted mode would coerce to "work" here and
+        # silently strip the $grilling activation on the parity path.
+        self.agent_mode = mode if mode in {"ask", "work", "plan", "grill", "build"} else "work"
         self.agent_role_contract = str(role_contract or "")[:8_000]
         self.memory_context = str(memory_context or "")[:24_000]
         self.continuity_context = (
@@ -956,18 +959,33 @@ class AgentCore:
         explicit user output limit uses `max_completion_tokens` for OpenAI-style
         endpoints. With no explicit limit, the existing provider defaults stay
         untouched. Ollama receives the equivalent `num_predict` only when set.
+
+        Reasoning effort rides along here too, in the shape each surface takes:
+        Anthropic carries it inside `output_config`, OpenAI-style endpoints take
+        a top-level `reasoning_effort`. An empty setting sends nothing, because
+        a model without an effort control rejects the field rather than
+        ignoring it. Ollama's graded thinking is not wired up: its `think` flag
+        is a bool, which is a different control, not a coarser one.
         """
         output_cap = self.agent_configuration.runtime_policy.max_output_tokens
         if self.provider == "remote":
+            anthropic = getattr(self.client, "auth_style", "") == AUTH_ANTHROPIC
             room = self._reply_room()
             if output_cap is not None:
                 room = min(room, output_cap) if room > 0 else output_cap
-            if getattr(self.client, "auth_style", "") == AUTH_ANTHROPIC and room > 0:
-                return {"max_tokens": room}
-            if output_cap is not None:
-                return {"max_completion_tokens": output_cap}
-            return None
-        options: dict[str, Any] = {}
+            options: dict[str, Any] = {}
+            if anthropic and room > 0:
+                options["max_tokens"] = room
+            elif output_cap is not None:
+                options["max_completion_tokens"] = output_cap
+            effort = str(self.config.get("remote_reasoning_effort") or "")
+            if effort:
+                if anthropic:
+                    options["output_config"] = {"effort": effort}
+                else:
+                    options["reasoning_effort"] = effort
+            return options or None
+        options = {}
         if self._context_requested > 0:
             options["num_ctx"] = self._context_requested
         if output_cap is not None:
@@ -1047,6 +1065,7 @@ class AgentCore:
         lists_models: bool | None = None,
         context_window_tokens: Any = None,
         published_context_window: Any = None,
+        reasoning_effort: str | None = None,
     ) -> None:
         """Point the agent at an OpenAI-compatible endpoint.
 
@@ -1059,6 +1078,10 @@ class AgentCore:
         They arrive separately because they are not equally trustworthy: the
         first clamps and is reported as configured, the second is a labelled
         fallback used only when the endpoint says nothing about itself.
+
+        ``reasoning_effort`` follows the ``None`` rule too. "" is a meaningful
+        value, not an absent one: it means send no effort field at all, which
+        is what a model without an effort control requires.
         """
         normalized_url = normalize_base_url(base_url)
         effective_key = (
@@ -1097,6 +1120,13 @@ class AgentCore:
             self.config["remote_account_label"] = account_label.strip()
         if lists_models is not None:
             self.config["remote_lists_models"] = bool(lists_models)
+        if reasoning_effort is not None:
+            self.config["remote_reasoning_effort"] = reasoning_effort.strip()
+        elif _different_host(previous_url, self.config["remote_base_url"]):
+            # An effort belongs to the model that advertised it. Carrying one
+            # across endpoints is how "xhigh" reaches a model that rejects the
+            # field and fails the turn outright.
+            self.config["remote_reasoning_effort"] = ""
         self._build_remote_client()
         # _build_remote_client only adopts a non-empty model, so clearing the
         # config above is not enough on its own: self.model would keep the
@@ -1203,6 +1233,9 @@ class AgentCore:
             "remote_model": str(self.config.get("remote_model") or ""),
             "has_api_key": bool(self.config.get("remote_api_key")),
             "account_label": self.account_label,
+            "remote_reasoning_effort": str(
+                self.config.get("remote_reasoning_effort") or ""
+            ),
             "chatgpt_native_mode": bool(self.config.get("chatgpt_native_mode", True)),
             "chatgpt_web_search": bool(self.config.get("chatgpt_web_search", False)),
             "chatgpt_reasoning_effort": str(
@@ -1636,6 +1669,15 @@ class AgentCore:
         prompt_before = self.total_prompt_tokens
         completion_before = self.total_completion_tokens
         reason = "complete"
+        # App Server bills one thread call per turn, so the classic loop
+        # counter never advances here and a twenty-step build reported a
+        # single model call. Count what actually happened instead: one model
+        # call per token-usage update, and every tool step Locus ran. Declared
+        # out here because a missing helper skips the block below entirely.
+        native_model_calls = 0
+        native_tool_steps = 0
+        native_prompt_tokens = 0
+        native_completion_tokens = 0
         self._turn_allows_tools = allow_tools
         self._last_turn_allowed_tools = allow_tools
         self._interrupt.clear()
@@ -1811,7 +1853,6 @@ class AgentCore:
                 assistant_items: dict[str, dict[str, Any]] = {}
                 synthetic_message_id = "managed-message"
                 synthetic_reasoning_id = "managed-reasoning"
-                dynamic_call_count = 0
                 dynamic_call_limit = min(
                     self.max_iterations,
                     max(int(model_call_limit), 1)
@@ -1951,7 +1992,8 @@ class AgentCore:
                         })
 
                 def handle_event(event: dict[str, Any]) -> None:
-                    nonlocal usage
+                    nonlocal usage, native_model_calls
+                    nonlocal native_prompt_tokens, native_completion_tokens
                     method = str(event.get("method") or "")
                     params = event.get("params")
                     if not isinstance(params, dict):
@@ -2043,17 +2085,29 @@ class AgentCore:
                         candidate = params.get("tokenUsage")
                         if isinstance(candidate, dict):
                             usage = candidate
+                            # ``last`` is one model call's spend. The helper
+                            # sends one update per call, so summing them is the
+                            # turn's true cost; keeping only the final snapshot
+                            # reported the last call as the whole turn.
+                            last = candidate.get("last")
+                            if isinstance(last, dict):
+                                prompt = max(int(last.get("inputTokens") or 0), 0)
+                                completion = max(int(last.get("outputTokens") or 0), 0)
+                                if prompt or completion:
+                                    native_model_calls += 1
+                                    native_prompt_tokens += prompt
+                                    native_completion_tokens += completion
                     elif method in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
                         raise RuntimeError("ChatGPT helper requested a disabled native approval")
 
                 def handle_tool(name: str, arguments: dict[str, Any], call_id: str) -> str:
-                    nonlocal dynamic_call_count
+                    nonlocal native_tool_steps
                     if not allow_tools:
                         return "Not run: Just Chat has no tool or workspace access."
-                    if dynamic_call_count >= dynamic_call_limit:
+                    if native_tool_steps >= dynamic_call_limit:
                         self._interrupt.set()
                         return "Error: Locus stopped this turn at its configured tool-step budget."
-                    dynamic_call_count += 1
+                    native_tool_steps += 1
                     if parity:
                         # Parity names exist only on the wire. Everything
                         # downstream — deny lists, accept-edits, previews,
@@ -2120,7 +2174,7 @@ class AgentCore:
                         "_phase": "final_answer",
                     })
                 if self._needs_final_answer_pass(
-                    reason=reason, tool_calls=dynamic_call_count
+                    reason=reason, tool_calls=native_tool_steps
                 ):
                     # The helper thread already holds this whole turn, so the
                     # write-up is one more turn on it with no tools attached —
@@ -2143,11 +2197,15 @@ class AgentCore:
                             "type": "note",
                             "text": "Locus could not write a closing summary for this turn.",
                         })
-                last = usage.get("last") if isinstance(usage.get("last"), dict) else {}
-                prompt = int(last.get("inputTokens") or 0)
-                completion = int(last.get("outputTokens") or 0)
-                self.total_prompt_tokens += max(prompt, 0)
-                self.total_completion_tokens += max(completion, 0)
+                # A helper that reports a running ``total`` is authoritative;
+                # otherwise the per-call sum built above is the honest figure.
+                total = usage.get("total") if isinstance(usage.get("total"), dict) else {}
+                prompt = max(int(total.get("inputTokens") or 0), 0) or native_prompt_tokens
+                completion = (
+                    max(int(total.get("outputTokens") or 0), 0) or native_completion_tokens
+                )
+                self.total_prompt_tokens += prompt
+                self.total_completion_tokens += completion
                 if self._interrupt.is_set():
                     reason = "interrupted"
             except (CodexAppServerError, RuntimeError, ValueError) as error:
@@ -2163,7 +2221,8 @@ class AgentCore:
             "type": "turn_done",
             "reason": reason,
             "duration_ms": max(int((time.monotonic() - started_at) * 1000), 0),
-            "model_calls": 1,
+            "model_calls": max(native_model_calls, 1),
+            "tool_steps": native_tool_steps,
             "iteration_limit": self.max_iterations,
             "model_call_limit": model_call_limit,
             "prompt_tokens": max(self.total_prompt_tokens - prompt_before, 0),
@@ -2776,6 +2835,8 @@ class AgentCore:
             "reason": reason,
             "duration_ms": max(int((time.monotonic() - started_at) * 1000), 0),
             "model_calls": iteration,
+            # The step count both routes agree on: one per tool Locus ran.
+            "tool_steps": tool_calls_run,
             "iteration_limit": iteration_limit,
             "model_call_limit": hard_call_limit,
             # This turn's token spend and provenance, additive so old clients

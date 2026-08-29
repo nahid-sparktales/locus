@@ -3434,8 +3434,63 @@ final class LocusUITests: XCTestCase {
         relaunchWithRunFixture("solo-swarm-empty")
 
         XCTAssertTrue(anyElement("runs.soloSwarm.overview").waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("runs.soloSwarm.noWorkers").exists)
-        XCTAssertTrue(app.staticTexts["This run did not delegate any workers"].exists)
+        let empty = anyElement("runs.soloSwarm.noWorkers")
+        XCTAssertTrue(empty.exists)
+        // Not a whole card any more: no workers is one line, and it has to say
+        // the agent chose this rather than that delegation was unavailable.
+        XCTAssertTrue(
+            (empty.label + " " + ((empty.value as? String) ?? ""))
+                .localizedCaseInsensitiveContains("did not delegate any workers")
+        )
+    }
+
+    func testSoloRunReportsTheWorkItActuallyDid() throws {
+        // The panel stacks a lot of chrome above its content, so a short test
+        // window can leave the timeline's later rows unrendered by the lazy
+        // stack rather than merely scrolled out of view.
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "1000"
+        relaunchWithRunFixture("solo-swarm-work")
+
+        XCTAssertTrue(anyElement("runs.soloSwarm.overview").waitForExistence(timeout: 3))
+
+        // The strip answers "what happened" before any card does. Four tool
+        // results, two surviving files: the numbers the panel used to report as
+        // "Model calls 1" for a run exactly like this one.
+        let strip = anyElement("runs.summaryStrip")
+        XCTAssertTrue(strip.exists)
+        XCTAssertEqual(anyElement("runs.summaryStat.steps").label, "Steps, 4")
+        XCTAssertEqual(anyElement("runs.summaryStat.files").label, "Files, 2")
+
+        XCTAssertTrue(anyElement("runs.work.file.stock_checker.py").exists)
+        XCTAssertTrue(anyElement("runs.work.file.test_stock_checker.py").exists)
+        XCTAssertFalse(anyElement("runs.work.empty").exists)
+
+        // And the timeline is populated without reaching for the raw log.
+        anyElement("runs.view.activity").click()
+        XCTAssertTrue(anyElement("runs.activity").waitForExistence(timeout: 3))
+        // The switch is off by default and now reads as what it is — the raw
+        // firehose, not the only route to a non-empty list.
+        XCTAssertTrue(anyElement("runs.technicalLog").exists)
+        XCTAssertTrue(app.checkBoxes["Raw events"].exists)
+        XCTAssertTrue(app.staticTexts["TIMELINE"].exists)
+        // The tools the run ran are rows in the default list, not something you
+        // have to switch the raw log on to find.
+        let write = anyElement("runs.activity.event.seed-work-1")
+        XCTAssertTrue(write.waitForExistence(timeout: 3))
+        XCTAssertTrue(write.label.localizedCaseInsensitiveContains("write stock_checker.py"))
+        XCTAssertTrue(
+            anyElement("runs.activity.event.seed-work-4").waitForExistence(timeout: 3)
+        )
+    }
+
+    func testRunsPanelPassesAnAccessibilityAudit() throws {
+        relaunchWithRunFixture("solo-swarm-work")
+
+        XCTAssertTrue(anyElement("runs.soloSwarm.overview").waitForExistence(timeout: 3))
+        try auditCurrentSurface()
+        anyElement("runs.view.activity").click()
+        XCTAssertTrue(anyElement("runs.activity").waitForExistence(timeout: 3))
+        try auditCurrentSurface()
     }
 
     func testPermissionPanelRepliesWithTheKeyboard() {
