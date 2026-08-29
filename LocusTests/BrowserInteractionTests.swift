@@ -198,8 +198,13 @@ final class BrowserInteractionTests: XCTestCase {
                  style="position:absolute;left:0;top:50px;width:200px;height:40px">
           <input id="otp" autocomplete="one-time-code"
                  style="position:absolute;left:0;top:100px;width:200px;height:40px">
+          <!-- A native select is laid out by the platform control, so its
+               height is not guaranteed to honour CSS across WebKit versions.
+               Opting out of the native appearance keeps the hit-test target
+               deterministic. -->
           <select id="expiry" autocomplete="cc-exp"
-                  style="position:absolute;left:0;top:150px;width:200px;height:40px">
+                  style="position:absolute;left:0;top:150px;width:200px;height:40px;
+                         -webkit-appearance:none;appearance:none">
             <option>12/2035</option>
           </select>
         </body>
@@ -211,7 +216,7 @@ final class BrowserInteractionTests: XCTestCase {
         XCTAssertEqual(code["secureCategory"] as? String, "securityCode")
         let otp = try await object("return __locus.describeAt(x, y)", ["x": 100, "y": 120])
         XCTAssertEqual(otp["secureCategory"] as? String, "oneTimeCode")
-        let expiry = try await object("return __locus.describeAt(x, y)", ["x": 100, "y": 170])
+        let expiry = try await object("return __locus.describeAt(x, y)", ["x": 100, "y": 158])
         XCTAssertEqual(expiry["secureCategory"] as? String, "paymentCard")
     }
 
