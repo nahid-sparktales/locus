@@ -72,6 +72,89 @@ final class BrowserServiceTests: XCTestCase {
         )
     }
 
+    func testBrowserWalletIsNotInjectedWhileAccessIsOff() async throws {
+        let gateway = WalletGateway(
+            signer: UnavailableWalletSignerClient(),
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"]
+        )
+        service.configureWalletGateway(gateway)
+        let tab = service.tab(for: "session-wallet-off")
+        try await load("<title>No wallet</title>", into: tab)
+
+        let result = try await tab.webView.callAsyncJavaScript(
+            "return typeof globalThis.locusVault;",
+            arguments: [:],
+            in: nil,
+            contentWorld: .page
+        ) as? String
+        XCTAssertEqual(result, "undefined")
+    }
+
+    func testEIP6963DiscoveryUsesFrozenUniqueProviderMetadataPerPage() async throws {
+        let gateway = WalletGateway(
+            signer: UnavailableWalletSignerClient(),
+            environment: [
+                "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
+                "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
+            ]
+        )
+        service.configureWalletGateway(gateway)
+        let first = service.tab(for: "session-wallet-one")
+        let second = service.tab(for: "session-wallet-two")
+        try await load("<title>Wallet one</title>", into: first)
+        try await load("<title>Wallet two</title>", into: second)
+
+        let firstDiscovery = try await walletDiscovery(in: first.webView)
+        let secondDiscovery = try await walletDiscovery(in: second.webView)
+        let firstID = try XCTUnwrap(firstDiscovery["uuid"] as? String)
+        let secondID = try XCTUnwrap(secondDiscovery["uuid"] as? String)
+        XCTAssertNotEqual(firstID, secondID)
+        XCTAssertNotNil(UUID(uuidString: firstID))
+        XCTAssertNotNil(UUID(uuidString: secondID))
+        XCTAssertEqual(firstDiscovery["frozen"] as? Bool, true)
+        XCTAssertEqual(firstDiscovery["name"] as? String, "Locus Vault")
+        XCTAssertEqual(firstDiscovery["rdns"] as? String, "io.sparktales.locus")
+
+        gateway.applyFeatureAccess(walletEnabled: true, browserEnabled: false)
+        service.applyWalletProviderAccess(reloadTabs: false)
+        try await load("<title>Wallet removed</title>", into: first)
+        let disabled = try await first.webView.callAsyncJavaScript(
+            "return typeof globalThis.locusVault;",
+            arguments: [:],
+            in: nil,
+            contentWorld: .page
+        ) as? String
+        XCTAssertEqual(disabled, "undefined")
+    }
+
+    private func walletDiscovery(in webView: WKWebView) async throws -> [String: Any] {
+        let result = try await webView.callAsyncJavaScript(
+            """
+            return await new Promise((resolve) => {
+              const timeout = setTimeout(() => resolve({ error: 'timeout' }), 1000);
+              const listener = (event) => {
+                clearTimeout(timeout);
+                removeEventListener('eip6963:announceProvider', listener);
+                resolve({
+                  uuid: event.detail.info.uuid,
+                  name: event.detail.info.name,
+                  rdns: event.detail.info.rdns,
+                  frozen: Object.isFrozen(event.detail)
+                    && Object.isFrozen(event.detail.info)
+                    && Object.isFrozen(event.detail.provider),
+                });
+              };
+              addEventListener('eip6963:announceProvider', listener);
+              dispatchEvent(new Event('eip6963:requestProvider'));
+            });
+            """,
+            arguments: [:],
+            in: nil,
+            contentWorld: .page
+        )
+        return try XCTUnwrap(result as? [String: Any])
+    }
+
     func testUnchangedProfileIdentityKeepsTheSameStore() {
         let tab = service.tab(for: "session-store")
         let store = tab.webView.configuration.websiteDataStore

@@ -75,6 +75,21 @@ actor WalletSepoliaRPCClient {
         self.session = session
     }
 
+    #if DEBUG
+    /// The only plain-HTTP construction path is compiled solely into Debug
+    /// products for the isolated Anvil integration target. Production and
+    /// Release builds contain no initializer that accepts loopback HTTP.
+    init(testLoopbackEndpoint value: String, session: URLSession = .shared) throws {
+        guard let url = URL(string: value), url.scheme?.lowercased() == "http",
+              let host = url.host?.lowercased(),
+              host == "127.0.0.1" || host == "localhost" || host == "::1" else {
+            throw WalletRPCError.invalidEndpoint
+        }
+        endpoint = url
+        self.session = session
+    }
+    #endif
+
     func configure(endpoint value: String) throws {
         guard let url = Self.validatedEndpoint(value) else { throw WalletRPCError.invalidEndpoint }
         endpoint = url

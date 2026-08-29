@@ -15,9 +15,23 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "7323BA3A6165E3D7FD525C6C"
-               BuildableName = "LocusMAS.app"
-               BlueprintName = "LocusMAS"
+               BlueprintIdentifier = "4896638691C4AFF8C4B6701D"
+               BuildableName = "Locus.app"
+               BlueprintName = "Locus"
+               ReferencedContainer = "container:Locus.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "5C095929DF359DE6429B72CD"
+               BuildableName = "LocusWalletChainTests.xctest"
+               BlueprintName = "LocusWalletChainTests"
                ReferencedContainer = "container:Locus.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -27,14 +41,14 @@
       buildConfiguration = "Debug"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
-      shouldUseLaunchSchemeArgsEnv = "YES"
+      shouldUseLaunchSchemeArgsEnv = "NO"
       onlyGenerateCoverageForSpecifiedTargets = "NO">
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "7323BA3A6165E3D7FD525C6C"
-            BuildableName = "LocusMAS.app"
-            BlueprintName = "LocusMAS"
+            BlueprintIdentifier = "4896638691C4AFF8C4B6701D"
+            BuildableName = "Locus.app"
+            BlueprintName = "Locus"
             ReferencedContainer = "container:Locus.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
@@ -44,15 +58,27 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "5B63DF227FB0A11687B95EAC"
-               BuildableName = "LocusMASUITests.xctest"
-               BlueprintName = "LocusMASUITests"
+               BlueprintIdentifier = "5C095929DF359DE6429B72CD"
+               BuildableName = "LocusWalletChainTests.xctest"
+               BlueprintName = "LocusWalletChainTests"
                ReferencedContainer = "container:Locus.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
       <CommandLineArguments>
       </CommandLineArguments>
+      <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "LOCUS_ANVIL_RPC_URL"
+            value = "$(LOCUS_ANVIL_RPC_URL)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "LOCUS_ANVIL_VERSION"
+            value = "$(LOCUS_ANVIL_VERSION)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+      </EnvironmentVariables>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
@@ -68,9 +94,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "7323BA3A6165E3D7FD525C6C"
-            BuildableName = "LocusMAS.app"
-            BlueprintName = "LocusMAS"
+            BlueprintIdentifier = "4896638691C4AFF8C4B6701D"
+            BuildableName = "Locus.app"
+            BlueprintName = "Locus"
             ReferencedContainer = "container:Locus.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -85,9 +111,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "7323BA3A6165E3D7FD525C6C"
-            BuildableName = "LocusMAS.app"
-            BlueprintName = "LocusMAS"
+            BlueprintIdentifier = "4896638691C4AFF8C4B6701D"
+            BuildableName = "Locus.app"
+            BlueprintName = "Locus"
             ReferencedContainer = "container:Locus.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -96,7 +122,7 @@
       buildConfiguration = "Debug">
    </AnalyzeAction>
    <ArchiveAction
-      buildConfiguration = "ReleaseMAS"
+      buildConfiguration = "Release"
       revealArchiveInOrganizer = "YES">
    </ArchiveAction>
 </Scheme>

@@ -1,86 +1,100 @@
-# Activate the experimental Locus Vault
+# Use the Locus Vault private alpha
 
-Locus Vault is an experimental, direct-download-only wallet. It creates a new,
-separate 24-word recovery phrase and is intended for limited test funds. It
-does not import or control MetaMask, Phantom, or Slush accounts.
+Locus Vault is an experimental, direct-download-only wallet for a small
+Sepolia private alpha. It creates a new, separate 24-word recovery phrase and
+is intended only for limited test funds. It never imports or controls a
+MetaMask, Phantom, Slush, or other external-wallet recovery phrase.
 
-## Turn on native Sepolia signing
+## Enable the private alpha
 
-1. Quit Locus completely.
-2. Open Terminal and run:
+1. Install and open the signed direct-download build of Locus.
+2. Open **Settings → Wallets**.
+3. Choose **Review Risks and Enable**.
+4. Read the experimental-risk sheet, then confirm only if you will use a new
+   recovery phrase and limited Sepolia test funds.
+5. Choose **Create Locus Vault**, write all 24 words down offline, and enter
+   the six requested words. Locus shows the phrase only during this flow.
+6. Unlock with Touch ID or the Mac password.
 
-   ```bash
-   launchctl setenv LOCUS_ENABLE_EXPERIMENTAL_WALLET 1
-   ```
+The setting takes effect immediately and persists on this Mac. The Mac App
+Store build ignores the setting because it does not contain `WalletSigner.xpc`
+and shows a direct-download-only explanation instead.
 
-3. Reopen the direct-download build of Locus.
-4. Open **Settings → Wallets**. The status should say **Not created** and the
-   **Create Locus Vault** button should be available.
-5. Create the vault, write all 24 recovery words on paper, and enter the six
-   requested words. Locus shows the phrase only during this flow.
-6. Unlock the vault with Touch ID or the Mac password, then use **Check
-   connection** to verify the Sepolia RPC.
-7. Fund only the displayed EVM address with Sepolia test ETH. Solana and Sui
-   addresses are public/read-only in this release.
+Older private-alpha installs that used
+`LOCUS_ENABLE_EXPERIMENTAL_WALLET` or
+`LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER` adopt those choices once. After
+that migration, the in-app switches are authoritative and no Terminal setup is
+needed.
+
+## Receive Sepolia ETH
+
+In the **Account** section, choose **Receive**. The receive sheet shows:
+
+- the full Sepolia address and a Copy action;
+- a locally generated QR code containing
+  `ethereum:<address>@11155111` (ERC-681), with no amount;
+- the latest cached balance and a refresh action; and
+- a link to Ethereum.org's current Sepolia faucet list.
+
+The address never leaves the Mac to create the QR code. Receiving and cached
+balance display remain available while the vault is locked. Solana and Sui
+public addresses are listed under **Advanced** and cannot sign in this release.
 
 The default RPC is `https://ethereum-sepolia-rpc.publicnode.com`. An HTTPS
-Sepolia endpoint can be supplied in Wallet Settings. The endpoint stays in
+Sepolia endpoint can be changed under **Advanced**. The endpoint stays in
 native code and is not added to model context.
 
-## Optional browser provider
+## Optional browser wallet access
 
-The browser provider has a separate gate so native transactions can be tested
-first. Quit Locus, then run:
+Browser access is a second, separate switch under **Connections**. Changing it
+requires confirmation because Locus must revoke pending requests and approved
+origins, rebuild the injected script set, and reload open tabs.
 
-```bash
-launchctl setenv LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER 1
-```
+When enabled, the built-in browser announces **Locus Vault** through EIP-6963
+with a unique provider ID for each page. It never replaces an existing
+`window.ethereum`. Each website asks separately to see the public Sepolia
+address; connecting does not authorize a transaction and ends on navigation,
+lock, quit, or restart. Browser transactions accept Sepolia native transfers
+only and always require the exact native confirmation sheet.
 
-Reopen Locus. The built-in browser will announce **Locus Vault** through
-EIP-6963 and use `window.ethereum` only if no provider already owns it. Each
-website must be approved by exact origin for the current Locus session.
-Browser transactions currently accept Sepolia native transfers only and pass
-through the same simulation and exact-confirmation path as native tools.
+## Agent spending rules
 
-Native wallet tools may also call a method from a contract added under
-**Contract registry & policies**. The model supplies only the registry ID,
-canonical function signature, typed string arguments, and optional native
-value. `WalletSigner.xpc` re-encodes the call from the normalized ABI, checks
-the selector, and requires exact confirmation. Unknown contract effects cannot
-use an autonomous budget. A verified ABI can be classified automatically for
-the reviewed ERC-20 transfer/finite-approval adapter or the separate narrow
-Universal Router V2 exact-input adapter. Those calls become policy-eligible
-only after you authorize an exact contract, asset, counterparty, amount, fee,
-and expiry budget in Wallet Settings. Unlimited approvals, extra router
-commands, allow-revert, zero minimum output, native wrapping, and stale swaps
-still require exact confirmation.
+An unlocked vault can give the Locus agent a narrow, session-only **Agent
+Spending Rule**. Native ETH fields accept decimal ETH and are converted exactly
+to canonical wei without floating point. Every rule binds its account,
+network, recipient, per-transfer amount, total allowance, fee ceiling, and
+expiry. Locking clears active rules. Saved templates contain no authorization.
 
-## Lock or turn it off
+Reviewed ERC-20 and narrow Universal Router rules remain under **Advanced**.
+Until authoritative token metadata exists, their amount fields are explicitly
+raw token units. Unknown effects, unlimited approvals, stale quotes, failed
+simulations, code mismatches, and expired intents cannot use autonomous rules.
 
-Use **Lock vault** whenever you want to clear decrypted material, prepared
-transactions, website grants, policies, and session budgets. Sleep, quit,
-updates, relaunch, or a signer interruption also locks the vault.
+## Lock, disable, diagnose, or delete
 
-To disable both experimental gates, quit Locus and run:
+Use **Lock Vault** to clear decrypted material, prepared transactions, website
+grants, active rules, and signing authority. Sleep, screen/session lock, quit,
+update, relaunch, or signer interruption does the same. Alpha intentionally has
+no idle timeout.
 
-```bash
-launchctl unsetenv LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER
-launchctl unsetenv LOCUS_ENABLE_EXPERIMENTAL_WALLET
-```
-
-Then reopen Locus. Disabling the feature does not delete the encrypted vault.
-Vault deletion is a separate authenticated action in Wallet Settings and is
+**Turn Off Alpha** locks immediately, withdraws the agent capability, cancels
+prepared work, revokes browser access, and leaves the encrypted vault intact.
+Vault deletion is a separate destructive action under **Advanced** and is
 recoverable only with the 24-word phrase.
+
+**Copy Diagnostics** produces a local, redacted report containing build,
+macOS, signer protocol/reachability, effective gates, vault state, RPC health
+category, and activity counts. It excludes recovery material, signed
+transactions, addresses, origins, policy contents, ABIs, and unrestricted
+errors. Locus adds no remote wallet telemetry.
 
 ## Current safety boundary
 
-- Mainnet signing is disabled.
+- Mainnet and human-initiated sending are unavailable.
 - Use only limited Sepolia test funds.
 - Raw calldata, arbitrary messages, typed data, replacement transactions, and
-  unknown autonomous contract effects are disabled.
-- Saved policy templates contain no authorization and must be approved again
-  after each launch.
-- External MetaMask, Phantom, and Slush connector definitions are present, but
-  their live connection buttons remain security gated. Never enter one of
-  those wallets' recovery phrases into Locus.
-- The Mac App Store build intentionally does not contain `WalletSigner.xpc`.
+  unknown autonomous contract effects are unavailable.
+- Live MetaMask, Phantom, and Slush connections are unavailable. MetaMask
+  Connect on Sepolia is the recommended next milestone after this alpha.
+- Native Solana/Sui signing and every mainnet gate remain separate audited
+  projects.

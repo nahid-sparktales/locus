@@ -295,11 +295,24 @@ final class BrowserService: NSObject, ObservableObject {
         gateway.onBrowserGrantsRevoked = { [weak self] origin in
             self?.emitWalletRevocation(origin: origin)
         }
+        applyWalletProviderAccess(reloadTabs: false)
+    }
+
+    /// User scripts are fixed at document start, so an approved access change
+    /// must rebuild the script set and reload live pages. Native revocation is
+    /// performed by WalletGateway before this method is called.
+    func applyWalletProviderAccess(reloadTabs: Bool) {
         for tab in openTabs {
-            installUserScripts(
-                on: tab.webView.configuration.userContentController,
-                emulatingDevice: tab.emulatesDevice
-            )
+            let controller = tab.webView.configuration.userContentController
+            controller.removeScriptMessageHandler(forName: BrowserBridge.walletHandlerName)
+            if walletGateway?.browserProviderEnabled == true {
+                controller.add(
+                    WeakScriptMessageHandler(self),
+                    name: BrowserBridge.walletHandlerName
+                )
+            }
+            installUserScripts(on: controller, emulatingDevice: tab.emulatesDevice)
+            if reloadTabs, tab.webView.url != nil { tab.webView.reloadFromOrigin() }
         }
     }
 
