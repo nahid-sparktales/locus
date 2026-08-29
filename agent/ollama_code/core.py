@@ -40,7 +40,11 @@ from pathlib import Path
 from typing import Any
 
 from . import proxy
-from .agent_config import AgentConfiguration, compose_system_prompt
+from .agent_config import (
+    ANSWER_CONTRACT,
+    AgentConfiguration,
+    compose_system_prompt,
+)
 from .config import (
     DEFAULTS,
     MINIMUM_CONTEXT_WINDOW,
@@ -231,7 +235,7 @@ Rules:
 3. Use todo_write to plan and track tasks that need multiple steps.
 4. Paths are relative to the working directory unless they start with /.
 5. Keep going: after a tool result comes back, continue with the next step until the task is fully done, then stop calling tools and give your final answer.
-6. Be concise. Final answers: 1-3 short sentences saying what you did and which files changed.
+6. Finish every turn with a written final answer that follows the locked answer contract below.
 7. When the user states an explicit durable preference, repeats a lasting constraint, or confirms a decision or outcome, call propose_memory once so it appears in the review-only Memory Inbox. Never propose guesses, secrets, or transient task details.
 
 Environment:
@@ -250,6 +254,20 @@ Answer the user's question conversationally using only the conversation shown to
 
 "Locus" names this app, not the model. Your underlying model: {model_identity}. When asked which model or LLM you are, answer with that.
 """
+
+#: What the runtime says when a turn did the work and then said nothing. The
+#: instruction is request-only — see AgentCore._run_final_answer_pass.
+FINAL_ANSWER_NUDGE = (
+    "This turn ended without a written answer. Using only what it has already "
+    "established, write the final answer now, following the locked answer "
+    "contract. Do not call any tools and do not start new work."
+)
+
+#: A reply shorter than this, after a turn that ran at least
+#: FINAL_ANSWER_TOOL_FLOOR tools, is a fragment rather than an answer. One tool
+#: call and a short sentence is a legitimately terse turn and is left alone.
+FINAL_ANSWER_MIN_CHARS = 40
+FINAL_ANSWER_TOOL_FLOOR = 3
 
 INIT_PROMPT = (
     "Analyze this project and create an OLLAMA.md file that will help future AI "
@@ -1384,6 +1402,7 @@ class AgentCore:
                 "submit_plan tool exactly once with your final implementation "
                 "plan. Do not modify any files in this mode."
             )
+        sections.append("## Locus answer contract\n" + ANSWER_CONTRACT)
         return "\n\n".join(sections)
 
     def start_new_session(
@@ -2075,16 +2094,20 @@ class AgentCore:
                     event_handler=handle_event,
                     should_interrupt=self._interrupt.is_set,
                 )
-                # A disconnect can omit the terminal notification after valid
-                # deltas. Finalize those partial items in first-seen order so
-                # the transcript never keeps a dangling streaming row.
-                for state in assistant_items.values():
-                    if state["ended"]:
-                        continue
-                    if state["kind"] == "message":
-                        finish_message(state)
-                    else:
-                        finish_reasoning(state)
+                def finalize_items() -> None:
+                    # A disconnect can omit the terminal notification after
+                    # valid deltas. Finalize those partial items in first-seen
+                    # order so the transcript never keeps a dangling streaming
+                    # row.
+                    for state in list(assistant_items.values()):
+                        if state["ended"]:
+                            continue
+                        if state["kind"] == "message":
+                            finish_message(state)
+                        else:
+                            finish_reasoning(state)
+
+                finalize_items()
                 if not any(
                     state["kind"] == "message" for state in assistant_items.values()
                 ):
@@ -2096,6 +2119,30 @@ class AgentCore:
                         "content": "",
                         "_phase": "final_answer",
                     })
+                if self._needs_final_answer_pass(
+                    reason=reason, tool_calls=dynamic_call_count
+                ):
+                    # The helper thread already holds this whole turn, so the
+                    # write-up is one more turn on it with no tools attached —
+                    # not a rebuilt request. Its own failure must not lose the
+                    # work that already succeeded, so it is caught here rather
+                    # than by the turn's handler, which would clear the thread.
+                    try:
+                        manager.run_turn(
+                            thread_id=self._chatgpt_thread_id,
+                            text=FINAL_ANSWER_NUDGE,
+                            model=self.model,
+                            effort=effort,
+                            tool_handler=None,
+                            event_handler=handle_event,
+                            should_interrupt=self._interrupt.is_set,
+                        )
+                        finalize_items()
+                    except (CodexAppServerError, RuntimeError, ValueError):
+                        self._emit({
+                            "type": "note",
+                            "text": "Locus could not write a closing summary for this turn.",
+                        })
                 last = usage.get("last") if isinstance(usage.get("last"), dict) else {}
                 prompt = int(last.get("inputTokens") or 0)
                 completion = int(last.get("outputTokens") or 0)
@@ -2467,6 +2514,70 @@ class AgentCore:
     #: Shorter alias used by the WebSocket handler.
     retry_last = retry_last_response
 
+    def _last_final_answer_text(self) -> str:
+        """This turn's visible answer, or "" when it never wrote one.
+
+        Walks back only as far as the current turn: a user message ends the
+        search, and so does a tool result, which in the classic loop is what
+        sits after an assistant message that only asked for tools.
+        """
+        for message in reversed(self.messages):
+            role = str(message.get("role") or "")
+            if role in {"user", "tool"}:
+                break
+            if role != "assistant":
+                continue
+            if message.get("_display_only"):
+                continue
+            if str(message.get("_phase") or "final_answer") != "final_answer":
+                # Codex commentary is narration between tool calls, not the
+                # answer; keep looking back through this turn.
+                continue
+            if message.get("tool_calls"):
+                break
+            return str(message.get("content") or "").strip()
+        return ""
+
+    def _needs_final_answer_pass(self, *, reason: str, tool_calls: int) -> bool:
+        """Whether this turn worked and then failed to say anything about it."""
+        if reason != "complete" or tool_calls <= 0:
+            return False
+        if self._interrupt.is_set() or not self._turn_allows_tools:
+            return False
+        if self.agent_role_contract or self._suppress_turn_done:
+            # Team workers and background runs are collected programmatically.
+            # Nobody is reading a write-up, and an extra call would be spent on
+            # text that is thrown away.
+            return False
+        text = self._last_final_answer_text()
+        if not text:
+            return True
+        return (
+            tool_calls >= FINAL_ANSWER_TOOL_FLOOR
+            and len(text) < FINAL_ANSWER_MIN_CHARS
+        )
+
+    def _run_final_answer_pass(self) -> bool:
+        """One tool-free call that writes the answer the turn owed the user."""
+        resp = self._stream_response(
+            extra_messages=[{"role": "user", "content": FINAL_ANSWER_NUDGE}],
+            disable_tools=True,
+        )
+        if resp is None:
+            # An error or a partial reply already reached the conversation.
+            return False
+        text = strip_think(resp.content).strip()
+        if not text:
+            return False
+        self._add_message({
+            "role": "assistant",
+            "content": text,
+            "_phase": "final_answer",
+        })
+        self.total_prompt_tokens += resp.prompt_eval_count
+        self.total_completion_tokens += resp.eval_count
+        return True
+
     def _run_response_loop(
         self,
         decider: PermissionDecider | None = None,
@@ -2479,6 +2590,7 @@ class AgentCore:
         completion_tokens_before = self.total_completion_tokens
         reason = "complete"
         iteration = 0
+        tool_calls_run = 0
         iteration_limit = self.max_iterations
         hard_call_limit = max(int(model_call_limit), 0) if model_call_limit is not None else None
         while iteration < iteration_limit and (hard_call_limit is None or iteration < hard_call_limit):
@@ -2605,6 +2717,7 @@ class AgentCore:
                     steered = True
                     break
                 self._in_tool_call = True
+                tool_calls_run += 1
                 try:
                     result = self._run_tool_call(tc, decider)
                 finally:
@@ -2655,6 +2768,9 @@ class AgentCore:
         # accepted before this point is either applied above or caused another
         # loop iteration; anything later belongs in Queue or Stop & Send.
         self.end_steerable_turn()
+        if self._needs_final_answer_pass(reason=reason, tool_calls=tool_calls_run):
+            if self._run_final_answer_pass():
+                iteration += 1
         terminal = {
             "type": "turn_done",
             "reason": reason,
@@ -2740,7 +2856,18 @@ class AgentCore:
         self,
         allow_overflow_retry: bool = True,
         allow_image_retry: bool = True,
+        *,
+        extra_messages: list[dict[str, Any]] | None = None,
+        disable_tools: bool = False,
     ) -> ChatResponse | None:
+        """Stream one model call.
+
+        ``extra_messages`` are appended to the request only: they never enter
+        ``self.messages``, so a one-off instruction cannot leak into the
+        conversation the next turn replays. ``disable_tools`` withholds the
+        schemas without touching ``_turn_allows_tools``, which would swap the
+        Just Chat system prompt in underneath.
+        """
         self._emit({"type": "message_start"})
         think_filter = ThinkFilter()
         inline_thinking: list[str] = []
@@ -2785,8 +2912,12 @@ class AgentCore:
             try:
                 resp = self.client.chat_stream(
                     model=self.model,
-                    messages=self._request_messages(),
-                    tools=self.tool_registry.schemas() if self._turn_allows_tools else [],
+                    messages=self._request_messages() + list(extra_messages or []),
+                    tools=(
+                        []
+                        if disable_tools or not self._turn_allows_tools
+                        else self.tool_registry.schemas()
+                    ),
                     on_token=on_token,
                     should_stop=self._should_stop_stream,
                     on_thinking=on_thinking,
@@ -2840,6 +2971,8 @@ class AgentCore:
                 return self._stream_response(
                     allow_overflow_retry=allow_overflow_retry,
                     allow_image_retry=False,
+                    extra_messages=extra_messages,
+                    disable_tools=disable_tools,
                 )
             if (
                 allow_overflow_retry
@@ -2865,6 +2998,8 @@ class AgentCore:
                 return self._stream_response(
                     allow_overflow_retry=False,
                     allow_image_retry=allow_image_retry,
+                    extra_messages=extra_messages,
+                    disable_tools=disable_tools,
                 )
             if partial:
                 visible_text.append(partial)

@@ -2742,7 +2742,9 @@ def test_reading_outside_the_workspace_requires_permission(tmp_path):
             tool_calls=[ToolCall("glob", {"pattern": str(secret.parent / "*")})],
             done=True,
         ),
-        ChatResponse(content_parts=["done"], done=True),
+        ChatResponse(content_parts=[
+            "Read `inside.txt`. Both paths outside the workspace were denied."
+        ], done=True),
     ])
     events = []
     core.on_event(events.append)
@@ -4448,6 +4450,95 @@ def test_system_prompt_names_the_underlying_model(tmp_path):
     assert "Underlying model: test-model via local Ollama" in message
     assert "names this agent, not the model" in message
     assert "call propose_memory once" in message
+
+
+def test_answer_contract_reaches_both_prompt_paths_but_not_just_chat(tmp_path):
+    """The screenshot case: ChatGPT-native sends no Locus system prompt at all."""
+    core = _core(tmp_path, [])
+
+    work = core.system_message()["content"]
+    assert "A bare list of names, paths, or values is not an answer" in work
+    assert "follows the locked answer contract" in work
+
+    assert "A bare list of names" not in core.system_message(mode="ask")["content"]
+
+    # The native-prompt route drops the system message entirely, so the
+    # contract has to ride in the developer layer or it never arrives.
+    assert "A bare list of names" in core._parity_developer_instructions()
+
+
+def test_a_turn_that_works_and_says_nothing_gets_one_written_answer(tmp_path):
+    from ollama_code.core import FINAL_ANSWER_NUDGE
+    from ollama_code.ollama import ToolCall
+
+    (tmp_path / "notes.md").write_text("hi")
+    listing = ChatResponse(tool_calls=[ToolCall("list_dir", {"path": "."})], done=True)
+    core = _core(tmp_path, [
+        listing,
+        ChatResponse(tool_calls=[ToolCall("list_dir", {"path": "."})], done=True),
+        ChatResponse(tool_calls=[ToolCall("list_dir", {"path": "."})], done=True),
+        ChatResponse(content_parts=[], done=True),
+        ChatResponse(content_parts=["The workspace holds one file, notes.md."], done=True),
+    ])
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn("what is in here")
+
+    assert core.client.calls == 5
+    assert core.messages[-1]["content"] == "The workspace holds one file, notes.md."
+    assert core.messages[-1]["_phase"] == "final_answer"
+    # Tool-free, so the write-up cannot start new work.
+    assert core.client.seen_tools[-1] == []
+    assert core.client.seen_messages[-1][-1] == {
+        "role": "user", "content": FINAL_ANSWER_NUDGE,
+    }
+    # …and the instruction is request-only: replaying this conversation next
+    # turn must not show the user asking for a summary they never asked for.
+    assert not [m for m in core.messages if m.get("content") == FINAL_ANSWER_NUDGE]
+    done = next(e for e in events if e["type"] == "turn_done")
+    assert done["reason"] == "complete"
+    assert done["model_calls"] == 5
+
+
+def test_the_written_answer_pass_stays_out_of_turns_that_already_answered(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    (tmp_path / "notes.md").write_text("hi")
+
+    def listing():
+        return ChatResponse(tool_calls=[ToolCall("list_dir", {"path": "."})], done=True)
+
+    answered = _core(tmp_path, [
+        listing(), listing(), listing(),
+        ChatResponse(content_parts=[
+            "One file: `notes.md`, two bytes, unchanged since you asked."
+        ], done=True),
+    ])
+    answered.run_turn("what is in here")
+    assert answered.client.calls == 4
+
+    # One tool call and a short sentence is a legitimately terse turn.
+    terse = _core(tmp_path, [
+        listing(),
+        ChatResponse(content_parts=["Just notes.md."], done=True),
+    ])
+    terse.run_turn("what is in here")
+    assert terse.client.calls == 2
+
+    # No tools ran, so there is no work to write up.
+    chatted = _core(tmp_path, [ChatResponse(content_parts=["Hi."], done=True)])
+    chatted.run_turn("hi")
+    assert chatted.client.calls == 1
+
+    # A team worker's output is collected programmatically, not read.
+    worker = _core(tmp_path, [
+        listing(), listing(), listing(),
+        ChatResponse(content_parts=[], done=True),
+    ])
+    worker.agent_role_contract = "Read-only research worker."
+    worker.run_turn("what is in here")
+    assert worker.client.calls == 4
 
 
 def test_model_switch_refreshes_the_identity_mid_conversation(tmp_path):
@@ -6687,7 +6778,9 @@ def test_mid_turn_eviction_keeps_tool_pairing_and_the_newest_result(tmp_path, mo
             ToolCall("read_file", {"path": "b"}),
             ToolCall("read_file", {"path": "c"}),
         ], done=True),
-        ChatResponse(content_parts=["done"], done=True),
+        ChatResponse(content_parts=[
+            "Read all three files; the oldest results no longer fit the window."
+        ], done=True),
     ])
     core.client.loaded_window = 8_192
     # A model whose ceiling *is* 8k, so the pin cannot raise the window and the
