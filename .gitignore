@@ -6,6 +6,9 @@
 .build-*/
 build/
 DerivedData/
+# `-derivedDataPath DD` is the documented way to run the tests without
+# LaunchServices; it drops 1.3GB of build output here.
+DD/
 .derivedData*/
 .release-tools/
 xcuserdata/

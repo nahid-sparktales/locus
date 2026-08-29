@@ -21,10 +21,16 @@ settings:
     CURRENT_PROJECT_VERSION: 20
     MARKETING_VERSION: 2.0.0
   configs:
+    # A stable signing identity rather than ad-hoc. Keychain items are guarded by
+    # an ACL bound to the code signature, and an ad-hoc signature changes on every
+    # rebuild, so the Autofill vault key would re-prompt after each build. This
+    # touches Debug only — the shipped Release and ReleaseMAS signatures are
+    # unchanged. Building outside the team (CI, contributors) works by appending
+    # `CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=` to the xcodebuild invocation.
     Debug:
       CODE_SIGN_STYLE: Manual
-      CODE_SIGN_IDENTITY: "-"
-      DEVELOPMENT_TEAM: ""
+      CODE_SIGN_IDENTITY: "Apple Development"
+      DEVELOPMENT_TEAM: 4X4RJA7GMD
       ENABLE_APP_SANDBOX: NO
       ENABLE_HARDENED_RUNTIME: NO
     Release:
@@ -136,8 +142,8 @@ targets:
       configs:
         Debug:
           CODE_SIGN_STYLE: Manual
-          CODE_SIGN_IDENTITY: "-"
-          DEVELOPMENT_TEAM: ""
+          CODE_SIGN_IDENTITY: "Apple Development"
+          DEVELOPMENT_TEAM: 4X4RJA7GMD
           ENABLE_HARDENED_RUNTIME: NO
         Release:
           CODE_SIGN_STYLE: Manual

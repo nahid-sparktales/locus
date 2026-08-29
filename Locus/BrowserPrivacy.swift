@@ -226,9 +226,27 @@ enum BrowserVaultError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unavailable: "Autofill is not ready."
-        case .keychainFailed(let status): "Autofill could not access its encryption key (\(status))."
+        case .keychainFailed(let status): Self.keychainDescription(status)
         case .invalidCard: "Enter a valid card number and expiration date. Security codes are never stored."
         case .corruptVault: "The encrypted Autofill data could not be opened."
+        }
+    }
+
+    /// A bare `OSStatus` tells nobody what to do next, so name the causes a person
+    /// can actually act on. The status is kept in every string for bug reports.
+    private static func keychainDescription(_ status: OSStatus) -> String {
+        switch status {
+        case errSecMissingEntitlement:
+            "Autofill could not access its encryption key because this build of Locus "
+                + "is not signed with permission to use the keychain (\(status))."
+        case errSecInteractionNotAllowed:
+            "Autofill could not reach its encryption key because the keychain is locked. "
+                + "Unlock your login keychain and try again (\(status))."
+        case errSecUserCanceled, errSecAuthFailed:
+            "Autofill was denied access to its encryption key. Allow Locus when macOS "
+                + "asks for keychain access, then try again (\(status))."
+        default:
+            "Autofill could not access its encryption key (\(status))."
         }
     }
 }
@@ -244,15 +262,34 @@ struct KeychainBrowserVaultKeyProvider: BrowserVaultKeyProviding {
     static let service = "io.sparktales.locus.browser-autofill.v2"
     static let account = "vault-master-key-v2"
 
-    func keyData() async throws -> Data {
-        let query: [CFString: Any] = [
+    /// Deliberately the file-based keychain, not the data protection keychain. The
+    /// latter needs an access group from an `application-identifier` or
+    /// `keychain-access-groups` entitlement, which neither the ad-hoc Debug build
+    /// nor the Developer ID direct-download build carries — both would fail every
+    /// read with `errSecMissingEntitlement` (-34018). `CredentialStore` keeps API
+    /// keys in this same keychain and works across all three signing channels.
+    static func readQuery() -> [CFString: Any] {
+        [
             kSecClass: kSecClassGenericPassword,
-            kSecAttrService: Self.service,
-            kSecAttrAccount: Self.account,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
             kSecReturnData: true,
             kSecMatchLimit: kSecMatchLimitOne,
-            kSecUseDataProtectionKeychain: true,
         ]
+    }
+
+    static func addQuery(key: Data) -> [CFString: Any] {
+        [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecValueData: key,
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        ]
+    }
+
+    func keyData() async throws -> Data {
+        let query = Self.readQuery()
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         if status == errSecSuccess, let data = item as? Data { return data }
@@ -266,15 +303,7 @@ struct KeychainBrowserVaultKeyProvider: BrowserVaultKeyProviding {
             throw BrowserVaultError.keychainFailed(randomStatus)
         }
         let key = Data(bytes)
-        let add: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: Self.service,
-            kSecAttrAccount: Self.account,
-            kSecValueData: key,
-            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            kSecUseDataProtectionKeychain: true,
-        ]
-        let addStatus = SecItemAdd(add as CFDictionary, nil)
+        let addStatus = SecItemAdd(Self.addQuery(key: key) as CFDictionary, nil)
         if addStatus == errSecDuplicateItem {
             var duplicate: CFTypeRef?
             let duplicateStatus = SecItemCopyMatching(query as CFDictionary, &duplicate)
