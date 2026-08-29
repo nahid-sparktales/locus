@@ -3490,10 +3490,7 @@ private struct StreamingCaret: View {
             .fill(LocusTheme.signalDeep)
             .frame(width: 2, height: 14)
             .opacity(visible ? 0.9 : 0.15)
-            .animation(
-                reduceMotion ? nil : .easeInOut(duration: 0.53).repeatForever(autoreverses: true),
-                value: visible
-            )
+            .animation(LocusMotion.caretBlink(reduceMotion: reduceMotion), value: visible)
             .onAppear {
                 guard !reduceMotion else { return }
                 visible = false

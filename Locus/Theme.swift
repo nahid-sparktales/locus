@@ -518,6 +518,25 @@ enum LocusType {
 }
 
 extension Font {
+    /// Exact point size, deliberately NOT routed through `Font.locus`'s
+    /// Dynamic Type buckets.
+    ///
+    /// The transcript renders the same content through two leaves — an AppKit
+    /// `NSAttributedString` when a selection coordinator is present, and a
+    /// SwiftUI fallback otherwise. `Font.locus` maps a range of point sizes
+    /// onto one semantic style, so the two leaves resolved the same block at
+    /// different sizes. Body prose still uses `Font.locus`; only the paired
+    /// AppKit/SwiftUI surfaces need this.
+    static func locusExact(
+        size: CGFloat,
+        weight: Font.Weight = .regular,
+        design: Font.Design = .default
+    ) -> Font {
+        .system(size: size, weight: weight, design: design)
+    }
+}
+
+extension Font {
     /// Compatibility bridge for existing point-sized call sites. Values at or
     /// below the old micro-copy range become preferred semantic styles, so
     /// accessibility sizing and the 11-point readability floor apply without
@@ -555,6 +574,15 @@ enum LocusMotion {
     static let press = Animation.easeOut(duration: 0.10)
     static let activityPulse = Animation.easeInOut(duration: 0.9)
         .repeatForever(autoreverses: true)
+    /// Streaming caret. Slower than `activityPulse` so it reads as a text
+    /// cursor rather than an activity indicator.
+    static let caretBlink = Animation.easeInOut(duration: 0.53)
+        .repeatForever(autoreverses: true)
+
+    /// `nil` holds the caret steady under Reduce Motion.
+    static func caretBlink(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : caretBlink
+    }
 
     static func allowsSpatialMotion(reduceMotion: Bool) -> Bool {
         !reduceMotion

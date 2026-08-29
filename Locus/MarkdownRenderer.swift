@@ -474,7 +474,7 @@ struct MarkdownInlineStyleSpec {
     }
 
     var swiftUIFont: Font {
-        var font = Font.system(
+        var font = Font.locusExact(
             size: fontSize,
             weight: swiftUIWeight,
             design: isMonospaced ? .monospaced : .default
@@ -1004,7 +1004,7 @@ private struct MarkdownBlocksView: View {
             // Set in the body face at body size: an ordered marker is part of
             // the sentence, not a caption sitting beside it.
             SwiftUI.Text("\(number).")
-                .font(.system(size: density.fontSize))
+                .font(.locusExact(size: density.fontSize))
                 .foregroundStyle(LocusTheme.muted)
                 .padding(.top, 0)
         } else {
@@ -1087,7 +1087,7 @@ private struct MarkdownBlocksView: View {
             .fixedSize(horizontal: false, vertical: true)
         } else {
             SwiftUI.Text(text)
-                .font(.system(size: font.pointSize, design: font.isFixedPitch ? .monospaced : .default))
+                .font(.locusExact(size: font.pointSize, design: font.isFixedPitch ? .monospaced : .default))
                 .foregroundStyle(Color(nsColor: color))
                 .lineSpacing(lineSpacing)
                 .textSelection(.enabled)

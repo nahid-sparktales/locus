@@ -1135,7 +1135,7 @@ private struct CodeDiffLines: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                 Text(line.isEmpty ? " " : line)
-                    .font(.system(size: fontSize, design: .monospaced))
+                    .font(.locusExact(size: fontSize, design: .monospaced))
                     .foregroundStyle(foreground(for: line))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: false)
