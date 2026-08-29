@@ -76,6 +76,16 @@ final class LocusUITests: XCTestCase {
         ).firstMatch
     }
 
+    /// Transcript prose, headings and table cells render as `ResponseSelectableText`
+    /// (an `NSTextView`), which XCUI exposes as a text view carrying its content
+    /// in `value` — never as a `staticTexts` whose `label` matches. Reasoning
+    /// entries still render as SwiftUI `Text`, so match either shape.
+    private func transcriptText(_ value: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@ OR value == %@", value, value)
+        ).firstMatch
+    }
+
     private func cancelConfirmation() {
         let sheetCancel = app.sheets.buttons["Cancel"].firstMatch
         if sheetCancel.exists {
@@ -508,7 +518,7 @@ final class LocusUITests: XCTestCase {
         showTable.coordinate(
             withNormalizedOffset: CGVector(dx: 0.12, dy: 0.5)
         ).click()
-        XCTAssertTrue(app.staticTexts["Row 11"].waitForExistence(timeout: 3))
+        XCTAssertTrue(transcriptText("Row 11").waitForExistence(timeout: 3))
         XCTAssertTrue(waitUntil {
             self.anyElement("message.table.collapse").label == "Collapse 11-row table"
         })
@@ -2907,9 +2917,9 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement(
             "message.00000000-0000-0000-0000-000000000304"
         ).exists)
-        XCTAssertTrue(app.staticTexts["I’ll check both locations now."].exists)
-        XCTAssertTrue(app.staticTexts["Austin: Sunny and hot."].exists)
-        XCTAssertTrue(app.staticTexts["Jerusalem: Warm and dry."].exists)
+        XCTAssertTrue(transcriptText("I’ll check both locations now.").exists)
+        XCTAssertTrue(transcriptText("Austin: Sunny and hot.").exists)
+        XCTAssertTrue(transcriptText("Jerusalem: Warm and dry.").exists)
     }
 
     func testReviewAndLandShowsDiffChecksAndBothDestinations() {
