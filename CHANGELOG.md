@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Notebook gathers every note you have into one page.** The sidebar gear
+  menu, the Locus menu (⇧⌘9), and the command palette open a searchable list of
+  every note Locus has kept — one per workspace, one per chat, and the shared
+  one — with any of them editable right there in the full notes editor. A note
+  and its Notes-panel copy are the same document, so the two can never
+  disagree. Notes are stored under a one-way hash of the workspace or chat that
+  owns them, so Locus now records what each one is called while that owner
+  still exists; notes written before this release are named where they can
+  still be matched and grouped under "Unlinked" where they cannot.
+
 - **Locus Vault is now an in-app Sepolia Wallet Hub for the private alpha.**
   Signed direct-download builds can review risks and enable the feature in
   Settings without Terminal setup, create or unlock the isolated vault,
@@ -39,8 +49,56 @@
   (off by default) lets Codex-native chats use OpenAI's web search the way
   Codex can. Turning it on sends search queries to OpenAI.
 
+### Changed
+
+- **Reasoning and tool activity now stay in transcript order.** Collapsed mode
+  uses quiet inline summary disclosures at each real activity boundary, while
+  Expanded reasoning and Verbose tools retain their detailed cards. Each turn
+  shows one Locus marker as soon as its first activity begins, and response
+  actions remain with its final answer.
+
 ### Fixed
 
+- **Notes whose plain-text mirror went missing are no longer loaded as empty.**
+  Each note is kept as a plain `.txt` alongside a formatting archive, and a note
+  that had lost the `.txt` opened blank — so the first keystroke saved that
+  blank over the archive and took the text with it. The archive is now used
+  when the mirror is absent, which restores those notes. Text genuinely cleared
+  stays cleared.
+
+- **UI test runs no longer read or write your real notes.** The suite drives
+  the actual notes editor and had no separate storage, so a test run left its
+  own documents in your notes folder. It now uses a temporary directory.
+
+- **Switching models no longer reports a model you have as "not installed".**
+  The agent checked every model switch against the list of *locally installed
+  Ollama* models, even for a ChatGPT-plan account whose models do not live
+  there — so moving between, say, `gpt-5.6` and `gpt-5.6-sol` failed with
+  "model not installed" while the chat itself worked perfectly. Endpoints that
+  do not publish a model list, such as Kimi Code, were stuck on whichever
+  model they started with for the same reason.
+- **Selecting text in the transcript works like text.** Selection was scoped to
+  a single assistant answer segment, so a drag could not reach the next
+  paragraph, let alone a question and its answer; scrolling threw the selection
+  away, because the rows it covered were destroyed as they left the screen; a
+  click anywhere cleared it before the transcript could interpret the click, so
+  shift-click never extended anything; dragging through the empty margin beside
+  a line jumped to whole-block selection; and a one-pixel wobble while clicking
+  a link swallowed the click. One selection now spans the whole conversation,
+  survives scrolling, extends the way a pointer suggests, keeps up with
+  edge-scrolling, and leaves links clickable. Copy and Command-C return exactly
+  what is highlighted, including passages that have scrolled out of view.
+- **The floating Copy / Quote buttons are gone.** They appeared on every
+  selection, fought with scrolling, and duplicated Command-C. Right-click still
+  offers Copy and Search in Google.
+- **Files the agent produces now open properly, and appear in Outputs.**
+  Clicking a produced PDF used to raise an empty or unrelated Quick Look
+  panel; it now opens in whatever app you use for that file type, and source
+  files still open in the Files inspector. Outputs also stops missing work:
+  the agent reports the files each tool created or changed, and Locus watches
+  the workspace for anything a shell command wrote — so a PDF built by a
+  script now shows up even in a folder that is not a Git repository or where
+  the output is gitignored.
 - **The Browser now follows the panel instead of acting like a zoomed canvas.**
   Resizing the inspector immediately resizes the live page, wide pages retain
   WebKit's native horizontal scrolling, and the always-visible magnification

@@ -822,6 +822,8 @@ struct SessionSidebarView: View {
                 .accessibilityIdentifier("sidebar.usage")
             Button("Session Checkpoints…") { model.checkpointPresented = true }
                 .accessibilityIdentifier("sidebar.checkpoints")
+            Button("Notebook…") { model.notebookPresented = true }
+                .accessibilityIdentifier("sidebar.notebook")
             Divider()
             Button("Archived Sessions") {
                 model.setShowArchived(!model.showArchivedSessions)

@@ -1,6 +1,5 @@
 import AppKit
 import Markdown
-import QuickLookUI
 import SwiftUI
 
 struct MarkdownInlineStyle: OptionSet, Hashable, Sendable {
@@ -185,7 +184,10 @@ enum MarkdownDocumentParser {
 }
 
 @MainActor
-private enum FinishedMarkdownCache {
+/// Parsed Markdown for finished messages, so re-rendering a transcript row does
+/// not re-parse it — and so the selection store's fill-in for an unrealized row
+/// costs no more than the row itself would.
+enum FinishedMarkdownCache {
     private static var values: [String: [MarkdownRenderBlock]] = [:]
     private static var order: [String] = []
     private static let limit = 128
@@ -497,10 +499,14 @@ struct MarkdownInlineStyleSpec {
 /// separators preserve list markers, task state, quotes, and table structure
 /// on Copy/Quote/Search.
 enum MarkdownSelectionProjection {
+    /// Keyed by the *local* dotted tree path, because that is what a leaf knows
+    /// about itself when it looks its span up. `rowID` travels inside the span
+    /// so the store can tell two rows' leaves apart.
     static func spans(
         for blocks: [MarkdownRenderBlock],
         rootPath: [Int] = [],
-        firstSeparator: String = ""
+        firstSeparator: String = "",
+        rowID: String = ""
     ) -> [String: TranscriptSelectionSpan] {
         var result: [String: TranscriptSelectionSpan] = [:]
         projectBlocks(
@@ -510,6 +516,7 @@ enum MarkdownSelectionProjection {
             laterSeparator: "\n\n",
             firstPrefix: "",
             laterPrefix: "",
+            rowID: rowID,
             into: &result
         )
         return result
@@ -522,6 +529,7 @@ enum MarkdownSelectionProjection {
         laterSeparator: String,
         firstPrefix: String,
         laterPrefix: String,
+        rowID: String,
         into result: inout [String: TranscriptSelectionSpan]
     ) {
         for (index, block) in blocks.enumerated() {
@@ -530,6 +538,7 @@ enum MarkdownSelectionProjection {
                 path: rootPath + [index],
                 separator: index == 0 ? firstSeparator : laterSeparator,
                 prefix: index == 0 ? firstPrefix : laterPrefix,
+                rowID: rowID,
                 into: &result
             )
         }
@@ -540,13 +549,14 @@ enum MarkdownSelectionProjection {
         path: [Int],
         separator: String,
         prefix: String,
+        rowID: String,
         into result: inout [String: TranscriptSelectionSpan]
     ) {
         switch block {
         case .paragraph(let runs), .heading(_, let runs):
-            append(inlineText(runs), path: path, separator: separator, prefix: prefix, into: &result)
+            append(inlineText(runs), path: path, separator: separator, prefix: prefix, rowID: rowID, into: &result)
         case .rawText(let text), .code(_, let text):
-            append(text, path: path, separator: separator, prefix: prefix, into: &result)
+            append(text, path: path, separator: separator, prefix: prefix, rowID: rowID, into: &result)
         case .rule:
             break
         case .quote(let nested):
@@ -557,12 +567,13 @@ enum MarkdownSelectionProjection {
                 laterSeparator: "\n",
                 firstPrefix: prefix + "> ",
                 laterPrefix: prefix + "> ",
+                rowID: rowID,
                 into: &result
             )
         case .unordered(let items):
-            projectList(items, start: nil, path: path, separator: separator, prefix: prefix, into: &result)
+            projectList(items, start: nil, path: path, separator: separator, prefix: prefix, rowID: rowID, into: &result)
         case .ordered(let start, let items):
-            projectList(items, start: start, path: path, separator: separator, prefix: prefix, into: &result)
+            projectList(items, start: start, path: path, separator: separator, prefix: prefix, rowID: rowID, into: &result)
         case .table(let headers, _, let rows):
             let allRows = [headers] + rows
             for (rowIndex, row) in allRows.enumerated() {
@@ -580,6 +591,7 @@ enum MarkdownSelectionProjection {
                         path: path + [rowIndex, columnIndex],
                         separator: cellSeparator,
                         prefix: columnIndex == 0 ? prefix : "",
+                        rowID: rowID,
                         into: &result
                     )
                 }
@@ -593,6 +605,7 @@ enum MarkdownSelectionProjection {
         path: [Int],
         separator: String,
         prefix: String,
+        rowID: String,
         into result: inout [String: TranscriptSelectionSpan]
     ) {
         for (itemIndex, item) in items.enumerated() {
@@ -612,6 +625,7 @@ enum MarkdownSelectionProjection {
                 laterSeparator: "\n",
                 firstPrefix: prefix + marker + " ",
                 laterPrefix: continuation,
+                rowID: rowID,
                 into: &result
             )
         }
@@ -622,6 +636,7 @@ enum MarkdownSelectionProjection {
         path: [Int],
         separator: String,
         prefix: String,
+        rowID: String,
         into result: inout [String: TranscriptSelectionSpan]
     ) {
         guard !text.isEmpty else { return }
@@ -629,9 +644,10 @@ enum MarkdownSelectionProjection {
             treePath: path,
             displayedText: text,
             separatorBefore: separator,
-            copyPrefix: prefix
+            copyPrefix: prefix,
+            rowID: rowID
         )
-        result[span.id] = span
+        result[path.map(String.init).joined(separator: ".")] = span
     }
 
     private static func inlineText(_ runs: [MarkdownInlineRun]) -> String {
@@ -717,9 +733,10 @@ struct MarkdownBodyView: View {
     let text: String
     var workspacePath: String? = nil
     var density: MarkdownRenderDensity = .regular
-    var selectionCoordinator: ResponseSelectionCoordinator? = nil
+    var selectionStore: TranscriptSelectionStore? = nil
     var selectionRootPath: [Int] = []
     var selectionFirstSeparator = ""
+    var selectionRowID: String = ""
     var onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)? = nil
 
     var body: some View {
@@ -728,11 +745,12 @@ struct MarkdownBodyView: View {
             blocks: blocks,
             workspacePath: workspacePath,
             density: density,
-            selectionCoordinator: selectionCoordinator,
+            selectionStore: selectionStore,
             selectionSpans: MarkdownSelectionProjection.spans(
                 for: blocks,
                 rootPath: selectionRootPath,
-                firstSeparator: selectionFirstSeparator
+                firstSeparator: selectionFirstSeparator,
+                rowID: selectionRowID
             ),
             pathPrefix: selectionRootPath,
             onOpenWorkspaceReference: onOpenWorkspaceReference
@@ -766,8 +784,9 @@ struct StreamingMarkdownBodyView: View {
     let text: String
     var workspacePath: String? = nil
     var density: MarkdownRenderDensity = .regular
-    var selectionCoordinator: ResponseSelectionCoordinator? = nil
+    var selectionStore: TranscriptSelectionStore? = nil
     var selectionRootPath: [Int] = []
+    var selectionRowID: String = ""
     var onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)? = nil
     @State private var blocks: [MarkdownRenderBlock] = []
 
@@ -785,10 +804,11 @@ struct StreamingMarkdownBodyView: View {
                     blocks: blocks,
                     workspacePath: workspacePath,
                     density: density,
-                    selectionCoordinator: selectionCoordinator,
+                    selectionStore: selectionStore,
                     selectionSpans: MarkdownSelectionProjection.spans(
                         for: blocks,
-                        rootPath: selectionRootPath
+                        rootPath: selectionRootPath,
+                        rowID: selectionRowID
                     ),
                     pathPrefix: selectionRootPath,
                     onOpenWorkspaceReference: onOpenWorkspaceReference
@@ -836,7 +856,7 @@ private struct MarkdownBlocksView: View {
     let blocks: [MarkdownRenderBlock]
     let workspacePath: String?
     let density: MarkdownRenderDensity
-    let selectionCoordinator: ResponseSelectionCoordinator?
+    let selectionStore: TranscriptSelectionStore?
     let selectionSpans: [String: TranscriptSelectionSpan]
     let pathPrefix: [Int]
     let onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)?
@@ -876,21 +896,16 @@ private struct MarkdownBlocksView: View {
                         reference: artifact,
                         image: image,
                         caption: runs.map(\.text).joined(),
-                        selectionCoordinator: selectionCoordinator,
-                        selectionSpan: selectionSpan(at: path)
+                        selectionStore: selectionStore,
+                        selectionSpan: selectionSpan(at: path),
+                        onOpen: { open(artifact) }
                     )
                 } else {
                     WorkspaceArtifactCard(
                         reference: artifact,
-                        selectionCoordinator: selectionCoordinator,
+                        selectionStore: selectionStore,
                         selectionSpan: selectionSpan(at: path),
-                        onPreview: {
-                            if artifact.kind == .source || artifact.sourceLocation != nil {
-                                open(artifact)
-                            } else {
-                                WorkspaceQuickLookPresenter.shared.present(artifact.url)
-                            }
-                        }
+                        onOpen: { open(artifact) }
                     )
                 }
             } else {
@@ -912,7 +927,7 @@ private struct MarkdownBlocksView: View {
                 language: language,
                 code: body,
                 density: density,
-                selectionCoordinator: selectionCoordinator,
+                selectionStore: selectionStore,
                 selectionSpan: selectionSpan(at: path)
             )
 
@@ -931,7 +946,7 @@ private struct MarkdownBlocksView: View {
                     blocks: nested,
                     workspacePath: workspacePath,
                     density: density,
-                    selectionCoordinator: selectionCoordinator,
+                    selectionStore: selectionStore,
                     selectionSpans: selectionSpans,
                     pathPrefix: path,
                     onOpenWorkspaceReference: onOpenWorkspaceReference,
@@ -952,7 +967,7 @@ private struct MarkdownBlocksView: View {
                 rows: rows,
                 workspacePath: workspacePath,
                 density: density,
-                selectionCoordinator: selectionCoordinator,
+                selectionStore: selectionStore,
                 selectionSpans: selectionSpans,
                 path: path,
                 onOpenWorkspaceReference: onOpenWorkspaceReference
@@ -980,7 +995,7 @@ private struct MarkdownBlocksView: View {
                         blocks: item.blocks,
                         workspacePath: workspacePath,
                         density: density,
-                        selectionCoordinator: selectionCoordinator,
+                        selectionStore: selectionStore,
                         selectionSpans: selectionSpans,
                         pathPrefix: path + [offset],
                         onOpenWorkspaceReference: onOpenWorkspaceReference,
@@ -1036,7 +1051,7 @@ private struct MarkdownBlocksView: View {
         color: Color,
         lineSpacing: CGFloat
     ) -> some View {
-        if let selectionCoordinator, let span = selectionSpan(at: path) {
+        if let selectionStore, let span = selectionSpan(at: path) {
             ResponseSelectableText(
                 attributedText: MarkdownNativeText.attributed(
                     runs,
@@ -1048,7 +1063,7 @@ private struct MarkdownBlocksView: View {
                     workspacePath: workspacePath
                 ),
                 span: span,
-                coordinator: selectionCoordinator,
+                store: selectionStore,
                 onOpenURL: open
             )
             .fixedSize(horizontal: false, vertical: true)
@@ -1073,7 +1088,7 @@ private struct MarkdownBlocksView: View {
         color: NSColor,
         lineSpacing: CGFloat
     ) -> some View {
-        if let selectionCoordinator, let span = selectionSpan(at: path) {
+        if let selectionStore, let span = selectionSpan(at: path) {
             ResponseSelectableText(
                 attributedText: MarkdownNativeText.plain(
                     text,
@@ -1082,7 +1097,7 @@ private struct MarkdownBlocksView: View {
                     lineSpacing: lineSpacing
                 ),
                 span: span,
-                coordinator: selectionCoordinator
+                store: selectionStore
             )
             .fixedSize(horizontal: false, vertical: true)
         } else {
@@ -1357,28 +1372,6 @@ enum WorkspacePathReferenceParser {
     }
 }
 
-@MainActor
-final class WorkspaceQuickLookPresenter: NSObject, @preconcurrency QLPreviewPanelDataSource {
-    static let shared = WorkspaceQuickLookPresenter()
-    private var previewURL: URL?
-
-    func present(_ url: URL) {
-        previewURL = url
-        guard let panel = QLPreviewPanel.shared() else { return }
-        panel.dataSource = self
-        panel.reloadData()
-        panel.makeKeyAndOrderFront(nil)
-    }
-
-    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
-        previewURL == nil ? 0 : 1
-    }
-
-    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
-        previewURL as NSURL?
-    }
-}
-
 enum MarkdownLinkPolicy {
     private static let remoteSchemes = Set(["http", "https", "mailto"])
     private static let imageExtensions = Set(["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff"])
@@ -1437,8 +1430,9 @@ private struct WorkspaceImageArtifactView: View {
     let reference: WorkspaceArtifactReference
     let image: NSImage
     let caption: String
-    let selectionCoordinator: ResponseSelectionCoordinator?
+    let selectionStore: TranscriptSelectionStore?
     let selectionSpan: TranscriptSelectionSpan?
+    let onOpen: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -1453,7 +1447,7 @@ private struct WorkspaceImageArtifactView: View {
                 }
 
             HStack(spacing: 8) {
-                if let selectionCoordinator, let selectionSpan {
+                if let selectionStore, let selectionSpan {
                     ResponseSelectableText(
                         attributedText: MarkdownNativeText.plain(
                             caption,
@@ -1462,7 +1456,7 @@ private struct WorkspaceImageArtifactView: View {
                             lineSpacing: 0
                         ),
                         span: selectionSpan,
-                        coordinator: selectionCoordinator
+                        store: selectionStore
                     )
                     .fixedSize(horizontal: false, vertical: true)
                 } else {
@@ -1472,9 +1466,7 @@ private struct WorkspaceImageArtifactView: View {
                         .textSelection(.enabled)
                 }
                 Spacer(minLength: 8)
-                artifactAction("Preview", symbol: "eye") {
-                    WorkspaceQuickLookPresenter.shared.present(reference.url)
-                }
+                artifactAction("Open", symbol: "arrow.up.forward.app", action: onOpen)
                 artifactAction("Reveal", symbol: "folder") {
                     NSWorkspace.shared.activateFileViewerSelecting([reference.url])
                 }
@@ -1501,9 +1493,9 @@ private struct WorkspaceImageArtifactView: View {
 
 private struct WorkspaceArtifactCard: View {
     let reference: WorkspaceArtifactReference
-    let selectionCoordinator: ResponseSelectionCoordinator?
+    let selectionStore: TranscriptSelectionStore?
     let selectionSpan: TranscriptSelectionSpan?
-    let onPreview: () -> Void
+    let onOpen: () -> Void
     @State private var copied = false
 
     var body: some View {
@@ -1518,7 +1510,7 @@ private struct WorkspaceArtifactCard: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                if let selectionCoordinator, let selectionSpan {
+                if let selectionStore, let selectionSpan {
                     ResponseSelectableText(
                         attributedText: MarkdownNativeText.plain(
                             reference.url.lastPathComponent,
@@ -1527,7 +1519,7 @@ private struct WorkspaceArtifactCard: View {
                             lineSpacing: 0
                         ),
                         span: selectionSpan.displaying(reference.url.lastPathComponent),
-                        coordinator: selectionCoordinator
+                        store: selectionStore
                     )
                     .fixedSize(horizontal: false, vertical: true)
                 } else {
@@ -1553,7 +1545,7 @@ private struct WorkspaceArtifactCard: View {
             }
 
             Spacer(minLength: 8)
-            cardAction("Preview", symbol: "eye", action: onPreview)
+            cardAction("Open", symbol: "arrow.up.forward.app", action: onOpen)
             cardAction("Reveal", symbol: "folder") {
                 NSWorkspace.shared.activateFileViewerSelecting([reference.url])
             }
@@ -1602,7 +1594,7 @@ private struct MarkdownTableRenderer: View {
     let rows: [[[MarkdownInlineRun]]]
     let workspacePath: String?
     let density: MarkdownRenderDensity
-    let selectionCoordinator: ResponseSelectionCoordinator?
+    let selectionStore: TranscriptSelectionStore?
     let selectionSpans: [String: TranscriptSelectionSpan]
     let path: [Int]
     let onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)?
@@ -1618,7 +1610,7 @@ private struct MarkdownTableRenderer: View {
         rows: [[[MarkdownInlineRun]]],
         workspacePath: String?,
         density: MarkdownRenderDensity,
-        selectionCoordinator: ResponseSelectionCoordinator?,
+        selectionStore: TranscriptSelectionStore?,
         selectionSpans: [String: TranscriptSelectionSpan],
         path: [Int],
         onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)?
@@ -1628,7 +1620,7 @@ private struct MarkdownTableRenderer: View {
         self.rows = rows
         self.workspacePath = workspacePath
         self.density = density
-        self.selectionCoordinator = selectionCoordinator
+        self.selectionStore = selectionStore
         self.selectionSpans = selectionSpans
         self.path = path
         self.onOpenWorkspaceReference = onOpenWorkspaceReference
@@ -1797,7 +1789,7 @@ private struct MarkdownTableRenderer: View {
         let weight: NSFont.Weight = header ? .semibold : .regular
         let color = header ? LocusTheme.ink : LocusTheme.inkSoft
         let key = path.map(String.init).joined(separator: ".")
-        if let selectionCoordinator, let span = selectionSpans[key] {
+        if let selectionStore, let span = selectionSpans[key] {
             ResponseSelectableText(
                 attributedText: MarkdownNativeText.attributed(
                     runs,
@@ -1809,7 +1801,7 @@ private struct MarkdownTableRenderer: View {
                     workspacePath: workspacePath
                 ),
                 span: span,
-                coordinator: selectionCoordinator,
+                store: selectionStore,
                 onOpenURL: open
             )
             .fixedSize(horizontal: false, vertical: true)

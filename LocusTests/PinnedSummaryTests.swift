@@ -356,12 +356,12 @@ final class PinnedSummaryTests: XCTestCase {
 
     // MARK: - AppModel wiring
 
-    private func sessionInfo(id: String) -> [String: Any] {
+    private func sessionInfo(id: String, cwd: String = "/tmp") -> [String: Any] {
         [
             "type": "session_info",
             "model": "qwen3:8b",
             "host": "http://localhost:11434",
-            "cwd": "/tmp",
+            "cwd": cwd,
             "session": "/tmp/\(id).jsonl",
             "session_id": id,
             "messages": 1,
@@ -387,6 +387,136 @@ final class PinnedSummaryTests: XCTestCase {
             "type": "tool_result", "id": id, "tool": tool, "summary": summary,
             "result": result, "ok": ok, "denied": denied,
         ])
+    }
+
+    func testFileTouchesAreBoundedAndKeepTheMostRecent() {
+        var state = base()
+        for index in 0..<(SessionStateReducer.fileLimit + 10) {
+            state = SessionStateReducer.reduce(
+                state, .fileCreate(path: "generated/file-\(index).txt", at: index)
+            )
+        }
+        XCTAssertEqual(state.files.count, SessionStateReducer.fileLimit)
+        XCTAssertEqual(
+            state.files.first?.path,
+            "generated/file-\(SessionStateReducer.fileLimit + 9).txt"
+        )
+    }
+
+    func testACreatedFileStaysCreatedAfterLaterEdits() {
+        // Outputs is `files.filter { $0.kind == .create }`, so demoting a
+        // create would make a produced file disappear from the list the moment
+        // the agent revised it.
+        var state = base()
+        state = SessionStateReducer.reduce(state, .fileCreate(path: "report.pdf", at: 1))
+        state = SessionStateReducer.reduce(
+            state, .fileEdit(path: "report.pdf", added: 2, removed: 1, at: 2)
+        )
+        state = SessionStateReducer.reduce(state, .fileRead(path: "report.pdf", at: 3))
+
+        XCTAssertEqual(state.createdFiles.map(\.path), ["report.pdf"])
+        XCTAssertEqual(PinnedSummary.outputs(state: state).map(\.label), ["report.pdf"])
+    }
+
+    @MainActor
+    func testShellProducedFilesReachOutputsThroughReportedFileEffects() throws {
+        // The reported failure: a PDF built by a shell command never appeared
+        // in Outputs. The shell branch emitted a command event and returned
+        // before any file activity was considered, and the fallback scraped
+        // prose that never named the file.
+        let workspace = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let model = AppModel(startImmediately: false)
+        model.handleEventForTesting(sessionInfo(id: "effects-session", cwd: workspace.path))
+        model.handleEventForTesting([
+            "type": "tool_result",
+            "id": "b1",
+            "tool": "bash",
+            "summary": "$ python make_report.py",
+            "result": "wrote 1 page",
+            "ok": true,
+            "denied": false,
+            "file_effects": [["path": "report.pdf", "effect": "create"]],
+        ])
+
+        let rows = PinnedSummary.outputs(state: model.sessionOverview.state)
+        XCTAssertEqual(rows.map(\.label), ["report.pdf"])
+        XCTAssertEqual(rows.first?.target, "report.pdf")
+
+        // The command still gets recorded — the effects branch must not swallow it.
+        XCTAssertTrue(model.sessionOverview.state.events.contains {
+            if case .command(let cmd, _, _) = $0 { return cmd == "$ python make_report.py" }
+            return false
+        })
+    }
+
+    @MainActor
+    func testPatchAddsAreCreatesAndOverwritesAreEdits() throws {
+        let workspace = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let model = AppModel(startImmediately: false)
+        model.handleEventForTesting(sessionInfo(id: "patch-session", cwd: workspace.path))
+        model.handleEventForTesting([
+            "type": "tool_result",
+            "id": "p1",
+            "tool": "apply_patch",
+            "summary": "patch 2 file(s)",
+            "ok": true,
+            "denied": false,
+            "file_effects": [
+                ["path": "made.md", "effect": "create"],
+                ["path": "existing.md", "effect": "edit"],
+            ],
+        ])
+
+        let state = model.sessionOverview.state
+        XCTAssertEqual(state.createdFiles.map(\.path), ["made.md"])
+        XCTAssertEqual(
+            state.files.first(where: { $0.path == "existing.md" })?.kind,
+            .edit,
+            "apply_patch used to report every touched file as an edit; now only M does"
+        )
+    }
+
+    @MainActor
+    func testTheSameFileFromDifferentFeedsCollapsesToOneOutputRow() throws {
+        // Git reports repository-relative, a tool reports whatever the model
+        // wrote, the watcher reports absolute. Without one normalization the
+        // same PDF becomes three rows.
+        let workspace = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let absolute = workspace.appendingPathComponent("report.pdf")
+        try Data("%PDF".utf8).write(to: absolute)
+
+        let model = AppModel(startImmediately: false)
+        model.handleEventForTesting(sessionInfo(id: "dedupe-session", cwd: workspace.path))
+
+        for raw in ["report.pdf", "./report.pdf", absolute.path] {
+            model.handleEventForTesting([
+                "type": "tool_result",
+                "id": "w-\(raw)",
+                "tool": "write_file",
+                "summary": "write report.pdf",
+                "ok": true,
+                "denied": false,
+                "file_effects": [["path": raw, "effect": "create"]],
+            ])
+        }
+
+        XCTAssertEqual(
+            PinnedSummary.outputs(state: model.sessionOverview.state).count,
+            1,
+            "three spellings of one file are one output"
+        )
+    }
+
+    private func makeWorkspace() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("locus-outputs-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url.standardizedFileURL.resolvingSymlinksInPath()
     }
 
     @MainActor

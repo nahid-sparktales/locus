@@ -144,6 +144,10 @@ struct LocusApp: App {
                     .keyboardShortcut("r", modifiers: .command)
                 Button("Session Checkpoints…") { model.checkpointPresented = true }
                     .keyboardShortcut("s", modifiers: .command)
+                // ⌘9 opens the Notes panel for the current chat; this is the
+                // shelf behind it.
+                Button("Notebook…") { model.notebookPresented = true }
+                    .keyboardShortcut("9", modifiers: [.command, .shift])
                 Menu("Export Session") {
                     ForEach(ChatExportFormat.allCases) { format in
                         Button("\(format.title)…") { model.exportCurrentSession(format: format) }
@@ -251,6 +255,34 @@ struct LocusApp: App {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(LocusTheme.surfaceCanvas)
+        case "notebook":
+            NotebookSheet(notebook: model.notebook)
+                .onAppear {
+                    // The UI-testing notes root is a fresh temporary directory,
+                    // so the fixture writes the documents it means to audit
+                    // instead of depending on what the host machine happens to
+                    // have. Written through the real store, saved immediately
+                    // because the list reads from disk.
+                    for (scope, text) in [
+                        (NotesScope.workspace, "Release checklist\n- [ ] tag the build"),
+                        (NotesScope.chat, "Follow up on the notary job"),
+                        (NotesScope.global, "Shared by every chat and workspace"),
+                    ] {
+                        let store = NotesStore.shared(
+                            workspacePath: model.workspacePath,
+                            sessionID: model.currentSessionID,
+                            scope: scope
+                        )
+                        store.update(text)
+                        store.flushForTesting()
+                    }
+                    model.notebook.refresh(
+                        workspaces: model.workspaceProfiles,
+                        sessions: model.sessions
+                    )
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(LocusTheme.surfaceCanvas)
         case "model-library":
             ModelLibraryView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -340,14 +372,9 @@ final class LocusApplicationDelegate: NSObject, NSApplicationDelegate,
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
-        TranscriptSelectionMenu.shared.start(
-            onSearch: { [weak self] selection in
-                self?.model?.searchWebForSelection(selection)
-            },
-            onQuote: { [weak self] selection in
-                self?.model?.quoteSelectionInComposer(selection)
-            }
-        )
+        TranscriptSelectionMenu.shared.start { [weak self] selection in
+            self?.model?.searchWebForSelection(selection)
+        }
     }
 
     nonisolated func userNotificationCenter(
@@ -384,7 +411,10 @@ final class LocusApplicationDelegate: NSObject, NSApplicationDelegate,
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        lifecycle?.applicationShouldTerminate(sender) ?? .terminateNow
+        // Session overview writes are debounced; quitting must not drop the
+        // last one.
+        model?.sessionOverview.persistNow()
+        return lifecycle?.applicationShouldTerminate(sender) ?? .terminateNow
     }
 
 }
@@ -699,6 +729,15 @@ struct RootView: View {
         .sheet(isPresented: $model.checkpointPresented) {
             CheckpointSheet()
                 .environmentObject(model)
+        }
+        .sheet(isPresented: $model.notebookPresented) {
+            NotebookSheet(notebook: model.notebook)
+                .onAppear {
+                    model.notebook.refresh(
+                        workspaces: model.workspaceProfiles,
+                        sessions: model.sessions
+                    )
+                }
         }
         .sheet(isPresented: $model.reviewAndLandPresented) {
             ReviewAndLandView()

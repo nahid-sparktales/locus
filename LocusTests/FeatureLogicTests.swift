@@ -653,23 +653,6 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
-    func testQuoteSelectionAppendsWithoutReplacingTheDraft() {
-        let selection = "  first line\n\nsecond line  "
-
-        XCTAssertEqual(
-            QuoteSelectionFormatter.appending(selection, to: ""),
-            "> first line\n>\n> second line\n\n"
-        )
-        XCTAssertEqual(
-            QuoteSelectionFormatter.appending(selection, to: "My question"),
-            "My question\n\n> first line\n>\n> second line\n\n"
-        )
-        XCTAssertEqual(
-            QuoteSelectionFormatter.appending(" \n ", to: "Keep me"),
-            "Keep me"
-        )
-    }
-
     func testPlainTextCopyPreservesNestedNumberedLists() {
         XCTAssertEqual(
             MarkdownPlainTextRenderer.render(
@@ -688,18 +671,6 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
-    @MainActor
-    func testQuotedSelectionRemainsInTheModelDuringAnActiveRun() {
-        let model = AppModel(startImmediately: false)
-        model.draftText = "Existing draft"
-        model.isBusy = true
-
-        model.quoteSelectionInComposer("selected output")
-
-        XCTAssertEqual(model.draftText, "Existing draft\n\n> selected output\n\n")
-        XCTAssertTrue(model.isBusy, "quoting must not interfere with the active run")
-    }
-
     func testLongOutputPolicyCountsLogicalLinesWithoutTheFenceTerminator() {
         let code = (1...25).map { "line \($0)" }.joined(separator: "\n") + "\n"
         let lines = LongOutputPolicy.codeLines(code)
@@ -711,10 +682,19 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(LongOutputPolicy.tablePreviewRowCount, 5)
     }
 
-    func testOneAssistantMarkerIsAssignedPerResponse() {
+    func testFirstActivityOwnsSingleAssistantMarkerPerResponse() {
         let firstUser = ChatBlock(kind: .user, text: "First request")
-        let commentary = ChatBlock(kind: .assistant, text: "Checking files")
-        let finalAnswer = ChatBlock(kind: .assistant, text: "Finished")
+        let reasoning = ChatBlock(kind: .assistant, reasoningText: "Planning")
+        let commentary = ChatBlock(
+            kind: .assistant,
+            text: "Checking files",
+            assistantPhase: .commentary
+        )
+        let finalAnswer = ChatBlock(
+            kind: .assistant,
+            text: "Finished",
+            assistantPhase: .finalAnswer
+        )
         let completion = ChatBlock(
             kind: .note,
             completion: TurnCompletion(
@@ -724,21 +704,62 @@ final class FeatureLogicTests: XCTestCase {
             )
         )
         let secondUser = ChatBlock(kind: .user, text: "Second request")
-        let secondAnswer = ChatBlock(kind: .assistant, text: "Done again")
-        let items = [
-            TranscriptPresentationItem.block(firstUser),
-            .thinkingGroup(id: firstUser.id, entries: []),
-            .block(commentary),
-            .toolGroup(id: firstUser.id, tools: []),
-            .block(finalAnswer),
-            .block(completion),
-            .block(secondUser),
-            .block(secondAnswer),
-        ]
+        let secondAnswer = ChatBlock(kind: .assistant, text: "Done again", assistantPhase: .finalAnswer)
+        let items = TranscriptPresentation.items(
+            from: [firstUser, reasoning, commentary, finalAnswer, completion, secondUser, secondAnswer],
+            toolVisibility: .collapsed,
+            thinkingVisibility: .collapsed
+        )
+
+        let reasoningItemID = TranscriptPresentationItem.ID.thinkingGroup(.init(
+            sourceBlockID: reasoning.id,
+            ordinal: 0
+        ))
+        let finalItemID = TranscriptPresentationItem.ID.assistantSegment(.init(
+            sourceBlockID: finalAnswer.id,
+            ordinal: 0
+        ))
+        let secondItemID = TranscriptPresentationItem.ID.assistantSegment(.init(
+            sourceBlockID: secondAnswer.id,
+            ordinal: 0
+        ))
 
         XCTAssertEqual(
-            TranscriptPresentation.assistantMarkerBlockIDs(in: items),
-            Set([commentary.id, secondAnswer.id])
+            TranscriptPresentation.assistantMarkerItemIDs(in: items),
+            Set([reasoningItemID, secondItemID])
+        )
+        XCTAssertEqual(
+            TranscriptPresentation.assistantActionItemIDs(in: items),
+            Set([finalItemID, secondItemID])
+        )
+    }
+
+    func testToolRunOwnsMarkerWhenItStartsTheResponse() {
+        let user = ChatBlock(kind: .user, text: "Inspect the project")
+        let tool = ChatBlock(
+            kind: .tool,
+            tool: ToolPayload(
+                toolID: "first-tool",
+                tool: "read_file",
+                summary: "Read files",
+                detail: "",
+                status: .running
+            )
+        )
+        let commentary = ChatBlock(
+            kind: .assistant,
+            text: "I found the relevant files.",
+            assistantPhase: .commentary
+        )
+        let items = TranscriptPresentation.items(
+            from: [user, tool, commentary],
+            toolVisibility: .collapsed,
+            thinkingVisibility: .collapsed
+        )
+
+        XCTAssertEqual(
+            TranscriptPresentation.assistantMarkerItemIDs(in: items),
+            Set([.toolGroup(tool.id)])
         )
     }
 
@@ -1017,6 +1038,49 @@ final class FeatureLogicTests: XCTestCase {
                 "https://example.com/chart.png",
                 workspacePath: workspace.path
             )
+        )
+    }
+
+    func testWorkspaceArtifactsRouteBinariesToTheDefaultAppAndTextToTheFilesTab() {
+        // The Files peek decodes UTF-8 only, so anything that is not source has
+        // to leave the app. The previous binary branch drove the shared
+        // QLPreviewPanel without owning it through the responder chain, which
+        // is what showed a blank or stale preview.
+        for kind in [
+            WorkspaceArtifactKind.pdf,
+            .image,
+            .spreadsheet,
+            .document,
+            .presentation,
+            .audio,
+            .video,
+            .other,
+        ] {
+            XCTAssertEqual(
+                WorkspaceArtifactOpener.destination(kind: kind, sourceLocation: nil),
+                .defaultApp,
+                "\(kind.rawValue) has no in-app renderer and must open externally"
+            )
+        }
+
+        XCTAssertEqual(
+            WorkspaceArtifactOpener.destination(kind: .source, sourceLocation: nil),
+            .filesTab(line: nil, column: nil)
+        )
+        XCTAssertEqual(
+            WorkspaceArtifactOpener.destination(
+                kind: .source,
+                sourceLocation: .init(line: 12, column: 4)
+            ),
+            .filesTab(line: 12, column: 4)
+        )
+        XCTAssertEqual(
+            WorkspaceArtifactOpener.destination(
+                kind: .pdf,
+                sourceLocation: .init(line: 3, column: nil)
+            ),
+            .filesTab(line: 3, column: nil),
+            "a named line is a citation to scroll to, not a document to hand to Preview"
         )
     }
 
@@ -1421,11 +1485,26 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(future.resolvedAppearance, .system)
     }
 
-    func testAccentOffersFivePresetsAndAnOpenEndedCustomColour() throws {
-        XCTAssertEqual(LocusAccentPreset.allCases.count, 5)
+    func testAccentOffersSevenPresetsAndAnOpenEndedCustomColour() throws {
+        XCTAssertEqual(LocusAccentPreset.allCases.count, 7)
         XCTAssertEqual(LocusAccentPreset.allCases.map(\.title), [
-            "Lime", "Blue", "Purple", "Orange", "Pink",
+            "Lime", "Green", "Blue", "Purple", "Orange", "Pink", "Neutral",
         ])
+
+        assertColor(
+            LocusAccentSelection(
+                rawValue: LocusAccentPreset.green.rawValue,
+                customHex: LocusAccentSelection.defaultCustomHex
+            ).fillNSColor,
+            hex: 0x2F7D4C
+        )
+        assertColor(
+            LocusAccentSelection(
+                rawValue: LocusAccentPreset.neutral.rawValue,
+                customHex: LocusAccentSelection.defaultCustomHex
+            ).fillNSColor,
+            hex: 0xD4D5D2
+        )
 
         let legacy = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
         XCTAssertEqual(legacy.resolvedAccent.preset, .lime)
@@ -4503,12 +4582,36 @@ final class FeatureLogicTests: XCTestCase {
             initial: .empty(workspacePath: "/tmp/two", modelID: "local-model")
         )
         writer.emit(.fileRead(path: "README.md", at: 2))
+        // Writes are coalesced — every event re-encodes the whole store, and a
+        // workspace watcher can deliver a batch of them. Session switches and
+        // resets flush on their own; a trailing event needs this.
+        writer.persistNow()
 
         let reader = SessionStateEmitter()
         reader.configurePersistence(enabled: true, defaults: defaults, key: key)
 
         XCTAssertEqual(reader.states["one"]?.status, .running)
         XCTAssertEqual(reader.states["two"]?.files.first?.path, "README.md")
+    }
+
+    @MainActor
+    func testSwitchingSessionsFlushesWithoutWaitingForTheDebounce() throws {
+        // The debounce must never cost a session switch: the previous chat's
+        // last events have to be on disk before the next one takes over.
+        let suiteName = "LocusTests.sessionOverviewFlush.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let key = "session-state"
+
+        let writer = SessionStateEmitter()
+        writer.configurePersistence(enabled: true, defaults: defaults, key: key)
+        writer.activate(sessionID: "one", initial: .empty(workspacePath: "/tmp/one"))
+        writer.emit(.fileCreate(path: "report.pdf", at: 1))
+        writer.activate(sessionID: "two", initial: .empty(workspacePath: "/tmp/two"))
+
+        let reader = SessionStateEmitter()
+        reader.configurePersistence(enabled: true, defaults: defaults, key: key)
+        XCTAssertEqual(reader.states["one"]?.createdFiles.map(\.path), ["report.pdf"])
     }
 
     func testTwoProviderAdaptersFoldTheSameEventsWithoutUIKnowledge() {

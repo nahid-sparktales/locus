@@ -378,6 +378,11 @@ enum SessionStateReducer {
     static let eventLimit = 200
     static let outputLimit = 50
     static let sourceLimit = 100
+    /// Files were the one list without a bound. That was survivable while the
+    /// only feeds were a tool naming a path and git reporting a change; a
+    /// workspace watcher can see a whole build tree, and every entry is
+    /// persisted.
+    static let fileLimit = 200
 
     static func reduce(_ state: SessionState, _ event: SessionEvent) -> SessionState {
         var next = state
@@ -521,6 +526,10 @@ enum SessionStateReducer {
             $0.lastTouchedAt == $1.lastTouchedAt
                 ? $0.path < $1.path : $0.lastTouchedAt > $1.lastTouchedAt
         }
+        // Already newest-first, so the tail is the least recently touched.
+        if state.files.count > fileLimit {
+            state.files.removeLast(state.files.count - fileLimit)
+        }
     }
 
     private static func upsertWebsiteOutput(in state: inout SessionState, url: String, at: Int) {
@@ -656,6 +665,7 @@ final class SessionStateEmitter: ObservableObject {
     private var persistenceEnabled = false
     private var defaults: UserDefaults = .standard
     private var persistenceKey = "Locus.sessionOverviewStates.v1"
+    private var persistTask: Task<Void, Never>?
 
     var state: SessionState {
         states[activeSessionID] ?? .empty()
@@ -678,6 +688,11 @@ final class SessionStateEmitter: ObservableObject {
             bounded.events = Array(value.events.suffix(SessionStateReducer.eventLimit))
             bounded.suggestions = Array(value.suggestions.prefix(3))
             bounded.outputs = Array(value.outputs.prefix(SessionStateReducer.outputLimit))
+            bounded.files = Array(
+                value.files
+                    .sorted { $0.lastTouchedAt > $1.lastTouchedAt }
+                    .prefix(SessionStateReducer.fileLimit)
+            )
             bounded.sources = Array(
                 value.sources
                     .sorted { $0.lastSeenAt > $1.lastSeenAt }
@@ -699,7 +714,7 @@ final class SessionStateEmitter: ObservableObject {
         } else {
             states[sessionID] = initial
         }
-        persist()
+        persistNow()
     }
 
     func emit(_ event: SessionEvent, sessionID: String? = nil) {
@@ -743,10 +758,27 @@ final class SessionStateEmitter: ObservableObject {
         guard !sessionID.isEmpty else { return }
         activeSessionID = sessionID
         states[sessionID] = initial
-        persist()
+        persistNow()
     }
 
+    /// Coalesces writes. Every event re-encodes the whole store, so a burst —
+    /// a build the workspace watcher saw, a long turn's tool calls — used to
+    /// mean one full JSON encode per event.
     private func persist() {
+        guard persistenceEnabled else { return }
+        persistTask?.cancel()
+        persistTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            self?.persistNow()
+        }
+    }
+
+    /// Writes immediately, for the moments a debounce could lose: session
+    /// switches, resets, and termination.
+    func persistNow() {
+        persistTask?.cancel()
+        persistTask = nil
         guard persistenceEnabled else { return }
         guard let data = try? JSONEncoder().encode(states) else { return }
         defaults.set(data, forKey: persistenceKey)

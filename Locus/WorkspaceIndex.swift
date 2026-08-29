@@ -10,7 +10,32 @@ enum ContextFileTypes {
     ]
 
     static let skippedDirectories: Set<String> = [
-        "node_modules", ".git", "dist", "build", ".next", ".build", ".venv",
+        "node_modules", ".git", ".svn", ".hg", "dist", "build", "out", "target",
+        ".next", ".nuxt", ".build", ".venv", "venv", "__pycache__", ".turbo",
+        ".parcel-cache", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+        ".gradle", ".idea", ".vscode", "DerivedData", "Pods", ".terraform",
+        ".cache", ".tox", ".eggs",
+    ]
+
+    /// Deliverables — what a run produces *for the user*, as opposed to the
+    /// text files Locus reads into context.
+    ///
+    /// Kept separate from `allowedExtensions` on purpose: widening that set
+    /// would pull binaries into the knowledge index and the "@" mention list.
+    /// This one exists so a generated `dist/report.pdf` can be recognised as an
+    /// output while `dist/main.js.map` is ignored.
+    static let deliverableExtensions: Set<String> = [
+        "pdf", "docx", "doc", "rtf", "pages", "xlsx", "xls", "csv", "numbers",
+        "pptx", "ppt", "key", "epub", "zip", "png", "jpg", "jpeg", "gif",
+        "svg", "webp", "heic", "mp4", "mov", "mp3", "wav", "html", "md", "txt",
+        "json",
+    ]
+
+    /// Directories that hold build output. Generated deliverables land here, so
+    /// they cannot simply be skipped — but nor can everything in them be
+    /// treated as an output.
+    static let buildOutputDirectories: Set<String> = [
+        "dist", "build", "out", "target", "site", "public", "DerivedData",
     ]
 }
 

@@ -119,11 +119,15 @@ struct GitStatusResponse: Codable {
     let upstream: String?
     let detached: Bool
     let hasCommits: Bool
+    /// Absolute path of the repository root. Porcelain paths are relative to
+    /// *this*, not to the workspace, so a workspace opened on a subdirectory
+    /// needs it to resolve a changed file to somewhere real.
+    let root: String?
     let files: [GitChange]
     let error: String?
 
     enum CodingKeys: String, CodingKey {
-        case ok, branch, ahead, behind, upstream, detached, files, error
+        case ok, branch, ahead, behind, upstream, detached, root, files, error
         case isRepo = "is_repo"
         case hasCommits = "has_commits"
     }
@@ -140,6 +144,7 @@ struct GitStatusResponse: Codable {
         // Absent means an old agent; assume commits exist rather than hide
         // push/unstage behind a wrong default.
         hasCommits = try container.decodeIfPresent(Bool.self, forKey: .hasCommits) ?? true
+        root = try container.decodeIfPresent(String.self, forKey: .root)
         files = try container.decodeIfPresent([GitChange].self, forKey: .files) ?? []
         error = try container.decodeIfPresent(String.self, forKey: .error)
     }

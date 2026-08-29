@@ -195,6 +195,121 @@ enum ToolActivityAggregateStatus: Equatable {
     }
 }
 
+/// Human-readable compact activity for one adjacent run of tools. The detailed
+/// provider summary remains available after disclosure; this formatter keeps
+/// the transcript's resting state quiet and familiar.
+struct CompactToolActivitySummary: Equatable {
+    let title: String
+    let systemImage: String
+
+    init(tools: [ToolPayload]) {
+        var order: [Family] = []
+        var counts: [Family: Int] = [:]
+        for tool in tools {
+            let family = Family(tool: tool)
+            if counts[family] == nil { order.append(family) }
+            counts[family, default: 0] += 1
+        }
+
+        let phrases = order.map { family in
+            family.phrase(count: counts[family, default: 1])
+        }
+        let shown = phrases.prefix(3)
+        var pieces = shown.enumerated().map { index, phrase in
+            index == 0 ? phrase : phrase.lowercasingFirstCharacter
+        }
+        if phrases.count > shown.count {
+            pieces.append("and \(phrases.count - shown.count) more")
+        }
+        title = pieces.joined(separator: ", ").nilIfEmpty ?? "Used tools"
+        systemImage = order.first?.systemImage ?? "wrench.and.screwdriver"
+    }
+
+    private enum Family: Hashable {
+        case command
+        case readFiles
+        case editFiles
+        case browse
+        case question
+        case plan
+        case image
+        case fallback(String)
+
+        init(tool: ToolPayload) {
+            let name = tool.tool.lowercased()
+            let leaf = name
+                .split(whereSeparator: { ".:/".contains($0) })
+                .last
+                .map(String.init) ?? name
+
+            if name.contains("request_user_input") || name.contains("ask_question") {
+                self = .question
+            } else if name.contains("update_plan") || name.contains("todo_write")
+                        || name.contains("submit_plan") {
+                self = .plan
+            } else if name.contains("imagegen") || name.contains("image_gen") {
+                self = .image
+            } else if name.contains("browser") || name.contains("web_fetch")
+                        || name.contains("web__run") || name.contains("web.run") {
+                self = .browse
+            } else if ["bash", "exec", "exec_command", "write_stdin", "background_service"]
+                        .contains(leaf) || name.contains("terminal") {
+                self = .command
+            } else if ["write_file", "edit_file", "multi_edit", "apply_patch"]
+                        .contains(leaf) || name.contains("apply_patch") {
+                self = .editFiles
+            } else if ["read_file", "list_dir", "glob", "grep", "find", "search"]
+                        .contains(leaf) || name.contains("read_file") {
+                self = .readFiles
+            } else {
+                self = .fallback(Self.fallbackTitle(tool))
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .command: "terminal"
+            case .readFiles: "magnifyingglass"
+            case .editFiles: "square.and.pencil"
+            case .browse: "globe"
+            case .question: "questionmark.circle"
+            case .plan: "checklist"
+            case .image: "photo"
+            case .fallback: "wrench.and.screwdriver"
+            }
+        }
+
+        func phrase(count: Int) -> String {
+            switch self {
+            case .command: count == 1 ? "Ran command" : "Ran commands"
+            case .readFiles: "Read files"
+            case .editFiles: count == 1 ? "Edited file" : "Edited files"
+            case .browse: "Browsed"
+            case .question: count == 1 ? "Asked a question" : "Asked \(count) questions"
+            case .plan: "Updated plan"
+            case .image: count == 1 ? "Created image" : "Created images"
+            case .fallback(let title): title
+            }
+        }
+
+        private static func fallbackTitle(_ tool: ToolPayload) -> String {
+            let rendered = MarkdownPlainTextRenderer.render(tool.summary)
+            let normalized = rendered
+                .split(whereSeparator: \.isWhitespace)
+                .joined(separator: " ")
+            guard !normalized.isEmpty else { return "Used tools" }
+            return String(normalized.prefix(96))
+        }
+    }
+}
+
+private extension String {
+    var lowercasingFirstCharacter: String {
+        guard let first else { return self }
+        return first.lowercased() + dropFirst()
+    }
+}
+
 struct ChatBlock: Identifiable, Codable, Hashable {
     enum Kind: String, Codable {
         case user
@@ -321,30 +436,91 @@ struct ChatBlock: Identifiable, Codable, Hashable {
     }
 }
 
-/// A stable presentation-only projection of transcript blocks. Tool calls and
-/// completed reasoning can become request-level activity groups while the
-/// stored blocks remain untouched.
+/// A stable presentation-only projection of transcript blocks. Assistant text,
+/// provider reasoning, inline thinking, and adjacent tool runs keep their
+/// source order while the stored blocks remain untouched.
 enum TranscriptPresentationItem: Identifiable, Equatable {
     enum ID: Hashable {
         case block(UUID)
+        case assistantSegment(AssistantPresentationSegment.ID)
         case toolGroup(UUID)
-        case thinkingGroup(UUID)
+        case thinkingGroup(ThinkingPresentationGroupID)
+
+        /// A stable string name for this row, used to scope selection spans.
+        ///
+        /// Position cannot do that job: rows are created and destroyed as the
+        /// transcript scrolls, so anything index-based invalidates a live
+        /// selection the moment the list realizes differently.
+        var stableKey: String {
+            switch self {
+            case .block(let id):
+                "block:\(id.uuidString)"
+            case .assistantSegment(let id):
+                "segment:\(id.sourceBlockID.uuidString):\(id.ordinal)"
+            case .toolGroup(let id):
+                "toolGroup:\(id.uuidString)"
+            case .thinkingGroup(let id):
+                "thinking:\(id.sourceBlockID.uuidString):\(id.ordinal)"
+            }
+        }
     }
 
     case block(ChatBlock)
+    case assistantSegment(AssistantPresentationSegment)
     case toolGroup(id: UUID, tools: [ToolPayload])
-    case thinkingGroup(id: UUID, entries: [ThinkingPresentationEntry])
+    case thinkingGroup(id: ThinkingPresentationGroupID, entries: [ThinkingPresentationEntry])
 
     var id: ID {
         switch self {
         case .block(let block): .block(block.id)
+        case .assistantSegment(let segment): .assistantSegment(segment.id)
         case .toolGroup(let id, _): .toolGroup(id)
         case .thinkingGroup(let id, _): .thinkingGroup(id)
         }
     }
+
+    /// The persisted transcript block represented by this row. Derived
+    /// assistant segments and activity groups retain their source identity so
+    /// search and overview jumps never need to infer it from rendered text.
+    var sourceBlockIDs: Set<UUID> {
+        switch self {
+        case .block(let block): [block.id]
+        case .assistantSegment(let segment): [segment.sourceBlock.id]
+        case .toolGroup(let id, _): [id]
+        case .thinkingGroup(let id, _): [id.sourceBlockID]
+        }
+    }
 }
 
-/// One provider-supplied reasoning segment inside a request-level thought
+/// One visible assistant segment projected from a persisted response. A single
+/// block can yield several segments when inline thinking appears between
+/// visible text, so identity includes the source-local ordinal.
+struct AssistantPresentationSegment: Equatable {
+    struct ID: Hashable {
+        let sourceBlockID: UUID
+        let ordinal: Int
+    }
+
+    let id: ID
+    let sourceBlock: ChatBlock
+    let text: String
+
+    var displayBlock: ChatBlock {
+        var block = sourceBlock
+        block.text = text
+        block.reasoningText = nil
+        block.reasoningSections = nil
+        return block
+    }
+}
+
+/// Stable identity for one reasoning item or inline-thinking boundary.
+struct ThinkingPresentationGroupID: Hashable {
+    let sourceBlockID: UUID
+    let ordinal: Int
+}
+
+/// One provider-supplied reasoning section inside a source-local thought
 /// group. The source block and ordinal keep SwiftUI identity stable without
 /// changing the persisted transcript model.
 struct ThinkingPresentationEntry: Identifiable, Equatable {
@@ -364,155 +540,177 @@ enum TranscriptPresentation {
         thinkingVisibility: ThinkingVisibility
     ) -> [TranscriptPresentationItem] {
         var items: [TranscriptPresentationItem] = []
-        var requestBlocks: [ChatBlock] = []
-        var requestID: UUID?
+        var pendingToolBlocks: [ChatBlock] = []
 
-        func flushRequest() {
-            guard !requestBlocks.isEmpty else { return }
-            let tools = requestBlocks.compactMap(\.tool)
-            let groupID = requestID ?? requestBlocks.first(where: { $0.tool != nil })?.id
-            var assistantProjections: [UUID: AssistantProjection] = [:]
-            for block in requestBlocks where block.kind == .assistant && !block.isStreaming {
-                assistantProjections[block.id] = assistantProjection(for: block)
+        func flushTools() {
+            guard !pendingToolBlocks.isEmpty else { return }
+            if toolVisibility == .verbose {
+                items.append(contentsOf: pendingToolBlocks.map(TranscriptPresentationItem.block))
+            } else if let first = pendingToolBlocks.first {
+                items.append(.toolGroup(
+                    id: first.id,
+                    tools: pendingToolBlocks.compactMap(\.tool)
+                ))
             }
-            let thinkingEntries = requestBlocks.flatMap { block in
-                assistantProjections[block.id]?.thinkingEntries ?? []
-            }
-            let thinkingGroupID = requestID
-                ?? thinkingEntries.first?.id.sourceBlockID
-            var insertedGroup = false
-            var insertedThinkingGroup = false
-
-            for block in requestBlocks {
-                if block.kind == .tool {
-                    if toolVisibility == .verbose {
-                        items.append(.block(block))
-                    } else if !insertedGroup, let groupID, !tools.isEmpty {
-                        items.append(.toolGroup(id: groupID, tools: tools))
-                        insertedGroup = true
-                    }
-                    continue
-                }
-
-                if let projection = assistantProjections[block.id] {
-                    if !projection.thinkingEntries.isEmpty,
-                       !insertedThinkingGroup,
-                       thinkingVisibility != .hidden,
-                       let thinkingGroupID
-                    {
-                        items.append(.thinkingGroup(
-                            id: thinkingGroupID,
-                            entries: thinkingEntries
-                        ))
-                        insertedThinkingGroup = true
-                    }
-                    if let visibleBlock = projection.visibleBlock {
-                        items.append(.block(visibleBlock))
-                    }
-                    continue
-                }
-
-                if isCompletedEmptyAssistant(block) { continue }
-                items.append(.block(block))
-            }
-            requestBlocks.removeAll(keepingCapacity: true)
+            pendingToolBlocks.removeAll(keepingCapacity: true)
         }
 
         for block in blocks {
-            if block.kind == .user {
-                flushRequest()
-                items.append(.block(block))
-                requestID = block.id
-            } else if block.completion != nil {
-                flushRequest()
-                items.append(.block(block))
-                requestID = nil
+            if block.kind == .tool {
+                pendingToolBlocks.append(block)
+                continue
+            }
+
+            flushTools()
+            if block.kind == .assistant {
+                items.append(contentsOf: assistantItems(
+                    for: block,
+                    thinkingVisibility: thinkingVisibility
+                ))
             } else {
-                requestBlocks.append(block)
+                items.append(.block(block))
             }
         }
-        flushRequest()
+        flushTools()
         return items
     }
 
-    /// The first visible assistant block owns the Locus marker for its whole
-    /// request. Providers can emit commentary and a final answer as separate
-    /// blocks, but they are still one response in the transcript.
-    static func assistantMarkerBlockIDs(
+    /// The first visible assistant activity owns the Locus marker for its
+    /// whole turn. This includes reasoning and tools so the marker appears as
+    /// soon as work begins, while every later row in the turn stays unmarked.
+    static func assistantMarkerItemIDs(
         in items: [TranscriptPresentationItem]
-    ) -> Set<UUID> {
-        var result: Set<UUID> = []
+    ) -> Set<TranscriptPresentationItem.ID> {
+        var result: Set<TranscriptPresentationItem.ID> = []
         var responseAlreadyHasMarker = false
 
         for item in items {
-            guard case .block(let block) = item else { continue }
-            if block.kind == .user || block.completion != nil {
+            if item.isTurnBoundary {
                 responseAlreadyHasMarker = false
                 continue
             }
-            guard block.kind == .assistant else { continue }
+            guard item.isVisibleAssistantActivity else { continue }
             if !responseAlreadyHasMarker {
-                result.insert(block.id)
+                result.insert(item.id)
                 responseAlreadyHasMarker = true
             }
         }
         return result
     }
 
-    private struct AssistantProjection {
-        let thinkingEntries: [ThinkingPresentationEntry]
-        let visibleBlock: ChatBlock?
-    }
+    /// Final-answer items own response actions. If a provider ends a turn with
+    /// commentary only, the last visible assistant item is the explicit
+    /// fallback so copy/use-as-draft never disappear entirely.
+    static func assistantActionItemIDs(
+        in items: [TranscriptPresentationItem]
+    ) -> Set<TranscriptPresentationItem.ID> {
+        var result: Set<TranscriptPresentationItem.ID> = []
+        var visible: [TranscriptPresentationItem] = []
 
-    private static func assistantProjection(for block: ChatBlock) -> AssistantProjection {
-        var thinkingEntries: [ThinkingPresentationEntry] = []
-        var ordinal = 0
-
-        func appendThinking(_ text: String) {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return }
-            thinkingEntries.append(ThinkingPresentationEntry(
-                id: .init(sourceBlockID: block.id, ordinal: ordinal),
-                text: trimmed
-            ))
-            ordinal += 1
+        func flushTurn() {
+            guard !visible.isEmpty else { return }
+            let owner = visible.last(where: { $0.assistantPhase != .commentary })
+                ?? visible.last
+            if let owner { result.insert(owner.id) }
+            visible.removeAll(keepingCapacity: true)
         }
 
-        for section in block.resolvedReasoningSections {
-            appendThinking(section)
-        }
-
-        let segments = AssistantSegment.parse(block.text)
-        let containsInlineThinking = segments.contains { segment in
-            if case .thinking = segment { return true }
-            return false
-        }
-        var visibleSegments: [String] = []
-        for segment in segments {
-            switch segment {
-            case .thinking(let text, _):
-                appendThinking(text)
-            case .visible(let text):
-                visibleSegments.append(text)
+        for item in items {
+            if item.isTurnBoundary {
+                flushTurn()
+            } else if item.isVisibleAssistantItem {
+                visible.append(item)
             }
         }
-
-        var visibleBlock = block
-        visibleBlock.reasoningText = nil
-        visibleBlock.reasoningSections = nil
-        if containsInlineThinking {
-            visibleBlock.text = visibleSegments.joined(separator: "\n\n")
-        }
-        if visibleBlock.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return AssistantProjection(thinkingEntries: thinkingEntries, visibleBlock: nil)
-        }
-        return AssistantProjection(thinkingEntries: thinkingEntries, visibleBlock: visibleBlock)
+        flushTurn()
+        return result
     }
 
-    private static func isCompletedEmptyAssistant(_ block: ChatBlock) -> Bool {
-        guard block.kind == .assistant, !block.isStreaming else { return false }
-        return block.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && block.resolvedReasoningSections.isEmpty
+    private static func assistantItems(
+        for block: ChatBlock,
+        thinkingVisibility: ThinkingVisibility
+    ) -> [TranscriptPresentationItem] {
+        // The active row is rendered from StreamingReplyState. Give it the same
+        // presentation identity its ordinary completed message will use.
+        if block.isStreaming {
+            return [.assistantSegment(AssistantPresentationSegment(
+                id: .init(sourceBlockID: block.id, ordinal: 0),
+                sourceBlock: block,
+                text: block.text
+            ))]
+        }
+
+        var result: [TranscriptPresentationItem] = []
+        var thinkingEntryOrdinal = 0
+        var thinkingGroupOrdinal = 0
+        var visibleOrdinal = 0
+
+        func appendThinkingGroup(_ sections: [String]) {
+            guard thinkingVisibility != .hidden else { return }
+            let entries = sections.compactMap { text -> ThinkingPresentationEntry? in
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                defer { thinkingEntryOrdinal += 1 }
+                return ThinkingPresentationEntry(
+                    id: .init(sourceBlockID: block.id, ordinal: thinkingEntryOrdinal),
+                    text: trimmed
+                )
+            }
+            guard !entries.isEmpty else { return }
+            result.append(.thinkingGroup(
+                id: .init(sourceBlockID: block.id, ordinal: thinkingGroupOrdinal),
+                entries: entries
+            ))
+            thinkingGroupOrdinal += 1
+        }
+
+        func appendVisible(_ text: String) {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            result.append(.assistantSegment(AssistantPresentationSegment(
+                id: .init(sourceBlockID: block.id, ordinal: visibleOrdinal),
+                sourceBlock: block,
+                text: trimmed
+            )))
+            visibleOrdinal += 1
+        }
+
+        appendThinkingGroup(block.resolvedReasoningSections)
+        for segment in AssistantSegment.parse(block.text) {
+            switch segment {
+            case .thinking(let text, _):
+                appendThinkingGroup([text])
+            case .visible(let text):
+                appendVisible(text)
+            }
+        }
+        return result
+    }
+}
+
+private extension TranscriptPresentationItem {
+    var isTurnBoundary: Bool {
+        guard case .block(let block) = self else { return false }
+        return block.kind == .user || block.completion != nil
+    }
+
+    var isVisibleAssistantActivity: Bool {
+        switch self {
+        case .assistantSegment, .thinkingGroup, .toolGroup:
+            return true
+        case .block(let block):
+            return block.kind == .tool
+        }
+    }
+
+    var isVisibleAssistantItem: Bool {
+        guard case .assistantSegment = self else { return false }
+        return true
+    }
+
+    var assistantPhase: AssistantPhase? {
+        guard case .assistantSegment(let segment) = self else { return nil }
+        return segment.sourceBlock.assistantPhase
     }
 }
 

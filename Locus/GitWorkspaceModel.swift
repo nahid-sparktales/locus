@@ -38,6 +38,10 @@ final class GitWorkspaceModel: ObservableObject {
     @Published var isSyncingRemote = false
     @Published var originIsGitHub = false
     @Published var gitBranch: String?
+    /// Absolute repository root. Porcelain paths in `gitChanges` are relative
+    /// to this, not to the workspace, so a workspace opened on a subdirectory
+    /// of the repo needs it to resolve a change to a real file.
+    @Published var repositoryRoot: String?
 
     var originCheckedForWorkspace: String?
     var statusTask: Task<Void, Never>?
@@ -176,6 +180,7 @@ final class GitWorkspaceModel: ObservableObject {
         gitBehind = response.behind ?? 0
         gitDetached = response.detached
         gitHasCommits = response.hasCommits
+        repositoryRoot = response.root
         if response.isRepo, originCheckedForWorkspace != workspacePath {
             originCheckedForWorkspace = workspacePath
             refreshOriginKind()

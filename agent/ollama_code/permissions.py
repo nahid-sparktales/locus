@@ -6,6 +6,7 @@ import json
 import re
 import shlex
 import threading
+from pathlib import Path
 from typing import Any
 
 from .tools import EDIT_TOOLS, SAFE_TOOLS
@@ -547,6 +548,81 @@ def build_preview(
         f"{name} {json.dumps(args, ensure_ascii=False, default=str)[:120]}",
         json.dumps(args, indent=2, ensure_ascii=False, default=str)[:2000],
     )
+
+
+def file_effects(
+    name: str,
+    args: dict[str, Any],
+    ctx: Any | None = None,
+) -> list[dict[str, str]]:
+    """What a pending tool call is about to do to the filesystem.
+
+    ``[{"path": ..., "effect": "create" | "edit" | "delete"}, ...]``.
+
+    The GUI used to recover this by scraping the summary and result strings,
+    which could not tell a new file from an edited one and could not see a bare
+    filename at the workspace root at all. The tool arguments already say
+    exactly what will happen, so say it.
+
+    Must be called *before* the tool runs: distinguishing a create from an
+    overwrite depends on whether the target exists yet.
+
+    Deliberately empty for ``bash``: a shell command's arguments say nothing
+    about what it will write, and guessing from its output is how the old
+    heuristic went wrong. The workspace watcher covers that case instead.
+    """
+
+    def relative(path: str) -> str | None:
+        cleaned = path.strip()
+        if not cleaned:
+            return None
+        if ctx is None:
+            return cleaned
+        try:
+            resolved = ctx.resolve(cleaned)
+            cwd = getattr(ctx, "cwd", "") or ""
+            if cwd:
+                try:
+                    return str(resolved.relative_to(Path(cwd)))
+                except ValueError:
+                    pass
+            return str(resolved)
+        except (OSError, RuntimeError):
+            return cleaned
+
+    def exists(path: str) -> bool:
+        if ctx is None:
+            return False
+        try:
+            return ctx.resolve(path).exists()
+        except (OSError, RuntimeError):
+            return False
+
+    try:
+        if name == "write_file":
+            path = str(args.get("path", ""))
+            target = relative(path)
+            if not target:
+                return []
+            return [{"path": target, "effect": "edit" if exists(path) else "create"}]
+        if name in {"edit_file", "multi_edit"}:
+            target = relative(str(args.get("path", "")))
+            return [{"path": target, "effect": "edit"}] if target else []
+        if name == "apply_patch":
+            from . import codex_patch
+
+            text = str(args.get("input") or args.get("patch") or "")
+            effects: list[dict[str, str]] = []
+            for marker, path in codex_patch.changed_paths(text):
+                target = relative(path)
+                if not target:
+                    continue
+                effect = {"A": "create", "D": "delete"}.get(marker, "edit")
+                effects.append({"path": target, "effect": effect})
+            return effects
+    except (OSError, RuntimeError, ValueError):
+        return []
+    return []
 
 
 def _target_detail(path: str, detail: str, ctx: Any | None) -> str:

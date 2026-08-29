@@ -97,31 +97,6 @@ enum ResponseCopyPayload {
     }
 }
 
-enum QuoteSelectionFormatter {
-    static func quote(_ selection: String) -> String {
-        let trimmed = selection.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-        return trimmed
-            .components(separatedBy: "\n")
-            .map { line in line.isEmpty ? ">" : "> \(line)" }
-            .joined(separator: "\n")
-    }
-
-    static func appending(_ selection: String, to draft: String) -> String {
-        let quoted = quote(selection)
-        guard !quoted.isEmpty else { return draft }
-        let separator: String
-        if draft.isEmpty || draft.hasSuffix("\n\n") {
-            separator = ""
-        } else if draft.hasSuffix("\n") {
-            separator = "\n"
-        } else {
-            separator = "\n\n"
-        }
-        return draft + separator + quoted + "\n\n"
-    }
-}
-
 enum LongOutputPolicy {
     static let codeCollapseThreshold = 24
     static let codePreviewLineCount = 12
@@ -165,9 +140,18 @@ struct MessageContentView: View {
     var reasoningSections: [String]? = nil
     var workspacePath: String? = nil
     var thinkingVisibility: ThinkingVisibility = .collapsed
+    /// The transcript's selection store, owned above the lazy list so a drag
+    /// survives this row being recycled.
+    var selectionStore: TranscriptSelectionStore? = nil
+    var selectionRowID: String = ""
     var onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)? = nil
-    @StateObject private var selectionCoordinator = ResponseSelectionCoordinator()
     @State private var presentedStreamingText = ""
+
+    /// A streaming answer freezes its rendered text while it is being
+    /// selected, so the ground does not move under the drag.
+    private var isSelecting: Bool {
+        selectionStore?.activeRowIDs.contains(selectionRowID) == true
+    }
 
     var body: some View {
         let nativeReasoning = reasoningText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -194,11 +178,11 @@ struct MessageContentView: View {
             presentedStreamingText = text
         }
         .onChange(of: text) { _, next in
-            guard !selectionCoordinator.isSelectionActive else { return }
+            guard !isSelecting else { return }
             presentedStreamingText = next
         }
-        .onChange(of: selectionCoordinator.selection) { _, _ in
-            guard !selectionCoordinator.isSelectionActive else { return }
+        .onChange(of: isSelecting) { _, selecting in
+            guard !selecting else { return }
             presentedStreamingText = text
         }
     }
@@ -218,9 +202,11 @@ struct MessageContentView: View {
             }
         } else {
             StreamingMarkdownBodyView(
-                text: selectionCoordinator.isSelectionActive ? presentedStreamingText : text,
+                text: isSelecting ? presentedStreamingText : text,
                 workspacePath: workspacePath,
-                selectionCoordinator: selectionCoordinator,
+                selectionStore: selectionStore,
+                selectionRootPath: [0],
+                selectionRowID: selectionRowID,
                 onOpenWorkspaceReference: onOpenWorkspaceReference
             )
         }
@@ -239,35 +225,16 @@ struct MessageContentView: View {
                     forceExpanded: thinkingVisibility == .expanded
                 )
             case .visible(let body):
-                SelectableVisibleAssistantSegment(
+                MarkdownBodyView(
                     text: body,
                     workspacePath: workspacePath,
+                    selectionStore: selectionStore,
                     selectionRootPath: [index],
+                    selectionRowID: selectionRowID,
                     onOpenWorkspaceReference: onOpenWorkspaceReference
                 )
             }
         }
-    }
-}
-
-/// A reasoning boundary starts a new logical selection document. Keeping the
-/// coordinator here prevents a drag from silently jumping across hidden or
-/// collapsed private reasoning while full-response Copy remains source-backed.
-private struct SelectableVisibleAssistantSegment: View {
-    let text: String
-    let workspacePath: String?
-    let selectionRootPath: [Int]
-    let onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)?
-    @StateObject private var selectionCoordinator = ResponseSelectionCoordinator()
-
-    var body: some View {
-        MarkdownBodyView(
-            text: text,
-            workspacePath: workspacePath,
-            selectionCoordinator: selectionCoordinator,
-            selectionRootPath: selectionRootPath,
-            onOpenWorkspaceReference: onOpenWorkspaceReference
-        )
     }
 }
 
@@ -277,12 +244,19 @@ struct StreamingMessageContentView: View {
     @ObservedObject var reply: StreamingReplyState
     let thinkingVisibility: ThinkingVisibility
     var workspacePath: String? = nil
+    var activityOnly = false
+    var activityMarkerAccent: LocusAccentSelection? = nil
+    var selectionStore: TranscriptSelectionStore? = nil
+    var selectionRowID: String = ""
     var onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)? = nil
-    @StateObject private var selectionCoordinator = ResponseSelectionCoordinator()
     @State private var presentedSnapshot = StreamingReplySnapshot()
 
+    private var isSelecting: Bool {
+        selectionStore?.activeRowIDs.contains(selectionRowID) == true
+    }
+
     var body: some View {
-        let snapshot = selectionCoordinator.isSelectionActive ? presentedSnapshot : reply.snapshot
+        let snapshot = isSelecting ? presentedSnapshot : reply.snapshot
         VStack(alignment: .leading, spacing: 14) {
             if !snapshot.reasoning.isEmpty, thinkingVisibility != .hidden {
                 StreamingThinkingSegmentView(
@@ -290,13 +264,19 @@ struct StreamingMessageContentView: View {
                     sections: snapshot.reasoningSections,
                     isActive: snapshot.text.isEmpty,
                     forceExpanded: thinkingVisibility == .expanded,
+                    activityOnly: activityOnly,
+                    activityMarkerAccent: activityMarkerAccent,
                     workspacePath: workspacePath
                 )
             }
             if snapshot.text.isEmpty {
                 if snapshot.reasoning.isEmpty || thinkingVisibility == .hidden {
-                    HStack(spacing: 7) {
-                        ProgressView().controlSize(.mini)
+                    HStack(spacing: 10) {
+                        if let activityMarkerAccent {
+                            LocusMessageMarker(accent: activityMarkerAccent)
+                        } else {
+                            ProgressView().controlSize(.mini)
+                        }
                         Text("Thinking…")
                             .font(.locus(size: 9, weight: .semibold))
                             .foregroundStyle(LocusTheme.muted)
@@ -306,7 +286,9 @@ struct StreamingMessageContentView: View {
                 StreamingMarkdownBodyView(
                     text: snapshot.text,
                     workspacePath: workspacePath,
-                    selectionCoordinator: selectionCoordinator,
+                    selectionStore: selectionStore,
+                    selectionRootPath: [0],
+                    selectionRowID: selectionRowID,
                     onOpenWorkspaceReference: onOpenWorkspaceReference
                 )
                 Capsule()
@@ -319,30 +301,93 @@ struct StreamingMessageContentView: View {
             presentedSnapshot = reply.snapshot
         }
         .onChange(of: reply.snapshot) { _, next in
-            guard !selectionCoordinator.isSelectionActive else { return }
+            guard !isSelecting else { return }
             presentedSnapshot = next
         }
-        .onChange(of: selectionCoordinator.selection) { _, _ in
-            guard !selectionCoordinator.isSelectionActive else { return }
+        .onChange(of: isSelecting) { _, selecting in
+            guard !selecting else { return }
             presentedSnapshot = reply.snapshot
         }
     }
 }
 
 private struct StreamingThinkingSegmentView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let text: String
     let sections: [String]
     let isActive: Bool
     let forceExpanded: Bool
+    let activityOnly: Bool
+    let activityMarkerAccent: LocusAccentSelection?
     var workspacePath: String? = nil
     @State private var expanded = false
 
-    private var isOpen: Bool { expanded || isActive || forceExpanded }
+    private var isOpen: Bool { expanded || forceExpanded }
 
+    @ViewBuilder
     var body: some View {
+        if isOpen {
+            if activityOnly {
+                HStack(alignment: .top, spacing: 10) {
+                    activityMarker
+                    detailedCard
+                }
+            } else {
+                detailedCard
+            }
+        } else {
+            compactRow
+        }
+    }
+
+    private var compactRow: some View {
+        Button {
+            withAnimation(reduceMotion ? nil : LocusMotion.content) {
+                expanded = true
+            }
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                if let activityMarkerAccent {
+                    LocusMessageMarker(accent: activityMarkerAccent)
+                } else {
+                    Image(systemName: "brain")
+                        .font(.locusExact(size: 12, weight: .regular))
+                        .frame(width: 20)
+                }
+                Text(summaryText)
+                    .font(.locusExact(size: 13, weight: .regular))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                if isActive { ProgressView().controlSize(.mini) }
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(LocusTheme.muted)
+            .frame(minHeight: 24)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.locus())
+        .accessibilityLabel("\(summaryText). Thought process, collapsed")
+        .accessibilityIdentifier("message.thinking.toggle")
+    }
+
+    @ViewBuilder
+    private var activityMarker: some View {
+        if let activityMarkerAccent {
+            LocusMessageMarker(accent: activityMarkerAccent)
+        } else {
+            Color.clear
+                .frame(width: 20, height: 20)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var detailedCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                expanded.toggle()
+                guard !forceExpanded else { return }
+                withAnimation(reduceMotion ? nil : LocusMotion.content) {
+                    expanded = false
+                }
             } label: {
                 HStack(spacing: 7) {
                     if !forceExpanded {
@@ -379,6 +424,14 @@ private struct StreamingThinkingSegmentView: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(LocusTheme.line.opacity(0.8), lineWidth: 1)
         }
+    }
+
+    private var summaryText: String {
+        let values = displaySections.compactMap { section -> String? in
+            let plain = MarkdownPlainTextRenderer.render(section)
+            return plain.split(whereSeparator: \.isWhitespace).joined(separator: " ").nilIfEmpty
+        }
+        return values.joined(separator: " · ").nilIfEmpty ?? (isActive ? "Thinking…" : "Reasoning")
     }
 
     private var displaySections: [String] {
@@ -489,10 +542,10 @@ final class AppendOnlyTextView: LocusSelectionTextView {
     }
 }
 
-/// Collapsible reasoning card. Expanded automatically only while the model is
-/// actively thinking; collapsed once the answer starts. In the transcript's
-/// Expanded mode the card is pinned open and the per-block toggle disabled.
+/// Reasoning disclosure. Collapsed mode rests as a lightweight inline summary;
+/// Expanded mode pins the existing detailed card open.
 struct ThinkingSegmentView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let text: String
     var sections: [String] = []
     var workspacePath: String? = nil
@@ -500,12 +553,50 @@ struct ThinkingSegmentView: View {
     var forceExpanded = false
     @State private var expanded = false
 
-    private var isOpen: Bool { expanded || isActive || forceExpanded }
+    private var isOpen: Bool { expanded || forceExpanded }
 
+    @ViewBuilder
     var body: some View {
+        if isOpen {
+            detailedCard
+        } else {
+            compactRow
+        }
+    }
+
+    private var compactRow: some View {
+        Button {
+            withAnimation(reduceMotion ? nil : LocusMotion.content) {
+                expanded = true
+            }
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: "brain")
+                    .font(.locusExact(size: 12, weight: .regular))
+                    .frame(width: 20)
+                Text(summaryText)
+                    .font(.locusExact(size: 13, weight: .regular))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                if isActive { ProgressView().controlSize(.mini) }
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(LocusTheme.muted)
+            .frame(minHeight: 24)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.locus())
+        .accessibilityLabel("\(summaryText). Thought process, collapsed")
+        .accessibilityIdentifier("message.thinking.toggle")
+    }
+
+    private var detailedCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                expanded.toggle()
+                guard !forceExpanded else { return }
+                withAnimation(reduceMotion ? nil : LocusMotion.content) {
+                    expanded = false
+                }
             } label: {
                 HStack(spacing: 7) {
                     if !forceExpanded {
@@ -548,6 +639,14 @@ struct ThinkingSegmentView: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(LocusTheme.line.opacity(0.8), lineWidth: 1)
         }
+    }
+
+    private var summaryText: String {
+        let values = displaySections.compactMap { section -> String? in
+            let plain = MarkdownPlainTextRenderer.render(section)
+            return plain.split(whereSeparator: \.isWhitespace).joined(separator: " ").nilIfEmpty
+        }
+        return values.joined(separator: " · ").nilIfEmpty ?? (isActive ? "Thinking…" : "Reasoning")
     }
 
     private var displaySections: [String] {
@@ -968,7 +1067,7 @@ struct CodeBlockView: View {
     let language: String?
     let code: String
     var density: MarkdownRenderDensity = .regular
-    var selectionCoordinator: ResponseSelectionCoordinator? = nil
+    var selectionStore: TranscriptSelectionStore? = nil
     var selectionSpan: TranscriptSelectionSpan? = nil
     @State private var copied = false
     @State private var collapsed = false
@@ -1059,7 +1158,7 @@ struct CodeBlockView: View {
                 .frame(height: 1)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                if let selectionCoordinator, let selectionSpan {
+                if let selectionStore, let selectionSpan {
                     ResponseSelectableText(
                         attributedText: NativeCodeTextRenderer.attributed(
                             visibleCode.isEmpty ? " " : visibleCode,
@@ -1068,7 +1167,7 @@ struct CodeBlockView: View {
                             fontSize: density.codeFontSize
                         ),
                         span: selectionSpan.displaying(visibleCode),
-                        coordinator: selectionCoordinator,
+                        store: selectionStore,
                         wraps: false
                     )
                     .fixedSize(horizontal: true, vertical: true)

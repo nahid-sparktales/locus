@@ -85,7 +85,7 @@ enum ThinkingVisibility: String, Codable, CaseIterable, Identifiable {
     /// Reasoning is not rendered at all; a minimal indicator shows while the
     /// model has produced nothing but reasoning.
     case hidden
-    /// Reasoning renders as collapsed cards that expand per block. Default.
+    /// Reasoning renders as inline summary disclosures at its source position. Default.
     case collapsed
     /// Every reasoning card is open inline.
     case expanded
@@ -103,7 +103,7 @@ enum ThinkingVisibility: String, Codable, CaseIterable, Identifiable {
     var detail: String {
         switch self {
         case .hidden: "Answers only — reasoning is not shown"
-        case .collapsed: "Reasoning folds into expandable cards"
+        case .collapsed: "Reasoning appears as inline summary disclosures"
         case .expanded: "Reasoning is always open inline"
         }
     }
@@ -115,7 +115,7 @@ enum ThinkingVisibility: String, Codable, CaseIterable, Identifiable {
 enum ToolActivityVisibility: String, Codable, CaseIterable, Identifiable {
     /// One expandable card for every tool call, matching the original UI.
     case verbose
-    /// All calls made for one user request fold into a single expandable card.
+    /// Adjacent calls fold into inline summaries at their source position.
     case collapsed
     /// A generic status line is the only transcript trace of tool activity.
     case hidden
@@ -133,7 +133,7 @@ enum ToolActivityVisibility: String, Codable, CaseIterable, Identifiable {
     var detail: String {
         switch self {
         case .verbose: "Show every tool call as its own card"
-        case .collapsed: "Group each request's tool calls into one card"
+        case .collapsed: "Show adjacent tool calls as inline activity summaries"
         case .hidden: "Show only a generic activity status line"
         }
     }

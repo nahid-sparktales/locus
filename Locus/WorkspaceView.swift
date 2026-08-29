@@ -2195,21 +2195,33 @@ private struct ConversationView: View {
     @EnvironmentObject private var model: AppModel
     let streamingReply: StreamingReplyState
     @StateObject private var scrollCoordinator = TranscriptScrollCoordinator()
+    /// Owned here, outside the lazy list, so recycling a row cannot take the
+    /// selection with it — and so a drag can run from one message into another.
+    @StateObject private var selection = TranscriptSelectionStore()
 
     private let bottomID = "conversation-bottom"
 
     var body: some View {
+        let items = model.blocks.isEmpty ? [] : presentationItems
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 24) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     if model.blocks.isEmpty {
                         EmptyConversationView()
                             .environmentObject(model)
                     } else {
-                        let items = presentationItems
-                        let markerIDs = TranscriptPresentation.assistantMarkerBlockIDs(in: items)
-                        ForEach(items) { item in
-                            presentationRow(item, assistantMarkerBlockIDs: markerIDs)
+                        let markerIDs = TranscriptPresentation.assistantMarkerItemIDs(in: items)
+                        let actionIDs = TranscriptPresentation.assistantActionItemIDs(in: items)
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                            presentationRow(
+                                item,
+                                assistantMarkerItemIDs: markerIDs,
+                                assistantActionItemIDs: actionIDs
+                            )
+                            .padding(.top, topSpacing(
+                                before: item,
+                                previous: index > 0 ? items[index - 1] : nil
+                            ))
                         }
                     }
                     Color.clear
@@ -2268,6 +2280,94 @@ private struct ConversationView: View {
                 scrollCoordinator.detach()
                 scrollToOverviewTarget(proxy)
             }
+            .onChange(of: model.currentSessionID) {
+                selection.reset()
+            }
+            .onAppear { configureSelection(for: items) }
+            .onChange(of: items.map(\.id.stableKey)) { _, _ in
+                configureSelection(for: items)
+            }
+            .onChange(of: model.thinkingVisibility) { _, _ in
+                configureSelection(for: items)
+            }
+        }
+    }
+
+    /// Keeps the store's idea of the transcript in step with what is rendered,
+    /// and teaches it how to read a row that has not been realized — which is
+    /// what lets Copy return a whole passage after a long scroll.
+    private func configureSelection(for items: [TranscriptPresentationItem]) {
+        let sources = Dictionary(
+            items.compactMap { item -> (String, RowSelectionSource)? in
+                guard let source = Self.selectionSource(of: item) else { return nil }
+                return (item.id.stableKey, source)
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let visibility = model.thinkingVisibility
+        selection.spanProvider = { rowID in
+            guard let source = sources[rowID] else { return [] }
+            return Self.spans(for: source, rowID: rowID, thinkingVisibility: visibility)
+        }
+        selection.onDragActiveChange = { active in
+            scrollCoordinator.setSelectionDragActive(active)
+        }
+        selection.syncRows(items.map(\.id.stableKey))
+    }
+
+    private enum RowSelectionSource {
+        /// A user bubble renders its text as one Markdown document.
+        case whole(String)
+        /// An assistant answer is split into reasoning and visible segments
+        /// before rendering, and each visible one is its own subtree.
+        case assistant(String)
+    }
+
+    private static func selectionSource(of item: TranscriptPresentationItem) -> RowSelectionSource? {
+        switch item {
+        case .block(let block):
+            switch block.kind {
+            case .user: .whole(block.text)
+            case .assistant: .assistant(block.text)
+            default: nil
+            }
+        case .assistantSegment(let segment):
+            .assistant(segment.text)
+        case .toolGroup, .thinkingGroup:
+            nil
+        }
+    }
+
+    /// Must reproduce exactly what the rendered leaves register, or a row
+    /// filled in from here would not line up with the same row once it scrolls
+    /// back into view.
+    private static func spans(
+        for source: RowSelectionSource,
+        rowID: String,
+        thinkingVisibility: ThinkingVisibility
+    ) -> [TranscriptSelectionSpan] {
+        switch source {
+        case .whole(let text):
+            guard !text.isEmpty else { return [] }
+            return Array(
+                MarkdownSelectionProjection.spans(
+                    for: FinishedMarkdownCache.blocks(for: text),
+                    rootPath: [0],
+                    rowID: rowID
+                ).values
+            )
+        case .assistant(let text):
+            var result: [TranscriptSelectionSpan] = []
+            let segments = AssistantSegment.rendered(from: text, mode: thinkingVisibility)
+            for (index, segment) in segments.enumerated() {
+                guard case .visible(let body) = segment, !body.isEmpty else { continue }
+                result += MarkdownSelectionProjection.spans(
+                    for: FinishedMarkdownCache.blocks(for: body),
+                    rootPath: [index],
+                    rowID: rowID
+                ).values
+            }
+            return result
         }
     }
 
@@ -2282,42 +2382,93 @@ private struct ConversationView: View {
     @ViewBuilder
     private func presentationRow(
         _ item: TranscriptPresentationItem,
-        assistantMarkerBlockIDs: Set<UUID>
+        assistantMarkerItemIDs: Set<TranscriptPresentationItem.ID>,
+        assistantActionItemIDs: Set<TranscriptPresentationItem.ID>
     ) -> some View {
         switch item {
         case .block(let block):
+            if block.kind == .tool, let tool = block.tool {
+                detailedToolRow(
+                    tool,
+                    showsAssistantMarker: assistantMarkerItemIDs.contains(item.id)
+                )
+                .id(item.id)
+            } else {
+                blockRow(
+                    displayBlock: block,
+                    sourceBlock: block,
+                    presentationID: item.id,
+                    accessibilityIdentifier: block.completion == nil
+                        ? "message.\(block.id.uuidString)"
+                        : "turnCompletion.\(block.id.uuidString)",
+                    showsAssistantMarker: assistantMarkerItemIDs.contains(item.id),
+                    showsAssistantActions: assistantActionItemIDs.contains(item.id)
+                )
+                .id(item.id)
+            }
+        case .assistantSegment(let segment):
             blockRow(
-                block,
-                showsAssistantMarker: assistantMarkerBlockIDs.contains(block.id)
+                displayBlock: segment.displayBlock,
+                sourceBlock: segment.sourceBlock,
+                presentationID: item.id,
+                accessibilityIdentifier: segment.id.ordinal == 0
+                    ? "message.\(segment.id.sourceBlockID.uuidString)"
+                    : "message.\(segment.id.sourceBlockID.uuidString).segment.\(segment.id.ordinal)",
+                showsAssistantMarker: assistantMarkerItemIDs.contains(item.id),
+                showsAssistantActions: assistantActionItemIDs.contains(item.id)
             )
+            .id(item.id)
         case .toolGroup(let id, let tools):
             ToolActivityView(
                 groupID: id,
                 tools: tools,
                 visibility: model.toolActivityVisibility,
+                accent: model.effectiveAccent,
+                showsMarker: assistantMarkerItemIDs.contains(item.id),
                 onExpansionChange: scrollCoordinator.detach
             )
-            .padding(.leading, 27)
-            .id("tool-activity-\(id.uuidString)")
+            .id(item.id)
         case .thinkingGroup(let id, let entries):
             ThinkingActivityView(
                 groupID: id,
                 entries: entries,
                 visibility: model.thinkingVisibility,
+                accent: model.effectiveAccent,
+                showsMarker: assistantMarkerItemIDs.contains(item.id),
                 onExpansionChange: scrollCoordinator.detach
             )
-            .padding(.leading, 27)
-            .id("thinking-activity-\(id.uuidString)")
+            .id(item.id)
+        }
+    }
+
+    private func detailedToolRow(
+        _ tool: ToolPayload,
+        showsAssistantMarker: Bool
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            if showsAssistantMarker {
+                LocusMessageMarker(accent: model.effectiveAccent)
+            } else {
+                Color.clear
+                    .frame(width: 20, height: 20)
+                    .accessibilityHidden(true)
+            }
+            ToolCardView(tool: tool)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     private func blockRow(
-        _ block: ChatBlock,
-        showsAssistantMarker: Bool
+        displayBlock: ChatBlock,
+        sourceBlock: ChatBlock,
+        presentationID: TranscriptPresentationItem.ID,
+        accessibilityIdentifier: String,
+        showsAssistantMarker: Bool,
+        showsAssistantActions: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            if block.kind == .assistant,
-               block.id == model.activeStreamingAssistantID
+            if sourceBlock.kind == .assistant,
+               sourceBlock.id == model.activeStreamingAssistantID
             {
                 ActiveAssistantBlockView(
                     reply: streamingReply,
@@ -2325,36 +2476,49 @@ private struct ConversationView: View {
                     accent: model.effectiveAccent,
                     workspacePath: model.workspacePath,
                     showsMarker: showsAssistantMarker,
+                    isReasoningActivity: sourceBlock.sourceItemID != nil
+                        && sourceBlock.assistantPhase == nil,
+                    selectionStore: selection,
+                    selectionRowID: presentationID.stableKey,
                     onOpenWorkspaceReference: model.openWorkspaceReference
                 )
-                .id(block.id)
+                .id(presentationID)
             } else {
                 MessageBlockView(
-                    block: block,
+                    block: displayBlock,
                     thinkingVisibility: model.thinkingVisibility,
                     accent: model.effectiveAccent,
                     workspacePath: model.workspacePath,
                     actionsDisabled: model.isBusy || model.hasPendingPermission,
-                    canRewind: model.canRewind(to: block),
-                    canRegenerate: model.canRegenerate(block),
+                    canRewind: model.canRewind(to: sourceBlock),
+                    canRegenerate: showsAssistantActions && model.canRegenerate(sourceBlock),
                     showsAssistantMarker: showsAssistantMarker,
+                    showsAssistantActions: showsAssistantActions,
+                    accessibilityIdentifier: accessibilityIdentifier,
+                    selectionStore: selection,
+                    selectionRowID: presentationID.stableKey,
                     onCopy: { format in
-                        if block.kind == .assistant {
-                            model.copyResponse(block.text, format: format)
+                        if sourceBlock.kind == .assistant {
+                            model.copyResponse(sourceBlock.text, format: format)
                         } else {
-                            model.copyMessage(block.text)
+                            model.copyMessage(sourceBlock.text)
                         }
                     },
-                    onUseAsDraft: { model.useAsDraft(block.text) },
-                    onRewind: { model.rewind(to: block) },
+                    onUseAsDraft: {
+                        let draft = sourceBlock.kind == .assistant
+                            ? AssistantSegment.copyableText(from: sourceBlock.text)
+                            : sourceBlock.text
+                        model.useAsDraft(draft)
+                    },
+                    onRewind: { model.rewind(to: sourceBlock) },
                     onRegenerate: { model.retryLastResponse() },
                     onOpenWorkspaceReference: model.openWorkspaceReference
                 )
                 .equatable()
             }
-            if block.kind == .user, let runID = block.runID {
+            if sourceBlock.kind == .user, let runID = sourceBlock.runID {
                 if model.runKind(for: runID) == "team" {
-                    TeamRunBoardView(runID: runID, request: block.text)
+                    TeamRunBoardView(runID: runID, request: sourceBlock.text)
                         .environmentObject(model)
                         .id("team-board-\(runID)")
                 } else {
@@ -2365,7 +2529,7 @@ private struct ConversationView: View {
             }
         }
         .overlay {
-            if let style = model.transcriptMatchStyle(for: block.id) {
+            if let style = model.transcriptMatchStyle(for: sourceBlock.id) {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .stroke(
                         style == .current
@@ -2377,13 +2541,15 @@ private struct ConversationView: View {
                     .allowsHitTesting(false)
             }
         }
-        .id(block.id)
     }
 
     private func scrollToCurrentMatch(_ proxy: ScrollViewProxy) {
         guard let match = model.currentTranscriptMatch else { return }
+        let destination = presentationItems.first(where: {
+            $0.sourceBlockIDs.contains(match)
+        })?.id ?? .block(match)
         withAnimation(LocusMotion.scroll) {
-            proxy.scrollTo(match, anchor: .center)
+            proxy.scrollTo(destination, anchor: .center)
         }
     }
 
@@ -2394,6 +2560,8 @@ private struct ConversationView: View {
         let destination = presentationItems.first(where: { item in
             switch item {
             case .block(let candidate): return candidate.id == target
+            case .assistantSegment(let segment):
+                return segment.sourceBlock.id == target
             case .toolGroup(_, let tools):
                 guard let toolID = block.tool?.toolID else { return false }
                 return tools.contains(where: { $0.toolID == toolID })
@@ -2404,6 +2572,34 @@ private struct ConversationView: View {
         guard let destination else { return }
         withAnimation(LocusMotion.scroll) {
             proxy.scrollTo(destination, anchor: .center)
+        }
+    }
+
+    private func topSpacing(
+        before item: TranscriptPresentationItem,
+        previous: TranscriptPresentationItem?
+    ) -> CGFloat {
+        guard let previous else { return 0 }
+        if isTurnBoundary(item) || isTurnBoundary(previous) { return 24 }
+        if isCompactFlowItem(item) || isCompactFlowItem(previous) { return 14 }
+        return 24
+    }
+
+    private func isTurnBoundary(_ item: TranscriptPresentationItem) -> Bool {
+        guard case .block(let block) = item else { return false }
+        return block.kind == .user || block.completion != nil
+    }
+
+    private func isCompactFlowItem(_ item: TranscriptPresentationItem) -> Bool {
+        switch item {
+        case .assistantSegment(let segment):
+            return segment.sourceBlock.assistantPhase == .commentary
+        case .toolGroup:
+            return model.toolActivityVisibility == .collapsed
+        case .thinkingGroup:
+            return model.thinkingVisibility == .collapsed
+        case .block:
+            return false
         }
     }
 }
@@ -2459,6 +2655,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     private var eventMonitor: Any?
     private var displayLink: CADisplayLink?
     private var pinPending = false
+    private var isSelectionDragActive = false
     private var isProgrammaticScroll = false
     private var isUserLiveScrolling = false
     private var isRoutingVerticalWheel = false
@@ -2568,6 +2765,20 @@ final class TranscriptScrollCoordinator: ObservableObject {
         mutateState { $0.detach() }
     }
 
+    /// A streaming reply pins the transcript to the bottom as it grows. During
+    /// a drag-selection that yanks the content out from under the pointer, so
+    /// following is suspended until the drag ends.
+    func setSelectionDragActive(_ active: Bool) {
+        guard isSelectionDragActive != active else { return }
+        isSelectionDragActive = active
+        if active {
+            pinPending = false
+            displayLink?.isPaused = true
+        } else {
+            updateNearBottom()
+        }
+    }
+
     func jumpToLatest() {
         mutateState { $0.jumpToLatest() }
         pinPending = false
@@ -2632,7 +2843,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     private func documentFrameChanged() {
-        if followState.permitsAutomaticScroll {
+        if followState.permitsAutomaticScroll, !isSelectionDragActive {
             schedulePin()
         } else {
             updateNearBottom()
@@ -2930,20 +3141,41 @@ private struct ActiveAssistantBlockView: View {
     let accent: LocusAccentSelection
     let workspacePath: String
     let showsMarker: Bool
+    let isReasoningActivity: Bool
+    let selectionStore: TranscriptSelectionStore
+    let selectionRowID: String
     let onOpenWorkspaceReference: (WorkspaceArtifactReference) -> Void
 
+    @ViewBuilder
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            assistantMarker
+        if isReasoningActivity {
             StreamingMessageContentView(
                 reply: reply,
                 thinkingVisibility: thinkingVisibility,
                 workspacePath: workspacePath,
+                activityOnly: true,
+                activityMarkerAccent: showsMarker ? accent : nil,
+                selectionStore: selectionStore,
+                selectionRowID: selectionRowID,
                 onOpenWorkspaceReference: onOpenWorkspaceReference
             )
             .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("message.streamingAssistant")
+        } else {
+            HStack(alignment: .top, spacing: 10) {
+                assistantMarker
+                StreamingMessageContentView(
+                    reply: reply,
+                    thinkingVisibility: thinkingVisibility,
+                    workspacePath: workspacePath,
+                    selectionStore: selectionStore,
+                    selectionRowID: selectionRowID,
+                    onOpenWorkspaceReference: onOpenWorkspaceReference
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .accessibilityIdentifier("message.streamingAssistant")
         }
-        .accessibilityIdentifier("message.streamingAssistant")
     }
 
     @ViewBuilder
@@ -3000,6 +3232,10 @@ private struct MessageBlockView: View, Equatable {
     let canRewind: Bool
     let canRegenerate: Bool
     let showsAssistantMarker: Bool
+    let showsAssistantActions: Bool
+    let accessibilityIdentifier: String
+    let selectionStore: TranscriptSelectionStore
+    let selectionRowID: String
     let onCopy: (ResponseCopyFormat) -> Void
     let onUseAsDraft: () -> Void
     let onRewind: () -> Void
@@ -3015,6 +3251,11 @@ private struct MessageBlockView: View, Equatable {
             && lhs.canRewind == rhs.canRewind
             && lhs.canRegenerate == rhs.canRegenerate
             && lhs.showsAssistantMarker == rhs.showsAssistantMarker
+            && lhs.showsAssistantActions == rhs.showsAssistantActions
+            && lhs.accessibilityIdentifier == rhs.accessibilityIdentifier
+            // The store is a stable reference and deliberately not compared;
+            // the row identity it is keyed by must be.
+            && lhs.selectionRowID == rhs.selectionRowID
     }
 
     var body: some View {
@@ -3027,6 +3268,9 @@ private struct MessageBlockView: View, Equatable {
                         MarkdownBodyView(
                             text: block.text,
                             workspacePath: workspacePath,
+                            selectionStore: selectionStore,
+                            selectionRootPath: [0],
+                            selectionRowID: selectionRowID,
                             onOpenWorkspaceReference: onOpenWorkspaceReference
                         )
                             .padding(.horizontal, 13)
@@ -3061,13 +3305,17 @@ private struct MessageBlockView: View, Equatable {
                             reasoningSections: block.reasoningSections,
                             workspacePath: workspacePath,
                             thinkingVisibility: thinkingVisibility,
+                            selectionStore: selectionStore,
+                            selectionRowID: selectionRowID,
                             onOpenWorkspaceReference: onOpenWorkspaceReference
                         )
                         if block.isStreaming {
                             StreamingCaret()
                         }
                     }
-                        messageActionBar(name: "Locus")
+                        if showsAssistantActions {
+                            messageActionBar(name: "Locus")
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -3108,9 +3356,9 @@ private struct MessageBlockView: View, Equatable {
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .animation(reduceMotion ? nil : LocusMotion.press, value: isHovering || actionsFocused)
-        .accessibilityIdentifier(blockAccessibilityIdentifier)
+        .accessibilityIdentifier(accessibilityIdentifier)
         .contextMenu {
-            if block.kind == .user || block.kind == .assistant {
+            if block.kind == .user || (block.kind == .assistant && showsAssistantActions) {
                 Button("Copy Message") { onCopy(.plainText) }
                 if block.kind == .assistant {
                     Button("Copy as Markdown") { onCopy(.markdown) }
@@ -3127,15 +3375,6 @@ private struct MessageBlockView: View, Equatable {
                 Button("Regenerate Response", action: onRegenerate)
             }
         }
-    }
-
-    private var blockAccessibilityIdentifier: String {
-        if block.kind == .tool, let tool = block.tool {
-            return "tool.\(tool.toolID).toggle"
-        }
-        return block.completion == nil
-            ? "message.\(block.id.uuidString)"
-            : "turnCompletion.\(block.id.uuidString)"
     }
 
     @ViewBuilder
@@ -3527,24 +3766,85 @@ private struct ThinkingDots: View {
     }
 }
 
-/// Completed reasoning is presentation-only activity, so one user request
-/// gets one disclosure row instead of a stack of otherwise empty assistant
-/// identities. Expanded mode pins the same request-level group open.
+/// One source-local reasoning item. Collapsed mode rests as a quiet inline
+/// summary; Expanded mode preserves the original detailed card verbatim.
 private struct ThinkingActivityView: View {
-    let groupID: UUID
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let groupID: ThinkingPresentationGroupID
     let entries: [ThinkingPresentationEntry]
     let visibility: ThinkingVisibility
+    let accent: LocusAccentSelection
+    let showsMarker: Bool
     let onExpansionChange: () -> Void
     @State private var expanded = false
 
     private var isOpen: Bool { expanded || visibility == .expanded }
 
+    @ViewBuilder
     var body: some View {
+        if visibility == .hidden {
+            EmptyView()
+        } else if visibility == .collapsed, !expanded {
+            compactRow
+        } else {
+            HStack(alignment: .top, spacing: 10) {
+                activityMarker
+                detailedCard
+            }
+        }
+    }
+
+    private var compactRow: some View {
+        Button {
+            onExpansionChange()
+            withAnimation(reduceMotion ? nil : LocusMotion.content) {
+                expanded = true
+            }
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                if showsMarker {
+                    LocusMessageMarker(accent: accent)
+                } else {
+                    Image(systemName: "brain")
+                        .font(.locusExact(size: 12, weight: .regular))
+                        .frame(width: 20)
+                        .accessibilityHidden(true)
+                }
+                Text(summaryText)
+                    .font(.locusExact(size: 13, weight: .regular))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(LocusTheme.muted)
+            .frame(minHeight: 24)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.locus())
+        .help("Show thought process")
+        .accessibilityLabel("\(summaryText). Thought process, collapsed")
+        .accessibilityIdentifier("thinkingActivity.group.\(groupIdentifier)")
+    }
+
+    @ViewBuilder
+    private var activityMarker: some View {
+        if showsMarker {
+            LocusMessageMarker(accent: accent)
+        } else {
+            Color.clear
+                .frame(width: 20, height: 20)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var detailedCard: some View {
         VStack(spacing: 0) {
             Button {
                 guard visibility != .expanded else { return }
                 onExpansionChange()
-                expanded.toggle()
+                withAnimation(reduceMotion ? nil : LocusMotion.content) {
+                    expanded = false
+                }
             } label: {
                 HStack(spacing: 8) {
                     if visibility != .expanded {
@@ -3573,7 +3873,7 @@ private struct ThinkingActivityView: View {
                 "Thought process, \(entries.count) update\(entries.count == 1 ? "" : "s"), "
                     + "done, \(isOpen ? "collapse" : "expand")"
             )
-            .accessibilityIdentifier("thinkingActivity.group.\(groupID.uuidString)")
+            .accessibilityIdentifier("thinkingActivity.group.\(groupIdentifier)")
 
             if isOpen {
                 VStack(alignment: .leading, spacing: 0) {
@@ -3598,17 +3898,39 @@ private struct ThinkingActivityView: View {
         }
         .locusCard(radius: 9)
     }
+
+    private var summaryText: String {
+        let summaries = entries.compactMap { entry -> String? in
+            let plain = MarkdownPlainTextRenderer.render(entry.text)
+            let normalized = plain.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            return normalized.nilIfEmpty
+        }
+        return summaries.joined(separator: " · ").nilIfEmpty ?? "Thought process"
+    }
+
+    private var groupIdentifier: String {
+        groupID.ordinal == 0
+            ? groupID.sourceBlockID.uuidString
+            : "\(groupID.sourceBlockID.uuidString).\(groupID.ordinal)"
+    }
 }
 
 private struct ToolActivityView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let groupID: UUID
     let tools: [ToolPayload]
     let visibility: ToolActivityVisibility
+    let accent: LocusAccentSelection
+    let showsMarker: Bool
     let onExpansionChange: () -> Void
     @State private var expanded = false
 
     private var status: ToolActivityAggregateStatus {
         ToolActivityAggregateStatus(tools: tools)
+    }
+
+    private var compactSummary: CompactToolActivitySummary {
+        CompactToolActivitySummary(tools: tools)
     }
 
     @ViewBuilder
@@ -3617,42 +3939,51 @@ private struct ToolActivityView: View {
         case .verbose:
             EmptyView()
         case .collapsed:
-            collapsedCard
+            collapsedActivity
         case .hidden:
-            hiddenLine
+            HStack(alignment: .center, spacing: 10) {
+                activityMarker
+                hiddenLine
+            }
         }
     }
 
-    private var collapsedCard: some View {
-        VStack(spacing: 0) {
+    private var collapsedActivity: some View {
+        VStack(alignment: .leading, spacing: 8) {
             Button {
                 onExpansionChange()
-                expanded.toggle()
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.locus(size: 9, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
-                        .accessibilityHidden(true)
-                    Image(systemName: statusSymbol)
-                        .font(.locus(size: 12, weight: .semibold))
-                        .foregroundStyle(statusColor)
-                        .accessibilityHidden(true)
-                    Text("\(tools.count) tool call\(tools.count == 1 ? "" : "s")")
-                        .font(.locus(size: 9, weight: .bold, design: .monospaced))
-                    Spacer()
-                    Text(collapsedStatusLabel.uppercased())
-                        .font(.locus(size: 7, weight: .bold))
-                        .tracking(0.6)
-                        .foregroundStyle(LocusTheme.muted)
+                withAnimation(reduceMotion ? nil : LocusMotion.content) {
+                    expanded.toggle()
                 }
-                .padding(.horizontal, 12)
-                .frame(height: 39)
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    if showsMarker {
+                        LocusMessageMarker(accent: accent)
+                    } else {
+                        Image(systemName: compactSummary.systemImage)
+                            .font(.locusExact(size: 12, weight: .regular))
+                            .foregroundStyle(compactStatusColor)
+                            .frame(width: 20)
+                            .accessibilityHidden(true)
+                    }
+                    HStack(spacing: 0) {
+                        Text(compactSummary.title)
+                            .foregroundStyle(LocusTheme.muted)
+                        if let compactStatusSuffix {
+                            Text(" · \(compactStatusSuffix)")
+                                .foregroundStyle(compactStatusColor)
+                        }
+                    }
+                    .font(.locusExact(size: 13, weight: .regular))
+                    .lineLimit(2)
+                    Spacer(minLength: 0)
+                }
+                .frame(minHeight: 24)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.locus())
             .accessibilityLabel(
-                "\(tools.count) tool call\(tools.count == 1 ? "" : "s"), "
+                "\(compactSummary.title), "
                     + "\(collapsedStatusLabel), \(expanded ? "collapse" : "expand")"
             )
             .accessibilityIdentifier("toolActivity.group.\(groupID.uuidString)")
@@ -3663,13 +3994,20 @@ private struct ToolActivityView: View {
                         ToolCardView(tool: tool)
                     }
                 }
-                .padding(10)
-                .overlay(alignment: .top) {
-                    Rectangle().fill(LocusTheme.line).frame(height: 1)
-                }
+                .padding(.leading, 30)
             }
         }
-        .locusCard(radius: 9)
+    }
+
+    @ViewBuilder
+    private var activityMarker: some View {
+        if showsMarker {
+            LocusMessageMarker(accent: accent)
+        } else {
+            Color.clear
+                .frame(width: 20, height: 20)
+                .accessibilityHidden(true)
+        }
     }
 
     private var hiddenLine: some View {
@@ -3704,6 +4042,10 @@ private struct ToolActivityView: View {
         }
     }
 
+    private var compactStatusSuffix: String? {
+        status == .done ? nil : collapsedStatusLabel
+    }
+
     private var hiddenStatusLabel: String {
         switch status {
         case .awaitingPermission: "Action needs approval"
@@ -3732,6 +4074,10 @@ private struct ToolActivityView: View {
         case .denied: LocusTheme.muted
         case .done: LocusTheme.success
         }
+    }
+
+    private var compactStatusColor: Color {
+        status == .done ? LocusTheme.muted : statusColor
     }
 }
 

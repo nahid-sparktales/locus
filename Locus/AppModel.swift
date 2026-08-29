@@ -383,6 +383,10 @@ final class AppModel: ObservableObject {
             settings.inspectorOpenTabs = openInspectorTabs.map(\.rawValue)
         }
     }
+    /// Session-local destination for the rail's reopen control. Persistence
+    /// continues to describe tabs that are actually open; a fresh launch has
+    /// no closed-tab history and therefore falls back to Overview.
+    private var lastClosedInspectorTab: InspectorTab?
     @Published var inspectorCollapsed = true {
         didSet {
             guard inspectorCollapsed != oldValue else { return }
@@ -411,6 +415,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var activePlan: PlanDocument?
     let gitWorkspace = GitWorkspaceModel()
     let workspaceFiles = WorkspaceFileModel()
+    /// Deliberately not bridged into `objectWillChange`: the Notebook sheet
+    /// observes this directly, and republishing here would invalidate the whole
+    /// workspace view every time its list changed.
+    let notebook = NotebookModel()
     private var gitWorkspaceBridge: AnyCancellable?
     private var workspaceFilesBridge: AnyCancellable?
     @Published private(set) var agentInstructionsExists = false
@@ -480,6 +488,7 @@ final class AppModel: ObservableObject {
     private var modelLibraryPendingSettingsDismissal = false
     @Published var commandPalettePresented = false
     @Published var checkpointPresented = false
+    @Published var notebookPresented = false
     @Published var rememberConfirmationText: String?
     @Published var clearChatConfirmationPresented = false
     @Published var clearSessionsConfirmationPresented = false
@@ -665,6 +674,19 @@ final class AppModel: ObservableObject {
     private var turnDispatchedTeamRunID: String?
     /// Client-side fallback for agents from before `turn_done.duration_ms`.
     private var turnStartedAt: Date?
+    /// The window during which file activity counts as this run's output, and
+    /// the session it belongs to.
+    ///
+    /// Gating on `status == .running` lost work at both ends: git status is an
+    /// async round trip, so a response about the very files the run produced
+    /// routinely lands after `.runFinished` has already flipped the state to
+    /// idle. Capturing the session id here also stops a mid-run switch from
+    /// filing one chat's outputs under another's.
+    private var fileCaptureSessionID = ""
+    private var fileCaptureStartedAt = 0
+    private var fileCaptureUntil = 0
+    private let sessionOutputWatcher = SessionOutputWatcher()
+    private var sessionOutputWatchTeardown: Task<Void, Never>?
     /// Present only for solo turns that the optional model router prepared.
     /// Keeping these per session matters because a routed chat can finish after
     /// the user has switched to, or started, another conversation.
@@ -3553,6 +3575,7 @@ final class AppModel: ObservableObject {
             reason: nil,
             at: Self.sessionTimestamp
         ))
+        beginSessionFileCapture()
         // Agent-side slash commands go out as raw text: no context pack, so
         // none of it counts as provided.
         let providedItems = Self.providedSourceItems(
@@ -4051,17 +4074,6 @@ final class AppModel: ObservableObject {
         showToast("Copied as \(format.title)")
     }
 
-    /// Quoting is intentionally available during a run. Permission and plan
-    /// prompts may temporarily replace the composer, but the draft remains in
-    /// the model and appears when the composer returns.
-    func quoteSelectionInComposer(_ selection: String) {
-        let updatedDraft = QuoteSelectionFormatter.appending(selection, to: draftText)
-        guard updatedDraft != draftText else { return }
-        draftText = updatedDraft
-        composerFocusToken = UUID()
-        showToast("Quote added to the composer")
-    }
-
     func useAsDraft(_ text: String) {
         guard !isBusy, !hasPendingPermission else {
             showToast("Finish the active action before reusing a message")
@@ -4100,6 +4112,7 @@ final class AppModel: ObservableObject {
             reason: nil,
             at: Self.sessionTimestamp
         ))
+        beginSessionFileCapture()
         showToast("Regenerating the last response")
     }
 
@@ -9789,22 +9802,26 @@ final class AppModel: ObservableObject {
         current: [GitChange]
     ) {
         synchronizeSessionIdentity()
-        guard sessionOverview.state.status == .running else { return }
+        guard let sessionID = sessionFileCaptureTarget else { return }
         let now = Self.sessionTimestamp
+        // Porcelain paths are relative to the repository root, which is only
+        // the workspace when the workspace is opened on the repo itself.
+        let base = gitWorkspace.repositoryRoot ?? workspacePath
         for change in current {
+            guard let path = sessionRelativePath(change.path, relativeTo: base) else { continue }
             let old = previous[change.path]
             let added = max((change.additions ?? 0) - (old?.additions ?? 0), 0)
             let removed = max((change.deletions ?? 0) - (old?.deletions ?? 0), 0)
             if old == nil, change.status == .added || change.status == .untracked {
-                sessionOverview.emit(.fileCreate(path: change.path, at: now))
+                sessionOverview.emit(.fileCreate(path: path, at: now), sessionID: sessionID)
             }
             if added > 0 || removed > 0 || (old == nil && change.status != .untracked) {
                 sessionOverview.emit(.fileEdit(
-                    path: change.path,
+                    path: path,
                     added: added,
                     removed: removed,
                     at: now
-                ))
+                ), sessionID: sessionID)
             }
         }
     }
@@ -9881,10 +9898,21 @@ final class AppModel: ObservableObject {
         settingsPresented = true
     }
 
+    /// Opens a file the session touched, addressed by its workspace-relative
+    /// path. Classifying it first is what lets an Outputs row for a PDF behave
+    /// like the same file's link in the transcript; the peek can only render
+    /// UTF-8 text, so handing it a binary used to print "not readable".
     func openSessionFile(_ relativePath: String) {
         let url = sessionFileURL(relativePath)
         guard FileManager.default.fileExists(atPath: url.path) else {
             showToast("That file is no longer on disk")
+            return
+        }
+        if let reference = WorkspaceArtifactReference.classify(
+            relativePath,
+            workspacePath: workspacePath
+        ) {
+            openWorkspaceArtifact(reference, at: url)
             return
         }
         selectInspectorTab(.files)
@@ -9892,6 +9920,8 @@ final class AppModel: ObservableObject {
     }
 
     func openWorkspaceReference(_ reference: WorkspaceArtifactReference) {
+        // Re-checked rather than trusted: the reference was classified when the
+        // message rendered, and this is the security boundary at activation.
         guard let contained = MarkdownLinkPolicy.containedWorkspaceFileURL(
             reference.relativePath,
             workspacePath: workspacePath
@@ -9902,16 +9932,24 @@ final class AppModel: ObservableObject {
             showToast("That file is no longer available in this workspace")
             return
         }
+        openWorkspaceArtifact(reference, at: contained)
+    }
 
-        if reference.kind == .source || reference.sourceLocation != nil {
+    /// The one place that decides what activating a produced file does.
+    private func openWorkspaceArtifact(
+        _ reference: WorkspaceArtifactReference,
+        at url: URL
+    ) {
+        switch WorkspaceArtifactOpener.destination(for: reference) {
+        case .filesTab(let line, let column):
             selectInspectorTab(.files)
-            workspaceFiles.preview(
-                contained,
-                line: reference.sourceLocation?.line,
-                column: reference.sourceLocation?.column
-            )
-        } else {
-            WorkspaceQuickLookPresenter.shared.present(contained)
+            workspaceFiles.preview(url, line: line, column: column)
+        case .defaultApp:
+            guard WorkspaceArtifactOpener.openInDefaultApp(url) else {
+                showToast("No app is set to open \(url.lastPathComponent)")
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+                return
+            }
         }
     }
 
@@ -10199,6 +10237,7 @@ final class AppModel: ObservableObject {
     func closeInspectorTab(_ tab: InspectorTab) {
         guard let closingIndex = openInspectorTabs.firstIndex(of: tab) else { return }
         let wasSelected = inspectorTab == tab
+        lastClosedInspectorTab = tab
         openInspectorTabs.remove(at: closingIndex)
 
         guard !openInspectorTabs.isEmpty else {
@@ -10246,9 +10285,25 @@ final class AppModel: ObservableObject {
         // special-purpose Plan or Browser surface. From either of those it
         // returns to the last workspace tab; a second press there collapses it.
         if !inspectorCollapsed, inspectorTab.isWorkspaceTab {
+            lastClosedInspectorTab = inspectorTab
             inspectorCollapsed = true
         } else {
             selectInspectorTab(settings.resolvedInspectorWorkspaceTab)
+        }
+    }
+
+    /// The dedicated rail control closes the current panel and reopens the
+    /// last selected destination. A fresh model starts on Overview, so the
+    /// first use always has a useful destination even when no tab was closed.
+    func toggleInspectorPanel() {
+        guard !justChatEnabled else { return }
+        if inspectorCollapsed {
+            let destination = lastClosedInspectorTab
+                ?? (openInspectorTabs.contains(inspectorTab) ? inspectorTab : .plan)
+            selectInspectorTab(destination)
+        } else {
+            lastClosedInspectorTab = inspectorTab
+            inspectorCollapsed = true
         }
     }
 
@@ -10295,6 +10350,7 @@ final class AppModel: ObservableObject {
     func toggleInspectorTab(_ tab: InspectorTab) {
         guard !justChatEnabled else { return }
         if !inspectorCollapsed, inspectorTab == tab {
+            lastClosedInspectorTab = tab
             inspectorCollapsed = true
         } else {
             selectInspectorTab(tab)
@@ -10900,6 +10956,7 @@ final class AppModel: ObservableObject {
             sidebarSearchFocusToken = UUID()
         case .showUsage: usageDashboardPresented = true
         case .showShortcuts: shortcutsPresented = true
+        case .showNotebook: notebookPresented = true
         case .openSettings: settingsPresented = true
         }
     }
@@ -11828,6 +11885,11 @@ final class AppModel: ObservableObject {
             synchronizeSessionPlan(todos)
             return
         }
+        // The agent states what it touched, so prefer that over reading prose.
+        // Deliberately before the shell branch and without returning: a shell
+        // call is still a command worth recording, it just never carries
+        // effects of its own.
+        let recordedEffects = recordSessionFileEffects(event, at: now)
         if tool.contains("command") || tool.contains("shell") || tool.contains("terminal")
             || tool == "bash" || tool == "exec" {
             let command = summary.nilIfEmpty ?? detail.nilIfEmpty ?? tool
@@ -11838,6 +11900,7 @@ final class AppModel: ObservableObject {
             ))
             return
         }
+        guard !recordedEffects else { return }
         guard let path = sessionActivityPath(in: [summary, detail, result]) else { return }
         if tool.contains("read") || tool.contains("view") {
             sessionOverview.emit(.fileRead(path: path, at: now))
@@ -11846,6 +11909,35 @@ final class AppModel: ObservableObject {
         } else if tool.contains("edit") || tool.contains("patch") {
             sessionOverview.emit(.fileEdit(path: path, added: 0, removed: 0, at: now))
         }
+    }
+
+    /// Records the file changes a tool reported. Returns whether it said
+    /// anything, so the prose fallback only runs for an agent too old to send
+    /// `file_effects`.
+    @discardableResult
+    private func recordSessionFileEffects(_ event: [String: Any], at now: Int) -> Bool {
+        guard let effects = event["file_effects"] as? [[String: Any]], !effects.isEmpty else {
+            return false
+        }
+        var recorded = false
+        for effect in effects {
+            guard let raw = effect["path"] as? String,
+                  let path = sessionRelativePath(raw)
+            else { continue }
+            switch effect["effect"] as? String {
+            case "create":
+                sessionOverview.emit(.fileCreate(path: path, at: now))
+            case "edit":
+                sessionOverview.emit(.fileEdit(path: path, added: 0, removed: 0, at: now))
+            case "delete":
+                // Nothing to open, and the Outputs list is about what exists.
+                continue
+            default:
+                continue
+            }
+            recorded = true
+        }
+        return recorded
     }
 
     /// An http(s) URL with a real host — the only kind worth listing as a
@@ -11864,6 +11956,104 @@ final class AppModel: ObservableObject {
         path.hasPrefix("/")
             ? URL(fileURLWithPath: path)
             : URL(fileURLWithPath: workspacePath).appending(path: path)
+    }
+
+    /// The one spelling of a file that session events are keyed by.
+    ///
+    /// Three feeds report the same file three ways — git gives repository-root
+    /// relative, a tool gives whatever the model wrote, the workspace watcher
+    /// gives an absolute path — so without a single normalizer one produced PDF
+    /// becomes two or three Outputs rows. Returns nil for anything outside the
+    /// workspace, which is also what keeps a symlink from smuggling one in.
+    func sessionRelativePath(_ raw: String, relativeTo base: String? = nil) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let candidate: String
+        if trimmed.hasPrefix("/") || base == nil {
+            candidate = trimmed
+        } else {
+            candidate = URL(fileURLWithPath: base!, isDirectory: true)
+                .appending(path: trimmed)
+                .path(percentEncoded: false)
+        }
+        guard let url = MarkdownLinkPolicy.containedWorkspaceFileURL(
+            candidate,
+            workspacePath: workspacePath
+        ) else { return nil }
+        // Containment resolves symlinks, so the relative path has to be taken
+        // against an equally resolved root. Otherwise a workspace reached
+        // through one — /tmp, which is /private/tmp — leaves every path
+        // absolute, and the three feeds stop agreeing on how to spell a file.
+        let root = URL(fileURLWithPath: workspacePath, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path(percentEncoded: false)
+        return WorkspaceIndex.relativePath(url, root: root).nilIfEmpty
+    }
+
+    /// Opens the window in which file activity is attributed to this run.
+    private func beginSessionFileCapture() {
+        synchronizeSessionIdentity()
+        fileCaptureSessionID = sessionOverview.activeSessionID
+        fileCaptureStartedAt = Self.sessionTimestamp
+        fileCaptureUntil = .max
+        sessionOutputWatchTeardown?.cancel()
+        sessionOutputWatchTeardown = nil
+        guard !isUITesting else { return }
+        let started = Date()
+        let root = workspacePath
+        sessionOutputWatcher.start(path: root, since: started) { [weak self] changes in
+            Task { @MainActor [weak self] in
+                self?.recordWatchedFileChanges(changes, watchedRoot: root)
+            }
+        }
+    }
+
+    /// Closes it with a grace period rather than instantly: the watcher batches
+    /// on a 0.35s latency and a git refresh is a round trip, so the events that
+    /// describe a run's own output arrive slightly after it ends.
+    private func endSessionFileCapture() {
+        guard fileCaptureUntil == .max else { return }
+        fileCaptureUntil = Self.sessionTimestamp + 4_000
+        sessionOutputWatchTeardown?.cancel()
+        sessionOutputWatchTeardown = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            self?.sessionOutputWatcher.stop()
+        }
+    }
+
+    /// Files the workspace watcher saw during a run. The watcher is
+    /// path-accurate but has no idea which chat asked for the work, so
+    /// attribution is decided here.
+    private func recordWatchedFileChanges(
+        _ changes: [SessionOutputWatcher.Change],
+        watchedRoot: String
+    ) {
+        guard watchedRoot == workspacePath,
+              let sessionID = sessionFileCaptureTarget
+        else { return }
+        let now = Self.sessionTimestamp
+        for change in changes {
+            guard let path = sessionRelativePath(change.path) else { continue }
+            switch change.effect {
+            case .created:
+                sessionOverview.emit(.fileCreate(path: path, at: now), sessionID: sessionID)
+            case .edited:
+                sessionOverview.emit(
+                    .fileEdit(path: path, added: 0, removed: 0, at: now),
+                    sessionID: sessionID
+                )
+            }
+        }
+    }
+
+    /// Whether a file event now belongs to a run, and which session owns it.
+    private var sessionFileCaptureTarget: String? {
+        guard !fileCaptureSessionID.isEmpty,
+              Self.sessionTimestamp <= fileCaptureUntil
+        else { return nil }
+        return fileCaptureSessionID
     }
 
     private func recordURLSource(_ url: URL, at timestamp: Int) {
@@ -11963,9 +12153,18 @@ final class AppModel: ObservableObject {
                 )
                 if token.hasPrefix(root) { return String(token.dropFirst(root.count)) }
                 guard !token.contains("://"), !token.hasPrefix("-"),
-                      token.contains("/"), URL(fileURLWithPath: token).pathExtension.nilIfEmpty != nil
+                      let ext = URL(fileURLWithPath: token).pathExtension.nilIfEmpty
                 else { continue }
-                return token
+                if token.contains("/") { return token }
+                // A bare `report.pdf` at the workspace root has no directory
+                // component to recognise it by, so require that it be a
+                // deliverable that actually exists. Existence is what stops a
+                // merely-mentioned filename becoming a phantom Outputs row.
+                guard ContextFileTypes.deliverableExtensions.contains(ext.lowercased()),
+                      let relative = sessionRelativePath(token),
+                      FileManager.default.fileExists(atPath: sessionFileURL(relative).path)
+                else { continue }
+                return relative
             }
         }
         return nil
@@ -12000,6 +12199,7 @@ final class AppModel: ObservableObject {
         // changes. Keep the legacy payload slot nil for wire/persistence
         // compatibility rather than storing a second stale source of truth.
         sessionOverview.emit(.runFinished(summary: run, suggestions: nil, at: now))
+        endSessionFileCapture()
         if outcome == .failed {
             sessionOverview.emit(.status(
                 status: .error,
@@ -13756,7 +13956,13 @@ final class AppModel: ObservableObject {
                     text: "Result \(index): The transcript should move continuously across selectable text, reasoning, and tool activity without snapping or stopping.",
                     reasoningText: "Reviewed section \(index) and verified the surrounding output before continuing to the next tool call."
                 ))
+            }
+            for index in 0..<12 {
                 blocks.append(ChatBlock(
+                    id: UUID(uuidString: String(
+                        format: "00000000-0000-0000-0000-%012X",
+                        0x401 + index
+                    ))!,
                     kind: .tool,
                     tool: ToolPayload(
                         toolID: "scroll-tool-\(index)",
@@ -13787,6 +13993,7 @@ final class AppModel: ObservableObject {
                     text: "The first audit pass is complete."
                 ),
                 ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000206")!,
                     kind: .tool,
                     tool: ToolPayload(
                         toolID: "thinking-fixture-tool",
@@ -13842,6 +14049,56 @@ final class AppModel: ObservableObject {
                     text: "I’ll check both locations now.",
                     assistantPhase: .commentary,
                     sourceItemID: "commentary-fixture"
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000306")!,
+                    kind: .tool,
+                    tool: ToolPayload(
+                        toolID: "codex-read",
+                        tool: "read_file",
+                        summary: "Read forecast data",
+                        detail: "Austin and Jerusalem forecast sources",
+                        status: .done,
+                        result: "Forecast data loaded"
+                    )
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000307")!,
+                    kind: .tool,
+                    tool: ToolPayload(
+                        toolID: "codex-command",
+                        tool: "bash",
+                        summary: "Normalize forecast output",
+                        detail: "normalize forecasts",
+                        status: .done,
+                        result: "Forecasts normalized"
+                    )
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000308")!,
+                    kind: .assistant,
+                    text: "The source data is ready.",
+                    assistantPhase: .commentary,
+                    sourceItemID: "commentary-fixture-2"
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000309")!,
+                    kind: .assistant,
+                    text: "<think>Compare the two forecasts</think>Both locations have clear conditions.",
+                    assistantPhase: .commentary,
+                    sourceItemID: "commentary-fixture-3"
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000310")!,
+                    kind: .tool,
+                    tool: ToolPayload(
+                        toolID: "codex-browser",
+                        tool: "browser",
+                        summary: "Verify forecast page",
+                        detail: "Open forecast page",
+                        status: .done,
+                        result: "Forecast verified"
+                    )
                 ),
                 ChatBlock(
                     id: UUID(uuidString: "00000000-0000-0000-0000-000000000304")!,
@@ -15718,6 +15975,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
     case searchConversations
     case showUsage
     case showShortcuts
+    case showNotebook
     case openSettings
 
     var id: String { rawValue }
@@ -15742,6 +16000,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .searchConversations: "Search all conversations"
         case .showUsage: "Show usage and costs"
         case .showShortcuts: "Show keyboard shortcuts"
+        case .showNotebook: "Open the notebook"
         case .openSettings: "Open Settings"
         }
     }
@@ -15766,6 +16025,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .searchConversations: "text.magnifyingglass"
         case .showUsage: "dollarsign.circle"
         case .showShortcuts: "keyboard"
+        case .showNotebook: "text.book.closed"
         case .openSettings: "gearshape"
         }
     }
@@ -15782,6 +16042,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .planMode: "⌥P"
         case .buildMode: "⌥B"
         case .showShortcuts: "⌘/"
+        case .showNotebook: "⇧⌘9"
         case .searchConversations: "⇧⌘F"
         case .chooseWorkspace, .newWorkspace, .browseModels, .refreshModels,
              .exportSession, .permissions, .showUsage, .openSettings: ""

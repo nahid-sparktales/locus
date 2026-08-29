@@ -66,12 +66,14 @@ Locus displays only reasoning explicitly supplied by the selected provider or in
 Use the **Thinking** selector or `/thinking` to choose:
 
 - **Hidden**: answers only
-- **Collapsed**: reasoning is available behind a disclosure control
-- **Expanded**: reasoning is shown inline
+- **Collapsed**: reasoning appears where it occurred as a lightweight inline summary disclosure
+- **Expanded**: the existing detailed reasoning cards are pinned open where they occurred
 
 The same setting applies to live responses, resumed history, and each agent in a team.
 
-Example: select Collapsed during normal coding, then expand only the Reviewer's reasoning when you want to understand why it rejected a change.
+Example: select Collapsed during normal coding, then expand only the Reviewer's inline reasoning summary when you want to understand why it rejected a change.
+
+Tool activity follows the same chronology. **Collapsed** groups only adjacent calls into inline activity summaries such as “Read files, ran commands”; **Verbose** keeps each detailed tool card; **Hidden** shows only generic activity status at the original run position.
 
 ### Live work status
 

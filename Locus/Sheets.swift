@@ -2214,7 +2214,7 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings.toolActivityVisibility")
 
-                    Text("Collapsed activity keeps technical detail available without interrupting the answer’s reading flow.")
+                    Text("Collapsed reasoning uses inline summary disclosures, and adjacent tool calls use inline activity summaries where they occurred.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)

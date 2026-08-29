@@ -550,7 +550,7 @@ final class LocusUITests: XCTestCase {
         })
     }
 
-    func testSelectedTranscriptTextOffersExactCopyAndQuoteInReply() {
+    func testDoubleClickSelectsAWordAndCommandCCopiesExactlyIt() {
         relaunchWithSelectionFixture()
 
         let selectedText = "QuoteMeSelectionTarget"
@@ -560,39 +560,16 @@ final class LocusUITests: XCTestCase {
             selectedText
         )).firstMatch
         XCTAssertTrue(text.waitForExistence(timeout: 3))
-        let copy = anyElement("selection.copy")
+
+        NSPasteboard.general.clearContents()
         text.doubleClick()
-        XCTAssertTrue(copy.waitForExistence(timeout: 3))
-        copy.click()
+        app.typeKey("c", modifierFlags: .command)
         XCTAssertTrue(waitUntil {
             NSPasteboard.general.string(forType: .string) == selectedText
-        })
-
-        text.doubleClick()
-        let quote = anyElement("selection.quote")
-        XCTAssertTrue(quote.waitForExistence(timeout: 3))
-        XCTAssertEqual(quote.label, "Quote in Reply")
-        quote.click()
-
-        let composer = app.textViews["composer.input"]
-        XCTAssertTrue(composer.waitForExistence(timeout: 3))
-        XCTAssertEqual(
-            composer.value as? String,
-            "Existing draft\n\n> \(selectedText)\n\n"
-        )
-        app.typeText("Continue")
-        XCTAssertTrue(
-            (composer.value as? String)?.hasSuffix("> \(selectedText)\n\nContinue") == true,
-            "Quote in Reply should focus the composer"
-        )
-
-        text.doubleClick()
-        XCTAssertTrue(anyElement("selection.copy").waitForExistence(timeout: 3))
-        app.typeKey(.escape, modifierFlags: [])
-        XCTAssertTrue(waitUntil { !self.anyElement("selection.copy").exists })
+        }, "double-click should select the word and Command-C copy exactly it")
     }
 
-    func testDragSelectionCrossesParagraphsAndBulletsWithExactCopyAndQuote() {
+    func testDragSelectionCrossesParagraphsAndBulletsWithExactCopy() {
         relaunchWithSelectionFixture()
 
         let firstLabel = "Drag start paragraph."
@@ -610,11 +587,11 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(first.waitForExistence(timeout: 3))
         XCTAssertTrue(last.waitForExistence(timeout: 3))
 
-        first.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5)).press(
+        NSPasteboard.general.clearContents()
+        first.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).press(
             forDuration: 0.1,
             thenDragTo: last.coordinate(withNormalizedOffset: CGVector(dx: 0.99, dy: 0.5))
         )
-        XCTAssertTrue(anyElement("selection.copy").waitForExistence(timeout: 3))
 
         let expected = """
         Drag start paragraph.
@@ -625,17 +602,107 @@ final class LocusUITests: XCTestCase {
         Drag end paragraph.
         """
         app.typeKey("c", modifierFlags: .command)
-        XCTAssertTrue(waitUntil {
-            NSPasteboard.general.string(forType: .string) == expected
-        }, "Command-C should copy the exact structural response selection")
-
-        let quote = anyElement("selection.quote")
-        XCTAssertTrue(quote.exists)
-        quote.click()
+        _ = waitUntil { NSPasteboard.general.string(forType: .string) == expected }
         XCTAssertEqual(
-            app.textViews["composer.input"].value as? String,
-            "Existing draft\n\n> Drag start paragraph.\n>\n> • First bullet\n> • Second bullet\n>\n> Drag end paragraph.\n\n"
+            NSPasteboard.general.string(forType: .string),
+            expected,
+            "Command-C should copy the exact structural response selection"
         )
+    }
+
+    func testUserMessagesAreSelectableToo() {
+        relaunchWithSelectionFixture()
+
+        let question = "Select the response"
+        let bubble = app.descendants(matching: .any).matching(NSPredicate(
+            format: "label == %@ OR value == %@", question, question
+        )).firstMatch
+        XCTAssertTrue(bubble.waitForExistence(timeout: 3))
+
+        NSPasteboard.general.clearContents()
+        bubble.doubleClick()
+        app.typeKey("c", modifierFlags: .command)
+        _ = waitUntil { (NSPasteboard.general.string(forType: .string) ?? "").isEmpty == false }
+        let copied = NSPasteboard.general.string(forType: .string) ?? "<nothing>"
+        XCTAssertTrue(
+            question.contains(copied),
+            "double-click in a user bubble should select a word from it, got: \(copied)"
+        )
+
+        NSPasteboard.general.clearContents()
+        bubble.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).press(
+            forDuration: 0.1,
+            thenDragTo: bubble.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.5))
+        )
+        app.typeKey("c", modifierFlags: .command)
+        _ = waitUntil { (NSPasteboard.general.string(forType: .string) ?? "").isEmpty == false }
+        let dragged = NSPasteboard.general.string(forType: .string) ?? "<nothing>"
+        XCTAssertTrue(
+            !dragged.isEmpty && question.hasPrefix(dragged),
+            "dragging inside a user bubble should select a prefix of it, got: \(dragged)"
+        )
+    }
+
+    func testDragSelectionCrossesFromTheUserMessageIntoTheAnswer() {
+        // Selection used to be scoped to a single assistant segment, so a
+        // question and its answer could never be copied together.
+        relaunchWithSelectionFixture()
+
+        let question = "Select the response"
+        let answerHead = "Drag start paragraph."
+        let start = app.descendants(matching: .any).matching(NSPredicate(
+            format: "label == %@ OR value == %@", question, question
+        )).firstMatch
+        let end = app.descendants(matching: .any).matching(NSPredicate(
+            format: "label == %@ OR value == %@", answerHead, answerHead
+        )).firstMatch
+        XCTAssertTrue(start.waitForExistence(timeout: 3))
+        XCTAssertTrue(end.waitForExistence(timeout: 3))
+
+        // Start well inside the bubble: it is right-aligned, so its leading
+        // edge is padding rather than text.
+        NSPasteboard.general.clearContents()
+        start.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)).press(
+            forDuration: 0.1,
+            thenDragTo: end.coordinate(withNormalizedOffset: CGVector(dx: 0.99, dy: 0.5))
+        )
+        app.typeKey("c", modifierFlags: .command)
+        _ = waitUntil {
+            let copied = NSPasteboard.general.string(forType: .string) ?? ""
+            return copied.hasSuffix(answerHead) && question.hasSuffix(
+                copied.components(separatedBy: "\n\n").first ?? ""
+            )
+        }
+        let copied = NSPasteboard.general.string(forType: .string) ?? "<nothing>"
+        let head = copied.components(separatedBy: "\n\n").first ?? ""
+        XCTAssertTrue(
+            copied.hasSuffix(answerHead) && !head.isEmpty && question.hasSuffix(head),
+            "a drag from the question into the answer should copy both, got: \(copied)"
+        )
+    }
+
+    func testDragSelectionSurvivesScrollingTheAnchorOutOfView() {
+        // Leaves are torn down as they scroll out of the lazy list, which used
+        // to clear the selection outright.
+        relaunchWithScrollFixture()
+
+        let firstLine = "Result 0:"
+        let anchor = app.descendants(matching: .any).matching(NSPredicate(
+            format: "value BEGINSWITH %@ OR label BEGINSWITH %@", firstLine, firstLine
+        )).firstMatch
+        XCTAssertTrue(anchor.waitForExistence(timeout: 5))
+
+        let transcript = anyElement("conversation.scroll")
+        NSPasteboard.general.clearContents()
+        anchor.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).press(
+            forDuration: 0.1,
+            thenDragTo: transcript.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.98))
+        )
+        transcript.scroll(byDeltaX: 0, deltaY: -900)
+        app.typeKey("c", modifierFlags: .command)
+        XCTAssertTrue(waitUntil {
+            (NSPasteboard.general.string(forType: .string) ?? "").hasPrefix(firstLine)
+        }, "the selection survives its anchor row being recycled")
     }
 
     func testTranscriptUsesTrailingUserBubbleAndOpenAssistantReadingFlow() {
@@ -1203,12 +1270,24 @@ final class LocusUITests: XCTestCase {
             choice.click()
             XCTAssertEqual(picker.value as? String, value)
         }
+        let greenAccent = anyElement("settings.accentColor.green")
+        let neutralAccent = anyElement("settings.accentColor.neutral")
         let blueAccent = anyElement("settings.accentColor.blue")
         let pinkAccent = anyElement("settings.accentColor.pink")
         let logoPreview = anyElement("settings.accentColor.preview")
+        XCTAssertTrue(greenAccent.exists)
+        XCTAssertTrue(greenAccent.isHittable)
+        XCTAssertTrue(neutralAccent.exists)
+        XCTAssertTrue(neutralAccent.isHittable)
         XCTAssertTrue(blueAccent.exists)
         XCTAssertTrue(pinkAccent.exists)
         XCTAssertTrue(logoPreview.exists)
+        greenAccent.click()
+        XCTAssertEqual(greenAccent.value as? String, "Selected")
+        XCTAssertEqual(logoPreview.label, "Current Locus logo, Green")
+        neutralAccent.click()
+        XCTAssertEqual(neutralAccent.value as? String, "Selected")
+        XCTAssertEqual(logoPreview.label, "Current Locus logo, Neutral")
         blueAccent.click()
         XCTAssertEqual(blueAccent.value as? String, "Selected")
         XCTAssertEqual(logoPreview.label, "Current Locus logo, Blue")
@@ -1446,18 +1525,12 @@ final class LocusUITests: XCTestCase {
 
     func testSidebarPlacesChatWorkAndScheduleBelowTheBrand() {
         let brand = anyElement("sidebar.brand")
-        let sideChat = anyElement("inspector.rail.sideChat")
         let chat = app.buttons["workspace.mode.chat"]
         let work = app.buttons["workspace.mode.work"]
         let schedule = anyElement("sidebar.schedule")
 
         XCTAssertTrue(brand.waitForExistence(timeout: 3))
-        XCTAssertTrue(sideChat.exists)
-        XCTAssertGreaterThan(
-            sideChat.frame.minX,
-            brand.frame.maxX,
-            "Side Chat belongs on the right utility rail, not in the left sidebar header"
-        )
+        XCTAssertFalse(anyElement("inspector.rail.sideChat").exists)
         XCTAssertFalse(anyElement("sidebar.splitView").exists)
         XCTAssertFalse(anyElement("workspace.splitView").exists)
         XCTAssertTrue(chat.exists)
@@ -1523,9 +1596,12 @@ final class LocusUITests: XCTestCase {
     func testWorkspaceActionsSitBesideModelPickerAndRailMoreMenuRestoresTabs() {
         XCTAssertTrue(anyElement("inspector.rail.notes").waitForExistence(timeout: 3))
         let more = anyElement("inspector.rail.more")
+        let toggle = anyElement("inspector.rail.toggle")
         XCTAssertTrue(more.exists)
         XCTAssertFalse(anyElement("inspector.rail.settings").exists)
-        XCTAssertFalse(anyElement("inspector.rail.toggle").exists)
+        XCTAssertTrue(toggle.exists)
+        XCTAssertFalse(anyElement("inspector.rail.sideChat").exists)
+        XCTAssertFalse(anyElement("inspector.rail.simulator").exists)
 
         let modelPicker = anyElement("workspace.modelPicker")
         let workspaceActions = anyElement("workspace.actions")
@@ -1539,12 +1615,14 @@ final class LocusUITests: XCTestCase {
         )
         XCTAssertLessThan(
             more.frame.maxY,
-            anyElement("inspector.rail.plan").frame.minY,
+            toggle.frame.minY,
             "the vertical-dots panel menu belongs at the top of the inspector rail"
         )
+        XCTAssertLessThan(toggle.frame.maxY, anyElement("inspector.rail.plan").frame.minY)
 
         more.click()
-        for tab in ["changes", "files", "runs", "agents"] {
+        XCTAssertTrue(app.menuItems["inspector.rail.menu.sideChat"].exists)
+        for tab in ["changes", "files", "simulator", "runs", "agents"] {
             XCTAssertTrue(
                 app.menuItems["inspector.rail.menu.\(tab)"].exists,
                 "the more-panels menu should restore \(tab)"
@@ -1595,6 +1673,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(planIcon.label.contains("Overview"))
         let terminalIcon = anyElement("inspector.rail.terminal")
         XCTAssertTrue(terminalIcon.exists)
+        XCTAssertFalse(anyElement("inspector.rail.simulator").exists)
         XCTAssertLessThan(planIcon.frame.maxY, terminalIcon.frame.minY)
         XCTAssertTrue(anyElement("inspector.tab.plan").exists)
         for closedTab in ["changes", "files", "terminal", "preview", "checkpoints", "runs", "agents"] {
@@ -1622,6 +1701,29 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("inspector.tab.plan").exists)
         XCTAssertTrue(anyElement("inspector.tab.terminal").exists)
         XCTAssertTrue(anyElement("inspector.tab.preview").exists)
+    }
+
+    func testPanelToggleClosesAndRestoresTheLastPanel() {
+        let toggle = anyElement("inspector.rail.toggle")
+        XCTAssertTrue(toggle.waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("plan.context").exists)
+
+        toggle.click()
+        XCTAssertFalse(anyElement("plan.context").exists)
+        XCTAssertEqual(toggle.value as? String, "Closed")
+
+        toggle.click()
+        XCTAssertTrue(anyElement("plan.context").waitForExistence(timeout: 3))
+        XCTAssertEqual(toggle.value as? String, "Open")
+
+        let browserIcon = anyElement("inspector.rail.preview")
+        browserIcon.click()
+        XCTAssertTrue(anyElement("browser.url").waitForExistence(timeout: 3))
+
+        toggle.click()
+        XCTAssertFalse(anyElement("browser.url").exists)
+        toggle.click()
+        XCTAssertTrue(anyElement("browser.url").waitForExistence(timeout: 3))
     }
 
     func testKeyboardShortcutsReachAdditionalInspectorTabs() {
@@ -2106,6 +2208,47 @@ final class LocusUITests: XCTestCase {
         try auditCurrentSurface()
     }
 
+    func testNotebookOpensFromTheSidebarMenuAndListsStoredNotes() throws {
+        anyElement("sidebar.more").click()
+        let item = menuItem("sidebar.notebook", title: "Notebook")
+        XCTAssertTrue(item.waitForExistence(timeout: 3))
+        item.click()
+
+        XCTAssertTrue(anyElement("notebook.search").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("notebook.close").exists)
+        // Nothing is selected until a row is chosen, so the editor must not be
+        // showing some other document's text.
+        XCTAssertTrue(anyElement("notebook.noSelection").exists)
+        anyElement("notebook.close").click()
+        XCTAssertTrue(
+            waitUntil(timeout: 3) { !self.anyElement("notebook.search").exists },
+            "closing the notebook should dismiss it"
+        )
+    }
+
+    func testNotebookOpensAStoredNoteInTheEditor() throws {
+        relaunchForAccessibilitySurface("notebook", anchor: "notebook.search")
+        let row = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "notebook.entry."))
+            .firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "the seeded notes should be listed")
+        row.click()
+
+        // The Notebook's editor carries its own identifier prefix so it is not
+        // confused with the inspector's, which can be on screen at the same time.
+        XCTAssertTrue(anyElement("notebook.document.editor").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("notebook.document.scopeBadge").exists)
+        XCTAssertFalse(
+            anyElement("notebook.document.scopeMenu").exists,
+            "a document's scope is a fact about it here, not a setting to change"
+        )
+    }
+
+    func testNotebookPassesAccessibilityAudit() throws {
+        relaunchForAccessibilitySurface("notebook", anchor: "notebook.search")
+        try auditCurrentSurface()
+    }
+
     func testSettingsPassesAccessibilityAudit() throws {
         relaunchForAccessibilitySurface("settings", anchor: "settings.page.general")
         try auditCurrentSurface()
@@ -2545,6 +2688,21 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }
 
+    private func scrollTranscriptDown(toReveal target: XCUIElement, attempts: Int = 12) {
+        let transcript = anyElement("conversation.scroll")
+        XCTAssertTrue(transcript.waitForExistence(timeout: 3))
+        for _ in 0..<attempts {
+            if isVisiblyInside(target, transcript) { return }
+            transcript.scroll(byDeltaX: 0, deltaY: -320)
+        }
+    }
+
+    private func isVisiblyInside(_ target: XCUIElement, _ container: XCUIElement) -> Bool {
+        guard target.exists else { return false }
+        let safeFrame = container.frame.insetBy(dx: 4, dy: 8)
+        return safeFrame.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))
+    }
+
     private func relaunchWithThinkingFixture(mode: String) {
         app.terminate()
         app.launchEnvironment["LOCUS_UI_TESTING_THINKING_FIXTURE"] = "1"
@@ -2681,12 +2839,13 @@ final class LocusUITests: XCTestCase {
         let transcript = anyElement("conversation.scroll")
         XCTAssertTrue(transcript.waitForExistence(timeout: 3))
         let group = anyElement(
-            "toolActivity.group.00000000-0000-0000-0000-000000000101"
+            "toolActivity.group.00000000-0000-0000-0000-000000000401"
         )
+        scrollTranscriptDown(toReveal: group)
         XCTAssertTrue(group.waitForExistence(timeout: 3))
         let firstTool = anyElement("tool.scroll-tool-0.toggle")
-        XCTAssertFalse(firstTool.exists, "collapsed mode starts with one request-level row")
-        group.click()
+        XCTAssertFalse(firstTool.exists, "collapsed mode starts with one adjacent-run row")
+        group.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         XCTAssertTrue(firstTool.waitForExistence(timeout: 3))
         firstTool.click()
 
@@ -2696,26 +2855,30 @@ final class LocusUITests: XCTestCase {
         // Grouping puts the tool cards next to one another. Move through them
         // in bounded steps so a single synthetic wheel event cannot jump past
         // the lazy stack and evict the final card from accessibility.
-        firstTool.scroll(byDeltaX: 0, deltaY: -320)
-        for _ in 0..<8 {
-            if lastTool.exists, lastTool.isHittable { break }
+        firstTool.coordinate(
+            // The expanded output begins immediately below the 39-point
+            // disclosure button. This lands inside its selectable detail.
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 1.5)
+        ).scroll(byDeltaX: 0, deltaY: -320)
+        for _ in 0..<12 {
+            if isVisiblyInside(lastTool, transcript) { break }
             transcript.scroll(byDeltaX: 0, deltaY: -320)
         }
         XCTAssertTrue(lastTool.waitForExistence(timeout: 3))
-        XCTAssertTrue(lastTool.isHittable)
-        lastTool.click()
+        XCTAssertTrue(isVisiblyInside(lastTool, transcript))
+        lastTool.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
 
         let firstMessage = anyElement("message.00000000-0000-0000-0000-000000000101")
         // Expanding the final card can move its button outside the viewport on
         // compact CI displays. This gesture only navigates back to the message;
         // target the owning transcript rather than a stale offscreen row.
         transcript.scroll(byDeltaX: 0, deltaY: 320)
-        for _ in 0..<8 {
-            if firstMessage.exists, firstMessage.isHittable { break }
+        for _ in 0..<12 {
+            if isVisiblyInside(firstMessage, transcript) { break }
             transcript.scroll(byDeltaX: 0, deltaY: 320)
         }
         XCTAssertTrue(firstMessage.waitForExistence(timeout: 3))
-        XCTAssertTrue(firstMessage.isHittable)
+        XCTAssertTrue(isVisiblyInside(firstMessage, transcript))
 
         let messageHeightBeforeHover = firstMessage.frame.height
         firstMessage.hover()
@@ -2739,7 +2902,7 @@ final class LocusUITests: XCTestCase {
         // result is independent of which elastic boundary the fixture reached.
         let wheelDeltas: [CGFloat] = [-320, -180, 320, 180]
         for delta in wheelDeltas where !messageMoved {
-            guard firstMessage.exists, firstMessage.isHittable else {
+            guard isVisiblyInside(firstMessage, transcript) else {
                 messageMoved = true
                 break
             }
@@ -2748,7 +2911,7 @@ final class LocusUITests: XCTestCase {
                 // A short row can leave the accessibility viewport entirely;
                 // that is conclusive evidence that its owning transcript moved.
                 !firstMessage.exists
-                    || !firstMessage.isHittable
+                    || !self.isVisiblyInside(firstMessage, transcript)
                     || abs(firstMessage.frame.minY - messageYBeforeWheel) > 8
             }
         }
@@ -2796,23 +2959,26 @@ final class LocusUITests: XCTestCase {
         relaunchWithScrollFixture()
 
         let group = anyElement(
-            "toolActivity.group.00000000-0000-0000-0000-000000000101"
+            "toolActivity.group.00000000-0000-0000-0000-000000000401"
         )
+        scrollTranscriptDown(toReveal: group)
         XCTAssertTrue(group.waitForExistence(timeout: 3))
-        XCTAssertTrue(group.label.contains("12 tool calls"))
+        XCTAssertTrue(group.label.contains("Read files"))
 
         let firstTool = anyElement("tool.scroll-tool-0.toggle")
         XCTAssertFalse(firstTool.exists)
-        group.click()
+        group.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         XCTAssertTrue(firstTool.waitForExistence(timeout: 3))
     }
 
     func testVerboseToolActivityView() {
         relaunchWithScrollFixture(toolActivityMode: "verbose")
 
-        XCTAssertTrue(anyElement("tool.scroll-tool-0.toggle").waitForExistence(timeout: 3))
+        let firstTool = anyElement("tool.scroll-tool-0.toggle")
+        scrollTranscriptDown(toReveal: firstTool)
+        XCTAssertTrue(firstTool.waitForExistence(timeout: 3))
         XCTAssertFalse(
-            anyElement("toolActivity.group.00000000-0000-0000-0000-000000000101").exists
+            anyElement("toolActivity.group.00000000-0000-0000-0000-000000000401").exists
         )
     }
 
@@ -2820,24 +2986,33 @@ final class LocusUITests: XCTestCase {
         relaunchWithScrollFixture(toolActivityMode: "hidden")
 
         let hidden = anyElement(
-            "toolActivity.hidden.00000000-0000-0000-0000-000000000101"
+            "toolActivity.hidden.00000000-0000-0000-0000-000000000401"
         )
+        scrollTranscriptDown(toReveal: hidden)
         XCTAssertTrue(hidden.waitForExistence(timeout: 3))
         XCTAssertEqual(hidden.label, "Actions complete")
         XCTAssertFalse(anyElement("tool.scroll-tool-0.toggle").exists)
         XCTAssertFalse(
-            anyElement("toolActivity.group.00000000-0000-0000-0000-000000000101").exists
+            anyElement("toolActivity.group.00000000-0000-0000-0000-000000000401").exists
         )
     }
 
     func testCollapsedThinkingGroupsReasoningWithoutEmptyAssistantRows() {
         relaunchWithThinkingFixture(mode: "collapsed")
 
-        let group = anyElement(
-            "thinkingActivity.group.00000000-0000-0000-0000-000000000101"
+        let firstGroup = anyElement(
+            "thinkingActivity.group.00000000-0000-0000-0000-000000000201"
         )
-        XCTAssertTrue(group.waitForExistence(timeout: 3))
-        XCTAssertTrue(group.label.contains("3 updates"))
+        let inlineGroup = anyElement(
+            "thinkingActivity.group.00000000-0000-0000-0000-000000000203"
+        )
+        let finalGroup = anyElement(
+            "thinkingActivity.group.00000000-0000-0000-0000-000000000204"
+        )
+        XCTAssertTrue(firstGroup.waitForExistence(timeout: 3))
+        XCTAssertTrue(firstGroup.label.contains("Inspect the remaining files"))
+        XCTAssertTrue(inlineGroup.exists)
+        XCTAssertTrue(finalGroup.exists)
         XCTAssertFalse(anyElement(
             "thinkingActivity.entry.00000000-0000-0000-0000-000000000201.0"
         ).exists)
@@ -2846,25 +3021,45 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("message.00000000-0000-0000-0000-000000000202").exists)
         XCTAssertTrue(anyElement("message.00000000-0000-0000-0000-000000000204").exists)
 
-        group.coordinate(
+        firstGroup.coordinate(
             withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)
         ).click()
         XCTAssertTrue(anyElement(
             "thinkingActivity.entry.00000000-0000-0000-0000-000000000201.0"
         ).waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement(
+        XCTAssertFalse(anyElement(
             "thinkingActivity.entry.00000000-0000-0000-0000-000000000203.0"
         ).exists)
-        XCTAssertTrue(anyElement(
+        XCTAssertFalse(anyElement(
             "thinkingActivity.entry.00000000-0000-0000-0000-000000000204.0"
         ).exists)
+
+        XCTAssertLessThan(
+            anyElement("message.00000000-0000-0000-0000-000000000202").frame.maxY,
+            anyElement("toolActivity.group.00000000-0000-0000-0000-000000000206").frame.minY
+        )
+        XCTAssertLessThan(
+            anyElement("toolActivity.group.00000000-0000-0000-0000-000000000206").frame.maxY,
+            inlineGroup.frame.minY
+        )
+        XCTAssertLessThan(inlineGroup.frame.maxY, finalGroup.frame.minY)
+        XCTAssertLessThan(
+            finalGroup.frame.maxY,
+            anyElement("message.00000000-0000-0000-0000-000000000204").frame.minY
+        )
     }
 
     func testHiddenThinkingRemovesGroupAndReasoningOnlyAssistantRows() {
         relaunchWithThinkingFixture(mode: "hidden")
 
         XCTAssertFalse(anyElement(
-            "thinkingActivity.group.00000000-0000-0000-0000-000000000101"
+            "thinkingActivity.group.00000000-0000-0000-0000-000000000201"
+        ).exists)
+        XCTAssertFalse(anyElement(
+            "thinkingActivity.group.00000000-0000-0000-0000-000000000203"
+        ).exists)
+        XCTAssertFalse(anyElement(
+            "thinkingActivity.group.00000000-0000-0000-0000-000000000204"
         ).exists)
         XCTAssertFalse(anyElement("message.00000000-0000-0000-0000-000000000201").exists)
         XCTAssertFalse(anyElement("message.00000000-0000-0000-0000-000000000203").exists)
@@ -2875,11 +3070,11 @@ final class LocusUITests: XCTestCase {
     func testExpandedThinkingStartsWithGroupedReasoningOpen() {
         relaunchWithThinkingFixture(mode: "expanded")
 
-        let group = anyElement(
-            "thinkingActivity.group.00000000-0000-0000-0000-000000000101"
+        let firstGroup = anyElement(
+            "thinkingActivity.group.00000000-0000-0000-0000-000000000201"
         )
-        XCTAssertTrue(group.waitForExistence(timeout: 3))
-        XCTAssertTrue(group.label.contains("collapse"))
+        XCTAssertTrue(firstGroup.waitForExistence(timeout: 3))
+        XCTAssertTrue(firstGroup.label.contains("collapse"))
         XCTAssertTrue(anyElement(
             "thinkingActivity.entry.00000000-0000-0000-0000-000000000201.0"
         ).waitForExistence(timeout: 3))
@@ -2895,7 +3090,7 @@ final class LocusUITests: XCTestCase {
         relaunchWithCodexTranscriptFixture()
 
         let group = anyElement(
-            "thinkingActivity.group.00000000-0000-0000-0000-000000000301"
+            "thinkingActivity.group.00000000-0000-0000-0000-000000000302"
         )
         XCTAssertTrue(group.waitForExistence(timeout: 3))
         XCTAssertTrue(group.label.contains("2 updates"))
@@ -2918,8 +3113,107 @@ final class LocusUITests: XCTestCase {
             "message.00000000-0000-0000-0000-000000000304"
         ).exists)
         XCTAssertTrue(transcriptText("I’ll check both locations now.").exists)
+        XCTAssertTrue(transcriptText("The source data is ready.").exists)
+        XCTAssertTrue(transcriptText("Both locations have clear conditions.").exists)
         XCTAssertTrue(transcriptText("Austin: Sunny and hot.").exists)
         XCTAssertTrue(transcriptText("Jerusalem: Warm and dry.").exists)
+
+        // Marker ownership is asserted against the presentation projection in
+        // unit tests. The visual sparkle remains intentionally hidden from the
+        // accessibility tree, so this fixture verifies the neighboring action
+        // ownership without turning decorative chrome into VoiceOver content.
+        XCTAssertFalse(anyElement(
+            "message.00000000-0000-0000-0000-000000000303.copy"
+        ).exists)
+        XCTAssertTrue(anyElement(
+            "message.00000000-0000-0000-0000-000000000304.copy"
+        ).exists)
+    }
+
+    func testCollapsedCodexActivityStaysInlineAndExpandsInPlace() {
+        relaunchWithCodexTranscriptFixture(mode: "collapsed")
+
+        let reasoning = anyElement(
+            "thinkingActivity.group.00000000-0000-0000-0000-000000000302"
+        )
+        let commentary = anyElement("message.00000000-0000-0000-0000-000000000303")
+        let tools = anyElement(
+            "toolActivity.group.00000000-0000-0000-0000-000000000306"
+        )
+        let laterCommentary = anyElement(
+            "message.00000000-0000-0000-0000-000000000308"
+        )
+        let inlineReasoning = anyElement(
+            "thinkingActivity.group.00000000-0000-0000-0000-000000000309"
+        )
+        let inlineCommentary = anyElement(
+            "message.00000000-0000-0000-0000-000000000309"
+        )
+        let browser = anyElement(
+            "toolActivity.group.00000000-0000-0000-0000-000000000310"
+        )
+        let final = anyElement("message.00000000-0000-0000-0000-000000000304")
+
+        XCTAssertTrue(reasoning.waitForExistence(timeout: 3))
+        for item in [commentary, tools, laterCommentary, inlineReasoning, inlineCommentary, browser, final] {
+            XCTAssertTrue(item.exists)
+        }
+        XCTAssertTrue(reasoning.label.contains("Planning data retrieval · Checking forecast parsing"))
+        XCTAssertTrue(tools.label.contains("Read files, ran command"))
+        XCTAssertTrue(browser.label.contains("Browsed"))
+
+        XCTAssertLessThan(reasoning.frame.maxY, commentary.frame.minY)
+        XCTAssertLessThan(commentary.frame.maxY, tools.frame.minY)
+        XCTAssertLessThan(tools.frame.maxY, laterCommentary.frame.minY)
+        XCTAssertLessThan(laterCommentary.frame.maxY, inlineReasoning.frame.minY)
+        XCTAssertLessThan(inlineReasoning.frame.maxY, inlineCommentary.frame.minY)
+        XCTAssertLessThan(inlineCommentary.frame.maxY, browser.frame.minY)
+        XCTAssertLessThan(browser.frame.maxY, final.frame.minY)
+
+        XCTAssertFalse(anyElement("tool.codex-read.toggle").exists)
+        tools.click()
+        XCTAssertTrue(anyElement("tool.codex-read.toggle").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("tool.codex-command.toggle").exists)
+        XCTAssertLessThan(commentary.frame.maxY, tools.frame.minY)
+        XCTAssertLessThan(tools.frame.maxY, laterCommentary.frame.minY)
+    }
+
+    func testCollapsedCodexActivityFitsLightAndDarkWindowSizes() throws {
+        let cases = [("1250", "760", "Light"), ("720", "620", "Dark")]
+        for (width, height, appearance) in cases {
+            app.terminate()
+            app.launchEnvironment["LOCUS_UI_TESTING_CODEX_TRANSCRIPT_FIXTURE"] = "1"
+            app.launchEnvironment["LOCUS_UI_TESTING_THINKING_MODE"] = "collapsed"
+            app.launchEnvironment["LOCUS_UI_TESTING_TOOL_ACTIVITY_MODE"] = "collapsed"
+            app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = width
+            app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = height
+            app.launchArguments = [
+                "-ApplePersistenceIgnoreState", "YES",
+                "-AppleInterfaceStyle", appearance,
+            ]
+            app.launch()
+            XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+
+            let transcript = anyElement("conversation.scroll")
+            let reasoning = anyElement(
+                "thinkingActivity.group.00000000-0000-0000-0000-000000000302"
+            )
+            XCTAssertTrue(transcript.waitForExistence(timeout: 3))
+            XCTAssertTrue(reasoning.waitForExistence(timeout: 3))
+            XCTAssertTrue(reasoning.label.contains("Thought process, collapsed"))
+            XCTAssertGreaterThanOrEqual(reasoning.frame.minX, transcript.frame.minX)
+            XCTAssertLessThanOrEqual(reasoning.frame.maxX, transcript.frame.maxX)
+            try auditCurrentSurface()
+
+            reasoning.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)
+            ).click()
+            XCTAssertTrue(anyElement(
+                "thinkingActivity.entry.00000000-0000-0000-0000-000000000302.0"
+            ).waitForExistence(timeout: 3))
+            XCTAssertGreaterThanOrEqual(reasoning.frame.minX, transcript.frame.minX)
+            XCTAssertLessThanOrEqual(reasoning.frame.maxX, transcript.frame.maxX)
+        }
     }
 
     func testReviewAndLandShowsDiffChecksAndBothDestinations() {

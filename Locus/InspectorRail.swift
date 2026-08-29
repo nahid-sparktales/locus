@@ -2,9 +2,9 @@ import Foundation
 import SwiftUI
 
 /// The always-visible right rail. Collapsing the inspector no longer empties
-/// the window edge: Side Chat, Overview, Terminal, Browser, and Notes stay within reach,
-/// while the vertical-ellipsis menu restores every additional workspace panel,
-/// including Model Router and Proxies.
+/// the window edge: Overview, Terminal, Browser, and Notes stay within reach,
+/// while the vertical-ellipsis menu contains Side Chat and every additional
+/// workspace panel, including Simulator, Model Router, and Proxies.
 /// The panel opens to the rail's left. Attention badges
 /// live on the icons, so a run can ask for eyes without the panel being open.
 struct InspectorRail: View {
@@ -14,17 +14,16 @@ struct InspectorRail: View {
     /// Direct rail destinations stay one click away. The remaining workspace
     /// panels live in the overflow menu instead of disappearing from the UI.
     static let menuTabs = InspectorTab.workspaceTabs.filter {
-        $0 != .terminal && $0 != .simulator && $0 != .notes
+        $0 != .terminal && $0 != .notes
     }
 
     var body: some View {
         VStack(spacing: 4) {
             moreMenu
-            sideChatButton
+            panelToggleButton
             railTab(.plan)
             railTab(.terminal)
             railTab(.preview)
-            railTab(.simulator)
             railTab(.notes)
             Spacer(minLength: 0)
             zoomButton
@@ -38,42 +37,38 @@ struct InspectorRail: View {
         }
     }
 
-    private var sideChatButton: some View {
-        let selected = model.splitViewActive
+    private var panelToggleButton: some View {
+        let selected = !model.inspectorCollapsed
         return Button {
             withAnimation(LocusMotion.spatial) {
-                model.toggleSplitView()
+                model.toggleInspectorPanel()
             }
         } label: {
-            Image(
-                systemName: selected
-                    ? "rectangle.split.2x1.fill"
-                    : "rectangle.split.2x1"
-            )
-            .font(.locus(size: 13, weight: .medium))
-            .foregroundStyle(selected ? LocusTheme.ink : LocusTheme.muted)
-            .frame(width: 34, height: 32)
-            .background {
-                if selected {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(LocusTheme.ink.opacity(0.09))
+            Image(systemName: "sidebar.right")
+                .font(.locus(size: 13, weight: .medium))
+                .foregroundStyle(selected ? LocusTheme.ink : LocusTheme.muted)
+                .frame(width: 34, height: 32)
+                .background {
+                    if selected {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(LocusTheme.ink.opacity(0.09))
+                    }
                 }
-            }
-            .overlay(alignment: .leading) {
-                if selected {
-                    Capsule()
-                        .fill(LocusTheme.signalDeep)
-                        .frame(width: 2, height: 14)
-                        .offset(x: -3)
+                .overlay(alignment: .leading) {
+                    if selected {
+                        Capsule()
+                            .fill(LocusTheme.signalDeep)
+                            .frame(width: 2, height: 14)
+                            .offset(x: -3)
+                    }
                 }
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.locus())
-        .help(selected ? "Close Side Chat" : "Open Side Chat")
-        .accessibilityLabel(selected ? "Close Side Chat" : "Open Side Chat")
+        .help(selected ? "Close panel" : "Open last panel")
+        .accessibilityLabel(selected ? "Close panel" : "Open last panel")
         .accessibilityValue(selected ? "Open" : "Closed")
-        .accessibilityIdentifier("inspector.rail.sideChat")
+        .accessibilityIdentifier("inspector.rail.toggle")
     }
 
     private var zoomButton: some View {
@@ -142,6 +137,15 @@ struct InspectorRail: View {
 
     private var moreMenu: some View {
         Menu {
+            Button(model.splitViewActive ? "Close Side Chat" : "Open Side Chat") {
+                withAnimation(LocusMotion.spatial) {
+                    model.toggleSplitView()
+                }
+            }
+            .accessibilityIdentifier("inspector.rail.menu.sideChat")
+
+            Divider()
+
             ForEach(Self.menuTabs) { tab in
                 Button(menuTitle(for: tab)) {
                     withAnimation(LocusMotion.spatial) {

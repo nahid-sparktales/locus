@@ -215,7 +215,7 @@ struct SettingsSearchDescriptor: Identifiable, Hashable {
         .init("settings.launchAtLogin", page: .general, title: "Launch at login", keywords: ["startup", "menu bar"]),
         .init("settings.maximumActiveChats", page: .general, title: "Background chats", keywords: ["concurrency", "worktrees"]),
         .init("settings.appearance", page: .appearance, title: "Appearance", keywords: ["light", "dark", "system"]),
-        .init("settings.accentColor", page: .appearance, title: "Accent colour", keywords: ["logo", "brand", "lime", "green", "blue", "purple", "orange", "pink", "custom"]),
+        .init("settings.accentColor", page: .appearance, title: "Accent colour", keywords: ["logo", "brand", "lime", "green", "dark green", "blue", "purple", "orange", "pink", "neutral", "grey", "gray", "custom"]),
         .init("settings.showTeamProgressInHeader", page: .appearance, title: "Header status", keywords: ["team", "context usage"]),
         .init("settings.notesScope", page: .chat, title: "Conversation notes", keywords: ["workspace", "scratchpad"]),
         .init("settings.thinkingVisibility", page: .chat, title: "Reasoning display", keywords: ["thinking", "collapsed"]),

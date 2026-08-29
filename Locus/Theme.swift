@@ -26,24 +26,28 @@ enum AppAppearance: String, CaseIterable, Codable, Identifiable {
     }
 }
 
-/// The five ready-made Locus brand colours. A custom value is stored separately
+/// The seven ready-made Locus brand colours. A custom value is stored separately
 /// so presets remain a small, stable set while the colour picker stays open-ended.
 enum LocusAccentPreset: String, CaseIterable, Identifiable, Sendable {
     case lime
+    case green
     case blue
     case purple
     case orange
     case pink
+    case neutral
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .lime: "Lime"
+        case .green: "Green"
         case .blue: "Blue"
         case .purple: "Purple"
         case .orange: "Orange"
         case .pink: "Pink"
+        case .neutral: "Neutral"
         }
     }
 
@@ -52,22 +56,26 @@ enum LocusAccentPreset: String, CaseIterable, Identifiable, Sendable {
     fileprivate var fillHex: UInt32 {
         switch self {
         case .lime: 0xC9F54A
+        case .green: 0x2F7D4C
         case .blue: 0x4A90FF
         case .purple: 0xA56EFF
         case .orange: 0xFF9F43
         case .pink: 0xFF5FA2
+        case .neutral: 0xD4D5D2
         }
     }
 
     /// The original app icon used a slightly softer lime than the workspace.
-    /// Matching softer companions keep all five logo treatments equally vivid.
+    /// Matching softer companions keep all seven logo treatments equally vivid.
     fileprivate var logoHex: UInt32 {
         switch self {
         case .lime: 0xDAF66C
+        case .green: 0x4C9967
         case .blue: 0x67A9FF
         case .purple: 0xBC86FF
         case .orange: 0xFFB15F
         case .pink: 0xFF82B6
+        case .neutral: 0xE1E2DE
         }
     }
 }

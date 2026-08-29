@@ -167,7 +167,7 @@ struct AppSettings: Codable, Hashable {
     /// Stored as a raw string so a preference written by a future version
     /// cannot make the rest of the settings payload fail to decode.
     var appearanceRaw = AppAppearance.system.rawValue
-    /// Five stable presets plus a separately stored custom swatch. Keeping the
+    /// Seven stable presets plus a separately stored custom swatch. Keeping the
     /// raw value tolerant lets a newer build add presets without resetting the
     /// rest of a person's settings in an older build.
     var accentPresetRaw = LocusAccentPreset.lime.rawValue

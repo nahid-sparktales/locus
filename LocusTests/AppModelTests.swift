@@ -2726,6 +2726,35 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testPanelToggleDefaultsToOverviewAndReopensTheLastClosedTab() {
+        let untouched = AppModel(startImmediately: false)
+        untouched.inspectorCollapsed = true
+
+        untouched.toggleInspectorPanel()
+
+        XCTAssertEqual(untouched.inspectorTab, .plan)
+        XCTAssertFalse(untouched.inspectorCollapsed)
+
+        let restored = AppModel(startImmediately: false)
+        restored.selectInspectorTab(.simulator)
+        restored.closeInspectorTab(.simulator)
+        XCTAssertTrue(restored.inspectorCollapsed)
+        XCTAssertTrue(restored.openInspectorTabs.isEmpty)
+
+        restored.toggleInspectorPanel()
+
+        XCTAssertEqual(restored.inspectorTab, .simulator)
+        XCTAssertEqual(restored.openInspectorTabs, [.simulator])
+        XCTAssertFalse(restored.inspectorCollapsed)
+
+        restored.toggleInspectorPanel()
+        XCTAssertTrue(restored.inspectorCollapsed)
+        restored.toggleInspectorPanel()
+        XCTAssertEqual(restored.inspectorTab, .simulator)
+        XCTAssertFalse(restored.inspectorCollapsed)
+    }
+
+    @MainActor
     func testSoloAndTeamInspectorChoicesAreAskedAndPersistedIndependently() {
         let model = AppModel(startImmediately: false)
         model.inspectorCollapsed = true
@@ -3036,8 +3065,8 @@ final class AppModelTests: XCTestCase {
         }
         XCTAssertEqual(entries.map(\.text), ["**Loading skill**", "**Fetching data**"])
         XCTAssertEqual(presentation.compactMap { item -> AssistantPhase? in
-            guard case .block(let block) = item else { return nil }
-            return block.assistantPhase
+            guard case .assistantSegment(let segment) = item else { return nil }
+            return segment.sourceBlock.assistantPhase
         }, [.commentary, .finalAnswer])
     }
 
@@ -3504,42 +3533,61 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.currentWorkPhase, "Working…", "hidden mode must not leak tool metadata")
     }
 
-    func testCompactTranscriptGroupsAllToolsForEachUserRequest() throws {
-        let firstUserID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000701"))
-        let secondUserID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000702"))
-        let emptyAssistantID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000703"))
-        let secondEmptyAssistantID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000704"))
-        let noteID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000705"))
-        let reasoningID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000706"))
-        let finalID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000707"))
-        let completionID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000708"))
+    func testTranscriptProjectsInterleavedActivityAtItsSourcePosition() throws {
+        let userID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000701"))
+        let reasoningID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000702"))
+        let commentaryID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000703"))
+        let firstToolID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000704"))
+        let secondToolID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000705"))
+        let laterCommentaryID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000706"))
+        let inlineID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000707"))
+        let thirdToolID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000708"))
+        let finalID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000709"))
+        let completionID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-00000000070A"))
 
-        let first = ToolPayload(
-            toolID: "first", tool: "list_dir", summary: "List files", detail: "",
-            status: .done
-        )
-        let second = ToolPayload(
-            toolID: "second", tool: "bash", summary: "Run tests", detail: "swift test",
-            status: .awaitingPermission
-        )
-        let third = ToolPayload(
-            toolID: "third", tool: "browser", summary: "Open preview", detail: "",
-            status: .error, result: "Could not connect"
-        )
-        let fourth = ToolPayload(
-            toolID: "fourth", tool: "read_file", summary: "Read README", detail: "",
-            status: .done
-        )
         let blocks = [
-            ChatBlock(id: firstUserID, kind: .user, text: "Do the work"),
-            ChatBlock(id: emptyAssistantID, kind: .assistant),
-            ChatBlock(kind: .tool, tool: first),
-            ChatBlock(id: noteID, kind: .note, text: "Context was compacted"),
-            ChatBlock(id: reasoningID, kind: .assistant, reasoningText: "Checking next step"),
-            ChatBlock(kind: .tool, tool: second),
-            ChatBlock(id: secondEmptyAssistantID, kind: .assistant),
-            ChatBlock(kind: .tool, tool: third),
-            ChatBlock(id: finalID, kind: .assistant, text: "Finished with one warning."),
+            ChatBlock(id: userID, kind: .user, text: "Audit this"),
+            ChatBlock(
+                id: reasoningID,
+                kind: .assistant,
+                reasoningSections: ["**Planning**", "Checking constraints"]
+            ),
+            ChatBlock(
+                id: commentaryID,
+                kind: .assistant,
+                text: "I’m checking the workspace.",
+                assistantPhase: .commentary
+            ),
+            ChatBlock(id: firstToolID, kind: .tool, tool: ToolPayload(
+                toolID: "read", tool: "read_file", summary: "Read files", detail: "",
+                status: .done
+            )),
+            ChatBlock(id: secondToolID, kind: .tool, tool: ToolPayload(
+                toolID: "test", tool: "bash", summary: "Run tests", detail: "swift test",
+                status: .awaitingPermission
+            )),
+            ChatBlock(
+                id: laterCommentaryID,
+                kind: .assistant,
+                text: "The first checks are complete.",
+                assistantPhase: .commentary
+            ),
+            ChatBlock(
+                id: inlineID,
+                kind: .assistant,
+                text: "<think>Compare the results</think>I found one more edge case.",
+                assistantPhase: .commentary
+            ),
+            ChatBlock(id: thirdToolID, kind: .tool, tool: ToolPayload(
+                toolID: "browse", tool: "browser", summary: "Open preview", detail: "",
+                status: .done
+            )),
+            ChatBlock(
+                id: finalID,
+                kind: .assistant,
+                text: "Everything is ready.",
+                assistantPhase: .finalAnswer
+            ),
             ChatBlock(
                 id: completionID,
                 kind: .note,
@@ -3549,9 +3597,6 @@ final class AppModelTests: XCTestCase {
                     durationMilliseconds: 1_000
                 )
             ),
-            ChatBlock(id: secondUserID, kind: .user, text: "Check one more file"),
-            ChatBlock(kind: .assistant),
-            ChatBlock(kind: .tool, tool: fourth),
         ]
 
         let collapsed = TranscriptPresentation.items(
@@ -3559,71 +3604,67 @@ final class AppModelTests: XCTestCase {
             toolVisibility: .collapsed,
             thinkingVisibility: .collapsed
         )
-        let hiddenTools = TranscriptPresentation.items(
-            from: blocks,
-            toolVisibility: .hidden,
-            thinkingVisibility: .collapsed
-        )
-        XCTAssertEqual(hiddenTools, collapsed, "compact tool modes share the same lossless grouping")
-        XCTAssertEqual(collapsed.count, 8)
+        XCTAssertEqual(collapsed.map(\.id), [
+            .block(userID),
+            .thinkingGroup(.init(sourceBlockID: reasoningID, ordinal: 0)),
+            .assistantSegment(.init(sourceBlockID: commentaryID, ordinal: 0)),
+            .toolGroup(firstToolID),
+            .assistantSegment(.init(sourceBlockID: laterCommentaryID, ordinal: 0)),
+            .thinkingGroup(.init(sourceBlockID: inlineID, ordinal: 0)),
+            .assistantSegment(.init(sourceBlockID: inlineID, ordinal: 0)),
+            .toolGroup(thirdToolID),
+            .assistantSegment(.init(sourceBlockID: finalID, ordinal: 0)),
+            .block(completionID),
+        ])
 
-        guard case .toolGroup(let firstGroupID, let firstTools) = collapsed[1] else {
-            return XCTFail("the first tool position should become one request group")
-        }
-        XCTAssertEqual(firstGroupID, firstUserID)
-        XCTAssertEqual(firstTools.map(\.toolID), ["first", "second", "third"])
-        XCTAssertEqual(ToolActivityAggregateStatus(tools: firstTools), .awaitingPermission)
+        guard case .toolGroup(_, let firstRun) = collapsed[3],
+              case .toolGroup(_, let secondRun) = collapsed[7]
+        else { return XCTFail("adjacent tool calls should form source-local runs") }
+        XCTAssertEqual(firstRun.map(\.toolID), ["read", "test"])
+        XCTAssertEqual(secondRun.map(\.toolID), ["browse"])
+        XCTAssertEqual(ToolActivityAggregateStatus(tools: firstRun), .awaitingPermission)
 
-        XCTAssertEqual(collapsed[2], .block(blocks[3]), "notes stay in transcript order")
-        guard case .thinkingGroup(let thinkingGroupID, let thinkingEntries) = collapsed[3] else {
-            return XCTFail("reasoning should become one request-level thought group")
-        }
-        XCTAssertEqual(thinkingGroupID, firstUserID)
-        XCTAssertEqual(thinkingEntries.map(\.text), ["Checking next step"])
-        XCTAssertEqual(collapsed[4], .block(blocks[8]), "the final answer stays visible")
-        XCTAssertEqual(collapsed[5], .block(blocks[9]), "completion remains the request boundary")
-
-        guard case .toolGroup(let secondGroupID, let secondTools) = collapsed[7] else {
-            return XCTFail("the next user request should own a separate group")
-        }
-        XCTAssertEqual(secondGroupID, secondUserID)
-        XCTAssertEqual(secondTools.map(\.toolID), ["fourth"])
-
-        let compactBlockIDs = collapsed.compactMap { item -> UUID? in
-            guard case .block(let block) = item else { return nil }
-            return block.id
-        }
-        XCTAssertFalse(compactBlockIDs.contains(emptyAssistantID))
-        XCTAssertFalse(compactBlockIDs.contains(secondEmptyAssistantID))
-        XCTAssertFalse(compactBlockIDs.contains(reasoningID))
-
-        let hiddenThinking = TranscriptPresentation.items(
+        let expanded = TranscriptPresentation.items(
             from: blocks,
             toolVisibility: .collapsed,
+            thinkingVisibility: .expanded
+        )
+        XCTAssertEqual(expanded, collapsed, "expanded thinking changes presentation, not order")
+
+        let hidden = TranscriptPresentation.items(
+            from: blocks,
+            toolVisibility: .hidden,
             thinkingVisibility: .hidden
         )
-        XCTAssertFalse(hiddenThinking.contains { item in
-            if case .thinkingGroup = item { return true }
-            return false
-        })
-        XCTAssertFalse(hiddenThinking.contains { item in
-            guard case .block(let block) = item else { return false }
-            return block.id == reasoningID
-        })
+        XCTAssertEqual(hidden.map(\.id), [
+            .block(userID),
+            .assistantSegment(.init(sourceBlockID: commentaryID, ordinal: 0)),
+            .toolGroup(firstToolID),
+            .assistantSegment(.init(sourceBlockID: laterCommentaryID, ordinal: 0)),
+            .assistantSegment(.init(sourceBlockID: inlineID, ordinal: 0)),
+            .toolGroup(thirdToolID),
+            .assistantSegment(.init(sourceBlockID: finalID, ordinal: 0)),
+            .block(completionID),
+        ])
 
         let verbose = TranscriptPresentation.items(
             from: blocks,
             toolVisibility: .verbose,
-            thinkingVisibility: .collapsed
+            thinkingVisibility: .expanded
         )
-        XCTAssertFalse(verbose.contains { item in
-            if case .toolGroup = item { return true }
-            return false
-        })
-        XCTAssertEqual(verbose.compactMap { item -> String? in
-            guard case .block(let block) = item else { return nil }
-            return block.tool?.toolID
-        }, ["first", "second", "third", "fourth"])
+        XCTAssertEqual(verbose.map(\.id), [
+            .block(userID),
+            .thinkingGroup(.init(sourceBlockID: reasoningID, ordinal: 0)),
+            .assistantSegment(.init(sourceBlockID: commentaryID, ordinal: 0)),
+            .block(firstToolID),
+            .block(secondToolID),
+            .assistantSegment(.init(sourceBlockID: laterCommentaryID, ordinal: 0)),
+            .thinkingGroup(.init(sourceBlockID: inlineID, ordinal: 0)),
+            .assistantSegment(.init(sourceBlockID: inlineID, ordinal: 0)),
+            .block(thirdToolID),
+            .assistantSegment(.init(sourceBlockID: finalID, ordinal: 0)),
+            .block(completionID),
+        ])
     }
 
     func testThoughtPresentationGroupsNativeAndInlineReasoningAndPreservesAnswers() throws {
@@ -3673,28 +3714,36 @@ final class AppModelTests: XCTestCase {
             toolVisibility: .verbose,
             thinkingVisibility: .collapsed
         )
-        let groups = collapsed.compactMap { item -> (UUID, [ThinkingPresentationEntry])? in
+        let groups = collapsed.compactMap { item -> (ThinkingPresentationGroupID, [ThinkingPresentationEntry])? in
             guard case .thinkingGroup(let id, let entries) = item else { return nil }
             return (id, entries)
         }
-        XCTAssertEqual(groups.count, 2)
-        XCTAssertEqual(groups[0].0, userID)
-        XCTAssertEqual(groups[0].1.map(\.text), [
-            "Inspect files",
-            "Choose the next check",
-            "Compare results",
-            "Prepare response",
+        XCTAssertEqual(groups.map(\.0), [
+            .init(sourceBlockID: nativeOnlyID, ordinal: 0),
+            .init(sourceBlockID: mixedID, ordinal: 0),
+            .init(sourceBlockID: mixedID, ordinal: 1),
+            .init(sourceBlockID: finalID, ordinal: 0),
+            .init(sourceBlockID: nextReasoningID, ordinal: 0),
         ])
-        XCTAssertEqual(groups[1].0, nextUserID)
-        XCTAssertEqual(groups[1].1.map(\.text), ["Second request"])
+        XCTAssertEqual(groups.map { $0.1.map(\.text) }, [
+            ["Inspect files"],
+            ["Choose the next check"],
+            ["Compare results"],
+            ["Prepare response"],
+            ["Second request"],
+        ])
 
-        let visibleAssistants = collapsed.compactMap { item -> ChatBlock? in
-            guard case .block(let block) = item, block.kind == .assistant else { return nil }
-            return block
+        let visibleAssistants = collapsed.compactMap { item -> AssistantPresentationSegment? in
+            guard case .assistantSegment(let segment) = item else { return nil }
+            return segment
         }
-        XCTAssertEqual(visibleAssistants.map(\.id), [mixedID, finalID])
-        XCTAssertEqual(visibleAssistants.map(\.text), ["Visible progress", "Before\n\nAfter"])
-        XCTAssertTrue(visibleAssistants.allSatisfy { $0.reasoningText == nil })
+        XCTAssertEqual(visibleAssistants.map(\.id), [
+            .init(sourceBlockID: mixedID, ordinal: 0),
+            .init(sourceBlockID: finalID, ordinal: 0),
+            .init(sourceBlockID: finalID, ordinal: 1),
+        ])
+        XCTAssertEqual(visibleAssistants.map(\.text), ["Visible progress", "Before", "After"])
+        XCTAssertTrue(visibleAssistants.allSatisfy { $0.displayBlock.reasoningText == nil })
 
         let expanded = TranscriptPresentation.items(
             from: blocks,
@@ -3712,22 +3761,24 @@ final class AppModelTests: XCTestCase {
             if case .thinkingGroup = item { return true }
             return false
         })
-        XCTAssertEqual(hidden.compactMap { item -> UUID? in
-            guard case .block(let block) = item, block.kind == .assistant else { return nil }
-            return block.id
-        }, [mixedID, finalID])
+        XCTAssertEqual(hidden.compactMap { item -> AssistantPresentationSegment.ID? in
+            guard case .assistantSegment(let segment) = item else { return nil }
+            return segment.id
+        }, visibleAssistants.map(\.id))
         XCTAssertFalse(hidden.contains { item in
-            guard case .block(let block) = item else { return false }
-            return block.id == nativeOnlyID || block.id == nextReasoningID
+            item.sourceBlockIDs.contains(nativeOnlyID) || item.sourceBlockIDs.contains(nextReasoningID)
         })
     }
 
     func testToolActivityGroupIdentityAndStatusRemainStableAsCallsUpdate() throws {
         let userID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000711"))
+        let firstToolBlockID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000712"))
+        let secondToolBlockID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000713"))
+        let commentaryID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000714"))
+        let thirdToolBlockID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000715"))
         var blocks = [
             ChatBlock(id: userID, kind: .user, text: "Run checks"),
-            ChatBlock(kind: .assistant),
-            ChatBlock(kind: .tool, tool: ToolPayload(
+            ChatBlock(id: firstToolBlockID, kind: .tool, tool: ToolPayload(
                 toolID: "one", tool: "bash", summary: "First check", detail: "",
                 status: .running
             )),
@@ -3741,12 +3792,11 @@ final class AppModelTests: XCTestCase {
         guard case .toolGroup(let initialID, let initialTools) = firstProjection[1] else {
             return XCTFail("expected the initial tool group")
         }
-        XCTAssertEqual(initialID, userID)
+        XCTAssertEqual(initialID, firstToolBlockID)
         XCTAssertEqual(ToolActivityAggregateStatus(tools: initialTools), .running)
 
-        blocks[2].tool?.status = .error
-        blocks.append(ChatBlock(kind: .assistant))
-        blocks.append(ChatBlock(kind: .tool, tool: ToolPayload(
+        blocks[1].tool?.status = .error
+        blocks.append(ChatBlock(id: secondToolBlockID, kind: .tool, tool: ToolPayload(
             toolID: "two", tool: "read_file", summary: "Fallback check", detail: "",
             status: .done
         )))
@@ -3762,6 +3812,26 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(updatedID, initialID)
         XCTAssertEqual(updatedTools.map(\.toolID), ["one", "two"])
         XCTAssertEqual(ToolActivityAggregateStatus(tools: updatedTools), .error)
+
+        blocks.append(ChatBlock(
+            id: commentaryID,
+            kind: .assistant,
+            text: "Checking another path",
+            assistantPhase: .commentary
+        ))
+        blocks.append(ChatBlock(id: thirdToolBlockID, kind: .tool, tool: ToolPayload(
+            toolID: "three", tool: "browser", summary: "Open preview", detail: "",
+            status: .done
+        )))
+        let separatedProjection = TranscriptPresentation.items(
+            from: blocks,
+            toolVisibility: .collapsed,
+            thinkingVisibility: .collapsed
+        )
+        XCTAssertEqual(separatedProjection.compactMap { item -> UUID? in
+            guard case .toolGroup(let id, _) = item else { return nil }
+            return id
+        }, [firstToolBlockID, thirdToolBlockID], "commentary ends an adjacent tool run")
 
         func statusTools(_ statuses: [ToolStatus]) -> [ToolPayload] {
             statuses.enumerated().map { index, status in
@@ -3787,6 +3857,44 @@ final class AppModelTests: XCTestCase {
             ),
             .awaitingPermission,
             "attention and active states follow the documented precedence"
+        )
+    }
+
+    func testCompactToolActivitySummaryUsesFirstSeenFamiliesAndFallbacks() {
+        func tool(_ id: String, _ name: String, _ summary: String = "") -> ToolPayload {
+            ToolPayload(
+                toolID: id,
+                tool: name,
+                summary: summary,
+                detail: "",
+                status: .done
+            )
+        }
+
+        let mixed = CompactToolActivitySummary(tools: [
+            tool("read", "read_file"),
+            tool("run", "bash"),
+            tool("read-again", "list_dir"),
+        ])
+        XCTAssertEqual(mixed.title, "Read files, ran command")
+        XCTAssertEqual(mixed.systemImage, "magnifyingglass")
+
+        XCTAssertEqual(CompactToolActivitySummary(tools: [
+            tool("q1", "request_user_input"),
+            tool("q2", "request_user_input"),
+            tool("q3", "request_user_input"),
+        ]).title, "Asked 3 questions")
+        XCTAssertEqual(CompactToolActivitySummary(tools: [
+            tool("e1", "apply_patch"),
+            tool("e2", "edit_file"),
+        ]).title, "Edited files")
+        XCTAssertEqual(
+            CompactToolActivitySummary(tools: [tool("custom", "sync_records", "**Synced records**")]).title,
+            "Synced records"
+        )
+        XCTAssertEqual(
+            CompactToolActivitySummary(tools: [tool("custom", "sync_records")]).title,
+            "Used tools"
         )
     }
 

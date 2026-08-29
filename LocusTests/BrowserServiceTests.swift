@@ -1172,6 +1172,233 @@ final class NotesStoreTests: XCTestCase {
         return url
     }
 
+    /// Writes a document straight to disk, bypassing the store, so a load can
+    /// be tested against a state only an older build or an external edit
+    /// produces.
+    private func writeDocument(
+        in support: URL,
+        scope: NotesScope,
+        digest: String,
+        plain: String?,
+        styled: NSAttributedString?
+    ) throws {
+        let directory = support
+            .appendingPathComponent("Locus", isDirectory: true)
+            .appendingPathComponent(NotesStore.directoryName(for: scope), isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if let plain {
+            try plain.write(
+                to: directory.appendingPathComponent("\(digest).txt"),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+        if let styled {
+            try NSKeyedArchiver.archivedData(withRootObject: styled, requiringSecureCoding: true)
+                .write(to: directory.appendingPathComponent("\(digest).styled"))
+        }
+    }
+
+    func testStyledArchiveIsAdoptedWhenThePlainMirrorIsAbsent() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let support = root.appendingPathComponent("Application Support", isDirectory: true)
+        let documentID = NotesStore.globalDocumentID
+        try writeDocument(
+            in: support,
+            scope: .global,
+            digest: documentID.digest,
+            plain: nil,
+            styled: NotesTextStyle.plain("Release on Friday")
+        )
+
+        let store = NotesStore.testingStore(
+            documentID: documentID,
+            scope: .global,
+            applicationSupport: support
+        )
+        // Loading as empty here is what would let the next keystroke archive an
+        // empty string over the only surviving copy of this text.
+        XCTAssertEqual(store.text, "Release on Friday")
+        XCTAssertEqual(store.attributedText.string, "Release on Friday")
+
+        store.update("Release on Friday, plus the notary job")
+        store.flushForTesting()
+        let recovered = NotesStore.testingStore(
+            documentID: documentID,
+            scope: .global,
+            applicationSupport: support
+        )
+        XCTAssertEqual(recovered.text, "Release on Friday, plus the notary job")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recovered.fileURL.path))
+    }
+
+    func testEmptyPlainMirrorIsNotRefilledByAStaleArchive() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let support = root.appendingPathComponent("Application Support", isDirectory: true)
+        let documentID = NotesStore.globalDocumentID
+        // A mirror the user really did clear is not the same as a missing one.
+        try writeDocument(
+            in: support,
+            scope: .global,
+            digest: documentID.digest,
+            plain: "",
+            styled: NotesTextStyle.plain("Text the user deleted")
+        )
+
+        let store = NotesStore.testingStore(
+            documentID: documentID,
+            scope: .global,
+            applicationSupport: support
+        )
+        XCTAssertEqual(store.text, "")
+    }
+
+    func testDigestLookupAndLogicalLookupReturnTheSameStoreInstance() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = root.appendingPathComponent("Project", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+
+        // Two surfaces reaching one document must not become two stores, each
+        // with its own debounce timer writing over the other.
+        let byName = NotesStore.shared(
+            workspacePath: workspace.path,
+            sessionID: "chat-one",
+            scope: .workspace
+        )
+        let byDigest = NotesStore.shared(
+            documentID: NotesStore.documentID(
+                workspacePath: workspace.path,
+                sessionID: "chat-one",
+                scope: .workspace
+            ),
+            scope: .workspace
+        )
+        XCTAssertTrue(byName === byDigest)
+        XCTAssertEqual(byName.documentID, byDigest.documentID)
+    }
+
+    func testDocumentIdentityMatchesTheFilesTheStoreWrites() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let support = root.appendingPathComponent("Application Support", isDirectory: true)
+        let store = NotesStore.testingStore(
+            workspacePath: root.appendingPathComponent("Project").path,
+            sessionID: "",
+            scope: .workspace,
+            applicationSupport: support
+        )
+        XCTAssertEqual(
+            store.fileURL.deletingPathExtension().lastPathComponent,
+            store.documentID.digest
+        )
+        XCTAssertEqual(
+            store.fileURL.deletingLastPathComponent().lastPathComponent,
+            store.documentID.directoryName
+        )
+        XCTAssertEqual(store.styledFileURL.deletingPathExtension().lastPathComponent,
+                       store.documentID.digest)
+        XCTAssertEqual(NotesStore.digest(of: "global"), NotesStore.globalDocumentID.digest)
+    }
+
+    func testSavingRecordsANameThatOutlivesItsWorkspace() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let support = root.appendingPathComponent("Application Support", isDirectory: true)
+        let workspace = root.appendingPathComponent("buy-bot", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+
+        let store = NotesStore.testingStore(
+            workspacePath: workspace.path,
+            sessionID: "",
+            scope: .workspace,
+            applicationSupport: support
+        )
+        store.update("Release checklist")
+        store.flushForTesting()
+
+        let record = try XCTUnwrap(NotesNameIndex.load(in: support)[store.documentID])
+        XCTAssertEqual(record.title, "buy-bot")
+        XCTAssertEqual(record.scopeRaw, NotesScope.workspace.rawValue)
+        // The workspace itself is what disappears; the record is the only thing
+        // that can still name the digest afterwards.
+        try FileManager.default.removeItem(at: workspace)
+        XCTAssertEqual(NotesNameIndex.load(in: support)[store.documentID]?.title, "buy-bot")
+    }
+
+    func testNameIndexSurvivesOneCorruptRecordAndKeepsAKnownTitle() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let support = root.appendingPathComponent("Application Support", isDirectory: true)
+        let good = NotesNameRecord(
+            directoryName: "Workspace Notes",
+            digest: String(repeating: "a", count: 64),
+            scopeRaw: NotesScope.workspace.rawValue,
+            workspacePath: "/tmp/one",
+            sessionID: "",
+            title: "one",
+            updatedAt: Date()
+        )
+        NotesNameIndex.merge([good], in: support)
+
+        // Splice a malformed element in beside the valid one.
+        let url = NotesNameIndex.fileURL(in: support)
+        var raw = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: try Data(contentsOf: url)) as? [Any]
+        )
+        raw.append(["digest": 17])
+        try JSONSerialization.data(withJSONObject: raw).write(to: url)
+
+        let loaded = NotesNameIndex.load(in: support)
+        XCTAssertEqual(loaded.count, 1, "one bad record must not cost every name")
+        XCTAssertEqual(loaded[good.documentID]?.title, "one")
+
+        // A writer that does not know the title must not blank the stored one.
+        var blank = good
+        blank.title = ""
+        blank.sessionID = "later"
+        NotesNameIndex.merge([blank], in: support)
+        XCTAssertEqual(NotesNameIndex.load(in: support)[good.documentID]?.title, "one")
+    }
+
+    func testReloadAdoptsExternalTextButNeverDiscardsUnsavedEdits() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let support = root.appendingPathComponent("Application Support", isDirectory: true)
+        let documentID = NotesStore.globalDocumentID
+        let store = NotesStore.testingStore(
+            documentID: documentID,
+            scope: .global,
+            applicationSupport: support
+        )
+        store.update("first")
+        store.flushForTesting()
+
+        try writeDocument(
+            in: support,
+            scope: .global,
+            digest: documentID.digest,
+            plain: "edited elsewhere",
+            styled: nil
+        )
+        store.reloadFromDiskIfClean()
+        XCTAssertEqual(store.text, "edited elsewhere")
+
+        // An edit still waiting on the debounce outranks anything on disk.
+        store.update("typed but not yet saved")
+        try writeDocument(
+            in: support,
+            scope: .global,
+            digest: documentID.digest,
+            plain: "a competing write",
+            styled: nil
+        )
+        store.reloadFromDiskIfClean()
+        XCTAssertEqual(store.text, "typed but not yet saved")
+    }
+
     func testWorkspaceIsTheDefaultAndScopeSettingsRoundTripSafely() throws {
         XCTAssertEqual(AppSettings().resolvedNotesScope, .workspace)
         XCTAssertEqual(
