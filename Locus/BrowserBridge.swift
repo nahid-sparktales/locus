@@ -165,11 +165,6 @@ enum BrowserBridge {
         MAIN: 'main', NAV: 'navigation', HEADER: 'banner', FOOTER: 'contentinfo',
         ASIDE: 'complementary', FORM: 'form', SECTION: 'region', ARTICLE: 'article',
       };
-      const SECURE_AUTOCOMPLETE = new Set([
-        'current-password', 'new-password', 'cc-number', 'cc-csc', 'cc-exp',
-        'one-time-code',
-      ]);
-
       function textInputRole(type) {
         switch (type) {
           case 'checkbox': return 'checkbox';
@@ -283,10 +278,22 @@ enum BrowserBridge {
       }
 
       function isSecure(element) {
-        if (element.tagName !== 'INPUT') { return false; }
-        if ((element.getAttribute('type') || '').toLowerCase() === 'password') { return true; }
+        return secureCategory(element) !== null;
+      }
+
+      function secureCategory(element) {
+        if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(element.tagName)) { return null; }
+        if (element.tagName === 'INPUT'
+            && (element.getAttribute('type') || '').toLowerCase() === 'password') {
+          return 'password';
+        }
         const autocomplete = (element.getAttribute('autocomplete') || '').toLowerCase();
-        return SECURE_AUTOCOMPLETE.has(autocomplete.split(/\s+/).pop() || '');
+        const token = autocomplete.split(/\s+/).pop() || '';
+        if (token === 'current-password' || token === 'new-password') { return 'password'; }
+        if (token === 'cc-csc') { return 'securityCode'; }
+        if (token.startsWith('cc-')) { return 'paymentCard'; }
+        if (token === 'one-time-code') { return 'oneTimeCode'; }
+        return null;
       }
 
       function detailOf(element, role) {
@@ -421,6 +428,7 @@ enum BrowserBridge {
 
       function describeElement(element) {
         const role = roleOf(element);
+        const sensitiveCategory = secureCategory(element);
         const form = element.form || (element.closest ? element.closest('form') : null);
         const formHasSecure = !!(form && form.querySelector(
           'input[type=password], input[autocomplete~=current-password], '
@@ -431,7 +439,8 @@ enum BrowserBridge {
           stale: false,
           role: role,
           name: nameOf(element, role),
-          secure: isSecure(element),
+          secure: sensitiveCategory !== null,
+          secureCategory: sensitiveCategory,
           formHasSecure: formHasSecure,
           tag: element.tagName,
         };
@@ -1251,6 +1260,17 @@ enum BrowserBridge {
         element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
       }
 
+      function setNativeValue(element, value) {
+        const prototype = element instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : element instanceof HTMLSelectElement
+            ? HTMLSelectElement.prototype
+            : HTMLInputElement.prototype;
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+        if (descriptor && descriptor.set) { descriptor.set.call(element, String(value)); }
+        else { element.value = String(value); }
+      }
+
       function matching(form, selector) {
         return (form || document).querySelector(selector);
       }
@@ -1264,12 +1284,14 @@ enum BrowserBridge {
             'input[autocomplete~=username],input[type=email],input[name*=user i],input[name*=email i]');
           const pass = matching(form,
             'input[type=password],input[autocomplete~=current-password],input[autocomplete~=new-password]');
-          if (user && typeof values.username === 'string') { user.value = values.username; fire(user); }
-          if (pass && typeof values.password === 'string') { pass.value = values.password; fire(pass); }
+          if (user && typeof values.username === 'string') { setNativeValue(user, values.username); fire(user); }
+          if (pass && typeof values.password === 'string') { setNativeValue(pass, values.password); fire(pass); }
           return !!pass;
         }
         const map = values.kind === 'paymentCard' ? {
           'cc-name': values.cardholder, 'cc-number': values.number,
+          'cc-exp': values.expirationMonth && values.expirationYear
+            ? values.expirationMonth + '/' + values.expirationYear : '',
           'cc-exp-month': values.expirationMonth, 'cc-exp-year': values.expirationYear,
         } : {
           'name': values.fullName, 'organization': values.organization,
@@ -1281,8 +1303,9 @@ enum BrowserBridge {
         let filled = false;
         for (const [token, value] of Object.entries(map)) {
           if (value === undefined || value === null || String(value) === '') { continue; }
-          const element = matching(form, 'input[autocomplete~="' + token + '"]');
-          if (element) { element.value = String(value); fire(element); filled = true; }
+          const attribute = '[autocomplete~="' + token + '"]';
+          const element = matching(form, 'input' + attribute + ',textarea' + attribute + ',select' + attribute);
+          if (element) { setNativeValue(element, value); fire(element); filled = true; }
         }
         return filled;
       }

@@ -38,7 +38,13 @@ struct BrowserSettingsView: View {
                             Text(access.title).tag(access.rawValue)
                         }
                     }
-                    Text("Agents can navigate normally. Passwords, autofill, files, payment fields, and settings remain user-only. History access starts disabled and shares only page title, address, and visit time.")
+                    Toggle("Let the model use saved passwords", isOn: $draft.browserAgentPasswordsEnabled)
+                        .accessibilityIdentifier("settings.browser.modelPasswords")
+                    Toggle("Let the model use saved contact information", isOn: $draft.browserAgentContactsEnabled)
+                        .accessibilityIdentifier("settings.browser.modelContacts")
+                    Toggle("Let the model use saved payment cards", isOn: $draft.browserAgentPaymentCardsEnabled)
+                        .accessibilityIdentifier("settings.browser.modelCards")
+                    Text("Enabled records can be returned as raw values to the active model, including hosted providers. Passwords are limited to the open site's exact origin. Enabling payment cards also lets the model complete checkout; security codes are never stored.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -46,8 +52,8 @@ struct BrowserSettingsView: View {
                 Section("Your browser data") {
                     managerLink(.passwords, symbol: "key.fill", summary: vaultSummary)
                         .id("settings.browser.passwords")
-                    managerLink(.contacts, symbol: "person.text.rectangle", summary: vaultLockedSummary(browser.autofillVault.contacts.count, noun: "contact"))
-                    managerLink(.cards, symbol: "creditcard.fill", summary: vaultLockedSummary(browser.autofillVault.cards.count, noun: "card"))
+                    managerLink(.contacts, symbol: "person.text.rectangle", summary: vaultSummary(browser.autofillVault.contacts.count, noun: "contact"))
+                    managerLink(.cards, symbol: "creditcard.fill", summary: vaultSummary(browser.autofillVault.cards.count, noun: "card"))
                     managerLink(.history, symbol: "clock.arrow.circlepath", summary: profileSummary(browser.activityStore.history.count, noun: "visit"))
                         .id("settings.browser.history")
                     managerLink(.downloads, symbol: "arrow.down.circle", summary: downloadSummary)
@@ -85,7 +91,7 @@ struct BrowserSettingsView: View {
                 Section {
                     SettingsAdvancedDisclosureRow(
                         isExpanded: $advancedExpanded,
-                        detail: "Input behavior, search, autofill security, and debugging"
+                        detail: "Input behavior, search, and debugging"
                     )
                     .accessibilityIdentifier("settings.browser.advanced")
                 }
@@ -106,6 +112,7 @@ struct BrowserSettingsView: View {
         }
         .onAppear { openDeepLinkIfNeeded() }
         .onChange(of: deepLink) { _, _ in openDeepLinkIfNeeded() }
+        .task { if !browser.autofillVault.isReady { await browser.autofillVault.load() } }
     }
 
     private func openDeepLinkIfNeeded() {
@@ -130,11 +137,12 @@ struct BrowserSettingsView: View {
     }
 
     private var vaultSummary: String {
-        vaultLockedSummary(browser.autofillVault.passwords.count, noun: "password")
+        vaultSummary(browser.autofillVault.passwords.count, noun: "password")
     }
 
-    private func vaultLockedSummary(_ count: Int, noun: String) -> String {
-        guard browser.autofillVault.isUnlocked else { return "Autofill locked" }
+    private func vaultSummary(_ count: Int, noun: String) -> String {
+        if browser.autofillVault.isLoading { return "Loading Autofill…" }
+        guard browser.autofillVault.isReady else { return "Autofill unavailable" }
         return "\(count) saved \(noun)\(count == 1 ? "" : "s")"
     }
 
@@ -224,13 +232,6 @@ struct BrowserSettingsView: View {
                     }
                 }
             }
-            Picker("Authenticate autofill", selection: $draft.browserAutofillAuthModeRaw) {
-                ForEach(BrowserAutofillAuthMode.allCases) { mode in
-                    Text(mode.title).tag(mode.rawValue)
-                }
-            }
-            Button("Lock Autofill Now") { browser.autofillVault.lock() }
-                .disabled(!browser.autofillVault.isUnlocked)
             Toggle("Allow the Web Inspector to attach", isOn: $draft.browserWebInspector)
                 .accessibilityIdentifier("settings.browser.webInspector")
             Text("Web Inspector can read the current page's cookies and storage. Leave it off unless you are debugging.")
@@ -240,18 +241,25 @@ struct BrowserSettingsView: View {
     }
 }
 
-private struct BrowserVaultLockedView: View {
-    let title: String
-    let unlock: () -> Void
+private struct BrowserVaultUnavailableView: View {
+    @ObservedObject var vault: BrowserAutofillVault
 
     var body: some View {
-        ContentUnavailableView {
-            Label("Autofill Locked", systemImage: "lock.fill")
-        } description: {
-            Text("Unlock with Touch ID or your Mac password to manage \(title.lowercased()).")
-        } actions: {
-            Button("Unlock Autofill", action: unlock)
-                .buttonStyle(.borderedProminent)
+        if vault.isLoading {
+            ContentUnavailableView {
+                ProgressView()
+            } description: {
+                Text("Loading encrypted Autofill data…")
+            }
+        } else {
+            ContentUnavailableView {
+                Label("Autofill Unavailable", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(vault.lastError ?? "Autofill data could not be loaded.")
+            } actions: {
+                Button("Try Again") { Task { await vault.load() } }
+                    .buttonStyle(.borderedProminent)
+            }
         }
     }
 }
@@ -263,44 +271,56 @@ private struct BrowserPasswordManager: View {
 
     var body: some View {
         Group {
-            if vault.isUnlocked {
-                List {
-                    Section {
-                        ForEach(vault.passwords) { password in
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text(password.displayOrigin).fontWeight(.medium)
-                                    Text(password.username.isEmpty ? "No username" : password.username)
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Text("••••••••").foregroundStyle(.secondary)
-                                Button("Edit") { editor = password }.buttonStyle(.borderless)
-                                Button("Delete", role: .destructive) {
-                                    do { try vault.removePassword(password.id) }
-                                    catch { self.error = error.localizedDescription }
-                                }.buttonStyle(.borderless)
-                            }
-                            .padding(.vertical, 4)
+            if vault.isReady {
+                if vault.passwords.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Saved Passwords", systemImage: "key")
+                    } description: {
+                        Text("Passwords you add here stay encrypted on this Mac.")
+                    } actions: {
+                        Button("Add Password") {
+                            editor = BrowserPasswordRecord(origin: "", username: "", password: "")
                         }
-                    } header: {
-                        HStack {
-                            Text("Saved Passwords")
-                            Spacer()
-                            Button("Add Password") { editor = BrowserPasswordRecord(origin: "", username: "", password: "") }
-                        }
+                        .buttonStyle(.borderedProminent)
                     }
-                    Section {
-                        Text("Suggestions appear only after you focus an eligible field. Agents cannot view or fill passwords.")
-                            .foregroundStyle(.secondary)
+                } else {
+                    List {
+                        Section {
+                            ForEach(vault.passwords) { password in
+                                HStack {
+                                    VStack(alignment: .leading) {
+                                        Text(password.displayOrigin).fontWeight(.medium)
+                                        Text(password.username.isEmpty ? "No username" : password.username)
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Text("••••••••").foregroundStyle(.secondary)
+                                    Button("Edit") { editor = password }.buttonStyle(.borderless)
+                                    Button("Delete", role: .destructive) {
+                                        do { try vault.removePassword(password.id) }
+                                        catch { self.error = error.localizedDescription }
+                                    }.buttonStyle(.borderless)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        } header: {
+                            HStack {
+                                Text("Saved Passwords")
+                                Spacer()
+                                Button("Add Password") { editor = BrowserPasswordRecord(origin: "", username: "", password: "") }
+                            }
+                        }
+                        Section {
+                            Text("Suggestions appear after an eligible field is focused. Model access follows the saved Browser setting and is limited to this website's exact origin.")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             } else {
-                BrowserVaultLockedView(title: "Passwords") {
-                    Task { await vault.unlock(reason: "Manage saved passwords") }
-                }
+                BrowserVaultUnavailableView(vault: vault)
             }
         }
+        .task { if !vault.isReady { await vault.load() } }
         .sheet(item: $editor) { record in
             BrowserPasswordEditor(record: record) { value in
                 do { try vault.save(value); editor = nil }
@@ -342,33 +362,43 @@ private struct BrowserContactManager: View {
 
     var body: some View {
         Group {
-            if vault.isUnlocked {
-                List {
-                    Section {
-                        ForEach(vault.contacts) { contact in
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text(contact.fullName.isEmpty ? contact.label : contact.fullName).fontWeight(.medium)
-                                    Text(contact.summary).font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Button("Edit") { editor = contact }.buttonStyle(.borderless)
-                                Button("Delete", role: .destructive) {
-                                    do { try vault.removeContact(contact.id) }
-                                    catch { self.error = error.localizedDescription }
-                                }.buttonStyle(.borderless)
-                            }.padding(.vertical, 4)
+            if vault.isReady {
+                if vault.contacts.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Saved Contact Information", systemImage: "person.text.rectangle")
+                    } description: {
+                        Text("Add a contact to fill names, addresses, email, and phone fields.")
+                    } actions: {
+                        Button("Add Contact") { editor = BrowserContactRecord() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                } else {
+                    List {
+                        Section {
+                            ForEach(vault.contacts) { contact in
+                                HStack {
+                                    VStack(alignment: .leading) {
+                                        Text(contact.fullName.isEmpty ? contact.label : contact.fullName).fontWeight(.medium)
+                                        Text(contact.summary).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Button("Edit") { editor = contact }.buttonStyle(.borderless)
+                                    Button("Delete", role: .destructive) {
+                                        do { try vault.removeContact(contact.id) }
+                                        catch { self.error = error.localizedDescription }
+                                    }.buttonStyle(.borderless)
+                                }.padding(.vertical, 4)
+                            }
+                        } header: {
+                            HStack { Text("Saved Contact Information"); Spacer(); Button("Add Contact") { editor = BrowserContactRecord() } }
                         }
-                    } header: {
-                        HStack { Text("Saved Contact Information"); Spacer(); Button("Add Contact") { editor = BrowserContactRecord() } }
                     }
                 }
             } else {
-                BrowserVaultLockedView(title: "Contact Information") {
-                    Task { await vault.unlock(reason: "Manage contact information") }
-                }
+                BrowserVaultUnavailableView(vault: vault)
             }
         }
+        .task { if !vault.isReady { await vault.load() } }
         .sheet(item: $editor) { record in
             BrowserContactEditor(record: record) { value in
                 do { try vault.save(value); editor = nil }
@@ -419,39 +449,49 @@ private struct BrowserCardManager: View {
 
     var body: some View {
         Group {
-            if vault.isUnlocked {
-                List {
-                    Section {
-                        ForEach(vault.cards) { card in
-                            HStack {
-                                Image(systemName: "creditcard.fill").foregroundStyle(.secondary)
-                                VStack(alignment: .leading) {
-                                    Text(card.nickname).fontWeight(.medium)
-                                    Text("\(card.maskedNumber) · \(String(format: "%02d", card.expirationMonth))/\(card.expirationYear)")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Button("Edit") { editor = card }.buttonStyle(.borderless)
-                                Button("Delete", role: .destructive) {
-                                    do { try vault.removeCard(card.id) }
-                                    catch { self.error = error.localizedDescription }
-                                }.buttonStyle(.borderless)
-                            }.padding(.vertical, 4)
-                        }
-                    } header: {
-                        HStack { Text("Saved Payment Cards"); Spacer(); Button("Add Card") { editor = BrowserPaymentCardRecord() } }
+            if vault.isReady {
+                if vault.cards.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Saved Payment Cards", systemImage: "creditcard")
+                    } description: {
+                        Text("Security codes are never requested or stored.")
+                    } actions: {
+                        Button("Add Card") { editor = BrowserPaymentCardRecord() }
+                            .buttonStyle(.borderedProminent)
                     }
-                    Section {
-                        Label("Locus never asks for or stores CVC, CVV, or CID security codes.", systemImage: "lock.shield")
-                            .foregroundStyle(.secondary)
+                } else {
+                    List {
+                        Section {
+                            ForEach(vault.cards) { card in
+                                HStack {
+                                    Image(systemName: "creditcard.fill").foregroundStyle(.secondary)
+                                    VStack(alignment: .leading) {
+                                        Text(card.nickname).fontWeight(.medium)
+                                        Text("\(card.maskedNumber) · \(String(format: "%02d", card.expirationMonth))/\(card.expirationYear)")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Button("Edit") { editor = card }.buttonStyle(.borderless)
+                                    Button("Delete", role: .destructive) {
+                                        do { try vault.removeCard(card.id) }
+                                        catch { self.error = error.localizedDescription }
+                                    }.buttonStyle(.borderless)
+                                }.padding(.vertical, 4)
+                            }
+                        } header: {
+                            HStack { Text("Saved Payment Cards"); Spacer(); Button("Add Card") { editor = BrowserPaymentCardRecord() } }
+                        }
+                        Section {
+                            Label("Locus never asks for or stores CVC, CVV, or CID security codes.", systemImage: "lock.shield")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             } else {
-                BrowserVaultLockedView(title: "Payment Cards") {
-                    Task { await vault.unlock(reason: "Manage payment cards") }
-                }
+                BrowserVaultUnavailableView(vault: vault)
             }
         }
+        .task { if !vault.isReady { await vault.load() } }
         .sheet(item: $editor) { record in
             BrowserCardEditor(record: record, contacts: vault.contacts) { value in
                 do { try vault.save(value); editor = nil }
@@ -847,8 +887,8 @@ private struct BrowserImportManager: View {
 
     private func commit(_ preview: BrowserImportPreview) async {
         if !preview.passwords.isEmpty || !preview.contacts.isEmpty {
-            guard await browser.autofillVault.unlock(reason: "Import Autofill data") else {
-                error = browser.autofillVault.lastError ?? "Autofill could not be unlocked."
+            guard await browser.autofillVault.load() else {
+                error = browser.autofillVault.lastError ?? "Autofill data could not be loaded."
                 return
             }
         }

@@ -165,7 +165,13 @@ class PermissionManager:
 #: argument is `ref_12`, and the meaning lives in the page, not the call. The
 #: page-aware half of this gate is on the Swift side, where the element's type
 #: and its form are actually known.
-_BROWSER_TYPED_ARGUMENT_TOOLS = {"browser_input", "browser_javascript"}
+# `browser_input` is authorized against the actual target element by the native
+# broker, where category settings and one-time-code classification are known.
+# Scanning its text here would reject an enabled password just because the
+# value happened to contain a word such as "secret". JavaScript has no target
+# element for the native broker to classify, so its credential-content guard
+# remains in place.
+_BROWSER_TYPED_ARGUMENT_TOOLS = {"browser_javascript"}
 _BROWSER_TYPED_KEYS = ("text", "value", "code")
 _BROWSER_CREDENTIAL_TERMS = (
     "password", "passcode", "credential", "api key", "secret",

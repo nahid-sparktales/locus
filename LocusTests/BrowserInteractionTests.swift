@@ -178,6 +178,7 @@ final class BrowserInteractionTests: XCTestCase {
         // A click carrying pixels names no element, so this is the only way to
         // know those pixels are a password field.
         XCTAssertEqual(described["secure"] as? Bool, true)
+        XCTAssertEqual(described["secureCategory"] as? String, "password")
         // Plain page furniture is described, not refused — only the field
         // itself is secure.
         let body = try await object("return __locus.describeAt(x, y)", ["x": 100, "y": 300])
@@ -186,6 +187,32 @@ final class BrowserInteractionTests: XCTestCase {
         // to be able to tell apart from "nothing sensitive here".
         let empty = try await object("return __locus.describeAt(x, y)", ["x": 100, "y": 50_000])
         XCTAssertEqual(empty["missing"] as? Bool, true)
+    }
+
+    func testSecureFieldsAreClassifiedByKind() async throws {
+        try await load("""
+        <body style="margin:0">
+          <input id="card" autocomplete="cc-number"
+                 style="position:absolute;left:0;top:0;width:200px;height:40px">
+          <input id="code" autocomplete="cc-csc"
+                 style="position:absolute;left:0;top:50px;width:200px;height:40px">
+          <input id="otp" autocomplete="one-time-code"
+                 style="position:absolute;left:0;top:100px;width:200px;height:40px">
+          <select id="expiry" autocomplete="cc-exp"
+                  style="position:absolute;left:0;top:150px;width:200px;height:40px">
+            <option>12/2035</option>
+          </select>
+        </body>
+        """)
+
+        let card = try await object("return __locus.describeAt(x, y)", ["x": 100, "y": 20])
+        XCTAssertEqual(card["secureCategory"] as? String, "paymentCard")
+        let code = try await object("return __locus.describeAt(x, y)", ["x": 100, "y": 70])
+        XCTAssertEqual(code["secureCategory"] as? String, "securityCode")
+        let otp = try await object("return __locus.describeAt(x, y)", ["x": 100, "y": 120])
+        XCTAssertEqual(otp["secureCategory"] as? String, "oneTimeCode")
+        let expiry = try await object("return __locus.describeAt(x, y)", ["x": 100, "y": 170])
+        XCTAssertEqual(expiry["secureCategory"] as? String, "paymentCard")
     }
 
     func testLocatingARefReportsThePointAndWhatIsCoveringIt() async throws {

@@ -629,16 +629,6 @@ struct BrowserPanel: View {
             Button("Downloads", systemImage: "arrow.down.circle") {
                 downloadsOpen = true
             }
-            Button(
-                browser.autofillVault.isUnlocked ? "Lock Autofill" : "Unlock Autofill",
-                systemImage: browser.autofillVault.isUnlocked ? "lock.fill" : "lock.open"
-            ) {
-                if browser.autofillVault.isUnlocked {
-                    browser.autofillVault.lock()
-                } else {
-                    Task { await browser.autofillVault.unlock(reason: "Unlock Locus Autofill") }
-                }
-            }
             Button("Reopen Closed Tab", systemImage: "arrow.uturn.backward") {
                 browser.userReopenClosedTab(sessionID: sessionID)
             }
@@ -916,8 +906,10 @@ private struct BrowserAutofillSuggestionBar: View {
         HStack(spacing: 8) {
             Image(systemName: symbol).foregroundStyle(LocusTheme.signalDeep)
             Text(title).font(.locus(size: 9, weight: .semibold))
-            if !vault.isUnlocked {
-                Button("Unlock Autofill") { Task { await vault.unlock(reason: "Show Autofill suggestions") } }
+            if vault.isLoading {
+                ProgressView().controlSize(.small)
+            } else if !vault.isReady {
+                Button("Retry Autofill") { Task { await vault.load() } }
                     .buttonStyle(.borderedProminent)
             } else {
                 suggestions
@@ -931,6 +923,7 @@ private struct BrowserAutofillSuggestionBar: View {
         .background(.regularMaterial)
         .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
         .accessibilityIdentifier("browser.autofill.suggestions")
+        .task { if !vault.isReady { await vault.load() } }
     }
 
     private var symbol: String {

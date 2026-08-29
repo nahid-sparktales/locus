@@ -4,6 +4,11 @@ Locus uses a dedicated GitHub App device flow for the bundled remote GitHub MCP 
 
 ## GitHub App
 
+The production registration currently uses:
+
+- GitHub App ID: `4754650` (administrative identifier; not sent by Locus).
+- OAuth Client ID: `Iv23liCL3tit1VOgBjWF` (public identifier embedded in builds).
+
 Create a GitHub App owned by the Locus release organization with:
 
 - Device Flow enabled.
@@ -22,9 +27,9 @@ The app's public client ID is the only value embedded in Locus. Device flow does
 
 ## Build setting
 
-Set `LOCUS_GITHUB_OAUTH_CLIENT_ID` in the signed release configuration. Both direct-download and Mac App Store Info.plists expose it as `LocusGitHubOAuthClientID`.
+`project.yml` defines `LOCUS_GITHUB_OAUTH_CLIENT_ID=Iv23liCL3tit1VOgBjWF` for both app targets. Both direct-download and Mac App Store Info.plists expose it as `LocusGitHubOAuthClientID`. Because this is a public OAuth identifier, it is safe to include in source and signed builds; no GitHub client secret is embedded.
 
-Development builds can set the `LOCUS_GITHUB_OAUTH_CLIENT_ID` environment variable. If neither value exists, Locus explains that account sign-in is unavailable and keeps **Use token instead** available.
+Development or release builds can override the configured value with the `LOCUS_GITHUB_OAUTH_CLIENT_ID` build setting when rotating the GitHub App registration. A process environment value remains a development fallback when the bundle contains no resolved value. If neither value exists, Locus explains that account sign-in is unavailable and keeps **Use token instead** available.
 
 ## Runtime behavior
 

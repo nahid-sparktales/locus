@@ -229,6 +229,34 @@ final class BrowserServiceTests: XCTestCase {
         tab.webView.navigationDelegate = service
     }
 
+    private func installAutofillVault(
+        passwords: [BrowserPasswordRecord] = [],
+        contacts: [BrowserContactRecord] = [],
+        cards: [BrowserPaymentCardRecord] = []
+    ) async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LocusBrowserServiceTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let vault = BrowserAutofillVault(
+            fileURL: directory.appendingPathComponent("vault.bin"),
+            keyProvider: InMemoryBrowserVaultKeyProvider()
+        )
+        let loaded = await vault.load()
+        XCTAssertTrue(loaded)
+        for record in passwords { try vault.save(record) }
+        for record in contacts { try vault.save(record) }
+        for record in cards { try vault.save(record) }
+        service.cancelPendingActions()
+        service = BrowserService(autofillVault: vault)
+    }
+
+    private func jsonObject(in result: [String: Any]) throws -> [String: Any] {
+        let text = try XCTUnwrap(result["text"] as? String)
+        let data = try XCTUnwrap(text.data(using: .utf8))
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
     func testANewTabOpensInTheBackgroundWithoutStealingTheView() async throws {
         let first = service.tab(for: "session-tabs")
         try await load("<title>First</title><body>one</body>", into: first)
@@ -442,6 +470,221 @@ final class BrowserServiceTests: XCTestCase {
         )
         let value = try await tab.webView.evaluateJavaScript("document.getElementById('p').value") as? String
         XCTAssertEqual(value, "")
+    }
+
+    func testSecureTypingFollowsCategorySettingsAndAlwaysBlocksCodes() async throws {
+        service.realInputEnabled = false
+        let tab = service.tab(for: "session-secure-categories")
+        try await load("""
+        <body>
+          <input id="password" type="password">
+          <input id="card" autocomplete="cc-number">
+          <input id="otp" autocomplete="one-time-code">
+        </body>
+        """, into: tab)
+
+        func type(_ id: String, text: String) async -> [String: Any] {
+            _ = try? await tab.webView.evaluateJavaScript("document.getElementById('\(id)').focus()")
+            return await service.perform(
+                tool: "browser_input",
+                arguments: ["action": "type", "text": text],
+                sessionID: "session-secure-categories",
+                timeoutMilliseconds: 10_000
+            )
+        }
+
+        let blockedPassword = await type("password", text: "saved-password")
+        XCTAssertTrue((blockedPassword["error"] as? String)?.contains("password") == true)
+        service.agentAutofillCategories.insert(.password)
+        let allowedPassword = await type("password", text: "saved-password")
+        XCTAssertNotNil(allowedPassword["text"])
+
+        let blockedCard = await type("card", text: "4242424242424242")
+        XCTAssertTrue((blockedCard["error"] as? String)?.contains("payment-card") == true)
+        service.agentAutofillCategories.insert(.paymentCard)
+        let allowedCard = await type("card", text: "4242424242424242")
+        XCTAssertNotNil(allowedCard["text"])
+
+        let blockedCode = await type("otp", text: "123456")
+        XCTAssertTrue((blockedCode["error"] as? String)?.contains("one-time-code") == true)
+        let code = try await tab.webView.evaluateJavaScript("document.getElementById('otp').value") as? String
+        XCTAssertEqual(code, "")
+    }
+
+    func testAutofillToolRejectsDisabledCategoriesNatively() async throws {
+        try await installAutofillVault(contacts: [BrowserContactRecord(fullName: "A Person")])
+
+        let result = await service.perform(
+            tool: "browser_autofill",
+            arguments: ["action": "list", "category": "contact"],
+            sessionID: "session-autofill-disabled",
+            timeoutMilliseconds: 5_000
+        )
+
+        XCTAssertNil(result["text"])
+        XCTAssertTrue((result["error"] as? String)?.contains("disabled") == true)
+    }
+
+    func testPasswordAutofillListGetAndFillStayOnTheExactOrigin() async throws {
+        let matching = BrowserPasswordRecord(
+            origin: "https://fixture.test/login",
+            username: "person@example.com",
+            password: "fixture-only-secret",
+            label: "Fixture"
+        )
+        let unrelated = BrowserPasswordRecord(
+            origin: "https://other.test",
+            username: "other@example.com",
+            password: "other-origin-secret",
+            label: "Other"
+        )
+        try await installAutofillVault(passwords: [matching, unrelated])
+        service.agentAutofillCategories = [.password]
+        let tab = service.tab(for: "session-password-autofill")
+        try await load("""
+        <body>
+          <form>
+            <input id="username" autocomplete="username">
+            <input id="password" type="password" autocomplete="current-password">
+          </form>
+          <script>
+            window.autofillEvents = [];
+            for (const id of ['username', 'password']) {
+              document.getElementById(id).addEventListener('input', () => window.autofillEvents.push(id));
+            }
+            document.getElementById('password').focus();
+          </script>
+        </body>
+        """, into: tab)
+
+        let listed = await service.perform(
+            tool: "browser_autofill",
+            arguments: ["action": "list", "category": "password"],
+            sessionID: "session-password-autofill",
+            timeoutMilliseconds: 5_000
+        )
+        let listedText = try XCTUnwrap(listed["text"] as? String)
+        XCTAssertFalse(listedText.contains("fixture-only-secret"))
+        XCTAssertFalse(listedText.contains("other-origin-secret"))
+        let records = try XCTUnwrap(try jsonObject(in: listed)["records"] as? [[String: Any]])
+        XCTAssertEqual(records.map { $0["id"] as? String }, [matching.id.uuidString])
+
+        let raw = await service.perform(
+            tool: "browser_autofill",
+            arguments: [
+                "action": "get", "category": "password", "record_id": matching.id.uuidString,
+            ],
+            sessionID: "session-password-autofill",
+            timeoutMilliseconds: 5_000
+        )
+        let rawRecord = try XCTUnwrap(try jsonObject(in: raw)["record"] as? [String: Any])
+        XCTAssertEqual(rawRecord["password"] as? String, "fixture-only-secret")
+
+        let crossOrigin = await service.perform(
+            tool: "browser_autofill",
+            arguments: [
+                "action": "get", "category": "password", "record_id": unrelated.id.uuidString,
+            ],
+            sessionID: "session-password-autofill",
+            timeoutMilliseconds: 5_000
+        )
+        XCTAssertNil(crossOrigin["text"])
+        XCTAssertTrue((crossOrigin["error"] as? String)?.contains("this site") == true)
+
+        let filled = await service.perform(
+            tool: "browser_autofill",
+            arguments: [
+                "action": "fill", "category": "password", "record_id": matching.id.uuidString,
+            ],
+            sessionID: "session-password-autofill",
+            timeoutMilliseconds: 5_000
+        )
+        XCTAssertFalse((filled["text"] as? String)?.contains("fixture-only-secret") == true)
+        let values = try await tab.webView.evaluateJavaScript(
+            "[document.getElementById('username').value, document.getElementById('password').value, window.autofillEvents.join(',')]"
+        ) as? [String]
+        XCTAssertEqual(values, ["person@example.com", "fixture-only-secret", "username,password"])
+    }
+
+    func testPaymentCardGetOmitsSecurityCodesAndNativeFillUpdatesControlledFields() async throws {
+        let card = BrowserPaymentCardRecord(
+            nickname: "Travel",
+            cardholder: "A Person",
+            number: "4242 4242 4242 4242",
+            expirationMonth: 12,
+            expirationYear: 2035
+        )
+        try await installAutofillVault(cards: [card])
+        service.agentAutofillCategories = [.paymentCard]
+        let tab = service.tab(for: "session-card-autofill")
+        try await load("""
+        <body>
+          <form>
+            <input id="name" autocomplete="cc-name">
+            <input id="number" autocomplete="cc-number">
+            <input id="month" autocomplete="cc-exp-month">
+            <input id="year" autocomplete="cc-exp-year">
+            <input id="expiry" autocomplete="cc-exp">
+            <input id="code" autocomplete="cc-csc">
+          </form>
+          <script>
+            const number = document.getElementById('number');
+            const nativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+            window.controlledSetterValue = '';
+            Object.defineProperty(number, 'value', {
+              configurable: true,
+              get() { return nativeValue.get.call(this); },
+              set(next) { window.controlledSetterValue = String(next); nativeValue.set.call(this, next); },
+            });
+            window.cardEvents = [];
+            number.addEventListener('input', () => window.cardEvents.push('input'));
+            number.addEventListener('change', () => window.cardEvents.push('change'));
+            number.focus();
+          </script>
+        </body>
+        """, into: tab)
+
+        let listed = await service.perform(
+            tool: "browser_autofill",
+            arguments: ["action": "list", "category": "paymentCard"],
+            sessionID: "session-card-autofill",
+            timeoutMilliseconds: 5_000
+        )
+        let listedText = try XCTUnwrap(listed["text"] as? String)
+        XCTAssertFalse(listedText.contains("4242424242424242"))
+        XCTAssertTrue(listedText.contains("4242"))
+
+        let raw = await service.perform(
+            tool: "browser_autofill",
+            arguments: [
+                "action": "get", "category": "paymentCard", "record_id": card.id.uuidString,
+            ],
+            sessionID: "session-card-autofill",
+            timeoutMilliseconds: 5_000
+        )
+        let rawText = try XCTUnwrap(raw["text"] as? String)
+        XCTAssertTrue(rawText.contains("4242424242424242"))
+        for forbidden in ["cvc", "cvv", "cid", "security_code"] {
+            XCTAssertFalse(rawText.lowercased().contains(forbidden))
+        }
+
+        let filled = await service.perform(
+            tool: "browser_autofill",
+            arguments: [
+                "action": "fill", "category": "paymentCard", "record_id": card.id.uuidString,
+            ],
+            sessionID: "session-card-autofill",
+            timeoutMilliseconds: 5_000
+        )
+        XCTAssertFalse((filled["text"] as? String)?.contains("4242424242424242") == true)
+        let values = try await tab.webView.evaluateJavaScript("""
+        [document.getElementById('number').value,
+         document.getElementById('code').value,
+         document.getElementById('expiry').value,
+         window.controlledSetterValue,
+         window.cardEvents.join(',')]
+        """) as? [String]
+        XCTAssertEqual(values, ["4242424242424242", "", "12/2035", "", "input,change"])
     }
 
     func testCoordinatesStillWorkWithRealInputTurnedOff() async throws {

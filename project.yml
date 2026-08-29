@@ -93,6 +93,10 @@ targetTemplates:
         PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus
         PRODUCT_NAME: Locus
         COMBINE_HIDPI_IMAGES: YES
+        # Public identifier for the Locus GitHub App device flow. Both app
+        # targets inherit it, so local and distribution builds can connect to
+        # the bundled GitHub MCP preset without a developer-only environment.
+        LOCUS_GITHUB_OAUTH_CLIENT_ID: Iv23liCL3tit1VOgBjWF
 targets:
   WalletSignerService:
     type: xpc-service

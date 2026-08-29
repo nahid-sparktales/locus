@@ -1021,6 +1021,52 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(anyElement("settings.enterSendsMessages").exists)
     }
 
+    func testBrowserDataManagersOpenPromptFree() {
+        func openBrowserSettings() {
+            app.typeKey(",", modifierFlags: .command)
+            let browserPage = anyElement("settings.page.browser")
+            XCTAssertTrue(browserPage.waitForExistence(timeout: 3))
+            browserPage.click()
+            XCTAssertTrue(anyElement("settings.browser.root").waitForExistence(timeout: 3))
+        }
+
+        openBrowserSettings()
+
+        for identifier in [
+            "settings.browser.modelPasswords",
+            "settings.browser.modelContacts",
+            "settings.browser.modelCards",
+        ] {
+            XCTAssertTrue(
+                anyElement(identifier).waitForExistence(timeout: 3),
+                "Every model Autofill category should have an explicit setting"
+            )
+        }
+
+        let managers = [
+            (route: "passwords", emptyState: "No Saved Passwords"),
+            (route: "contacts", emptyState: "No Saved Contact Information"),
+            (route: "cards", emptyState: "No Saved Payment Cards"),
+        ]
+        for (index, manager) in managers.enumerated() {
+            if index > 0 { openBrowserSettings() }
+            let link = anyElement("settings.browser.manager.\(manager.route)")
+            XCTAssertTrue(link.waitForExistence(timeout: 3))
+            XCTAssertTrue(waitUntilHittable(link))
+            link.click()
+            XCTAssertTrue(
+                app.staticTexts[manager.emptyState].waitForExistence(timeout: 5),
+                "The \(manager.route) manager should load without authentication"
+            )
+            XCTAssertFalse(app.staticTexts["Autofill Locked"].exists)
+            XCTAssertFalse(app.buttons["Unlock Autofill"].exists)
+            anyElement("settings.page.general").click()
+            XCTAssertTrue(anyElement("settings.content.general").waitForExistence(timeout: 3))
+            anyElement("settings.cancel").click()
+            XCTAssertTrue(waitUntil { !self.anyElement("settings.page.browser").exists })
+        }
+    }
+
     func testSettingsSearchActivatesAdvancedAndRoutesToTheControl() {
         app.typeKey(",", modifierFlags: .command)
 

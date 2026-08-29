@@ -126,6 +126,7 @@
 		83AADDDF785F1C1B6E461820 /* WalletSignerProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 530DCDEFEDCBE87B25169CB8 /* WalletSignerProtocol.swift */; };
 		873027C93A71AC0112D86F5B /* SettingsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AC2E6FEB488D4F4DA5260EE /* SettingsModels.swift */; };
 		8869F371B1A9A520350F754A /* InspectorBrowserTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B3ACD7AD15138A194268B22 /* InspectorBrowserTab.swift */; };
+		891E9369CEBCDB690DE2C507 /* MarkdownTextKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 374021875E8ACFCCC20B5D90 /* MarkdownTextKit.swift */; };
 		89517844C925AB4FB2FF47BE /* InspectorSimulatorTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CBE8AF1AA0E88FC532FCF8D /* InspectorSimulatorTab.swift */; };
 		8B8CC0604C68E39928653D38 /* BrowserCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 491C7A81B9570B8692EB32B2 /* BrowserCapture.swift */; };
 		8EC790D3EDE4C9D1CDB0ED42 /* CompanionGateway.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41CE2B724F913964929108E5 /* CompanionGateway.swift */; };
@@ -204,6 +205,7 @@
 		DAC9BDD3759C84F504BBD92F /* PermissionPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28BF95EE575D10DBDE8FA1B3 /* PermissionPromptView.swift */; };
 		DB56B70CD46781DCFDE41672 /* GitWorkspaceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AFF112DFD138A58ACB32658 /* GitWorkspaceModel.swift */; };
 		DD91D26D55202523E05B0B26 /* BrowserCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 491C7A81B9570B8692EB32B2 /* BrowserCapture.swift */; };
+		E0C4DE034C58C7E3A4FB6ED6 /* MarkdownTextKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 374021875E8ACFCCC20B5D90 /* MarkdownTextKit.swift */; };
 		E4829191758EFFB79898D48E /* ProviderModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A074779950EBBB250C3F62FF /* ProviderModels.swift */; };
 		E49310B926DA762DF5516B6D /* SimulatorBridgeProvenance.txt in Resources */ = {isa = PBXBuildFile; fileRef = 732FC22F62A01058F817D500 /* SimulatorBridgeProvenance.txt */; };
 		E50266C90BB80C21CF26DA6D /* SimulatorBridgeProvenance.txt in Resources */ = {isa = PBXBuildFile; fileRef = 732FC22F62A01058F817D500 /* SimulatorBridgeProvenance.txt */; };
@@ -303,6 +305,7 @@
 		2E2B58EEFFFA7A86BC2AF7F6 /* InspectorAgentsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorAgentsTab.swift; sourceTree = "<group>"; };
 		2E32D0129D54375A8701B85D /* BrowserInputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserInputTests.swift; sourceTree = "<group>"; };
 		319231FBA55F2DE9A5EB9377 /* HostedScreenshotConsent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedScreenshotConsent.swift; sourceTree = "<group>"; };
+		374021875E8ACFCCC20B5D90 /* MarkdownTextKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTextKit.swift; sourceTree = "<group>"; };
 		3793FC69B1D813ED07567A2E /* BackendService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendService.swift; sourceTree = "<group>"; };
 		38EED4FF1CBA575694CE08AA /* LocusTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocusTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3D09F5FF64508E5EFEF22945 /* LocusMAS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LocusMAS.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -557,6 +560,7 @@
 				C55065A982A7FB563B8DEA87 /* LocalRuntimeCoordinator.swift */,
 				BCCEF7CD29A9C6F9C3E1472F /* LocusApp.swift */,
 				B0E25B0D308D2D499E48D903 /* MarkdownRenderer.swift */,
+				374021875E8ACFCCC20B5D90 /* MarkdownTextKit.swift */,
 				8FA164EE10426EF2AD4E606A /* MessageContent.swift */,
 				E8FCD4DB1FD5A4E1FD862797 /* ModelLibraryService.swift */,
 				4CB88F08135C226D4D6AFF6A /* ModelLibraryView.swift */,
@@ -1068,6 +1072,7 @@
 				B302C713CDCD5A21C3CF431C /* LocalRuntimeCoordinator.swift in Sources */,
 				CB22892B835E59A99C4FA35D /* LocusApp.swift in Sources */,
 				647CCF1ABDC75CDB8654F08D /* MarkdownRenderer.swift in Sources */,
+				E0C4DE034C58C7E3A4FB6ED6 /* MarkdownTextKit.swift in Sources */,
 				3EB73A207975893878E53D8B /* MessageContent.swift in Sources */,
 				09B6A5BCCC8803A5F53316D4 /* ModelLibraryService.swift in Sources */,
 				CC34DB49F0794EFC59213A34 /* ModelLibraryView.swift in Sources */,
@@ -1165,6 +1170,7 @@
 				0A965E4BA7E9E795E29F861E /* LocalRuntimeCoordinator.swift in Sources */,
 				974C1A68A4A333CDDECAC3A9 /* LocusApp.swift in Sources */,
 				709506A38AE20076DCF1FA06 /* MarkdownRenderer.swift in Sources */,
+				891E9369CEBCDB690DE2C507 /* MarkdownTextKit.swift in Sources */,
 				0FCA7915F1F08420BB34DDC0 /* MessageContent.swift in Sources */,
 				78B4B59BB52C09E38B5C39CB /* ModelLibraryService.swift in Sources */,
 				3F59DF9C3CD4ED07F3AE4650 /* ModelLibraryView.swift in Sources */,
@@ -1440,6 +1446,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LOCUS_GITHUB_OAUTH_CLIENT_ID = Iv23liCL3tit1VOgBjWF;
 				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus;
 				PRODUCT_NAME = Locus;
 				SDKROOT = macosx;
@@ -1476,6 +1483,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LOCUS_GITHUB_OAUTH_CLIENT_ID = Iv23liCL3tit1VOgBjWF;
 				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus;
 				PRODUCT_MODULE_NAME = Locus;
 				PRODUCT_NAME = Locus;
@@ -1548,6 +1556,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LOCUS_GITHUB_OAUTH_CLIENT_ID = Iv23liCL3tit1VOgBjWF;
 				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus;
 				PRODUCT_NAME = Locus;
 				SDKROOT = macosx;
@@ -1583,6 +1592,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LOCUS_GITHUB_OAUTH_CLIENT_ID = Iv23liCL3tit1VOgBjWF;
 				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus;
 				PRODUCT_MODULE_NAME = Locus;
 				PRODUCT_NAME = Locus;
@@ -1601,6 +1611,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LOCUS_GITHUB_OAUTH_CLIENT_ID = Iv23liCL3tit1VOgBjWF;
 				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus;
 				PRODUCT_MODULE_NAME = Locus;
 				PRODUCT_NAME = Locus;
@@ -1763,6 +1774,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LOCUS_GITHUB_OAUTH_CLIENT_ID = Iv23liCL3tit1VOgBjWF;
 				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus;
 				PRODUCT_NAME = Locus;
 				SDKROOT = macosx;
