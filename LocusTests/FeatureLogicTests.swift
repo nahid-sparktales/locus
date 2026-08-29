@@ -1053,6 +1053,110 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertTrue(tokens.contains(CodeToken(text: "42", kind: .number)))
     }
 
+    func testCodeHighlighterClassifiesCallsMembersAndTypes() {
+        let source = "let view = Container.shared.build(width)"
+        let tokens = CodeSyntaxHighlighter.tokens(for: source, language: "swift")
+
+        XCTAssertEqual(tokens.map(\.text).joined(), source)
+        XCTAssertTrue(tokens.contains(CodeToken(text: "Container", kind: .type)))
+        XCTAssertTrue(tokens.contains(CodeToken(text: "shared", kind: .property)))
+        XCTAssertTrue(tokens.contains(CodeToken(text: "build", kind: .function)))
+        XCTAssertTrue(tokens.contains(CodeToken(text: "(", kind: .punctuation)))
+    }
+
+    func testCodeHighlighterReadsLiteralsAsConstantsInEveryLanguage() {
+        for language in ["python", "javascript", "swift"] {
+            let tokens = CodeSyntaxHighlighter.tokens(for: "value = true", language: language)
+            XCTAssertTrue(
+                tokens.contains(CodeToken(text: "true", kind: .constant)),
+                "Expected a constant token for \(language)"
+            )
+        }
+    }
+
+    /// The old fallback applied `//` line comments to every unrecognised fence,
+    /// which turned ordinary TOML and INI paths into comments.
+    func testHashCommentLanguagesDoNotTreatSlashesAsComments() {
+        let source = "# note\nroot = /a//b"
+        let tokens = CodeSyntaxHighlighter.tokens(for: source, language: "toml")
+
+        XCTAssertEqual(tokens.map(\.text).joined(), source)
+        XCTAssertTrue(tokens.contains(CodeToken(text: "# note", kind: .comment)))
+        XCTAssertFalse(tokens.contains { $0.kind == .comment && $0.text.contains("//") })
+    }
+
+    func testUnknownLanguageStillReceivesKeywordsAndNoStrayComments() {
+        let tokens = CodeSyntaxHighlighter.tokens(
+            for: "if x then y end // not a comment here",
+            language: "someunknownlang"
+        )
+
+        XCTAssertTrue(tokens.contains(CodeToken(text: "if", kind: .keyword)))
+        XCTAssertTrue(tokens.contains(CodeToken(text: "end", kind: .keyword)))
+        XCTAssertNil(tokens.first { $0.kind == .comment })
+    }
+
+    // MARK: - Transcript typography
+
+    func testHeadingTakesMoreRoomAboveThanBelow() {
+        let paragraph = MarkdownRenderBlock.paragraph([])
+        let heading = MarkdownRenderBlock.heading(level: 2, runs: [])
+
+        for density in [MarkdownRenderDensity.regular, .compact] {
+            let above = density.topSpacing(from: paragraph, to: heading)
+            let below = density.topSpacing(from: heading, to: paragraph)
+            XCTAssertGreaterThan(above, below, "Heading rhythm should be asymmetric")
+            XCTAssertEqual(density.topSpacing(from: nil, to: heading), 0)
+        }
+    }
+
+    func testStrongRunsDarkenAsWellAsThicken() {
+        let spec = MarkdownInlineStyleSpec.resolve(
+            run: MarkdownInlineRun(text: "x", style: [.strong]),
+            baseSize: 13,
+            baseWeight: .regular,
+            baseColor: LocusTheme.inkSoft,
+            inlineCodeSize: 12,
+            link: nil
+        )
+
+        XCTAssertTrue(spec.isBold)
+        XCTAssertEqual(spec.foreground, LocusTheme.ink)
+    }
+
+    /// Regression guard for the drift that motivated the shared spec: the
+    /// AppKit leaf and the SwiftUI fallback must resolve one run identically.
+    func testInlineCodeResolvesTheSameOnBothRenderPaths() {
+        let run = MarkdownInlineRun(text: "value", style: [.code])
+        let spec = MarkdownInlineStyleSpec.resolve(
+            run: run,
+            baseSize: 13,
+            baseWeight: .regular,
+            baseColor: LocusTheme.inkSoft,
+            inlineCodeSize: 12,
+            link: nil
+        )
+
+        XCTAssertEqual(spec.fontSize, 12)
+        XCTAssertTrue(spec.isMonospaced)
+        XCTAssertEqual(spec.foreground, LocusTheme.ink)
+        XCTAssertEqual(spec.pillFill, LocusTheme.inlineCodeFill)
+
+        let appKit = MarkdownNativeText.attributed(
+            [run],
+            size: 13,
+            weight: .regular,
+            color: LocusTheme.inkSoft,
+            lineSpacing: 5,
+            inlineCodeSize: 12,
+            workspacePath: nil
+        )
+        let font = appKit.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+        XCTAssertEqual(font?.pointSize, spec.fontSize)
+        XCTAssertEqual(font?.isFixedPitch, true)
+        XCTAssertNotNil(appKit.attribute(.locusInlineCodePill, at: 0, effectiveRange: nil))
+    }
+
     // MARK: - Diff detection
 
     func testUnifiedDiffIsDetected() {

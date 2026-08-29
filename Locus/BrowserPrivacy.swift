@@ -2,20 +2,11 @@ import AppKit
 import Combine
 import CryptoKit
 import Foundation
-import LocalAuthentication
 import Security
 import SQLite3
 import WebKit
 
 // MARK: - Migration-safe browser preferences
-
-enum BrowserAutofillAuthMode: String, CaseIterable, Codable, Identifiable {
-    case session
-    case eachFill
-
-    var id: String { rawValue }
-    var title: String { self == .session ? "Once per session" : "Every fill" }
-}
 
 enum BrowserDownloadDestinationKind: String, CaseIterable, Codable, Identifiable {
     case systemDownloads
@@ -227,15 +218,15 @@ private struct BrowserVaultPayload: Codable {
 }
 
 enum BrowserVaultError: LocalizedError {
-    case locked
-    case authenticationFailed
+    case unavailable
+    case keychainFailed(OSStatus)
     case invalidCard
     case corruptVault
 
     var errorDescription: String? {
         switch self {
-        case .locked: "Unlock Autofill before making changes."
-        case .authenticationFailed: "Autofill could not be unlocked."
+        case .unavailable: "Autofill is not ready."
+        case .keychainFailed(let status): "Autofill could not access its encryption key (\(status))."
         case .invalidCard: "Enter a valid card number and expiration date. Security codes are never stored."
         case .corruptVault: "The encrypted Autofill data could not be opened."
         }
@@ -243,50 +234,54 @@ enum BrowserVaultError: LocalizedError {
 }
 
 protocol BrowserVaultKeyProviding: Sendable {
-    func keyData(reason: String) async throws -> Data
+    func keyData() async throws -> Data
 }
 
 struct KeychainBrowserVaultKeyProvider: BrowserVaultKeyProviding {
-    static let service = "io.sparktales.locus.browser-autofill"
-    static let account = "vault-master-key-v1"
+    /// Version 2 deliberately uses a new item. Version 1 required user presence,
+    /// so querying it would revive the Touch ID / Mac-password prompt this
+    /// provider exists to remove. The legacy item and file are left untouched.
+    static let service = "io.sparktales.locus.browser-autofill.v2"
+    static let account = "vault-master-key-v2"
 
-    func keyData(reason: String) async throws -> Data {
-        let context = LAContext()
-        context.localizedReason = reason
-        var query: [CFString: Any] = [
+    func keyData() async throws -> Data {
+        let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: Self.service,
             kSecAttrAccount: Self.account,
             kSecReturnData: true,
             kSecMatchLimit: kSecMatchLimitOne,
-            kSecUseAuthenticationContext: context,
             kSecUseDataProtectionKeychain: true,
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         if status == errSecSuccess, let data = item as? Data { return data }
-        guard status == errSecItemNotFound else { throw BrowserVaultError.authenticationFailed }
+        guard status == errSecItemNotFound else { throw BrowserVaultError.keychainFailed(status) }
 
-        let key = Data((0..<32).map { _ in UInt8.random(in: .min ... .max) })
-        var error: Unmanaged<CFError>?
-        guard let access = SecAccessControlCreateWithFlags(
-            nil,
-            kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            .userPresence,
-            &error
-        ) else { throw error?.takeRetainedValue() ?? BrowserVaultError.authenticationFailed }
-
-        query.removeAll()
-        query = [
+        var bytes = [UInt8](repeating: 0, count: 32)
+        let randomStatus = bytes.withUnsafeMutableBytes { buffer in
+            SecRandomCopyBytes(kSecRandomDefault, buffer.count, buffer.baseAddress!)
+        }
+        guard randomStatus == errSecSuccess else {
+            throw BrowserVaultError.keychainFailed(randomStatus)
+        }
+        let key = Data(bytes)
+        let add: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: Self.service,
             kSecAttrAccount: Self.account,
             kSecValueData: key,
-            kSecAttrAccessControl: access,
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             kSecUseDataProtectionKeychain: true,
         ]
-        let addStatus = SecItemAdd(query as CFDictionary, nil)
-        guard addStatus == errSecSuccess else { throw BrowserVaultError.authenticationFailed }
+        let addStatus = SecItemAdd(add as CFDictionary, nil)
+        if addStatus == errSecDuplicateItem {
+            var duplicate: CFTypeRef?
+            let duplicateStatus = SecItemCopyMatching(query as CFDictionary, &duplicate)
+            if duplicateStatus == errSecSuccess, let data = duplicate as? Data { return data }
+            throw BrowserVaultError.keychainFailed(duplicateStatus)
+        }
+        guard addStatus == errSecSuccess else { throw BrowserVaultError.keychainFailed(addStatus) }
         return key
     }
 }
@@ -294,7 +289,7 @@ struct KeychainBrowserVaultKeyProvider: BrowserVaultKeyProviding {
 struct InMemoryBrowserVaultKeyProvider: BrowserVaultKeyProviding {
     let data: Data
     init(data: Data = Data(repeating: 7, count: 32)) { self.data = data }
-    func keyData(reason: String) async throws -> Data { data }
+    func keyData() async throws -> Data { data }
 }
 
 @MainActor
@@ -302,13 +297,14 @@ final class BrowserAutofillVault: ObservableObject {
     @Published private(set) var passwords: [BrowserPasswordRecord] = []
     @Published private(set) var contacts: [BrowserContactRecord] = []
     @Published private(set) var cards: [BrowserPaymentCardRecord] = []
-    @Published private(set) var isUnlocked = false
+    @Published private(set) var isReady = false
+    @Published private(set) var isLoading = false
     @Published private(set) var lastError: String?
 
-    var authMode: BrowserAutofillAuthMode = .session
     private let fileURL: URL
     private let keyProvider: any BrowserVaultKeyProviding
     private var key: SymmetricKey?
+    private var loadingTask: Task<Bool, Never>?
 
     init(
         fileURL: URL? = nil,
@@ -321,41 +317,52 @@ final class BrowserAutofillVault: ObservableObject {
     static var defaultFileURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first ?? FileManager.default.temporaryDirectory
-        return base.appendingPathComponent("Locus/Browser/Autofill/vault.bin")
+        return base.appendingPathComponent("Locus/Browser/Autofill/vault-v2.bin")
     }
 
     var totalCount: Int { passwords.count + contacts.count + cards.count }
 
     @discardableResult
-    func unlock(reason: String = "Unlock Locus Autofill") async -> Bool {
-        if isUnlocked { return true }
+    func load() async -> Bool {
+        if isReady { return true }
+        if let loadingTask { return await loadingTask.value }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return false }
+            return await self.loadFromDisk()
+        }
+        loadingTask = task
+        let loaded = await task.value
+        loadingTask = nil
+        return loaded
+    }
+
+    private func loadFromDisk() async -> Bool {
+        isLoading = true
+        defer { isLoading = false }
         do {
-            let data = try await keyProvider.keyData(reason: reason)
+            let data = try await keyProvider.keyData()
             let key = SymmetricKey(data: data)
             let payload = try readPayload(using: key)
             self.key = key
             passwords = payload.passwords.sorted { $0.updatedAt > $1.updatedAt }
             contacts = payload.contacts.sorted { $0.updatedAt > $1.updatedAt }
             cards = payload.cards.sorted { $0.updatedAt > $1.updatedAt }
-            isUnlocked = true
+            isReady = true
             lastError = nil
             return true
         } catch {
+            key = nil
+            passwords.removeAll()
+            contacts.removeAll()
+            cards.removeAll()
+            isReady = false
             lastError = error.localizedDescription
             return false
         }
     }
 
-    func lock() {
-        key = nil
-        passwords.removeAll()
-        contacts.removeAll()
-        cards.removeAll()
-        isUnlocked = false
-    }
-
     func save(_ record: BrowserPasswordRecord) throws {
-        guard isUnlocked else { throw BrowserVaultError.locked }
+        guard isReady else { throw BrowserVaultError.unavailable }
         var record = record
         record.origin = Self.normalizedOrigin(record.origin)
         record.updatedAt = Date()
@@ -364,7 +371,7 @@ final class BrowserAutofillVault: ObservableObject {
     }
 
     func save(_ record: BrowserContactRecord) throws {
-        guard isUnlocked else { throw BrowserVaultError.locked }
+        guard isReady else { throw BrowserVaultError.unavailable }
         var record = record
         record.updatedAt = Date()
         upsert(record, in: &contacts)
@@ -372,7 +379,7 @@ final class BrowserAutofillVault: ObservableObject {
     }
 
     func save(_ record: BrowserPaymentCardRecord) throws {
-        guard isUnlocked else { throw BrowserVaultError.locked }
+        guard isReady else { throw BrowserVaultError.unavailable }
         var record = record
         record.number = record.normalizedNumber
         guard record.isValid else { throw BrowserVaultError.invalidCard }
@@ -386,13 +393,13 @@ final class BrowserAutofillVault: ObservableObject {
     func removeCard(_ id: UUID) throws { try remove(id, from: &cards) }
 
     func passwordSuggestions(for origin: String) -> [BrowserPasswordRecord] {
-        guard isUnlocked else { return [] }
+        guard isReady else { return [] }
         let normalized = Self.normalizedOrigin(origin)
         return passwords.filter { Self.normalizedOrigin($0.origin) == normalized }
     }
 
-    func contactSuggestions() -> [BrowserContactRecord] { isUnlocked ? contacts : [] }
-    func cardSuggestions() -> [BrowserPaymentCardRecord] { isUnlocked ? cards : [] }
+    func contactSuggestions() -> [BrowserContactRecord] { isReady ? contacts : [] }
+    func cardSuggestions() -> [BrowserPaymentCardRecord] { isReady ? cards : [] }
 
     nonisolated static func normalizedOrigin(_ raw: String) -> String {
         let candidate = raw.contains("://") ? raw : "https://\(raw)"
@@ -415,7 +422,7 @@ final class BrowserAutofillVault: ObservableObject {
     }
 
     private func remove<T: Identifiable>(_ id: UUID, from values: inout [T]) throws where T.ID == UUID {
-        guard isUnlocked else { throw BrowserVaultError.locked }
+        guard isReady else { throw BrowserVaultError.unavailable }
         values.removeAll { $0.id == id }
         try persist()
     }
@@ -435,7 +442,7 @@ final class BrowserAutofillVault: ObservableObject {
     }
 
     private func persist() throws {
-        guard let key else { throw BrowserVaultError.locked }
+        guard let key else { throw BrowserVaultError.unavailable }
         let payload = BrowserVaultPayload(passwords: passwords, contacts: contacts, cards: cards)
         let clear = try JSONEncoder.browser.encode(payload)
         let sealed = try AES.GCM.seal(clear, using: key)
@@ -861,10 +868,20 @@ struct BrowserWebsiteDataRecord: Identifiable, Hashable {
     var dataTypes: Set<String>
 }
 
-enum BrowserAutofillCategory: String, Codable {
+enum BrowserAutofillCategory: String, CaseIterable, Codable, Hashable, Identifiable {
     case password
     case contact
     case paymentCard
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .password: "Passwords"
+        case .contact: "Contact information"
+        case .paymentCard: "Payment cards"
+        }
+    }
 }
 
 struct BrowserAutofillPrompt: Identifiable, Equatable {

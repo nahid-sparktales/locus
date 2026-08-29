@@ -677,7 +677,7 @@ Endpoint: `/ws/chat`.
 | `computer_action_result` | `request_id: string`, `result: object` | Completes one pending native broker request. `result` may contain `text`, `error`, and optional `screenshot` metadata/data. Late, duplicate, and unknown IDs are ignored after cancellation or timeout. |
 | `set_simulator_control` | `enabled: boolean`, `native_available: boolean`, optional `attached_device: {udid, name, runtime, family, state}` | Advertises the direct-download Simulator broker for one task-leased device. Simulator schemas enter the model only when the helper is compatible and the message includes a non-empty attached UDID. Rejected while a turn is busy. |
 | `simulator_action_result` | `request_id: string`, `result: object` | Completes one pending Simulator request. Results contain `text` or `error`, may include structured `build` failure details, and may use the shared newest-only `screenshot` observation. Late, duplicate, and unknown IDs are ignored after cancellation, timeout, disconnect, or detach. |
-| `set_browser_control` | `enabled: boolean` | Advertises the native browser broker. Browser tools enter model schemas only while true. Rejected while a turn is busy, so the client re-sends after `turn_done`. Unlike computer control there is no `native_available`: a web view needs no special access and is present in every build. |
+| `set_browser_control` | `enabled: boolean`, `history_enabled: boolean`, `autofill_categories: ("password" \| "contact" \| "paymentCard")[]` | Advertises the native browser broker and its current data-access grants. Browser tools enter model schemas only while enabled; history and Autofill schemas are independently omitted unless granted, and the Autofill category enum is narrowed to the supplied list. Rejected while a turn is busy, so the client re-sends this complete canonical payload after `turn_done`. Unlike computer control there is no `native_available`: a web view needs no special access and is present in every build. |
 | `browser_action_result` | `request_id: string`, `result: object` | Completes one pending browser request. `result` may contain `text`, `error`, and optional `screenshot` metadata/data. Late, duplicate, and unknown IDs are ignored after cancellation or timeout. |
 | `set_notes_control` | `enabled: boolean` | Advertises the native Notes broker. `notes_read` and `notes_update` enter model schemas only while true; read-only routes receive only `notes_read`. The native app, not the model, resolves the workspace/chat owner and current scope. Rejected while a turn is busy. |
 | `notes_action_result` | `request_id: string`, `result: object` | Completes one pending Notes request. `result` contains `text` or `error`; late, duplicate, and unknown IDs are ignored after cancellation or timeout. |
@@ -891,8 +891,9 @@ and one visible fallback diagnostic.
 
 ### `browser_control_status` / `browser_action_request`
 
-`browser_control_status {enabled}` acknowledges the browser capability
-handshake. When enabled, a browser tool call emits:
+`browser_control_status {enabled, history_enabled, autofill_categories}`
+acknowledges the complete browser capability handshake. When enabled, a
+browser tool call emits:
 
 ```json
 { "type": "browser_action_request", "request_id": "...",
@@ -1209,7 +1210,13 @@ When the browser broker is enabled the schema also contains `browser_read_page`,
 `browser_get_text`, `browser_find`, `browser_screenshot`, `browser_wait_for`,
 `browser_console`, `browser_network`, `browser_tabs`, `browser_navigate`,
 `browser_input`, `browser_resize`, `browser_javascript`, and
-`browser_dev_server`. The reading half is
+`browser_dev_server`. `browser_history` is added only while history access is
+enabled. `browser_autofill` is added only while at least one model-access
+category is enabled, and its category enum contains only those grants. It can
+`list` metadata, `get` a raw record, or natively `fill` matching fields. Saved
+password operations require the target tab's exact normalized origin; contacts
+and payment cards are global. Security codes are never stored or returned.
+Autofill remains unavailable to read-only agents. The reading half is
 permission-free and stays available to read-only agents, which is a deliberate
 departure from computer control — a reviewer should be able to look at the page
 it is reviewing. Everything else follows the permission mode, and
@@ -1220,10 +1227,10 @@ its command, keeps a bounded output ring readable through `status`, and kills
 every server at backend shutdown — a server otherwise outlives the conversation
 that started it. Navigation is restricted
 to `http`, `https` and `about`: a `file:` URL would otherwise read any file
-without passing through `read_file`'s workspace scoping or its prompt. Typing a
-credential is hard blocked on both sides — by content in the agent, and by the
-field's own type, its autocomplete hint, and whether its form holds a password
-in the app.
+without passing through `read_file`'s workspace scoping or its prompt. The app
+classifies password, payment-card, card-security-code, and one-time-code fields.
+Password and payment-card input is accepted only while the matching model
+setting is enabled; card security codes and one-time codes are always blocked.
 
 JavaScript dialogs never block the page: alerts are acknowledged, and an
 unarmed `confirm`/`prompt` takes the safe branch — dismissed — with the outcome

@@ -220,7 +220,7 @@ final class BrowserService: NSObject, ObservableObject {
     @Published private(set) var isExecuting = false
     @Published var autofillPrompt: BrowserAutofillPrompt?
     @Published var pendingPasswordSave: BrowserPasswordSavePrompt?
-    let autofillVault = BrowserAutofillVault()
+    let autofillVault: BrowserAutofillVault
     let activityStore = BrowserActivityStore()
     let permissionStore = BrowserPermissionStore()
     /// More live web views than this and the oldest idle one is closed. Each
@@ -257,6 +257,10 @@ final class BrowserService: NSObject, ObservableObject {
     /// Whether new tabs allow the Web Inspector to attach.
     var webInspectorEnabled = false
     var historyAccess: BrowserHistoryAccess = .disabled
+    /// Categories the active model may read or fill. The Python runtime uses
+    /// the same set to shape its schema, but this native set is authoritative
+    /// for guessed or stale calls and for secure-field input.
+    var agentAutofillCategories: Set<BrowserAutofillCategory> = []
     var downloadDestination: BrowserDownloadDestinationKind = .systemDownloads
     var downloadAskEveryTime = false
     var customDownloadBookmark: Data?
@@ -289,6 +293,40 @@ final class BrowserService: NSObject, ObservableObject {
     private var activeDownloads: [UUID: WKDownload] = [:]
     private var resumeDataByDownload: [UUID: Data] = [:]
     private var recentDownloadStarts: [String: [Date]] = [:]
+
+    override init() {
+        // The fixture key is a known constant, so this branch must not be
+        // reachable in a signed Release or App Store build: anyone able to
+        // influence the launch environment would otherwise get a vault sealed
+        // with a publicly known 32 bytes.
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1" {
+            // UI tests must never inherit or mutate the person's real browser
+            // records. A per-process encrypted fixture also makes the empty
+            // manager states deterministic while exercising the real vault
+            // loading path.
+            let fixtureDirectory = FileManager.default.temporaryDirectory
+                .appendingPathComponent(
+                    "LocusUITests-Autofill-\(ProcessInfo.processInfo.processIdentifier)",
+                    isDirectory: true
+                )
+            autofillVault = BrowserAutofillVault(
+                fileURL: fixtureDirectory.appendingPathComponent("vault.bin"),
+                keyProvider: InMemoryBrowserVaultKeyProvider()
+            )
+        } else {
+            autofillVault = BrowserAutofillVault()
+        }
+        #else
+        autofillVault = BrowserAutofillVault()
+        #endif
+        super.init()
+    }
+
+    init(autofillVault: BrowserAutofillVault) {
+        self.autofillVault = autofillVault
+        super.init()
+    }
 
     func configureWalletGateway(_ gateway: WalletGateway) {
         walletGateway = gateway
@@ -556,6 +594,8 @@ final class BrowserService: NSObject, ObservableObject {
                 return tabsTool(arguments, sessionID: sessionID)
             case "browser_history":
                 return try await historyTool(arguments)
+            case "browser_autofill":
+                return try await autofillTool(arguments, sessionID: sessionID)
             default:
                 return ["error": "unsupported browser tool '\(tool)'"]
             }
@@ -596,6 +636,184 @@ final class BrowserService: NSObject, ObservableObject {
             options: [.sortedKeys]
         )
         return ["text": String(decoding: data, as: UTF8.self)]
+    }
+
+    /// Model-facing access to the encrypted Autofill store. Settings shape the
+    /// advertised schema, while this check is the boundary for stale schemas and
+    /// guessed calls. Password records are additionally scoped to the exact
+    /// origin of the target tab.
+    private func autofillTool(
+        _ arguments: [String: Any],
+        sessionID: String
+    ) async throws -> [String: Any] {
+        guard let rawCategory = arguments["category"] as? String,
+              let category = BrowserAutofillCategory(rawValue: rawCategory)
+        else {
+            throw BrowserToolError("'category' must be password, contact, or paymentCard")
+        }
+        guard agentAutofillCategories.contains(category) else {
+            throw BrowserToolError("model access to \(category.title.lowercased()) is disabled in Browser Settings")
+        }
+        guard await autofillVault.load() else {
+            throw BrowserToolError(autofillVault.lastError ?? "Autofill data could not be loaded")
+        }
+
+        let action = ((arguments["action"] as? String) ?? "list").lowercased()
+        let tabID = arguments["tab_id"] as? String
+        let passwordOrigin: String?
+        if category == .password {
+            passwordOrigin = try autofillPasswordOrigin(sessionID: sessionID, tabID: tabID)
+        } else {
+            passwordOrigin = nil
+        }
+
+        switch action {
+        case "list":
+            let records: [[String: Any]]
+            switch category {
+            case .password:
+                records = autofillVault.passwords.filter {
+                    BrowserAutofillVault.normalizedOrigin($0.origin) == passwordOrigin
+                }.map {
+                    [
+                        "id": $0.id.uuidString,
+                        "label": $0.label,
+                        "origin": $0.origin,
+                        "username": $0.username,
+                    ]
+                }
+            case .contact:
+                records = autofillVault.contacts.map {
+                    [
+                        "id": $0.id.uuidString,
+                        "label": $0.label,
+                        "display_name": $0.fullName.isEmpty ? $0.label : $0.fullName,
+                    ]
+                }
+            case .paymentCard:
+                records = autofillVault.cards.map {
+                    [
+                        "id": $0.id.uuidString,
+                        "nickname": $0.nickname,
+                        "last_four": $0.lastFour,
+                    ]
+                }
+            }
+            return ["text": try autofillJSON(["category": category.rawValue, "records": records])]
+
+        case "get":
+            let id = try autofillRecordID(arguments)
+            let record: [String: Any]
+            switch category {
+            case .password:
+                guard let password = autofillVault.passwords.first(where: {
+                    $0.id == id && BrowserAutofillVault.normalizedOrigin($0.origin) == passwordOrigin
+                }) else {
+                    throw BrowserToolError("no saved password for this site has that record_id")
+                }
+                // The secret itself is deliberately withheld. A tool result
+                // becomes a message that is appended verbatim to the on-disk
+                // session transcript and the run ledger, neither of which is
+                // encrypted or scrubbed — returning the password here would
+                // write it in clear next to the vault that exists to protect
+                // it. `fill` applies the credential natively without it ever
+                // passing through the model.
+                record = [
+                    "id": password.id.uuidString,
+                    "label": password.label,
+                    "origin": password.origin,
+                    "username": password.username,
+                ]
+            case .contact:
+                guard let contact = autofillVault.contacts.first(where: { $0.id == id }) else {
+                    throw BrowserToolError("no saved contact has that record_id")
+                }
+                record = [
+                    "id": contact.id.uuidString,
+                    "label": contact.label,
+                    "full_name": contact.fullName,
+                    "organization": contact.organization,
+                    "email": contact.email,
+                    "phone": contact.phone,
+                    "street": contact.street,
+                    "city": contact.city,
+                    "region": contact.region,
+                    "postal_code": contact.postalCode,
+                    "country": contact.country,
+                ]
+            case .paymentCard:
+                guard let card = autofillVault.cards.first(where: { $0.id == id }) else {
+                    throw BrowserToolError("no saved payment card has that record_id")
+                }
+                // Same reasoning as passwords: the full PAN never enters a
+                // tool result. `last_four` is enough for the model to confirm
+                // it picked the right card; `fill` supplies the real number.
+                record = [
+                    "id": card.id.uuidString,
+                    "nickname": card.nickname,
+                    "cardholder": card.cardholder,
+                    "last_four": card.lastFour,
+                    "expiration_month": card.expirationMonth,
+                    "expiration_year": card.expirationYear,
+                    "billing_contact_id": (card.billingContactID?.uuidString as Any?) ?? NSNull(),
+                ]
+            }
+            return ["text": try autofillJSON(["category": category.rawValue, "record": record])]
+
+        case "fill":
+            let id = try autofillRecordID(arguments)
+            let filled: Bool
+            switch category {
+            case .password:
+                guard autofillVault.passwords.contains(where: {
+                    $0.id == id && BrowserAutofillVault.normalizedOrigin($0.origin) == passwordOrigin
+                }) else {
+                    throw BrowserToolError("no saved password for this site has that record_id")
+                }
+                filled = await fillPassword(id, sessionID: sessionID, tabID: tabID)
+            case .contact:
+                guard autofillVault.contacts.contains(where: { $0.id == id }) else {
+                    throw BrowserToolError("no saved contact has that record_id")
+                }
+                filled = await fillContact(id, sessionID: sessionID, tabID: tabID)
+            case .paymentCard:
+                guard autofillVault.cards.contains(where: { $0.id == id }) else {
+                    throw BrowserToolError("no saved payment card has that record_id")
+                }
+                filled = await fillCard(id, sessionID: sessionID, tabID: tabID)
+            }
+            guard filled else {
+                throw BrowserToolError("the page has no matching Autofill fields in the focused form")
+            }
+            return ["text": "Filled saved \(category.title.lowercased())."]
+
+        default:
+            throw BrowserToolError("'action' must be list, get, or fill")
+        }
+    }
+
+    private func autofillPasswordOrigin(sessionID: String, tabID: String?) throws -> String {
+        let tab = try openTab(for: sessionID, tabID: tabID)
+        guard let url = tab.webView.url,
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              url.host != nil
+        else {
+            throw BrowserToolError("open the website before accessing its saved passwords")
+        }
+        return BrowserAutofillVault.normalizedOrigin(url.absoluteString)
+    }
+
+    private func autofillRecordID(_ arguments: [String: Any]) throws -> UUID {
+        guard let raw = arguments["record_id"] as? String, let id = UUID(uuidString: raw) else {
+            throw BrowserToolError("'record_id' must be an id returned by browser_autofill list")
+        }
+        return id
+    }
+
+    private func autofillJSON(_ object: Any) throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        return String(decoding: data, as: UTF8.self)
     }
 
     private static func parseHistoryDate(_ value: Any?) -> Date? {
@@ -1304,27 +1522,52 @@ final class BrowserService: NSObject, ObservableObject {
     /// autocomplete hint and whether its form holds a password are all visible.
     private func refuseSecureField(_ tab: Tab, ref: String) async throws {
         let raw = try await callBridge(tab, "return __locus.describe(ref)", ["ref": ref])
-        guard let described = raw as? [String: Any] else { return }
+        // Fail closed. Since the agent-side text scan was removed for
+        // `browser_input`, this is the only credential gate left, so a bridge
+        // that cannot describe the target must refuse the typing rather than
+        // wave it through.
+        guard let described = raw as? [String: Any] else {
+            throw BrowserToolError("that field could not be inspected; type it yourself")
+        }
         if described["stale"] as? Bool == true {
             throw BrowserToolError(BrowserBridge.staleReferenceMessage.droppingErrorPrefix)
         }
-        if described["secure"] as? Bool == true {
-            throw BrowserToolError(
-                "that is a password or one-time-code field; the user has to type it themselves"
-            )
-        }
+        try authorizeSensitiveInput(described, subject: "that field")
     }
 
     /// The same gate for typing that names no element. Real input goes wherever
     /// focus already is, so the focused element is what has to be vetted.
     private func refuseSecureFocus(_ tab: Tab) async throws {
-        let raw = try? await callBridge(tab, "return __locus.describeActive()", [:])
-        guard let described = raw as? [String: Any] else { return }
-        if described["secure"] as? Bool == true {
-            throw BrowserToolError(
-                "the focused field is a password or one-time-code field; "
-                + "the user has to type it themselves"
-            )
+        // `try?` plus a permissive guard meant a throwing or malformed bridge
+        // reply silently authorised typing into whatever held focus.
+        let raw = try await callBridge(tab, "return __locus.describeActive()", [:])
+        guard let described = raw as? [String: Any] else {
+            throw BrowserToolError("the focused field could not be inspected; type it yourself")
+        }
+        try authorizeSensitiveInput(described, subject: "the focused field")
+    }
+
+    private func authorizeSensitiveInput(_ described: [String: Any], subject: String) throws {
+        guard described["secure"] as? Bool == true else { return }
+        switch described["secureCategory"] as? String {
+        case BrowserAutofillCategory.password.rawValue:
+            guard agentAutofillCategories.contains(.password) else {
+                throw BrowserToolError(
+                    "\(subject) is a password field; enable model password access in Browser Settings"
+                )
+            }
+        case BrowserAutofillCategory.paymentCard.rawValue:
+            guard agentAutofillCategories.contains(.paymentCard) else {
+                throw BrowserToolError(
+                    "\(subject) is a payment-card field; enable model payment-card access in Browser Settings"
+                )
+            }
+        case "oneTimeCode":
+            throw BrowserToolError("\(subject) is a one-time-code field; the user has to type it themselves")
+        case "securityCode":
+            throw BrowserToolError("\(subject) is a card security-code field; the user has to type it themselves")
+        default:
+            throw BrowserToolError("\(subject) is a protected field; the user has to type it themselves")
         }
     }
 
@@ -2865,7 +3108,7 @@ extension BrowserService {
 
     func acceptPasswordSavePrompt() async -> Bool {
         guard let prompt = pendingPasswordSave else { return false }
-        guard await autofillVault.unlock(reason: "Save a password in Locus Autofill") else {
+        guard await autofillVault.load() else {
             return false
         }
         do {
@@ -2875,7 +3118,6 @@ extension BrowserService {
                 password: prompt.password
             ))
             pendingPasswordSave = nil
-            if autofillVault.authMode == .eachFill { autofillVault.lock() }
             onUserNotice?("Password saved in Autofill")
             return true
         } catch {
@@ -2884,7 +3126,7 @@ extension BrowserService {
         }
     }
 
-    func fillPassword(_ id: UUID, sessionID: String) async -> Bool {
+    func fillPassword(_ id: UUID, sessionID: String, tabID: String? = nil) async -> Bool {
         guard await prepareVaultForFill(),
               let record = autofillVault.passwords.first(where: { $0.id == id })
         else { return false }
@@ -2893,10 +3135,15 @@ extension BrowserService {
             "username": record.username,
             "password": record.password,
         ]
-        return await completeFill(payload, sessionID: sessionID)
+        return await completeFill(
+            payload,
+            sessionID: sessionID,
+            tabID: tabID,
+            expectedOrigin: record.origin
+        )
     }
 
-    func fillContact(_ id: UUID, sessionID: String) async -> Bool {
+    func fillContact(_ id: UUID, sessionID: String, tabID: String? = nil) async -> Bool {
         guard await prepareVaultForFill(),
               let record = autofillVault.contacts.first(where: { $0.id == id })
         else { return false }
@@ -2912,10 +3159,10 @@ extension BrowserService {
             "postalCode": record.postalCode,
             "country": record.country,
         ]
-        return await completeFill(payload, sessionID: sessionID)
+        return await completeFill(payload, sessionID: sessionID, tabID: tabID)
     }
 
-    func fillCard(_ id: UUID, sessionID: String) async -> Bool {
+    func fillCard(_ id: UUID, sessionID: String, tabID: String? = nil) async -> Bool {
         guard await prepareVaultForFill(),
               let record = autofillVault.cards.first(where: { $0.id == id })
         else { return false }
@@ -2927,16 +3174,48 @@ extension BrowserService {
             "expirationMonth": String(format: "%02d", record.expirationMonth),
             "expirationYear": String(record.expirationYear),
         ]
-        return await completeFill(payload, sessionID: sessionID)
+        return await completeFill(payload, sessionID: sessionID, tabID: tabID)
     }
 
     private func prepareVaultForFill() async -> Bool {
-        if autofillVault.authMode == .eachFill { autofillVault.lock() }
-        return await autofillVault.unlock(reason: "Fill saved information in this page")
+        await autofillVault.load()
     }
 
-    private func completeFill(_ payload: [String: Any], sessionID: String) async -> Bool {
-        guard let tab = existingTab(for: sessionID) else { return false }
+    /// A saved record may only be written into a page that could legitimately
+    /// have asked for it. Passwords additionally pin the exact origin they were
+    /// saved against; contacts and payment cards are not origin-bound, so the
+    /// destination itself is what has to be vetted — without this, a full PAN
+    /// was written into whatever page happened to be open, including `file:`,
+    /// `data:` and plain-http pages.
+    private static func isSecureFillDestination(_ url: URL) -> Bool {
+        switch url.scheme?.lowercased() {
+        case "https":
+            return true
+        case "http":
+            // Loopback only, so local development still works.
+            guard let host = url.host?.lowercased() else { return false }
+            return host == "localhost" || host == "127.0.0.1" || host == "::1"
+        default:
+            return false
+        }
+    }
+
+    private func completeFill(
+        _ payload: [String: Any],
+        sessionID: String,
+        tabID: String? = nil,
+        expectedOrigin: String? = nil
+    ) async -> Bool {
+        guard let tab = existingTab(for: sessionID, tabID: tabID) else { return false }
+        guard let destination = tab.webView.url,
+              Self.isSecureFillDestination(destination)
+        else { return false }
+        if let expectedOrigin {
+            guard let pageURL = tab.webView.url,
+                  BrowserAutofillVault.normalizedOrigin(pageURL.absoluteString)
+                    == BrowserAutofillVault.normalizedOrigin(expectedOrigin)
+            else { return false }
+        }
         do {
             let result = try await tab.webView.callAsyncJavaScript(
                 "return globalThis.__locusAutofill && globalThis.__locusAutofill.fill(record)",
@@ -2945,10 +3224,8 @@ extension BrowserService {
                 contentWorld: BrowserBridge.readerWorld
             )
             autofillPrompt = nil
-            if autofillVault.authMode == .eachFill { autofillVault.lock() }
             return (result as? Bool) == true
         } catch {
-            if autofillVault.authMode == .eachFill { autofillVault.lock() }
             return false
         }
     }

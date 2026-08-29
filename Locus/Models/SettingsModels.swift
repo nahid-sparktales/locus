@@ -296,9 +296,12 @@ struct AppSettings: Codable, Hashable {
     /// Web Inspector lets any local process attach to the agent's pages and
     /// read their cookies and storage, so it is opt-in and off by default.
     var browserWebInspector = false
-    /// Browser privacy settings use raw strings so a value written by a newer
-    /// build cannot make the rest of the preferences payload fail to decode.
-    var browserAutofillAuthModeRaw = BrowserAutofillAuthMode.session.rawValue
+    /// Raw Autofill records are visible to the active model only after an
+    /// explicit per-category opt-in. These defaults intentionally stay off for
+    /// existing settings payloads as well as new installations.
+    var browserAgentPasswordsEnabled = false
+    var browserAgentContactsEnabled = false
+    var browserAgentPaymentCardsEnabled = false
     var browserDownloadDestinationRaw = BrowserDownloadDestinationKind.systemDownloads.rawValue
     var browserDownloadAskEveryTime = false
     /// A security-scoped bookmark, never a plain path. Nil means the custom
@@ -504,7 +507,9 @@ struct AppSettings: Codable, Hashable {
         browserRealInput = draft.browserRealInput
         browserEmulateDevice = draft.browserEmulateDevice
         browserWebInspector = draft.browserWebInspector
-        browserAutofillAuthModeRaw = draft.browserAutofillAuthModeRaw
+        browserAgentPasswordsEnabled = draft.browserAgentPasswordsEnabled
+        browserAgentContactsEnabled = draft.browserAgentContactsEnabled
+        browserAgentPaymentCardsEnabled = draft.browserAgentPaymentCardsEnabled
         browserDownloadDestinationRaw = draft.browserDownloadDestinationRaw
         browserDownloadAskEveryTime = draft.browserDownloadAskEveryTime
         browserCustomDownloadBookmark = draft.browserCustomDownloadBookmark
@@ -563,8 +568,12 @@ struct AppSettings: Codable, Hashable {
         BrowserViewport(rawValue: browserViewportRaw) ?? .desktop
     }
 
-    var resolvedBrowserAutofillAuthMode: BrowserAutofillAuthMode {
-        BrowserAutofillAuthMode(rawValue: browserAutofillAuthModeRaw) ?? .session
+    var browserAgentAutofillCategories: Set<BrowserAutofillCategory> {
+        var categories = Set<BrowserAutofillCategory>()
+        if browserAgentPasswordsEnabled { categories.insert(.password) }
+        if browserAgentContactsEnabled { categories.insert(.contact) }
+        if browserAgentPaymentCardsEnabled { categories.insert(.paymentCard) }
+        return categories
     }
 
     var resolvedBrowserDownloadDestination: BrowserDownloadDestinationKind {
@@ -811,9 +820,15 @@ struct AppSettings: Codable, Hashable {
             Bool.self,
             forKey: .browserWebInspector
         ) ?? defaults.browserWebInspector
-        browserAutofillAuthModeRaw = try container.decodeIfPresent(
-            String.self, forKey: .browserAutofillAuthModeRaw
-        ) ?? defaults.browserAutofillAuthModeRaw
+        browserAgentPasswordsEnabled = try container.decodeIfPresent(
+            Bool.self, forKey: .browserAgentPasswordsEnabled
+        ) ?? defaults.browserAgentPasswordsEnabled
+        browserAgentContactsEnabled = try container.decodeIfPresent(
+            Bool.self, forKey: .browserAgentContactsEnabled
+        ) ?? defaults.browserAgentContactsEnabled
+        browserAgentPaymentCardsEnabled = try container.decodeIfPresent(
+            Bool.self, forKey: .browserAgentPaymentCardsEnabled
+        ) ?? defaults.browserAgentPaymentCardsEnabled
         browserDownloadDestinationRaw = try container.decodeIfPresent(
             String.self, forKey: .browserDownloadDestinationRaw
         ) ?? defaults.browserDownloadDestinationRaw

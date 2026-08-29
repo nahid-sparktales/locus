@@ -292,6 +292,13 @@ enum LocusTheme {
         let permissionInk: NSColor
         let permissionMuted: NSColor
         let successSoft: NSColor
+        /// Code-token hues. Deliberately fixed rather than accent-derived: a
+        /// keyword colour that follows the accent would collide with links
+        /// (`signalDeep`) and would mint a fresh dynamic `NSColor` on every body
+        /// evaluation, defeating the attributed-string equality check that keeps
+        /// code blocks from resetting their text storage each pass.
+        let codeKeyword: NSColor
+        let codeType: NSColor
     }
 
     /// Keep the established light appearance byte-for-byte equivalent to the
@@ -320,7 +327,9 @@ enum LocusTheme {
         warning: rgb(0x7D5106),
         permissionInk: rgb(red: 0.42, green: 0.31, blue: 0.25),
         permissionMuted: rgb(red: 0.52, green: 0.42, blue: 0.36),
-        successSoft: rgb(red: 0.906, green: 0.949, blue: 0.792)
+        successSoft: rgb(red: 0.906, green: 0.949, blue: 0.792),
+        codeKeyword: rgb(0x7C3F6E),
+        codeType: rgb(0x1F6F76)
     )
 
     static let darkPalette = Palette(
@@ -342,7 +351,9 @@ enum LocusTheme {
         warning: rgb(0xE1A54B),
         permissionInk: rgb(0xD7A77E),
         permissionMuted: rgb(0xB9927B),
-        successSoft: rgb(0x2A3320)
+        successSoft: rgb(0x2A3320),
+        codeKeyword: rgb(0xE0A0CE),
+        codeType: rgb(0x6BC8D0)
     )
 
     static let ink = adaptive(\.ink)
@@ -375,6 +386,8 @@ enum LocusTheme {
     static let warning = adaptive(\.warning)
     static let permissionInk = adaptive(\.permissionInk)
     static let permissionMuted = adaptive(\.permissionMuted)
+    static let codeKeyword = adaptive(\.codeKeyword)
+    static let codeType = adaptive(\.codeType)
     static var successSoft: Color { signal.opacity(0.18) }
 
     // Semantic roles. The legacy names above remain source-compatible while
@@ -395,6 +408,20 @@ enum LocusTheme {
     static let warningForeground = warning
     static let dangerForeground = danger
     static var selectionFill: Color { signal }
+    /// Transcript selection. A soft accent wash rather than the system
+    /// highlight, and applied as a background only so selected prose keeps its
+    /// own colour instead of being inverted to white.
+    static func selectionWash(forKeyWindow isKey: Bool) -> NSColor {
+        let selection = LocusAccentRuntime.shared.currentSelection()
+        return NSColor(name: nil) { appearance in
+            let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let base: CGFloat = dark ? 0.26 : 0.34
+            return selection.fillNSColor.withAlphaComponent(isKey ? base : base * 0.5)
+        }
+    }
+
+    /// Backing fill for the inline-code pill.
+    static let inlineCodeFill = paperDeep
     static let focusRing = blue
 
     /// Artwork drawn on the chosen signal colour automatically uses whichever
@@ -442,6 +469,40 @@ enum LocusTheme {
     }
 }
 
+/// One table both render paths read, so the AppKit and SwiftUI code views can
+/// no longer drift apart. Every hue is drawn from the Locus palette: keyword and
+/// type are the only additions, and both are fixed rather than accent-derived.
+enum LocusCodeTheme {
+    static func color(for kind: CodeTokenKind) -> Color {
+        switch kind {
+        case .plain: LocusTheme.inkSoft
+        case .punctuation: LocusTheme.muted.opacity(0.75)
+        case .comment: LocusTheme.muted
+        case .keyword: LocusTheme.codeKeyword
+        case .type: LocusTheme.codeType
+        case .function: LocusTheme.blue
+        case .string: LocusTheme.coral
+        case .number, .constant: LocusTheme.warning
+        case .property: LocusTheme.ink
+        }
+    }
+
+    static func nsColor(for kind: CodeTokenKind) -> NSColor {
+        NSColor(color(for: kind))
+    }
+
+    /// Comments are the one token that carries a trait as well as a hue.
+    static func isItalic(_ kind: CodeTokenKind) -> Bool {
+        kind == .comment
+    }
+
+    static func font(size: CGFloat, kind: CodeTokenKind) -> NSFont {
+        let base = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        guard isItalic(kind) else { return base }
+        return NSFontManager.shared.convert(base, toHaveTrait: .italicFontMask)
+    }
+}
+
 /// Semantic type roles backed by the macOS preferred text styles. The legacy
 /// adapter lets the large existing surface migrate mechanically while still
 /// enforcing an 11-point floor for user-facing content.
@@ -454,6 +515,25 @@ enum LocusType {
     static let badge = Font.system(.subheadline, design: .default, weight: .semibold)
     static let mono = Font.system(.callout, design: .monospaced, weight: .regular)
     static let monoCaption = Font.system(.subheadline, design: .monospaced, weight: .regular)
+}
+
+extension Font {
+    /// Exact point size, deliberately NOT routed through `Font.locus`'s
+    /// Dynamic Type buckets.
+    ///
+    /// The transcript renders the same content through two leaves — an AppKit
+    /// `NSAttributedString` when a selection coordinator is present, and a
+    /// SwiftUI fallback otherwise. `Font.locus` maps a range of point sizes
+    /// onto one semantic style, so the two leaves resolved the same block at
+    /// different sizes. Body prose still uses `Font.locus`; only the paired
+    /// AppKit/SwiftUI surfaces need this.
+    static func locusExact(
+        size: CGFloat,
+        weight: Font.Weight = .regular,
+        design: Font.Design = .default
+    ) -> Font {
+        .system(size: size, weight: weight, design: design)
+    }
 }
 
 extension Font {
@@ -494,6 +574,15 @@ enum LocusMotion {
     static let press = Animation.easeOut(duration: 0.10)
     static let activityPulse = Animation.easeInOut(duration: 0.9)
         .repeatForever(autoreverses: true)
+    /// Streaming caret. Slower than `activityPulse` so it reads as a text
+    /// cursor rather than an activity indicator.
+    static let caretBlink = Animation.easeInOut(duration: 0.53)
+        .repeatForever(autoreverses: true)
+
+    /// `nil` holds the caret steady under Reduce Motion.
+    static func caretBlink(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : caretBlink
+    }
 
     static func allowsSpatialMotion(reduceMotion: Bool) -> Bool {
         !reduceMotion

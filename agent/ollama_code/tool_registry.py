@@ -1,6 +1,7 @@
 """Dynamic tool schemas and dispatch for built-ins, skills, and MCP tools."""
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -449,6 +450,25 @@ BROWSER_TOOL_SCHEMAS = [
         [],
     ),
     _browser_schema(
+        "browser_autofill",
+        "List, retrieve, or fill browser data that the user explicitly enabled for the "
+        "active model. 'get' returns raw saved values. Password records are limited to "
+        "the open tab's exact origin; contact and payment-card records are global. "
+        "Security codes are never stored.",
+        {
+            "action": {"type": "string", "enum": ["list", "get", "fill"]},
+            "category": {
+                "type": "string",
+                "enum": ["password", "contact", "paymentCard"],
+            },
+            "record_id": {
+                "type": "string",
+                "description": "For get or fill, an id returned by list.",
+            },
+        },
+        ["action", "category"],
+    ),
+    _browser_schema(
         "browser_read_page",
         "Read the open page as a tree of elements. Interactive ones carry a ref_N id "
         "valid only for this snapshot: acting on an older one returns "
@@ -821,6 +841,9 @@ class ToolRegistry:
         # History is a separate opt-in inside Browser Settings. Keeping this
         # false removes the schema and also rejects guessed calls.
         self.browser_history_enabled = False
+        # Raw categories the user explicitly enabled. The tool is omitted when
+        # empty and its schema enum is narrowed to this set when present.
+        self.browser_autofill_categories: set[str] = set()
         #: Notes live in the native app, so the headless CLI must not advertise
         #: these schemas until a connected Locus instance announces its broker.
         self.notes_enabled = False
@@ -1087,10 +1110,18 @@ class ToolRegistry:
         """
         if not self.browser_enabled:
             return []
-        return [
-            schema for schema in BROWSER_TOOL_SCHEMAS
-            if self.browser_tool_allowed(schema["function"]["name"])
-        ]
+        schemas = []
+        for schema in BROWSER_TOOL_SCHEMAS:
+            name = schema["function"]["name"]
+            if not self.browser_tool_allowed(name):
+                continue
+            if name == "browser_autofill":
+                schema = copy.deepcopy(schema)
+                schema["function"]["parameters"]["properties"]["category"]["enum"] = sorted(
+                    self.browser_autofill_categories
+                )
+            schemas.append(schema)
+        return schemas
 
     def browser_tool_allowed(self, name: str) -> bool:
         """Whether this agent may actually run ``name``.
@@ -1103,6 +1134,8 @@ class ToolRegistry:
         if not self.browser_enabled or name not in _BROWSER_TOOL_NAMES:
             return False
         if name == "browser_history" and not self.browser_history_enabled:
+            return False
+        if name == "browser_autofill" and not self.browser_autofill_categories:
             return False
         if self._agent_access_ceiling == "read_only":
             return name in _READ_ONLY_BROWSER_TOOLS

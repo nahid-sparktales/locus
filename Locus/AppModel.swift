@@ -1033,6 +1033,12 @@ final class AppModel: ObservableObject {
         browser.onUserNotice = { [weak self] notice in
             self?.showToast(notice)
         }
+        if startImmediately {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                _ = await self.browser.autofillVault.load()
+            }
+        }
         if startImmediately, !isUITesting {
             // Warm WebKit's helper processes once launch settles, so the
             // first page load doesn't pay their cold start. Gated on the
@@ -1107,7 +1113,6 @@ final class AppModel: ObservableObject {
                     queue: .main
                 ) { [weak self] _ in
                     MainActor.assumeIsolated {
-                        self?.browser.autofillVault.lock()
                         self?.walletGateway.lock()
                         self?.refreshWalletCapabilities()
                     }
@@ -4230,7 +4235,6 @@ final class AppModel: ObservableObject {
     /// the updater or AppKit starts tearing down the rest of the process.
     func lockSensitiveServicesForShutdown() {
         walletGateway.lock()
-        browser.autofillVault.lock()
     }
 
     func authorizeWalletSession() async {
@@ -9431,6 +9435,11 @@ final class AppModel: ObservableObject {
                 != newSettings.walletBrowserProviderEnabled
         let browserHistoryAccessChanged = settings.browserHistoryAccessRaw
             != newSettings.browserHistoryAccessRaw
+        let browserAutofillAccessChanged = settings.browserAgentPasswordsEnabled
+            != newSettings.browserAgentPasswordsEnabled
+            || settings.browserAgentContactsEnabled != newSettings.browserAgentContactsEnabled
+            || settings.browserAgentPaymentCardsEnabled
+                != newSettings.browserAgentPaymentCardsEnabled
         let browserProfileChanged = settings.browserPersistProfile
             != newSettings.browserPersistProfile
         let proxyChanged = proxyCredentialChanged
@@ -9479,7 +9488,7 @@ final class AppModel: ObservableObject {
             refreshWalletCapabilities()
         }
 
-        if browserEnabledChanged || browserHistoryAccessChanged {
+        if browserEnabledChanged || browserHistoryAccessChanged || browserAutofillAccessChanged {
             announceBrowserCapability()
             if !newSettings.browserEnabled { browser.cancelPendingActions() }
         }
@@ -10759,17 +10768,23 @@ final class AppModel: ObservableObject {
     }
 
     private func sendBrowserCapability(to transport: BackendService) {
-        let delivered = transport.send([
-            "type": "set_browser_control",
-            "enabled": settings.browserEnabled,
-            "history_enabled": settings.resolvedBrowserHistoryAccess != .disabled,
-        ])
+        let delivered = transport.send(browserCapabilityPayload)
         // The agent refuses capability changes mid-turn and Swift historically
         // dropped the answer, so a toggle during a long turn was lost until the
         // next reconnect. Retry once the turn is over instead.
         if !delivered || isBusy {
             pendingBrowserCapabilityTransports.append(transport)
         }
+    }
+
+    private var browserCapabilityPayload: [String: Any] {
+        [
+            "type": "set_browser_control",
+            "enabled": settings.browserEnabled,
+            "history_enabled": settings.resolvedBrowserHistoryAccess != .disabled,
+            "autofill_categories": settings.browserAgentAutofillCategories
+                .map(\.rawValue).sorted(),
+        ]
     }
 
     /// Notes are a native app surface, so headless agents should not advertise
@@ -10805,10 +10820,9 @@ final class AppModel: ObservableObject {
         let transports = pendingBrowserCapabilityTransports
         pendingBrowserCapabilityTransports.removeAll()
         for transport in transports {
-            _ = transport.send([
-                "type": "set_browser_control",
-                "enabled": settings.browserEnabled,
-            ])
+            if !transport.send(browserCapabilityPayload) {
+                pendingBrowserCapabilityTransports.append(transport)
+            }
         }
     }
 
@@ -11289,7 +11303,7 @@ final class AppModel: ObservableObject {
         browser.realInputEnabled = settings.browserRealInput
         browser.deviceEmulationEnabled = settings.browserEmulateDevice
         browser.webInspectorEnabled = settings.browserWebInspector
-        browser.autofillVault.authMode = settings.resolvedBrowserAutofillAuthMode
+        browser.agentAutofillCategories = settings.browserAgentAutofillCategories
         browser.historyAccess = settings.resolvedBrowserHistoryAccess
         browser.downloadDestination = settings.resolvedBrowserDownloadDestination
         browser.downloadAskEveryTime = settings.browserDownloadAskEveryTime

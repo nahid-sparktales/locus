@@ -9,3 +9,14 @@ condition = "AND"
 regexTarget = "line"
 paths = ['''(^|/)agent/ollama_code/core\.py$''']
 regexes = ['''headroom_tokens\s*=\s*RESERVED_REPLY_TOKENS''']
+
+[[allowlists]]
+description = """
+The Locus GitHub App client ID is a public identifier, not a credential.
+GitHub App client IDs are published on the app's own settings page and are
+required in the OAuth device flow, which is designed for public clients that
+cannot hold a secret. No GitHub client secret is embedded anywhere in this
+repository. Matched by generic-api-key on entropy plus the "auth" substring in
+LOCUS_GITHUB_OAUTH_CLIENT_ID.
+"""
+regexes = ['''Iv23liCL3tit1VOgBjWF''']

@@ -2019,11 +2019,23 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         enabled = bool(msg.get("enabled"))
         core.tool_registry.browser_enabled = enabled
         core.tool_registry.browser_history_enabled = enabled and bool(msg.get("history_enabled"))
+        allowed_autofill_categories = {"password", "contact", "paymentCard"}
+        raw_autofill_categories = msg.get("autofill_categories")
+        core.tool_registry.browser_autofill_categories = (
+            {
+                str(category)
+                for category in raw_autofill_categories
+                if str(category) in allowed_autofill_categories
+            }
+            if enabled and isinstance(raw_autofill_categories, list)
+            else set()
+        )
         core.browser_executor = svc.execute_browser if enabled else None
         svc.queue_event({
             "type": "browser_control_status",
             "enabled": enabled,
             "history_enabled": core.tool_registry.browser_history_enabled,
+            "autofill_categories": sorted(core.tool_registry.browser_autofill_categories),
         })
     elif mtype == "browser_action_result":
         request_id = str(msg.get("request_id") or "")

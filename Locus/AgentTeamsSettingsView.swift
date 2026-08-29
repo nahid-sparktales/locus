@@ -193,7 +193,6 @@ struct AgentTeamsSettingsView: View {
                         .disabled(model.isBusy)
                     }
                     .padding(.vertical, 7)
-                    Divider()
                 }
             }
         }
@@ -241,7 +240,6 @@ struct AgentTeamsSettingsView: View {
                         .disabled(model.isBusy)
                     }
                     .padding(.vertical, 7)
-                    Divider()
                 }
             }
         }

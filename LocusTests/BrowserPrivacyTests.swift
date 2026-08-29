@@ -7,7 +7,10 @@ final class BrowserPrivacyTests: XCTestCase {
     func testSettingsMigrationUsesPrivateSecureDefaults() throws {
         let settings = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
 
-        XCTAssertEqual(settings.resolvedBrowserAutofillAuthMode, .session)
+        XCTAssertFalse(settings.browserAgentPasswordsEnabled)
+        XCTAssertFalse(settings.browserAgentContactsEnabled)
+        XCTAssertFalse(settings.browserAgentPaymentCardsEnabled)
+        XCTAssertTrue(settings.browserAgentAutofillCategories.isEmpty)
         XCTAssertEqual(settings.resolvedBrowserDownloadDestination, .systemDownloads)
         XCTAssertEqual(settings.resolvedBrowserHistoryAccess, .disabled)
         XCTAssertEqual(settings.resolvedBrowserPresentationMode, .fixedCanvas)
@@ -18,14 +21,16 @@ final class BrowserPrivacyTests: XCTestCase {
         XCTAssertEqual(settings.resolvedBrowserPermissionDefaults[.fileUploads], .ask)
     }
 
-    func testVaultEncryptsRecordsAndClearsPlaintextWhenLocked() async throws {
+    func testVaultEncryptsRecordsAndLoadsPromptFreeAcrossRelaunch() async throws {
         let url = temporaryURL("vault.bin")
+        let keyProvider = InMemoryBrowserVaultKeyProvider()
         let vault = BrowserAutofillVault(
             fileURL: url,
-            keyProvider: InMemoryBrowserVaultKeyProvider()
+            keyProvider: keyProvider
         )
-        let unlocked = await vault.unlock(reason: "Test")
-        XCTAssertTrue(unlocked)
+        let loaded = await vault.load()
+        XCTAssertTrue(loaded)
+        XCTAssertTrue(vault.isReady)
         try vault.save(BrowserPasswordRecord(
             origin: "HTTPS://Example.com/login",
             username: "person@example.com",
@@ -36,13 +41,12 @@ final class BrowserPrivacyTests: XCTestCase {
         XCTAssertNil(String(data: bytes, encoding: .utf8)?.range(of: "unique-secret-value"))
         XCTAssertEqual(vault.passwords.first?.origin, "https://example.com")
 
-        vault.lock()
-        XCTAssertFalse(vault.isUnlocked)
-        XCTAssertTrue(vault.passwords.isEmpty)
-
-        let reopened = await vault.unlock(reason: "Test reopen")
-        XCTAssertTrue(reopened)
-        XCTAssertEqual(vault.passwords.first?.username, "person@example.com")
+        let relaunched = BrowserAutofillVault(fileURL: url, keyProvider: keyProvider)
+        let reloaded = await relaunched.load()
+        XCTAssertTrue(reloaded)
+        XCTAssertTrue(relaunched.isReady)
+        XCTAssertEqual(relaunched.passwords.first?.username, "person@example.com")
+        XCTAssertEqual(relaunched.passwords.first?.password, "unique-secret-value")
     }
 
     func testCardValidationAndEncodingNeverIncludeSecurityCode() async throws {
@@ -50,8 +54,8 @@ final class BrowserPrivacyTests: XCTestCase {
             fileURL: temporaryURL("cards.bin"),
             keyProvider: InMemoryBrowserVaultKeyProvider()
         )
-        let unlocked = await vault.unlock(reason: "Test")
-        XCTAssertTrue(unlocked)
+        let loaded = await vault.load()
+        XCTAssertTrue(loaded)
         let card = BrowserPaymentCardRecord(
             nickname: "Travel",
             cardholder: "A Person",
@@ -67,6 +71,27 @@ final class BrowserPrivacyTests: XCTestCase {
         XCTAssertFalse(encoded.contains("cvc"))
         XCTAssertFalse(encoded.contains("cvv"))
         XCTAssertFalse(encoded.contains("cid"))
+    }
+
+    func testAutofillModelSettingsRoundTripAndIgnoreLegacyAuthMode() throws {
+        var settings = AppSettings()
+        settings.browserAgentPasswordsEnabled = true
+        settings.browserAgentPaymentCardsEnabled = true
+
+        let restored = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONEncoder().encode(settings)
+        )
+        XCTAssertEqual(restored.browserAgentAutofillCategories, [.password, .paymentCard])
+
+        let legacy = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data(#"{"browserAutofillAuthModeRaw":"always","browserAgentContactsEnabled":true}"#.utf8)
+        )
+        XCTAssertFalse(legacy.browserAgentPasswordsEnabled)
+        XCTAssertTrue(legacy.browserAgentContactsEnabled)
+        XCTAssertFalse(legacy.browserAgentPaymentCardsEnabled)
+        XCTAssertEqual(legacy.browserAgentAutofillCategories, [.contact])
     }
 
     func testActivityDatabasePartitionsPersistentWorkspaceProfiles() {

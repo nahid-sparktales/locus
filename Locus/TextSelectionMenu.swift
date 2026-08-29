@@ -885,10 +885,19 @@ final class ResponseSelectionCoordinator: ObservableObject {
 /// NSTextView leaf used only inside a response coordinator. It deliberately
 /// handles selection itself instead of letting AppKit clamp a drag to this
 /// view's text storage.
-final class ResponseSelectableTextView: NSTextView {
+final class ResponseSelectableTextView: LocusSelectionTextView {
     weak var responseSelectionCoordinator: ResponseSelectionCoordinator?
     var responseSelectionSpanID: String?
     var onOpenURL: ((URL) -> Void)?
+
+    /// Built against a hand-made TextKit 1 stack so inline-code runs can be
+    /// drawn as rounded pills by `LocusMarkdownLayoutManager`.
+    static func make() -> ResponseSelectableTextView {
+        let stack = LocusSelectionTextView.makeTextKit1Stack()
+        let view = ResponseSelectableTextView(frame: .zero, textContainer: stack.container)
+        view.adoptTextKit1(storage: stack.storage)
+        return view
+    }
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -999,7 +1008,7 @@ struct ResponseSelectableText: NSViewRepresentable {
     var onOpenURL: ((URL) -> Void)?
 
     func makeNSView(context: Context) -> ResponseSelectableTextView {
-        let view = ResponseSelectableTextView(frame: .zero)
+        let view = ResponseSelectableTextView.make()
         view.isEditable = false
         view.isSelectable = true
         view.isRichText = true
@@ -1053,6 +1062,9 @@ struct ResponseSelectableText: NSViewRepresentable {
         if !view.attributedString().isEqual(to: attributedText) {
             view.textStorage?.setAttributedString(attributedText)
         }
+        // The wash follows the accent, so it is re-resolved on every update
+        // rather than only at construction.
+        view.refreshSelectionWash()
         view.onOpenURL = onOpenURL
         coordinator.register(span, view: view)
         view.invalidateIntrinsicContentSize()

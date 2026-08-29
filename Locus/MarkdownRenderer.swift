@@ -332,7 +332,164 @@ enum MarkdownRenderDensity: Sendable {
 
     var fontSize: CGFloat { self == .compact ? 11 : 13 }
     var lineSpacing: CGFloat { self == .compact ? 3 : 5 }
-    var blockSpacing: CGFloat { self == .compact ? 8 : 12 }
+
+    /// Sized literally at both leaves. Routing these through `Font.locus`, whose
+    /// point sizes are buckets rather than values, is what let the AppKit and
+    /// SwiftUI code paths render the same block at two different sizes.
+    var codeFontSize: CGFloat { self == .compact ? 11 : 12 }
+    var inlineCodeFontSize: CGFloat { self == .compact ? 10 : 12 }
+    var headingLineSpacing: CGFloat { self == .compact ? 0 : 1 }
+
+    func headingSize(level: Int) -> CGFloat {
+        if self == .compact {
+            return switch level {
+            case 1: 13
+            case 2: 12
+            default: 11
+            }
+        }
+        return switch level {
+        case 1: 20
+        case 2: 16
+        case 3: 14
+        default: 13
+        }
+    }
+
+    func headingWeight(level: Int) -> NSFont.Weight {
+        level == 1 ? .bold : .semibold
+    }
+
+    /// Space above `block`, given what precedes it.
+    ///
+    /// The single most consequential rule here is that a heading takes far more
+    /// room above than below. A uniform gap — what this replaced — gives a
+    /// section break exactly as much weight as a paragraph break, which is why
+    /// long answers read as one undifferentiated column.
+    func topSpacing(from previous: MarkdownRenderBlock?, to block: MarkdownRenderBlock) -> CGFloat {
+        guard let previous else { return 0 }
+        let compact = self == .compact
+
+        if case .heading(let level, _) = block {
+            return level <= 2 ? (compact ? 14 : 22) : (compact ? 12 : 18)
+        }
+        if case .heading = previous { return compact ? 4 : 6 }
+        if case .rule = block { return compact ? 12 : 20 }
+        if case .rule = previous { return compact ? 12 : 20 }
+        if block.isCodeOrTable || previous.isCodeOrTable { return compact ? 9 : 14 }
+        if block.isList {
+            // A list reads as a continuation of the sentence introducing it.
+            if case .paragraph = previous { return compact ? 5 : 8 }
+        }
+        return compact ? 8 : 12
+    }
+}
+
+extension MarkdownRenderBlock {
+    var isCodeOrTable: Bool {
+        switch self {
+        case .code, .table: true
+        default: false
+        }
+    }
+
+    var isList: Bool {
+        switch self {
+        case .unordered, .ordered: true
+        default: false
+        }
+    }
+}
+
+/// The one place a Markdown inline run turns into type and colour.
+///
+/// Both leaves — the AppKit `NSAttributedString` used whenever a selection
+/// coordinator is present, and the SwiftUI `AttributedString` fallback — resolve
+/// through this. Previously each decided independently and had already drifted:
+/// inline code took different foregrounds, links underlined on only one path,
+/// and the two disagreed on code size.
+struct MarkdownInlineStyleSpec {
+    var fontSize: CGFloat
+    var weight: NSFont.Weight
+    var isMonospaced: Bool
+    var isBold: Bool
+    var isItalic: Bool
+    var isStrikethrough: Bool
+    var isUnderlined: Bool
+    var foreground: Color
+    var pillFill: Color?
+
+    static func resolve(
+        run: MarkdownInlineRun,
+        baseSize: CGFloat,
+        baseWeight: NSFont.Weight,
+        baseColor: Color,
+        inlineCodeSize: CGFloat,
+        link: URL?
+    ) -> Self {
+        var spec = Self(
+            fontSize: baseSize,
+            weight: baseWeight,
+            isMonospaced: false,
+            isBold: run.style.contains(.strong),
+            isItalic: run.style.contains(.emphasis),
+            isStrikethrough: run.style.contains(.strikethrough),
+            isUnderlined: false,
+            foreground: baseColor,
+            pillFill: nil
+        )
+
+        // Bold reads darker as well as heavier. Body prose sits at `inkSoft`, so
+        // weight alone gave emphasis no contrast to work with.
+        if spec.isBold { spec.foreground = LocusTheme.ink }
+
+        if run.style.contains(.code) {
+            spec.isMonospaced = true
+            spec.fontSize = inlineCodeSize
+            spec.weight = .medium
+            spec.isBold = false
+            spec.foreground = LocusTheme.ink
+            spec.pillFill = LocusTheme.inlineCodeFill
+        }
+
+        if link != nil {
+            spec.foreground = LocusTheme.signalDeep
+            spec.isUnderlined = true
+        }
+
+        return spec
+    }
+
+    var nsFont: NSFont {
+        var font = isMonospaced
+            ? NSFont.monospacedSystemFont(ofSize: fontSize, weight: weight)
+            : NSFont.systemFont(ofSize: fontSize, weight: weight)
+        var traits: NSFontTraitMask = []
+        if isBold { traits.insert(.boldFontMask) }
+        if isItalic { traits.insert(.italicFontMask) }
+        if !traits.isEmpty {
+            font = NSFontManager.shared.convert(font, toHaveTrait: traits)
+        }
+        return font
+    }
+
+    var swiftUIFont: Font {
+        var font = Font.locusExact(
+            size: fontSize,
+            weight: swiftUIWeight,
+            design: isMonospaced ? .monospaced : .default
+        )
+        if isBold { font = font.bold() }
+        if isItalic { font = font.italic() }
+        return font
+    }
+
+    private var swiftUIWeight: Font.Weight {
+        if weight >= .bold { return .bold }
+        if weight >= .semibold { return .semibold }
+        if weight >= .medium { return .medium }
+        return .regular
+    }
 }
 
 /// Builds the logical document that sits behind the independently laid-out
@@ -485,47 +642,54 @@ enum MarkdownSelectionProjection {
 enum MarkdownNativeText {
     static func attributed(
         _ runs: [MarkdownInlineRun],
-        font: NSFont,
-        color: NSColor,
+        size: CGFloat,
+        weight: NSFont.Weight,
+        color: Color,
         lineSpacing: CGFloat,
+        inlineCodeSize: CGFloat,
         workspacePath: String?
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = lineSpacing
         for run in runs {
-            var runFont = font
-            let traits: NSFontTraitMask = [
-                run.style.contains(.strong) ? .boldFontMask : [],
-                run.style.contains(.emphasis) ? .italicFontMask : []
-            ]
-            .reduce([]) { $0.union($1) }
-            if !traits.isEmpty {
-                runFont = NSFontManager.shared.convert(runFont, toHaveTrait: traits)
-            }
-            if run.style.contains(.code) {
-                runFont = NSFont.monospacedSystemFont(
-                    ofSize: max(font.pointSize - 1, 10),
-                    weight: .medium
-                )
-            }
+            let url = MarkdownLinkPolicy.renderedURL(for: run, workspacePath: workspacePath)
+            let spec = MarkdownInlineStyleSpec.resolve(
+                run: run,
+                baseSize: size,
+                baseWeight: weight,
+                baseColor: color,
+                inlineCodeSize: inlineCodeSize,
+                link: url
+            )
             var attributes: [NSAttributedString.Key: Any] = [
-                .font: runFont,
-                .foregroundColor: color,
+                .font: spec.nsFont,
+                .foregroundColor: NSColor(spec.foreground),
                 .paragraphStyle: paragraph
             ]
-            if run.style.contains(.strikethrough) {
+            if spec.isStrikethrough {
                 attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
             }
-            if run.style.contains(.code) {
-                attributes[.backgroundColor] = NSColor(LocusTheme.paperDeep)
-            }
-            if let url = MarkdownLinkPolicy.renderedURL(for: run, workspacePath: workspacePath) {
-                attributes[.link] = url
-                attributes[.foregroundColor] = NSColor(LocusTheme.signalDeep)
+            if spec.isUnderlined {
                 attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
             }
-            result.append(NSAttributedString(string: run.text, attributes: attributes))
+            if let fill = spec.pillFill {
+                // A custom attribute rather than `.backgroundColor`: the pill is
+                // drawn rounded and padded by `LocusMarkdownLayoutManager`.
+                attributes[.locusInlineCodePill] = NSColor(fill)
+            }
+            if let url { attributes[.link] = url }
+            let piece = NSMutableAttributedString(string: run.text, attributes: attributes)
+            if spec.pillFill != nil, piece.length > 0 {
+                // Trailing room only, so the following word clears the pill's
+                // right edge. Kerning the whole run would letter-space the code.
+                piece.addAttribute(
+                    .kern,
+                    value: 3.0,
+                    range: NSRange(location: piece.length - 1, length: 1)
+                )
+            }
+            result.append(piece)
         }
         return result
     }
@@ -676,15 +840,30 @@ private struct MarkdownBlocksView: View {
     let selectionSpans: [String: TranscriptSelectionSpan]
     let pathPrefix: [Int]
     let onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)?
+    /// Nested lists step in; the top level does not.
+    var nestingDepth = 0
+    /// Set by block quotes. The AppKit leaves paint their own colour, so a
+    /// `.foregroundStyle` on the parent never reached them.
+    var textColor: Color?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: density.blockSpacing) {
+        // Spacing is per-transition rather than uniform, so headings can take
+        // more room above than below.
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
                 blockView(block, path: pathPrefix + [index])
+                    .padding(.top, density.topSpacing(
+                        from: index == 0 ? nil : blocks[index - 1],
+                        to: block
+                    ))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .tint(LocusTheme.signalDeep)
+    }
+
+    private var proseColor: Color {
+        textColor ?? (density == .compact ? LocusTheme.muted : LocusTheme.inkSoft)
     }
 
     @ViewBuilder
@@ -722,18 +901,17 @@ private struct MarkdownBlocksView: View {
             selectableInline(
                 runs,
                 path: path,
-                fontSize: density == .compact
-                    ? (level <= 2 ? 13 : 11)
-                    : (level == 1 ? 20 : (level == 2 ? 17 : 14)),
-                fontWeight: level <= 2 ? .bold : .semibold,
+                fontSize: density.headingSize(level: level),
+                fontWeight: density.headingWeight(level: level),
                 color: LocusTheme.ink,
-                lineSpacing: 0
+                lineSpacing: density.headingLineSpacing
             )
 
         case .code(let language, let body):
             CodeBlockView(
                 language: language,
                 code: body,
+                density: density,
                 selectionCoordinator: selectionCoordinator,
                 selectionSpan: selectionSpan(at: path)
             )
@@ -756,17 +934,16 @@ private struct MarkdownBlocksView: View {
                     selectionCoordinator: selectionCoordinator,
                     selectionSpans: selectionSpans,
                     pathPrefix: path,
-                    onOpenWorkspaceReference: onOpenWorkspaceReference
+                    onOpenWorkspaceReference: onOpenWorkspaceReference,
+                    nestingDepth: nestingDepth,
+                    textColor: LocusTheme.muted
                 )
-                .foregroundStyle(LocusTheme.muted)
             }
-            .padding(.vertical, 2)
 
         case .rule:
             Rectangle()
                 .fill(LocusTheme.line)
                 .frame(height: 1)
-                .padding(.vertical, 3)
 
         case .table(let headers, let alignments, let rows):
             MarkdownTableRenderer(
@@ -794,7 +971,7 @@ private struct MarkdownBlocksView: View {
     }
 
     private func list(items: [MarkdownRenderListItem], start: Int?, path: [Int]) -> some View {
-        VStack(alignment: .leading, spacing: density == .compact ? 4 : 6) {
+        VStack(alignment: .leading, spacing: density == .compact ? 3 : 4) {
             ForEach(Array(items.enumerated()), id: \.offset) { offset, item in
                 HStack(alignment: .top, spacing: 8) {
                     listMarker(item: item, number: start.map { $0 + offset })
@@ -806,12 +983,14 @@ private struct MarkdownBlocksView: View {
                         selectionCoordinator: selectionCoordinator,
                         selectionSpans: selectionSpans,
                         pathPrefix: path + [offset],
-                        onOpenWorkspaceReference: onOpenWorkspaceReference
+                        onOpenWorkspaceReference: onOpenWorkspaceReference,
+                        nestingDepth: nestingDepth + 1,
+                        textColor: textColor
                     )
                 }
             }
         }
-        .padding(.leading, 2)
+        .padding(.leading, nestingDepth > 0 ? 10 : 2)
     }
 
     @ViewBuilder
@@ -822,15 +1001,17 @@ private struct MarkdownBlocksView: View {
                 .foregroundStyle(checked ? LocusTheme.success : LocusTheme.muted)
                 .padding(.top, 2)
         } else if let number {
+            // Set in the body face at body size: an ordered marker is part of
+            // the sentence, not a caption sitting beside it.
             SwiftUI.Text("\(number).")
-                .font(.locus(size: 10, weight: .semibold, design: .monospaced))
+                .font(.locusExact(size: density.fontSize))
                 .foregroundStyle(LocusTheme.muted)
-                .padding(.top, 1)
+                .padding(.top, 0)
         } else {
             Circle()
-                .fill(LocusTheme.inkSoft)
+                .fill(LocusTheme.muted)
                 .frame(width: 4, height: 4)
-                .padding(.top, 7)
+                .padding(.top, density == .compact ? 5 : 7)
         }
     }
 
@@ -841,7 +1022,7 @@ private struct MarkdownBlocksView: View {
             path: path,
             fontSize: density.fontSize,
             fontWeight: .regular,
-            color: density == .compact ? LocusTheme.muted : LocusTheme.inkSoft,
+            color: proseColor,
             lineSpacing: density.lineSpacing
         )
     }
@@ -859,9 +1040,11 @@ private struct MarkdownBlocksView: View {
             ResponseSelectableText(
                 attributedText: MarkdownNativeText.attributed(
                     runs,
-                    font: .systemFont(ofSize: fontSize, weight: fontWeight),
-                    color: NSColor(color),
+                    size: fontSize,
+                    weight: fontWeight,
+                    color: color,
                     lineSpacing: lineSpacing,
+                    inlineCodeSize: density.inlineCodeFontSize,
                     workspacePath: workspacePath
                 ),
                 span: span,
@@ -870,9 +1053,12 @@ private struct MarkdownBlocksView: View {
             )
             .fixedSize(horizontal: false, vertical: true)
         } else {
-            SwiftUI.Text(attributed(runs))
-                .font(.system(size: fontSize, weight: swiftUIWeight(fontWeight)))
-                .foregroundStyle(color)
+            SwiftUI.Text(attributed(
+                runs,
+                baseSize: fontSize,
+                baseWeight: fontWeight,
+                baseColor: color
+            ))
                 .lineSpacing(lineSpacing)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -901,7 +1087,7 @@ private struct MarkdownBlocksView: View {
             .fixedSize(horizontal: false, vertical: true)
         } else {
             SwiftUI.Text(text)
-                .font(.system(size: font.pointSize, design: font.isFixedPitch ? .monospaced : .default))
+                .font(.locusExact(size: font.pointSize, design: font.isFixedPitch ? .monospaced : .default))
                 .foregroundStyle(Color(nsColor: color))
                 .lineSpacing(lineSpacing)
                 .textSelection(.enabled)
@@ -913,39 +1099,34 @@ private struct MarkdownBlocksView: View {
         selectionSpans[path.map(String.init).joined(separator: ".")]
     }
 
-    private func swiftUIWeight(_ weight: NSFont.Weight) -> Font.Weight {
-        if weight >= .bold { return .bold }
-        if weight >= .semibold { return .semibold }
-        if weight >= .medium { return .medium }
-        return .regular
-    }
-
+    /// Fallback leaf used only when no selection coordinator is present.
+    /// Resolves through the same spec as the AppKit leaf so the two cannot drift.
     private func attributed(
         _ runs: [MarkdownInlineRun],
-        headingLevel: Int? = nil
+        baseSize: CGFloat,
+        baseWeight: NSFont.Weight,
+        baseColor: Color
     ) -> AttributedString {
         var result = AttributedString()
         for run in runs {
+            let url = MarkdownLinkPolicy.renderedURL(for: run, workspacePath: workspacePath)
+            let spec = MarkdownInlineStyleSpec.resolve(
+                run: run,
+                baseSize: baseSize,
+                baseWeight: baseWeight,
+                baseColor: baseColor,
+                inlineCodeSize: density.inlineCodeFontSize,
+                link: url
+            )
             var piece = AttributedString(run.text)
-            var intent: InlinePresentationIntent = []
-            if run.style.contains(.strong) { intent.insert(.stronglyEmphasized) }
-            if run.style.contains(.emphasis) { intent.insert(.emphasized) }
-            if run.style.contains(.strikethrough) { intent.insert(.strikethrough) }
-            if run.style.contains(.code) { intent.insert(.code) }
-            if !intent.isEmpty { piece.inlinePresentationIntent = intent }
-            if run.style.contains(.code) {
-                piece.font = .locus(
-                    size: max(density.fontSize - 1, 10),
-                    weight: .medium,
-                    design: .monospaced
-                )
-                piece.foregroundColor = LocusTheme.ink
-                piece.backgroundColor = LocusTheme.paperDeep
-            }
-            if let url = MarkdownLinkPolicy.renderedURL(for: run, workspacePath: workspacePath) {
-                piece.link = url
-                piece.foregroundColor = LocusTheme.signalDeep
-            }
+            piece.font = spec.swiftUIFont
+            piece.foregroundColor = spec.foreground
+            if spec.isStrikethrough { piece.strikethroughStyle = .single }
+            if spec.isUnderlined { piece.underlineStyle = .single }
+            // No layout manager on this path, so the pill degrades to a flat
+            // fill rather than a rounded one.
+            if let fill = spec.pillFill { piece.backgroundColor = fill }
+            if let url { piece.link = url }
             result.append(piece)
         }
         return result
@@ -1426,7 +1607,71 @@ private struct MarkdownTableRenderer: View {
     let path: [Int]
     let onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)?
     @State private var collapsed = false
-    private let cellWidth: CGFloat = 154
+    /// Measured once at construction. A fixed width for every column made even a
+    /// two-column table scroll sideways; sizing to content is what lets a normal
+    /// table simply sit in the reply.
+    private let columnWidths: [CGFloat]
+
+    init(
+        headers: [[MarkdownInlineRun]],
+        alignments: [MarkdownColumnAlignment],
+        rows: [[[MarkdownInlineRun]]],
+        workspacePath: String?,
+        density: MarkdownRenderDensity,
+        selectionCoordinator: ResponseSelectionCoordinator?,
+        selectionSpans: [String: TranscriptSelectionSpan],
+        path: [Int],
+        onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)?
+    ) {
+        self.headers = headers
+        self.alignments = alignments
+        self.rows = rows
+        self.workspacePath = workspacePath
+        self.density = density
+        self.selectionCoordinator = selectionCoordinator
+        self.selectionSpans = selectionSpans
+        self.path = path
+        self.onOpenWorkspaceReference = onOpenWorkspaceReference
+        columnWidths = Self.columnWidths(
+            headers: headers,
+            rows: rows,
+            fontSize: density == .compact ? 10 : 12
+        )
+    }
+
+    private var cellFontSize: CGFloat { density == .compact ? 10 : 12 }
+
+    /// Widths cover every row, not just the visible ones, so collapsing a long
+    /// table does not resize its columns underneath the reader.
+    private static func columnWidths(
+        headers: [[MarkdownInlineRun]],
+        rows: [[[MarkdownInlineRun]]],
+        fontSize: CGFloat
+    ) -> [CGFloat] {
+        let columnCount = max(headers.count, rows.map(\.count).max() ?? 0)
+        guard columnCount > 0 else { return [] }
+        func width(_ runs: [MarkdownInlineRun], header: Bool) -> CGFloat {
+            let text = runs.map(\.text).joined()
+            guard !text.isEmpty else { return 0 }
+            let font = NSFont.systemFont(
+                ofSize: fontSize,
+                weight: header ? .semibold : .regular
+            )
+            return NSAttributedString(string: text, attributes: [.font: font]).size().width
+        }
+        return (0..<columnCount).map { column in
+            var widest: CGFloat = 0
+            if column < headers.count { widest = width(headers[column], header: true) }
+            for row in rows where column < row.count {
+                widest = max(widest, width(row[column], header: false))
+            }
+            return min(max(widest.rounded(.up), 44), 300)
+        }
+    }
+
+    private func cellWidth(at index: Int) -> CGFloat {
+        index < columnWidths.count ? columnWidths[index] : 154
+    }
 
     private var isLong: Bool {
         rows.count > LongOutputPolicy.tableCollapseThreshold
@@ -1529,7 +1774,7 @@ private struct MarkdownTableRenderer: View {
                 case .right: .trailing
                 }
                 cellText(cell, path: path + [rowIndex, index], header: header)
-                    .frame(width: cellWidth, alignment: edge)
+                    .frame(width: cellWidth(at: index), alignment: edge)
                     .frame(minHeight: 34, alignment: edge)
                     .padding(.horizontal, 10)
                     .overlay(alignment: .trailing) {
@@ -1548,16 +1793,19 @@ private struct MarkdownTableRenderer: View {
         path: [Int],
         header: Bool
     ) -> some View {
-        let size: CGFloat = density == .compact ? 10 : 11
+        let size = cellFontSize
+        let weight: NSFont.Weight = header ? .semibold : .regular
         let color = header ? LocusTheme.ink : LocusTheme.inkSoft
         let key = path.map(String.init).joined(separator: ".")
         if let selectionCoordinator, let span = selectionSpans[key] {
             ResponseSelectableText(
                 attributedText: MarkdownNativeText.attributed(
                     runs,
-                    font: .systemFont(ofSize: size, weight: header ? .semibold : .regular),
-                    color: NSColor(color),
+                    size: size,
+                    weight: weight,
+                    color: color,
                     lineSpacing: 2,
+                    inlineCodeSize: density.inlineCodeFontSize,
                     workspacePath: workspacePath
                 ),
                 span: span,
@@ -1566,27 +1814,36 @@ private struct MarkdownTableRenderer: View {
             )
             .fixedSize(horizontal: false, vertical: true)
         } else {
-            SwiftUI.Text(attributed(runs))
-                .font(.system(size: size, weight: header ? .semibold : .regular))
-                .foregroundStyle(color)
+            SwiftUI.Text(attributed(runs, size: size, weight: weight, color: color))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    private func attributed(_ runs: [MarkdownInlineRun]) -> AttributedString {
+    private func attributed(
+        _ runs: [MarkdownInlineRun],
+        size: CGFloat,
+        weight: NSFont.Weight,
+        color: Color
+    ) -> AttributedString {
         var result = AttributedString()
         for run in runs {
+            let url = MarkdownLinkPolicy.renderedURL(for: run, workspacePath: workspacePath)
+            let spec = MarkdownInlineStyleSpec.resolve(
+                run: run,
+                baseSize: size,
+                baseWeight: weight,
+                baseColor: color,
+                inlineCodeSize: density.inlineCodeFontSize,
+                link: url
+            )
             var piece = AttributedString(run.text)
-            var intent: InlinePresentationIntent = []
-            if run.style.contains(.strong) { intent.insert(.stronglyEmphasized) }
-            if run.style.contains(.emphasis) { intent.insert(.emphasized) }
-            if run.style.contains(.strikethrough) { intent.insert(.strikethrough) }
-            if run.style.contains(.code) { intent.insert(.code) }
-            if !intent.isEmpty { piece.inlinePresentationIntent = intent }
-            if let url = MarkdownLinkPolicy.renderedURL(for: run, workspacePath: workspacePath) {
-                piece.link = url
-            }
+            piece.font = spec.swiftUIFont
+            piece.foregroundColor = spec.foreground
+            if spec.isStrikethrough { piece.strikethroughStyle = .single }
+            if spec.isUnderlined { piece.underlineStyle = .single }
+            if let fill = spec.pillFill { piece.backgroundColor = fill }
+            if let url { piece.link = url }
             result.append(piece)
         }
         return result

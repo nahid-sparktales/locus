@@ -396,7 +396,7 @@ struct StreamingPlainTextView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> AppendOnlyTextView {
-        let view = AppendOnlyTextView(frame: .zero)
+        let view = AppendOnlyTextView.make()
         view.isEditable = false
         view.isSelectable = true
         view.drawsBackground = false
@@ -454,7 +454,17 @@ struct StreamingPlainTextView: NSViewRepresentable {
     }
 }
 
-final class AppendOnlyTextView: NSTextView {
+final class AppendOnlyTextView: LocusSelectionTextView {
+    /// Shares the transcript's TextKit 1 stack and selection wash so the
+    /// streaming fast path is indistinguishable from the parsed markdown that
+    /// replaces it a frame later.
+    static func make() -> AppendOnlyTextView {
+        let stack = LocusSelectionTextView.makeTextKit1Stack()
+        let view = AppendOnlyTextView(frame: .zero, textContainer: stack.container)
+        view.adoptTextKit1(storage: stack.storage)
+        return view
+    }
+
     func measuredHeight(for width: CGFloat) -> CGFloat {
         guard let textContainer, let layoutManager else { return 1 }
         textContainer.containerSize = NSSize(
@@ -580,10 +590,15 @@ private struct ReasoningSectionsView: View {
 
 enum CodeTokenKind: Hashable {
     case plain
+    case punctuation
     case keyword
+    case constant
     case string
     case number
     case comment
+    case function
+    case type
+    case property
 }
 
 struct CodeToken: Hashable {
@@ -595,6 +610,12 @@ struct CodeToken: Hashable {
 /// in coding-agent replies. It is intentionally lexical rather than a full
 /// parser: malformed or partial snippets still preserve every character and
 /// receive stable, useful color without blocking rendering.
+///
+/// The classification rules below are all single-token lookarounds, which is
+/// what keeps that property. An identifier is a call when `(` follows it, a
+/// member when `.` precedes it, and a type when it opens uppercase — each
+/// correct far more often than not across the languages an agent emits, and
+/// each harmless when it guesses wrong, since the fallback is plain body color.
 enum CodeSyntaxHighlighter {
     static func tokens(for code: String, language: String?) -> [CodeToken] {
         let family = normalizedLanguage(language)
@@ -611,6 +632,12 @@ enum CodeSyntaxHighlighter {
             } else {
                 tokens.append(CodeToken(text: value, kind: kind))
             }
+        }
+
+        /// A call is only recognised when `(` follows immediately. Allowing
+        /// intervening spaces would recolor `if (x)` in C-family code.
+        func opensCall(at position: Int) -> Bool {
+            position < characters.count && characters[position] == "("
         }
 
         while index < characters.count {
@@ -677,32 +704,64 @@ enum CodeSyntaxHighlighter {
                     index += 1
                 }
                 let word = String(characters[start..<index])
-                emit(keywords.contains(word) ? .keyword : .plain, start..<index)
+                let kind: CodeTokenKind
+                if literalConstants.contains(word) {
+                    // Checked ahead of keywords so `true`/`null`/`None` read as
+                    // literals in every language rather than only where a
+                    // keyword set happens to list them.
+                    kind = .constant
+                } else if keywords.contains(word) {
+                    kind = .keyword
+                } else if opensCall(at: index) {
+                    kind = .function
+                } else if start > 0, characters[start - 1] == "." {
+                    kind = .property
+                } else if word.first?.isUppercase == true {
+                    kind = .type
+                } else {
+                    kind = .plain
+                }
+                emit(kind, start..<index)
                 continue
             }
 
             index += 1
-            emit(.plain, start..<index)
+            emit(
+                punctuationCharacters.contains(characters[start]) ? .punctuation : .plain,
+                start..<index
+            )
         }
         return tokens
     }
 
-    static func highlighted(_ code: String, language: String?) -> AttributedString {
+    static func highlighted(
+        _ code: String,
+        language: String?,
+        fontSize: CGFloat = 12
+    ) -> AttributedString {
         var result = AttributedString()
         for token in tokens(for: code, language: language) {
             var piece = AttributedString(token.text)
-            piece.font = .locus(size: 11, design: .monospaced)
-            piece.foregroundColor = switch token.kind {
-            case .plain: LocusTheme.inkSoft
-            case .keyword: LocusTheme.signalDeep
-            case .string: LocusTheme.blue
-            case .number: LocusTheme.coral
-            case .comment: LocusTheme.muted
+            // Sized literally rather than through `Font.locus`, whose point-size
+            // bucketing is what made this path and the AppKit one disagree.
+            piece.font = .system(size: fontSize, design: .monospaced)
+            if LocusCodeTheme.isItalic(token.kind) {
+                piece.font = piece.font?.italic()
             }
+            piece.foregroundColor = LocusCodeTheme.color(for: token.kind)
             result.append(piece)
         }
         return result
     }
+
+    private static let literalConstants: Set<String> = [
+        "true", "false", "null", "nil", "None", "True", "False",
+        "undefined", "NULL", "nullptr", "NaN", "Infinity"
+    ]
+
+    private static let punctuationCharacters: Set<Character> = Set(
+        "{}()[]<>.,;:+-*/%=!&|^~?@\\"
+    )
 
     private static func normalizedLanguage(_ language: String?) -> String {
         let value = language?
@@ -711,15 +770,23 @@ enum CodeSyntaxHighlighter {
             .first
             .map(String.init) ?? ""
         return switch value {
-        case "js", "jsx", "javascript": "javascript"
+        case "js", "jsx", "javascript", "mjs", "cjs": "javascript"
         case "ts", "tsx", "typescript": "typescript"
         case "py", "python3": "python"
-        case "sh", "bash", "zsh", "shell": "shell"
+        case "sh", "bash", "zsh", "shell", "fish": "shell"
         case "rs": "rust"
         case "golang": "go"
-        case "c++", "cpp", "cc": "cpp"
+        case "c++", "cpp", "cc", "hpp": "cpp"
         case "objc", "objective-c": "objective-c"
         case "yml": "yaml"
+        case "kt", "kts": "kotlin"
+        case "rb": "ruby"
+        case "cs": "csharp"
+        case "htm", "xhtml": "html"
+        case "conf", "cfg", "properties": "ini"
+        case "make", "mk": "makefile"
+        case "docker": "dockerfile"
+        case "postgres", "psql", "mysql", "sqlite": "sql"
         default: value
         }
     }
@@ -727,37 +794,91 @@ enum CodeSyntaxHighlighter {
     private static func keywordSet(for language: String) -> Set<String> {
         switch language {
         case "swift":
-            return ["actor", "as", "async", "await", "break", "case", "catch", "class", "continue", "default", "defer", "do", "else", "enum", "extension", "false", "for", "func", "guard", "if", "import", "in", "init", "let", "nil", "private", "protocol", "public", "return", "self", "static", "struct", "switch", "throw", "throws", "true", "try", "var", "where", "while"]
+            return ["actor", "as", "async", "await", "break", "case", "catch", "class", "continue", "default", "defer", "do", "else", "enum", "extension", "for", "func", "guard", "if", "import", "in", "init", "let", "private", "protocol", "public", "return", "self", "static", "struct", "switch", "throw", "throws", "try", "var", "where", "while"]
         case "javascript", "typescript":
-            return ["async", "await", "break", "case", "catch", "class", "const", "continue", "default", "delete", "do", "else", "export", "extends", "false", "finally", "for", "from", "function", "if", "import", "in", "instanceof", "interface", "let", "new", "null", "of", "return", "static", "super", "switch", "throw", "true", "try", "type", "typeof", "undefined", "var", "while", "yield"]
+            return ["async", "await", "break", "case", "catch", "class", "const", "continue", "default", "delete", "do", "else", "export", "extends", "finally", "for", "from", "function", "if", "import", "in", "instanceof", "interface", "let", "new", "of", "return", "static", "super", "switch", "throw", "try", "type", "typeof", "var", "while", "yield"]
         case "python":
-            return ["and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "False", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True", "try", "while", "with", "yield"]
+            return ["and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield"]
         case "rust":
-            return ["as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while"]
+            return ["as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait", "type", "unsafe", "use", "where", "while"]
         case "go":
             return ["break", "case", "chan", "const", "continue", "default", "defer", "else", "fallthrough", "for", "func", "go", "goto", "if", "import", "interface", "map", "package", "range", "return", "select", "struct", "switch", "type", "var"]
         case "c", "cpp", "objective-c":
-            return ["auto", "bool", "break", "case", "catch", "char", "class", "const", "continue", "default", "do", "double", "else", "enum", "false", "float", "for", "if", "int", "long", "namespace", "new", "nullptr", "private", "protected", "public", "return", "short", "signed", "sizeof", "static", "struct", "switch", "template", "this", "throw", "true", "try", "typedef", "typename", "union", "unsigned", "using", "virtual", "void", "while"]
+            return ["auto", "bool", "break", "case", "catch", "char", "class", "const", "continue", "default", "do", "double", "else", "enum", "float", "for", "if", "int", "long", "namespace", "new", "private", "protected", "public", "return", "short", "signed", "sizeof", "static", "struct", "switch", "template", "this", "throw", "try", "typedef", "typename", "union", "unsigned", "using", "virtual", "void", "while"]
+        case "csharp":
+            return ["abstract", "as", "async", "await", "base", "bool", "break", "case", "catch", "class", "const", "continue", "default", "delegate", "do", "double", "else", "enum", "event", "finally", "for", "foreach", "if", "in", "int", "interface", "internal", "is", "lock", "namespace", "new", "out", "override", "params", "private", "protected", "public", "readonly", "ref", "return", "sealed", "static", "string", "struct", "switch", "this", "throw", "try", "typeof", "using", "var", "virtual", "void", "while", "yield"]
+        case "java":
+            return ["abstract", "assert", "boolean", "break", "byte", "case", "catch", "char", "class", "const", "continue", "default", "do", "double", "else", "enum", "extends", "final", "finally", "float", "for", "if", "implements", "import", "instanceof", "int", "interface", "long", "native", "new", "package", "private", "protected", "public", "return", "short", "static", "super", "switch", "synchronized", "this", "throw", "throws", "transient", "try", "var", "void", "volatile", "while"]
+        case "kotlin":
+            return ["as", "break", "by", "class", "companion", "const", "continue", "data", "do", "else", "enum", "external", "false", "final", "for", "fun", "if", "import", "in", "infix", "init", "interface", "internal", "is", "lateinit", "object", "open", "operator", "override", "package", "private", "protected", "public", "return", "sealed", "super", "suspend", "this", "throw", "try", "typealias", "val", "var", "vararg", "when", "while"]
+        case "ruby":
+            return ["alias", "and", "begin", "break", "case", "class", "def", "defined?", "do", "elsif", "else", "end", "ensure", "for", "if", "in", "module", "next", "not", "or", "redo", "rescue", "retry", "return", "self", "super", "then", "unless", "until", "when", "while", "yield"]
+        case "php":
+            return ["abstract", "array", "as", "break", "callable", "case", "catch", "class", "clone", "const", "continue", "declare", "default", "do", "echo", "else", "elseif", "empty", "enum", "extends", "final", "finally", "fn", "for", "foreach", "function", "global", "if", "implements", "include", "instanceof", "interface", "isset", "match", "namespace", "new", "print", "private", "protected", "public", "readonly", "require", "return", "static", "switch", "throw", "trait", "try", "unset", "use", "var", "while", "yield"]
+        case "lua":
+            return ["and", "break", "do", "else", "elseif", "end", "for", "function", "goto", "if", "in", "local", "not", "or", "repeat", "return", "then", "until", "while"]
+        case "sql":
+            return ["add", "all", "alter", "and", "as", "asc", "between", "by", "case", "cast", "column", "create", "delete", "desc", "distinct", "drop", "else", "end", "exists", "from", "full", "group", "having", "in", "index", "inner", "insert", "into", "is", "join", "left", "like", "limit", "not", "offset", "on", "or", "order", "outer", "primary", "references", "right", "select", "set", "table", "then", "union", "unique", "update", "values", "view", "when", "where", "with"]
+        case "css", "scss", "less":
+            return ["and", "important", "media", "import", "include", "keyframes", "mixin", "not", "supports", "use"]
+        case "html", "xml", "svg":
+            return ["class", "href", "id", "rel", "src", "style", "type", "xmlns"]
         case "json":
-            return ["false", "null", "true"]
-        case "shell":
-            return ["case", "do", "done", "elif", "else", "esac", "fi", "for", "function", "if", "in", "local", "return", "then", "until", "while"]
-        default:
             return []
+        case "yaml", "toml", "ini":
+            return ["on", "off", "yes", "no"]
+        case "dockerfile":
+            return ["add", "arg", "cmd", "copy", "entrypoint", "env", "expose", "from", "healthcheck", "label", "run", "shell", "user", "volume", "workdir", "ARG", "CMD", "COPY", "ENTRYPOINT", "ENV", "EXPOSE", "FROM", "HEALTHCHECK", "LABEL", "RUN", "SHELL", "USER", "VOLUME", "WORKDIR", "ADD"]
+        case "makefile":
+            return ["define", "else", "endef", "endif", "export", "ifdef", "ifeq", "ifndef", "ifneq", "include", "override", "unexport"]
+        case "shell":
+            return ["case", "do", "done", "elif", "else", "esac", "export", "fi", "for", "function", "if", "in", "local", "readonly", "return", "then", "until", "while"]
+        default:
+            // An unknown fence still deserves structure. A union of the most
+            // universal control-flow words colors sensibly across languages we
+            // do not list, instead of the flat wall an empty set produced.
+            return commonKeywords
         }
     }
 
+    private static let commonKeywords: Set<String> = [
+        "and", "as", "async", "await", "break", "case", "catch", "class", "const",
+        "continue", "def", "default", "do", "elif", "else", "end", "enum", "export",
+        "extends", "finally", "fn", "for", "from", "func", "function", "if", "import",
+        "in", "interface", "is", "let", "match", "module", "namespace", "new", "not",
+        "or", "package", "pass", "private", "protected", "public", "require", "return",
+        "self", "static", "struct", "super", "switch", "then", "this", "throw", "trait",
+        "try", "type", "use", "val", "var", "void", "when", "where", "while", "with",
+        "yield"
+    ]
+
+    /// Getting this wrong is worse than having no comment color at all: the old
+    /// `//` fallback for unrecognised fences turned ordinary TOML and INI paths
+    /// into comments. Unknown languages now opt out instead.
     private static func lineCommentPrefix(for language: String) -> [Character]? {
         return switch language {
-        case "python", "shell", "ruby", "yaml": ["#"]
-        case "sql": ["-", "-"]
-        case "json", "html", "css", "markdown", "md", "": nil
-        default: ["/", "/"]
+        case "python", "shell", "ruby", "yaml", "toml", "ini", "dockerfile",
+             "makefile", "perl", "r", "elixir", "julia", "nim", "hcl", "terraform":
+            ["#"]
+        case "sql", "lua", "haskell", "ada":
+            ["-", "-"]
+        case "lisp", "clojure", "scheme", "asm":
+            [";"]
+        case "swift", "javascript", "typescript", "rust", "go", "c", "cpp",
+             "objective-c", "csharp", "java", "kotlin", "php", "scala", "dart",
+             "zig", "groovy":
+            ["/", "/"]
+        default:
+            nil
         }
     }
 
     private static func supportsBlockComments(_ language: String) -> Bool {
-        !["python", "shell", "ruby", "yaml", "sql", "json", "markdown", "md", ""].contains(language)
+        [
+            "swift", "javascript", "typescript", "rust", "go", "c", "cpp",
+            "objective-c", "csharp", "java", "kotlin", "php", "scala", "dart",
+            "css", "scss", "less", "groovy", "zig"
+        ].contains(language)
     }
 
     private static func isIdentifierStart(_ character: Character) -> Bool {
@@ -779,24 +900,22 @@ enum CodeSyntaxHighlighter {
 }
 
 enum NativeCodeTextRenderer {
-    static func attributed(_ code: String, language: String?, isDiff: Bool) -> NSAttributedString {
-        if isDiff { return attributedDiff(code) }
+    static func attributed(
+        _ code: String,
+        language: String?,
+        isDiff: Bool,
+        fontSize: CGFloat = 12
+    ) -> NSAttributedString {
+        if isDiff { return attributedDiff(code, fontSize: fontSize) }
         let result = NSMutableAttributedString()
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = 3
+        paragraph.lineSpacing = 4
         for token in CodeSyntaxHighlighter.tokens(for: code, language: language) {
-            let color: NSColor = switch token.kind {
-            case .plain: NSColor(LocusTheme.inkSoft)
-            case .keyword: NSColor(LocusTheme.signalDeep)
-            case .string: NSColor(LocusTheme.blue)
-            case .number: NSColor(LocusTheme.coral)
-            case .comment: NSColor(LocusTheme.muted)
-            }
             result.append(NSAttributedString(
                 string: token.text,
                 attributes: [
-                    .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
-                    .foregroundColor: color,
+                    .font: LocusCodeTheme.font(size: fontSize, kind: token.kind),
+                    .foregroundColor: LocusCodeTheme.nsColor(for: token.kind),
                     .paragraphStyle: paragraph
                 ]
             ))
@@ -804,7 +923,7 @@ enum NativeCodeTextRenderer {
         return result
     }
 
-    private static func attributedDiff(_ code: String) -> NSAttributedString {
+    private static func attributedDiff(_ code: String, fontSize: CGFloat) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let lines = code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         for (index, line) in lines.enumerated() {
@@ -825,12 +944,13 @@ enum NativeCodeTextRenderer {
                 background = .clear
             }
             let paragraph = NSMutableParagraphStyle()
-            paragraph.minimumLineHeight = 20
-            paragraph.maximumLineHeight = 20
+            let lineHeight = (fontSize * 1.62).rounded()
+            paragraph.minimumLineHeight = lineHeight
+            paragraph.maximumLineHeight = lineHeight
             result.append(NSAttributedString(
                 string: value,
                 attributes: [
-                    .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+                    .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular),
                     .foregroundColor: foreground,
                     .backgroundColor: background,
                     .paragraphStyle: paragraph
@@ -847,6 +967,7 @@ enum NativeCodeTextRenderer {
 struct CodeBlockView: View {
     let language: String?
     let code: String
+    var density: MarkdownRenderDensity = .regular
     var selectionCoordinator: ResponseSelectionCoordinator? = nil
     var selectionSpan: TranscriptSelectionSpan? = nil
     @State private var copied = false
@@ -943,7 +1064,8 @@ struct CodeBlockView: View {
                         attributedText: NativeCodeTextRenderer.attributed(
                             visibleCode.isEmpty ? " " : visibleCode,
                             language: language,
-                            isDiff: isDiff
+                            isDiff: isDiff,
+                            fontSize: density.codeFontSize
                         ),
                         span: selectionSpan.displaying(visibleCode),
                         coordinator: selectionCoordinator,
@@ -953,13 +1075,14 @@ struct CodeBlockView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, isDiff ? 8 : 11)
                 } else if isDiff {
-                    CodeDiffLines(code: visibleCode)
+                    CodeDiffLines(code: visibleCode, fontSize: density.codeFontSize)
                 } else {
                     Text(CodeSyntaxHighlighter.highlighted(
                         visibleCode.isEmpty ? " " : visibleCode,
-                        language: language
+                        language: language,
+                        fontSize: density.codeFontSize
                     ))
-                        .lineSpacing(3)
+                        .lineSpacing(4)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: true, vertical: true)
                         .padding(.horizontal, 12)
@@ -1001,21 +1124,23 @@ struct CodeBlockView: View {
 
 private struct CodeDiffLines: View {
     let lines: [String]
+    let fontSize: CGFloat
 
-    init(code: String) {
+    init(code: String, fontSize: CGFloat = 12) {
         lines = code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        self.fontSize = fontSize
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                 Text(line.isEmpty ? " " : line)
-                    .font(.locus(size: 11, design: .monospaced))
+                    .font(.locusExact(size: fontSize, design: .monospaced))
                     .foregroundStyle(foreground(for: line))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: false)
                     .padding(.horizontal, 12)
-                    .frame(minHeight: 20, alignment: .leading)
+                    .frame(minHeight: (fontSize * 1.62).rounded(), alignment: .leading)
                     .background(background(for: line))
             }
         }

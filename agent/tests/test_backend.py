@@ -3407,6 +3407,56 @@ def test_browser_history_is_read_only_when_enabled(tmp_path):
     assert core.tool_registry.is_safe("browser_history")
 
 
+def test_browser_autofill_schema_is_category_gated_and_hidden_from_read_only_agents(tmp_path):
+    core = _core(tmp_path, [ChatResponse(content_parts=["ok"], done=True)])
+    core.tool_registry.browser_enabled = True
+
+    def browser_schemas():
+        return {
+            schema["function"]["name"]: schema
+            for schema in core.tool_registry.browser_schemas()
+        }
+
+    assert "browser_autofill" not in browser_schemas()
+
+    core.tool_registry.browser_autofill_categories = {"contact", "paymentCard"}
+    schema = browser_schemas()["browser_autofill"]
+    category = schema["function"]["parameters"]["properties"]["category"]
+    assert category["enum"] == ["contact", "paymentCard"]
+    assert core.tool_registry.browser_tool_allowed("browser_autofill")
+
+    core.tool_registry.set_mcp_agent_policy(
+        {}, access_ceiling="read_only", role="reviewer"
+    )
+    assert "browser_autofill" not in browser_schemas()
+    assert not core.tool_registry.browser_tool_allowed("browser_autofill")
+
+
+def test_guessing_disabled_browser_autofill_never_reaches_the_native_broker(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(
+            tool_calls=[ToolCall("browser_autofill", {
+                "action": "get",
+                "category": "password",
+                "record_id": "guessed",
+            })],
+            done=True,
+        ),
+        ChatResponse(content_parts=["done"], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    core.tool_registry.browser_enabled = True
+    core.perms.set_mode("bypass")
+    calls = []
+    core.browser_executor = lambda name, args, request_id: calls.append(name) or "secret"
+
+    core.run_turn("use my saved password")
+
+    assert calls == []
+
+
 def test_read_only_agents_see_and_may_use_only_the_reading_half(tmp_path):
     core = _core(tmp_path, [ChatResponse(content_parts=["ok"], done=True)])
     core.tool_registry.browser_enabled = True
@@ -3651,12 +3701,18 @@ def test_browsing_ordinary_urls_is_neither_blocked_nor_confirmation_gated():
 
 def test_browser_guardrails_hold_where_the_arguments_carry_meaning():
     perms = PermissionManager(mode="bypass")
+    # Native browser input is gated against the actual field category and the
+    # live Autofill settings. Text scanning here would falsely reject enabled
+    # passwords whose values happen to contain a word such as "secret".
     assert perms.blocked_reason(
         "browser_input", {"action": "type", "text": "my password is hunter2"}
-    ) is not None
+    ) is None
     assert perms.blocked_reason(
         "browser_input", {"action": "type", "text": "hello world"}
     ) is None
+    assert perms.blocked_reason(
+        "browser_javascript", {"code": "password.value = 'hunter2'"}
+    ) is not None
     # Reading the page is never blocked, however the query is phrased.
     assert perms.blocked_reason("browser_read_page", {"ref_id": "ref_7"}) is None
     # These are marked as consequential for Ask/Accept Edits; AgentCore skips
@@ -3681,13 +3737,13 @@ def test_browser_permission_preview_names_a_coordinate_target():
     assert build_preview("browser_input", {"action": "click", "ref": "ref_4"})[0] == "click ref_4"
 
 
-def test_coordinate_input_still_meets_the_credential_gate():
+def test_coordinate_input_defers_credential_authority_to_the_native_field_gate():
     from ollama_code.permissions import PermissionManager as Manager
 
     manager = Manager(mode="bypass")
-    # Aiming by pixels rather than by ref must not route around the block on
-    # typing credentials, which reads the typed text, not the target.
-    assert manager.blocked_reason(
+    # The backend cannot tell what pixels mean. The native broker classifies
+    # the focused field and checks current password/card grants before typing.
+    assert not manager.blocked_reason(
         "browser_input",
         {"action": "type", "x": 10, "y": 20, "text": "my password is hunter2"},
     )
@@ -3975,10 +4031,26 @@ def test_dev_server_tool_never_crosses_the_socket(client):
     # without any native broker attached.
     with client.websocket_connect("/ws/chat") as ws:
         assert ws.receive_json()["type"] == "session_info"
-        ws.send_json({"type": "set_browser_control", "enabled": True})
+        ws.send_json({
+            "type": "set_browser_control",
+            "enabled": True,
+            "history_enabled": True,
+            "autofill_categories": ["password", "paymentCard", "invalid"],
+        })
         events = drain(ws)
-        assert {"type": "browser_control_status", "enabled": True} in [
-            {"type": e.get("type"), "enabled": e.get("enabled")} for e in events
+        assert {
+            "type": "browser_control_status",
+            "enabled": True,
+            "history_enabled": True,
+            "autofill_categories": ["password", "paymentCard"],
+        } in [
+            {
+                "type": e.get("type"),
+                "enabled": e.get("enabled"),
+                "history_enabled": e.get("history_enabled"),
+                "autofill_categories": e.get("autofill_categories"),
+            }
+            for e in events
         ]
 
     svc = client.app.state.service
