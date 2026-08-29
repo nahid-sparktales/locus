@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AgentTeamsSettingsView: View {
     @EnvironmentObject private var model: AppModel
+    @Binding var advancedExpanded: Bool
     @State private var editingPrimaryAgent = false
     @State private var editingProfile: AgentProfile?
     @State private var editingTeam: AgentTeam?
@@ -11,20 +12,32 @@ struct AgentTeamsSettingsView: View {
     @State private var quickTeamPresented = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                settingsHeader
-                quickTeamSection
-                primaryAgentSection
+        Form {
+            quickTeamSection
+                .id("settings.agents.quickTeam")
+            primaryAgentSection
+                .id("settings.agents.primary")
+            profilesSection
+            teamsSection
+
+            Section {
+                SettingsAdvancedDisclosureRow(
+                    isExpanded: $advancedExpanded,
+                    detail: "Scheduling, evaluations, telemetry, and hosted routing"
+                )
+                .accessibilityIdentifier("settings.agents.advanced")
+            }
+
+            if advancedExpanded {
                 runtimeSection
-                profilesSection
-                teamsSection
+                    .id("settings.agents.scheduler")
                 evaluationsSection
                 observabilitySection
                 routingConsentSection
             }
-            .padding(20)
         }
+        .formStyle(.grouped)
+        .accessibilityIdentifier("settings.agents.root")
         .sheet(item: $editingProfile) { profile in
             AgentProfileEditor(profile: profile) {
                 model.saveAgentProfile($0)
@@ -84,99 +97,70 @@ struct AgentTeamsSettingsView: View {
     }
 
     private var quickTeamSection: some View {
-        HStack(alignment: .center, spacing: 14) {
-            Image(systemName: "person.3.sequence.fill")
-                .font(.locus(size: 18, weight: .semibold))
-                .foregroundStyle(LocusTheme.signalDeep)
-                .frame(width: 42, height: 42)
-                .background(LocusTheme.signal.opacity(0.10))
-                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-            VStack(alignment: .leading, spacing: 3) {
-                Text("QUICK TEAM")
-                    .font(.locus(size: 8, weight: .bold))
-                    .tracking(0.8)
-                    .foregroundStyle(LocusTheme.muted)
-                Text("Choose models visually and start using the team right away.")
-                    .font(.locus(size: 11, weight: .semibold))
-                Text("Pick a dispatcher, a lead editor, and optional read-only helpers. Everything remains editable in the advanced sections below.")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+        Section("Get started") {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "person.3.sequence.fill")
+                    .font(.locus(size: 15, weight: .semibold))
+                    .foregroundStyle(LocusTheme.accentAction)
+                    .frame(width: 28)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Create a quick team")
+                        .font(.locus(size: 11, weight: .semibold))
+                    Text("Choose a dispatcher, lead editor, and optional read-only helpers.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                Button("Create Team…") { quickTeamPresented = true }
+                    .buttonStyle(.borderedProminent)
+                    .tint(LocusTheme.ink)
+                    .controlSize(.small)
+                    .disabled(model.isBusy)
+                    .accessibilityIdentifier("settings.quickTeam.create")
             }
-            Spacer(minLength: 12)
-            Button("Create Quick Team…") { quickTeamPresented = true }
-                .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
-                .controlSize(.small)
-                .disabled(model.isBusy)
-                .accessibilityIdentifier("settings.quickTeam.create")
+            .padding(.vertical, 3)
         }
-        .padding(14)
-        .locusCard()
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("settings.quickTeam")
     }
 
     private var runtimeSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("GLOBAL SCHEDULER")
-                .font(.locus(size: 8, weight: .bold))
-                .tracking(0.8)
-                .foregroundStyle(LocusTheme.muted)
+        Section("Scheduler") {
             Stepper(
                 "Up to \(model.globalAgentConcurrency) simultaneous model calls",
                 value: $model.globalAgentConcurrency,
                 in: 1...8
             )
-            .font(.locus(size: 10, weight: .semibold))
             Text("Shared fairly across running chats. Expired worker leases are reclaimed after a crash.")
-                .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .padding(12)
-        .locusCard()
     }
 
     private var primaryAgentSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        Section("Primary agent") {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("PRIMARY AGENT")
-                        .font(.locus(size: 8, weight: .bold))
-                        .tracking(0.8)
-                        .foregroundStyle(LocusTheme.muted)
                     Text(model.primaryAgentBehavior.displayName)
-                        .font(.locus(size: 12, weight: .semibold))
-                    Text("Uses the selected conversation model · \(model.selectedModel)")
-                        .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .font(.locus(size: 11, weight: .semibold))
+                    Text("Conversation model · \(model.selectedModel)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("Edit Behavior") { editingPrimaryAgent = true }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
             }
-            Text("Edit its name, description, response style, mode-specific guidance, capability ceilings, memory behavior, and runtime limits. The real model identity and safety rules stay factual and locked.")
-                .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+            Text("Customize its response style and memory behavior. Model identity and safety rules remain fixed.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(12)
-        .locusCard()
-    }
-
-    private var settingsHeader: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("Agents & Teams")
-                .font(.locus(size: 16, weight: .bold))
-            Text("Create explicit model roles, then combine them into a dispatcher-led team with safely ordered coding agents.")
-                .font(.locus(size: 10))
-                .foregroundStyle(LocusTheme.muted)
         }
     }
 
     private var profilesSection: some View {
-        settingsSection(title: "AGENT PROFILES", actionTitle: "Add Agent") {
+        settingsSection(title: "Saved agents", actionTitle: "Add Agent") {
             let role = nextSuggestedRole
             editingProfile = AgentProfile(
                 name: role.title,
@@ -191,9 +175,7 @@ struct AgentTeamsSettingsView: View {
             } else {
                 ForEach(model.agentProfiles) { profile in
                     HStack(spacing: 10) {
-                        Image(systemName: profile.accessCeiling.canWrite ? "hammer.fill" : "eye.fill")
-                            .foregroundStyle(profile.accessCeiling.canWrite ? LocusTheme.signalDeep : LocusTheme.muted)
-                            .frame(width: 18)
+                        providerLogo(for: profile.route)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(profile.name).font(.locus(size: 11, weight: .semibold))
                             Text("\(profile.role.title) · \(routeTitle(profile.route)) · \(profile.model)")
@@ -218,7 +200,7 @@ struct AgentTeamsSettingsView: View {
     }
 
     private var teamsSection: some View {
-        settingsSection(title: "TEAMS", actionTitle: "Add Team") {
+        settingsSection(title: "Teams", actionTitle: "Add Team") {
             let dispatcher = model.agentProfiles.first(where: { $0.role == .dispatcher })
             let writer = model.agentProfiles.first(where: { $0.accessCeiling.canWrite })
             let members = Array(Set([dispatcher?.id, writer?.id].compactMap { $0 }))
@@ -266,16 +248,18 @@ struct AgentTeamsSettingsView: View {
     }
 
     private var routingConsentSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("AUTOMATIC HOSTED ROUTING")
-                .font(.locus(size: 8, weight: .bold))
-                .tracking(0.8)
-                .foregroundStyle(LocusTheme.muted)
+        Section("Automatic hosted routing") {
             Text("Locus asks once per account before a dispatcher may route team data to it automatically.")
-                .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .font(.caption)
+                .foregroundStyle(.secondary)
             ForEach(model.providerAccounts) { account in
-                HStack {
+                HStack(spacing: 10) {
+                    ProviderLogo(
+                        kind: account.kind,
+                        name: account.displayName,
+                        url: account.resolvedBaseURL,
+                        size: 26
+                    )
                     VStack(alignment: .leading, spacing: 2) {
                         Text(account.displayName).font(.locus(size: 10, weight: .semibold))
                         Text(account.resolvedBaseURL).font(.locus(size: 8, design: .monospaced))
@@ -297,11 +281,7 @@ struct AgentTeamsSettingsView: View {
     }
 
     private var observabilitySection: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text("OPTIONAL TELEMETRY")
-                .font(.locus(size: 8, weight: .bold))
-                .tracking(0.8)
-                .foregroundStyle(LocusTheme.muted)
+        Section("Optional telemetry") {
             Toggle("Export completed runs with OTLP/HTTP", isOn: $model.settings.otlpExportEnabled)
             TextField("https://collector.example", text: $model.settings.otlpEndpoint)
                 .textFieldStyle(.roundedBorder)
@@ -318,15 +298,13 @@ struct AgentTeamsSettingsView: View {
                     .frame(width: 34, alignment: .trailing)
             }
             Text("Metadata export is off by default. The authorization value is stored unencrypted in local app settings and is never written to logs or traces. Visible content requires a separate confirmation for each run.")
-                .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .padding(12)
-        .locusCard()
     }
 
     private var evaluationsSection: some View {
-        settingsSection(title: "EVALUATION LAB", actionTitle: "Add Suite") {
+        settingsSection(title: "Evaluation Lab", actionTitle: "Add Suite") {
             model.createEvaluationSuite()
         } content: {
             HStack {
@@ -418,22 +396,35 @@ struct AgentTeamsSettingsView: View {
         action: @escaping () -> Void,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
+        Section {
+            content()
+        } header: {
+            HStack(spacing: 8) {
                 Text(title)
-                    .font(.locus(size: 8, weight: .bold))
-                    .tracking(0.8)
-                    .foregroundStyle(LocusTheme.muted)
                 Spacer()
                 Button(actionTitle, systemImage: "plus", action: action)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(.borderless)
+                    .textCase(nil)
             }
-            VStack(spacing: 0) { content() }
-                .padding(.horizontal, 12)
-                .background(LocusTheme.white.opacity(0.65))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay { RoundedRectangle(cornerRadius: 10).stroke(LocusTheme.line) }
+        }
+    }
+
+    @ViewBuilder
+    private func providerLogo(for route: AgentRoute) -> some View {
+        switch route {
+        case .localOllama:
+            ProviderLogo(name: "Ollama", size: 26)
+        case .providerAccount(let id):
+            if let account = model.providerAccounts.first(where: { $0.id == id }) {
+                ProviderLogo(
+                    kind: account.kind,
+                    name: account.displayName,
+                    url: account.resolvedBaseURL,
+                    size: 26
+                )
+            } else {
+                ProviderLogo(name: "Unavailable provider", size: 26)
+            }
         }
     }
 }
@@ -728,8 +719,15 @@ struct QuickTeamBuilderView: View {
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .top, spacing: 7) {
-                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(selected ? LocusTheme.signalDeep : LocusTheme.muted)
+                    ProviderLogo(name: choice.providerName, size: 24)
+                        .overlay(alignment: .bottomTrailing) {
+                            if selected {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(LocusTheme.accentAction)
+                                    .background(Circle().fill(LocusTheme.surfaceCard))
+                            }
+                        }
                     Text(choice.model)
                         .font(.locus(size: 9, weight: .semibold, design: .monospaced))
                         .lineLimit(2)
@@ -2325,6 +2323,7 @@ private struct EvaluationSuiteEditor: View {
 struct WorkspaceKnowledgeSettingsView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Binding var advancedExpanded: Bool
     @State private var enabled = true
     @State private var embeddingModel = ""
     @State private var exclusions = ""
@@ -2335,6 +2334,416 @@ struct WorkspaceKnowledgeSettingsView: View {
     @State private var showAdvancedMemory = false
 
     var body: some View {
+        Form {
+            Section("Saved memory") {
+                Picker("Memory owner", selection: $selectedMemoryAgentID) {
+                    Text("Primary · \(model.primaryAgentBehavior.displayName)")
+                        .tag("primary")
+                    ForEach(model.agentProfiles) { profile in
+                        Text(profile.name).tag(profile.id.uuidString)
+                    }
+                }
+                Text("The agent can suggest preferences, decisions, and facts. Nothing is recalled until you approve it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if let vault = model.memoryVaultStatus {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(vault.encrypted ? "Private on this Mac" : "Encryption needs attention")
+                                .fontWeight(.semibold)
+                            Text("\(vault.candidateCount) in Inbox · \(vault.conflictCount ?? 0) conflicts · \(vault.staleCount ?? 0) stale")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: vault.encrypted ? "lock.fill" : "lock.open.fill")
+                            .foregroundStyle(vault.encrypted ? LocusTheme.accentAction : LocusTheme.warning)
+                    }
+                }
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Memory Inbox")
+                            .fontWeight(.semibold)
+                        Text(model.memoryCandidates.isEmpty
+                            ? "No suggestions waiting for review"
+                            : "\(model.memoryCandidates.count) suggestion\(model.memoryCandidates.count == 1 ? "" : "s") waiting")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Remember…") { memoryDraft = .new }
+                }
+                .id("settings.memory.saved")
+
+                ForEach(model.memoryCandidates) { memory in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(memory.title).fontWeight(.semibold)
+                        Text(memory.content)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                        HStack {
+                            if memory.hasConflicts {
+                                Label("Possible conflict", systemImage: "arrow.triangle.branch")
+                                    .font(.caption)
+                                    .foregroundStyle(LocusTheme.warning)
+                            }
+                            Spacer()
+                            Button("Reject", role: .destructive) {
+                                model.deleteWorkspaceMemory(memory, agentID: selectedMemoryAgentID)
+                            }
+                            if memory.hasConflicts {
+                                Button("Keep Both") {
+                                    model.approveMemoryCandidate(memory, agentID: selectedMemoryAgentID)
+                                }
+                                Button("Replace Older") {
+                                    model.approveMemoryCandidate(
+                                        memory,
+                                        agentID: selectedMemoryAgentID,
+                                        replacingConflicts: true
+                                    )
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(LocusTheme.ink)
+                            } else {
+                                Button("Approve") {
+                                    model.approveMemoryCandidate(memory, agentID: selectedMemoryAgentID)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(LocusTheme.ink)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 3)
+                }
+
+                ForEach(model.workspaceMemories) { memory in
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: memory.pinned ? "pin.fill" : "bookmark")
+                            .foregroundStyle(memory.stale ? LocusTheme.warning : LocusTheme.accentAction)
+                            .frame(width: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(memory.title).fontWeight(.semibold)
+                            Text(memory.content)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(3)
+                            Text("\(memory.resolvedScope.title) · \(memory.resolvedKind.title)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        Spacer()
+                        memoryMenu(memory)
+                    }
+                    .padding(.vertical, 3)
+                }
+            }
+
+            Section("Workspace knowledge") {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Project search")
+                            .fontWeight(.semibold)
+                        Text(knowledgeSummary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .foregroundStyle(LocusTheme.accentAction)
+                }
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Cross-chat handoffs")
+                            .fontWeight(.semibold)
+                        Text("Encrypted snapshots help work continue across development chats.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(model.contextSnapshots.count.formatted())
+                        .foregroundStyle(.secondary)
+                    Button("Clear All", role: .destructive) { model.clearContextSnapshots() }
+                        .disabled(model.contextSnapshots.isEmpty)
+                }
+                .id("settings.memory.context")
+
+                ForEach(model.contextSnapshots.prefix(8)) { snapshot in
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: snapshot.pinned ? "pin.fill" : "clock.arrow.circlepath")
+                            .foregroundStyle(snapshot.pinned ? LocusTheme.accentAction : .secondary)
+                            .frame(width: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(snapshot.goal.isEmpty ? "Development session" : snapshot.goal)
+                                .fontWeight(.semibold)
+                                .lineLimit(2)
+                            Text(Date(timeIntervalSince1970: snapshot.updatedAt), style: .relative)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(snapshot.pinned ? "Unpin" : "Pin") {
+                            model.setContextSnapshotPinned(snapshot, pinned: !snapshot.pinned)
+                        }
+                        Button(role: .destructive) { model.deleteContextSnapshot(snapshot) } label: {
+                            Image(systemName: "trash")
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+
+            Section {
+                SettingsAdvancedDisclosureRow(
+                    isExpanded: $advancedExpanded,
+                    detail: "Indexing, backup, diagnostics, and destructive controls"
+                )
+                .accessibilityIdentifier("memory.advancedSettings")
+            }
+
+            if advancedExpanded {
+                advancedKnowledgeSections
+            }
+        }
+        .formStyle(.grouped)
+        .accessibilityIdentifier("settings.knowledge.root")
+        .task(id: selectedMemoryAgentID) {
+            await model.refreshWorkspaceKnowledge(agentID: selectedMemoryAgentID)
+            syncDraft()
+        }
+        .onChange(of: model.knowledgeStatus) { _, _ in syncDraft() }
+        .sheet(item: $memoryDraft) { draft in
+            WorkspaceMemoryEditor(draft: draft) { value in
+                saveMemoryDraft(value)
+                memoryDraft = nil
+            }
+        }
+        .confirmationDialog(
+            "Delete all knowledge for this workspace?",
+            isPresented: $confirmDeleteAll,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Index and Memories", role: .destructive) {
+                model.deleteAllWorkspaceKnowledge(agentID: selectedMemoryAgentID)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Chat transcripts and workspace files are not removed.")
+        }
+        .confirmationDialog(
+            "Delete all visible memory?",
+            isPresented: $confirmDeleteMemory,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Personal, Workspace & Agent Memory", role: .destructive) {
+                model.deleteAllMemory(agentID: selectedMemoryAgentID)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The project index, chats, and files stay intact. This cannot be undone unless you exported memory first.")
+        }
+    }
+
+    @ViewBuilder
+    private var advancedKnowledgeSections: some View {
+        Section("Workspace search index") {
+            HStack(spacing: 10) {
+                ProviderLogo(name: "Ollama", size: 26)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Local semantic search")
+                        .fontWeight(.semibold)
+                    Text("Leave the model empty to use fast text search only.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Toggle("Index this workspace", isOn: $enabled)
+            TextField(
+                "Optional Ollama embedding model",
+                text: $embeddingModel,
+                prompt: Text("Text search only")
+            )
+            TextField(
+                "Additional exclusions",
+                text: $exclusions,
+                prompt: Text("Generated/**, Fixtures/private-*.json")
+            )
+            HStack {
+                Button("Save Index Settings") {
+                    model.configureWorkspaceKnowledge(
+                        enabled: enabled,
+                        embeddingModel: embeddingModel,
+                        exclusions: exclusions.split(separator: ",").map {
+                            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                        }.filter { !$0.isEmpty }
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(LocusTheme.ink)
+                Button("Rebuild Index") { model.rebuildWorkspaceKnowledge() }
+                    .disabled(!enabled || model.isBusy)
+            }
+            if let status = model.knowledgeStatus {
+                Text("\(status.documentCount) indexed files · \(status.chunkCount) searchable chunks")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let error = status.lastError, !error.isEmpty {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(LocusTheme.warning)
+                }
+            }
+        }
+        .id("settings.memory.index")
+
+        Section("Backup and maintenance") {
+            HStack {
+                Button("Review Health") { model.reviewMemoryHealth(agentID: selectedMemoryAgentID) }
+                Button("Import Memory…") { model.importMemory(agentID: selectedMemoryAgentID) }
+                Button("Export Memory…") { model.exportMemory(agentID: selectedMemoryAgentID) }
+            }
+            if let vault = model.memoryVaultStatus {
+                Text("\(vault.cipher) · memory text and optional vectors are encrypted together on this Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Button("Delete Workspace Index and Memory…", role: .destructive) {
+                confirmDeleteAll = true
+            }
+            Button("Delete All Memory…", role: .destructive) {
+                confirmDeleteMemory = true
+            }
+        }
+
+        Section("Skill observations") {
+            HStack {
+                Text(model.skillObservations.isEmpty
+                    ? "No observations recorded"
+                    : "\(model.skillObservations.count) improvement note\(model.skillObservations.count == 1 ? "" : "s")")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Export…") { model.exportSkillObservations() }
+                    .disabled(model.skillObservations.isEmpty)
+            }
+            ForEach(model.skillObservations.prefix(20)) { observation in
+                HStack(alignment: .top, spacing: 10) {
+                    Text("#\(observation.number)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(observation.title).fontWeight(.semibold)
+                        Text("\(observation.skill) · \(observation.status.capitalized)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if observation.status == "OPEN" {
+                        Button("Actioned") {
+                            model.setSkillObservationStatus(observation, status: "ACTIONED")
+                        }
+                        Button("Decline") {
+                            model.setSkillObservationStatus(observation, status: "DECLINED")
+                        }
+                    } else {
+                        Button("Reopen") {
+                            model.setSkillObservationStatus(observation, status: "OPEN")
+                        }
+                    }
+                    Button(role: .destructive) { model.deleteSkillObservation(observation) } label: {
+                        Image(systemName: "trash")
+                    }
+                }
+            }
+        }
+
+        Section("Memory health") {
+            Button("Analyze Selected Chat") {
+                model.reprocessCurrentChatMemory(agentID: selectedMemoryAgentID)
+            }
+            .disabled(model.currentSessionID.isEmpty || model.isBusy)
+            .accessibilityIdentifier("memory.health.analyze")
+            if let report = model.memoryDiagnosticReport {
+                Text("\(report.approvedCount) approved · \(report.candidateCount) pending · \(report.staleCount ?? 0) stale")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if !report.embeddingError.isEmpty {
+                    Label(report.embeddingError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(LocusTheme.warning)
+                }
+            } else {
+                Text("Diagnostics load after memory refresh.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .id("settings.memory.health")
+    }
+
+    private var knowledgeSummary: String {
+        guard let status = model.knowledgeStatus else { return "Loading index status…" }
+        let method = status.embeddingModel.isEmpty ? "text search" : "text and local semantic search"
+        return status.enabled
+            ? "\(status.documentCount) files indexed with \(method)."
+            : "Indexing is off. Saved memory still works."
+    }
+
+    private func memoryMenu(_ memory: WorkspaceMemory) -> some View {
+        Menu {
+            if memory.sourceRunID != nil || memory.sourceSessionID != nil {
+                Button("Open Source") { model.openWorkspaceMemorySource(memory) }
+            }
+            Button("Edit") { memoryDraft = .existing(memory) }
+            Button(memory.pinned ? "Unpin" : "Pin") {
+                var value = memory
+                value.pinned.toggle()
+                model.updateWorkspaceMemory(value, agentID: selectedMemoryAgentID)
+            }
+            Button(memory.stale ? "Mark Current" : "Mark Stale") {
+                var value = memory
+                value.stale.toggle()
+                model.updateWorkspaceMemory(value, agentID: selectedMemoryAgentID)
+            }
+            Divider()
+            Button("Delete", role: .destructive) {
+                model.deleteWorkspaceMemory(memory, agentID: selectedMemoryAgentID)
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+    }
+
+    private func saveMemoryDraft(_ value: WorkspaceMemoryDraft) {
+        switch value.original {
+        case .none:
+            model.rememberWorkspaceFact(
+                title: value.title,
+                content: value.content,
+                tags: value.tags.split(separator: ",").map(String.init),
+                scope: value.scope,
+                kind: value.kind,
+                confidence: value.confidence,
+                validUntil: value.expires ? value.validUntil.timeIntervalSince1970 : nil,
+                agentID: selectedMemoryAgentID
+            )
+        case .some(var memory):
+            memory.title = value.title
+            memory.content = value.content
+            memory.tags = value.tags.split(separator: ",").map(String.init)
+            memory.scope = value.scope.rawValue
+            memory.kind = value.kind.rawValue
+            memory.confidence = value.confidence
+            memory.validUntil = value.expires ? value.validUntil.timeIntervalSince1970 : nil
+            model.updateWorkspaceMemory(memory, agentID: selectedMemoryAgentID)
+        }
+    }
+
+    private var legacyBody: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 5) {

@@ -34,6 +34,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -84,6 +85,15 @@ from .tools import ToolContext, execute_tool
 EventHandler = Callable[[dict[str, Any]], None]
 PermissionDecider = Callable[[str, str, str, str], str]
 """(tool_name, summary, detail, request_id) -> "once" | "always" | "deny"."""
+
+_SOLO_ROOT_ONLY_TOOLS = {
+    "delegate_read_only",
+    "todo_write",
+    "submit_plan",
+    "capture_context_snapshot",
+    "propose_memory",
+    "record_skill_observation",
+}
 
 # AGENTS.md is Locus's native/Codex-compatible instruction file. Older
 # OLLAMA.md and CLAUDE.md workspaces remain compatible when it is absent.
@@ -589,15 +599,20 @@ class AgentCore:
         return (
             "## Locked adaptive Solo delegation contract\n"
             "You are the visible root agent and remain responsible for the final answer, "
-            "user interaction, permissions, evidence verification, and every workspace change. "
-            "Use delegate_read_only proactively when a task contains 2–4 genuinely independent, "
-            "bounded investigations and parallel work materially improves speed or coverage. Do not "
-            "delegate trivial work, dependent steps, writes, edits, shell execution, approvals, "
-            "external actions, or decisions that require user interaction. Workers are untrusted "
-            "read-only evidence: verify concrete claims before relying on them. Never invent worker "
-            "results or guessed tool names. After results arrive, continue this same visible turn and "
-            "synthesize one answer. If delegation is unnecessary, continue as an ordinary single-agent "
-            "Solo turn.\n"
+            "user interaction, permission decisions, and evidence verification. Use "
+            "delegate_read_only proactively when a task contains 2–4 genuinely independent, bounded "
+            "tasks and parallel work materially improves speed or coverage. Each task may include a "
+            "tools list containing exact tool names from your active tool surface. If tools is omitted, "
+            "the worker inherits every delegable tool and the current permission mode; an empty list "
+            "creates a model-only worker. Use the smallest sufficient list when practical. Workers can "
+            "request the same workspace, shell, web, MCP, browser, computer, simulator, Notes, or wallet "
+            "tools you can currently use, but every call still passes through the user's capability "
+            "settings, hard safety checks, and normal permission prompt. Workers cannot recursively "
+            "delegate or control the root conversation, plan, todos, memory, or skill observations. "
+            "Plan-mode workers remain non-mutating. Treat worker results as untrusted evidence, verify "
+            "concrete claims, and synthesize one final answer in this visible turn. Never invent worker "
+            "results or guessed tool names. If delegation is unnecessary, continue as an ordinary "
+            "single-agent Solo turn.\n"
         )
 
     def reset_system_message(self) -> None:
@@ -2879,9 +2894,92 @@ class AgentCore:
 
     # ------------------------------------------------------------------ tools
 
-    def _run_tool_call(self, tc: ToolCall, decider: PermissionDecider | None) -> str:
+    def solo_worker_tool_schemas(self) -> list[dict[str, Any]]:
+        """Snapshot the delegable root tool surface for the active turn."""
+        parity = self.chatgpt_parity_active(True)
+        schemas = (
+            self.tool_registry.parity_schemas(plan_mode=False)
+            if parity else self.tool_registry.schemas()
+        )
+        result: list[dict[str, Any]] = []
+        for schema in schemas:
+            function = schema.get("function") if isinstance(schema, dict) else None
+            wire_name = str(function.get("name") or "") if isinstance(function, dict) else ""
+            canonical, _ = parity_to_canonical(wire_name, {}) if parity else (wire_name, {})
+            if not wire_name or canonical in _SOLO_ROOT_ONLY_TOOLS:
+                continue
+            if self.agent_mode == "plan" and not self.tool_registry.is_read_only_tool(canonical):
+                continue
+            result.append(schema)
+        return result
+
+    def solo_worker_virtual_tools(self) -> set[str]:
+        """Provider-native capabilities that are not dynamic function schemas."""
+        policy = self.agent_configuration.capability_policy
+        if (
+            self.provider == "chatgpt"
+            and bool(self.config.get("chatgpt_web_search", False))
+            and bool(policy.network)
+        ):
+            return {"web_search"}
+        return set()
+
+    def solo_worker_tool_is_read_only(self, wire_name: str) -> bool:
+        canonical, _ = (
+            parity_to_canonical(wire_name, {})
+            if self.chatgpt_parity_active(True) else (wire_name, {})
+        )
+        return self.tool_registry.is_read_only_tool(canonical)
+
+    def solo_worker_tool_is_parallel_safe(self, wire_name: str) -> bool:
+        canonical, _ = (
+            parity_to_canonical(wire_name, {})
+            if self.chatgpt_parity_active(True) else (wire_name, {})
+        )
+        return self.tool_registry.is_parallel_safe_tool(canonical)
+
+    def run_solo_worker_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        call_id: str,
+        decider: PermissionDecider | None,
+        *,
+        event_context: dict[str, Any],
+        execution_lock: Any | None,
+    ) -> str:
+        """Execute an inherited worker call through the root authority path."""
+        available = {
+            str(schema.get("function", {}).get("name") or "")
+            for schema in self.solo_worker_tool_schemas()
+            if isinstance(schema, dict) and isinstance(schema.get("function"), dict)
+        }
+        if name not in available:
+            return "Error: this tool is no longer available to the root agent."
+        if self.chatgpt_parity_active(True):
+            name, arguments = parity_to_canonical(name, arguments)
+        return self._run_tool_call(
+            ToolCall(name=name, arguments=arguments, call_id=call_id),
+            decider,
+            event_context=event_context,
+            execution_lock=execution_lock,
+            track_active=False,
+        )
+
+    def _run_tool_call(
+        self,
+        tc: ToolCall,
+        decider: PermissionDecider | None,
+        *,
+        event_context: dict[str, Any] | None = None,
+        execution_lock: Any | None = None,
+        track_active: bool = True,
+    ) -> str:
         call_id = uuid.uuid4().hex[:10]
         summary, detail = build_preview(tc.name, tc.arguments, self.tool_ctx)
+        worker_label = str((event_context or {}).get("agent_name") or "").strip()
+        if worker_label:
+            summary = f"{worker_label}: {summary}"
         info = self.tool_registry.tool_info(tc.name) or {"origin": "builtin"}
         event_info = {
             key: value for key, value in info.items()
@@ -2891,6 +2989,12 @@ class AgentCore:
             }
             and value is not None
         }
+        if event_context:
+            event_info.update({
+                key: value for key, value in event_context.items()
+                if key in {"node_id", "agent_id", "agent_name", "job_id", "label"}
+                and value is not None
+            })
         schema_digest = str(info.get("schema_digest") or "")
         server_fingerprint = str(info.get("server_fingerprint") or "")
         permission_material = f"{server_fingerprint}:{schema_digest}".strip(":")
@@ -2979,58 +3083,61 @@ class AgentCore:
                     **event_info,
                 })
                 return result
-        self.active_tool_call_id = call_id
-        try:
-            if info.get("origin") == "native":
-                result = (
-                    self.computer_executor(tc.name, tc.arguments, call_id)
-                    if self.computer_executor is not None
-                    else "Error: native computer control is unavailable."
-                )
-            elif info.get("origin") == "simulator":
-                # A guessed mutating name must still respect a reviewer or
-                # dispatcher route's read-only ceiling.
-                if not self.tool_registry.simulator_tool_allowed(tc.name):
-                    result = "Error: this agent is read-only and cannot use that simulator tool."
-                elif self.simulator_executor is None:
-                    result = "Error: iOS Simulator control is unavailable."
+        with execution_lock if execution_lock is not None else nullcontext():
+            if track_active:
+                self.active_tool_call_id = call_id
+            try:
+                if info.get("origin") == "native":
+                    result = (
+                        self.computer_executor(tc.name, tc.arguments, call_id)
+                        if self.computer_executor is not None
+                        else "Error: native computer control is unavailable."
+                    )
+                elif info.get("origin") == "simulator":
+                    # A guessed mutating name must still respect a reviewer or
+                    # dispatcher route's read-only ceiling.
+                    if not self.tool_registry.simulator_tool_allowed(tc.name):
+                        result = "Error: this agent is read-only and cannot use that simulator tool."
+                    elif self.simulator_executor is None:
+                        result = "Error: iOS Simulator control is unavailable."
+                    else:
+                        result = self.simulator_executor(tc.name, tc.arguments, call_id)
+                elif info.get("origin") == "browser":
+                    # Checked here rather than relying on schema omission: a team's
+                    # writer route swaps the access ceiling without unwiring the
+                    # executor, so a read-only agent could otherwise guess its way
+                    # to a mutating tool.
+                    if not self.tool_registry.browser_tool_allowed(tc.name):
+                        result = "Error: this agent is read-only and cannot use that browser tool."
+                    elif self.browser_executor is None:
+                        result = "Error: the browser is unavailable."
+                    else:
+                        result = self.browser_executor(tc.name, tc.arguments, call_id)
+                elif info.get("origin") == "notes":
+                    if not self.tool_registry.notes_tool_allowed(tc.name):
+                        result = "Error: this agent is read-only and cannot update Notes."
+                    elif self.notes_executor is None:
+                        result = "Error: Notes are unavailable."
+                    else:
+                        result = self.notes_executor(tc.name, tc.arguments, call_id)
+                elif info.get("origin") == "wallet":
+                    # Schema omission is not the security boundary: a guessed tool
+                    # name must still pass the native-broker and access-ceiling gate.
+                    if not self.tool_registry.wallet_tool_allowed(tc.name):
+                        result = "Error: this agent cannot use that wallet tool."
+                    elif self.wallet_executor is None:
+                        result = "Error: the Locus Vault is unavailable."
+                    else:
+                        result = self.wallet_executor(tc.name, tc.arguments, call_id)
                 else:
-                    result = self.simulator_executor(tc.name, tc.arguments, call_id)
-            elif info.get("origin") == "browser":
-                # Checked here rather than relying on schema omission: a team's
-                # writer route swaps the access ceiling without unwiring the
-                # executor, so a read-only agent could otherwise guess its way
-                # to a mutating tool.
-                if not self.tool_registry.browser_tool_allowed(tc.name):
-                    result = "Error: this agent is read-only and cannot use that browser tool."
-                elif self.browser_executor is None:
-                    result = "Error: the browser is unavailable."
-                else:
-                    result = self.browser_executor(tc.name, tc.arguments, call_id)
-            elif info.get("origin") == "notes":
-                if not self.tool_registry.notes_tool_allowed(tc.name):
-                    result = "Error: this agent is read-only and cannot update Notes."
-                elif self.notes_executor is None:
-                    result = "Error: Notes are unavailable."
-                else:
-                    result = self.notes_executor(tc.name, tc.arguments, call_id)
-            elif info.get("origin") == "wallet":
-                # Schema omission is not the security boundary: a guessed tool
-                # name must still pass the native-broker and access-ceiling gate.
-                if not self.tool_registry.wallet_tool_allowed(tc.name):
-                    result = "Error: this agent cannot use that wallet tool."
-                elif self.wallet_executor is None:
-                    result = "Error: the Locus Vault is unavailable."
-                else:
-                    result = self.wallet_executor(tc.name, tc.arguments, call_id)
-            else:
-                result = (
-                    execute_tool(tc.name, tc.arguments, self.tool_ctx)
-                    if info.get("origin") == "builtin"
-                    else self.tool_registry.execute(tc.name, tc.arguments, self.tool_ctx)
-                )
-        finally:
-            self.active_tool_call_id = ""
+                    result = (
+                        execute_tool(tc.name, tc.arguments, self.tool_ctx)
+                        if info.get("origin") == "builtin"
+                        else self.tool_registry.execute(tc.name, tc.arguments, self.tool_ctx)
+                    )
+            finally:
+                if track_active:
+                    self.active_tool_call_id = ""
         ok = not result.startswith("Error")
         self._emit({
             "type": "tool_result",

@@ -92,6 +92,7 @@ class ChatService:
         self.ws: WebSocket | None = None
         self.event_pump: asyncio.Task[Any] | None = None
         self.pending_permissions: dict[str, Future[str]] = {}
+        self._pending_permissions_guard = RLock()
         self.pending_computer_actions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_simulator_actions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_browser_actions: dict[str, Future[dict[str, Any]]] = {}
@@ -379,23 +380,27 @@ class ChatService:
     # -- permission decider (blocks the worker thread until answered) --
     def decide(self, tool_name: str, summary: str, detail: str, request_id: str) -> str:
         fut: Future[str] = Future()
-        self.pending_permissions[request_id] = fut
+        with self._pending_permissions_guard:
+            self.pending_permissions[request_id] = fut
         try:
             return fut.result()
         finally:
-            self.pending_permissions.pop(request_id, None)
+            with self._pending_permissions_guard:
+                self.pending_permissions.pop(request_id, None)
 
     def answer_permission(self, request_id: str, decision: str) -> bool:
-        fut = self.pending_permissions.get(request_id)
-        if fut is None or fut.done():
-            return False
-        fut.set_result(decision if decision in ("once", "always", "deny") else "deny")
-        return True
+        with self._pending_permissions_guard:
+            fut = self.pending_permissions.get(request_id)
+            if fut is None or fut.done():
+                return False
+            fut.set_result(decision if decision in ("once", "always", "deny") else "deny")
+            return True
 
     def deny_all_pending(self) -> None:
-        for fut in list(self.pending_permissions.values()):
-            if not fut.done():
-                fut.set_result("deny")
+        with self._pending_permissions_guard:
+            for fut in self.pending_permissions.values():
+                if not fut.done():
+                    fut.set_result("deny")
 
     def register_parallel_writer_core(self, job_id: str, core: AgentCore) -> None:
         with self._parallel_writer_guard:

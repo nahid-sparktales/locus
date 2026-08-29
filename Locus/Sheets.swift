@@ -1274,6 +1274,7 @@ private struct WalletSettingsView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var gateway: WalletGateway
     @Binding var rpcURL: String
+    @Binding var advancedExpanded: Bool
     @State private var recoveryPresented = false
     @State private var deletePresented = false
     @State private var policyPresented = false
@@ -1281,21 +1282,33 @@ private struct WalletSettingsView: View {
     @State private var contractPolicyEntry: WalletContractRegistryEntry?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                vaultCard
-                if !gateway.accounts.isEmpty { accountsCard }
+        Form {
+            vaultCard
+                .id("settings.wallet.status")
+            if !gateway.accounts.isEmpty { accountsCard }
+            if !gateway.transactionHistory.isEmpty { historyCard }
+            externalWalletsCard
+                .id("settings.wallet.connectors")
+
+            Section {
+                SettingsAdvancedDisclosureRow(
+                    isExpanded: $advancedExpanded,
+                    detail: "Test networks, budgets, diagnostics, and vault deletion"
+                )
+                .accessibilityIdentifier("settings.wallet.advanced")
+            }
+
+            if advancedExpanded {
                 rpcCard
+                    .id("settings.wallet.rpc-url")
                 policyCard
-                if !gateway.transactionHistory.isEmpty { historyCard }
-                externalWalletsCard
+                    .id("settings.wallet.policies")
                 rolloutCard
                 controlsCard
             }
-            .padding(24)
-            .frame(maxWidth: 680)
-            .frame(maxWidth: .infinity)
         }
+        .formStyle(.grouped)
+        .accessibilityIdentifier("settings.wallet.root")
         .task {
             gateway.configureRPCURL(rpcURL)
             await gateway.refreshStatus()
@@ -1333,19 +1346,20 @@ private struct WalletSettingsView: View {
     }
 
     private var vaultCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        Section("Locus Vault") {
             HStack {
-                Label("Locus Vault", systemImage: "wallet.bifold.fill")
-                    .font(.locus(size: 13, weight: .bold))
+                Label("Limited-fund transaction vault", systemImage: "wallet.bifold.fill")
+                    .fontWeight(.semibold)
                 Spacer()
-                Text(gateway.statusText).font(.locus(size: 9, weight: .semibold))
-                    .foregroundStyle(LocusTheme.warning)
+                Text(gateway.statusText)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(walletStatusColor)
                     .accessibilityIdentifier("settings.wallet.status")
             }
             Text("A separate, limited-fund vault for policy-controlled transactions. Existing Phantom, MetaMask, and Slush recovery phrases are never imported or extracted.")
-                .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+                .font(.caption).foregroundStyle(.secondary)
             Label("Mainnet signing stays disabled until independent security review is complete.", systemImage: "lock.shield.fill")
-                .font(.locus(size: 9)).foregroundStyle(LocusTheme.coral)
+                .font(.caption).foregroundStyle(LocusTheme.warning)
             if gateway.status == .unlocked {
                 Button("Lock vault") { model.lockWalletSession() }
                     .accessibilityIdentifier("settings.wallet.lock")
@@ -1361,20 +1375,16 @@ private struct WalletSettingsView: View {
                 Button("Unlock vault") { Task { await model.authorizeWalletSession() } }
                     .accessibilityIdentifier("settings.wallet.unlock")
             }
-            if !gateway.isExperimentalEnabled && gateway.signerAvailable {
-                Text("Activation required: enable the experimental wallet for this Mac, quit Locus, then reopen it. The exact commands are in Docs/WalletActivation.md.")
-                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.warning)
-            }
-            if let error = gateway.lastError {
-                Text(error).font(.locus(size: 9)).foregroundStyle(LocusTheme.coral)
+            if !gateway.isExperimentalEnabled {
+                Text("Wallet features are turned off on this Mac. Open Advanced for setup and diagnostic details.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
-        .padding(14).locusCard(radius: 10)
     }
 
     private var accountsCard: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text("Accounts").font(.locus(size: 12, weight: .semibold))
+        Section("Accounts") {
             ForEach(gateway.accounts) { account in
                 HStack(alignment: .top, spacing: 9) {
                     Image(systemName: account.chain == .evm ? "diamond.fill" : "circle.hexagongrid.fill")
@@ -1392,12 +1402,10 @@ private struct WalletSettingsView: View {
                 }
             }
         }
-        .padding(14).locusCard(radius: 10)
     }
 
     private var rpcCard: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text("Sepolia connection").font(.locus(size: 12, weight: .semibold))
+        Section("Test-network connection") {
             TextField("HTTPS RPC URL", text: $rpcURL).textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("settings.wallet.rpc-url")
             HStack {
@@ -1408,13 +1416,13 @@ private struct WalletSettingsView: View {
             Text("The endpoint stays native and is never sent to Python or included in model context.")
                 .font(.locus(size: 8)).foregroundStyle(LocusTheme.textTertiary)
         }
-        .padding(14).locusCard(radius: 10)
     }
 
     private var policyCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        Section("Budgets and contracts") {
             HStack {
-                Text("Contract registry & policies").font(.locus(size: 12, weight: .semibold))
+                Text("Transaction rules")
+                    .fontWeight(.semibold)
                 Spacer()
                 Button("Add contract") { registryPresented = true }
                     .disabled(gateway.status != .unlocked)
@@ -1482,13 +1490,13 @@ private struct WalletSettingsView: View {
                 }
             }
         }
-        .padding(14).locusCard(radius: 10)
     }
 
     private var historyCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        Section("Transaction activity") {
             HStack {
-                Text("Transaction activity").font(.locus(size: 12, weight: .semibold))
+                Text("Recent test-network activity")
+                    .fontWeight(.semibold)
                 Spacer()
                 Button("Refresh") { Task { await gateway.refreshTransactionHistory() } }
                     .font(.locus(size: 8))
@@ -1514,24 +1522,30 @@ private struct WalletSettingsView: View {
                 }
             }
         }
-        .padding(14).locusCard(radius: 10)
     }
 
     private var externalWalletsCard: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text("External approval wallets").font(.locus(size: 12, weight: .semibold))
+        Section("External approval wallets") {
             ForEach(WalletExternalConnectorCatalog.connectors) { descriptor in
                 connector(descriptor)
             }
             Text("Connector contracts and test-network boundaries are defined. Connection buttons remain closed until each transport dependency and callback path passes its security audit. External wallets always retain their own keys and confirmation experience.")
                 .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
         }
-        .padding(14).locusCard(radius: 10)
     }
 
     private var rolloutCard: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text("Security rollout").font(.locus(size: 12, weight: .semibold))
+        Section("Security and diagnostics") {
+            if !gateway.isExperimentalEnabled && gateway.signerAvailable {
+                Text("Activation required: enable the experimental wallet for this Mac, quit Locus, then reopen it. The exact commands are in Docs/WalletActivation.md.")
+                    .font(.caption)
+                    .foregroundStyle(LocusTheme.warning)
+            }
+            if let error = gateway.lastError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(LocusTheme.coral)
+            }
             rollout("1", "Native ETH on Sepolia", ready: true)
             rollout("2", "Registered ABI calls with exact confirmation", ready: true)
             rollout("3", "Session-scoped Sepolia browser provider", ready: gateway.browserProviderEnabled)
@@ -1543,23 +1557,21 @@ private struct WalletSettingsView: View {
                     .font(.locus(size: 8)).foregroundStyle(LocusTheme.textTertiary)
             }
         }
-        .padding(14).locusCard(radius: 10)
     }
 
     private var controlsCard: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text("Vault controls").font(.locus(size: 12, weight: .semibold))
+        Section("Vault deletion") {
             Button("Delete Locus Vault", role: .destructive) { deletePresented = true }
                 .disabled(gateway.vaultState == .missing)
                 .accessibilityIdentifier("settings.wallet.delete")
             Text("Deletion requires macOS authentication and the exact confirmation phrase. Locus cannot show the recovery phrase again.")
                 .font(.locus(size: 8)).foregroundStyle(LocusTheme.textTertiary)
         }
-        .padding(14).locusCard(radius: 10)
     }
 
     private func connector(_ descriptor: WalletExternalConnectorDescriptor) -> some View {
         HStack(spacing: 10) {
+            ProviderLogo(name: descriptor.name, size: 28)
             VStack(alignment: .leading, spacing: 2) {
                 Text(descriptor.name).font(.locus(size: 10, weight: .semibold))
                 Text(descriptor.transport).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
@@ -1609,6 +1621,14 @@ private struct WalletSettingsView: View {
         case .submitted: LocusTheme.warning
         case .failed: LocusTheme.coral
         case .broadcastUnknown: LocusTheme.warning
+        }
+    }
+
+    private var walletStatusColor: Color {
+        switch gateway.status {
+        case .unlocked: LocusTheme.success
+        case .locked: LocusTheme.textSecondary
+        default: LocusTheme.warning
         }
     }
 
@@ -2196,6 +2216,7 @@ struct SettingsView: View {
     @State private var deletingLocalModelName: String?
     @State private var settingsSearch = ""
     @State private var pendingSearchAnchor: String?
+    @State private var expandedAdvancedPages: Set<SettingsPage> = []
     @State private var hasLoadedDraft = false
     @State private var discardPromptPresented = false
     @State private var lifecycleRegistrationID = UUID()
@@ -2245,10 +2266,6 @@ struct SettingsView: View {
             proxyPassword = ""
             proxyPasswordStored = model.persistenceEnabled
                 && CredentialStore.has(account: CredentialStore.proxyCredentialKey)
-            if model.settingsPage.minimumLevel == .advanced,
-               model.settings.resolvedSettingsLevel == .standard {
-                model.settingsPage = .general
-            }
             hasLoadedDraft = true
             model.registerSettingsUpdatePreparation(id: lifecycleRegistrationID) {
                 prepareSettingsForUpdate()
@@ -2270,6 +2287,7 @@ struct SettingsView: View {
         }
         .interactiveDismissDisabled(hasAnyStagedChanges)
         .onDisappear {
+            expandedAdvancedPages.removeAll()
             model.unregisterSettingsUpdatePreparation(id: lifecycleRegistrationID)
             model.clearAppearancePreview()
             if presentationContext == .settingsWindow {
@@ -2340,7 +2358,18 @@ struct SettingsView: View {
 
     // MARK: - Studio settings shell
 
-    private var settingsLevel: SettingsLevel { draft.resolvedSettingsLevel }
+    private func advancedBinding(for page: SettingsPage) -> Binding<Bool> {
+        Binding(
+            get: { expandedAdvancedPages.contains(page) },
+            set: { expanded in
+                if expanded {
+                    expandedAdvancedPages.insert(page)
+                } else {
+                    expandedAdvancedPages.remove(page)
+                }
+            }
+        )
+    }
 
     private var settingsSidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -2401,48 +2430,14 @@ struct SettingsView: View {
             }
             .accessibilityIdentifier("settings.navigation")
 
-            VStack(alignment: .leading, spacing: 7) {
-                Text("SETTINGS LEVEL")
-                    .font(.system(.caption2, design: .default, weight: .semibold))
-                    .tracking(0.8)
-                    .foregroundStyle(LocusTheme.textTertiary)
-                Picker("Settings level", selection: $draft.settingsLevelRaw) {
-                    ForEach(SettingsLevel.allCases) { level in
-                        Text(level.title)
-                            .tag(level.rawValue)
-                            .accessibilityIdentifier("settings.level.\(level.rawValue)")
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .accessibilityIdentifier("settings.level")
-                Text(settingsLevel == .standard
-                    ? "Common controls. Search still finds advanced settings."
-                    : "All runtime and diagnostic controls are visible.")
-                    .font(.system(.caption, design: .default))
-                    .foregroundStyle(LocusTheme.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(14)
-            .overlay(alignment: .top) {
-                Rectangle().fill(LocusTheme.separator).frame(height: 1)
-            }
         }
         .frame(width: 208)
         .frame(maxHeight: .infinity)
         .locusSurface(.structural)
-        .onChange(of: draft.settingsLevelRaw) {
-            if settingsLevel == .standard, model.settingsPage.minimumLevel == .advanced {
-                model.settingsPage = .general
-            }
-        }
     }
 
     private func visiblePages(in group: SettingsNavigationGroup) -> [SettingsPage] {
-        SettingsPage.allCases.filter { page in
-            page.navigationGroup == group
-                && (settingsLevel == .advanced || page.minimumLevel == .standard)
-        }
+        SettingsPage.allCases.filter { $0.navigationGroup == group }
     }
 
     private func settingsNavigationButton(_ page: SettingsPage) -> some View {
@@ -2528,14 +2523,15 @@ struct SettingsView: View {
                 case .wallet:
                     WalletSettingsView(
                         gateway: model.walletGateway,
-                        rpcURL: $draft.walletSepoliaRPCURL
+                        rpcURL: $draft.walletSepoliaRPCURL,
+                        advancedExpanded: advancedBinding(for: .wallet)
                     )
                 case .accounts: accountsPage
                 case .agents:
-                    AgentTeamsSettingsView()
+                    AgentTeamsSettingsView(advancedExpanded: advancedBinding(for: .agents))
                         .environmentObject(model)
                 case .knowledge:
-                    WorkspaceKnowledgeSettingsView()
+                    WorkspaceKnowledgeSettingsView(advancedExpanded: advancedBinding(for: .knowledge))
                         .environmentObject(model)
                 case .permissions: permissionsPage
                 case .extensions:
@@ -2583,7 +2579,7 @@ struct SettingsView: View {
                                     HStack(spacing: 7) {
                                         Text(result.title)
                                             .font(.system(.body, design: .default, weight: .semibold))
-                                        if result.minimumLevel == .advanced {
+                                        if result.isAdvanced {
                                             Text("ADVANCED")
                                                 .font(.system(.caption2, design: .default, weight: .bold))
                                                 .foregroundStyle(LocusTheme.textTertiary)
@@ -2622,8 +2618,8 @@ struct SettingsView: View {
     }
 
     private func openSearchResult(_ result: SettingsSearchDescriptor) {
-        if result.minimumLevel == .advanced {
-            draft.settingsLevelRaw = SettingsLevel.advanced.rawValue
+        if result.isAdvanced {
+            expandedAdvancedPages.insert(result.page)
         }
         model.settingsPage = result.page
         pendingSearchAnchor = result.anchor
@@ -2632,9 +2628,6 @@ struct SettingsView: View {
 
     private var settingsActionBar: some View {
         HStack(spacing: 10) {
-            Button("Close") { requestSettingsDismissal() }
-                .accessibilityIdentifier("settings.cancel")
-            Spacer()
             if let error = model.settingsPage == .network ? proxyDraftError : nil {
                 Text(error)
                     .font(.system(.caption, design: .default))
@@ -2645,6 +2638,7 @@ struct SettingsView: View {
                     .font(.system(.caption, design: .default, weight: .medium))
                     .foregroundStyle(LocusTheme.textTertiary)
             }
+            Spacer()
             if isStagedPage(model.settingsPage) {
                 Button("Discard") { discardStagedChanges(for: model.settingsPage) }
                     .disabled(!currentPageHasStagedChanges)
@@ -2655,6 +2649,8 @@ struct SettingsView: View {
                     .disabled(!currentPageHasStagedChanges || stagedPageHasError)
                     .accessibilityIdentifier("settings.save")
             }
+            Button("Close") { requestSettingsDismissal() }
+                .accessibilityIdentifier("settings.cancel")
         }
         .padding(.horizontal, 20)
         .frame(height: 52)
@@ -2666,7 +2662,7 @@ struct SettingsView: View {
 
     private var immediateDraftSignature: String {
         [
-            draft.settingsLevelRaw, draft.appearanceRaw,
+            draft.appearanceRaw,
             draft.accentPresetRaw, draft.customAccentHex,
             draft.showTeamProgressInHeader.description,
             draft.showContextUsageInHeader.description,
@@ -2705,7 +2701,7 @@ struct SettingsView: View {
     private func isStagedPage(_ page: SettingsPage) -> Bool {
         guard page.mutationPolicy == .staged else { return false }
         if page == .accounts {
-            return settingsLevel == .advanced || hasStagedChanges(for: page)
+            return expandedAdvancedPages.contains(.accounts) || hasStagedChanges(for: page)
         }
         return true
     }
@@ -3174,11 +3170,8 @@ struct SettingsView: View {
         ].filter { !$0.isEmpty }.joined(separator: " · ")
 
         return HStack(spacing: 10) {
-            Image(systemName: hidden ? "eye.slash" : "shippingbox.fill")
-                .font(.locus(size: 11, weight: .medium))
-                .foregroundStyle(hidden ? LocusTheme.muted : LocusTheme.signalDeep)
-                .frame(width: 18)
-                .accessibilityHidden(true)
+            ProviderLogo(name: "Ollama", size: 24)
+                .opacity(hidden ? 0.48 : 1)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
@@ -3246,7 +3239,7 @@ struct SettingsView: View {
             browser: model.browser,
             draft: $draft,
             deepLink: $pendingSearchAnchor,
-            settingsLevel: settingsLevel
+            advancedExpanded: advancedBinding(for: .browser)
         )
         .environmentObject(model)
     }
@@ -3621,13 +3614,23 @@ struct SettingsView: View {
 
                 ForEach(model.providerAccounts) { account in
                     HStack(spacing: 10) {
-                        Circle()
-                            .fill(
-                                model.accountStatus[account.id]?.isHealthy ?? account.hasKey
-                                    ? LocusTheme.success
-                                    : LocusTheme.coral
-                            )
-                            .frame(width: 7, height: 7)
+                        ProviderLogo(
+                            kind: account.kind,
+                            name: account.displayName,
+                            url: account.resolvedBaseURL,
+                            size: 28
+                        )
+                        .overlay(alignment: .bottomTrailing) {
+                            Circle()
+                                .fill(
+                                    model.accountStatus[account.id]?.isHealthy ?? account.hasKey
+                                        ? LocusTheme.success
+                                        : LocusTheme.coral
+                                )
+                                .frame(width: 8, height: 8)
+                                .overlay(Circle().stroke(LocusTheme.surfaceCard, lineWidth: 1.5))
+                                .accessibilityHidden(true)
+                        }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(account.displayName)
                                 .font(.locus(size: 11, weight: .semibold))
@@ -3647,8 +3650,14 @@ struct SettingsView: View {
 
                 Menu("Add Account…") {
                     ForEach(ProviderKind.allCases) { kind in
-                        Button(kind.title) {
+                        Button {
                             addingAccount = ProviderAccount(kind: kind)
+                        } label: {
+                            Label {
+                                Text(kind.title)
+                            } icon: {
+                                ProviderLogo(kind: kind, size: 18)
+                            }
                         }
                     }
                 }
@@ -3661,12 +3670,12 @@ struct SettingsView: View {
             }
 
             Section("Local model") {
-                Label(
-                    "Local Ollama needs no account — models installed on this Mac appear in the picker automatically.",
-                    systemImage: "bolt.fill"
-                )
-                .font(.locus(size: 10))
-                .foregroundStyle(LocusTheme.muted)
+                HStack(spacing: 10) {
+                    ProviderLogo(name: "Ollama", size: 26)
+                    Text("Ollama models installed on this Mac appear automatically. No account is needed.")
+                        .font(.locus(size: 10))
+                        .foregroundStyle(LocusTheme.muted)
+                }
 
                 if model.installedLocalModels.isEmpty {
                     Text(model.isModelOnline
@@ -3681,9 +3690,15 @@ struct SettingsView: View {
                 }
 
                 HStack {
-                    Button("Browse Hugging Face Models…") {
+                    Button {
                         model.openModelLibraryFromSettings()
                         dismiss()
+                    } label: {
+                        Label {
+                            Text("Browse Hugging Face Models…")
+                        } icon: {
+                            ProviderLogo(name: "Hugging Face", size: 20)
+                        }
                     }
                     .accessibilityIdentifier("settings.accounts.browseHuggingFace")
 
@@ -3694,7 +3709,18 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings.localModels.refresh")
                 }
 
-                if settingsLevel == .advanced {
+            }
+
+            Section {
+                SettingsAdvancedDisclosureRow(
+                    isExpanded: advancedBinding(for: .accounts),
+                    detail: "Local model context and runtime tuning"
+                )
+                .accessibilityIdentifier("settings.accounts.advanced")
+            }
+
+            if expandedAdvancedPages.contains(.accounts) {
+                Section("Advanced local model settings") {
                     TextField("Local context window in tokens (optional)", text: $localWindow)
                         .accessibilityIdentifier("settings.localContextWindow")
 
@@ -3704,8 +3730,8 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("settings.localContextDescription")
                 }
+                .id("settings.localContextWindow")
             }
-            .id("settings.localContextWindow")
         }
         .formStyle(.grouped)
     }

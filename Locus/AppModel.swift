@@ -4028,6 +4028,28 @@ final class AppModel: ObservableObject {
         showToast("Message copied")
     }
 
+    /// Copies a completed assistant response from its authoritative source.
+    /// Rendering never depends on the currently expanded portion of a code
+    /// block or table, so a visually collapsed response still copies in full.
+    func copyResponse(_ source: String, format: ResponseCopyFormat) {
+        let text = ResponseCopyPayload.text(from: source, format: format)
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        showToast("Copied as \(format.title)")
+    }
+
+    /// Quoting is intentionally available during a run. Permission and plan
+    /// prompts may temporarily replace the composer, but the draft remains in
+    /// the model and appears when the composer returns.
+    func quoteSelectionInComposer(_ selection: String) {
+        let updatedDraft = QuoteSelectionFormatter.appending(selection, to: draftText)
+        guard updatedDraft != draftText else { return }
+        draftText = updatedDraft
+        composerFocusToken = UUID()
+        showToast("Quote added to the composer")
+    }
+
     func useAsDraft(_ text: String) {
         guard !isBusy, !hasPendingPermission else {
             showToast("Finish the active action before reusing a message")
@@ -9841,6 +9863,30 @@ final class AppModel: ObservableObject {
         workspaceFiles.preview(url)
     }
 
+    func openWorkspaceReference(_ reference: WorkspaceArtifactReference) {
+        guard let contained = MarkdownLinkPolicy.containedWorkspaceFileURL(
+            reference.relativePath,
+            workspacePath: workspacePath
+        ),
+        contained == reference.url.standardizedFileURL.resolvingSymlinksInPath(),
+        FileManager.default.fileExists(atPath: contained.path)
+        else {
+            showToast("That file is no longer available in this workspace")
+            return
+        }
+
+        if reference.kind == .source || reference.sourceLocation != nil {
+            selectInspectorTab(.files)
+            workspaceFiles.preview(
+                contained,
+                line: reference.sourceLocation?.line,
+                column: reference.sourceLocation?.column
+            )
+        } else {
+            WorkspaceQuickLookPresenter.shared.present(contained)
+        }
+    }
+
     func prefillSessionSuggestion(_ suggestion: String) {
         prefillComposer(with: suggestion)
     }
@@ -13612,6 +13658,63 @@ final class AppModel: ObservableObject {
                 )
             ),
         ]
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_TEXT_OUTPUT"] == "1" {
+            let code = (1...25).map { "line \($0)" }.joined(separator: "\n")
+            let tableRows = (1...11).map { "| Row \($0) | Value \($0) |" }
+                .joined(separator: "\n")
+            let response = """
+            <think>private fixture reasoning</think>
+            # Copy formats
+
+            Read **the [complete guide](https://example.com/guide)**.
+
+            ```swift
+            \(code)
+            ```
+
+            | Name | Value |
+            | --- | --- |
+            \(tableRows)
+
+            Complete response suffix.
+            """
+            blocks = [
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000109")!,
+                    kind: .user,
+                    text: "Show the text-output fixture"
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000110")!,
+                    kind: .assistant,
+                    text: response
+                ),
+            ]
+        }
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_SELECTION"] == "1" {
+            blocks = [
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000119")!,
+                    kind: .user,
+                    text: "Select the response"
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000120")!,
+                    kind: .assistant,
+                    text: """
+                    Drag start paragraph.
+
+                    - First bullet
+                    - Second bullet
+
+                    Drag end paragraph.
+
+                    QuoteMeSelectionTarget
+                    """
+                ),
+            ]
+            draftText = "Existing draft"
+        }
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_SCROLL"] == "1" {
             blocks = [blocks[0]]
             for index in 0..<12 {

@@ -1,5 +1,6 @@
 import AppKit
 import Markdown
+import QuickLookUI
 import SwiftUI
 
 struct MarkdownInlineStyle: OptionSet, Hashable, Sendable {
@@ -201,6 +202,130 @@ private enum FinishedMarkdownCache {
     }
 }
 
+enum MarkdownPlainTextRenderer {
+    static func render(_ source: String) -> String {
+        stripBoundaryNewlines(render(blocks: MarkdownDocumentParser.parse(source)))
+    }
+
+    private static func render(blocks: [MarkdownRenderBlock]) -> String {
+        var result = ""
+        for block in blocks {
+            append(render(block: block), to: &result)
+        }
+        return result
+    }
+
+    private static func render(block: MarkdownRenderBlock) -> String {
+        switch block {
+        case .paragraph(let runs):
+            return inlineText(runs)
+        case .heading(_, let runs):
+            return inlineText(runs)
+        case .code(_, let body):
+            return body
+        case .unordered(let items):
+            return renderList(items, start: nil)
+        case .ordered(let start, let items):
+            return renderList(items, start: start)
+        case .quote(let nested):
+            return render(blocks: nested)
+                .components(separatedBy: "\n")
+                .map { $0.isEmpty ? ">" : "> \($0)" }
+                .joined(separator: "\n")
+        case .rule:
+            return "────────"
+        case .table(let headers, _, let rows):
+            return ([headers] + rows)
+                .map { row in row.map(inlineText).joined(separator: "\t") }
+                .joined(separator: "\n")
+        case .rawText(let value):
+            return value
+        }
+    }
+
+    private static func renderList(
+        _ items: [MarkdownRenderListItem],
+        start: Int?
+    ) -> String {
+        items.enumerated().map { offset, item in
+            let marker: String
+            if let checked = item.checked {
+                marker = checked ? "[x]" : "[ ]"
+            } else if let start {
+                marker = "\(start + offset)."
+            } else {
+                marker = "•"
+            }
+            let content = render(blocks: item.blocks)
+            let continuation = String(repeating: " ", count: marker.count + 1)
+            return content.components(separatedBy: "\n").enumerated().map { index, line in
+                if index == 0 { return "\(marker) \(line)" }
+                return line.isEmpty ? "" : "\(continuation)\(line)"
+            }
+            .joined(separator: "\n")
+        }
+        .joined(separator: "\n")
+    }
+
+    private static func inlineText(_ runs: [MarkdownInlineRun]) -> String {
+        var result = ""
+        var index = 0
+        while index < runs.count {
+            let run = runs[index]
+            if run.isImage {
+                let label = run.text.hasPrefix("Image: ")
+                    ? String(run.text.dropFirst("Image: ".count))
+                    : run.text
+                result += label
+                if let destination = run.destination, !destination.isEmpty {
+                    result += " (\(destination))"
+                }
+                index += 1
+                continue
+            }
+            if let destination = run.destination, !destination.isEmpty {
+                var label = ""
+                while index < runs.count,
+                      runs[index].destination == destination,
+                      !runs[index].isImage
+                {
+                    label += runs[index].text
+                    index += 1
+                }
+                result += label
+                if label != destination { result += " (\(destination))" }
+                continue
+            }
+            result += run.text
+            index += 1
+        }
+        return result
+    }
+
+    private static func append(_ block: String, to result: inout String) {
+        guard !block.isEmpty else { return }
+        if result.isEmpty {
+            result = block
+        } else if result.hasSuffix("\n\n") {
+            result += block
+        } else if result.hasSuffix("\n") {
+            result += "\n" + block
+        } else {
+            result += "\n\n" + block
+        }
+    }
+
+    private static func stripBoundaryNewlines(_ value: String) -> String {
+        String(
+            value
+                .drop(while: { $0 == "\n" || $0 == "\r" })
+                .reversed()
+                .drop(while: { $0 == "\n" || $0 == "\r" })
+                .reversed()
+        )
+    }
+}
+
 enum MarkdownRenderDensity: Sendable {
     case regular
     case compact
@@ -210,17 +335,263 @@ enum MarkdownRenderDensity: Sendable {
     var blockSpacing: CGFloat { self == .compact ? 8 : 12 }
 }
 
+/// Builds the logical document that sits behind the independently laid-out
+/// native Markdown leaves. Paths mirror the render tree, while prefixes and
+/// separators preserve list markers, task state, quotes, and table structure
+/// on Copy/Quote/Search.
+enum MarkdownSelectionProjection {
+    static func spans(
+        for blocks: [MarkdownRenderBlock],
+        rootPath: [Int] = [],
+        firstSeparator: String = ""
+    ) -> [String: TranscriptSelectionSpan] {
+        var result: [String: TranscriptSelectionSpan] = [:]
+        projectBlocks(
+            blocks,
+            rootPath: rootPath,
+            firstSeparator: firstSeparator,
+            laterSeparator: "\n\n",
+            firstPrefix: "",
+            laterPrefix: "",
+            into: &result
+        )
+        return result
+    }
+
+    private static func projectBlocks(
+        _ blocks: [MarkdownRenderBlock],
+        rootPath: [Int],
+        firstSeparator: String,
+        laterSeparator: String,
+        firstPrefix: String,
+        laterPrefix: String,
+        into result: inout [String: TranscriptSelectionSpan]
+    ) {
+        for (index, block) in blocks.enumerated() {
+            project(
+                block,
+                path: rootPath + [index],
+                separator: index == 0 ? firstSeparator : laterSeparator,
+                prefix: index == 0 ? firstPrefix : laterPrefix,
+                into: &result
+            )
+        }
+    }
+
+    private static func project(
+        _ block: MarkdownRenderBlock,
+        path: [Int],
+        separator: String,
+        prefix: String,
+        into result: inout [String: TranscriptSelectionSpan]
+    ) {
+        switch block {
+        case .paragraph(let runs), .heading(_, let runs):
+            append(inlineText(runs), path: path, separator: separator, prefix: prefix, into: &result)
+        case .rawText(let text), .code(_, let text):
+            append(text, path: path, separator: separator, prefix: prefix, into: &result)
+        case .rule:
+            break
+        case .quote(let nested):
+            projectBlocks(
+                nested,
+                rootPath: path,
+                firstSeparator: separator,
+                laterSeparator: "\n",
+                firstPrefix: prefix + "> ",
+                laterPrefix: prefix + "> ",
+                into: &result
+            )
+        case .unordered(let items):
+            projectList(items, start: nil, path: path, separator: separator, prefix: prefix, into: &result)
+        case .ordered(let start, let items):
+            projectList(items, start: start, path: path, separator: separator, prefix: prefix, into: &result)
+        case .table(let headers, _, let rows):
+            let allRows = [headers] + rows
+            for (rowIndex, row) in allRows.enumerated() {
+                for (columnIndex, cell) in row.enumerated() {
+                    let cellSeparator: String
+                    if rowIndex == 0, columnIndex == 0 {
+                        cellSeparator = separator
+                    } else if columnIndex == 0 {
+                        cellSeparator = "\n"
+                    } else {
+                        cellSeparator = "\t"
+                    }
+                    append(
+                        inlineText(cell),
+                        path: path + [rowIndex, columnIndex],
+                        separator: cellSeparator,
+                        prefix: columnIndex == 0 ? prefix : "",
+                        into: &result
+                    )
+                }
+            }
+        }
+    }
+
+    private static func projectList(
+        _ items: [MarkdownRenderListItem],
+        start: Int?,
+        path: [Int],
+        separator: String,
+        prefix: String,
+        into result: inout [String: TranscriptSelectionSpan]
+    ) {
+        for (itemIndex, item) in items.enumerated() {
+            let marker: String
+            if let checked = item.checked {
+                marker = checked ? "[x]" : "[ ]"
+            } else if let start {
+                marker = "\(start + itemIndex)."
+            } else {
+                marker = "•"
+            }
+            let continuation = prefix + String(repeating: " ", count: marker.utf16.count + 1)
+            projectBlocks(
+                item.blocks,
+                rootPath: path + [itemIndex],
+                firstSeparator: itemIndex == 0 ? separator : "\n",
+                laterSeparator: "\n",
+                firstPrefix: prefix + marker + " ",
+                laterPrefix: continuation,
+                into: &result
+            )
+        }
+    }
+
+    private static func append(
+        _ text: String,
+        path: [Int],
+        separator: String,
+        prefix: String,
+        into result: inout [String: TranscriptSelectionSpan]
+    ) {
+        guard !text.isEmpty else { return }
+        let span = TranscriptSelectionSpan(
+            treePath: path,
+            displayedText: text,
+            separatorBefore: separator,
+            copyPrefix: prefix
+        )
+        result[span.id] = span
+    }
+
+    private static func inlineText(_ runs: [MarkdownInlineRun]) -> String {
+        runs.map(\.text).joined()
+    }
+}
+
+enum MarkdownNativeText {
+    static func attributed(
+        _ runs: [MarkdownInlineRun],
+        font: NSFont,
+        color: NSColor,
+        lineSpacing: CGFloat,
+        workspacePath: String?
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = lineSpacing
+        for run in runs {
+            var runFont = font
+            let traits: NSFontTraitMask = [
+                run.style.contains(.strong) ? .boldFontMask : [],
+                run.style.contains(.emphasis) ? .italicFontMask : []
+            ]
+            .reduce([]) { $0.union($1) }
+            if !traits.isEmpty {
+                runFont = NSFontManager.shared.convert(runFont, toHaveTrait: traits)
+            }
+            if run.style.contains(.code) {
+                runFont = NSFont.monospacedSystemFont(
+                    ofSize: max(font.pointSize - 1, 10),
+                    weight: .medium
+                )
+            }
+            var attributes: [NSAttributedString.Key: Any] = [
+                .font: runFont,
+                .foregroundColor: color,
+                .paragraphStyle: paragraph
+            ]
+            if run.style.contains(.strikethrough) {
+                attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+            }
+            if run.style.contains(.code) {
+                attributes[.backgroundColor] = NSColor(LocusTheme.paperDeep)
+            }
+            if let url = MarkdownLinkPolicy.renderedURL(for: run, workspacePath: workspacePath) {
+                attributes[.link] = url
+                attributes[.foregroundColor] = NSColor(LocusTheme.signalDeep)
+                attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            }
+            result.append(NSAttributedString(string: run.text, attributes: attributes))
+        }
+        return result
+    }
+
+    static func plain(
+        _ text: String,
+        font: NSFont,
+        color: NSColor,
+        lineSpacing: CGFloat
+    ) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = lineSpacing
+        return NSAttributedString(
+            string: text,
+            attributes: [
+                .font: font,
+                .foregroundColor: color,
+                .paragraphStyle: paragraph
+            ]
+        )
+    }
+}
+
 struct MarkdownBodyView: View {
     let text: String
     var workspacePath: String? = nil
     var density: MarkdownRenderDensity = .regular
+    var selectionCoordinator: ResponseSelectionCoordinator? = nil
+    var selectionRootPath: [Int] = []
+    var selectionFirstSeparator = ""
+    var onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)? = nil
 
     var body: some View {
+        let blocks = FinishedMarkdownCache.blocks(for: text)
         MarkdownBlocksView(
-            blocks: FinishedMarkdownCache.blocks(for: text),
+            blocks: blocks,
             workspacePath: workspacePath,
-            density: density
+            density: density,
+            selectionCoordinator: selectionCoordinator,
+            selectionSpans: MarkdownSelectionProjection.spans(
+                for: blocks,
+                rootPath: selectionRootPath,
+                firstSeparator: selectionFirstSeparator
+            ),
+            pathPrefix: selectionRootPath,
+            onOpenWorkspaceReference: onOpenWorkspaceReference
         )
+        .environment(\.openURL, OpenURLAction { url in
+            open(url)
+            return .handled
+        })
+    }
+
+    private func open(_ url: URL) {
+        if let reference = WorkspaceArtifactReference.fromNavigationURL(
+            url,
+            workspacePath: workspacePath
+        ) {
+            if let onOpenWorkspaceReference {
+                onOpenWorkspaceReference(reference)
+            } else {
+                NSWorkspace.shared.open(reference.url)
+            }
+        } else {
+            NSWorkspace.shared.open(url)
+        }
     }
 }
 
@@ -231,6 +602,9 @@ struct StreamingMarkdownBodyView: View {
     let text: String
     var workspacePath: String? = nil
     var density: MarkdownRenderDensity = .regular
+    var selectionCoordinator: ResponseSelectionCoordinator? = nil
+    var selectionRootPath: [Int] = []
+    var onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)? = nil
     @State private var blocks: [MarkdownRenderBlock] = []
 
     var body: some View {
@@ -246,10 +620,21 @@ struct StreamingMarkdownBodyView: View {
                 MarkdownBlocksView(
                     blocks: blocks,
                     workspacePath: workspacePath,
-                    density: density
+                    density: density,
+                    selectionCoordinator: selectionCoordinator,
+                    selectionSpans: MarkdownSelectionProjection.spans(
+                        for: blocks,
+                        rootPath: selectionRootPath
+                    ),
+                    pathPrefix: selectionRootPath,
+                    onOpenWorkspaceReference: onOpenWorkspaceReference
                 )
             }
         }
+        .environment(\.openURL, OpenURLAction { url in
+            open(url)
+            return .handled
+        })
         .task(id: text) {
             let snapshot = text
             let parseTask = Task.detached(priority: .userInitiated) {
@@ -266,17 +651,36 @@ struct StreamingMarkdownBodyView: View {
             blocks = parsed
         }
     }
+
+    private func open(_ url: URL) {
+        if let reference = WorkspaceArtifactReference.fromNavigationURL(
+            url,
+            workspacePath: workspacePath
+        ) {
+            if let onOpenWorkspaceReference {
+                onOpenWorkspaceReference(reference)
+            } else {
+                NSWorkspace.shared.open(reference.url)
+            }
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
 }
 
 private struct MarkdownBlocksView: View {
     let blocks: [MarkdownRenderBlock]
     let workspacePath: String?
     let density: MarkdownRenderDensity
+    let selectionCoordinator: ResponseSelectionCoordinator?
+    let selectionSpans: [String: TranscriptSelectionSpan]
+    let pathPrefix: [Int]
+    let onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: density.blockSpacing) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                blockView(block)
+            ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
+                blockView(block, path: pathPrefix + [index])
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -284,47 +688,61 @@ private struct MarkdownBlocksView: View {
     }
 
     @ViewBuilder
-    private func blockView(_ block: MarkdownRenderBlock) -> some View {
+    private func blockView(_ block: MarkdownRenderBlock, path: [Int]) -> some View {
         switch block {
         case .paragraph(let runs):
-            if let image = localImage(in: runs) {
-                VStack(alignment: .leading, spacing: 6) {
-                    SwiftUI.Image(nsImage: image.image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: 620, maxHeight: 420, alignment: .leading)
-                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                    SwiftUI.Text(image.label)
-                        .font(.locus(size: 9, weight: .medium))
-                        .foregroundStyle(LocusTheme.muted)
+            if let artifact = standaloneArtifact(in: runs) {
+                if artifact.kind == .image, let image = NSImage(contentsOf: artifact.url) {
+                    WorkspaceImageArtifactView(
+                        reference: artifact,
+                        image: image,
+                        caption: runs.map(\.text).joined(),
+                        selectionCoordinator: selectionCoordinator,
+                        selectionSpan: selectionSpan(at: path)
+                    )
+                } else {
+                    WorkspaceArtifactCard(
+                        reference: artifact,
+                        selectionCoordinator: selectionCoordinator,
+                        selectionSpan: selectionSpan(at: path),
+                        onPreview: {
+                            if artifact.kind == .source || artifact.sourceLocation != nil {
+                                open(artifact)
+                            } else {
+                                WorkspaceQuickLookPresenter.shared.present(artifact.url)
+                            }
+                        }
+                    )
                 }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(image.label)
             } else {
-                prose(runs)
+                prose(runs, path: path)
             }
 
         case .heading(let level, let runs):
-            SwiftUI.Text(attributed(runs, headingLevel: level))
-                .font(.locus(
-                    size: density == .compact
-                        ? (level <= 2 ? 13 : 11)
-                        : (level == 1 ? 20 : (level == 2 ? 17 : 14)),
-                    weight: level <= 2 ? .bold : .semibold
-                ))
-                .tracking(level <= 2 ? -0.2 : 0)
-                .foregroundStyle(LocusTheme.ink)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+            selectableInline(
+                runs,
+                path: path,
+                fontSize: density == .compact
+                    ? (level <= 2 ? 13 : 11)
+                    : (level == 1 ? 20 : (level == 2 ? 17 : 14)),
+                fontWeight: level <= 2 ? .bold : .semibold,
+                color: LocusTheme.ink,
+                lineSpacing: 0
+            )
 
         case .code(let language, let body):
-            CodeBlockView(language: language, code: body)
+            CodeBlockView(
+                language: language,
+                code: body,
+                selectionCoordinator: selectionCoordinator,
+                selectionSpan: selectionSpan(at: path)
+            )
 
         case .unordered(let items):
-            list(items: items, start: nil)
+            list(items: items, start: nil, path: path)
 
         case .ordered(let start, let items):
-            list(items: items, start: start)
+            list(items: items, start: start, path: path)
 
         case .quote(let nested):
             HStack(alignment: .top, spacing: 10) {
@@ -334,7 +752,11 @@ private struct MarkdownBlocksView: View {
                 MarkdownBlocksView(
                     blocks: nested,
                     workspacePath: workspacePath,
-                    density: density
+                    density: density,
+                    selectionCoordinator: selectionCoordinator,
+                    selectionSpans: selectionSpans,
+                    pathPrefix: path,
+                    onOpenWorkspaceReference: onOpenWorkspaceReference
                 )
                 .foregroundStyle(LocusTheme.muted)
             }
@@ -352,21 +774,26 @@ private struct MarkdownBlocksView: View {
                 alignments: alignments,
                 rows: rows,
                 workspacePath: workspacePath,
-                density: density
+                density: density,
+                selectionCoordinator: selectionCoordinator,
+                selectionSpans: selectionSpans,
+                path: path,
+                onOpenWorkspaceReference: onOpenWorkspaceReference
             )
 
         case .rawText(let value):
-            SwiftUI.Text(value)
-                .font(.locus(size: density.fontSize, design: .monospaced))
-                .foregroundStyle(LocusTheme.inkSoft)
-                .lineSpacing(density.lineSpacing)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel("Raw HTML shown as text")
+            selectablePlain(
+                value,
+                path: path,
+                font: .monospacedSystemFont(ofSize: density.fontSize, weight: .regular),
+                color: NSColor(LocusTheme.inkSoft),
+                lineSpacing: density.lineSpacing
+            )
+            .accessibilityLabel("Raw HTML shown as text")
         }
     }
 
-    private func list(items: [MarkdownRenderListItem], start: Int?) -> some View {
+    private func list(items: [MarkdownRenderListItem], start: Int?, path: [Int]) -> some View {
         VStack(alignment: .leading, spacing: density == .compact ? 4 : 6) {
             ForEach(Array(items.enumerated()), id: \.offset) { offset, item in
                 HStack(alignment: .top, spacing: 8) {
@@ -375,7 +802,11 @@ private struct MarkdownBlocksView: View {
                     MarkdownBlocksView(
                         blocks: item.blocks,
                         workspacePath: workspacePath,
-                        density: density
+                        density: density,
+                        selectionCoordinator: selectionCoordinator,
+                        selectionSpans: selectionSpans,
+                        pathPrefix: path + [offset],
+                        onOpenWorkspaceReference: onOpenWorkspaceReference
                     )
                 }
             }
@@ -403,13 +834,90 @@ private struct MarkdownBlocksView: View {
         }
     }
 
-    private func prose(_ runs: [MarkdownInlineRun]) -> some View {
-        SwiftUI.Text(attributed(runs))
-            .font(.locus(size: density.fontSize))
-            .foregroundStyle(density == .compact ? LocusTheme.muted : LocusTheme.inkSoft)
-            .lineSpacing(density.lineSpacing)
-            .textSelection(.enabled)
+    @ViewBuilder
+    private func prose(_ runs: [MarkdownInlineRun], path: [Int]) -> some View {
+        selectableInline(
+            runs,
+            path: path,
+            fontSize: density.fontSize,
+            fontWeight: .regular,
+            color: density == .compact ? LocusTheme.muted : LocusTheme.inkSoft,
+            lineSpacing: density.lineSpacing
+        )
+    }
+
+    @ViewBuilder
+    private func selectableInline(
+        _ runs: [MarkdownInlineRun],
+        path: [Int],
+        fontSize: CGFloat,
+        fontWeight: NSFont.Weight,
+        color: Color,
+        lineSpacing: CGFloat
+    ) -> some View {
+        if let selectionCoordinator, let span = selectionSpan(at: path) {
+            ResponseSelectableText(
+                attributedText: MarkdownNativeText.attributed(
+                    runs,
+                    font: .systemFont(ofSize: fontSize, weight: fontWeight),
+                    color: NSColor(color),
+                    lineSpacing: lineSpacing,
+                    workspacePath: workspacePath
+                ),
+                span: span,
+                coordinator: selectionCoordinator,
+                onOpenURL: open
+            )
             .fixedSize(horizontal: false, vertical: true)
+        } else {
+            SwiftUI.Text(attributed(runs))
+                .font(.system(size: fontSize, weight: swiftUIWeight(fontWeight)))
+                .foregroundStyle(color)
+                .lineSpacing(lineSpacing)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder
+    private func selectablePlain(
+        _ text: String,
+        path: [Int],
+        font: NSFont,
+        color: NSColor,
+        lineSpacing: CGFloat
+    ) -> some View {
+        if let selectionCoordinator, let span = selectionSpan(at: path) {
+            ResponseSelectableText(
+                attributedText: MarkdownNativeText.plain(
+                    text,
+                    font: font,
+                    color: color,
+                    lineSpacing: lineSpacing
+                ),
+                span: span,
+                coordinator: selectionCoordinator
+            )
+            .fixedSize(horizontal: false, vertical: true)
+        } else {
+            SwiftUI.Text(text)
+                .font(.system(size: font.pointSize, design: font.isFixedPitch ? .monospaced : .default))
+                .foregroundStyle(Color(nsColor: color))
+                .lineSpacing(lineSpacing)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func selectionSpan(at path: [Int]) -> TranscriptSelectionSpan? {
+        selectionSpans[path.map(String.init).joined(separator: ".")]
+    }
+
+    private func swiftUIWeight(_ weight: NSFont.Weight) -> Font.Weight {
+        if weight >= .bold { return .bold }
+        if weight >= .semibold { return .semibold }
+        if weight >= .medium { return .medium }
+        return .regular
     }
 
     private func attributed(
@@ -434,7 +942,7 @@ private struct MarkdownBlocksView: View {
                 piece.foregroundColor = LocusTheme.ink
                 piece.backgroundColor = LocusTheme.paperDeep
             }
-            if let url = MarkdownLinkPolicy.safeURL(run.destination, workspacePath: workspacePath) {
+            if let url = MarkdownLinkPolicy.renderedURL(for: run, workspacePath: workspacePath) {
                 piece.link = url
                 piece.foregroundColor = LocusTheme.signalDeep
             }
@@ -443,17 +951,250 @@ private struct MarkdownBlocksView: View {
         return result
     }
 
-    private func localImage(
-        in runs: [MarkdownInlineRun]
-    ) -> (image: NSImage, label: String)? {
-        guard runs.count == 1, let run = runs.first, run.isImage,
-              let url = MarkdownLinkPolicy.workspaceImageURL(
-                run.destination,
+    private func standaloneArtifact(in runs: [MarkdownInlineRun]) -> WorkspaceArtifactReference? {
+        guard runs.count == 1, let run = runs.first else { return nil }
+        let raw: String?
+        if let destination = run.destination {
+            raw = destination
+        } else if run.style.contains(.code) {
+            raw = run.text
+        } else {
+            raw = nil
+        }
+        return WorkspaceArtifactReference.classify(raw, workspacePath: workspacePath)
+    }
+
+    private func open(_ url: URL) {
+        if let reference = WorkspaceArtifactReference.fromNavigationURL(
+            url,
+            workspacePath: workspacePath
+        ) {
+            if let onOpenWorkspaceReference {
+                onOpenWorkspaceReference(reference)
+            } else {
+                NSWorkspace.shared.open(reference.url)
+            }
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func open(_ reference: WorkspaceArtifactReference) {
+        if let onOpenWorkspaceReference {
+            onOpenWorkspaceReference(reference)
+        } else {
+            NSWorkspace.shared.open(reference.url)
+        }
+    }
+}
+
+struct WorkspaceSourceLocation: Hashable, Sendable {
+    let line: Int
+    let column: Int?
+}
+
+enum WorkspaceArtifactKind: String, Hashable, Sendable {
+    case source
+    case image
+    case pdf
+    case document
+    case spreadsheet
+    case presentation
+    case audio
+    case video
+    case other
+
+    var label: String {
+        switch self {
+        case .source: "Source file"
+        case .image: "Image"
+        case .pdf: "PDF"
+        case .document: "Document"
+        case .spreadsheet: "Spreadsheet"
+        case .presentation: "Presentation"
+        case .audio: "Audio"
+        case .video: "Video"
+        case .other: "File"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .source: "doc.text"
+        case .image: "photo"
+        case .pdf: "doc.richtext"
+        case .document: "doc.text"
+        case .spreadsheet: "tablecells"
+        case .presentation: "rectangle.on.rectangle.angled"
+        case .audio: "waveform"
+        case .video: "film"
+        case .other: "doc"
+        }
+    }
+}
+
+struct WorkspaceArtifactReference: Hashable, Sendable {
+    let url: URL
+    let relativePath: String
+    let kind: WorkspaceArtifactKind
+    let byteCount: Int64?
+    let sourceLocation: WorkspaceSourceLocation?
+
+    var displaySize: String? {
+        guard let byteCount else { return nil }
+        return ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .file)
+    }
+
+    var navigationURL: URL {
+        var components = URLComponents()
+        components.scheme = "locus-workspace"
+        components.host = "open"
+        components.path = "/" + relativePath
+        var query: [URLQueryItem] = []
+        if let sourceLocation {
+            query.append(.init(name: "line", value: String(sourceLocation.line)))
+            if let column = sourceLocation.column {
+                query.append(.init(name: "column", value: String(column)))
+            }
+        }
+        components.queryItems = query.isEmpty ? nil : query
+        return components.url ?? url
+    }
+
+    static func classify(_ raw: String?, workspacePath: String?) -> Self? {
+        guard let workspacePath,
+              let parsed = WorkspacePathReferenceParser.parse(raw),
+              let url = MarkdownLinkPolicy.containedWorkspaceFileURL(
+                parsed.path,
                 workspacePath: workspacePath
               ),
-              let image = NSImage(contentsOf: url)
+              FileManager.default.fileExists(atPath: url.path)
         else { return nil }
-        return (image, run.text)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+              !isDirectory.boolValue
+        else { return nil }
+
+        let root = URL(fileURLWithPath: workspacePath, isDirectory: true)
+        let relative = WorkspaceIndex.relativePath(url, root: root.path)
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey])
+        return Self(
+            url: url,
+            relativePath: relative,
+            kind: kind(for: url.pathExtension),
+            byteCount: values?.fileSize.map(Int64.init),
+            sourceLocation: parsed.location
+        )
+    }
+
+    static func fromNavigationURL(_ url: URL, workspacePath: String?) -> Self? {
+        guard url.scheme == "locus-workspace", url.host == "open" else { return nil }
+        var raw = String(url.path.dropFirst())
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        if let line = items.first(where: { $0.name == "line" })?.value {
+            raw += ":" + line
+            if let column = items.first(where: { $0.name == "column" })?.value {
+                raw += ":" + column
+            }
+        }
+        return classify(raw, workspacePath: workspacePath)
+    }
+
+    private static func kind(for pathExtension: String) -> WorkspaceArtifactKind {
+        let value = pathExtension.lowercased()
+        if ["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "bmp"].contains(value) {
+            return .image
+        }
+        if value == "pdf" { return .pdf }
+        if ["doc", "docx", "rtf", "pages", "odt"].contains(value) { return .document }
+        if ["xls", "xlsx", "csv", "tsv", "numbers", "ods"].contains(value) { return .spreadsheet }
+        if ["ppt", "pptx", "key", "odp"].contains(value) { return .presentation }
+        if ["mp3", "m4a", "wav", "aiff", "flac", "aac", "ogg"].contains(value) { return .audio }
+        if ["mp4", "mov", "m4v", "avi", "mkv", "webm"].contains(value) { return .video }
+        if ["swift", "m", "mm", "h", "c", "cc", "cpp", "rs", "go", "py", "js", "jsx", "ts", "tsx", "json", "yaml", "yml", "toml", "md", "txt", "sh", "zsh", "html", "css", "sql", "xml"].contains(value) {
+            return .source
+        }
+        return .other
+    }
+}
+
+enum WorkspacePathReferenceParser {
+    struct Parsed: Hashable, Sendable {
+        let path: String
+        let location: WorkspaceSourceLocation?
+    }
+
+    static func parse(_ raw: String?) -> Parsed? {
+        guard var value = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty,
+              !value.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+        else { return nil }
+        if value.hasPrefix("<"), value.hasSuffix(">") {
+            value = String(value.dropFirst().dropLast())
+        }
+        if let url = URL(string: value), let scheme = url.scheme?.lowercased(),
+           scheme != "file"
+        {
+            return nil
+        }
+
+        let patterns = [
+            #"#L([0-9]+)(?:C([0-9]+))?$"#,
+            #":([0-9]+)(?::([0-9]+))?$"#
+        ]
+        for pattern in patterns {
+            guard let expression = try? NSRegularExpression(pattern: pattern),
+                  let match = expression.firstMatch(
+                    in: value,
+                    range: NSRange(value.startIndex..., in: value)
+                  ),
+                  let whole = Range(match.range(at: 0), in: value),
+                  let lineRange = Range(match.range(at: 1), in: value),
+                  let line = Int(value[lineRange]), line > 0
+            else { continue }
+            let column: Int?
+            if match.range(at: 2).location != NSNotFound,
+               let columnRange = Range(match.range(at: 2), in: value)
+            {
+                column = Int(value[columnRange]).flatMap { $0 > 0 ? $0 : nil }
+            } else {
+                column = nil
+            }
+            let rawPath = String(value[..<whole.lowerBound])
+            let decoded = rawPath.removingPercentEncoding ?? rawPath
+            let path = URL(string: decoded).flatMap { $0.isFileURL ? $0.path : nil } ?? decoded
+            return Parsed(path: path, location: .init(line: line, column: column))
+        }
+
+        let path: String
+        if let fileURL = URL(string: value), fileURL.isFileURL {
+            path = fileURL.path
+        } else {
+            path = value.removingPercentEncoding ?? value
+        }
+        return Parsed(path: path, location: nil)
+    }
+}
+
+@MainActor
+final class WorkspaceQuickLookPresenter: NSObject, @preconcurrency QLPreviewPanelDataSource {
+    static let shared = WorkspaceQuickLookPresenter()
+    private var previewURL: URL?
+
+    func present(_ url: URL) {
+        previewURL = url
+        guard let panel = QLPreviewPanel.shared() else { return }
+        panel.dataSource = self
+        panel.reloadData()
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
+        previewURL == nil ? 0 : 1
+    }
+
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+        previewURL as NSURL?
     }
 }
 
@@ -468,14 +1209,25 @@ enum MarkdownLinkPolicy {
         else { return nil }
         if let url = URL(string: raw), let scheme = url.scheme?.lowercased() {
             if remoteSchemes.contains(scheme) { return url }
-            if scheme == "file" { return containedFileURL(url, workspacePath: workspacePath) }
+            if scheme == "file" {
+                guard let parsed = WorkspacePathReferenceParser.parse(raw) else { return nil }
+                return containedWorkspaceFileURL(parsed.path, workspacePath: workspacePath)
+            }
             return nil
         }
-        guard let workspacePath else { return nil }
-        let url = raw.hasPrefix("/")
-            ? URL(fileURLWithPath: raw)
-            : URL(fileURLWithPath: workspacePath, isDirectory: true).appending(path: raw)
-        return containedFileURL(url, workspacePath: workspacePath)
+        guard let parsed = WorkspacePathReferenceParser.parse(raw) else { return nil }
+        return containedWorkspaceFileURL(parsed.path, workspacePath: workspacePath)
+    }
+
+    static func renderedURL(for run: MarkdownInlineRun, workspacePath: String?) -> URL? {
+        let localCandidate = run.destination ?? (run.style.contains(.code) ? run.text : nil)
+        if let reference = WorkspaceArtifactReference.classify(
+            localCandidate,
+            workspacePath: workspacePath
+        ) {
+            return reference.navigationURL
+        }
+        return safeURL(run.destination, workspacePath: workspacePath)
     }
 
     static func workspaceImageURL(_ raw: String?, workspacePath: String?) -> URL? {
@@ -485,8 +1237,11 @@ enum MarkdownLinkPolicy {
         return url
     }
 
-    private static func containedFileURL(_ url: URL, workspacePath: String?) -> URL? {
+    static func containedWorkspaceFileURL(_ rawPath: String, workspacePath: String?) -> URL? {
         guard let workspacePath else { return nil }
+        let url = rawPath.hasPrefix("/")
+            ? URL(fileURLWithPath: rawPath)
+            : URL(fileURLWithPath: workspacePath, isDirectory: true).appending(path: rawPath)
         let root = URL(fileURLWithPath: workspacePath, isDirectory: true)
             .standardizedFileURL
             .resolvingSymlinksInPath()
@@ -497,39 +1252,274 @@ enum MarkdownLinkPolicy {
     }
 }
 
+private struct WorkspaceImageArtifactView: View {
+    let reference: WorkspaceArtifactReference
+    let image: NSImage
+    let caption: String
+    let selectionCoordinator: ResponseSelectionCoordinator?
+    let selectionSpan: TranscriptSelectionSpan?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            SwiftUI.Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: 620, maxHeight: 420, alignment: .leading)
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(LocusTheme.line.opacity(0.8), lineWidth: 1)
+                }
+
+            HStack(spacing: 8) {
+                if let selectionCoordinator, let selectionSpan {
+                    ResponseSelectableText(
+                        attributedText: MarkdownNativeText.plain(
+                            caption,
+                            font: .systemFont(ofSize: 11, weight: .medium),
+                            color: NSColor(LocusTheme.muted),
+                            lineSpacing: 0
+                        ),
+                        span: selectionSpan,
+                        coordinator: selectionCoordinator
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(caption)
+                        .font(.locus(size: 9, weight: .medium))
+                        .foregroundStyle(LocusTheme.muted)
+                        .textSelection(.enabled)
+                }
+                Spacer(minLength: 8)
+                artifactAction("Preview", symbol: "eye") {
+                    WorkspaceQuickLookPresenter.shared.present(reference.url)
+                }
+                artifactAction("Reveal", symbol: "folder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([reference.url])
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Image artifact, \(reference.relativePath)")
+    }
+
+    private func artifactAction(
+        _ title: String,
+        symbol: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .font(.locus(size: 9, weight: .semibold))
+        }
+        .buttonStyle(.locus())
+        .foregroundStyle(LocusTheme.muted)
+        .accessibilityLabel("\(title) \(reference.relativePath)")
+    }
+}
+
+private struct WorkspaceArtifactCard: View {
+    let reference: WorkspaceArtifactReference
+    let selectionCoordinator: ResponseSelectionCoordinator?
+    let selectionSpan: TranscriptSelectionSpan?
+    let onPreview: () -> Void
+    @State private var copied = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(LocusTheme.paperDeep.opacity(0.9))
+                    .frame(width: 38, height: 38)
+                Image(systemName: reference.kind.symbol)
+                    .font(.locus(size: 14, weight: .semibold))
+                    .foregroundStyle(LocusTheme.signalDeep)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                if let selectionCoordinator, let selectionSpan {
+                    ResponseSelectableText(
+                        attributedText: MarkdownNativeText.plain(
+                            reference.url.lastPathComponent,
+                            font: .systemFont(ofSize: 10, weight: .semibold),
+                            color: NSColor(LocusTheme.ink),
+                            lineSpacing: 0
+                        ),
+                        span: selectionSpan.displaying(reference.url.lastPathComponent),
+                        coordinator: selectionCoordinator
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(reference.url.lastPathComponent)
+                        .font(.locus(size: 10, weight: .semibold))
+                        .foregroundStyle(LocusTheme.ink)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                HStack(spacing: 5) {
+                    Text(reference.kind.label)
+                    if let displaySize = reference.displaySize {
+                        Text("·")
+                        Text(displaySize)
+                    }
+                    if let location = reference.sourceLocation {
+                        Text("·")
+                        Text("line \(location.line)")
+                    }
+                }
+                .font(.locus(size: 9))
+                .foregroundStyle(LocusTheme.muted)
+            }
+
+            Spacer(minLength: 8)
+            cardAction("Preview", symbol: "eye", action: onPreview)
+            cardAction("Reveal", symbol: "folder") {
+                NSWorkspace.shared.activateFileViewerSelecting([reference.url])
+            }
+            cardAction(copied ? "Copied" : "Copy Path", symbol: copied ? "checkmark" : "doc.on.doc") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(reference.relativePath, forType: .string)
+                copied = true
+                Task {
+                    try? await Task.sleep(for: .seconds(1.4))
+                    copied = false
+                }
+            }
+        }
+        .padding(.horizontal, 11)
+        .frame(minHeight: 58)
+        .background(LocusTheme.white)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(LocusTheme.line, lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(reference.kind.label) artifact, \(reference.relativePath)")
+    }
+
+    private func cardAction(
+        _ title: String,
+        symbol: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .labelStyle(.iconOnly)
+                .frame(width: 25, height: 25)
+        }
+        .buttonStyle(.locus())
+        .foregroundStyle(title == "Copied" ? LocusTheme.success : LocusTheme.muted)
+        .help(title)
+        .accessibilityLabel("\(title) \(reference.relativePath)")
+    }
+}
+
 private struct MarkdownTableRenderer: View {
     let headers: [[MarkdownInlineRun]]
     let alignments: [MarkdownColumnAlignment]
     let rows: [[[MarkdownInlineRun]]]
     let workspacePath: String?
     let density: MarkdownRenderDensity
+    let selectionCoordinator: ResponseSelectionCoordinator?
+    let selectionSpans: [String: TranscriptSelectionSpan]
+    let path: [Int]
+    let onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)?
+    @State private var collapsed = false
     private let cellWidth: CGFloat = 154
 
+    private var isLong: Bool {
+        rows.count > LongOutputPolicy.tableCollapseThreshold
+    }
+
+    private var visibleRows: [[[MarkdownInlineRun]]] {
+        guard collapsed, isLong else { return rows }
+        return Array(rows.prefix(LongOutputPolicy.tablePreviewRowCount))
+    }
+
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 0) {
-                row(headers, header: true)
-                Rectangle().fill(LocusTheme.lineStrong.opacity(0.8)).frame(height: 1)
-                ForEach(Array(rows.enumerated()), id: \.offset) { index, cells in
-                    row(cells, header: false)
-                        .background(index.isMultiple(of: 2) ? Color.clear : LocusTheme.paperDeep.opacity(0.28))
-                    if index < rows.count - 1 {
-                        Rectangle().fill(LocusTheme.line.opacity(0.7)).frame(height: 1)
+        VStack(alignment: .leading, spacing: 0) {
+            if isLong {
+                HStack(spacing: 7) {
+                    Image(systemName: "tablecells")
+                        .font(.locus(size: 9, weight: .semibold))
+                        .foregroundStyle(LocusTheme.muted)
+                    Text("Table")
+                        .font(.locus(size: 9, weight: .semibold))
+                        .foregroundStyle(LocusTheme.inkSoft)
+                    Text("\(rows.count) rows")
+                        .font(.locus(size: 9, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                    Spacer()
+                    Button {
+                        collapsed.toggle()
+                    } label: {
+                        Image(systemName: collapsed ? "chevron.down" : "chevron.up")
+                            .font(.locus(size: 8, weight: .semibold))
+                            .foregroundStyle(LocusTheme.muted)
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.locus())
+                    .help(collapsed ? "Expand table" : "Collapse table")
+                    .accessibilityLabel(
+                        collapsed
+                            ? "Expand \(rows.count)-row table"
+                            : "Collapse \(rows.count)-row table"
+                    )
+                    .accessibilityIdentifier("message.table.collapse")
+                }
+                .padding(.horizontal, 11)
+                .frame(height: 34)
+                .background(LocusTheme.paperDeep.opacity(0.78))
+                Rectangle().fill(LocusTheme.line.opacity(0.8)).frame(height: 1)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    row(headers, rowIndex: 0, header: true)
+                    Rectangle().fill(LocusTheme.lineStrong.opacity(0.8)).frame(height: 1)
+                    ForEach(Array(visibleRows.enumerated()), id: \.offset) { index, cells in
+                        row(cells, rowIndex: index + 1, header: false)
+                            .background(index.isMultiple(of: 2) ? Color.clear : LocusTheme.paperDeep.opacity(0.28))
+                        if index < visibleRows.count - 1 {
+                            Rectangle().fill(LocusTheme.line.opacity(0.7)).frame(height: 1)
+                        }
                     }
                 }
             }
-            .background(LocusTheme.white)
-            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(LocusTheme.line, lineWidth: 1)
+
+            if collapsed, isLong {
+                Rectangle().fill(LocusTheme.line.opacity(0.8)).frame(height: 1)
+                Button("Show all \(rows.count) rows") {
+                    collapsed = false
+                }
+                .buttonStyle(.plain)
+                .font(.locus(size: 9, weight: .semibold))
+                .foregroundStyle(LocusTheme.signalDeep)
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+                .contentShape(Rectangle())
+                .accessibilityIdentifier("message.table.showAll")
             }
         }
+        .background(LocusTheme.white)
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(LocusTheme.line, lineWidth: 1)
+        }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Table with \(headers.count) columns and \(rows.count) rows")
+        .accessibilityLabel(
+            "Table with \(headers.count) columns and \(rows.count) rows"
+                + (collapsed ? ", collapsed" : ", expanded")
+        )
     }
 
-    private func row(_ cells: [[MarkdownInlineRun]], header: Bool) -> some View {
+    private func row(
+        _ cells: [[MarkdownInlineRun]],
+        rowIndex: Int,
+        header: Bool
+    ) -> some View {
         HStack(spacing: 0) {
             ForEach(Array(cells.enumerated()), id: \.offset) { index, cell in
                 let alignment = index < alignments.count ? alignments[index] : .left
@@ -538,11 +1528,7 @@ private struct MarkdownTableRenderer: View {
                 case .center: .center
                 case .right: .trailing
                 }
-                SwiftUI.Text(attributed(cell))
-                    .font(.locus(size: density == .compact ? 10 : 11, weight: header ? .semibold : .regular))
-                    .foregroundStyle(header ? LocusTheme.ink : LocusTheme.inkSoft)
-                    .lineLimit(4)
-                    .textSelection(.enabled)
+                cellText(cell, path: path + [rowIndex, index], header: header)
                     .frame(width: cellWidth, alignment: edge)
                     .frame(minHeight: 34, alignment: edge)
                     .padding(.horizontal, 10)
@@ -556,6 +1542,38 @@ private struct MarkdownTableRenderer: View {
         .background(header ? LocusTheme.paperDeep.opacity(0.75) : Color.clear)
     }
 
+    @ViewBuilder
+    private func cellText(
+        _ runs: [MarkdownInlineRun],
+        path: [Int],
+        header: Bool
+    ) -> some View {
+        let size: CGFloat = density == .compact ? 10 : 11
+        let color = header ? LocusTheme.ink : LocusTheme.inkSoft
+        let key = path.map(String.init).joined(separator: ".")
+        if let selectionCoordinator, let span = selectionSpans[key] {
+            ResponseSelectableText(
+                attributedText: MarkdownNativeText.attributed(
+                    runs,
+                    font: .systemFont(ofSize: size, weight: header ? .semibold : .regular),
+                    color: NSColor(color),
+                    lineSpacing: 2,
+                    workspacePath: workspacePath
+                ),
+                span: span,
+                coordinator: selectionCoordinator,
+                onOpenURL: open
+            )
+            .fixedSize(horizontal: false, vertical: true)
+        } else {
+            SwiftUI.Text(attributed(runs))
+                .font(.system(size: size, weight: header ? .semibold : .regular))
+                .foregroundStyle(color)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private func attributed(_ runs: [MarkdownInlineRun]) -> AttributedString {
         var result = AttributedString()
         for run in runs {
@@ -566,11 +1584,26 @@ private struct MarkdownTableRenderer: View {
             if run.style.contains(.strikethrough) { intent.insert(.strikethrough) }
             if run.style.contains(.code) { intent.insert(.code) }
             if !intent.isEmpty { piece.inlinePresentationIntent = intent }
-            if let url = MarkdownLinkPolicy.safeURL(run.destination, workspacePath: workspacePath) {
+            if let url = MarkdownLinkPolicy.renderedURL(for: run, workspacePath: workspacePath) {
                 piece.link = url
             }
             result.append(piece)
         }
         return result
+    }
+
+    private func open(_ url: URL) {
+        if let reference = WorkspaceArtifactReference.fromNavigationURL(
+            url,
+            workspacePath: workspacePath
+        ) {
+            if let onOpenWorkspaceReference {
+                onOpenWorkspaceReference(reference)
+            } else {
+                NSWorkspace.shared.open(reference.url)
+            }
+        } else {
+            NSWorkspace.shared.open(url)
+        }
     }
 }

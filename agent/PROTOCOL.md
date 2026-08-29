@@ -696,9 +696,17 @@ delegation. The deprecated `solo_swarm: {"enabled": true}` field remains
 accepted for older clients but is no longer required. The backend snapshots
 the selected route and temporarily exposes one bounded `delegate_read_only`
 tool to the visible root.
-Workers use the same provider/model, remain depth-one and workspace-read-only,
-and emit the existing agent activity plus `swarm_telemetry` events. Ask, slash,
-and team messages never expose delegation. `run_kind` remains `solo`.
+Workers use the same provider/model, remain depth-one, and inherit the root's
+currently available tools and permission mode by default. Each delegated task
+may instead provide an exact `tools` allowlist; `tools: []` creates a model-only
+worker. Recursive delegation plus root plan/todo, memory, and skill-observation
+controls are never inherited, and Plan-mode workers receive only non-mutating
+tools. Every worker call is revalidated against the root capability policy and
+runs through the root permission/safety path. Read-only calls may overlap;
+writes, shell, unannotated or mutating MCP, and native shared-state calls share
+one per-turn execution gate. Workers emit the existing agent activity plus
+`swarm_telemetry` events. Ask, slash, and team messages never expose delegation.
+`run_kind` remains `solo`.
 
 A team budget may include `call_budget_mode: "automatic" | "fixed"`.
 `automatic` resolves to the bounded 100-call adaptive pool; `fixed` preserves

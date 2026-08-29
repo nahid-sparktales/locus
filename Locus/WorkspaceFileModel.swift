@@ -1,6 +1,11 @@
 import Combine
 import Foundation
 
+struct WorkspacePreviewLocation: Hashable, Sendable {
+    let line: Int
+    let column: Int?
+}
+
 /// Feature-owned state for workspace file discovery and inline previews.
 ///
 /// The application root supplies only the current workspace and whether a
@@ -15,6 +20,7 @@ final class WorkspaceFileModel: ObservableObject {
     @Published private(set) var files: [URL] = []
     @Published private(set) var previewedPath: String?
     @Published private(set) var previewedContents: String?
+    @Published private(set) var previewedLocation: WorkspacePreviewLocation?
 
     private let scanner: Scanner
     private var isUITesting = false
@@ -74,11 +80,14 @@ final class WorkspaceFileModel: ObservableObject {
         }
     }
 
-    func preview(_ url: URL) {
+    func preview(_ url: URL, line: Int? = nil, column: Int? = nil) {
         let root = workspacePath
         let relativePath = WorkspaceIndex.relativePath(url, root: root)
         previewedPath = relativePath
         previewedContents = nil
+        previewedLocation = line.map {
+            WorkspacePreviewLocation(line: max($0, 1), column: column.map { max($0, 1) })
+        }
         previewTask?.cancel()
         previewTask = Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) { () -> String in
@@ -101,6 +110,7 @@ final class WorkspaceFileModel: ObservableObject {
         previewTask?.cancel()
         previewedPath = nil
         previewedContents = nil
+        previewedLocation = nil
     }
 
     func stop() {

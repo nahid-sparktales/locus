@@ -1613,7 +1613,7 @@ struct InspectorRunsTab: View {
         VStack(alignment: .leading, spacing: 4) {
             Label("Solo delegates automatically", systemImage: "point.3.connected.trianglepath.dotted")
                 .font(.locus(size: 9, weight: .semibold))
-            Text("When parallel investigation would help, temporary read-only workers share the selected model and fixed safety limits.")
+            Text("When parallel work would help, temporary workers share the selected model and inherit the current tools and permission mode.")
                 .font(.locus(size: 8))
                 .foregroundStyle(LocusTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2131,7 +2131,7 @@ struct InspectorRunsTab: View {
                                 "\(swarmRootTokens(run).formatted()) tokens"
                             )
                             metricRow(
-                                "Read-only workers",
+                                "Solo workers",
                                 "\(swarmWorkerTokens(run).formatted()) tokens"
                             )
                             if let calls = run.usage?["worker_model_calls"]?.integer {
@@ -3055,8 +3055,8 @@ struct InspectorRunsTab: View {
         let isSoloSwarm = model.selectedOrchestrationRun?.isSoloSwarm == true
         return switch event.type {
         case "run_started": isSoloSwarm ? "Solo run started" : "Run started"
-        case "agent_spawned": isSoloSwarm ? "Read-only worker started" : "Agent started"
-        case "agent_branch_stopped": isSoloSwarm ? "Read-only worker stopped" : "Agent branch stopped"
+        case "agent_spawned": isSoloSwarm ? "Solo worker started" : "Agent started"
+        case "agent_branch_stopped": isSoloSwarm ? "Solo worker stopped" : "Agent branch stopped"
         case "swarm_telemetry": "Worker batch completed"
         case "turn_done": isSoloSwarm ? "Solo run completed" : "Run completed"
         case "note": "Run note"
