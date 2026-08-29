@@ -38,6 +38,16 @@ xcodebuild test -project Locus.xcodeproj -scheme Locus \
     -destination 'platform=macOS' -only-testing:LocusTests
 ```
 
+Debug builds are signed with an Apple Development identity from the SparkTales
+team, so that keychain-backed features (such as the browser Autofill vault) keep
+a stable code signature across rebuilds instead of re-prompting. If you are not
+in that team, build ad-hoc by appending these to any `xcodebuild` invocation —
+this is exactly what CI does:
+
+```bash
+CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=
+```
+
 The Python agent has its own suite:
 
 ```bash

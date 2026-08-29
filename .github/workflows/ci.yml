@@ -82,6 +82,8 @@ jobs:
           -configuration Debug
           -destination 'platform=macOS'
           -only-testing:LocusTests
+          CODE_SIGN_IDENTITY=-
+          DEVELOPMENT_TEAM=
       - name: Pinned Anvil wallet-chain integration
         env:
           FOUNDRY_VERSION: v1.7.1
@@ -194,3 +196,5 @@ jobs:
           -configuration Debug
           -destination 'platform=macOS'
           -only-testing:LocusUITests
+          CODE_SIGN_IDENTITY=-
+          DEVELOPMENT_TEAM=

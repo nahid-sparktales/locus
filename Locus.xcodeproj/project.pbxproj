@@ -855,11 +855,28 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					4896638691C4AFF8C4B6701D = {
+						DevelopmentTeam = 4X4RJA7GMD;
+					};
 					54F38C8317FB3757358B2EBD = {
+						DevelopmentTeam = 4X4RJA7GMD;
 						TestTargetID = 4896638691C4AFF8C4B6701D;
 					};
 					5B63DF227FB0A11687B95EAC = {
+						DevelopmentTeam = 4X4RJA7GMD;
 						TestTargetID = 7323BA3A6165E3D7FD525C6C;
+					};
+					5C095929DF359DE6429B72CD = {
+						DevelopmentTeam = 4X4RJA7GMD;
+					};
+					64C83A6D8AFCD6169F49C520 = {
+						DevelopmentTeam = 4X4RJA7GMD;
+					};
+					7323BA3A6165E3D7FD525C6C = {
+						DevelopmentTeam = 4X4RJA7GMD;
+					};
+					A0463F65BF102D8D5DE8EDD0 = {
+						DevelopmentTeam = 4X4RJA7GMD;
 					};
 				};
 			};
@@ -1702,10 +1719,10 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				ARCHS = arm64;
 				CODE_SIGN_ENTITLEMENTS = Config/WalletSigner.entitlements;
-				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 4X4RJA7GMD;
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WalletSignerService/Info.plist;
@@ -1851,12 +1868,12 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 20;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 4X4RJA7GMD;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;

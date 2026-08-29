@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import XCTest
 @testable import Locus
 
@@ -47,6 +48,45 @@ final class BrowserPrivacyTests: XCTestCase {
         XCTAssertTrue(relaunched.isReady)
         XCTAssertEqual(relaunched.passwords.first?.username, "person@example.com")
         XCTAssertEqual(relaunched.passwords.first?.password, "unique-secret-value")
+    }
+
+    /// The master key must live in the file-based keychain. Opting into the data
+    /// protection keychain requires an access group from an `application-identifier`
+    /// or `keychain-access-groups` entitlement, which neither the ad-hoc Debug build
+    /// nor the Developer ID direct-download build carries; every read then failed
+    /// with errSecMissingEntitlement (-34018) and all three Autofill managers showed
+    /// "Autofill Unavailable" on every launch.
+    func testKeychainKeyProviderAvoidsDataProtectionKeychain() {
+        let read = KeychainBrowserVaultKeyProvider.readQuery()
+        let add = KeychainBrowserVaultKeyProvider.addQuery(key: Data(repeating: 3, count: 32))
+
+        XCTAssertNil(read[kSecUseDataProtectionKeychain])
+        XCTAssertNil(add[kSecUseDataProtectionKeychain])
+        XCTAssertEqual(read[kSecAttrService] as? String, KeychainBrowserVaultKeyProvider.service)
+        XCTAssertEqual(read[kSecAttrAccount] as? String, KeychainBrowserVaultKeyProvider.account)
+        XCTAssertEqual(add[kSecAttrService] as? String, KeychainBrowserVaultKeyProvider.service)
+        XCTAssertEqual(add[kSecAttrAccount] as? String, KeychainBrowserVaultKeyProvider.account)
+        XCTAssertEqual(
+            add[kSecAttrAccessible] as? String,
+            kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String
+        )
+    }
+
+    func testKeychainFailureNamesTheCauseInsteadOfLeakingABareStatus() {
+        let missing = BrowserVaultError.keychainFailed(errSecMissingEntitlement).errorDescription
+        XCTAssertEqual(missing?.contains("not signed with permission to use the keychain"), true)
+        XCTAssertEqual(missing?.contains("-34018"), true)
+
+        let locked = BrowserVaultError.keychainFailed(errSecInteractionNotAllowed).errorDescription
+        XCTAssertEqual(locked?.contains("Unlock your login keychain"), true)
+
+        let denied = BrowserVaultError.keychainFailed(errSecUserCanceled).errorDescription
+        XCTAssertEqual(denied?.contains("Allow Locus"), true)
+
+        XCTAssertEqual(
+            BrowserVaultError.keychainFailed(errSecDecode).errorDescription,
+            "Autofill could not access its encryption key (\(errSecDecode))."
+        )
     }
 
     func testCardValidationAndEncodingNeverIncludeSecurityCode() async throws {
