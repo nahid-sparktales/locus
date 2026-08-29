@@ -62,7 +62,7 @@ from .ollama import (
     looks_like_image_rejection,
     pinned_context_length,
 )
-from .permissions import PermissionManager, build_preview
+from .permissions import PermissionManager, build_preview, file_effects
 from .remote import (
     ANTHROPIC_MAX_OUTPUT_TOKENS,
     AUTH_ANTHROPIC,
@@ -1208,6 +1208,39 @@ class AgentCore:
         if self.provider != "remote":
             return ""
         return str(self.config.get("remote_account_label") or "")
+
+    def resolve_model_name(self, name: str) -> str | None:
+        """The installed model `name` refers to, or None when it is unknown.
+
+        Only Ollama has an "installed list" to check against, and only there is
+        a substring match wanted — its tags carry suffixes (`qwen3:8b` for
+        `qwen3`). A hosted provider's catalogue lives behind the account, not
+        behind `self.client`: `client` stays an `OllamaClient` for the whole
+        ChatGPT-plan branch, so validating there rejected every ChatGPT model as
+        "not installed". The same applies to an endpoint that does not serve
+        `/models` — `RemoteClient` answers with the one model already
+        configured, which refused every switch away from it.
+
+        `ensure_model` and `refresh_context_limit` already skip themselves for
+        those providers; this keeps the model-switch command consistent.
+        """
+        wanted = name.strip()
+        if not wanted:
+            return None
+        if self.provider == "chatgpt":
+            return wanted
+        if self.provider == "remote" and not getattr(self.client, "lists_models", True):
+            return wanted
+        names = [
+            str(item.get("name"))
+            for item in self.client.list_models()
+            if item.get("name")
+        ]
+        if wanted in names:
+            return wanted
+        if self.provider == "remote":
+            return None
+        return next((candidate for candidate in names if wanted in candidate), None)
 
     def set_model(self, name: str) -> None:
         self.model = name
@@ -2977,6 +3010,9 @@ class AgentCore:
     ) -> str:
         call_id = uuid.uuid4().hex[:10]
         summary, detail = build_preview(tc.name, tc.arguments, self.tool_ctx)
+        # Computed before the call runs: telling a create from an overwrite
+        # depends on whether the target exists yet.
+        effects = file_effects(tc.name, tc.arguments, self.tool_ctx)
         worker_label = str((event_context or {}).get("agent_name") or "").strip()
         if worker_label:
             summary = f"{worker_label}: {summary}"
@@ -3147,6 +3183,7 @@ class AgentCore:
             "result": result,
             "ok": ok,
             "denied": False,
+            **({"file_effects": effects} if effects and ok else {}),
             **event_info,
         })
         if tc.name in {"todo_write", "submit_plan"}:

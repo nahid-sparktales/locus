@@ -32,7 +32,7 @@ from ollama_code.continuity import ContinuityStore
 from ollama_code.core import AgentCore
 from ollama_code.ollama import ChatResponse, OllamaError, process_chunk
 from ollama_code.orchestration import AgentResult, TeamOrchestrator
-from ollama_code.permissions import PermissionManager, build_preview
+from ollama_code.permissions import PermissionManager, build_preview, file_effects
 from ollama_code.render import ThinkFilter, strip_think
 from ollama_code.sessions import SessionMeta, SessionStore, strip_prompt_decoration
 from ollama_code.tools import ToolContext, execute_tool
@@ -579,6 +579,55 @@ def test_edit_preview_discloses_replace_all():
     )
     assert "every occurrence" in summary
     assert plain  # unchanged behavior for the single-replacement case
+
+
+def test_file_effects_separates_a_new_file_from_an_overwrite(ctx, tmp_path):
+    """The GUI cannot tell these apart from the result string, but the
+    arguments can — as long as they are read before the write happens."""
+    (tmp_path / "existing.md").write_text("old")
+
+    assert file_effects("write_file", {"path": "report.pdf", "content": "x"}, ctx) == [
+        {"path": "report.pdf", "effect": "create"}
+    ]
+    assert file_effects("write_file", {"path": "existing.md", "content": "x"}, ctx) == [
+        {"path": "existing.md", "effect": "edit"}
+    ]
+    assert file_effects("edit_file", {"path": "existing.md"}, ctx) == [
+        {"path": "existing.md", "effect": "edit"}
+    ]
+
+
+def test_file_effects_maps_patch_add_modify_and_delete(ctx, tmp_path):
+    (tmp_path / "changed.txt").write_text("one\n")
+    (tmp_path / "gone.txt").write_text("bye\n")
+    patch = (
+        "*** Begin Patch\n"
+        "*** Add File: made.txt\n"
+        "+new\n"
+        "*** Update File: changed.txt\n"
+        "@@\n"
+        "-one\n"
+        "+two\n"
+        "*** Delete File: gone.txt\n"
+        "*** End Patch"
+    )
+
+    assert file_effects("apply_patch", {"input": patch}, ctx) == [
+        {"path": "made.txt", "effect": "create"},
+        {"path": "changed.txt", "effect": "edit"},
+        {"path": "gone.txt", "effect": "delete"},
+    ]
+
+
+def test_file_effects_is_empty_for_shell_and_read_only_tools(ctx):
+    """A command's arguments say nothing about what it writes.
+
+    Guessing from its output is exactly how the old summary-scraping heuristic
+    went wrong; the workspace watcher covers this case instead.
+    """
+    assert file_effects("bash", {"command": "python make_report.py"}, ctx) == []
+    assert file_effects("read_file", {"path": "notes.md"}, ctx) == []
+    assert file_effects("browser_navigate", {"url": "https://example.com"}, ctx) == []
 
 
 def test_edit_preview_is_a_diff():
@@ -2805,6 +2854,52 @@ def test_websocket_set_cwd_and_model(client, tmp_path):
         assert any(e.get("type") == "session_info" for e in drain(ws))
 
 
+def test_websocket_set_model_accepts_a_chatgpt_plan_model(client):
+    """A ChatGPT-plan model is not an Ollama tag and must not be checked as one.
+
+    `core.client` stays an `OllamaClient` for the whole ChatGPT branch, so the
+    old installed-list check rejected every managed model — the session worked,
+    but switching between them raised "model '...' not installed".
+    """
+    svc = client.app.state.service
+    svc.core.provider = "chatgpt"
+    svc.core.host = "chatgpt://managed"
+    with client.websocket_connect("/ws/chat") as ws:
+        ws.receive_json()  # session_info
+        ws.send_json({"type": "set_model", "model": "gpt-5.6-sol"})
+        events = drain(ws)
+
+    assert [e for e in events if e.get("type") == "command_error"] == []
+    assert any(e.get("type") == "session_info" for e in events)
+    assert svc.core.model == "gpt-5.6-sol"
+    assert svc.core.config["chatgpt_model"] == "gpt-5.6-sol"
+
+
+def test_resolve_model_name_trusts_an_endpoint_that_does_not_list_models(tmp_path):
+    """`RemoteClient` answers /models-less providers with the configured model.
+
+    Validating against that list let a session switch to the model it was
+    already on and nothing else.
+    """
+    core = AgentCore(cwd=str(tmp_path), config={"model": "kimi-for-coding"})
+    core.provider = "remote"
+    core.client = FakeClient([])
+    core.client.lists_models = False
+    core.client.list_models = lambda: [{"name": "kimi-for-coding"}]
+
+    assert core.resolve_model_name("kimi-for-coding-highspeed") == "kimi-for-coding-highspeed"
+
+
+def test_resolve_model_name_still_rejects_an_uninstalled_ollama_model(tmp_path):
+    core = AgentCore(cwd=str(tmp_path), config={"model": "test-model"})
+    core.client = FakeClient([])
+
+    assert core.resolve_model_name("test-model") == "test-model"
+    # Ollama tags carry suffixes, so a prefix still resolves.
+    assert core.resolve_model_name("test") == "test-model"
+    assert core.resolve_model_name("llama3:70b") is None
+
+
 def test_websocket_state_commands_are_nonterminal_rejections_while_busy(client, tmp_path):
     from concurrent.futures import Future
 
@@ -3166,6 +3261,43 @@ def test_run_turn_emits_streaming_and_turn_done(tmp_path):
     assert done["reason"] == "complete"
     assert isinstance(done["duration_ms"], int) and done["duration_ms"] >= 0
     assert core.messages[-1]["content"] == "Hello world"
+
+
+def test_tool_result_reports_file_effects_only_when_the_call_succeeded(tmp_path):
+    """The Outputs list is built from these, so a refused call must not add to it."""
+    from ollama_code.ollama import ToolCall
+
+    core = _core(tmp_path, [
+        ChatResponse(tool_calls=[ToolCall("write_file", {
+            "path": "report.md", "content": "hello",
+        })], done=True),
+        ChatResponse(content_parts=["done"], done=True),
+    ])
+    core.perms.set_mode("bypass")
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn("write it")
+
+    result = next(e for e in events if e["type"] == "tool_result")
+    assert result["ok"] is True
+    assert result["file_effects"] == [{"path": "report.md", "effect": "create"}]
+
+    denied = _core(tmp_path, [
+        ChatResponse(tool_calls=[ToolCall("write_file", {
+            "path": "refused.md", "content": "hello",
+        })], done=True),
+        ChatResponse(content_parts=["done"], done=True),
+    ])
+    denied_events = []
+    denied.on_event(denied_events.append)
+
+    denied.run_turn("write it", decider=lambda *args, **kwargs: "deny")
+
+    refusal = next(e for e in denied_events if e["type"] == "tool_result")
+    assert refusal["denied"] is True
+    assert "file_effects" not in refusal
+    assert not (tmp_path / "refused.md").exists()
 
 
 def test_run_turn_names_a_smaller_team_call_limit_instead_of_iteration_limit(tmp_path):

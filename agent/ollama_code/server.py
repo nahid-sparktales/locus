@@ -2116,15 +2116,9 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             return
         try:
             with svc.state_mutation():
-                names = [
-                    item.get("name")
-                    for item in core.client.list_models()
-                    if item.get("name")
-                ]
-                match = next((name for name in names if name == model), None) or next(
-                    (name for name in names if model in name),
-                    None,
-                )
+                # The provider owns what "installed" means; only Ollama has a
+                # local list to check against.
+                match = core.resolve_model_name(model)
                 if not match:
                     _command_error(svc, str(mtype), f"model '{model}' not installed")
                     return
