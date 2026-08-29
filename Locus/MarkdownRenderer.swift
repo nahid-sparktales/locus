@@ -735,7 +735,9 @@ struct MarkdownBodyView: View {
     var density: MarkdownRenderDensity = .regular
     var selectionStore: TranscriptSelectionStore? = nil
     var selectionRootPath: [Int] = []
-    var selectionFirstSeparator = ""
+    /// Applied only when this subtree is not the first thing in the selection,
+    /// so it separates one row — or one answer segment — from the next.
+    var selectionFirstSeparator = "\n\n"
     var selectionRowID: String = ""
     var onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)? = nil
 
@@ -808,6 +810,7 @@ struct StreamingMarkdownBodyView: View {
                     selectionSpans: MarkdownSelectionProjection.spans(
                         for: blocks,
                         rootPath: selectionRootPath,
+                        firstSeparator: "\n\n",
                         rowID: selectionRowID
                     ),
                     pathPrefix: selectionRootPath,
@@ -853,6 +856,7 @@ struct StreamingMarkdownBodyView: View {
 }
 
 private struct MarkdownBlocksView: View {
+    @Environment(\.locusAccent) private var accent
     let blocks: [MarkdownRenderBlock]
     let workspacePath: String?
     let density: MarkdownRenderDensity
@@ -879,7 +883,7 @@ private struct MarkdownBlocksView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .tint(LocusTheme.signalDeep)
+        .tint(accent.actionColor)
     }
 
     private var proseColor: Color {
@@ -1492,6 +1496,7 @@ private struct WorkspaceImageArtifactView: View {
 }
 
 private struct WorkspaceArtifactCard: View {
+    @Environment(\.locusAccent) private var accent
     let reference: WorkspaceArtifactReference
     let selectionStore: TranscriptSelectionStore?
     let selectionSpan: TranscriptSelectionSpan?
@@ -1506,7 +1511,7 @@ private struct WorkspaceArtifactCard: View {
                     .frame(width: 38, height: 38)
                 Image(systemName: reference.kind.symbol)
                     .font(.locus(size: 14, weight: .semibold))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(accent.actionColor)
             }
 
             VStack(alignment: .leading, spacing: 2) {
@@ -1589,6 +1594,7 @@ private struct WorkspaceArtifactCard: View {
 }
 
 private struct MarkdownTableRenderer: View {
+    @Environment(\.locusAccent) private var accent
     let headers: [[MarkdownInlineRun]]
     let alignments: [MarkdownColumnAlignment]
     let rows: [[[MarkdownInlineRun]]]
@@ -1732,7 +1738,7 @@ private struct MarkdownTableRenderer: View {
                 }
                 .buttonStyle(.plain)
                 .font(.locus(size: 9, weight: .semibold))
-                .foregroundStyle(LocusTheme.signalDeep)
+                .foregroundStyle(accent.actionColor)
                 .padding(.horizontal, 12)
                 .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
                 .contentShape(Rectangle())

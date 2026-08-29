@@ -1581,31 +1581,40 @@ final class FeatureLogicTests: XCTestCase {
             customHex: LocusAccentSelection.defaultCustomHex
         )
 
+        // A colour read while lime was selected outlives that selection: SwiftUI
+        // hands it to a view node that may not be re-evaluated for a long time.
+        // It has to resolve to the accent in force when it is *drawn*, or that
+        // node keeps painting an accent the customer has already changed.
         LocusAccentRuntime.shared.configure(lime)
-        let limeFill = LocusTheme.signal
-        let limeAction = LocusTheme.signalDeep
+        let heldFill = LocusTheme.signal
+        let heldAction = LocusTheme.signalDeep
         LocusAccentRuntime.shared.configure(pink)
-        let pinkFill = LocusTheme.signal
-        let pinkAction = LocusTheme.signalDeep
+        let freshFill = LocusTheme.signal
+        let freshAction = LocusTheme.signalDeep
 
-        var resolvedLimeFill: NSColor?
-        var resolvedLimeAction: NSColor?
-        var resolvedPinkFill: NSColor?
-        var resolvedPinkAction: NSColor?
+        var resolvedHeldFill: NSColor?
+        var resolvedHeldAction: NSColor?
+        var resolvedFreshFill: NSColor?
+        var resolvedFreshAction: NSColor?
         appearance.performAsCurrentDrawingAppearance {
-            resolvedLimeFill = NSColor(limeFill)
-            resolvedLimeAction = NSColor(limeAction)
-            resolvedPinkFill = NSColor(pinkFill)
-            resolvedPinkAction = NSColor(pinkAction)
+            resolvedHeldFill = NSColor(heldFill)
+            resolvedHeldAction = NSColor(heldAction)
+            resolvedFreshFill = NSColor(freshFill)
+            resolvedFreshAction = NSColor(freshAction)
         }
 
-        assertColor(try XCTUnwrap(resolvedLimeFill), hex: 0xC9F54A)
-        assertColor(try XCTUnwrap(resolvedPinkFill), hex: 0xFF5FA2)
-        XCTAssertNotEqual(
-            LocusAccentSelection.hexString(for: try XCTUnwrap(resolvedLimeAction)),
-            LocusAccentSelection.hexString(for: try XCTUnwrap(resolvedPinkAction)),
-            "Composer and other long-lived surfaces must receive the new action colour"
+        assertColor(try XCTUnwrap(resolvedHeldFill), hex: 0xFF5FA2)
+        assertColor(try XCTUnwrap(resolvedFreshFill), hex: 0xFF5FA2)
+        XCTAssertEqual(
+            LocusAccentSelection.hexString(for: try XCTUnwrap(resolvedHeldAction)),
+            LocusAccentSelection.hexString(for: try XCTUnwrap(resolvedFreshAction)),
+            "A colour held across an accent change must resolve to the current accent"
         )
+
+        // Each read still produces a distinct value, so a view body that *is*
+        // re-evaluated registers the change rather than being diffed away.
+        XCTAssertNotEqual(freshFill, heldFill)
+        XCTAssertNotEqual(freshAction, heldAction)
     }
 
     @MainActor

@@ -107,6 +107,12 @@ struct LocusAccentSelection: Hashable, Sendable {
 
     var fillColor: Color { Color(nsColor: fillNSColor) }
 
+    /// The readable-on-any-background form, as a SwiftUI colour. Appearance is
+    /// still resolved lazily; only the accent is fixed to this selection.
+    var actionColor: Color {
+        Color(nsColor: NSColor(name: nil) { actionNSColor(for: $0) })
+    }
+
     func actionNSColor(for appearance: NSAppearance) -> NSColor {
         let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let background = dark ? Self.color(hex: 0x171713) : Self.color(hex: 0xF3F1EA)
@@ -420,11 +426,15 @@ enum LocusTheme {
     /// highlight, and applied as a background only so selected prose keeps its
     /// own colour instead of being inverted to white.
     static func selectionWash(forKeyWindow isKey: Bool) -> NSColor {
-        let selection = LocusAccentRuntime.shared.currentSelection()
-        return NSColor(name: nil) { appearance in
+        // Read at resolve time for the same reason the accent colours are: a
+        // text view holds this for as long as it lives, and the accent can
+        // change underneath it.
+        NSColor(name: nil) { appearance in
             let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             let base: CGFloat = dark ? 0.26 : 0.34
-            return selection.fillNSColor.withAlphaComponent(isKey ? base : base * 0.5)
+            return LocusAccentRuntime.shared.currentSelection()
+                .fillNSColor
+                .withAlphaComponent(isKey ? base : base * 0.5)
         }
     }
 
@@ -455,12 +465,15 @@ enum LocusTheme {
     private static func accentAdaptive(
         _ resolve: @escaping @Sendable (LocusAccentSelection, NSAppearance) -> NSColor
     ) -> Color {
-        // Bind each newly evaluated view body to the selection that triggered
-        // it. The NSColor remains appearance-aware, but an older SwiftUI Color
-        // can no longer silently change identity underneath a cached view node.
-        let selection = LocusAccentRuntime.shared.currentSelection()
-        return Color(nsColor: NSColor(name: nil) { appearance in
-            resolve(selection, appearance)
+        // The selection is read when the colour is *resolved*, not when it is
+        // created. Capturing it here instead froze the accent into every Color
+        // a view body produced, so a subtree SwiftUI did not re-evaluate went
+        // on painting the old accent — and kept painting it even when a
+        // light/dark switch forced the provider to run again. Each read still
+        // returns a distinct dynamic NSColor, so a re-evaluated body still
+        // reads as a changed value.
+        Color(nsColor: NSColor(name: nil) { appearance in
+            resolve(LocusAccentRuntime.shared.currentSelection(), appearance)
         })
     }
 
@@ -600,6 +613,28 @@ enum LocusMotion {
         allowsSpatialMotion(reduceMotion: reduceMotion)
             ? .move(edge: edge).combined(with: .opacity)
             : .opacity
+    }
+}
+
+/// The accent as a view-tree dependency.
+///
+/// `LocusTheme`'s accent colours are read from a process-wide store, which
+/// makes them invisible to SwiftUI's update machinery: a view deep inside a
+/// subtree whose inputs never mention the accent — the Markdown tree under a
+/// transcript row, for one — is not re-evaluated when the accent changes, so
+/// it keeps painting the colour it last resolved. A leaf that renders an
+/// accent colour reads this instead, which states the dependency SwiftUI needs
+/// in order to invalidate it.
+private struct LocusAccentEnvironmentKey: EnvironmentKey {
+    static var defaultValue: LocusAccentSelection {
+        LocusAccentRuntime.shared.currentSelection()
+    }
+}
+
+extension EnvironmentValues {
+    var locusAccent: LocusAccentSelection {
+        get { self[LocusAccentEnvironmentKey.self] }
+        set { self[LocusAccentEnvironmentKey.self] = newValue }
     }
 }
 

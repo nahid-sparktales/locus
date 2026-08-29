@@ -155,6 +155,7 @@
 		A0C5B89397F5E14E567F89B7 /* WalletRPCClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07AB72AB3D46BF6E5B8EDC2 /* WalletRPCClient.swift */; };
 		A168BD7079B3C4263A512D9D /* BrowserHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DAA191A144F0B1DE7901A9D /* BrowserHostTests.swift */; };
 		A1C511A92D7541CDB3C5B1FB /* SessionOutputWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA812E808A560BC759B643F5 /* SessionOutputWatcher.swift */; };
+		A2ABF63BAC7D91824652DBD2 /* TranscriptRelayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9803427C2F43062BF1C6A92 /* TranscriptRelayoutTests.swift */; };
 		A2B5CFEF11A4602ED851F805 /* ThirdPartyNotices.md in Resources */ = {isa = PBXBuildFile; fileRef = 0B46A04DBC2F15987A189E7A /* ThirdPartyNotices.md */; };
 		A386B208A9F32AB86DF9D8D2 /* InspectorSimulatorTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CBE8AF1AA0E88FC532FCF8D /* InspectorSimulatorTab.swift */; };
 		A5B2C39A822A7FEBDB129E2C /* BackendProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */; };
@@ -185,6 +186,7 @@
 		BBDE84D324F6199CD80D6E0F /* TranscriptSelectionGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 418F31828D4EE1F1E605A01F /* TranscriptSelectionGeometry.swift */; };
 		BEAFCBFDAE33591C970B5E98 /* BackendProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */; };
 		BFD9B220064B1A7D36E1D116 /* HostedScreenshotConsent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 319231FBA55F2DE9A5EB9377 /* HostedScreenshotConsent.swift */; };
+		C036FA6F79B4AF1F181958E2 /* AccentPropagationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D67A726DCC6ECB4D8557128 /* AccentPropagationTests.swift */; };
 		C0888AD9C1A69FEDBCF58E8E /* TextSelectionMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DB36421DC413C2F3F5BDA72 /* TextSelectionMenu.swift */; };
 		C0E82F8A928841455031CFA2 /* ProxyConfigurator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F29AE63F7A646BB5043E54 /* ProxyConfigurator.swift */; };
 		C0EB8EF86FF9954D89CC082E /* InspectorPlanTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */; };
@@ -359,6 +361,7 @@
 		535F3FB7D434799FB66DADAA /* PinnedSummaryModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedSummaryModel.swift; sourceTree = "<group>"; };
 		57D7A27ACF9B37EC8F79B9D7 /* BrowserBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserBridge.swift; sourceTree = "<group>"; };
 		5CBA85D1FB7286E08482ED76 /* ShortcutsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsSheet.swift; sourceTree = "<group>"; };
+		5D67A726DCC6ECB4D8557128 /* AccentPropagationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccentPropagationTests.swift; sourceTree = "<group>"; };
 		5E1CF6E34451F264F94F7E0D /* PinnedSummaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedSummaryTests.swift; sourceTree = "<group>"; };
 		5F812F42D54F996DD9AE8F7D /* AppUpdateControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdateControllerTests.swift; sourceTree = "<group>"; };
 		603951DA29612321B84516AE /* SessionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionModels.swift; sourceTree = "<group>"; };
@@ -411,6 +414,7 @@
 		B2F29AE63F7A646BB5043E54 /* ProxyConfigurator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyConfigurator.swift; sourceTree = "<group>"; };
 		B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendProcess.swift; sourceTree = "<group>"; };
 		B55C8839ECBB1BF8FAA6F064 /* WalletGateway.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletGateway.swift; sourceTree = "<group>"; };
+		B9803427C2F43062BF1C6A92 /* TranscriptRelayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptRelayoutTests.swift; sourceTree = "<group>"; };
 		BAC12D6A9C390215CBA2E83B /* SimulatorControlService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimulatorControlService.swift; sourceTree = "<group>"; };
 		BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorPlanTab.swift; sourceTree = "<group>"; };
 		BCCEF7CD29A9C6F9C3E1472F /* LocusApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocusApp.swift; sourceTree = "<group>"; };
@@ -504,6 +508,7 @@
 		60C7C16567C3B98966E012C1 /* LocusTests */ = {
 			isa = PBXGroup;
 			children = (
+				5D67A726DCC6ECB4D8557128 /* AccentPropagationTests.swift */,
 				C41E39F35E0F75A05095B5EC /* AppModelTests.swift */,
 				5F812F42D54F996DD9AE8F7D /* AppUpdateControllerTests.swift */,
 				0F07D2B0078D88B65F9AA0FE /* BrowserAnnotationTests.swift */,
@@ -522,6 +527,7 @@
 				2EC88909073BDCF25DC61A04 /* NotebookModelTests.swift */,
 				5E1CF6E34451F264F94F7E0D /* PinnedSummaryTests.swift */,
 				3DDCC477A47A2FB0E5FF77D2 /* SessionOutputWatcherTests.swift */,
+				B9803427C2F43062BF1C6A92 /* TranscriptRelayoutTests.swift */,
 				C22A462B4342C2597DC23767 /* TranscriptSelectionTests.swift */,
 				E76206A025463F2FC7DDC557 /* WalletGatewayTests.swift */,
 				A1BE5F3B4FAC99BFE48D4CBD /* WorkspaceFileModelTests.swift */,
@@ -1064,6 +1070,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C036FA6F79B4AF1F181958E2 /* AccentPropagationTests.swift in Sources */,
 				6CB6F6C625981B438BD534AB /* AppModelTests.swift in Sources */,
 				81859D894E60EF5508ECE7D0 /* AppUpdateControllerTests.swift in Sources */,
 				386CA92D41F5CF96C5D700E1 /* BrowserAnnotationTests.swift in Sources */,
@@ -1082,6 +1089,7 @@
 				3BF2B9B49A0CFB1ECD3CBEF7 /* NotebookModelTests.swift in Sources */,
 				D16940498B346B575CD0BD99 /* PinnedSummaryTests.swift in Sources */,
 				C8CE5CB81A94DF13254C7B14 /* SessionOutputWatcherTests.swift in Sources */,
+				A2ABF63BAC7D91824652DBD2 /* TranscriptRelayoutTests.swift in Sources */,
 				151503634B4BE07947B021B2 /* TranscriptSelectionTests.swift in Sources */,
 				3DAC82E08795459837842303 /* WalletGatewayTests.swift in Sources */,
 				576D00B8A24D3BD2750ADF83 /* WorkspaceFileModelTests.swift in Sources */,

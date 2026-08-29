@@ -2353,6 +2353,7 @@ private struct ConversationView: View {
                 MarkdownSelectionProjection.spans(
                     for: FinishedMarkdownCache.blocks(for: text),
                     rootPath: [0],
+                    firstSeparator: "\n\n",
                     rowID: rowID
                 ).values
             )
@@ -2364,6 +2365,7 @@ private struct ConversationView: View {
                 result += MarkdownSelectionProjection.spans(
                     for: FinishedMarkdownCache.blocks(for: body),
                     rootPath: [index],
+                    firstSeparator: "\n\n",
                     rowID: rowID
                 ).values
             }
@@ -3280,6 +3282,12 @@ private struct MessageBlockView: View, Equatable {
                             .overlay {
                                 RoundedRectangle(cornerRadius: 15, style: .continuous)
                                     .stroke(LocusTheme.line.opacity(0.7), lineWidth: 1)
+                                    // A shape in an overlay takes mouse events
+                                    // by default, and this one covers the whole
+                                    // bubble: clicks fell through but drags did
+                                    // not, so a user message could be
+                                    // double-clicked and never dragged across.
+                                    .allowsHitTesting(false)
                             }
                             .accessibilityIdentifier("message.\(block.id.uuidString).bubble")
                         messageActionBar(name: "You")

@@ -467,12 +467,7 @@ final class AppModel: ObservableObject {
         appearancePreview ?? settings.resolvedAppearance
     }
     var effectiveAccent: LocusAccentSelection { settings.resolvedAccent }
-    var accentActionColor: Color {
-        let accent = effectiveAccent
-        return Color(nsColor: NSColor(name: nil) { appearance in
-            accent.actionNSColor(for: appearance)
-        })
-    }
+    var accentActionColor: Color { effectiveAccent.actionColor }
     @Published var settingsPresented = false
     @Published private(set) var launchAtLoginError: String?
     @Published private(set) var automaticInspectorPrompt: AutomaticInspectorPrompt?

@@ -574,6 +574,37 @@ final class ResponseSelectableTextView: LocusSelectionTextView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    /// Height this text needs at `width`. Both `sizeThatFits` and
+    /// `intrinsicContentSize` route through here so the two can never answer
+    /// from different wrap widths.
+    func measuredHeight(for width: CGFloat) -> CGFloat {
+        guard let container = textContainer, let layoutManager else { return 1 }
+        container.containerSize = NSSize(
+            width: max(width, 1),
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        layoutManager.ensureLayout(for: container)
+        return max(layoutManager.usedRect(for: container).height.rounded(.up), 1)
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let wraps = textContainer?.widthTracksTextView ?? true
+        return NSSize(
+            width: NSView.noIntrinsicMetric,
+            height: measuredHeight(for: wraps ? max(bounds.width, 1) : .greatestFiniteMagnitude)
+        )
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let widthChanged = abs(newSize.width - frame.width) > 0.5
+        super.setFrameSize(newSize)
+        // A new width means new line breaks, so the height cached for the old
+        // one no longer describes this text. Without this the row keeps the
+        // height it had at the previous column width and its lines are drawn
+        // over the row below it.
+        if widthChanged { invalidateIntrinsicContentSize() }
+    }
+
     override func selectAll(_ sender: Any?) {
         selectionStore?.selectAll(from: self)
     }
@@ -701,20 +732,20 @@ struct ResponseSelectableText: NSViewRepresentable {
     ) -> CGSize? {
         let width: CGFloat
         if wraps {
-            guard let proposed = proposal.width, proposed > 0 else { return nil }
-            width = proposed
+            // An unspecified proposal still has to be answered. Returning nil
+            // handed SwiftUI the text view's own intrinsic size, and SwiftUI
+            // asks for one during the same layout pass that is changing the
+            // column width — so the row was sized for the width it had a
+            // moment ago and its lines ran over the row beneath. Falling back
+            // to the width the view currently has keeps every answer tied to a
+            // width this text was actually laid out for.
+            width = proposal.width.flatMap { $0 > 0 ? $0 : nil } ?? max(nsView.bounds.width, 1)
         } else {
             width = max(nsView.attributedString().size().width.rounded(.up) + 2, 1)
         }
-        guard let layoutManager = nsView.layoutManager, let container = nsView.textContainer else {
-            return nil
-        }
-        container.containerSize = NSSize(
-            width: wraps ? width : CGFloat.greatestFiniteMagnitude,
-            height: CGFloat.greatestFiniteMagnitude
+        let height = nsView.measuredHeight(
+            for: wraps ? width : CGFloat.greatestFiniteMagnitude
         )
-        layoutManager.ensureLayout(for: container)
-        let height = max(layoutManager.usedRect(for: container).height.rounded(.up), 1)
         return CGSize(width: width, height: height)
     }
 

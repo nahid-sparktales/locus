@@ -84,6 +84,10 @@ final class TranscriptSelectionTests: XCTestCase {
         // Leaves are torn down by the lazy list as they scroll off. That used
         // to clear the selection outright, which made any drag longer than the
         // window impossible.
+        //
+        // Covered here rather than as a UI test: forcing real recycling needs a
+        // transcript large enough that every XCUITest query against it timed
+        // out before it could assert anything.
         let store = TranscriptSelectionStore()
         store.syncRows(["r1", "r2"])
         let first = span(row: "r1", path: [0], text: "first")

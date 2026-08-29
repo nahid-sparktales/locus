@@ -72,6 +72,7 @@ struct LocusApp: App {
                 .preferredColorScheme(model.effectiveAppearance.colorScheme)
                 .accentColor(model.accentActionColor)
                 .tint(model.accentActionColor)
+                .environment(\.locusAccent, model.effectiveAccent)
                 .frame(
                     // The full three-column layout fits comfortably at the
                     // default size. Narrow windows progressively overlay the
@@ -208,6 +209,7 @@ struct LocusApp: App {
                 .preferredColorScheme(model.effectiveAppearance.colorScheme)
                 .accentColor(model.accentActionColor)
                 .tint(model.accentActionColor)
+                .environment(\.locusAccent, model.effectiveAccent)
         }
 
         MenuBarExtra {
