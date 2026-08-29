@@ -3064,10 +3064,7 @@ private struct MessageBlockView: View, Equatable {
                             onOpenWorkspaceReference: onOpenWorkspaceReference
                         )
                         if block.isStreaming {
-                            Capsule()
-                                .fill(LocusTheme.signalDeep)
-                                .frame(width: 9, height: 2)
-                                .opacity(0.8)
+                            StreamingCaret()
                         }
                     }
                         messageActionBar(name: "Locus")
@@ -3478,6 +3475,30 @@ private struct ContextUsageChip: View {
             Text(value)
                 .font(.locus(size: 9, weight: .semibold, design: .monospaced))
         }
+    }
+}
+
+/// End-of-stream caret. An upright blinking bar reads as "still writing" in a
+/// way the previous underscore-shaped rule did not — it sits on the text
+/// baseline rather than below the paragraph.
+private struct StreamingCaret: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var visible = true
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 1, style: .continuous)
+            .fill(LocusTheme.signalDeep)
+            .frame(width: 2, height: 14)
+            .opacity(visible ? 0.9 : 0.15)
+            .animation(
+                reduceMotion ? nil : .easeInOut(duration: 0.53).repeatForever(autoreverses: true),
+                value: visible
+            )
+            .onAppear {
+                guard !reduceMotion else { return }
+                visible = false
+            }
+            .accessibilityHidden(true)
     }
 }
 
