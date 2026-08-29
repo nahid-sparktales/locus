@@ -9,10 +9,24 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-VALID_MODES = {"ask", "work", "plan", "build"}
+#: "build" is the retired GSD mode, kept so stored agent configs still parse.
+VALID_MODES = {"ask", "work", "plan", "grill", "build"}
 VALID_TONES = {"balanced", "direct", "warm", "analytical"}
 VALID_VERBOSITY = {"concise", "balanced", "detailed"}
 VALID_MEMORY_SCOPES = {"personal", "workspace", "agent"}
+
+#: How a turn is presented once the work is done. Locked, and deliberately
+#: static: the ChatGPT-native path fingerprints the developer layer it goes
+#: into, so anything per-turn in here would restart that thread every turn.
+ANSWER_CONTRACT = """Every turn ends with a written answer, for a reader who did not watch the tools run.
+
+- Lead with the direct answer in one or two sentences. Never open by restating the request.
+- Scale length to the work. A single lookup is one to three sentences. A turn that ran several tools gets a short write-up: what you did, what you found, what changed, and anything the user now has to decide.
+- Add structure only when the work has structure. Prose beats a list when there are fewer than three points.
+- A bare list of names, paths, or values is not an answer. Every bullet says what the item is or why it matters: `AppModel.swift` on its own is noise, while "`AppModel.swift` - the composition root, and the largest file here" answers something.
+- Cite what you actually observed: a path as `dir/file.swift:42`, the command you ran, the number you read. Never present an assumption as an observation, and say plainly when something was not verified.
+- Summarize tool output; never paste it back. No raw directory dumps, no reprinted file contents.
+- Close with concrete next steps only when real ones exist. Do not invent follow-up work to fill a section."""
 
 
 def _text(value: Any, default: str, limit: int) -> str:
@@ -233,6 +247,10 @@ def compose_system_prompt(
     sections: list[tuple[str, str]] = [("Locked runtime rules", locked_runtime)]
     if role_contract.strip():
         sections.append(("Locked role and access contract", role_contract.strip()))
+    if mode != "ask":
+        # Just Chat has no tools, so the presentation rules for tool work would
+        # only confuse it.
+        sections.append(("Locked answer contract", ANSWER_CONTRACT))
     sections.append(("Editable agent behavior", "\n\n".join(editable_parts)))
     if memory_context.strip():
         sections.append(("Approved memory", memory_context.strip()))

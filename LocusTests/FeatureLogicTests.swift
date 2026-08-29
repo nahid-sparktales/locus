@@ -1084,6 +1084,19 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
+    func testFileCardsAreReservedForTopLevelReferences() {
+        // A reply that lists a directory writes one bullet per file. Promoting
+        // each of those to a 58pt card with three buttons turned a seven-file
+        // answer into a wall of chrome, which is what made the reply read as a
+        // raw dump rather than an answer.
+        XCTAssertTrue(MarkdownArtifactPromotion.allowsCard(nestingDepth: 0))
+        XCTAssertFalse(
+            MarkdownArtifactPromotion.allowsCard(nestingDepth: 1),
+            "inside a list the reference stays an inline, still-clickable link"
+        )
+        XCTAssertFalse(MarkdownArtifactPromotion.allowsCard(nestingDepth: 2))
+    }
+
     @MainActor
     func testWorkspacePreviewPublishesAndClearsSourceLocation() {
         let model = WorkspaceFileModel()

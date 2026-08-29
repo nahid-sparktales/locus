@@ -1,6 +1,10 @@
 from ollama_code import server as server_mod
 from ollama_code import tool_registry
-from ollama_code.agent_config import AgentConfiguration, compose_system_prompt
+from ollama_code.agent_config import (
+    ANSWER_CONTRACT,
+    AgentConfiguration,
+    compose_system_prompt,
+)
 from ollama_code.core import AgentCore
 from ollama_code.orchestration import AgentProfile
 
@@ -53,14 +57,44 @@ def test_composer_keeps_locked_identity_and_safety_in_separate_first_layer():
     assert [layer["name"] for layer in layers] == [
         "Locked runtime rules",
         "Locked role and access contract",
+        "Locked answer contract",
         "Editable agent behavior",
         "Approved memory",
         "Workspace instructions from AGENTS.md",
     ]
-    assert [layer["editable"] for layer in layers] == [False, False, True, False, False]
+    assert [layer["editable"] for layer in layers] == [
+        False, False, False, True, False, False,
+    ]
     assert prompt.index("ActualModel") < prompt.index("FakeModel")
     assert "Never exceed granted permissions" in layers[0]["content"]
-    assert "Prefer small, verified patches" in layers[2]["content"]
+    assert "Prefer small, verified patches" in layers[3]["content"]
+
+
+def test_answer_contract_is_locked_for_tool_modes_and_absent_from_just_chat():
+    """Just Chat has no tools, so rules about presenting tool work confuse it."""
+    config = AgentConfiguration.parse({
+        "custom_instructions": "Answer with a single word and nothing else.",
+    })
+
+    for mode in ("work", "plan", "build"):
+        prompt, layers = compose_system_prompt("Locked.", config, mode=mode)
+        contract = next(
+            layer for layer in layers if layer["name"] == "Locked answer contract"
+        )
+        assert contract["editable"] is False
+        assert contract["content"] == ANSWER_CONTRACT
+        assert "A bare list of names, paths, or values is not an answer" in prompt
+        # The editable layer cannot quietly cancel it: the contract is composed
+        # into the locked half, which the runtime declares outranks user text.
+        assert prompt.index("Locked answer contract") < prompt.index(
+            "Answer with a single word"
+        )
+
+    chat_prompt, chat_layers = compose_system_prompt("Locked.", config, mode="ask")
+    assert not [
+        layer for layer in chat_layers if layer["name"] == "Locked answer contract"
+    ]
+    assert "A bare list of names" not in chat_prompt
 
 
 def test_agent_configuration_round_trips_as_versioned_additive_payload():

@@ -894,24 +894,27 @@ private struct MarkdownBlocksView: View {
     private func blockView(_ block: MarkdownRenderBlock, path: [Int]) -> some View {
         switch block {
         case .paragraph(let runs):
-            if let artifact = standaloneArtifact(in: runs) {
-                if artifact.kind == .image, let image = NSImage(contentsOf: artifact.url) {
-                    WorkspaceImageArtifactView(
-                        reference: artifact,
-                        image: image,
-                        caption: runs.map(\.text).joined(),
-                        selectionStore: selectionStore,
-                        selectionSpan: selectionSpan(at: path),
-                        onOpen: { open(artifact) }
-                    )
-                } else {
-                    WorkspaceArtifactCard(
-                        reference: artifact,
-                        selectionStore: selectionStore,
-                        selectionSpan: selectionSpan(at: path),
-                        onOpen: { open(artifact) }
-                    )
-                }
+            let artifact = standaloneArtifact(in: runs)
+            let artifactImage = artifact.flatMap { reference in
+                reference.kind == .image ? NSImage(contentsOf: reference.url) : nil
+            }
+            if let artifact, let artifactImage {
+                WorkspaceImageArtifactView(
+                    reference: artifact,
+                    image: artifactImage,
+                    caption: runs.map(\.text).joined(),
+                    selectionStore: selectionStore,
+                    selectionSpan: selectionSpan(at: path),
+                    onOpen: { open(artifact) }
+                )
+            } else if let artifact,
+                      MarkdownArtifactPromotion.allowsCard(nestingDepth: nestingDepth) {
+                WorkspaceArtifactCard(
+                    reference: artifact,
+                    selectionStore: selectionStore,
+                    selectionSpan: selectionSpan(at: path),
+                    onOpen: { open(artifact) }
+                )
             } else {
                 prose(runs, path: path)
             }
@@ -1191,6 +1194,17 @@ private struct MarkdownBlocksView: View {
 struct WorkspaceSourceLocation: Hashable, Sendable {
     let line: Int
     let column: Int?
+}
+
+/// Whether a standalone workspace reference earns its own block-level card.
+///
+/// A file card is 58pt of chrome with three buttons. One sitting in a paragraph
+/// is a useful artifact; one per bullet turns a seven-file listing into a wall
+/// of cards, so inside a list the reference stays an inline link instead.
+/// Images are content rather than chrome and are promoted at any depth by the
+/// caller before this is consulted.
+enum MarkdownArtifactPromotion {
+    static func allowsCard(nestingDepth: Int) -> Bool { nestingDepth == 0 }
 }
 
 enum WorkspaceArtifactKind: String, Hashable, Sendable {
