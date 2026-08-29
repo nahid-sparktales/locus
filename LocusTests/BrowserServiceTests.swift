@@ -661,7 +661,15 @@ final class BrowserServiceTests: XCTestCase {
             timeoutMilliseconds: 5_000
         )
         let rawRecord = try XCTUnwrap(try jsonObject(in: raw)["record"] as? [String: Any])
-        XCTAssertEqual(rawRecord["password"] as? String, "fixture-only-secret")
+        // The record identifies itself without carrying the secret: a tool
+        // result is appended verbatim to the unencrypted session transcript
+        // and run ledger, so the password must never appear in one.
+        XCTAssertEqual(rawRecord["username"] as? String, matching.username)
+        XCTAssertNil(rawRecord["password"])
+        XCTAssertFalse(
+            (raw["text"] as? String)?.contains("fixture-only-secret") ?? false,
+            "the saved password must not appear anywhere in the tool result"
+        )
 
         let crossOrigin = await service.perform(
             tool: "browser_autofill",
@@ -746,7 +754,12 @@ final class BrowserServiceTests: XCTestCase {
             timeoutMilliseconds: 5_000
         )
         let rawText = try XCTUnwrap(raw["text"] as? String)
-        XCTAssertTrue(rawText.contains("4242424242424242"))
+        // `get` identifies the card without disclosing it. A tool result is
+        // appended verbatim to the unencrypted session transcript and the run
+        // ledger, so the full PAN must never appear in one — `fill` supplies
+        // the real number natively.
+        XCTAssertFalse(rawText.contains("4242424242424242"))
+        XCTAssertTrue(rawText.contains("4242"))
         for forbidden in ["cvc", "cvv", "cid", "security_code"] {
             XCTAssertFalse(rawText.lowercased().contains(forbidden))
         }

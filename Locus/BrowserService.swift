@@ -295,6 +295,11 @@ final class BrowserService: NSObject, ObservableObject {
     private var recentDownloadStarts: [String: [Date]] = [:]
 
     override init() {
+        // The fixture key is a known constant, so this branch must not be
+        // reachable in a signed Release or App Store build: anyone able to
+        // influence the launch environment would otherwise get a vault sealed
+        // with a publicly known 32 bytes.
+        #if DEBUG
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1" {
             // UI tests must never inherit or mutate the person's real browser
             // records. A per-process encrypted fixture also makes the empty
@@ -312,6 +317,9 @@ final class BrowserService: NSObject, ObservableObject {
         } else {
             autofillVault = BrowserAutofillVault()
         }
+        #else
+        autofillVault = BrowserAutofillVault()
+        #endif
         super.init()
     }
 
@@ -703,12 +711,18 @@ final class BrowserService: NSObject, ObservableObject {
                 }) else {
                     throw BrowserToolError("no saved password for this site has that record_id")
                 }
+                // The secret itself is deliberately withheld. A tool result
+                // becomes a message that is appended verbatim to the on-disk
+                // session transcript and the run ledger, neither of which is
+                // encrypted or scrubbed — returning the password here would
+                // write it in clear next to the vault that exists to protect
+                // it. `fill` applies the credential natively without it ever
+                // passing through the model.
                 record = [
                     "id": password.id.uuidString,
                     "label": password.label,
                     "origin": password.origin,
                     "username": password.username,
-                    "password": password.password,
                 ]
             case .contact:
                 guard let contact = autofillVault.contacts.first(where: { $0.id == id }) else {
@@ -731,11 +745,14 @@ final class BrowserService: NSObject, ObservableObject {
                 guard let card = autofillVault.cards.first(where: { $0.id == id }) else {
                     throw BrowserToolError("no saved payment card has that record_id")
                 }
+                // Same reasoning as passwords: the full PAN never enters a
+                // tool result. `last_four` is enough for the model to confirm
+                // it picked the right card; `fill` supplies the real number.
                 record = [
                     "id": card.id.uuidString,
                     "nickname": card.nickname,
                     "cardholder": card.cardholder,
-                    "number": card.normalizedNumber,
+                    "last_four": card.lastFour,
                     "expiration_month": card.expirationMonth,
                     "expiration_year": card.expirationYear,
                     "billing_contact_id": (card.billingContactID?.uuidString as Any?) ?? NSNull(),
@@ -1505,7 +1522,13 @@ final class BrowserService: NSObject, ObservableObject {
     /// autocomplete hint and whether its form holds a password are all visible.
     private func refuseSecureField(_ tab: Tab, ref: String) async throws {
         let raw = try await callBridge(tab, "return __locus.describe(ref)", ["ref": ref])
-        guard let described = raw as? [String: Any] else { return }
+        // Fail closed. Since the agent-side text scan was removed for
+        // `browser_input`, this is the only credential gate left, so a bridge
+        // that cannot describe the target must refuse the typing rather than
+        // wave it through.
+        guard let described = raw as? [String: Any] else {
+            throw BrowserToolError("that field could not be inspected; type it yourself")
+        }
         if described["stale"] as? Bool == true {
             throw BrowserToolError(BrowserBridge.staleReferenceMessage.droppingErrorPrefix)
         }
@@ -1515,8 +1538,12 @@ final class BrowserService: NSObject, ObservableObject {
     /// The same gate for typing that names no element. Real input goes wherever
     /// focus already is, so the focused element is what has to be vetted.
     private func refuseSecureFocus(_ tab: Tab) async throws {
-        let raw = try? await callBridge(tab, "return __locus.describeActive()", [:])
-        guard let described = raw as? [String: Any] else { return }
+        // `try?` plus a permissive guard meant a throwing or malformed bridge
+        // reply silently authorised typing into whatever held focus.
+        let raw = try await callBridge(tab, "return __locus.describeActive()", [:])
+        guard let described = raw as? [String: Any] else {
+            throw BrowserToolError("the focused field could not be inspected; type it yourself")
+        }
         try authorizeSensitiveInput(described, subject: "the focused field")
     }
 
@@ -3154,6 +3181,25 @@ extension BrowserService {
         await autofillVault.load()
     }
 
+    /// A saved record may only be written into a page that could legitimately
+    /// have asked for it. Passwords additionally pin the exact origin they were
+    /// saved against; contacts and payment cards are not origin-bound, so the
+    /// destination itself is what has to be vetted — without this, a full PAN
+    /// was written into whatever page happened to be open, including `file:`,
+    /// `data:` and plain-http pages.
+    private static func isSecureFillDestination(_ url: URL) -> Bool {
+        switch url.scheme?.lowercased() {
+        case "https":
+            return true
+        case "http":
+            // Loopback only, so local development still works.
+            guard let host = url.host?.lowercased() else { return false }
+            return host == "localhost" || host == "127.0.0.1" || host == "::1"
+        default:
+            return false
+        }
+    }
+
     private func completeFill(
         _ payload: [String: Any],
         sessionID: String,
@@ -3161,6 +3207,9 @@ extension BrowserService {
         expectedOrigin: String? = nil
     ) async -> Bool {
         guard let tab = existingTab(for: sessionID, tabID: tabID) else { return false }
+        guard let destination = tab.webView.url,
+              Self.isSecureFillDestination(destination)
+        else { return false }
         if let expectedOrigin {
             guard let pageURL = tab.webView.url,
                   BrowserAutofillVault.normalizedOrigin(pageURL.absoluteString)
