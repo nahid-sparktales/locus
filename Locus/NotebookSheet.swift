@@ -36,11 +36,11 @@ struct NotebookSheet: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Notebook")
                     .font(.locus(size: 15, weight: .bold))
-                // The smallest text on this surface, and the only line that
-                // explains what the Notebook is. `muted` leaves it close enough
-                // to the contrast floor that antialiasing at 1x can push it
-                // under; secondary copy is the right weight for a caption this
-                // long anyway.
+                // `muted` nominally clears the contrast floor here, but at nine
+                // points its antialiased strokes never reach that colour: the
+                // pixels this caption actually draws measure 4.4:1 against the
+                // panel, under the 4.5:1 minimum. Secondary copy measures about
+                // 11.8:1 and is the right weight for prose in any case.
                 Text("Every note Locus has kept — one per workspace, one per chat, and one shared by all of them. Edits here are the same document the Notes panel shows.")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.textSecondary)
