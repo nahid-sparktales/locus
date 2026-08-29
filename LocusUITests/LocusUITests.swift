@@ -80,6 +80,43 @@ final class LocusUITests: XCTestCase {
     /// (an `NSTextView`), which XCUI exposes as a text view carrying its content
     /// in `value` — never as a `staticTexts` whose `label` matches. Reasoning
     /// entries still render as SwiftUI `Text`, so match either shape.
+    /// Scrolls a transcript control into the visible part of the conversation
+    /// and clicks it.
+    ///
+    /// The text-output fixture is deliberately long — an eleven-row table and a
+    /// twenty-five line code block, both expanded — so it is taller than the
+    /// test window and a control can sit below the fold. None of these tests is
+    /// about how much of the transcript happens to fit on screen, so bring the
+    /// target into view the way a person would before reaching for it. The
+    /// click goes through a coordinate because AppKit reports a transcript
+    /// button at the end of a long conversation as not hittable even once it is
+    /// fully on screen, which is why the fixture's disclosure control was
+    /// already clicked this way.
+    private func clickInTranscript(
+        _ element: XCUIElement,
+        normalizedOffset: CGVector = CGVector(dx: 0.5, dy: 0.5),
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(element.waitForExistence(timeout: 3), file: file, line: line)
+        let transcript = anyElement("conversation.scroll")
+        if transcript.waitForExistence(timeout: 3) {
+            for _ in 0..<12 {
+                let viewport = transcript.frame
+                let frame = element.frame
+                // Leave a margin so the control is not flush against an edge,
+                // where a click can land on the neighbouring row instead.
+                let below = frame.maxY - (viewport.maxY - 24)
+                let above = (viewport.minY + 24) - frame.minY
+                let delta = below > 0 ? below : (above > 0 ? -above : 0)
+                guard abs(delta) > 1 else { break }
+                transcript.scroll(byDeltaX: 0, deltaY: -max(-400, min(400, delta)))
+                if abs(element.frame.midY - frame.midY) < 1 { break }
+            }
+        }
+        element.coordinate(withNormalizedOffset: normalizedOffset).click()
+    }
+
     private func transcriptText(_ value: String) -> XCUIElement {
         app.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@ OR value == %@", value, value)
@@ -291,7 +328,8 @@ final class LocusUITests: XCTestCase {
                     + "description=\(issue.compactDescription), "
                     + "identifier=\(element?.identifier ?? "<none>"), "
                     + "label=\(element?.label ?? "<none>"), "
-                    + "role=\(String(describing: element?.elementType)), "
+                    + "value=\(String(describing: element?.value)), "
+                    + "role=\(String(describing: element?.elementType.rawValue)), "
                     + "frame=\(String(describing: element?.frame))"
             )
             return false
@@ -468,7 +506,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(copy.waitForExistence(timeout: 3))
         XCTAssertTrue(formats.waitForExistence(timeout: 3))
 
-        copy.click()
+        clickInTranscript(copy)
         XCTAssertTrue(waitUntil {
             guard let copied = NSPasteboard.general.string(forType: .string) else { return false }
             return copied.hasPrefix("Copy formats")
@@ -480,7 +518,7 @@ final class LocusUITests: XCTestCase {
                 && !copied.contains("```")
         })
 
-        formats.click()
+        clickInTranscript(formats)
         let markdown = menuItem(
             "\(responseID).copyFormat.markdown",
             title: "Copy as Markdown"
@@ -508,16 +546,12 @@ final class LocusUITests: XCTestCase {
         let tableToggle = anyElement("message.table.collapse")
         XCTAssertTrue(tableToggle.waitForExistence(timeout: 3))
         XCTAssertEqual(tableToggle.label, "Collapse 11-row table")
-        // Activating an off-screen accessibility control asks AppKit to reveal
-        // it, matching keyboard and Voice Control behavior.
-        tableToggle.click()
+        clickInTranscript(tableToggle)
         XCTAssertTrue(waitUntil { tableToggle.label == "Expand 11-row table" })
         let showTable = app.buttons["message.table.showAll"].firstMatch
         XCTAssertTrue(showTable.waitForExistence(timeout: 2))
         XCTAssertEqual(showTable.label, "Show all 11 rows")
-        showTable.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.12, dy: 0.5)
-        ).click()
+        clickInTranscript(showTable, normalizedOffset: CGVector(dx: 0.12, dy: 0.5))
         XCTAssertTrue(transcriptText("Row 11").waitForExistence(timeout: 3))
         XCTAssertTrue(waitUntil {
             self.anyElement("message.table.collapse").label == "Collapse 11-row table"
@@ -526,15 +560,14 @@ final class LocusUITests: XCTestCase {
         let codeToggle = anyElement("message.codeBlock.collapse")
         XCTAssertTrue(codeToggle.waitForExistence(timeout: 3))
         XCTAssertEqual(codeToggle.label, "Collapse 25-line code block")
-        codeToggle.click()
+        clickInTranscript(codeToggle)
         XCTAssertTrue(waitUntil { codeToggle.label == "Expand 25-line code block" })
         let showCode = app.buttons["message.codeBlock.showAll"].firstMatch
         XCTAssertTrue(showCode.waitForExistence(timeout: 2))
         XCTAssertEqual(showCode.label, "Show all 25 lines")
 
         let codeCopy = anyElement("message.codeBlock.copy")
-        XCTAssertTrue(codeCopy.isHittable)
-        codeCopy.click()
+        clickInTranscript(codeCopy)
         XCTAssertTrue(waitUntil {
             let copied = NSPasteboard.general.string(forType: .string) ?? ""
             return copied.hasPrefix("line 1\n") && copied.hasSuffix("line 25\n")

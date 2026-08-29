@@ -36,9 +36,14 @@ struct NotebookSheet: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Notebook")
                     .font(.locus(size: 15, weight: .bold))
+                // The smallest text on this surface, and the only line that
+                // explains what the Notebook is. `muted` leaves it close enough
+                // to the contrast floor that antialiasing at 1x can push it
+                // under; secondary copy is the right weight for a caption this
+                // long anyway.
                 Text("Every note Locus has kept — one per workspace, one per chat, and one shared by all of them. Edits here are the same document the Notes panel shows.")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(LocusTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
