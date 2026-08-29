@@ -80,6 +80,33 @@ jobs:
           -configuration Debug
           -destination 'platform=macOS'
           -only-testing:LocusTests
+      - name: Pinned Anvil wallet-chain integration
+        env:
+          FOUNDRY_VERSION: v1.7.1
+        run: |
+          case "$(uname -m)" in
+            arm64)
+              asset="foundry_${FOUNDRY_VERSION}_darwin_arm64.tar.gz"
+              expected="eacdc67718fac857cad9e19c7f6729dd80de731d09df81856391d093cfcab547"
+              ;;
+            x86_64)
+              asset="foundry_${FOUNDRY_VERSION}_darwin_amd64.tar.gz"
+              expected="c7fd1f5c9bf718d30b5cb6fc94eac605039de2aa50afc4c545a4dddc1e411acb"
+              ;;
+            *)
+              echo "Unsupported CI architecture" >&2
+              exit 1
+              ;;
+          esac
+          foundry_dir="$RUNNER_TEMP/foundry-${FOUNDRY_VERSION}"
+          mkdir -p "$foundry_dir"
+          curl -fL \
+            "https://github.com/foundry-rs/foundry/releases/download/${FOUNDRY_VERSION}/${asset}" \
+            -o "$foundry_dir/$asset"
+          actual="$(shasum -a 256 "$foundry_dir/$asset" | awk '{print $1}')"
+          test "$actual" = "$expected"
+          tar -xzf "$foundry_dir/$asset" -C "$foundry_dir"
+          LOCUS_ANVIL_BIN="$foundry_dir/anvil" Tools/RunWalletChainTests.sh
       - name: Direct and App Store release configurations compile
         env:
           LOCUS_BUNDLE_MODE: skip

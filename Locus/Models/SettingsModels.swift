@@ -267,6 +267,15 @@ struct AppSettings: Codable, Hashable {
     /// Public Sepolia RPC used only by the native wallet broker. It is never
     /// included in model context or sent to the Python agent.
     var walletSepoliaRPCURL = "https://ethereum-sepolia-rpc.publicnode.com"
+    /// Private-alpha access is an explicit, persisted choice in direct-download
+    /// builds. App Store builds ignore both switches even if the same defaults
+    /// domain was previously written by a direct-download build.
+    var walletAlphaEnabled = false
+    var walletBrowserProviderEnabled = false
+    /// Environment-variable activation existed before the in-app controls.
+    /// This marker lets an existing install adopt that choice exactly once;
+    /// afterward the persisted switches are authoritative.
+    var walletFeatureAccessMigrated = false
     /// Raw string, like the tab: an unknown preset from a future version must
     /// not fail the whole settings decode.
     var browserViewportRaw = BrowserViewport.desktop.rawValue
@@ -420,6 +429,36 @@ struct AppSettings: Codable, Hashable {
         return min(max(value, 0), 1)
     }
 
+    #if LOCUS_DIRECT_DOWNLOAD
+    static let walletAlphaSupportedByCurrentBuild = true
+    #else
+    static let walletAlphaSupportedByCurrentBuild = false
+    #endif
+
+    static func effectiveWalletFeatureAccess(
+        walletEnabled: Bool,
+        browserEnabled: Bool,
+        isDirectDownload: Bool = walletAlphaSupportedByCurrentBuild
+    ) -> (walletEnabled: Bool, browserEnabled: Bool) {
+        guard isDirectDownload, walletEnabled else { return (false, false) }
+        return (true, browserEnabled)
+    }
+
+    @discardableResult
+    mutating func migrateLegacyWalletFeatureAccess(
+        environment: [String: String],
+        isDirectDownload: Bool = walletAlphaSupportedByCurrentBuild
+    ) -> Bool {
+        guard !walletFeatureAccessMigrated else { return false }
+        if isDirectDownload {
+            walletAlphaEnabled = environment["LOCUS_ENABLE_EXPERIMENTAL_WALLET"] == "1"
+            walletBrowserProviderEnabled = walletAlphaEnabled
+                && environment["LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER"] == "1"
+        }
+        walletFeatureAccessMigrated = true
+        return true
+    }
+
     var resolvedInspectorTab: InspectorTab {
         let tab = InspectorTab(rawValue: inspectorLastTab) ?? .plan
         return tab == .checkpoints ? .plan : tab
@@ -460,6 +499,8 @@ struct AppSettings: Codable, Hashable {
         notifyOnNeedsAttention = draft.notifyOnNeedsAttention
         browserEnabled = draft.browserEnabled
         walletSepoliaRPCURL = draft.walletSepoliaRPCURL
+        walletAlphaEnabled = draft.walletAlphaEnabled
+        walletBrowserProviderEnabled = draft.walletBrowserProviderEnabled
         previewURL = draft.previewURL
         browserViewportRaw = draft.browserViewportRaw
         browserPersistProfile = draft.browserPersistProfile
@@ -754,6 +795,15 @@ struct AppSettings: Codable, Hashable {
         walletSepoliaRPCURL = try container.decodeIfPresent(
             String.self, forKey: .walletSepoliaRPCURL
         ) ?? defaults.walletSepoliaRPCURL
+        walletAlphaEnabled = try container.decodeIfPresent(
+            Bool.self, forKey: .walletAlphaEnabled
+        ) ?? defaults.walletAlphaEnabled
+        walletBrowserProviderEnabled = try container.decodeIfPresent(
+            Bool.self, forKey: .walletBrowserProviderEnabled
+        ) ?? defaults.walletBrowserProviderEnabled
+        walletFeatureAccessMigrated = try container.decodeIfPresent(
+            Bool.self, forKey: .walletFeatureAccessMigrated
+        ) ?? defaults.walletFeatureAccessMigrated
         browserViewportRaw = try container.decodeIfPresent(String.self, forKey: .browserViewportRaw)
             ?? defaults.browserViewportRaw
         browserPersistProfile = try container.decodeIfPresent(

@@ -48,7 +48,7 @@ paid route.
 - **Works from your phone.** The optional [Locus Mobile](https://github.com/nahid-sparktales/locus-mobile) companion for iOS and Android pairs directly over your LAN or Tailscale, with no Locus cloud relay.
 - **Supports local and hosted models.** Use Ollama, a ChatGPT plan, OpenAI, Anthropic Claude, Moonshot Kimi, or an OpenAI-compatible endpoint.
 - **Stores work locally by default.** Sessions, run records, and encrypted memory live on your Mac. Hosted providers receive prompts only when you select them.
-- **Experiments with guarded wallet actions.** Direct-download builds can opt into a separate, limited-fund Locus Vault for Sepolia transfers and reviewed contract actions, with signer isolation, exact confirmations, and session-scoped budgets.
+- **Experiments with guarded wallet actions.** Direct-download builds can enable a separate, limited-fund Locus Vault in Settings, receive Sepolia ETH, review clear transaction summaries, and give the agent session-scoped spending rules backed by signer isolation and exact confirmation.
 
 ![Scheduled tasks in the Locus Activity Center](Docs/locus-schedules-dark.png)
 
@@ -140,18 +140,21 @@ Direct-download builds from 1.14.0 onward check the stable release channel and c
 
 ### Experimental Locus Vault
 
-Direct-download builds can opt into the isolated, Sepolia-only
+Direct-download builds can enable the isolated, Sepolia-only
 [Locus Vault](Docs/WalletActivation.md). It creates a separate 24-word recovery
 phrase for limited test funds and keeps signing material inside a sandboxed,
 network-isolated XPC service. Every privileged request is bound to the active
 app session and its agent or browser source; the signer rechecks the prepared
-transaction immediately before signing.
+transaction immediately before signing. Activation, setup, receiving, browser
+access, and diagnostics are handled in **Settings → Wallets** with no Terminal
+step.
 
 | Area | Current boundary |
 | --- | --- |
 | Vault | Creates a separate 24-word phrase and derives EVM, Solana, and Sui public accounts; decrypted keys never leave the signer |
+| Wallet Hub | Shows a locked-safe Sepolia balance/address, Receive with a locally generated ERC-681 QR, activity and Etherscan links, agent spending rules, browser origins, and progressive Advanced controls |
 | Native EVM | Sepolia transfers, exact-confirmed registered-contract calls, finite ERC-20 transfers and approvals, and one narrow Universal Router V2 exact-input path |
-| Policy actions | Reviewed agent actions can use signer-owned limits for contract, asset, counterparty, amount, fee, expiry, and session totals; unknown effects and unlimited approvals require exact confirmation |
+| Agent spending rules | Reviewed agent actions can use signer-owned limits for contract, asset, counterparty, amount, fee, expiry, and session totals; native ETH uses exact decimal-to-wei parsing, while Advanced token rules explicitly use raw units |
 | Browser provider | Session-scoped EIP-1193/EIP-6963 access for approved origins and Sepolia native transfers only; every browser transaction requires exact confirmation |
 | Activity | Stores bounded public transaction metadata, marks uncertain broadcasts, and reconciles receipt status without retaining raw signed transactions or secrets |
 | Solana and Sui | Derived public addresses are visible, but native signing remains disabled |
@@ -159,12 +162,15 @@ transaction immediately before signing.
 
 Locking the vault, sleeping, quitting, updating, relaunching, or losing the
 signer connection clears decrypted material, prepared transactions, origin
-grants, active policies, and session budgets. Saved policy templates contain
+grants, active policies, and spending authority while retaining public
+addresses and cached balances for receiving. Saved policy templates contain
 no authorization and must be approved again after launch. Locus does not
 import MetaMask, Phantom, or Slush recovery phrases.
 
-The feature is off by default. EVM mainnet, native Solana and Sui signing, and
-live MetaMask, Phantom, and Slush connections remain security gated. See the
+The feature is off by default and ignored by Mac App Store builds. EVM mainnet,
+native Solana and Sui signing, and live MetaMask, Phantom, and Slush connections
+remain security gated. MetaMask Connect on Sepolia is the recommended next
+milestone after the private alpha succeeds. See the
 [security gate](Docs/WalletSecurityGate.md) and
 [threat model](Docs/WalletThreatModel.md) for the current boundaries, reviewed
 adapters, verification requirements, and incident response plan.

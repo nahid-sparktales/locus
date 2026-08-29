@@ -18,11 +18,13 @@ signer. It is not a general message-signing or raw-transaction API.
 | --- | --- | --- |
 | BIP-39 entropy and derived private keys | `WalletSigner.xpc` only | AES-GCM at rest; device-only Keychain wrapping key with user presence; zeroized in memory on lock or connection loss |
 | Signing-session capability | One accepted XPC connection | Random session ID required on every privileged request; never sent to Python, web content, or a model |
-| Prepared intent and policy budget | The same signer connection | In-memory only; maximum 32 pending intents and 32 active policies; removed on use, expiry, lock, interruption, invalidation, or process exit |
+| Prepared intent and agent spending rule | The same signer connection | In-memory only; maximum 32 pending intents and 32 active policies; removed on use, expiry, lock, interruption, invalidation, feature disablement, or process exit |
 | RPC endpoint and chain evidence | Native app | HTTPS only; Sepolia chain ID checked; JSON-RPC version, request ID, envelope shape, and response size validated |
-| Browser origin grant | Native app session | Main-frame origin derived from WebKit, never accepted from page payload; revoked on navigation, lock, interruption, update, or exit |
+| Browser origin grant | Native app session | Main-frame origin derived from WebKit, never accepted from page payload; revoked on navigation, lock, provider disablement, interruption, update, or exit |
 | Contract classification | Native app and signer | Runtime code hash, normalized ABI digest, exact functions/selectors, and signer-derived adapter identity |
 | Durable activity | Native app preferences | Public metadata only: hash, intent ID, network/account IDs, summary, timestamps, receipt state, and bounded error detail; never raw signed bytes or secrets |
+| Locked receive snapshot | Native app memory | Public address, cached base-unit balance, and freshness only; retained across lock so receiving works without signing authority |
+| Copied alpha diagnostics | User-initiated local clipboard write | Whitelisted build, OS, signer protocol/reachability, effective gates, vault state, RPC category, and activity counts only; excludes addresses, origins, rules, ABIs, raw transactions, secrets, and unrestricted errors |
 
 The XPC listener accepts only the signed Locus host identifier and production
 team identifier. Each accepted connection receives a new signer service
@@ -44,6 +46,10 @@ execution.
 - Origin access grants expose only the Sepolia address and the supported narrow
   RPC surface. Raw signing, personal-message signing, chain addition, contract
   calldata, and mainnet remain unavailable.
+- Browser provider discovery is separately opt-in, uses a UUIDv4 per page,
+  freezes EIP-6963 metadata/discovery objects, and never replaces an existing
+  `window.ethereum`. Disabling it denies pending native requests before tabs
+  reload without the injection.
 
 ## Reviewed effect adapters
 
@@ -62,7 +68,7 @@ revalidates this classification before using it.
    signer requires a nonzero minimum output, two to four path tokens, the vault
    account as recipient, and a deadline no more than 20 minutes away.
 
-Contract policies additionally bind the registry ID, observed runtime code
+Advanced contract spending rules additionally bind the registry ID, observed runtime code
 hash, adapter, one input asset, decoded recipient or spender, per-action amount,
 cumulative session amount, fee ceiling, account, network, and expiry. Unknown,
 stale, mismatched, or additional effects fall back to exact confirmation.
@@ -81,6 +87,8 @@ stale, mismatched, or additional effects fall back to exact confirmation.
 | Broadcast succeeds but client loses the response | Consume before signing; record `broadcast_unknown` with locally derived hash; reconcile through transaction receipt without allowing replay |
 | Recovery phrase confusion or import phishing | Never provide in-app import; show phrase only at creation; identify standard paths and warn never to enter an external-wallet phrase |
 | Activity log leaks signing material | Persist public transaction metadata only; cap records and error detail; never persist raw transaction bytes |
+| QR service learns or substitutes a receive address | Generate the ERC-681 Sepolia QR locally with Core Image; encode no amount and call no QR service |
+| A discoverability toggle is mistaken for authorization | Keep signer session/source binding, simulation, policy evaluation, and exact confirmation independent of feature settings; App Store builds force effective gates off |
 
 ## Verification and release gates
 
@@ -90,10 +98,11 @@ binary export audit, and a clean Xcode build. Direct-download verification also
 launches the embedded signer process and checks that a new connection starts
 without an unlocked session.
 
-No gate opens native EVM mainnet, Solana signing, or Sui signing. MetaMask is the
-first external connector target, followed by Phantom and Slush; the current
-code defines their test-network and transport contracts but exposes no live
-connection button. Each connector needs pinned dependencies, callback/session
+No gate opens native EVM mainnet, Solana signing, or Sui signing. MetaMask
+Connect on Sepolia is the recommended next milestone only after the private
+alpha meets its exit criteria; Phantom and Slush remain later separate work.
+The current code exposes no live connection button. Each connector needs
+pinned dependencies, callback/session
 tests, origin/account-change tests, denial and disconnect tests, threat-model
 review, and external audit before enablement.
 

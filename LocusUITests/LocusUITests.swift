@@ -259,7 +259,7 @@ final class LocusUITests: XCTestCase {
                let surface = self.app.launchEnvironment[
                    "LOCUS_UI_TESTING_ACCESSIBILITY_SURFACE"
                ],
-               surface == "settings" || surface == "agent-editor" {
+               surface == "settings" || surface == "agent-editor" || surface == "wallet" {
                 return true
             }
             // These compact combined elements include tested semantic text
@@ -291,6 +291,21 @@ final class LocusUITests: XCTestCase {
     private func relaunchForAccessibilitySurface(_ surface: String, anchor: String) {
         app.terminate()
         app.launchEnvironment["LOCUS_UI_TESTING_ACCESSIBILITY_SURFACE"] = surface
+        app.launch()
+        XCTAssertTrue(anyElement(anchor).waitForExistence(timeout: 10))
+    }
+
+    private func relaunchWalletFixture(_ fixture: String, anchor: String) {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_ACCESSIBILITY_SURFACE"] = "wallet"
+        app.launchEnvironment["LOCUS_UI_TESTING_WALLET_FIXTURE"] = fixture
+        if fixture == "disabled" {
+            app.launchEnvironment["LOCUS_ENABLE_EXPERIMENTAL_WALLET"] = nil
+            app.launchEnvironment["LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER"] = nil
+        } else {
+            app.launchEnvironment["LOCUS_ENABLE_EXPERIMENTAL_WALLET"] = "1"
+            app.launchEnvironment["LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER"] = "1"
+        }
         app.launch()
         XCTAssertTrue(anyElement(anchor).waitForExistence(timeout: 10))
     }
@@ -818,6 +833,60 @@ final class LocusUITests: XCTestCase {
         closeButton.click()
         XCTAssertTrue(waitUntil { !settingsPage.exists })
         XCTAssertTrue(workspace.exists)
+    }
+
+    func testWalletHubDisabledFixture() {
+        relaunchWalletFixture("disabled", anchor: "settings.wallet.enable-alpha")
+        XCTAssertTrue(app.staticTexts["Locus Vault Private Alpha"].exists)
+    }
+
+    func testWalletHubSetupFixture() {
+        relaunchWalletFixture("setup", anchor: "settings.wallet.create")
+        XCTAssertTrue(app.staticTexts["Create a separate vault"].exists)
+    }
+
+    func testWalletHubLockedFixture() {
+        relaunchWalletFixture("locked", anchor: "settings.wallet.unlock")
+        XCTAssertTrue(app.staticTexts["0.0125 ETH"].exists)
+        XCTAssertTrue(app.buttons["Receive"].exists)
+    }
+
+    func testWalletHubReadyFixture() {
+        relaunchWalletFixture("ready", anchor: "settings.wallet.lock")
+        XCTAssertTrue(app.staticTexts["Agent Spending Rules"].exists)
+        XCTAssertTrue(anyElement("settings.wallet.rule.usage").exists)
+    }
+
+    func testWalletHubReadyCompactFixturePassesAccessibilityAudit() throws {
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "720"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "620"
+        relaunchWalletFixture("ready", anchor: "settings.wallet.lock")
+        try auditCurrentSurface()
+    }
+
+    func testWalletHubActivityFixture() {
+        relaunchWalletFixture("activity", anchor: "settings.wallet.lock")
+        XCTAssertTrue(app.staticTexts["Sent 0.002 Sepolia ETH"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Copy Hash"].firstMatch.exists)
+        XCTAssertTrue(app.links["View on Etherscan"].firstMatch.exists)
+    }
+
+    func testWalletOriginRequestFixture() {
+        relaunchWalletFixture("origin", anchor: "settings.wallet.lock")
+        XCTAssertTrue(app.staticTexts[
+            "Allow this website to see your Sepolia address?"
+        ].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["https://pay.example.com"].exists)
+        XCTAssertTrue(app.buttons["Allow Address Access"].exists)
+    }
+
+    func testWalletExactTransactionConfirmationFixture() {
+        relaunchWalletFixture("transaction", anchor: "settings.wallet.lock")
+        XCTAssertTrue(app.staticTexts["Review Transaction"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Requested by https://pay.example.com"].exists)
+        let confirm = app.buttons["Confirm and Send 0.01 Sepolia ETH"]
+        XCTAssertTrue(confirm.exists)
+        XCTAssertTrue(confirm.isEnabled)
     }
 
     func testAgentProfileEditorKeepsInstructionsAndAdvancedActionsVisible() {
