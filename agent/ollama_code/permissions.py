@@ -5,6 +5,7 @@ import difflib
 import json
 import re
 import shlex
+import threading
 from typing import Any
 
 from .tools import EDIT_TOOLS, SAFE_TOOLS
@@ -34,23 +35,25 @@ class PermissionManager:
         #: Allowed across sessions (persisted in the config file).
         self.always_allow: set[str] = set(always_allow or [])
         self.deny_commands: list[str] = list(deny_commands or [])
+        self._guard = threading.RLock()
 
     @property
     def skip_all(self) -> bool:
         return self.mode == "bypass"
 
     def is_auto_allowed(self, tool_name: str, inside_workspace: bool = True) -> bool:
-        if self.mode == "bypass":
-            return True
-        if tool_name in SAFE_TOOLS:
-            # Reading is only automatic inside the workspace; anything outside
-            # it (dotfiles, ~/.ssh, another project) still asks.
-            return inside_workspace
-        if tool_name in self.allowed or tool_name in self.always_allow:
-            return True
-        if self.mode == "accept_edits" and tool_name in EDIT_TOOLS:
-            return inside_workspace
-        return False
+        with self._guard:
+            if self.mode == "bypass":
+                return True
+            if tool_name in SAFE_TOOLS:
+                # Reading is only automatic inside the workspace; anything outside
+                # it (dotfiles, ~/.ssh, another project) still asks.
+                return inside_workspace
+            if tool_name in self.allowed or tool_name in self.always_allow:
+                return True
+            if self.mode == "accept_edits" and tool_name in EDIT_TOOLS:
+                return inside_workspace
+            return False
 
     def blocked_reason(self, tool_name: str, args: dict[str, Any]) -> str | None:
         """A hard block that no permission answer can override.
@@ -112,38 +115,43 @@ class PermissionManager:
         return any(term in text for term in consequence_terms)
 
     def allow_tool(self, tool_name: str, permanent: bool = False) -> None:
-        self.allowed.add(tool_name)
-        if permanent:
-            self.always_allow.add(tool_name)
+        with self._guard:
+            self.allowed.add(tool_name)
+            if permanent:
+                self.always_allow.add(tool_name)
 
     def set_mode(self, mode: str) -> None:
         if mode in MODES:
-            self.mode = mode
+            with self._guard:
+                self.mode = mode
 
     def reset(self) -> None:
-        self.allowed.clear()
-        self.mode = "ask"
+        with self._guard:
+            self.allowed.clear()
+            self.mode = "ask"
 
     def state(self) -> dict[str, Any]:
-        return {
-            "skip_all": self.skip_all,
-            "mode": self.mode,
-            "allowed": sorted(self.allowed | self.always_allow),
-            "always_allow": sorted(self.always_allow),
-            "safe_tools": sorted(SAFE_TOOLS),
-            "deny_commands": list(self.deny_commands),
-        }
+        with self._guard:
+            return {
+                "skip_all": self.skip_all,
+                "mode": self.mode,
+                "allowed": sorted(self.allowed | self.always_allow),
+                "always_allow": sorted(self.always_allow),
+                "safe_tools": sorted(SAFE_TOOLS),
+                "deny_commands": list(self.deny_commands),
+            }
 
     def summary_lines(self) -> list[str]:
-        return [
-            f"mode: {self.mode} — {MODE_LABELS.get(self.mode, '')}",
-            f"always-allowed this session: {', '.join(sorted(self.allowed)) or '—'}",
-            f"always-allowed permanently: {', '.join(sorted(self.always_allow)) or '—'}",
-            f"safe tools (never ask): {', '.join(sorted(SAFE_TOOLS))}",
-            f"denied commands: {', '.join(self.deny_commands) or '—'}",
-            "use '/permissions reset' to clear allowances, "
-            "'/permissions mode ask|accept_edits|bypass' to change the mode",
-        ]
+        with self._guard:
+            return [
+                f"mode: {self.mode} — {MODE_LABELS.get(self.mode, '')}",
+                f"always-allowed this session: {', '.join(sorted(self.allowed)) or '—'}",
+                f"always-allowed permanently: {', '.join(sorted(self.always_allow)) or '—'}",
+                f"safe tools (never ask): {', '.join(sorted(SAFE_TOOLS))}",
+                f"denied commands: {', '.join(self.deny_commands) or '—'}",
+                "use '/permissions reset' to clear allowances, "
+                "'/permissions mode ask|accept_edits|bypass' to change the mode",
+            ]
 
 
 #: Browser tools that carry content the user is about to send somewhere.

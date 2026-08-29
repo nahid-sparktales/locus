@@ -172,9 +172,6 @@ struct AppSettings: Codable, Hashable {
     /// rest of a person's settings in an older build.
     var accentPresetRaw = LocusAccentPreset.lime.rawValue
     var customAccentHex = LocusAccentSelection.defaultCustomHex
-    /// Settings use progressive disclosure like a studio application. Raw
-    /// storage keeps future levels from invalidating the remaining payload.
-    var settingsLevelRaw = SettingsLevel.standard.rawValue
     var provider: ModelProvider = .ollama
     /// Endpoint base URL. The API key is not stored here — see `CredentialStore`.
     ///
@@ -479,12 +476,7 @@ struct AppSettings: Codable, Hashable {
         )
     }
 
-    var resolvedSettingsLevel: SettingsLevel {
-        SettingsLevel(rawValue: settingsLevelRaw) ?? .standard
-    }
-
     mutating func applyImmediatePreferences(from draft: AppSettings) {
-        settingsLevelRaw = draft.settingsLevelRaw
         appearanceRaw = draft.appearanceRaw
         accentPresetRaw = draft.accentPresetRaw
         customAccentHex = draft.customAccentHex
@@ -680,8 +672,6 @@ struct AppSettings: Codable, Hashable {
             ?? defaults.accentPresetRaw
         customAccentHex = try container.decodeIfPresent(String.self, forKey: .customAccentHex)
             ?? defaults.customAccentHex
-        settingsLevelRaw = try container.decodeIfPresent(String.self, forKey: .settingsLevelRaw)
-            ?? defaults.settingsLevelRaw
         provider = try container.decodeIfPresent(ModelProvider.self, forKey: .provider)
             ?? defaults.provider
         remoteBaseURL = try container.decodeIfPresent(String.self, forKey: .remoteBaseURL)

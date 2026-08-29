@@ -55,6 +55,87 @@ enum AssistantSegment: Hashable {
             return true
         }
     }
+
+    /// The complete answer a response-level Copy action places on the
+    /// pasteboard. Copy from the source message rather than the individually
+    /// rendered Markdown views, whose selections stop at block boundaries.
+    /// Local-model thinking tags remain private just as native reasoning does.
+    static func copyableText(from text: String) -> String {
+        parse(text)
+            .compactMap { segment -> String? in
+                guard case .visible(let value) = segment else { return nil }
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            .joined(separator: "\n\n")
+    }
+}
+
+enum ResponseCopyFormat: String, CaseIterable, Identifiable {
+    case plainText
+    case markdown
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .plainText: "Plain Text"
+        case .markdown: "Markdown"
+        }
+    }
+}
+
+enum ResponseCopyPayload {
+    static func text(from source: String, format: ResponseCopyFormat) -> String {
+        let visibleMarkdown = AssistantSegment.copyableText(from: source)
+        switch format {
+        case .plainText:
+            return MarkdownPlainTextRenderer.render(visibleMarkdown)
+        case .markdown:
+            return visibleMarkdown
+        }
+    }
+}
+
+enum QuoteSelectionFormatter {
+    static func quote(_ selection: String) -> String {
+        let trimmed = selection.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        return trimmed
+            .components(separatedBy: "\n")
+            .map { line in line.isEmpty ? ">" : "> \(line)" }
+            .joined(separator: "\n")
+    }
+
+    static func appending(_ selection: String, to draft: String) -> String {
+        let quoted = quote(selection)
+        guard !quoted.isEmpty else { return draft }
+        let separator: String
+        if draft.isEmpty || draft.hasSuffix("\n\n") {
+            separator = ""
+        } else if draft.hasSuffix("\n") {
+            separator = "\n"
+        } else {
+            separator = "\n\n"
+        }
+        return draft + separator + quoted + "\n\n"
+    }
+}
+
+enum LongOutputPolicy {
+    static let codeCollapseThreshold = 24
+    static let codePreviewLineCount = 12
+    static let tableCollapseThreshold = 10
+    static let tablePreviewRowCount = 5
+
+    static func codeLines(_ code: String) -> [String] {
+        guard !code.isEmpty else { return [] }
+        var lines = code.components(separatedBy: "\n")
+        if code.hasSuffix("\n"), lines.last?.isEmpty == true {
+            lines.removeLast()
+        }
+        return lines
+    }
 }
 
 /// Heuristic for tool output that is a unified diff, so the Changes inspector
@@ -84,6 +165,9 @@ struct MessageContentView: View {
     var reasoningSections: [String]? = nil
     var workspacePath: String? = nil
     var thinkingVisibility: ThinkingVisibility = .collapsed
+    var onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)? = nil
+    @StateObject private var selectionCoordinator = ResponseSelectionCoordinator()
+    @State private var presentedStreamingText = ""
 
     var body: some View {
         let nativeReasoning = reasoningText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -106,6 +190,17 @@ struct MessageContentView: View {
                 finishedAnswer
             }
         }
+        .onAppear {
+            presentedStreamingText = text
+        }
+        .onChange(of: text) { _, next in
+            guard !selectionCoordinator.isSelectionActive else { return }
+            presentedStreamingText = next
+        }
+        .onChange(of: selectionCoordinator.selection) { _, _ in
+            guard !selectionCoordinator.isSelectionActive else { return }
+            presentedStreamingText = text
+        }
     }
 
     @ViewBuilder
@@ -122,14 +217,19 @@ struct MessageContentView: View {
                 .accessibilityIdentifier("message.thinking.hiddenIndicator")
             }
         } else {
-            StreamingMarkdownBodyView(text: text, workspacePath: workspacePath)
+            StreamingMarkdownBodyView(
+                text: selectionCoordinator.isSelectionActive ? presentedStreamingText : text,
+                workspacePath: workspacePath,
+                selectionCoordinator: selectionCoordinator,
+                onOpenWorkspaceReference: onOpenWorkspaceReference
+            )
         }
     }
 
     @ViewBuilder
     private var finishedAnswer: some View {
         let segments = AssistantSegment.rendered(from: text, mode: thinkingVisibility)
-        ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+        ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
             switch segment {
             case .thinking(let body, _):
                 ThinkingSegmentView(
@@ -139,9 +239,35 @@ struct MessageContentView: View {
                     forceExpanded: thinkingVisibility == .expanded
                 )
             case .visible(let body):
-                MarkdownBodyView(text: body, workspacePath: workspacePath)
+                SelectableVisibleAssistantSegment(
+                    text: body,
+                    workspacePath: workspacePath,
+                    selectionRootPath: [index],
+                    onOpenWorkspaceReference: onOpenWorkspaceReference
+                )
             }
         }
+    }
+}
+
+/// A reasoning boundary starts a new logical selection document. Keeping the
+/// coordinator here prevents a drag from silently jumping across hidden or
+/// collapsed private reasoning while full-response Copy remains source-backed.
+private struct SelectableVisibleAssistantSegment: View {
+    let text: String
+    let workspacePath: String?
+    let selectionRootPath: [Int]
+    let onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)?
+    @StateObject private var selectionCoordinator = ResponseSelectionCoordinator()
+
+    var body: some View {
+        MarkdownBodyView(
+            text: text,
+            workspacePath: workspacePath,
+            selectionCoordinator: selectionCoordinator,
+            selectionRootPath: selectionRootPath,
+            onOpenWorkspaceReference: onOpenWorkspaceReference
+        )
     }
 }
 
@@ -151,9 +277,12 @@ struct StreamingMessageContentView: View {
     @ObservedObject var reply: StreamingReplyState
     let thinkingVisibility: ThinkingVisibility
     var workspacePath: String? = nil
+    var onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)? = nil
+    @StateObject private var selectionCoordinator = ResponseSelectionCoordinator()
+    @State private var presentedSnapshot = StreamingReplySnapshot()
 
     var body: some View {
-        let snapshot = reply.snapshot
+        let snapshot = selectionCoordinator.isSelectionActive ? presentedSnapshot : reply.snapshot
         VStack(alignment: .leading, spacing: 14) {
             if !snapshot.reasoning.isEmpty, thinkingVisibility != .hidden {
                 StreamingThinkingSegmentView(
@@ -174,12 +303,28 @@ struct StreamingMessageContentView: View {
                     }
                 }
             } else {
-                StreamingMarkdownBodyView(text: snapshot.text, workspacePath: workspacePath)
+                StreamingMarkdownBodyView(
+                    text: snapshot.text,
+                    workspacePath: workspacePath,
+                    selectionCoordinator: selectionCoordinator,
+                    onOpenWorkspaceReference: onOpenWorkspaceReference
+                )
                 Capsule()
                     .fill(LocusTheme.signalDeep)
                     .frame(width: 9, height: 2)
                     .opacity(0.8)
             }
+        }
+        .onAppear {
+            presentedSnapshot = reply.snapshot
+        }
+        .onChange(of: reply.snapshot) { _, next in
+            guard !selectionCoordinator.isSelectionActive else { return }
+            presentedSnapshot = next
+        }
+        .onChange(of: selectionCoordinator.selection) { _, _ in
+            guard !selectionCoordinator.isSelectionActive else { return }
+            presentedSnapshot = reply.snapshot
         }
     }
 }
@@ -633,13 +778,90 @@ enum CodeSyntaxHighlighter {
     }
 }
 
+enum NativeCodeTextRenderer {
+    static func attributed(_ code: String, language: String?, isDiff: Bool) -> NSAttributedString {
+        if isDiff { return attributedDiff(code) }
+        let result = NSMutableAttributedString()
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 3
+        for token in CodeSyntaxHighlighter.tokens(for: code, language: language) {
+            let color: NSColor = switch token.kind {
+            case .plain: NSColor(LocusTheme.inkSoft)
+            case .keyword: NSColor(LocusTheme.signalDeep)
+            case .string: NSColor(LocusTheme.blue)
+            case .number: NSColor(LocusTheme.coral)
+            case .comment: NSColor(LocusTheme.muted)
+            }
+            result.append(NSAttributedString(
+                string: token.text,
+                attributes: [
+                    .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+                    .foregroundColor: color,
+                    .paragraphStyle: paragraph
+                ]
+            ))
+        }
+        return result
+    }
+
+    private static func attributedDiff(_ code: String) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        let lines = code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        for (index, line) in lines.enumerated() {
+            let value = line + (index < lines.count - 1 ? "\n" : "")
+            let foreground: NSColor
+            let background: NSColor
+            if line.hasPrefix("@@") {
+                foreground = NSColor(LocusTheme.blue)
+                background = NSColor(LocusTheme.blue).withAlphaComponent(0.07)
+            } else if line.hasPrefix("+"), !line.hasPrefix("+++") {
+                foreground = NSColor(LocusTheme.success)
+                background = NSColor(LocusTheme.success).withAlphaComponent(0.1)
+            } else if line.hasPrefix("-"), !line.hasPrefix("---") {
+                foreground = NSColor(LocusTheme.coral)
+                background = NSColor(LocusTheme.coral).withAlphaComponent(0.1)
+            } else {
+                foreground = NSColor(LocusTheme.inkSoft)
+                background = .clear
+            }
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.minimumLineHeight = 20
+            paragraph.maximumLineHeight = 20
+            result.append(NSAttributedString(
+                string: value,
+                attributes: [
+                    .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+                    .foregroundColor: foreground,
+                    .backgroundColor: background,
+                    .paragraphStyle: paragraph
+                ]
+            ))
+        }
+        return result
+    }
+}
+
 /// Fenced code rendered as a native macOS code card. Diff fences receive
 /// per-line add/remove treatment; all other languages retain exact whitespace
 /// and scroll horizontally without forcing the conversation itself sideways.
 struct CodeBlockView: View {
     let language: String?
     let code: String
+    var selectionCoordinator: ResponseSelectionCoordinator? = nil
+    var selectionSpan: TranscriptSelectionSpan? = nil
     @State private var copied = false
+    @State private var collapsed = false
+
+    private var lines: [String] { LongOutputPolicy.codeLines(code) }
+
+    private var isLong: Bool {
+        lines.count > LongOutputPolicy.codeCollapseThreshold
+    }
+
+    private var visibleCode: String {
+        guard collapsed, isLong else { return code }
+        return lines.prefix(LongOutputPolicy.codePreviewLineCount).joined(separator: "\n")
+    }
 
     private var displayLanguage: String {
         let value = language?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -659,7 +881,30 @@ struct CodeBlockView: View {
                 Text(displayLanguage)
                     .font(.locus(size: 9, weight: .semibold, design: .monospaced))
                     .foregroundStyle(LocusTheme.inkSoft)
+                if isLong {
+                    Text("\(lines.count) lines")
+                        .font(.locus(size: 9, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                }
                 Spacer()
+                if isLong {
+                    Button {
+                        collapsed.toggle()
+                    } label: {
+                        Image(systemName: collapsed ? "chevron.down" : "chevron.up")
+                            .font(.locus(size: 8, weight: .semibold))
+                            .foregroundStyle(LocusTheme.muted)
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.locus())
+                    .help(collapsed ? "Expand code block" : "Collapse code block")
+                    .accessibilityLabel(
+                        collapsed
+                            ? "Expand \(lines.count)-line code block"
+                            : "Collapse \(lines.count)-line code block"
+                    )
+                    .accessibilityIdentifier("message.codeBlock.collapse")
+                }
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(code, forType: .string)
@@ -693,11 +938,25 @@ struct CodeBlockView: View {
                 .frame(height: 1)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                if isDiff {
-                    CodeDiffLines(code: code)
+                if let selectionCoordinator, let selectionSpan {
+                    ResponseSelectableText(
+                        attributedText: NativeCodeTextRenderer.attributed(
+                            visibleCode.isEmpty ? " " : visibleCode,
+                            language: language,
+                            isDiff: isDiff
+                        ),
+                        span: selectionSpan.displaying(visibleCode),
+                        coordinator: selectionCoordinator,
+                        wraps: false
+                    )
+                    .fixedSize(horizontal: true, vertical: true)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, isDiff ? 8 : 11)
+                } else if isDiff {
+                    CodeDiffLines(code: visibleCode)
                 } else {
                     Text(CodeSyntaxHighlighter.highlighted(
-                        code.isEmpty ? " " : code,
+                        visibleCode.isEmpty ? " " : visibleCode,
                         language: language
                     ))
                         .lineSpacing(3)
@@ -708,6 +967,22 @@ struct CodeBlockView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+
+            if collapsed, isLong {
+                Rectangle()
+                    .fill(LocusTheme.line.opacity(0.8))
+                    .frame(height: 1)
+                Button("Show all \(lines.count) lines") {
+                    collapsed = false
+                }
+                .buttonStyle(.plain)
+                .font(.locus(size: 9, weight: .semibold))
+                .foregroundStyle(LocusTheme.signalDeep)
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+                .contentShape(Rectangle())
+                .accessibilityIdentifier("message.codeBlock.showAll")
+            }
         }
         .background(LocusTheme.white)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -716,7 +991,11 @@ struct CodeBlockView: View {
                 .stroke(LocusTheme.line, lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(displayLanguage) code block")
+        .accessibilityLabel(
+            isLong
+                ? "\(displayLanguage) code block, \(lines.count) lines"
+                : "\(displayLanguage) code block"
+        )
     }
 }
 

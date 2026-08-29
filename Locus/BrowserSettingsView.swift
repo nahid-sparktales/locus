@@ -3,7 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 private enum BrowserSettingsRoute: String, Hashable {
-    case passwords, contacts, cards, history, downloads, siteData, permissions, importing, advanced
+    case passwords, contacts, cards, history, downloads, siteData, permissions, importing
 
     var title: String {
         switch self {
@@ -15,7 +15,6 @@ private enum BrowserSettingsRoute: String, Hashable {
         case .siteData: "Cookies and Site Data"
         case .permissions: "Site Permissions"
         case .importing: "Import Browser Data"
-        case .advanced: "Browser Controls"
         }
     }
 }
@@ -25,13 +24,13 @@ struct BrowserSettingsView: View {
     @ObservedObject var browser: BrowserService
     @Binding var draft: AppSettings
     @Binding var deepLink: String?
-    let settingsLevel: SettingsLevel
+    @Binding var advancedExpanded: Bool
     @State private var navigationPath: [BrowserSettingsRoute] = []
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
             Form {
-                Section("Browser access") {
+                Section("Agent access") {
                     Toggle("Let the agent browse the web", isOn: $draft.browserEnabled)
                         .accessibilityIdentifier("settings.browser.enabled")
                     Picker("Browsing history for agents", selection: $draft.browserHistoryAccessRaw) {
@@ -44,7 +43,7 @@ struct BrowserSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Section("Privacy and activity") {
+                Section("Your browser data") {
                     managerLink(.passwords, symbol: "key.fill", summary: vaultSummary)
                         .id("settings.browser.passwords")
                     managerLink(.contacts, symbol: "person.text.rectangle", summary: vaultLockedSummary(browser.autofillVault.contacts.count, noun: "contact"))
@@ -84,8 +83,18 @@ struct BrowserSettingsView: View {
                 }
 
                 Section {
-                    managerLink(.advanced, symbol: "slider.horizontal.3", summary: "Input, emulation, search, and developer options")
-                        .id("settings.browser.webInspector")
+                    SettingsAdvancedDisclosureRow(
+                        isExpanded: $advancedExpanded,
+                        detail: "Input behavior, search, autofill security, and debugging"
+                    )
+                    .accessibilityIdentifier("settings.browser.advanced")
+                }
+                .id("settings.browser.webInspector")
+
+                if advancedExpanded {
+                    Section("Advanced browser controls") {
+                        browserAdvancedControls
+                    }
                 }
             }
             .formStyle(.grouped)
@@ -111,7 +120,9 @@ struct BrowserSettingsView: View {
         case "settings.browser.siteData": route = .siteData
         case "settings.browser.permissions": route = .permissions
         case "settings.browser.import": route = .importing
-        case "settings.browser.webInspector": route = .advanced
+        case "settings.browser.webInspector":
+            advancedExpanded = true
+            route = nil
         default: route = nil
         }
         if let route { navigationPath = [route] }
@@ -187,56 +198,45 @@ struct BrowserSettingsView: View {
             BrowserPermissionManager(browser: browser, draft: $draft)
         case .importing:
             BrowserImportManager(browser: browser)
-        case .advanced:
-            browserControls
         }
     }
 
-    private var browserControls: some View {
-        Form {
-            Section("Interaction") {
-                Picker("Agent input", selection: $draft.browserRealInput) {
-                    Text("Real input").tag(true)
-                    Text("Synthetic events only").tag(false)
-                }
-                Toggle("Emulate a mobile device at phone widths", isOn: $draft.browserEmulateDevice)
-                Picker("Presentation", selection: $draft.browserPresentationModeRaw) {
-                    ForEach(BrowserPresentationMode.allCases) { mode in
-                        Text(mode.title).tag(mode.rawValue)
-                    }
-                }
-                Text("The selected viewport stays exact while the canvas scales to fit, keeping page layout and agent coordinates stable.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    private var browserAdvancedControls: some View {
+        Group {
+            Picker("Agent input", selection: $draft.browserRealInput) {
+                Text("Real input").tag(true)
+                Text("Synthetic events only").tag(false)
             }
-            Section("Highlighted text") {
+            Toggle("Emulate a mobile device at phone widths", isOn: $draft.browserEmulateDevice)
+            Picker("Presentation", selection: $draft.browserPresentationModeRaw) {
+                ForEach(BrowserPresentationMode.allCases) { mode in
+                    Text(mode.title).tag(mode.rawValue)
+                }
+            }
+            Text("The selected viewport stays exact while the canvas scales to fit, keeping page layout and agent coordinates stable.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                ProviderLogo(name: "Google", size: 24)
                 Picker("Search in Google opens in", selection: $draft.webSearchDestinationRaw) {
                     ForEach(WebSearchDestination.allCases) { destination in
                         Text(destination.title).tag(destination.rawValue)
                     }
                 }
             }
-            Section("Autofill security") {
-                Picker("Authenticate", selection: $draft.browserAutofillAuthModeRaw) {
-                    ForEach(BrowserAutofillAuthMode.allCases) { mode in
-                        Text(mode.title).tag(mode.rawValue)
-                    }
-                }
-                Button("Lock Autofill Now") { browser.autofillVault.lock() }
-                    .disabled(!browser.autofillVault.isUnlocked)
-            }
-            if settingsLevel == .advanced {
-                Section("Developer") {
-                    Toggle("Allow the Web Inspector to attach", isOn: $draft.browserWebInspector)
-                        .accessibilityIdentifier("settings.browser.webInspector")
-                    Text("Web Inspector can read the current page's cookies and storage. Leave it off unless you are debugging.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            Picker("Authenticate autofill", selection: $draft.browserAutofillAuthModeRaw) {
+                ForEach(BrowserAutofillAuthMode.allCases) { mode in
+                    Text(mode.title).tag(mode.rawValue)
                 }
             }
+            Button("Lock Autofill Now") { browser.autofillVault.lock() }
+                .disabled(!browser.autofillVault.isUnlocked)
+            Toggle("Allow the Web Inspector to attach", isOn: $draft.browserWebInspector)
+                .accessibilityIdentifier("settings.browser.webInspector")
+            Text("Web Inspector can read the current page's cookies and storage. Leave it off unless you are debugging.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .formStyle(.grouped)
-        .accessibilityIdentifier("settings.browser.controls")
     }
 }
 

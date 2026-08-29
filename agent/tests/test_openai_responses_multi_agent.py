@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 
 import pytest
 
@@ -211,6 +213,132 @@ def test_safe_tool_call_continues_the_same_response_history(tmp_path):
         "type": "function_call_output", "call_id": "call-1",
         "output": "bounded evidence",
     }]
+
+
+def test_injected_tool_surface_uses_root_owned_executor_and_agent_identity(tmp_path):
+    requests = []
+    calls = []
+    first = [
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "function_call", "name": "web_fetch",
+                "arguments": '{"url":"https://example.com/weather"}',
+                "call_id": "call-weather",
+                "agent": {"agent_name": "/root/weather"},
+            },
+        },
+        {"type": "response.completed", "response": {"usage": {}}},
+    ]
+    root_text = '{"results":[]}'
+    second = [
+        {
+            "type": "response.output_item.added", "output_index": 0,
+            "item": {"type": "message", "agent": {"agent_name": "/root"}},
+        },
+        {"type": "response.output_text.delta", "output_index": 0, "delta": root_text},
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message", "agent": {"agent_name": "/root"},
+                "content": [{"type": "output_text", "text": root_text}],
+            },
+        },
+        {"type": "response.completed", "response": {"usage": {}}},
+    ]
+
+    def opener(request, **_kwargs):
+        requests.append(json.loads(request.data))
+        return _Response(first if len(requests) == 1 else second)
+
+    def execute(name, arguments, call_id, agent):
+        calls.append((name, json.loads(arguments), call_id, agent))
+        return "Toronto: 26 C"
+
+    tools = [{
+        "type": "function", "name": "web_fetch", "description": "Fetch a URL.",
+        "parameters": {
+            "type": "object",
+            "properties": {"url": {"type": "string"}},
+            "required": ["url"],
+        },
+    }]
+    client = OpenAIResponsesMultiAgentClient(
+        api_key="test", model="gpt-5.6", workspace=str(tmp_path), opener=opener,
+        tools=tools, tool_executor=execute,
+        developer_instructions="Use the inherited root permission boundary.",
+    )
+
+    client.run("weather", multi_agent=True)
+
+    assert requests[0]["tools"] == tools
+    assert calls == [(
+        "web_fetch", {"url": "https://example.com/weather"},
+        "call-weather", "/root/weather",
+    )]
+    output = next(
+        item for item in requests[1]["input"]
+        if item.get("type") == "function_call_output"
+    )
+    assert output["output"] == "Toronto: 26 C"
+
+
+def test_injected_hosted_tool_calls_can_run_concurrently(tmp_path):
+    requests = []
+    first = [
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "function_call", "name": "web_fetch", "arguments": "{}",
+                "call_id": f"call-{index}",
+                "agent": {"agent_name": f"/root/worker-{index}"},
+            },
+        }
+        for index in range(2)
+    ] + [{"type": "response.completed", "response": {"usage": {}}}]
+    root_text = '{"results":[]}'
+    second = [
+        {
+            "type": "response.output_item.added", "output_index": 0,
+            "item": {"type": "message", "agent": {"agent_name": "/root"}},
+        },
+        {"type": "response.output_text.delta", "output_index": 0, "delta": root_text},
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message", "agent": {"agent_name": "/root"},
+                "content": [{"type": "output_text", "text": root_text}],
+            },
+        },
+        {"type": "response.completed", "response": {"usage": {}}},
+    ]
+
+    def opener(request, **_kwargs):
+        requests.append(json.loads(request.data))
+        return _Response(first if len(requests) == 1 else second)
+
+    active = 0
+    peak = 0
+    guard = threading.Lock()
+
+    def execute(_name, _arguments, _call_id, _agent):
+        nonlocal active, peak
+        with guard:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.04)
+        with guard:
+            active -= 1
+        return "ok"
+
+    client = OpenAIResponsesMultiAgentClient(
+        api_key="test", model="gpt-5.6", workspace=str(tmp_path), opener=opener,
+        tools=[], tool_executor=execute,
+    )
+
+    client.run("parallel reads", multi_agent=True)
+
+    assert peak == 2
 
 
 def test_hosted_continuations_observe_calls_and_aggregate_usage(tmp_path):

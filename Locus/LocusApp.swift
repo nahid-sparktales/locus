@@ -340,9 +340,14 @@ final class LocusApplicationDelegate: NSObject, NSApplicationDelegate,
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
-        TranscriptSelectionMenu.shared.start { [weak self] selection in
-            self?.model?.searchWebForSelection(selection)
-        }
+        TranscriptSelectionMenu.shared.start(
+            onSearch: { [weak self] selection in
+                self?.model?.searchWebForSelection(selection)
+            },
+            onQuote: { [weak self] selection in
+                self?.model?.quoteSelectionInComposer(selection)
+            }
+        )
     }
 
     nonisolated func userNotificationCenter(

@@ -433,9 +433,199 @@ final class LocusUITests: XCTestCase {
     func testMessageActionsRemainAvailableToAccessibilityWithoutHover() {
         let assistant = anyElement("message.00000000-0000-0000-0000-000000000102")
         XCTAssertTrue(assistant.waitForExistence(timeout: 2))
-        XCTAssertTrue(anyElement("message.00000000-0000-0000-0000-000000000102.copy").exists)
+        let copy = anyElement("message.00000000-0000-0000-0000-000000000102.copy")
+        XCTAssertTrue(copy.exists)
+        XCTAssertTrue(copy.isHittable, "copying a response should not require hover or selection")
+        XCTAssertEqual(copy.label, "Copy response")
+        XCTAssertGreaterThan(copy.frame.width, 40, "the Copy label should be visible beside its icon")
         XCTAssertTrue(anyElement("message.00000000-0000-0000-0000-000000000102.useAsDraft").exists)
         XCTAssertTrue(anyElement("message.00000000-0000-0000-0000-000000000102.regenerate").exists)
+
+        copy.click()
+        XCTAssertTrue(waitUntil { copy.label == "Response copied" })
+        XCTAssertTrue(waitUntil {
+            NSPasteboard.general.string(forType: .string)
+                == "The workspace is ready for a focused review."
+        }, "the control should copy the complete response source")
+    }
+
+    func testResponseCopyMenuWritesPlainTextAndMarkdownFromTheFullSource() {
+        relaunchWithTextOutputFixture()
+
+        let responseID = "message.00000000-0000-0000-0000-000000000110"
+        let copy = anyElement("\(responseID).copy")
+        let formats = anyElement("\(responseID).copyFormats")
+        XCTAssertTrue(copy.waitForExistence(timeout: 3))
+        XCTAssertTrue(formats.waitForExistence(timeout: 3))
+
+        copy.click()
+        XCTAssertTrue(waitUntil {
+            guard let copied = NSPasteboard.general.string(forType: .string) else { return false }
+            return copied.hasPrefix("Copy formats")
+                && copied.contains("Read the complete guide (https://example.com/guide).")
+                && copied.contains("Name\tValue")
+                && copied.hasSuffix("Complete response suffix.")
+                && !copied.contains("private fixture reasoning")
+                && !copied.contains("**")
+                && !copied.contains("```")
+        })
+
+        formats.click()
+        let markdown = menuItem(
+            "\(responseID).copyFormat.markdown",
+            title: "Copy as Markdown"
+        )
+        XCTAssertTrue(markdown.waitForExistence(timeout: 3))
+        markdown.click()
+        XCTAssertTrue(waitUntil {
+            guard let copied = NSPasteboard.general.string(forType: .string) else { return false }
+            return copied.hasPrefix("# Copy formats")
+                && copied.contains("**the [complete guide](https://example.com/guide)**")
+                && copied.contains("```swift")
+                && copied.contains("| Row 11 | Value 11 |")
+                && copied.hasSuffix("Complete response suffix.")
+                && !copied.contains("private fixture reasoning")
+        })
+    }
+
+    func testLongCodeAndTableStartExpandedThenCollapseWithoutChangingFullCopy() {
+        relaunchWithTextOutputFixture()
+
+        let transcript = anyElement("conversation.scroll")
+        XCTAssertTrue(transcript.waitForExistence(timeout: 3))
+        let initialWidth = transcript.frame.width
+
+        let tableToggle = anyElement("message.table.collapse")
+        XCTAssertTrue(tableToggle.waitForExistence(timeout: 3))
+        XCTAssertEqual(tableToggle.label, "Collapse 11-row table")
+        // Activating an off-screen accessibility control asks AppKit to reveal
+        // it, matching keyboard and Voice Control behavior.
+        tableToggle.click()
+        XCTAssertTrue(waitUntil { tableToggle.label == "Expand 11-row table" })
+        let showTable = app.buttons["message.table.showAll"].firstMatch
+        XCTAssertTrue(showTable.waitForExistence(timeout: 2))
+        XCTAssertEqual(showTable.label, "Show all 11 rows")
+        showTable.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.12, dy: 0.5)
+        ).click()
+        XCTAssertTrue(app.staticTexts["Row 11"].waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntil {
+            self.anyElement("message.table.collapse").label == "Collapse 11-row table"
+        })
+
+        let codeToggle = anyElement("message.codeBlock.collapse")
+        XCTAssertTrue(codeToggle.waitForExistence(timeout: 3))
+        XCTAssertEqual(codeToggle.label, "Collapse 25-line code block")
+        codeToggle.click()
+        XCTAssertTrue(waitUntil { codeToggle.label == "Expand 25-line code block" })
+        let showCode = app.buttons["message.codeBlock.showAll"].firstMatch
+        XCTAssertTrue(showCode.waitForExistence(timeout: 2))
+        XCTAssertEqual(showCode.label, "Show all 25 lines")
+
+        let codeCopy = anyElement("message.codeBlock.copy")
+        XCTAssertTrue(codeCopy.isHittable)
+        codeCopy.click()
+        XCTAssertTrue(waitUntil {
+            let copied = NSPasteboard.general.string(forType: .string) ?? ""
+            return copied.hasPrefix("line 1\n") && copied.hasSuffix("line 25\n")
+        }, "collapsed code must still copy all 25 source lines")
+        XCTAssertEqual(transcript.frame.width, initialWidth, accuracy: 1)
+
+        showCode.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.12, dy: 0.5)
+        ).click()
+        XCTAssertTrue(waitUntil {
+            self.anyElement("message.codeBlock.collapse").label
+                == "Collapse 25-line code block"
+        })
+    }
+
+    func testSelectedTranscriptTextOffersExactCopyAndQuoteInReply() {
+        relaunchWithSelectionFixture()
+
+        let selectedText = "QuoteMeSelectionTarget"
+        let text = app.descendants(matching: .any).matching(NSPredicate(
+            format: "label == %@ OR value == %@",
+            selectedText,
+            selectedText
+        )).firstMatch
+        XCTAssertTrue(text.waitForExistence(timeout: 3))
+        let copy = anyElement("selection.copy")
+        text.doubleClick()
+        XCTAssertTrue(copy.waitForExistence(timeout: 3))
+        copy.click()
+        XCTAssertTrue(waitUntil {
+            NSPasteboard.general.string(forType: .string) == selectedText
+        })
+
+        text.doubleClick()
+        let quote = anyElement("selection.quote")
+        XCTAssertTrue(quote.waitForExistence(timeout: 3))
+        XCTAssertEqual(quote.label, "Quote in Reply")
+        quote.click()
+
+        let composer = app.textViews["composer.input"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 3))
+        XCTAssertEqual(
+            composer.value as? String,
+            "Existing draft\n\n> \(selectedText)\n\n"
+        )
+        app.typeText("Continue")
+        XCTAssertTrue(
+            (composer.value as? String)?.hasSuffix("> \(selectedText)\n\nContinue") == true,
+            "Quote in Reply should focus the composer"
+        )
+
+        text.doubleClick()
+        XCTAssertTrue(anyElement("selection.copy").waitForExistence(timeout: 3))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitUntil { !self.anyElement("selection.copy").exists })
+    }
+
+    func testDragSelectionCrossesParagraphsAndBulletsWithExactCopyAndQuote() {
+        relaunchWithSelectionFixture()
+
+        let firstLabel = "Drag start paragraph."
+        let lastLabel = "Drag end paragraph."
+        let first = app.descendants(matching: .any).matching(NSPredicate(
+            format: "label == %@ OR value == %@",
+            firstLabel,
+            firstLabel
+        )).firstMatch
+        let last = app.descendants(matching: .any).matching(NSPredicate(
+            format: "label == %@ OR value == %@",
+            lastLabel,
+            lastLabel
+        )).firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 3))
+        XCTAssertTrue(last.waitForExistence(timeout: 3))
+
+        first.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5)).press(
+            forDuration: 0.1,
+            thenDragTo: last.coordinate(withNormalizedOffset: CGVector(dx: 0.99, dy: 0.5))
+        )
+        XCTAssertTrue(anyElement("selection.copy").waitForExistence(timeout: 3))
+
+        let expected = """
+        Drag start paragraph.
+
+        • First bullet
+        • Second bullet
+
+        Drag end paragraph.
+        """
+        app.typeKey("c", modifierFlags: .command)
+        XCTAssertTrue(waitUntil {
+            NSPasteboard.general.string(forType: .string) == expected
+        }, "Command-C should copy the exact structural response selection")
+
+        let quote = anyElement("selection.quote")
+        XCTAssertTrue(quote.exists)
+        quote.click()
+        XCTAssertEqual(
+            app.textViews["composer.input"].value as? String,
+            "Existing draft\n\n> Drag start paragraph.\n>\n> • First bullet\n> • Second bullet\n>\n> Drag end paragraph.\n\n"
+        )
     }
 
     func testTranscriptUsesTrailingUserBubbleAndOpenAssistantReadingFlow() {
@@ -622,6 +812,16 @@ final class LocusUITests: XCTestCase {
         }
 
         openSettings()
+        XCTAssertFalse(anyElement("settings.level").exists)
+        let footerClose = app.buttons["settings.cancel"]
+        let headerClose = anyElement("settings.close")
+        XCTAssertTrue(footerClose.waitForExistence(timeout: 3))
+        XCTAssertTrue(headerClose.exists)
+        XCTAssertLessThanOrEqual(
+            abs(footerClose.frame.maxX - headerClose.frame.maxX),
+            12,
+            "The footer Close action should align with the trailing settings edge"
+        )
         app.buttons["settings.cancel"].click()
         assertClosedAndReopenable()
 
@@ -751,6 +951,11 @@ final class LocusUITests: XCTestCase {
         createQuickTeam.click()
 
         XCTAssertTrue(anyElement("quickTeam.builder").waitForExistence(timeout: 3))
+        let firstLocalModel = anyElement("quickTeam.model.ollama|qwen3:8b")
+        XCTAssertTrue(
+            firstLocalModel.label.localizedCaseInsensitiveContains("Ollama"),
+            "Local model choices should expose the provider identity alongside its mark"
+        )
         let create = app.descendants(matching: .any).matching(NSPredicate(
             format: "identifier == %@ OR label == %@",
             "quickTeam.create",
@@ -759,7 +964,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(create.waitForExistence(timeout: 3))
         XCTAssertFalse(create.isEnabled)
 
-        let modelCard = anyElement("quickTeam.model.ollama|qwen3:8b")
+        let modelCard = firstLocalModel
         XCTAssertTrue(waitUntilHittable(modelCard))
         modelCard.click() // Dispatcher; the builder advances to Lead editor.
         XCTAssertEqual(anyElement("quickTeam.lane.lead").value as? String, "Active lane")
@@ -842,9 +1047,10 @@ final class LocusUITests: XCTestCase {
         anyElement("workspace.modelPicker").click()
         app.buttons["Manage Accounts…"].click()
 
-        XCTAssertFalse(
+        XCTAssertTrue(anyElement("provider.logo.ollama").waitForExistence(timeout: 3))
+        XCTAssertTrue(
             anyElement("settings.page.developer").exists,
-            "Standard settings should hide runtime diagnostics"
+            "Every settings destination should remain discoverable"
         )
         anyElement("settings.page.browser").click()
         XCTAssertFalse(anyElement("settings.browser.webInspector").exists)
@@ -856,19 +1062,16 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("settings.soloPlanPresentation").exists)
         XCTAssertTrue(anyElement("settings.teamRunsPresentation").exists)
 
-        let advancedLevel = anyElement("settings.level.advanced")
-        XCTAssertTrue(waitUntilHittable(advancedLevel))
-        advancedLevel.click()
         let developerPage = anyElement("settings.page.developer")
         XCTAssertTrue(developerPage.waitForExistence(timeout: 3))
         let browserPage = anyElement("settings.page.browser")
         browserPage.click()
         anyElement("settings.browser.root").scroll(byDeltaX: 0, deltaY: -620)
-        let browserControls = anyElement("settings.browser.manager.advanced")
+        let browserControls = anyElement("settings.browser.advanced")
         XCTAssertTrue(browserControls.waitForExistence(timeout: 3))
         XCTAssertTrue(waitUntilHittable(browserControls))
         browserControls.click()
-        anyElement("settings.browser.controls").scroll(byDeltaX: 0, deltaY: -420)
+        anyElement("settings.browser.root").scroll(byDeltaX: 0, deltaY: -420)
         XCTAssertTrue(anyElement("settings.browser.webInspector").waitForExistence(timeout: 3))
         anyElement("settings.navigation").scroll(byDeltaX: 0, deltaY: -900)
         XCTAssertTrue(waitUntilHittable(developerPage))
@@ -2300,6 +2503,20 @@ final class LocusUITests: XCTestCase {
         app.launchEnvironment["LOCUS_UI_TESTING_CODEX_TRANSCRIPT_FIXTURE"] = "1"
         app.launchEnvironment["LOCUS_UI_TESTING_THINKING_MODE"] = mode
         app.launchEnvironment["LOCUS_UI_TESTING_TOOL_ACTIVITY_MODE"] = "collapsed"
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+    }
+
+    private func relaunchWithTextOutputFixture() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_TEXT_OUTPUT"] = "1"
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+    }
+
+    private func relaunchWithSelectionFixture() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_SELECTION"] = "1"
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }

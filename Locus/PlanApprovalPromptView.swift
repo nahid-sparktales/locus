@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// A deliberately small inline view of temporary Solo workers. It appears only
-/// after the root delegates and has no team controls, approvals, or writer UI.
+/// after the root delegates and has no team controls or writer UI. Any inherited
+/// tool approval still appears in the normal composer permission panel.
 struct SoloSwarmPanelView: View {
     @EnvironmentObject private var model: AppModel
     let runID: String

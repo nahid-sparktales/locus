@@ -435,6 +435,30 @@ enum TranscriptPresentation {
         return items
     }
 
+    /// The first visible assistant block owns the Locus marker for its whole
+    /// request. Providers can emit commentary and a final answer as separate
+    /// blocks, but they are still one response in the transcript.
+    static func assistantMarkerBlockIDs(
+        in items: [TranscriptPresentationItem]
+    ) -> Set<UUID> {
+        var result: Set<UUID> = []
+        var responseAlreadyHasMarker = false
+
+        for item in items {
+            guard case .block(let block) = item else { continue }
+            if block.kind == .user || block.completion != nil {
+                responseAlreadyHasMarker = false
+                continue
+            }
+            guard block.kind == .assistant else { continue }
+            if !responseAlreadyHasMarker {
+                result.insert(block.id)
+                responseAlreadyHasMarker = true
+            }
+        }
+        return result
+    }
+
     private struct AssistantProjection {
         let thinkingEntries: [ThinkingPresentationEntry]
         let visibleBlock: ChatBlock?

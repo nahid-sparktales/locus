@@ -1402,6 +1402,7 @@ struct SettingsView: View {
     @State private var deletingLocalModelName: String?
     @State private var settingsSearch = ""
     @State private var pendingSearchAnchor: String?
+    @State private var expandedAdvancedPages: Set<SettingsPage> = []
     @State private var hasLoadedDraft = false
     @State private var discardPromptPresented = false
     @State private var lifecycleRegistrationID = UUID()
@@ -1451,10 +1452,6 @@ struct SettingsView: View {
             proxyPassword = ""
             proxyPasswordStored = model.persistenceEnabled
                 && CredentialStore.has(account: CredentialStore.proxyCredentialKey)
-            if model.settingsPage.minimumLevel == .advanced,
-               model.settings.resolvedSettingsLevel == .standard {
-                model.settingsPage = .general
-            }
             hasLoadedDraft = true
             model.registerSettingsUpdatePreparation(id: lifecycleRegistrationID) {
                 prepareSettingsForUpdate()
@@ -1476,6 +1473,7 @@ struct SettingsView: View {
         }
         .interactiveDismissDisabled(hasAnyStagedChanges)
         .onDisappear {
+            expandedAdvancedPages.removeAll()
             model.unregisterSettingsUpdatePreparation(id: lifecycleRegistrationID)
             model.clearAppearancePreview()
             if presentationContext == .settingsWindow {
@@ -1546,7 +1544,18 @@ struct SettingsView: View {
 
     // MARK: - Studio settings shell
 
-    private var settingsLevel: SettingsLevel { draft.resolvedSettingsLevel }
+    private func advancedBinding(for page: SettingsPage) -> Binding<Bool> {
+        Binding(
+            get: { expandedAdvancedPages.contains(page) },
+            set: { expanded in
+                if expanded {
+                    expandedAdvancedPages.insert(page)
+                } else {
+                    expandedAdvancedPages.remove(page)
+                }
+            }
+        )
+    }
 
     private var settingsSidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1607,48 +1616,14 @@ struct SettingsView: View {
             }
             .accessibilityIdentifier("settings.navigation")
 
-            VStack(alignment: .leading, spacing: 7) {
-                Text("SETTINGS LEVEL")
-                    .font(.system(.caption2, design: .default, weight: .semibold))
-                    .tracking(0.8)
-                    .foregroundStyle(LocusTheme.textTertiary)
-                Picker("Settings level", selection: $draft.settingsLevelRaw) {
-                    ForEach(SettingsLevel.allCases) { level in
-                        Text(level.title)
-                            .tag(level.rawValue)
-                            .accessibilityIdentifier("settings.level.\(level.rawValue)")
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .accessibilityIdentifier("settings.level")
-                Text(settingsLevel == .standard
-                    ? "Common controls. Search still finds advanced settings."
-                    : "All runtime and diagnostic controls are visible.")
-                    .font(.system(.caption, design: .default))
-                    .foregroundStyle(LocusTheme.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(14)
-            .overlay(alignment: .top) {
-                Rectangle().fill(LocusTheme.separator).frame(height: 1)
-            }
         }
         .frame(width: 208)
         .frame(maxHeight: .infinity)
         .locusSurface(.structural)
-        .onChange(of: draft.settingsLevelRaw) {
-            if settingsLevel == .standard, model.settingsPage.minimumLevel == .advanced {
-                model.settingsPage = .general
-            }
-        }
     }
 
     private func visiblePages(in group: SettingsNavigationGroup) -> [SettingsPage] {
-        SettingsPage.allCases.filter { page in
-            page.navigationGroup == group
-                && (settingsLevel == .advanced || page.minimumLevel == .standard)
-        }
+        SettingsPage.allCases.filter { $0.navigationGroup == group }
     }
 
     private func settingsNavigationButton(_ page: SettingsPage) -> some View {
@@ -1740,10 +1715,10 @@ struct SettingsView: View {
                     )
                 case .accounts: accountsPage
                 case .agents:
-                    AgentTeamsSettingsView()
+                    AgentTeamsSettingsView(advancedExpanded: advancedBinding(for: .agents))
                         .environmentObject(model)
                 case .knowledge:
-                    WorkspaceKnowledgeSettingsView()
+                    WorkspaceKnowledgeSettingsView(advancedExpanded: advancedBinding(for: .knowledge))
                         .environmentObject(model)
                 case .permissions: permissionsPage
                 case .extensions:
@@ -1791,7 +1766,7 @@ struct SettingsView: View {
                                     HStack(spacing: 7) {
                                         Text(result.title)
                                             .font(.system(.body, design: .default, weight: .semibold))
-                                        if result.minimumLevel == .advanced {
+                                        if result.isAdvanced {
                                             Text("ADVANCED")
                                                 .font(.system(.caption2, design: .default, weight: .bold))
                                                 .foregroundStyle(LocusTheme.textTertiary)
@@ -1830,8 +1805,8 @@ struct SettingsView: View {
     }
 
     private func openSearchResult(_ result: SettingsSearchDescriptor) {
-        if result.minimumLevel == .advanced {
-            draft.settingsLevelRaw = SettingsLevel.advanced.rawValue
+        if result.isAdvanced {
+            expandedAdvancedPages.insert(result.page)
         }
         model.settingsPage = result.page
         pendingSearchAnchor = result.anchor
@@ -1840,9 +1815,6 @@ struct SettingsView: View {
 
     private var settingsActionBar: some View {
         HStack(spacing: 10) {
-            Button("Close") { requestSettingsDismissal() }
-                .accessibilityIdentifier("settings.cancel")
-            Spacer()
             if let error = model.settingsPage == .network ? proxyDraftError : nil {
                 Text(error)
                     .font(.system(.caption, design: .default))
@@ -1853,6 +1825,7 @@ struct SettingsView: View {
                     .font(.system(.caption, design: .default, weight: .medium))
                     .foregroundStyle(LocusTheme.textTertiary)
             }
+            Spacer()
             if isStagedPage(model.settingsPage) {
                 Button("Discard") { discardStagedChanges(for: model.settingsPage) }
                     .disabled(!currentPageHasStagedChanges)
@@ -1863,6 +1836,8 @@ struct SettingsView: View {
                     .disabled(!currentPageHasStagedChanges || stagedPageHasError)
                     .accessibilityIdentifier("settings.save")
             }
+            Button("Close") { requestSettingsDismissal() }
+                .accessibilityIdentifier("settings.cancel")
         }
         .padding(.horizontal, 20)
         .frame(height: 52)
@@ -1874,7 +1849,7 @@ struct SettingsView: View {
 
     private var immediateDraftSignature: String {
         [
-            draft.settingsLevelRaw, draft.appearanceRaw,
+            draft.appearanceRaw,
             draft.accentPresetRaw, draft.customAccentHex,
             draft.showTeamProgressInHeader.description,
             draft.showContextUsageInHeader.description,
@@ -1915,7 +1890,7 @@ struct SettingsView: View {
     private func isStagedPage(_ page: SettingsPage) -> Bool {
         guard page.mutationPolicy == .staged else { return false }
         if page == .accounts {
-            return settingsLevel == .advanced || hasStagedChanges(for: page)
+            return expandedAdvancedPages.contains(.accounts) || hasStagedChanges(for: page)
         }
         return true
     }
@@ -2384,11 +2359,8 @@ struct SettingsView: View {
         ].filter { !$0.isEmpty }.joined(separator: " · ")
 
         return HStack(spacing: 10) {
-            Image(systemName: hidden ? "eye.slash" : "shippingbox.fill")
-                .font(.locus(size: 11, weight: .medium))
-                .foregroundStyle(hidden ? LocusTheme.muted : LocusTheme.signalDeep)
-                .frame(width: 18)
-                .accessibilityHidden(true)
+            ProviderLogo(name: "Ollama", size: 24)
+                .opacity(hidden ? 0.48 : 1)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
@@ -2456,7 +2428,7 @@ struct SettingsView: View {
             browser: model.browser,
             draft: $draft,
             deepLink: $pendingSearchAnchor,
-            settingsLevel: settingsLevel
+            advancedExpanded: advancedBinding(for: .browser)
         )
         .environmentObject(model)
     }
@@ -2831,13 +2803,23 @@ struct SettingsView: View {
 
                 ForEach(model.providerAccounts) { account in
                     HStack(spacing: 10) {
-                        Circle()
-                            .fill(
-                                model.accountStatus[account.id]?.isHealthy ?? account.hasKey
-                                    ? LocusTheme.success
-                                    : LocusTheme.coral
-                            )
-                            .frame(width: 7, height: 7)
+                        ProviderLogo(
+                            kind: account.kind,
+                            name: account.displayName,
+                            url: account.resolvedBaseURL,
+                            size: 28
+                        )
+                        .overlay(alignment: .bottomTrailing) {
+                            Circle()
+                                .fill(
+                                    model.accountStatus[account.id]?.isHealthy ?? account.hasKey
+                                        ? LocusTheme.success
+                                        : LocusTheme.coral
+                                )
+                                .frame(width: 8, height: 8)
+                                .overlay(Circle().stroke(LocusTheme.surfaceCard, lineWidth: 1.5))
+                                .accessibilityHidden(true)
+                        }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(account.displayName)
                                 .font(.locus(size: 11, weight: .semibold))
@@ -2857,8 +2839,14 @@ struct SettingsView: View {
 
                 Menu("Add Account…") {
                     ForEach(ProviderKind.allCases) { kind in
-                        Button(kind.title) {
+                        Button {
                             addingAccount = ProviderAccount(kind: kind)
+                        } label: {
+                            Label {
+                                Text(kind.title)
+                            } icon: {
+                                ProviderLogo(kind: kind, size: 18)
+                            }
                         }
                     }
                 }
@@ -2871,12 +2859,12 @@ struct SettingsView: View {
             }
 
             Section("Local model") {
-                Label(
-                    "Local Ollama needs no account — models installed on this Mac appear in the picker automatically.",
-                    systemImage: "bolt.fill"
-                )
-                .font(.locus(size: 10))
-                .foregroundStyle(LocusTheme.muted)
+                HStack(spacing: 10) {
+                    ProviderLogo(name: "Ollama", size: 26)
+                    Text("Ollama models installed on this Mac appear automatically. No account is needed.")
+                        .font(.locus(size: 10))
+                        .foregroundStyle(LocusTheme.muted)
+                }
 
                 if model.installedLocalModels.isEmpty {
                     Text(model.isModelOnline
@@ -2891,9 +2879,15 @@ struct SettingsView: View {
                 }
 
                 HStack {
-                    Button("Browse Hugging Face Models…") {
+                    Button {
                         model.openModelLibraryFromSettings()
                         dismiss()
+                    } label: {
+                        Label {
+                            Text("Browse Hugging Face Models…")
+                        } icon: {
+                            ProviderLogo(name: "Hugging Face", size: 20)
+                        }
                     }
                     .accessibilityIdentifier("settings.accounts.browseHuggingFace")
 
@@ -2904,7 +2898,18 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings.localModels.refresh")
                 }
 
-                if settingsLevel == .advanced {
+            }
+
+            Section {
+                SettingsAdvancedDisclosureRow(
+                    isExpanded: advancedBinding(for: .accounts),
+                    detail: "Local model context and runtime tuning"
+                )
+                .accessibilityIdentifier("settings.accounts.advanced")
+            }
+
+            if expandedAdvancedPages.contains(.accounts) {
+                Section("Advanced local model settings") {
                     TextField("Local context window in tokens (optional)", text: $localWindow)
                         .accessibilityIdentifier("settings.localContextWindow")
 
@@ -2914,8 +2919,8 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("settings.localContextDescription")
                 }
+                .id("settings.localContextWindow")
             }
-            .id("settings.localContextWindow")
         }
         .formStyle(.grouped)
     }
