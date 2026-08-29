@@ -52,7 +52,9 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - run: brew install xcodegen
+      # ripgrep is what the design-system audit greps with. Without it that
+      # step found nothing, reported success, and checked nothing at all.
+      - run: brew install xcodegen ripgrep
       - run: xcodegen generate
       - name: Generated project is current
         run: git diff --exit-code -- Locus.xcodeproj/project.pbxproj
