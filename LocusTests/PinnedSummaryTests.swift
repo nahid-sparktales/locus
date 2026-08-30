@@ -650,7 +650,7 @@ final class PinnedSummaryTests: XCTestCase {
     @MainActor
     func testStopAllBackgroundServicesDropsRunningRowsOptimistically() {
         let model = AppModel(startImmediately: false)
-        model.applyBackgroundServicesForTesting([
+        model.backgroundServicesModel.applyBackgroundServicesForTesting([
             BackgroundServiceRecord(
                 name: "vite", command: "npm run dev", cwd: "/tmp", port: 5173, pid: 1, running: true,
                 exitCode: nil, startedAt: "", uptimeSeconds: 1, tail: nil
@@ -660,7 +660,7 @@ final class PinnedSummaryTests: XCTestCase {
                 exitCode: 0, startedAt: "", uptimeSeconds: 0, tail: nil
             ),
         ])
-        model.stopAllBackgroundServices()
-        XCTAssertEqual(model.backgroundServices.map(\.name), ["old"])
+        model.backgroundServicesModel.stopAllBackgroundServices()
+        XCTAssertEqual(model.backgroundServicesModel.backgroundServices.map(\.name), ["old"])
     }
 }

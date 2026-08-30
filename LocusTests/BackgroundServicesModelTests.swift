@@ -97,7 +97,7 @@ final class BackgroundServicesModelTests: XCTestCase {
         let republished = expectation(description: "AppModel.objectWillChange fired")
         republished.assertForOverFulfill = false
         let cancellable = app.objectWillChange.sink { _ in republished.fulfill() }
-        app.applyBackgroundServicesForTesting([])
+        app.backgroundServicesModel.applyBackgroundServicesForTesting([])
         await fulfillment(of: [republished], timeout: 1.0)
         cancellable.cancel()
     }

@@ -41,11 +41,11 @@ struct PinnedSummaryCard: View {
     private var outputs: [PinnedSummary.OutputRow] { PinnedSummary.outputs(state: state) }
     private var sources: [PinnedSummary.SourceRow] { PinnedSummary.sources(state: state) }
     private var processes: [BackgroundServiceRecord] {
-        PinnedSummary.backgroundProcesses(model.backgroundServices)
+        PinnedSummary.backgroundProcesses(model.backgroundServicesModel.backgroundServices)
     }
     private var subagents: [PinnedSummary.SubagentRow] {
         PinnedSummary.subagents(
-            activities: model.agentActivities,
+            activities: model.teamRunLive.agentActivities,
             runs: model.visibleActivityRuns,
             sessionID: model.currentSessionID
         )
@@ -219,7 +219,7 @@ struct PinnedSummaryCard: View {
                 label: "Stop all background processes",
                 identifier: "plan.processes.stopAll"
             ) {
-                model.stopAllBackgroundServices()
+                model.backgroundServicesModel.stopAllBackgroundServices()
             }
         } content: {
             VStack(spacing: 2) {
@@ -241,7 +241,7 @@ struct PinnedSummaryCard: View {
                         if let port = service.port, let url = URL(string: "http://localhost:\(port)") {
                             Button("Open in Browser Tab") { model.openURLInBrowserTab(url) }
                         }
-                        Button("Stop") { model.stopBackgroundService(service) }
+                        Button("Stop") { model.backgroundServicesModel.stopBackgroundService(service) }
                     }
                 }
             }

@@ -358,7 +358,6 @@
 		E9C0EF3C309C45C946A1D4E5 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5118157AFFA0FF82EDCA5BED /* AppModel.swift */; };
 		E9F4EF0EA873C28080008298 /* GitWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6D865DBE30EBEB947619172 /* GitWorkflowTests.swift */; };
 		E9FEE16772490F3AB7B3051F /* AppModel+Commands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 032390CC6CE531E43C5D2DEE /* AppModel+Commands.swift */; };
-		EB7CEA80C9C031B86CB9BF79 /* AppModel+BackgroundServicesFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31CA8AF6A8A436E308E9A062 /* AppModel+BackgroundServicesFacade.swift */; };
 		EC06B39AD364D426B2D17A75 /* AgentModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF8CB595C9539FB091A47A05 /* AgentModels.swift */; };
 		ED01D2FB6F84F4B82660CD05 /* CommandAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADFF6B3CE2F946B371F8A9EA /* CommandAction.swift */; };
 		EEDEBE8D5EE1E16D0FCC1BAC /* AppModel+TranscriptSearchFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = 080933D1123F1040434DC5C3 /* AppModel+TranscriptSearchFacade.swift */; };
@@ -380,7 +379,6 @@
 		F71E9354E1DDD892AAB84463 /* AppModel+MobileCompanion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B7FCF48D140BDC503F90A41 /* AppModel+MobileCompanion.swift */; };
 		F931472E8E4FA66CB54043F5 /* ScheduleModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD24095E0EA6433F8AF94214 /* ScheduleModels.swift */; };
 		F9405ED899AAD041CF6BAD66 /* BackendService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3793FC69B1D813ED07567A2E /* BackendService.swift */; };
-		F9E1AD45EEF98CB055933669 /* AppModel+BackgroundServicesFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31CA8AF6A8A436E308E9A062 /* AppModel+BackgroundServicesFacade.swift */; };
 		FA376F12956F2CAE3B426C17 /* NotesDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 154F2AD569E232B4B8A4909C /* NotesDocument.swift */; };
 		FB4E051B7DF5AA5AC0AE9EBF /* QuestionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BBAE276C6EEC0680C848F97 /* QuestionModels.swift */; };
 		FB861DE1EB0815DC7FF9BF53 /* ChatAttachmentLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB6C801D489BBF80BE16EBD6 /* ChatAttachmentLoader.swift */; };
@@ -491,7 +489,6 @@
 		2E32D0129D54375A8701B85D /* BrowserInputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserInputTests.swift; sourceTree = "<group>"; };
 		2EC88909073BDCF25DC61A04 /* NotebookModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotebookModelTests.swift; sourceTree = "<group>"; };
 		319231FBA55F2DE9A5EB9377 /* HostedScreenshotConsent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedScreenshotConsent.swift; sourceTree = "<group>"; };
-		31CA8AF6A8A436E308E9A062 /* AppModel+BackgroundServicesFacade.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+BackgroundServicesFacade.swift"; sourceTree = "<group>"; };
 		374021875E8ACFCCC20B5D90 /* MarkdownTextKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTextKit.swift; sourceTree = "<group>"; };
 		3793FC69B1D813ED07567A2E /* BackendService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendService.swift; sourceTree = "<group>"; };
 		38EED4FF1CBA575694CE08AA /* LocusTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocusTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -806,7 +803,6 @@
 				E16033E84DC973F0FD1BFA21 /* AppModel+ActivityCenterFacade.swift */,
 				7D7261686C41E5A17833AC6E /* AppModel+AgentTeamsFacade.swift */,
 				5BAFC6DFED15705B38AC0CE2 /* AppModel+BackendEvents.swift */,
-				31CA8AF6A8A436E308E9A062 /* AppModel+BackgroundServicesFacade.swift */,
 				3FEC18063F2B5DD71D342F67 /* AppModel+ChatOrganization.swift */,
 				002312B5082A52E6C32866FD /* AppModel+ChatWorkers.swift */,
 				032390CC6CE531E43C5D2DEE /* AppModel+Commands.swift */,
@@ -1438,7 +1434,6 @@
 				721E997882A22C989DED3C01 /* AppModel+ActivityCenterFacade.swift in Sources */,
 				7E0B38C59FEFB081EAB457E5 /* AppModel+AgentTeamsFacade.swift in Sources */,
 				7E6EB4217147C77970023671 /* AppModel+BackendEvents.swift in Sources */,
-				EB7CEA80C9C031B86CB9BF79 /* AppModel+BackgroundServicesFacade.swift in Sources */,
 				0C3346F80243AD15437CE992 /* AppModel+ChatOrganization.swift in Sources */,
 				8B467BC00FAF712C9BE2146D /* AppModel+ChatWorkers.swift in Sources */,
 				E9FEE16772490F3AB7B3051F /* AppModel+Commands.swift in Sources */,
@@ -1605,7 +1600,6 @@
 				1CBE8880E4FCED38F33D0E88 /* AppModel+ActivityCenterFacade.swift in Sources */,
 				BBA8BFD52B305C0947380763 /* AppModel+AgentTeamsFacade.swift in Sources */,
 				998395FD905117F6B142F681 /* AppModel+BackendEvents.swift in Sources */,
-				F9E1AD45EEF98CB055933669 /* AppModel+BackgroundServicesFacade.swift in Sources */,
 				0160AB5D0CEB9185E7B6F66A /* AppModel+ChatOrganization.swift in Sources */,
 				C64F13FE36D3F0501983E2B5 /* AppModel+ChatWorkers.swift in Sources */,
 				62E22E62ABAE01435BC47054 /* AppModel+Commands.swift in Sources */,

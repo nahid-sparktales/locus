@@ -599,7 +599,7 @@ extension AppModel {
             }
 
         case "background_services_changed":
-            refreshBackgroundServices(recordingOutputs: (event["action"] as? String) == "start")
+            backgroundServicesModel.refreshBackgroundServices(recordingOutputs: (event["action"] as? String) == "start")
 
         case "turn_done":
             flushPendingTokens()

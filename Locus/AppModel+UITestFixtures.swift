@@ -629,7 +629,7 @@ extension AppModel {
             sessionOverview.emit(.sourceUsed(kind: .tool, label: "context7", target: nil, at: now - 125_000))
             sessionOverview.emit(.sourceUsed(kind: .webSearch, label: "Web search", target: nil, at: now - 120_000))
             sessionOverview.emit(.sourceUsed(kind: .webSearch, label: "Web search", target: nil, at: now - 110_000))
-            applyBackgroundServicesForTesting([
+            backgroundServicesModel.applyBackgroundServicesForTesting([
                 BackgroundServiceRecord(
                     name: "vite",
                     command: "npm run dev",
