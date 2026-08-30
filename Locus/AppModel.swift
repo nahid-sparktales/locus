@@ -64,18 +64,14 @@ final class AppModel: ObservableObject {
     @Published var orchestrationState: TeamRunState?  // internal(for: AppModel+UITestFixtures)
     @Published private(set) var activeWorkerID: String?
     @Published var taskConversationStates: [String: TaskConversationState] = [:]  // internal(for: AppModel+UITestFixtures)
-    @Published var dispatcherActivity: AgentActivity?  // internal(for: AppModel+UITestFixtures)
-    @Published var dispatcherValidationReason: String?  // internal(for: AppModel+UITestFixtures)
-    @Published private(set) var agentActivities: [AgentActivity] = []
-    @Published private(set) var teamModelCalls = 0
-    @Published private(set) var teamMeteredTokens = 0
+    let teamRunLive = TeamRunLiveModel()
+    private var teamRunLiveBridge: AnyCancellable?
     @Published var activeTaskRecord: TaskRecord?  // internal(for: AppModel+UITestFixtures)
     @Published var taskHasChanges = false  // internal(for: AppModel+UITestFixtures)
     @Published var taskPatchBytes = 0  // internal(for: AppModel+UITestFixtures)
     let runs = OrchestrationRunsModel()
     private var runsBridge: AnyCancellable?
     @Published var runsNavigationRequest: RunsNavigationRequest?  // internal(for: AppModel+UITestFixtures)
-    @Published var pendingDispatchPlan: DispatchPlan?  // internal(for: AppModel+UITestFixtures)
     let evaluations = EvaluationsModel()
     private var evaluationsBridge: AnyCancellable?
     let knowledge = WorkspaceKnowledgeModel()
@@ -929,6 +925,19 @@ final class AppModel: ObservableObject {
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
         runsBridge = runs.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        teamRunLive.configure(
+            isBusyProvider: { [weak self] in self?.isBusy ?? false },
+            liveRunID: { [weak self] in self?.orchestrationRunID },
+            liveState: { [weak self] in self?.orchestrationState },
+            selectedRunTeamID: { [weak self] in self?.selectedOrchestrationRun?.teamID },
+            teamLookup: { [weak self] id in
+                self?.agentTeams.first(where: { $0.id == id })
+            },
+            selectedTeamProvider: { [weak self] in self?.selectedAgentTeam }
+        )
+        teamRunLiveBridge = teamRunLive.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         simulatorControl.capabilityDidChange = { [weak self] in
@@ -3713,24 +3722,6 @@ final class AppModel: ObservableObject {
 
     // MARK: - Agents and teams
 
-    var shouldShowTeamDispatchProgress: Bool {
-        isBusy && orchestrationRunID != nil && orchestrationState == .dispatching
-            && pendingDispatchPlan == nil
-    }
-
-    var shouldShowTeamDispatchApproval: Bool {
-        orchestrationState == .waitingDispatchApproval && pendingDispatchPlan != nil
-    }
-
-    var activeOrchestrationTeam: AgentTeam? {
-        if let id = selectedOrchestrationRun?.teamID.flatMap(UUID.init(uuidString:)),
-           let team = agentTeams.first(where: { $0.id == id })
-        {
-            return team
-        }
-        return selectedAgentTeam
-    }
-
     func testAgentProfileConnection(_ profile: AgentProfile) async -> String {
         switch profile.route {
         case .localOllama:
@@ -5576,7 +5567,7 @@ final class AppModel: ObservableObject {
                 sendSimulatorControlCapability()
                 dispatcherActivity = nil
                 dispatcherValidationReason = nil
-                agentActivities = response.agentActivities
+                teamRunLive.restoreActivities(response.agentActivities)
                 orchestrationState = response.orchestrationState
                 orchestrationRunID = response.orchestrationRunID
                 activeWorkerID = response.workerID
@@ -5637,7 +5628,7 @@ final class AppModel: ObservableObject {
         orchestrationState = nil
         dispatcherActivity = nil
         dispatcherValidationReason = nil
-        agentActivities = []
+        teamRunLive.restoreActivities([])
         activeTaskRecord = nil
         taskHasChanges = false
         taskPatchBytes = 0
@@ -5679,7 +5670,7 @@ final class AppModel: ObservableObject {
                     streamingAssistantID = streamingID
                 }
                 refreshAnchoredRunsIfNeeded()
-                agentActivities = detail.agentActivities ?? []
+                teamRunLive.restoreActivities(detail.agentActivities ?? [])
                 orchestrationState = detail.orchestrationState
                     ?? taskConversationStates[runtime.sessionID]?.state
                     ?? detail.task?.state
@@ -10211,9 +10202,7 @@ final class AppModel: ObservableObject {
             orchestrationRunID = event["run_id"] as? String
             orchestrationState = .running
             activeWorkerID = event["worker_id"] as? String ?? activeWorkerID
-            agentActivities = []
-            teamModelCalls = 0
-            teamMeteredTokens = 0
+            teamRunLive.apply(type, event)
             if let runID = orchestrationRunID {
                 selectedOrchestrationRun = nil
                 orchestrationEvents = []
@@ -10228,12 +10217,7 @@ final class AppModel: ObservableObject {
             orchestrationRunID = event["run_id"] as? String
             orchestrationState = .dispatching
             activeWorkerID = event["worker_id"] as? String ?? activeWorkerID
-            dispatcherActivity = nil
-            dispatcherValidationReason = nil
-            agentActivities = []
-            teamModelCalls = 0
-            teamMeteredTokens = 0
-            pendingDispatchPlan = nil
+            teamRunLive.apply(type, event)
             if let runID = orchestrationRunID {
                 selectedOrchestrationRun = nil
                 orchestrationEvents = []
@@ -10245,52 +10229,8 @@ final class AppModel: ObservableObject {
             updateTaskConversation(state: .dispatching, event: event)
             if persistenceEnabled { Task { await refreshMetadata() } }
 
-        case "dispatcher_started":
-            dispatcherValidationReason = nil
-            let runID = event["run_id"] as? String ?? orchestrationRunID ?? "current"
-            dispatcherActivity = AgentActivity(
-                id: "dispatcher-\(runID)",
-                agentName: event["agent_name"] as? String ?? "Dispatcher",
-                role: AgentRole.dispatcher.rawValue,
-                provider: event["provider"] as? String ?? "",
-                model: event["model"] as? String ?? "",
-                goal: event["goal"] as? String ?? "Creating the team plan",
-                state: .running,
-                output: "",
-                reasoningText: nil,
-                tool: nil,
-                evidence: [],
-                startedAt: Date(),
-                elapsedMilliseconds: 0,
-                promptTokens: 0,
-                completionTokens: 0
-            )
-
-        case "dispatcher_completed":
-            let state = (event["state"] as? String) == TeamRunState.failed.rawValue
-                ? TeamRunState.failed : .completed
-            if var activity = dispatcherActivity {
-                activity.state = state
-                activity.output = event["message"] as? String ?? "Dispatch plan ready"
-                activity.elapsedMilliseconds = event["elapsed_ms"] as? Int ?? 0
-                activity.promptTokens = event["prompt_tokens"] as? Int ?? 0
-                activity.completionTokens = event["completion_tokens"] as? Int ?? 0
-                dispatcherActivity = activity
-            }
-            if let usage = event["usage"] as? [String: Any] {
-                teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
-                teamMeteredTokens = usage["metered_tokens"] as? Int ?? teamMeteredTokens
-            }
-
-        case "dispatcher_plan_rejected":
-            dispatcherValidationReason = event["reason"] as? String
-            if var activity = dispatcherActivity {
-                activity.state = .running
-                activity.output = event["message"] as? String
-                    ?? event["reason"] as? String
-                    ?? "Correcting dispatcher plan…"
-                dispatcherActivity = activity
-            }
+        case "dispatcher_started", "dispatcher_completed", "dispatcher_plan_rejected":
+            teamRunLive.apply(type, event)
 
         case "orchestration_state":
             if let state = (event["state"] as? String).flatMap(TeamRunState.init(rawValue:)) {
@@ -10300,9 +10240,7 @@ final class AppModel: ObservableObject {
 
         case "dispatch_plan_ready":
             orchestrationState = .waitingDispatchApproval
-            if let raw = event["plan"] as? [String: Any] {
-                pendingDispatchPlan = decode(DispatchPlan.self, from: raw)
-            }
+            teamRunLive.apply(type, event)
             updateTaskConversation(state: .waitingDispatchApproval, event: event)
 
         case "orchestration_recovery_available":
@@ -10329,193 +10267,20 @@ final class AppModel: ObservableObject {
              "evaluation_case_completed", "evaluation_completed":
             evaluations.ingest(type, event)
 
-        case "agent_spawned":
-            let nodeID = event["node_id"] as? String ?? UUID().uuidString
-            guard !agentActivities.contains(where: { ($0.nodeID ?? $0.id) == nodeID }) else {
-                break
-            }
-            agentActivities.append(AgentActivity(
-                id: event["job_id"] as? String ?? nodeID,
-                agentName: event["agent_name"] as? String ?? "Hosted agent",
-                role: event["role"] as? String ?? "researcher",
-                provider: event["provider"] as? String ?? "",
-                model: event["model"] as? String ?? "",
-                goal: event["goal"] as? String ?? "Gathering evidence",
-                state: .running,
-                output: "Branch started",
-                reasoningText: nil,
-                tool: nil,
-                evidence: [],
-                startedAt: Date(),
-                elapsedMilliseconds: 0,
-                promptTokens: 0,
-                completionTokens: 0,
-                writerJobID: nil,
-                writerPosition: nil,
-                writerTotal: nil,
-                nodeID: nodeID,
-                parentNodeID: event["parent_node_id"] as? String,
-                depth: event["depth"] as? Int ?? 0,
-                executionEngine: event["execution_engine"] as? String
-                    ?? "locus_managed"
-            ))
-
-        case "agent_job_started":
-            let jobID = event["job_id"] as? String ?? UUID().uuidString
-            if let index = agentActivities.firstIndex(where: { $0.id == jobID }) {
-                agentActivities[index].state = .running
-                agentActivities[index].startedAt = Date()
-                agentActivities[index].writerJobID = event["writer_job_id"] as? String
-                agentActivities[index].writerPosition = event["writer_position"] as? Int
-                agentActivities[index].writerTotal = event["writer_total"] as? Int
-                agentActivities[index].nodeID = event["node_id"] as? String ?? jobID
-                agentActivities[index].parentNodeID = event["parent_node_id"] as? String
-                agentActivities[index].depth = event["depth"] as? Int ?? 0
-                agentActivities[index].executionEngine = event["execution_engine"] as? String
-                    ?? "locus_managed"
-            } else {
-                agentActivities.append(AgentActivity(
-                    id: jobID,
-                    agentName: event["agent_name"] as? String ?? "Agent",
-                    role: event["role"] as? String ?? "generalist",
-                    provider: event["provider"] as? String ?? "",
-                    model: event["model"] as? String ?? "",
-                    goal: event["goal"] as? String ?? "",
-                    state: .running,
-                    output: "",
-                    reasoningText: nil,
-                    tool: nil,
-                    evidence: [],
-                    startedAt: Date(),
-                    elapsedMilliseconds: 0,
-                    promptTokens: 0,
-                    completionTokens: 0,
-                    writerJobID: event["writer_job_id"] as? String,
-                    writerPosition: event["writer_position"] as? Int,
-                    writerTotal: event["writer_total"] as? Int,
-                    nodeID: event["node_id"] as? String ?? jobID,
-                    parentNodeID: event["parent_node_id"] as? String,
-                    depth: event["depth"] as? Int ?? 0,
-                    executionEngine: event["execution_engine"] as? String
-                        ?? "locus_managed"
-                ))
-            }
-
-        case "agent_job_continuing":
-            let jobID = event["job_id"] as? String ?? ""
-            if let index = agentActivities.firstIndex(where: { $0.id == jobID }) {
-                agentActivities[index].state = .running
-                agentActivities[index].output = event["message"] as? String
-                    ?? "Continuing coding job…"
-            }
-            if let usage = event["usage"] as? [String: Any] {
-                teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
-                teamMeteredTokens = usage["metered_tokens"] as? Int ?? teamMeteredTokens
-            }
-
-        case "agent_branch_stopped":
-            let nodeID = event["node_id"] as? String ?? ""
-            if let index = agentActivities.firstIndex(where: {
-                ($0.nodeID ?? $0.id) == nodeID
-            }) {
-                agentActivities[index].state = .interrupted
-                agentActivities[index].output = event["message"] as? String
-                    ?? event["reason"] as? String
-                    ?? "This read-only branch stopped."
-            }
-            if let usage = event["usage"] as? [String: Any] {
-                teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
-                teamMeteredTokens = usage["metered_tokens"] as? Int ?? teamMeteredTokens
-            }
+        case "agent_spawned", "agent_job_started", "agent_job_continuing",
+             "agent_branch_stopped", "agent_job_completed", "swarm_telemetry":
+            teamRunLive.apply(type, event)
 
         case "agent_job_incomplete":
-            let jobID = event["job_id"] as? String ?? ""
-            if let index = agentActivities.firstIndex(where: { $0.id == jobID }) {
-                agentActivities[index].state = .paused
-                agentActivities[index].output = event["message"] as? String
-                    ?? "This coding job stopped before it finished."
-                if let result = event["result"] as? [String: Any] {
-                    agentActivities[index].elapsedMilliseconds = result["elapsed_ms"] as? Int ?? 0
-                    agentActivities[index].promptTokens = result["prompt_tokens"] as? Int ?? 0
-                    agentActivities[index].completionTokens = result["completion_tokens"] as? Int ?? 0
-                }
-            }
+            teamRunLive.apply(type, event)
             orchestrationState = .paused
-            if let usage = event["usage"] as? [String: Any] {
-                teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
-                teamMeteredTokens = usage["metered_tokens"] as? Int ?? teamMeteredTokens
-            }
-
-        case "agent_job_completed":
-            guard let result = event["result"] as? [String: Any] else { return }
-            let jobID = result["job_id"] as? String ?? ""
-            let rawState = event["state"] as? String
-            let state = rawState.flatMap(TeamRunState.init(rawValue:))
-                ?? (rawState == "stopped" ? .interrupted : .completed)
-            let index = agentActivities.firstIndex(where: { $0.id == jobID })
-            let activity = AgentActivity(
-                id: jobID.isEmpty ? UUID().uuidString : jobID,
-                agentName: result["agent_name"] as? String ?? "Agent",
-                role: result["role"] as? String ?? "generalist",
-                provider: index.map { agentActivities[$0].provider } ?? "",
-                model: index.map { agentActivities[$0].model } ?? "",
-                goal: index.map { agentActivities[$0].goal } ?? "",
-                state: state,
-                output: result["output"] as? String ?? result["error"] as? String ?? "",
-                reasoningText: result["reasoning_text"] as? String,
-                tool: nil,
-                evidence: result["evidence"] as? [String] ?? [],
-                startedAt: index.flatMap { agentActivities[$0].startedAt },
-                elapsedMilliseconds: result["elapsed_ms"] as? Int ?? 0,
-                promptTokens: result["prompt_tokens"] as? Int ?? 0,
-                completionTokens: result["completion_tokens"] as? Int ?? 0,
-                writerJobID: event["writer_job_id"] as? String
-                    ?? index.flatMap { agentActivities[$0].writerJobID },
-                writerPosition: event["writer_position"] as? Int
-                    ?? index.flatMap { agentActivities[$0].writerPosition },
-                writerTotal: event["writer_total"] as? Int
-                    ?? index.flatMap { agentActivities[$0].writerTotal },
-                nodeID: result["node_id"] as? String
-                    ?? event["node_id"] as? String
-                    ?? index.flatMap { agentActivities[$0].nodeID }
-                    ?? jobID,
-                parentNodeID: result["parent_node_id"] as? String
-                    ?? event["parent_node_id"] as? String
-                    ?? index.flatMap { agentActivities[$0].parentNodeID },
-                depth: result["depth"] as? Int
-                    ?? event["depth"] as? Int
-                    ?? index.map { agentActivities[$0].depth }
-                    ?? 0,
-                executionEngine: result["execution_engine"] as? String
-                    ?? event["execution_engine"] as? String
-                    ?? index.map { agentActivities[$0].executionEngine }
-                    ?? "locus_managed"
-            )
-            if let index { agentActivities[index] = activity } else { agentActivities.append(activity) }
-            if let usage = event["usage"] as? [String: Any] {
-                teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
-                teamMeteredTokens = usage["delegated_tokens"] as? Int
-                    ?? ((usage["prompt_tokens"] as? Int ?? 0)
-                        + (usage["completion_tokens"] as? Int ?? 0))
-            }
-
-        case "swarm_telemetry":
-            if let usage = event["usage"] as? [String: Any] {
-                teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
-                teamMeteredTokens = usage["delegated_tokens"] as? Int
-                    ?? ((usage["prompt_tokens"] as? Int ?? 0)
-                        + (usage["completion_tokens"] as? Int ?? 0))
-            }
 
         case "orchestration_completed":
             let completedState = (event["state"] as? String)
                 .flatMap(TeamRunState.init(rawValue:)) ?? .completed
             if orchestrationState != completedState { orchestrationState = completedState }
             updateTaskConversation(state: completedState, event: event)
-            if let usage = event["usage"] as? [String: Any] {
-                teamModelCalls = usage["model_calls"] as? Int ?? teamModelCalls
-                teamMeteredTokens = usage["metered_tokens"] as? Int ?? teamMeteredTokens
-            }
+            teamRunLive.apply(type, event)
             if let runID = event["run_id"] as? String {
                 // Reconnects can replay this durable terminal event. Only the
                 // first copy should start the final metadata + incremental
@@ -11006,9 +10771,8 @@ final class AppModel: ObservableObject {
             activeWorkerID = nil
             dispatcherActivity = nil
             dispatcherValidationReason = nil
-            agentActivities = []
-            teamModelCalls = 0
-            teamMeteredTokens = 0
+            teamRunLive.restoreActivities([])
+            teamRunLive.resetMetering()
             taskHasChanges = false
             taskPatchBytes = 0
             synchronizeSessionPlan([])
