@@ -48,7 +48,7 @@ extension AppModel {
                 await self?.refreshOrchestrationRuns(select: runID)
             }
         }
-        if tab == .agents { refreshAgentInstructions() }
+        if tab == .agents { agentInstructions.refreshAgentInstructions() }
         settings.inspectorLastTab = tab.rawValue
         if tab.isWorkspaceTab {
             settings.inspectorLastWorkspaceTab = tab.rawValue

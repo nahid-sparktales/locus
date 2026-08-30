@@ -430,9 +430,9 @@ extension AppModel {
             "docs/terminal.md",
         ].map { URL(fileURLWithPath: workspace).appending(path: $0) }
         workspaceFiles.seed(seededWorkspaceFiles, workspacePath: workspace)
-        agentInstructionsExists = true
-        savedAgentInstructions = "# Workspace instructions\n\n- Keep changes focused.\n"
-        agentInstructionsDraft = savedAgentInstructions
+        agentInstructions.agentInstructionsExists = true
+        agentInstructions.savedAgentInstructions = "# Workspace instructions\n\n- Keep changes focused.\n"
+        agentInstructions.agentInstructionsDraft = agentInstructions.savedAgentInstructions
         workspaceProfiles = [
             WorkspaceProfile(
                 path: workspace,
