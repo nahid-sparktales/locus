@@ -1694,7 +1694,7 @@ struct AgentProfileEditor: View {
                 .font(.locus(size: 8, weight: .bold))
                 .tracking(0.8)
                 .foregroundStyle(LocusTheme.muted)
-            ForEach(model.extensions.mcpServers) { server in
+            ForEach(model.extensionsModel.extensions.mcpServers) { server in
                 Toggle(server.name, isOn: Binding(
                     get: { draft.mcpPolicy?.serverIDs.contains(server.id) == true },
                     set: { enabled in

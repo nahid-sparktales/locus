@@ -646,7 +646,7 @@ extension AppModel {
             syncPreferredPermissionMode(to: conversationBackend)
             pendingRetry = false
             steeringState = nil
-            mcpInputRequest = nil
+            extensionsModel.mcpInputRequest = nil
             streamingAssistantID = nil
             streamedCharsThisTurn = 0
             streamingReply.resetTurn()

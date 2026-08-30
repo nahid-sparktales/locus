@@ -249,7 +249,7 @@ struct ComposerView: View {
             return matches.isEmpty ? nil : .mention(matches)
         }
         if let query = activeSkillQuery {
-            let matches = model.extensions.skills.filter {
+            let matches = model.extensionsModel.extensions.skills.filter {
                 $0.enabled && $0.error == nil
                     && (query.isEmpty || $0.id.localizedCaseInsensitiveContains(query))
             }

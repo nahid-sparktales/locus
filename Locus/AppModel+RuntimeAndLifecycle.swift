@@ -538,7 +538,7 @@ extension AppModel {
             // Preserve the last-known list during reconnects.
         }
 
-        await refreshExtensions()
+        await extensionsModel.refreshExtensions()
         gitWorkspace.refreshBranch()
     }
 }

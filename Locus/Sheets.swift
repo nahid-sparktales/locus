@@ -237,12 +237,12 @@ private struct ExtensionsSettingsView: View {
             .labelsHidden()
             .padding(14)
 
-            if let error = model.extensionErrorMessage, !error.isEmpty {
+            if let error = model.extensionsModel.extensionErrorMessage, !error.isEmpty {
                 HStack(spacing: 7) {
                     Image(systemName: "exclamationmark.triangle.fill")
                     Text(error).lineLimit(2)
                     Spacer()
-                    Button("Dismiss") { model.extensionErrorMessage = nil }
+                    Button("Dismiss") { model.extensionsModel.extensionErrorMessage = nil }
                         .buttonStyle(.locus())
                 }
                 .font(.locus(size: 9))
@@ -262,13 +262,13 @@ private struct ExtensionsSettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .task {
-            await model.refreshExtensions()
-            await model.refreshExtensionCatalog()
+            await model.extensionsModel.refreshExtensions()
+            await model.extensionsModel.refreshExtensionCatalog()
         }
         .sheet(item: $review) { item in
             PluginTrustReviewView(item: item) { scope in
                 review = nil
-                Task { await model.installPlugin(item.entry, trust: item.trust, scope: scope) }
+                Task { await model.extensionsModel.installPlugin(item.entry, trust: item.trust, scope: scope) }
             }
         }
         .sheet(isPresented: $editorPresented) {
@@ -293,10 +293,13 @@ private struct ExtensionsSettingsView: View {
         .sheet(item: $enableAfterProbe) { server in
             MCPEnableReviewView(server: server) { scope in
                 enableAfterProbe = nil
-                Task { await model.setMCPServer(server.id, enabled: true, scope: scope) }
+                Task { await model.extensionsModel.setMCPServer(server.id, enabled: true, scope: scope) }
             }
         }
-        .sheet(item: $model.mcpDeviceAuthorization) { prompt in
+        .sheet(item: Binding(
+            get: { model.extensionsModel.mcpDeviceAuthorization },
+            set: { model.extensionsModel.mcpDeviceAuthorization = $0 }
+        )) { prompt in
             MCPDeviceAuthorizationView(prompt: prompt)
                 .environmentObject(model)
         }
@@ -305,7 +308,7 @@ private struct ExtensionsSettingsView: View {
     private var installedPane: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
-                if model.extensions.plugins.isEmpty {
+                if model.extensionsModel.extensions.plugins.isEmpty {
                     ContentUnavailableView(
                         "No plugins installed",
                         systemImage: "puzzlepiece.extension",
@@ -313,7 +316,7 @@ private struct ExtensionsSettingsView: View {
                     )
                     .frame(maxWidth: .infinity, minHeight: 330)
                 }
-                ForEach(model.extensions.plugins) { plugin in
+                ForEach(model.extensionsModel.extensions.plugins) { plugin in
                     VStack(alignment: .leading, spacing: 9) {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
@@ -333,7 +336,7 @@ private struct ExtensionsSettingsView: View {
                             }
                             Spacer()
                             Button(plugin.enabledGlobal ? "Disable everywhere" : "Enable everywhere") {
-                                Task { await model.setPlugin(plugin.id, enabled: !plugin.enabledGlobal, scope: "global") }
+                                Task { await model.extensionsModel.setPlugin(plugin.id, enabled: !plugin.enabledGlobal, scope: "global") }
                             }
                             .disabled(model.isBusy)
                         }
@@ -357,17 +360,17 @@ private struct ExtensionsSettingsView: View {
                             let workspaceEnabled = !plugin.disabledWorkspaces.contains(model.workspacePath)
                                 && (plugin.enabledGlobal || plugin.enabledWorkspaces.contains(model.workspacePath))
                             Button(workspaceEnabled ? "Disable for this workspace" : "Enable for this workspace") {
-                                Task { await model.setPlugin(plugin.id, enabled: !workspaceEnabled, scope: "workspace") }
+                                Task { await model.extensionsModel.setPlugin(plugin.id, enabled: !workspaceEnabled, scope: "workspace") }
                             }
                             .disabled(model.isBusy)
                             if !(plugin.previousVersions ?? []).isEmpty {
-                                Button("Roll back") { Task { await model.rollbackPlugin(plugin.id) } }
+                                Button("Roll back") { Task { await model.extensionsModel.rollbackPlugin(plugin.id) } }
                                     .disabled(model.isBusy)
                             }
                             if plugin.updateAvailable == true {
                                 Button("Review update") {
                                     Task {
-                                        if let (entry, trust) = await model.inspectUpdate(for: plugin) {
+                                        if let (entry, trust) = await model.extensionsModel.inspectUpdate(for: plugin) {
                                             review = PluginInstallReview(entry: entry, trust: trust)
                                         }
                                     }
@@ -376,7 +379,7 @@ private struct ExtensionsSettingsView: View {
                             }
                             Spacer()
                             Button("Uninstall", role: .destructive) {
-                                Task { await model.uninstallPlugin(plugin.id) }
+                                Task { await model.extensionsModel.uninstallPlugin(plugin.id) }
                             }
                             .disabled(model.isBusy)
                         }
@@ -395,7 +398,7 @@ private struct ExtensionsSettingsView: View {
             HStack {
                 Picker("Source", selection: $marketplaceID) {
                     Text("All sources").tag("")
-                    ForEach(model.extensions.marketplaces) { source in
+                    ForEach(model.extensionsModel.extensions.marketplaces) { source in
                         Text(source.name).tag(source.id)
                     }
                 }
@@ -403,10 +406,10 @@ private struct ExtensionsSettingsView: View {
                 TextField("Search plugins", text: $search)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit {
-                        Task { await model.refreshExtensionCatalog(query: search, marketplaceID: marketplaceID) }
+                        Task { await model.extensionsModel.refreshExtensionCatalog(query: search, marketplaceID: marketplaceID) }
                     }
                 Button("Search") {
-                    Task { await model.refreshExtensionCatalog(query: search, marketplaceID: marketplaceID) }
+                    Task { await model.extensionsModel.refreshExtensionCatalog(query: search, marketplaceID: marketplaceID) }
                 }
             }
             HStack {
@@ -418,7 +421,7 @@ private struct ExtensionsSettingsView: View {
                 Button("Add source") {
                     let source = marketplaceSource
                     marketplaceSource = ""
-                    Task { await model.addMarketplace(source: source, name: marketplaceName) }
+                    Task { await model.extensionsModel.addMarketplace(source: source, name: marketplaceName) }
                 }
                 .disabled(marketplaceSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -454,7 +457,7 @@ private struct ExtensionsSettingsView: View {
                                 Button("Find") {
                                     search = recommendation.name
                                     Task {
-                                        await model.refreshExtensionCatalog(
+                                        await model.extensionsModel.refreshExtensionCatalog(
                                             query: recommendation.name,
                                             marketplaceID: marketplaceID
                                         )
@@ -467,7 +470,7 @@ private struct ExtensionsSettingsView: View {
                     }
                     .padding(.bottom, 6)
 
-                    ForEach(model.extensionCatalog) { entry in
+                    ForEach(model.extensionsModel.extensionCatalog) { entry in
                         HStack(alignment: .top, spacing: 10) {
                             Image(systemName: "shippingbox")
                                 .frame(width: 22, height: 22)
@@ -486,7 +489,7 @@ private struct ExtensionsSettingsView: View {
                             Spacer()
                             Button(entry.installed ? "Review update" : "Review & install") {
                                 Task {
-                                    if let trust = await model.inspectPlugin(entry) {
+                                    if let trust = await model.extensionsModel.inspectPlugin(entry) {
                                         review = PluginInstallReview(entry: entry, trust: trust)
                                     }
                                 }
@@ -496,7 +499,7 @@ private struct ExtensionsSettingsView: View {
                         .padding(11)
                         .locusCard(radius: 9)
                     }
-                    if model.extensionCatalog.isEmpty {
+                    if model.extensionsModel.extensionCatalog.isEmpty {
                         ContentUnavailableView(
                             "No plugins found",
                             systemImage: "magnifyingglass",
@@ -510,7 +513,7 @@ private struct ExtensionsSettingsView: View {
         }
         .padding(.horizontal, 14)
         .onChange(of: marketplaceID) {
-            Task { await model.refreshExtensionCatalog(query: search, marketplaceID: marketplaceID) }
+            Task { await model.extensionsModel.refreshExtensionCatalog(query: search, marketplaceID: marketplaceID) }
         }
     }
 
@@ -520,7 +523,7 @@ private struct ExtensionsSettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("External tools from MCP servers")
                         .font(.locus(size: 11, weight: .semibold))
-                    if !model.extensions.capabilities.stdio {
+                    if !model.extensionsModel.extensions.capabilities.stdio {
                         Text("This App Store build supports remote MCP servers and skills. Local command-based servers are unavailable.")
                             .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.muted)
@@ -535,7 +538,7 @@ private struct ExtensionsSettingsView: View {
             }
             ScrollView {
                 LazyVStack(spacing: 9) {
-                    if !model.extensions.mcpPresets.isEmpty {
+                    if !model.extensionsModel.extensions.mcpPresets.isEmpty {
                         HStack {
                             Text("Recommended")
                                 .font(.locus(size: 11, weight: .semibold))
@@ -544,7 +547,7 @@ private struct ExtensionsSettingsView: View {
                                 .font(.locus(size: 8))
                                 .foregroundStyle(LocusTheme.muted)
                         }
-                        ForEach(model.extensions.mcpPresets) { preset in
+                        ForEach(model.extensionsModel.extensions.mcpPresets) { preset in
                             HStack(alignment: .top, spacing: 10) {
                                 MCPLogo(
                                     name: preset.displayName,
@@ -585,7 +588,7 @@ private struct ExtensionsSettingsView: View {
                             Spacer()
                         }
                     }
-                    ForEach(model.extensions.mcpServers) { server in
+                    ForEach(model.extensionsModel.extensions.mcpServers) { server in
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 10) {
                                 MCPLogo(
@@ -611,9 +614,9 @@ private struct ExtensionsSettingsView: View {
                                         .foregroundStyle(LocusTheme.muted)
                                 }
                                 Spacer()
-                                Button("Test") { Task { await model.testMCPServer(server.id) } }
+                                Button("Test") { Task { await model.extensionsModel.testMCPServer(server.id) } }
                                     .disabled(model.isBusy)
-                                Button("Reconnect") { Task { await model.reconnectMCPServer(server.id) } }
+                                Button("Reconnect") { Task { await model.extensionsModel.reconnectMCPServer(server.id) } }
                                     .disabled(model.isBusy)
                                 if server.origin == "user" {
                                     Button("Edit") {
@@ -626,7 +629,7 @@ private struct ExtensionsSettingsView: View {
                                 Text(error).font(.locus(size: 8)).foregroundStyle(LocusTheme.coral)
                             }
                             if server.presetID == "github",
-                               model.githubConnectionCapability(for: server) == .tokenFallbackOnly {
+                               model.extensionsModel.githubConnectionCapability(for: server) == .tokenFallbackOnly {
                                 Label(
                                     "This build has no GitHub App client ID. Account sign-in is disabled; use a personal token instead.",
                                     systemImage: "exclamationmark.triangle.fill"
@@ -641,11 +644,11 @@ private struct ExtensionsSettingsView: View {
                                 }
                                 if server.auth == "oauth" || server.auth == "auto" {
                                     Button(server.hasCredentials == true ? "Reconnect account" : "Connect account") {
-                                        model.authenticateMCPServer(server)
+                                        model.extensionsModel.authenticateMCPServer(server)
                                     }
                                     .disabled(
                                         server.presetID == "github"
-                                            && model.githubConnectionCapability(for: server) == .tokenFallbackOnly
+                                            && model.extensionsModel.githubConnectionCapability(for: server) == .tokenFallbackOnly
                                     )
                                 } else if server.auth != "none" {
                                     Button(server.hasCredentials == true ? "Update credentials" : "Add credentials") {
@@ -659,7 +662,7 @@ private struct ExtensionsSettingsView: View {
                                 }
                                 if server.hasCredentials == true {
                                     Button("Forget credentials") {
-                                        Task { await model.clearMCPCredentials(serverID: server.id) }
+                                        Task { await model.extensionsModel.clearMCPCredentials(serverID: server.id) }
                                     }
                                 }
                                 Spacer()
@@ -667,22 +670,22 @@ private struct ExtensionsSettingsView: View {
                                     && (server.enabledGlobal == true || server.enabledWorkspaces?.contains(model.workspacePath) == true)
                                 if let pluginID = server.pluginID {
                                     Button(workspaceEnabled ? "Disable plugin here" : "Enable plugin here") {
-                                        Task { await model.setPlugin(pluginID, enabled: !workspaceEnabled, scope: "workspace") }
+                                        Task { await model.extensionsModel.setPlugin(pluginID, enabled: !workspaceEnabled, scope: "workspace") }
                                     }
                                 } else {
                                     Button(workspaceEnabled ? "Disable here" : "Enable here") {
-                                        Task { await model.setMCPServer(server.id, enabled: !workspaceEnabled, scope: "workspace") }
+                                        Task { await model.extensionsModel.setMCPServer(server.id, enabled: !workspaceEnabled, scope: "workspace") }
                                     }
                                 }
                                 if server.origin == "user" {
                                     Button("Remove", role: .destructive) {
-                                        Task { await model.removeMCPServer(server.id) }
+                                        Task { await model.extensionsModel.removeMCPServer(server.id) }
                                     }
                                 }
                             }
                             .font(.locus(size: 9))
 
-                            let tools = model.extensionTools.filter { $0.serverID == server.id }
+                            let tools = model.extensionsModel.extensionTools.filter { $0.serverID == server.id }
                             if !tools.isEmpty {
                                 DisclosureGroup("Tool permissions") {
                                     ForEach(tools) { tool in
@@ -723,7 +726,7 @@ private struct ExtensionsSettingsView: View {
             }
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    ForEach(model.extensions.skills) { skill in
+                    ForEach(model.extensionsModel.extensions.skills) { skill in
                         HStack(spacing: 10) {
                             Image(systemName: "sparkles").foregroundStyle(LocusTheme.muted)
                             VStack(alignment: .leading, spacing: 2) {
@@ -745,7 +748,7 @@ private struct ExtensionsSettingsView: View {
                                 let enabledEverywhere = skill.enabledGlobal ?? skill.enabled
                                 Button(enabledEverywhere ? "Disable globally" : "Enable globally") {
                                     Task {
-                                        await model.setSkill(
+                                        await model.extensionsModel.setSkill(
                                             skill.id,
                                             enabled: !enabledEverywhere,
                                             scope: "global"
@@ -757,7 +760,7 @@ private struct ExtensionsSettingsView: View {
                                         || skill.enabledWorkspaces?.contains(model.workspacePath) == true)
                                 Button(enabledHere ? "Disable here" : "Enable here") {
                                     Task {
-                                        await model.setSkill(
+                                        await model.extensionsModel.setSkill(
                                             skill.id,
                                             enabled: !enabledHere,
                                             scope: "workspace"
@@ -766,7 +769,7 @@ private struct ExtensionsSettingsView: View {
                                 }
                                 if skill.source == "imported" {
                                     Button("Remove", role: .destructive) {
-                                        Task { await model.removeSkill(skill.id) }
+                                        Task { await model.extensionsModel.removeSkill(skill.id) }
                                     }
                                 }
                             } else {
@@ -785,10 +788,10 @@ private struct ExtensionsSettingsView: View {
 
     @ViewBuilder
     private func policyButtons(serverID: String, tool: String?) -> some View {
-        Button("Use annotations") { Task { await model.setMCPPolicy(serverID: serverID, tool: tool, mode: "annotations") } }
-        Button("Ask") { Task { await model.setMCPPolicy(serverID: serverID, tool: tool, mode: "ask") } }
-        Button("Allow") { Task { await model.setMCPPolicy(serverID: serverID, tool: tool, mode: "allow") } }
-        Button("Disabled") { Task { await model.setMCPPolicy(serverID: serverID, tool: tool, mode: "disabled") } }
+        Button("Use annotations") { Task { await model.extensionsModel.setMCPPolicy(serverID: serverID, tool: tool, mode: "annotations") } }
+        Button("Ask") { Task { await model.extensionsModel.setMCPPolicy(serverID: serverID, tool: tool, mode: "ask") } }
+        Button("Allow") { Task { await model.extensionsModel.setMCPPolicy(serverID: serverID, tool: tool, mode: "allow") } }
+        Button("Disabled") { Task { await model.extensionsModel.setMCPPolicy(serverID: serverID, tool: tool, mode: "disabled") } }
     }
 
     private func policyTitle(_ value: String?) -> String {
@@ -814,7 +817,7 @@ private struct ExtensionsSettingsView: View {
         useTokenFallback: Bool = false
     ) {
         Task {
-            guard let server = await model.materializeMCPPreset(preset, projectRef: projectRef) else {
+            guard let server = await model.extensionsModel.materializeMCPPreset(preset, projectRef: projectRef) else {
                 return
             }
             if useTokenFallback {
@@ -822,12 +825,12 @@ private struct ExtensionsSettingsView: View {
                 return
             }
             let probe: @MainActor () async -> Void = {
-                if await model.testMCPServer(server.id) {
+                if await model.extensionsModel.testMCPServer(server.id) {
                     enableAfterProbe = server
                 }
             }
             if server.auth == "auto" || server.auth == "oauth" {
-                model.authenticateMCPServer(server) { success in
+                model.extensionsModel.authenticateMCPServer(server) { success in
                     if success { Task { await probe() } }
                 }
             } else {
@@ -844,7 +847,7 @@ private struct ExtensionsSettingsView: View {
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
-            Task { await model.importSkill(from: url.path) }
+            Task { await model.extensionsModel.importSkill(from: url.path) }
         }
     }
 }
@@ -883,7 +886,7 @@ private struct MCPDeviceAuthorizationView: View {
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Cancel", role: .cancel) {
-                    model.cancelMCPDeviceAuthorization()
+                    model.extensionsModel.cancelMCPDeviceAuthorization()
                 }
                 Spacer()
                 Button("Copy Code") {
@@ -1062,7 +1065,7 @@ private struct MCPPresetReviewView: View {
     }
 
     private var githubCapability: GitHubConnectionCapability {
-        model.githubConnectionCapability()
+        model.extensionsModel.githubConnectionCapability()
     }
 }
 
@@ -1142,7 +1145,7 @@ private struct MCPServerEditorView: View {
                         .overlay(alignment: .topLeading) {
                             if arguments.isEmpty { Text("One argument per line").foregroundStyle(LocusTheme.muted).padding(5) }
                         }
-                    if !model.extensions.capabilities.stdio {
+                    if !model.extensionsModel.extensions.capabilities.stdio {
                         Text("Local command servers are unavailable in this App Store build.")
                             .foregroundStyle(LocusTheme.coral)
                     }
@@ -1197,7 +1200,7 @@ private struct MCPServerEditorView: View {
                             "redirect_uri": "locus://mcp/oauth",
                         ]
                     }
-                    Task { await model.saveMCPServer(body) }
+                    Task { await model.extensionsModel.saveMCPServer(body) }
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
@@ -1254,7 +1257,7 @@ private struct MCPCredentialView: View {
                     } else {
                         values = ["headers": [fieldName: secret]]
                     }
-                    Task { await model.setMCPCredentials(serverID: server.id, values: values) }
+                    Task { await model.extensionsModel.setMCPCredentials(serverID: server.id, values: values) }
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent).tint(LocusTheme.ink)

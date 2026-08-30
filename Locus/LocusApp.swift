@@ -792,10 +792,10 @@ struct RootView: View {
             }
         }
         .sheet(item: Binding(
-            get: { model.mcpInputRequest },
+            get: { model.extensionsModel.mcpInputRequest },
             set: { value in
-                if value == nil, model.mcpInputRequest != nil {
-                    model.answerMCPInput(action: "cancel")
+                if value == nil, model.extensionsModel.mcpInputRequest != nil {
+                    model.extensionsModel.answerMCPInput(action: "cancel")
                 }
             }
         )) { request in
@@ -974,11 +974,11 @@ private struct MCPInputRequestView: View {
                     .foregroundStyle(LocusTheme.muted)
             }
             HStack {
-                Button("Decline") { model.answerMCPInput(action: "decline") }
-                Button("Cancel") { model.answerMCPInput(action: "cancel") }
+                Button("Decline") { model.extensionsModel.answerMCPInput(action: "decline") }
+                Button("Cancel") { model.extensionsModel.answerMCPInput(action: "cancel") }
                 Spacer()
                 Button(request.mode == "url" ? "I've Completed It" : "Submit") {
-                    model.answerMCPInput(action: "accept", content: formContent)
+                    model.extensionsModel.answerMCPInput(action: "accept", content: formContent)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(LocusTheme.ink)

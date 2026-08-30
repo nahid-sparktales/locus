@@ -344,7 +344,7 @@ extension AppModel {
                 ),
             ]
         }
-        extensions = ExtensionsResponse(
+        extensionsModel.extensions = ExtensionsResponse(
             capabilities: ExtensionCapabilities(),
             marketplaces: [],
             plugins: [],
