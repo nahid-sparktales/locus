@@ -1834,6 +1834,7 @@ def _task_diff(svc: ChatService, workspace_root: str, execution_path: str) -> st
     result = subprocess.run(
         ["git", "diff", "--binary", "--full-index", "HEAD", "--"],
         cwd=execution_path or workspace_root,
+        env=proxy.sanitized_child_environment(),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

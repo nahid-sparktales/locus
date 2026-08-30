@@ -673,6 +673,166 @@ def test_landing_check_child_env_is_credential_stripped(
     assert "s3cret" not in str(env)
 
 
+def test_evaluation_command_assertion_env_is_credential_stripped(
+    tmp_path, monkeypatch, credentialed_environ
+):
+    """The eval-check runner executes configured commands in a login shell —
+    the same shape as the landing-check runner."""
+    from ollama_code import evaluations as evaluations_mod
+
+    wrapper, calls = _recording(subprocess.run)
+    monkeypatch.setattr(evaluations_mod.subprocess, "run", wrapper)
+
+    ok, detail = evaluations_mod._grade_assertion(
+        {"kind": "command", "command": "true"}, tmp_path, "", []
+    )
+
+    assert ok, detail
+    env = calls[0][1]["env"]
+    assert env["HTTP_PROXY"] == CLEAN
+    assert "s3cret" not in str(env)
+
+
+def test_evaluation_git_probe_env_is_credential_stripped(
+    tmp_path, monkeypatch, credentialed_environ
+):
+    from ollama_code import evaluations as evaluations_mod
+
+    wrapper, calls = _recording(subprocess.run)
+    monkeypatch.setattr(evaluations_mod.subprocess, "run", wrapper)
+
+    evaluations_mod._is_git_workspace(str(tmp_path))
+
+    env = calls[0][1]["env"]
+    assert env["HTTP_PROXY"] == CLEAN
+    assert "s3cret" not in str(env)
+
+
+def test_multi_agent_workspace_tools_env_is_credential_stripped(
+    tmp_path, monkeypatch, credentialed_environ
+):
+    """The hosted agents' read-only tools shell out to rg and git in the user
+    workspace; the grep call is recorded even when rg is not installed."""
+    from ollama_code import openai_responses_multi_agent as multi_agent_mod
+
+    wrapper, calls = _recording(subprocess.run)
+    monkeypatch.setattr(multi_agent_mod.subprocess, "run", wrapper)
+
+    tools = multi_agent_mod.ReadOnlyWorkspaceTools(str(tmp_path))
+    tools.execute("grep", json.dumps({"query": "needle"}))
+    tools.execute("git_status", "{}")
+    tools.execute("git_diff", "{}")
+
+    assert calls, "no spawn was recorded"
+    for _args, kwargs in calls:
+        env = kwargs["env"]
+        assert env["HTTP_PROXY"] == CLEAN
+        assert "s3cret" not in str(env)
+
+
+def test_task_diff_env_is_credential_stripped(tmp_path, monkeypatch, credentialed_environ):
+    """server._task_diff falls back to raw git when no managed task is active."""
+    from ollama_code import server as server_mod
+
+    wrapper, calls = _recording(subprocess.run)
+    monkeypatch.setattr(server_mod.subprocess, "run", wrapper)
+
+    server_mod._task_diff(SimpleNamespace(current_task=None), str(tmp_path), "")
+
+    env = calls[0][1]["env"]
+    assert env["HTTP_PROXY"] == CLEAN
+    assert "s3cret" not in str(env)
+
+
+def test_canonical_repository_env_is_credential_stripped(
+    tmp_path, monkeypatch, credentialed_environ
+):
+    from ollama_code import core as core_mod
+
+    wrapper, calls = _recording(subprocess.run)
+    monkeypatch.setattr(core_mod.subprocess, "run", wrapper)
+
+    # Duck-typed self: the method reads only workspace_root, so the full
+    # AgentCore constructor (MCP manager, config writes) stays out of the test.
+    core_mod.AgentCore._canonical_repository(SimpleNamespace(workspace_root=str(tmp_path)))
+
+    env = calls[0][1]["env"]
+    assert env["HTTP_PROXY"] == CLEAN
+    assert "s3cret" not in str(env)
+
+
+def test_evaluation_changed_paths_env_is_credential_stripped(
+    tmp_path, monkeypatch, credentialed_environ
+):
+    from ollama_code import evaluation_runtime as evaluation_runtime_mod
+    from ollama_code.worktrees import TaskCheckout, WorktreeError
+
+    wrapper, calls = _recording(subprocess.run)
+    monkeypatch.setattr(evaluation_runtime_mod.subprocess, "run", wrapper)
+
+    task = TaskCheckout(
+        id="task-env",
+        workspace_root=str(tmp_path),
+        execution_path=str(tmp_path),
+        baseline_tree="HEAD",
+        baseline_commit="HEAD",
+    )
+    with pytest.raises(WorktreeError):
+        evaluation_runtime_mod._evaluation_changed_paths(task, "HEAD")
+
+    env = calls[0][1]["env"]
+    assert env["HTTP_PROXY"] == CLEAN
+    assert "s3cret" not in str(env)
+
+
+def test_workspace_evidence_env_is_credential_stripped(
+    tmp_path, monkeypatch, credentialed_environ
+):
+    from ollama_code import orchestration as orchestration_mod
+
+    wrapper, calls = _recording(subprocess.run)
+    monkeypatch.setattr(orchestration_mod.subprocess, "run", wrapper)
+
+    orchestration_mod.collect_workspace_evidence(str(tmp_path))
+
+    assert len(calls) == 4, "status, diff stat, diff, and ls-files all spawn"
+    for _args, kwargs in calls:
+        env = kwargs["env"]
+        assert env["HTTP_PROXY"] == CLEAN
+        assert "s3cret" not in str(env)
+
+
+def test_continuity_status_env_is_credential_stripped(
+    tmp_path, monkeypatch, credentialed_environ
+):
+    from ollama_code import continuity as continuity_mod
+
+    wrapper, calls = _recording(subprocess.run)
+    monkeypatch.setattr(continuity_mod.subprocess, "run", wrapper)
+
+    continuity_mod.workspace_changed_files(str(tmp_path))
+
+    env = calls[0][1]["env"]
+    assert env["HTTP_PROXY"] == CLEAN
+    assert "s3cret" not in str(env)
+
+
+def test_knowledge_index_scan_env_is_credential_stripped(
+    tmp_path, monkeypatch, credentialed_environ
+):
+    from ollama_code import knowledge as knowledge_mod
+
+    store = knowledge_mod.KnowledgeStore(str(tmp_path), path=tmp_path / "knowledge.db")
+    wrapper, calls = _recording(subprocess.run)
+    monkeypatch.setattr(knowledge_mod.subprocess, "run", wrapper)
+
+    store._candidate_paths(None)
+
+    env = calls[0][1]["env"]
+    assert env["HTTP_PROXY"] == CLEAN
+    assert "s3cret" not in str(env)
+
+
 def test_web_fetch_error_text_is_redacted(monkeypatch, credentialed_environ):
     """requests raises InvalidURL naming the whole proxy URL when urllib3
     cannot parse the proxy host, and this string goes straight to the model."""

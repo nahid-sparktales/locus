@@ -16,6 +16,7 @@ from typing import Any
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from .memory import _master_key, memory_database
+from .proxy import sanitized_child_environment
 
 SNAPSHOT_TTL_SECONDS = 30 * 24 * 60 * 60
 MAX_SNAPSHOTS_PER_WORKSPACE = 50
@@ -54,6 +55,7 @@ def workspace_changed_files(workspace: str) -> list[str]:
     try:
         completed = subprocess.run(
             ["git", "-C", workspace, "status", "--porcelain=v1", "-z"],
+            env=sanitized_child_environment(),
             capture_output=True,
             check=False,
             timeout=5,
