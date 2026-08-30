@@ -21,26 +21,8 @@ final class AppModel: ObservableObject {
     @Published var modelRuntimePhase: RuntimePhase = .starting("Checking the model provider…")
     var isAgentOnline: Bool { agentRuntimePhase.isOnline }
     var isModelOnline: Bool { modelRuntimePhase.isOnline }
-    @Published var models: [ModelInfo] = []
-    /// The local Ollama models, kept separately because `models` reflects
-    /// whichever provider the agent is currently pointed at — with an account
-    /// active it holds that account's list, not the local one.
-    @Published var localModels: [ModelInfo] = []  // internal(for: AppModel+UITestFixtures)
-    /// Ollama's complete installed list, including models the user has hidden
-    /// from Locus. Settings uses this to make hiding reversible.
-    @Published var installedLocalModels: [ModelInfo] = []  // internal(for: AppModel+UITestFixtures)
-    @Published var providerAccounts: [ProviderAccount] = []  // internal(for: AppModel+UITestFixtures)
-    @Published var accountModels: [UUID: [String]] = [:]  // internal(for: AppModel+UITestFixtures)
-    /// The full ChatGPT catalog rows, kept beside the plain name list because
-    /// the account editor needs each model's supported reasoning efforts.
-    @Published private(set) var accountModelCatalogs: [UUID: [ChatGPTModelsResponse.Model]] = [:]
-    @Published var accountStatus: [UUID: ProviderAccountStatus] = [:]  // internal(for: AppModel+UITestFixtures)
-    /// ChatGPT plan state is per account: each one signs in to its own
-    /// isolated credential home, so a single set of these would report the
-    /// account that happened to refresh last.
-    @Published private(set) var chatGPTAccounts: [UUID: ChatGPTAccountResponse] = [:]
-    @Published private(set) var chatGPTUsageByAccount: [UUID: ChatGPTUsageResponse] = [:]
-    @Published private(set) var chatGPTLoginIDs: [UUID: String] = [:]
+    let providerAccountsModel = ProviderAccountsModel()
+    private var providerAccountsBridge: AnyCancellable?
 
     #if !LOCUS_APP_STORE
     /// The ChatGPT-plan helpers ship as a downloadable component in the direct
@@ -319,7 +301,6 @@ final class AppModel: ObservableObject {
     @Published private(set) var launchAtLoginError: String?
     @Published private(set) var automaticInspectorPrompt: AutomaticInspectorPrompt?
     @Published var usageDashboardPresented = false
-    @Published var usageSummary: UsageSummary?
     @Published private(set) var lastModelRoutingDecision: ModelRoutingDecision?
     @Published private(set) var modelRouterMessage = "No scorecard has been run yet."
     @Published private(set) var proxyHealthRecords: [ProxyHealthRecord] = []
@@ -613,6 +594,7 @@ final class AppModel: ObservableObject {
             loadedSettings = AppSettings()
         }
 
+        var restoredProviderAccounts: [ProviderAccount] = []
         // `persistenceEnabled` is false only for tests and UI testing, and a
         // model that will never write must not read either: loading here meant a
         // unit test started with whatever accounts the developer happened to have
@@ -649,7 +631,7 @@ final class AppModel: ObservableObject {
                 loadedSettings.provider = .ollama
                 routingRewritten = true
             }
-            providerAccounts = accounts
+            restoredProviderAccounts = accounts
             // A key whose account is gone is residue from a crash between the
             // two writes; nothing can reach it again.
             //
@@ -786,6 +768,7 @@ final class AppModel: ObservableObject {
         backend = backendOverride ?? BackendService(
             baseURL: URL(string: loadedSettings.backendURL) ?? URL(string: "http://127.0.0.1:8791")!
         )
+        providerAccountsModel.providerAccounts = restoredProviderAccounts
         gitWorkspace.configure(
             backend: backend,
             isUITesting: isUITesting,
@@ -964,6 +947,26 @@ final class AppModel: ObservableObject {
         scheduleBridge = schedule.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
+        providerAccountsModel.configure(
+            backend: backend,
+            persistenceEnabled: persistenceEnabled,
+            localModelHidden: { [weak self] name in self?.isLocalModelHidden(name) ?? false },
+            routedModelsProvider: { [weak self] id in
+                (self?.agentProfiles ?? []).compactMap { profile in
+                    profile.route.accountID == id ? profile.model : nil
+                }
+            },
+            activeAccountProvider: { [weak self] in self?.activeAccount },
+            accountRoutingDeactivated: { [weak self] id in
+                guard let self, self.settings.activeAccountID == id.uuidString else { return }
+                self.settings.activeAccountID = nil
+                await self.applyProvider(announce: false)
+            },
+            toastHandler: { [weak self] message in self?.showToast(message) }
+        )
+        providerAccountsBridge = providerAccountsModel.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
         simulatorControl.capabilityDidChange = { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -1132,15 +1135,6 @@ final class AppModel: ObservableObject {
         return sessionInfo?.host ?? lastOllamaHost
     }
 
-    private var lastOllamaHost = "http://127.0.0.1:11434" {
-        didSet {
-            guard lastOllamaHost != oldValue else { return }
-            // The bypass list keeps Ollama direct, so the proxy layer has to
-            // hear about the real host the agent just reported.
-            ProxyRuntime.shared.noteOllamaHost(lastOllamaHost)
-        }
-    }
-    private var accountCatalogFetchedAt: [UUID: Date] = [:]
 
     /// Whether the session is running this model through this source. Both
     /// halves matter: two accounts can offer a model of the same name.
@@ -2285,116 +2279,6 @@ final class AppModel: ObservableObject {
 
         await refreshExtensions()
         gitWorkspace.refreshBranch()
-    }
-
-    /// Reads the local runtime directly. With an account active the agent has
-    /// no Ollama client to ask, but the local models still belong in the picker.
-    private func refreshLocalModels() async {
-        guard let url = URL(string: lastOllamaHost + "/api/tags") else { return }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 10
-        guard let (data, response) = try? await ProxyRuntime.shared.urlSession.data(for: request),
-              (200..<300).contains((response as? HTTPURLResponse)?.statusCode ?? -1),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let entries = root["models"] as? [[String: Any]]
-        else { return }  // Ollama not running is normal; keep the last list.
-        let knownWindows = Dictionary(
-            (installedLocalModels + models).map { ($0.name, $0.contextLength) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        installedLocalModels = entries.compactMap { entry in
-            guard let name = entry["name"] as? String else { return nil }
-            return ModelInfo(
-                name: name,
-                size: (entry["size"] as? NSNumber)?.int64Value ?? 0,
-                parameterSize: (entry["details"] as? [String: Any])?["parameter_size"] as? String ?? "",
-                // This route is Ollama's /api/tags, which carries no window at
-                // all. Zeroing it unconditionally meant that with an account
-                // active, every local model in the picker read as unknown even
-                // though the agent had already reported a window for it.
-                contextLength: knownWindows[name] ?? 0
-            )
-        }
-        localModels = visibleLocalModels(in: installedLocalModels)
-    }
-
-    private func visibleLocalModels(in models: [ModelInfo]) -> [ModelInfo] {
-        models.filter { !isLocalModelHidden($0.name) }
-    }
-
-    /// Refreshes every account's model list, unless it was fetched recently.
-    func refreshAccountCatalogs(force: Bool = false) async {
-        guard persistenceEnabled else { return }
-        let stale = Date().addingTimeInterval(-Self.accountCatalogTTL)
-        let due = providerAccounts.filter { account in
-            force || (accountCatalogFetchedAt[account.id] ?? .distantPast) < stale
-        }
-        guard !due.isEmpty else { return }
-        let now = Date()
-        for account in due { accountCatalogFetchedAt[account.id] = now }
-        for account in due where account.kind == .chatGPT {
-            do {
-                let response = try await backend.get(
-                    "/api/chatgpt/models",
-                    query: [URLQueryItem(name: "account_id", value: account.codexHomeIdentifier)],
-                    as: ChatGPTModelsResponse.self
-                )
-                let names = response.models.map(\.id)
-                accountModels[account.id] = names.isEmpty ? account.kind.curatedModels : names
-                accountModelCatalogs[account.id] = response.models
-                await refreshChatGPTAccount(for: account)
-            } catch {
-                accountModels[account.id] = account.kind.curatedModels
-                accountStatus[account.id] = .runtimeUnavailable(error.localizedDescription)
-            }
-        }
-        let endpointAccounts = due.filter { $0.kind != .chatGPT }
-        await withTaskGroup(of: (UUID, ProviderModelCatalog.Result).self) { group in
-            for account in endpointAccounts {
-                group.addTask { (account.id, await ProviderModelCatalog.fetch(for: account)) }
-            }
-            for await (id, result) in group {
-                guard let account = providerAccounts.first(where: { $0.id == id }) else {
-                    continue
-                }
-                let routedModels = agentProfiles.compactMap { profile -> String? in
-                    guard profile.route.accountID == id else { return nil }
-                    return profile.model
-                }
-                let scoped = ProviderModelCatalog.scopedModels(
-                    for: account,
-                    result: result,
-                    routedModels: routedModels
-                )
-                accountModels[id] = scoped
-                accountStatus[id] = result.status
-                if let replacement = scoped.first,
-                   !scoped.contains(where: {
-                       $0.caseInsensitiveCompare(account.preferredModel) == .orderedSame
-                   }),
-                   let index = providerAccounts.firstIndex(where: { $0.id == id })
-                {
-                    providerAccounts[index].preferredModel = replacement
-                    persistProviderAccounts()
-                }
-            }
-        }
-    }
-
-    /// Long enough that the 15-second metadata poll cannot hammer a provider,
-    /// short enough that a new model shows up without a relaunch.
-    private static let accountCatalogTTL: TimeInterval = 300
-
-    func forgetAccountCatalog(_ id: UUID) {
-        accountCatalogFetchedAt[id] = nil
-        accountModels[id] = nil
-        accountModelCatalogs[id] = nil
-        accountStatus[id] = nil
-    }
-
-    private func noteLocalHost(from info: SessionInfo) {
-        guard info.provider != "remote", !info.host.isEmpty else { return }
-        lastOllamaHost = info.host
     }
 
     // MARK: - Optional solo model router
@@ -3849,11 +3733,6 @@ final class AppModel: ObservableObject {
         else { return }
         providerAccounts[index].preferredModel = model
         persistProviderAccounts()
-    }
-
-    func persistProviderAccounts() {
-        guard persistenceEnabled else { return }
-        ProviderAccountStore.save(providerAccounts)
     }
 
     private func modelBelongsToAccount(_ model: String, account: ProviderAccount) -> Bool {
@@ -5803,140 +5682,6 @@ final class AppModel: ObservableObject {
         }
         showToast("Saved \(updated.displayName)")
         return true
-    }
-
-    /// Refreshes every ChatGPT account, each against its own credential home.
-    func refreshChatGPTAccounts(forceTokenRefresh: Bool = false) async {
-        for account in providerAccounts where account.kind == .chatGPT {
-            await refreshChatGPTAccount(for: account, forceTokenRefresh: forceTokenRefresh)
-        }
-    }
-
-    func refreshChatGPTAccount(
-        for account: ProviderAccount,
-        forceTokenRefresh: Bool = false
-    ) async {
-        var query = [URLQueryItem(name: "account_id", value: account.codexHomeIdentifier)]
-        if forceTokenRefresh {
-            query.append(URLQueryItem(name: "refresh", value: "true"))
-        }
-        do {
-            let state = try await backend.get(
-                "/api/chatgpt/account",
-                query: query,
-                as: ChatGPTAccountResponse.self
-            )
-            chatGPTAccounts[account.id] = state
-            accountStatus[account.id] = switch state.status {
-            case "signed_in": .signedIn(email: state.email, plan: state.planType)
-            case "runtime_unavailable":
-                .runtimeUnavailable(state.message ?? "The ChatGPT runtime is unavailable")
-            case "signing_in": .signingIn
-            default: .signedOut
-            }
-            if state.status == "signed_in" {
-                chatGPTLoginIDs[account.id] = nil
-                await refreshChatGPTUsage(for: account)
-            }
-        } catch {
-            accountStatus[account.id] = .runtimeUnavailable(error.localizedDescription)
-        }
-    }
-
-    func startChatGPTLogin(for account: ProviderAccount) async {
-        do {
-            let response = try await backend.post(
-                "/api/chatgpt/login/start",
-                body: ["account_id": account.codexHomeIdentifier],
-                as: ChatGPTLoginResponse.self
-            )
-            chatGPTLoginIDs[account.id] = response.loginID
-            accountStatus[account.id] = .signingIn
-            guard let url = URL(string: response.authURL), NSWorkspace.shared.open(url) else {
-                showToast("Could not open the ChatGPT sign-in page")
-                return
-            }
-        } catch {
-            showToast("Could not start ChatGPT sign-in: \(error.localizedDescription)")
-            await refreshChatGPTAccount(for: account)
-        }
-    }
-
-    func cancelChatGPTLogin(for account: ProviderAccount) async {
-        guard let loginID = chatGPTLoginIDs[account.id] else { return }
-        do {
-            let state = try await backend.post(
-                "/api/chatgpt/login/cancel",
-                body: [
-                    "login_id": loginID,
-                    "account_id": account.codexHomeIdentifier,
-                ],
-                as: ChatGPTAccountResponse.self
-            )
-            chatGPTLoginIDs[account.id] = nil
-            chatGPTAccounts[account.id] = state
-            await refreshChatGPTAccount(for: account)
-        } catch {
-            showToast("Could not cancel ChatGPT sign-in: \(error.localizedDescription)")
-        }
-    }
-
-    func signOutChatGPT(from account: ProviderAccount) async {
-        do {
-            let state = try await backend.post(
-                "/api/chatgpt/logout",
-                body: ["account_id": account.codexHomeIdentifier],
-                as: ChatGPTAccountResponse.self
-            )
-            chatGPTAccounts[account.id] = state
-            chatGPTLoginIDs[account.id] = nil
-            chatGPTUsageByAccount[account.id] = nil
-            accountStatus[account.id] = .signedOut
-            // Only the account in use costs the app its provider. Signing out
-            // of a second plan must leave a chat running on the first alone.
-            if settings.activeAccountID == account.id.uuidString {
-                settings.activeAccountID = nil
-                await applyProvider(announce: false)
-            }
-        } catch {
-            showToast("Could not sign out of ChatGPT: \(error.localizedDescription)")
-        }
-    }
-
-    /// The plan usage of the ChatGPT account currently routing requests, which
-    /// is the only one the usage dashboard's plan section can be about.
-    var activeChatGPTUsage: ChatGPTUsageResponse? {
-        guard let account = activeAccount, account.kind == .chatGPT else { return nil }
-        return chatGPTUsageByAccount[account.id]
-    }
-
-    func refreshActiveChatGPTUsage() async {
-        guard let account = activeAccount, account.kind == .chatGPT else { return }
-        await refreshChatGPTUsage(for: account)
-    }
-
-    func refreshChatGPTUsage(for account: ProviderAccount) async {
-        guard providerAccounts.contains(where: { $0.id == account.id }) else {
-            chatGPTUsageByAccount[account.id] = nil
-            return
-        }
-        do {
-            let usage = try await backend.get(
-                "/api/chatgpt/usage",
-                query: [URLQueryItem(name: "account_id", value: account.codexHomeIdentifier)],
-                as: ChatGPTUsageResponse.self
-            )
-            chatGPTUsageByAccount[account.id] = usage
-            if let window = usage.rateLimits.rateLimits?.primary,
-               window.usedPercent >= 100
-            {
-                let reset = window.resetsAt.map { Date(timeIntervalSince1970: Double($0)) }
-                accountStatus[account.id] = .rateLimited(resetAt: reset)
-            }
-        } catch {
-            // Usage is supplementary; the account and working providers stay
-            // available when this one read fails.
-        }
     }
 
     /// Removes an account, its key, and — if it was the one in use — the
@@ -9329,23 +9074,6 @@ final class AppModel: ObservableObject {
         }
         let name = account.kind == .custom ? "Endpoint" : account.kind.marketingName
         return "\(name) \(status)"
-    }
-
-    /// Fetch the usage rollup for the dashboard. A failure leaves the previous
-    /// summary in place; the sheet's spinner covers the initial load.
-    func refreshUsageSummary(since: Double) {
-        Task { [weak self] in
-            guard let self else { return }
-            let query = since > 0
-                ? [URLQueryItem(name: "since", value: String(since))]
-                : []
-            guard let summary = try? await backend.get(
-                "/api/usage/summary",
-                query: query,
-                as: UsageSummary.self
-            ) else { return }
-            usageSummary = summary
-        }
     }
 
     func runCommand(_ command: CommandAction) {
