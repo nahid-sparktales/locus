@@ -641,7 +641,13 @@ final class PinnedSummaryTests: XCTestCase {
         model.inspectorCollapsed = false
         let token = model.composerFocusToken
         model.insertCreationPrompt(.document)
-        for _ in 0..<3 { await Task.yield() }
+        // The prefill re-applies after one main-actor turn; a fixed yield
+        // count raced it on slow CI runners, so poll with a bound instead.
+        var attempts = 0
+        while model.composerFocusToken == token, attempts < 500 {
+            attempts += 1
+            await Task.yield()
+        }
         XCTAssertEqual(model.draftText, SummaryCreationKind.document.prompt)
         XCTAssertFalse(model.inspectorCollapsed)
         XCTAssertNotEqual(model.composerFocusToken, token)
