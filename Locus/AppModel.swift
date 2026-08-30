@@ -151,8 +151,8 @@ final class AppModel: ObservableObject {
     @Published var scheduleEditorDraft: ScheduleEditorDraft?
     @Published private(set) var isSavingSchedule = false
     @Published private(set) var isRefreshingSchedules = false
-    @Published private(set) var backgroundServices: [BackgroundServiceRecord] = []
-    private var backgroundServicesRefreshGeneration = 0
+    let backgroundServicesModel = BackgroundServicesModel()
+    private var backgroundServicesBridge: AnyCancellable?
     let extensionsModel = ExtensionsModel()
     private var extensionsBridge: AnyCancellable?
     var orchestrationEventIDs: Set<String> = []  // internal(for: AppModel+UITestFixtures)
@@ -929,6 +929,17 @@ final class AppModel: ObservableObject {
         }
         toastCenter.onToastReplaced = { [weak self] in self?.pendingDeletedChat = nil }
         toastCenterBridge = toastCenter.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        backgroundServicesModel.configure(
+            transportProvider: { [weak self] in self?.conversationBackend },
+            recordingSessionIDProvider: { [weak self] in self?.sessionOverview.activeSessionID ?? "" },
+            websiteOutput: { [weak self] url, sessionID in
+                self?.emitWebsiteOutput(url, sessionID: sessionID)
+            },
+            toastHandler: { [weak self] message in self?.showToast(message) }
+        )
+        backgroundServicesBridge = backgroundServicesModel.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         simulatorControl.capabilityDidChange = { [weak self] in
@@ -5011,105 +5022,6 @@ final class AppModel: ObservableObject {
                 await refreshOrchestrationRuns(select: runID)
             } catch {
                 showToast(error.localizedDescription)
-            }
-        }
-    }
-
-    /// - Parameter recordingOutputs: when the refresh follows a service start
-    ///   in this session, dev servers that were not running before and expose
-    ///   a port become website outputs of the session that was active when
-    ///   the start happened.
-    func refreshBackgroundServices(recordingOutputs: Bool = false) {
-        backgroundServicesRefreshGeneration += 1
-        let generation = backgroundServicesRefreshGeneration
-        let transport = conversationBackend
-        let recordingSessionID = recordingOutputs ? sessionOverview.activeSessionID : ""
-        let alreadyRunning = Set(backgroundServices.filter(\.running).map(\.name))
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let response = try await transport.get(
-                    "/api/services", as: BackgroundServicesResponse.self
-                )
-                guard generation == backgroundServicesRefreshGeneration else { return }
-                backgroundServices = response.services
-                guard !recordingSessionID.isEmpty else { return }
-                for service in response.services
-                where service.running && !alreadyRunning.contains(service.name) {
-                    guard let port = service.port,
-                          let url = URL(string: "http://localhost:\(port)")
-                    else { continue }
-                    emitWebsiteOutput(url, sessionID: recordingSessionID)
-                }
-            } catch {
-                guard generation == backgroundServicesRefreshGeneration else { return }
-                backgroundServices = []
-            }
-        }
-    }
-
-    /// Stops every running background process from the Overview's
-    /// "Stop all" action. Rows disappear immediately; the refresh afterwards
-    /// restores anything the backend could not stop.
-    func stopAllBackgroundServices() {
-        let running = backgroundServices.filter(\.running)
-        guard !running.isEmpty else { return }
-        backgroundServicesRefreshGeneration += 1
-        let runningNames = Set(running.map(\.name))
-        backgroundServices.removeAll { runningNames.contains($0.name) }
-        let transport = conversationBackend
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            var failed = 0
-            for service in running {
-                guard let encoded = service.name.addingPercentEncoding(
-                    withAllowedCharacters: .urlPathAllowed
-                ) else { continue }
-                do {
-                    _ = try await transport.delete(
-                        "/api/services/\(encoded)", as: BackgroundServiceStopResponse.self
-                    )
-                } catch {
-                    failed += 1
-                }
-            }
-            let noun = running.count == 1 ? "background process" : "background processes"
-            showToast(
-                failed == 0
-                    ? "Stopped \(running.count) \(noun)"
-                    : "Could not stop \(failed) of \(running.count) \(noun)"
-            )
-            refreshBackgroundServices()
-        }
-    }
-
-    /// Test seam: the Overview derives its Background processes rows from
-    /// this list, and unit tests have no backend to refresh from.
-    func applyBackgroundServicesForTesting(_ services: [BackgroundServiceRecord]) {
-        backgroundServicesRefreshGeneration += 1
-        backgroundServices = services
-    }
-
-    func stopBackgroundService(_ service: BackgroundServiceRecord) {
-        guard let encoded = service.name.addingPercentEncoding(
-            withAllowedCharacters: .urlPathAllowed
-        ) else { return }
-        // Stop is authoritative in the interface. Invalidate older in-flight
-        // list requests so a stale response cannot make the service reappear.
-        backgroundServicesRefreshGeneration += 1
-        backgroundServices.removeAll { $0.name == service.name }
-        let transport = conversationBackend
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                _ = try await transport.delete(
-                    "/api/services/\(encoded)", as: BackgroundServiceStopResponse.self
-                )
-                showToast(service.running ? "Stopped \(service.name)" : "Dismissed \(service.name)")
-                refreshBackgroundServices()
-            } catch {
-                showToast("Could not stop \(service.name): \(error.localizedDescription)")
-                refreshBackgroundServices()
             }
         }
     }
