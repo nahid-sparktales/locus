@@ -131,9 +131,8 @@ final class AppModel: ObservableObject {
     @Published var orchestrationEvents: [OrchestrationEvent] = []  // internal(for: AppModel+UITestFixtures)
     @Published private(set) var isLoadingOrchestrationRuns = false
     @Published var pendingDispatchPlan: DispatchPlan?  // internal(for: AppModel+UITestFixtures)
-    @Published private(set) var evaluationSuites: [EvaluationSuite] = []
-    @Published private(set) var activeEvaluationID: String?
-    @Published private(set) var evaluationStatus: String?
+    let evaluations = EvaluationsModel()
+    private var evaluationsBridge: AnyCancellable?
     let knowledge = WorkspaceKnowledgeModel()
     private var knowledgeBridge: AnyCancellable?
     @Published var landingPreflight: LandingPreflight?  // internal(for: AppModel+UITestFixtures)
@@ -926,6 +925,18 @@ final class AppModel: ObservableObject {
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
         knowledgeBridge = knowledge.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        evaluations.configure(
+            backend: backend,
+            workspacePathProvider: { [weak self] in self?.workspacePath ?? "" },
+            selectedTeamIDProvider: { [weak self] in self?.selectedAgentTeamID },
+            manifestProvider: { [weak self] prompt, teamID in
+                self?.teamManifest(for: prompt, teamID: teamID)
+            },
+            toastHandler: { [weak self] message in self?.showToast(message) }
+        )
+        evaluationsBridge = evaluations.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         simulatorControl.capabilityDidChange = { [weak self] in
@@ -5526,142 +5537,6 @@ final class AppModel: ObservableObject {
                     path, body: body, timeout: 30, as: SimpleActionResponse.self
                 )
                 await refreshOrchestrationRuns(select: runID)
-            } catch {
-                showToast(error.localizedDescription)
-            }
-        }
-    }
-
-    func refreshEvaluations() async {
-        do {
-            let response: EvaluationSuitesResponse = try await backend.get(
-                "/api/evaluations",
-                query: [URLQueryItem(name: "workspace", value: workspacePath)],
-                as: EvaluationSuitesResponse.self
-            )
-            evaluationSuites = response.suites
-        } catch {
-            showToast("Could not load evaluations: \(error.localizedDescription)")
-        }
-    }
-
-    func loadEvaluationReport(_ suite: EvaluationSuite) async -> EvaluationReport? {
-        do {
-            return try await backend.get(
-                "/api/evaluations/\(suite.id)", as: EvaluationReport.self
-            )
-        } catch {
-            showToast("Could not load evaluation results: \(error.localizedDescription)")
-            return nil
-        }
-    }
-
-    func createEvaluationSuite() {
-        let suite = EvaluationSuite(
-            name: "Workspace checks",
-            workspaceRoot: workspacePath,
-            cases: [EvaluationCase(name: "First case", prompt: "Describe the expected task here.")]
-        )
-        saveEvaluationSuite(suite)
-    }
-
-    func saveEvaluationSuite(_ suite: EvaluationSuite) {
-        guard let body = encodedJSONObject(suite) else { return }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let response: EvaluationSuiteResponse = try await backend.post(
-                    "/api/evaluations", body: body, as: EvaluationSuiteResponse.self
-                )
-                evaluationSuites.removeAll { $0.id == response.suite.id }
-                evaluationSuites.insert(response.suite, at: 0)
-                showToast("Saved evaluation suite")
-            } catch {
-                showToast(error.localizedDescription)
-            }
-        }
-    }
-
-    func deleteEvaluationSuite(_ suite: EvaluationSuite) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let _: SimpleActionResponse = try await backend.delete(
-                    "/api/evaluations/\(suite.id)", as: SimpleActionResponse.self
-                )
-                evaluationSuites.removeAll { $0.id == suite.id }
-            } catch {
-                showToast(error.localizedDescription)
-            }
-        }
-    }
-
-    func importEvaluationSuite() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.json]
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            var suite = try JSONDecoder().decode(EvaluationSuite.self, from: Data(contentsOf: url))
-            suite.id = UUID().uuidString
-            saveEvaluationSuite(suite)
-        } catch {
-            showToast("Could not import evaluation suite: \(error.localizedDescription)")
-        }
-    }
-
-    func exportEvaluationSuite(_ suite: EvaluationSuite) {
-        do {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-            let data = try encoder.encode(suite)
-            let panel = NSSavePanel()
-            panel.allowedContentTypes = [.json]
-            panel.nameFieldStringValue = "\(suite.name.replacingOccurrences(of: "/", with: "-")) evaluation.json"
-            guard panel.runModal() == .OK, let url = panel.url else { return }
-            try data.write(to: url, options: .atomic)
-            showToast("Evaluation suite exported")
-        } catch {
-            showToast("Could not export evaluation suite: \(error.localizedDescription)")
-        }
-    }
-
-    func runEvaluationSuite(_ suite: EvaluationSuite) {
-        let needsTeam = suite.cases.contains { $0.target.caseInsensitiveCompare("team") == .orderedSame }
-        var body: [String: Any] = [:]
-        var manifests: [String: Any] = [:]
-        for evaluationCase in suite.cases where evaluationCase.target == "team" {
-            let requestedID = UUID(uuidString: evaluationCase.teamID) ?? selectedAgentTeamID
-            guard let requestedID,
-                  let manifest = teamManifest(for: evaluationCase.prompt, teamID: requestedID)
-            else {
-                showToast("Select or repair every team used by this suite")
-                return
-            }
-            manifests[requestedID.uuidString] = manifest
-        }
-        if !manifests.isEmpty { body["manifests"] = manifests }
-        if let selectedAgentTeamID,
-           let fallback = teamManifest(
-               for: suite.cases.first?.prompt ?? "", teamID: selectedAgentTeamID
-           )
-        {
-            body["manifest"] = fallback
-        }
-        if needsTeam && manifests.isEmpty {
-            showToast("Select a configured team before running this suite")
-            return
-        }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let response: EvaluationRunResponse = try await backend.post(
-                    "/api/evaluations/\(suite.id)/run",
-                    body: body,
-                    as: EvaluationRunResponse.self
-                )
-                activeEvaluationID = response.evaluationID
-                evaluationStatus = "Queued"
             } catch {
                 showToast(error.localizedDescription)
             }
@@ -12150,24 +12025,9 @@ final class AppModel: ObservableObject {
         case "orchestration_pause_requested":
             showToast("Pausing at the next safe boundary")
 
-        case "evaluation_started":
-            activeEvaluationID = event["evaluation_id"] as? String
-            evaluationStatus = "Starting evaluation"
-
-        case "evaluation_case_started":
-            let index = (event["case_index"] as? Int ?? 0) + 1
-            let count = event["case_count"] as? Int
-            evaluationStatus = count.map { "Running case \(index) of \($0)" }
-                ?? "Running case \(index)"
-
-        case "evaluation_case_completed":
-            evaluationStatus = "Grading results"
-
-        case "evaluation_completed":
-            activeEvaluationID = nil
-            evaluationStatus = (event["state"] as? String) == "interrupted"
-                ? "Evaluation interrupted" : "Evaluation complete"
-            Task { @MainActor [weak self] in await self?.refreshEvaluations() }
+        case "evaluation_started", "evaluation_case_started",
+             "evaluation_case_completed", "evaluation_completed":
+            evaluations.ingest(type, event)
 
         case "agent_spawned":
             let nodeID = event["node_id"] as? String ?? UUID().uuidString
