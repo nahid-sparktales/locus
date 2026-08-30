@@ -52,7 +52,18 @@ final class AccentPropagationTests: XCTestCase {
         super.tearDown()
     }
 
+    func testMarkdownArtifactChipFollowsAccentWithoutBeingRebuilt() throws {
+        // A list-item reference mounts the compact chip, whose kind icon is
+        // accent-tinted.
+        try assertMarkdownArtifactFollowsAccent(text: "- `notes.md`")
+    }
+
     func testMarkdownArtifactCardFollowsAccentWithoutBeingRebuilt() throws {
+        // A top-level reference mounts the full card.
+        try assertMarkdownArtifactFollowsAccent(text: "`notes.md`")
+    }
+
+    private func assertMarkdownArtifactFollowsAccent(text: String) throws {
         let workspace = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("locus-accent-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(
@@ -69,7 +80,7 @@ final class AccentPropagationTests: XCTestCase {
         let box = AccentBox(lime)
         let live = mount(StableMarkdownHost(
             accent: box,
-            text: "- `notes.md`",
+            text: text,
             workspacePath: workspace.path
         ))
         let onLime = try XCTUnwrap(snapshot(live))
@@ -84,18 +95,18 @@ final class AccentPropagationTests: XCTestCase {
         // values keeps the assertion out of the display's colour space.
         let rebuilt = mount(StableMarkdownHost(
             accent: AccentBox(pink),
-            text: "- `notes.md`",
+            text: text,
             workspacePath: workspace.path
         ))
         let rebuiltOnPink = try XCTUnwrap(snapshot(rebuilt))
 
         XCTAssertGreaterThan(
             differingPixels(onLime, onPink), 0,
-            "The mounted card kept the previous accent instead of following the change"
+            "The mounted artifact tile kept the previous accent instead of following the change"
         )
         XCTAssertEqual(
             differingPixels(onPink, rebuiltOnPink), 0,
-            "A mounted card must match one built fresh under the same accent"
+            "A mounted artifact tile must match one built fresh under the same accent"
         )
     }
 

@@ -907,16 +907,33 @@ private struct MarkdownBlocksView: View {
                     selectionSpan: selectionSpan(at: path),
                     onOpen: { open(artifact) }
                 )
-            } else if let artifact,
-                      MarkdownArtifactPromotion.allowsCard(nestingDepth: nestingDepth) {
-                WorkspaceArtifactCard(
-                    reference: artifact,
-                    selectionStore: selectionStore,
-                    selectionSpan: selectionSpan(at: path),
-                    onOpen: { open(artifact) }
-                )
             } else {
-                prose(runs, path: path)
+                switch MarkdownArtifactPromotion.presentation(nestingDepth: nestingDepth) {
+                case .fullCard:
+                    if let artifact {
+                        WorkspaceArtifactCard(
+                            reference: artifact,
+                            selectionStore: selectionStore,
+                            selectionSpan: selectionSpan(at: path),
+                            onOpen: { open(artifact) }
+                        )
+                    } else {
+                        prose(runs, path: path)
+                    }
+                case .compactChip:
+                    if let reference = MarkdownArtifactPromotion.leadingArtifact(
+                        in: runs, workspacePath: workspacePath
+                    ) {
+                        WorkspaceArtifactChipRow(
+                            reference: reference,
+                            onOpen: { open(reference) }
+                        ) {
+                            prose(runs, path: path)
+                        }
+                    } else {
+                        prose(runs, path: path)
+                    }
+                }
             }
 
         case .heading(let level, let runs):
@@ -1156,15 +1173,10 @@ private struct MarkdownBlocksView: View {
 
     private func standaloneArtifact(in runs: [MarkdownInlineRun]) -> WorkspaceArtifactReference? {
         guard runs.count == 1, let run = runs.first else { return nil }
-        let raw: String?
-        if let destination = run.destination {
-            raw = destination
-        } else if run.style.contains(.code) {
-            raw = run.text
-        } else {
-            raw = nil
-        }
-        return WorkspaceArtifactReference.classify(raw, workspacePath: workspacePath)
+        return WorkspaceArtifactReference.classify(
+            MarkdownArtifactPromotion.candidate(in: run),
+            workspacePath: workspacePath
+        )
     }
 
     private func open(_ url: URL) {
@@ -1196,15 +1208,53 @@ struct WorkspaceSourceLocation: Hashable, Sendable {
     let column: Int?
 }
 
-/// Whether a standalone workspace reference earns its own block-level card.
+/// How a workspace file reference presents at a given nesting depth.
+enum MarkdownArtifactPresentation {
+    case fullCard
+    case compactChip
+}
+
+/// Which presentation a standalone workspace reference earns.
 ///
 /// A file card is 58pt of chrome with three buttons. One sitting in a paragraph
 /// is a useful artifact; one per bullet turns a seven-file listing into a wall
-/// of cards, so inside a list the reference stays an inline link instead.
+/// of cards, so inside a list the reference renders as a single-line chip —
+/// the card's icon, metadata, and actions without the chrome.
 /// Images are content rather than chrome and are promoted at any depth by the
 /// caller before this is consulted.
 enum MarkdownArtifactPromotion {
-    static func allowsCard(nestingDepth: Int) -> Bool { nestingDepth == 0 }
+    static func presentation(nestingDepth: Int) -> MarkdownArtifactPresentation {
+        nestingDepth == 0 ? .fullCard : .compactChip
+    }
+
+    /// The file reference a nested paragraph leads with, if it is the only
+    /// one. A bullet like `` `AppModel.swift` — the composition root ``
+    /// promotes to a chip; a bullet comparing two files stays prose, so an
+    /// annotation's actions are never attributed to the wrong file.
+    static func leadingArtifact(
+        in runs: [MarkdownInlineRun],
+        workspacePath: String?
+    ) -> WorkspaceArtifactReference? {
+        guard let first = runs.first,
+              let reference = WorkspaceArtifactReference.classify(
+                candidate(in: first), workspacePath: workspacePath
+              ),
+              runs.dropFirst().allSatisfy({ run in
+                  WorkspaceArtifactReference.classify(
+                    candidate(in: run), workspacePath: workspacePath
+                  ) == nil
+              })
+        else { return nil }
+        return reference
+    }
+
+    /// The text a run offers as a possible workspace path: a link's
+    /// destination, or the literal text of inline code.
+    static func candidate(in run: MarkdownInlineRun) -> String? {
+        if let destination = run.destination { return destination }
+        if run.style.contains(.code) { return run.text }
+        return nil
+    }
 }
 
 enum WorkspaceArtifactKind: String, Hashable, Sendable {
@@ -1505,6 +1555,88 @@ private struct WorkspaceImageArtifactView: View {
         }
         .buttonStyle(.locus())
         .foregroundStyle(LocusTheme.muted)
+        .accessibilityLabel("\(title) \(reference.relativePath)")
+    }
+}
+
+/// The single-line variant of `WorkspaceArtifactCard` used inside lists: the
+/// card's icon, size, and actions without the 58pt of chrome that made a
+/// listing read as a wall. The paragraph's inline content renders inside it
+/// unchanged — the filename keeps its pill and the whole row stays one
+/// selection span — so nothing is re-typeset here. Reveal and Copy Path live
+/// in the context menu.
+private struct WorkspaceArtifactChipRow<Content: View>: View {
+    @Environment(\.locusAccent) private var accent
+    let reference: WorkspaceArtifactReference
+    let onOpen: () -> Void
+    private let content: Content
+
+    init(
+        reference: WorkspaceArtifactReference,
+        onOpen: @escaping () -> Void,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.reference = reference
+        self.onOpen = onOpen
+        self.content = content()
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(LocusTheme.paperDeep.opacity(0.9))
+                    .frame(width: 22, height: 22)
+                Image(systemName: reference.kind.symbol)
+                    .font(.locus(size: 10, weight: .semibold))
+                    .foregroundStyle(accent.actionColor)
+            }
+            content
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let displaySize = reference.displaySize {
+                Text(displaySize)
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .layoutPriority(1)
+            }
+            chipAction("Open", symbol: "arrow.up.forward.app", action: onOpen)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .frame(minHeight: 28)
+        .background(LocusTheme.white)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(LocusTheme.line, lineWidth: 1)
+        }
+        .contextMenu {
+            Button("Open") { onOpen() }
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([reference.url])
+            }
+            Button("Copy Path") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(reference.relativePath, forType: .string)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(reference.kind.label) artifact, \(reference.relativePath)")
+    }
+
+    private func chipAction(
+        _ title: String,
+        symbol: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .labelStyle(.iconOnly)
+                .frame(width: 21, height: 21)
+        }
+        .buttonStyle(.locus())
+        .foregroundStyle(LocusTheme.muted)
+        .help(title)
         .accessibilityLabel("\(title) \(reference.relativePath)")
     }
 }
