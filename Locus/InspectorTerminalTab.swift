@@ -36,7 +36,7 @@ private struct TerminalPanel: View {
             configure()
             terminal.ensureStarted()
             terminal.focus()
-            model.refreshBackgroundServices()
+            model.backgroundServicesModel.refreshBackgroundServices()
         }
         .onChange(of: model.workspacePath) { configure() }
         .onChange(of: model.settings.terminalShell) { configure() }
@@ -65,13 +65,13 @@ private struct TerminalPanel: View {
                 Label("Managed services", systemImage: "server.rack")
                     .font(.locus(size: 8, weight: .semibold))
                 Spacer()
-                Button { model.refreshBackgroundServices() } label: {
+                Button { model.backgroundServicesModel.refreshBackgroundServices() } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.locus())
                 .help("Refresh managed services")
             }
-            ForEach(model.backgroundServices) { service in
+            ForEach(model.backgroundServicesModel.backgroundServices) { service in
                 HStack(spacing: 7) {
                     Circle()
                         .fill(service.running ? LocusTheme.success : LocusTheme.warning)
@@ -87,7 +87,7 @@ private struct TerminalPanel: View {
                     Spacer()
                     if service.running {
                         Button("Stop", role: .destructive) {
-                            model.stopBackgroundService(service)
+                            model.backgroundServicesModel.stopBackgroundService(service)
                         }
                         .buttonStyle(.locus())
                         .font(.locus(size: 8))
@@ -97,7 +97,7 @@ private struct TerminalPanel: View {
                                 .font(.locus(size: 7, design: .monospaced))
                                 .foregroundStyle(LocusTheme.warning)
                             Button("Dismiss") {
-                                model.stopBackgroundService(service)
+                                model.backgroundServicesModel.stopBackgroundService(service)
                             }
                             .buttonStyle(.locus())
                             .font(.locus(size: 8))
@@ -105,7 +105,7 @@ private struct TerminalPanel: View {
                     }
                 }
             }
-            if model.backgroundServices.isEmpty {
+            if model.backgroundServicesModel.backgroundServices.isEmpty {
                 Text("No managed services. Agents use these for servers and watchers that should survive Stop.")
                     .font(.locus(size: 7))
                     .foregroundStyle(LocusTheme.muted)

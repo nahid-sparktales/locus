@@ -470,3 +470,32 @@ enum RecommendationEngine {
             .map { $0 }
     }
 }
+
+struct AutomaticInspectorPrompt: Equatable {
+    let tab: InspectorTab
+    let runID: String?
+
+    var isTeamRun: Bool { tab == .runs }
+
+    var title: String {
+        isTeamRun
+            ? "Open Runs for team requests?"
+            : "Open Context & Plan for solo requests?"
+    }
+
+    var message: String {
+        if isTeamRun {
+            return "Locus can open Runs whenever you send a team request so you can follow its agents and progress. You can change this anytime in Settings → General → Conversation."
+        }
+        return "Locus can open Context & Plan whenever you send a solo Work request so you can follow context use and the current plan. You can change this anytime in Settings → General → Conversation."
+    }
+
+    var confirmationTitle: String {
+        isTeamRun ? "Open Runs Every Time" : "Open Context & Plan Every Time"
+    }
+}
+
+struct RunsNavigationRequest: Equatable, Identifiable {
+    let id = UUID()
+    let runID: String
+}

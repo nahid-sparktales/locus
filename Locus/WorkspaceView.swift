@@ -31,7 +31,7 @@ struct WorkspaceView: View {
                 chatContent
                     .frame(width: proxy.size.width, height: proxy.size.height)
 
-                if model.activityCenterPresented {
+                if model.activity.activityCenterPresented {
                     ActivityCenterView()
                         .environmentObject(model)
                         .frame(
@@ -171,8 +171,8 @@ struct WorkspaceView: View {
                     .environmentObject(model)
             }
 
-            if model.activeTaskRecord != nil, model.taskHasChanges {
-                Button("Review & Land") { model.prepareReviewAndLand() }
+            if model.activeTaskRecord != nil, model.landingFlow.taskHasChanges {
+                Button("Review & Land") { model.landingFlow.prepareReviewAndLand() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .tint(LocusTheme.ink)
@@ -210,10 +210,10 @@ struct WorkspaceView: View {
                 .frame(maxWidth: 176)
             }
             .buttonStyle(.locus())
-            .help(model.teamModeEnabled
+            .help(model.agentTeamsModel.teamModeEnabled
                 ? "Active team: \(model.selectedTeamModelNames.joined(separator: ", "))"
                 : "Select model")
-            .accessibilityLabel(model.teamModeEnabled
+            .accessibilityLabel(model.agentTeamsModel.teamModeEnabled
                 ? "Active team, \(model.modelPickerLabel), \(runtimeHealthTitle)"
                 : "Select model, \(model.modelPickerLabel), \(runtimeHealthTitle)")
             .accessibilityIdentifier("workspace.modelPicker")
@@ -769,7 +769,7 @@ struct ReviewAndLandView: View {
     }
 
     private var checksAreCurrentAndPassing: Bool {
-        guard let check = model.landingCheckRun, let preflight = model.landingPreflight else {
+        guard let check = model.landingFlow.landingCheckRun, let preflight = model.landingFlow.landingPreflight else {
             return false
         }
         return check.passed && check.tree == preflight.tree
@@ -780,8 +780,8 @@ struct ReviewAndLandView: View {
     }
 
     private var canLand: Bool {
-        guard let preflight = model.landingPreflight, preflight.patchBytes > 0,
-              !model.isLandingOperationRunning else { return false }
+        guard let preflight = model.landingFlow.landingPreflight, preflight.patchBytes > 0,
+              !model.landingFlow.isLandingOperationRunning else { return false }
         if destination == "local" { return preflight.canApplyLocal }
         return branchProblem == nil
             && !commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -809,7 +809,7 @@ struct ReviewAndLandView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         stageHeader("1", "Review changes")
-                        if let preflight = model.landingPreflight {
+                        if let preflight = model.landingFlow.landingPreflight {
                             HStack {
                                 Text("\(preflight.paths.count) file\(preflight.paths.count == 1 ? "" : "s")")
                                 Text(ByteCountFormatter.string(
@@ -823,7 +823,7 @@ struct ReviewAndLandView: View {
                             .foregroundStyle(LocusTheme.muted)
 
                             ScrollView([.horizontal, .vertical]) {
-                                Text(model.landingPatch.isEmpty ? "No changes." : model.landingPatch)
+                                Text(model.landingFlow.landingPatch.isEmpty ? "No changes." : model.landingFlow.landingPatch)
                                     .font(.locus(size: 9, design: .monospaced))
                                     .textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -851,24 +851,24 @@ struct ReviewAndLandView: View {
                             .overlay { RoundedRectangle(cornerRadius: 8).stroke(LocusTheme.line) }
                             .accessibilityIdentifier("landing.checkCommands")
                         HStack {
-                            if model.activeLandingCheckRunID != nil {
+                            if model.landingFlow.activeLandingCheckRunID != nil {
                                 ProgressView().controlSize(.small)
                                 Text("Running checks…")
                                     .font(.locus(size: 9))
-                                Button("Stop") { model.stopLandingChecks() }
+                                Button("Stop") { model.landingFlow.stopLandingChecks() }
                                     .accessibilityIdentifier("landing.stopChecks")
                             } else {
-                                Button("Run Checks") { model.runLandingChecks(commands: commands) }
-                                    .disabled(commands.isEmpty || model.isLandingOperationRunning)
+                                Button("Run Checks") { model.landingFlow.runLandingChecks(commands: commands) }
+                                    .disabled(commands.isEmpty || model.landingFlow.isLandingOperationRunning)
                                     .accessibilityIdentifier("landing.runChecks")
                             }
                             Spacer()
                             if checksAreCurrentAndPassing {
                                 Label("Checks passed", systemImage: "checkmark.circle.fill")
                                     .foregroundStyle(LocusTheme.success)
-                            } else if let check = model.landingCheckRun {
+                            } else if let check = model.landingFlow.landingCheckRun {
                                 Label(
-                                    check.tree == model.landingPreflight?.tree
+                                    check.tree == model.landingFlow.landingPreflight?.tree
                                         ? "Checks did not pass" : "Checks are stale",
                                     systemImage: "exclamationmark.triangle.fill"
                                 )
@@ -880,7 +880,7 @@ struct ReviewAndLandView: View {
                         }
                         .font(.locus(size: 9, weight: .semibold))
 
-                        if let run = model.landingCheckRun {
+                        if let run = model.landingFlow.landingCheckRun {
                             VStack(alignment: .leading, spacing: 6) {
                                 ForEach(run.results) { result in
                                     DisclosureGroup {
@@ -915,13 +915,13 @@ struct ReviewAndLandView: View {
                         landingDestinationControl
 
                         if destination == "local" {
-                            if model.landingPreflight?.canApplyLocal == true {
+                            if model.landingFlow.landingPreflight?.canApplyLocal == true {
                                 Text("The complete patch will be applied unstaged to Local. This chat remains in its worktree.")
                                     .font(.locus(size: 9))
                                     .foregroundStyle(LocusTheme.muted)
                             } else {
                                 Label(
-                                    model.landingPreflight?.conflict.nilIfEmpty
+                                    model.landingFlow.landingPreflight?.conflict.nilIfEmpty
                                         ?? "The patch conflicts with Local. Both checkouts are unchanged.",
                                     systemImage: "exclamationmark.triangle.fill"
                                 )
@@ -934,7 +934,7 @@ struct ReviewAndLandView: View {
                                     .foregroundStyle(LocusTheme.success)
                                 HStack {
                                     Button("Publish") { model.publishLandedWorktree() }
-                                        .disabled(model.isLandingOperationRunning)
+                                        .disabled(model.landingFlow.isLandingOperationRunning)
                                     Button("Open Pull Request") { model.openLandedPullRequest() }
                                     Text(task.landingCommit?.prefix(10) ?? "")
                                         .font(.locus(size: 8, design: .monospaced))
@@ -999,7 +999,7 @@ struct ReviewAndLandView: View {
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
-                await model.refreshLandingReview()
+                await model.landingFlow.refreshLandingReview()
             }
         }
         .alert("Land without passing current checks?", isPresented: $confirmOverride) {
@@ -1059,7 +1059,7 @@ struct ReviewAndLandView: View {
     }
 
     private func land(override: Bool) {
-        model.landActiveTask(
+        model.landingFlow.landActiveTask(
             destination: destination,
             branch: branchName,
             commitMessage: commitMessage,
@@ -1101,13 +1101,16 @@ struct ActivityCenterView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Activity Center")
                         .font(.locus(size: 15, weight: .bold))
-                    Text(model.activityCenterSection == .activity
+                    Text(model.activity.activityCenterSection == .activity
                         ? "Work keeps running when you move between chats."
                         : "Create recurring work that starts in a fresh chat.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
-                Picker("Section", selection: $model.activityCenterSection) {
+                Picker("Section", selection: Binding(
+                    get: { model.activity.activityCenterSection },
+                    set: { model.activity.activityCenterSection = $0 }
+                )) {
                     ForEach(ActivityCenterSection.allCases) { section in
                         Text(section.title).tag(section)
                     }
@@ -1116,24 +1119,24 @@ struct ActivityCenterView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 180)
                 Spacer()
-                if model.activityCenterSection == .activity,
-                   model.visibleActivityRuns.contains(where: { model.activityIsUnseen($0) }) {
-                    Button("Mark All Seen") { model.markAllActivitySeen() }
+                if model.activity.activityCenterSection == .activity,
+                   model.visibleActivityRuns.contains(where: { model.activity.activityIsUnseen($0) }) {
+                    Button("Mark All Seen") { model.activity.markAllActivitySeen() }
                         .accessibilityIdentifier("activity.markAllSeen")
                 }
-                if model.activityCenterSection == .activity,
+                if model.activity.activityCenterSection == .activity,
                    model.visibleActivityRuns.contains(where: {
                     TeamRunState(rawValue: $0.state)?.isTerminal == true
                 }) {
-                    Button("Clear Finished") { model.clearFinishedActivityRuns() }
+                    Button("Clear Finished") { model.activity.clearFinishedActivityRuns() }
                         .accessibilityIdentifier("activity.clearFinished")
                 }
                 Button {
                     Task {
-                        if model.activityCenterSection == .activity {
-                            await model.refreshActivityRuns()
+                        if model.activity.activityCenterSection == .activity {
+                            await model.activity.refreshActivityRuns()
                         } else {
-                            await model.refreshScheduledTasks()
+                            await model.schedule.refreshScheduledTasks()
                         }
                     }
                 } label: {
@@ -1142,7 +1145,7 @@ struct ActivityCenterView: View {
                 .accessibilityIdentifier("activity.refresh")
                 Button {
                     withAnimation(LocusMotion.spatial) {
-                        model.toggleActivityCenter()
+                        model.activity.toggleActivityCenter()
                     }
                 } label: {
                     Image(systemName: "xmark")
@@ -1157,7 +1160,7 @@ struct ActivityCenterView: View {
             .padding(.vertical, 14)
             .background(LocusTheme.paperDeep.opacity(0.55))
 
-            if model.activityCenterSection == .schedules {
+            if model.activity.activityCenterSection == .schedules {
                 schedulesView
             } else if model.visibleActivityRuns.isEmpty {
                 ContentUnavailableView(
@@ -1199,10 +1202,10 @@ struct ActivityCenterView: View {
         }
         .task {
             while !Task.isCancelled {
-                if model.activityCenterSection == .activity {
-                    await model.refreshActivityRuns()
+                if model.activity.activityCenterSection == .activity {
+                    await model.activity.refreshActivityRuns()
                 } else {
-                    await model.refreshScheduledTasks(announceFailure: false)
+                    await model.schedule.refreshScheduledTasks(announceFailure: false)
                 }
                 try? await Task.sleep(for: .seconds(2))
             }
@@ -1227,7 +1230,7 @@ struct ActivityCenterView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
 
-            if model.scheduledTasks.isEmpty {
+            if model.schedule.scheduledTasks.isEmpty {
                 ContentUnavailableView(
                     "No Scheduled Tasks",
                     systemImage: "calendar.badge.clock",
@@ -1238,7 +1241,7 @@ struct ActivityCenterView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 10) {
-                        ForEach(model.scheduledTasks) { task in
+                        ForEach(model.schedule.scheduledTasks) { task in
                             ScheduleRow(task: task)
                                 .environmentObject(model)
                         }
@@ -1290,7 +1293,7 @@ struct ActivityCenterView: View {
                         Text(run.state.replacingOccurrences(of: "_", with: " ").uppercased())
                             .font(.locus(size: 7, weight: .bold, design: .monospaced))
                             .foregroundStyle(color(for: run))
-                        if model.activityIsUnseen(run) {
+                        if model.activity.activityIsUnseen(run) {
                             Text("NEW")
                                 .font(.locus(size: 7, weight: .bold, design: .monospaced))
                                 .foregroundStyle(LocusTheme.brandInk)
@@ -1345,7 +1348,7 @@ struct ActivityCenterView: View {
                     Button("Retry") { model.retryRun(run) }
                 }
                 if TeamRunState(rawValue: run.state)?.isTerminal == true {
-                    Button("Remove") { model.dismissActivityRun(run) }
+                    Button("Remove") { model.activity.dismissActivityRun(run) }
                         .help("Remove from Activity; the run timeline is preserved")
                         .accessibilityIdentifier("activity.remove.\(run.id)")
                 }
@@ -1468,15 +1471,15 @@ private struct ScheduleRow: View {
             }
 
             HStack(spacing: 7) {
-                Button("Run Now") { model.runScheduleNow(task) }
+                Button("Run Now") { model.schedule.runScheduleNow(task) }
                 Button("Edit") { model.presentScheduleEditor(task: task) }
                 if task.enabled {
-                    Button("Pause") { model.setScheduleEnabled(task, enabled: false) }
+                    Button("Pause") { model.schedule.setScheduleEnabled(task, enabled: false) }
                 } else if task.rule.kind != .once || task.nextRunAt != nil {
-                    Button("Resume") { model.setScheduleEnabled(task, enabled: true) }
+                    Button("Resume") { model.schedule.setScheduleEnabled(task, enabled: true) }
                 }
                 if task.lastRunID != nil {
-                    Button("Latest Result") { model.openLatestRun(for: task) }
+                    Button("Latest Result") { model.schedule.openLatestRun(for: task) }
                 }
                 Spacer()
                 Button("Delete", role: .destructive) { confirmsDelete = true }
@@ -1492,7 +1495,7 @@ private struct ScheduleRow: View {
         .accessibilityIdentifier("schedule.row.\(task.id)")
         .alert("Delete \(task.name)?", isPresented: $confirmsDelete) {
             Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) { model.deleteSchedule(task) }
+            Button("Delete", role: .destructive) { model.schedule.deleteSchedule(task) }
         } message: {
             Text("Its generated chats and run history will be kept.")
         }
@@ -1545,12 +1548,12 @@ struct ScheduleEditorView: View {
                         .foregroundStyle(LocusTheme.muted)
                 }
                 Spacer()
-                Button("Cancel") { model.scheduleEditorDraft = nil }
+                Button("Cancel") { model.schedule.scheduleEditorDraft = nil }
                 Button(draft.id == nil ? "Create" : "Save") {
-                    Task { _ = await model.saveSchedule(draft) }
+                    Task { _ = await model.schedule.saveSchedule(draft) }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.isSavingSchedule)
+                .disabled(model.schedule.isSavingSchedule)
                 .accessibilityIdentifier("scheduleEditor.save")
             }
             .padding(18)
@@ -1698,7 +1701,7 @@ struct ScheduleEditorView: View {
 
     private var availableModels: [String] {
         if routeSelection == "ollama" {
-            let names = model.installedLocalModels.map(\.name)
+            let names = model.providerAccountsModel.installedLocalModels.map(\.name)
             return names.isEmpty ? [draft.model].filter { !$0.isEmpty } : names
         }
         guard let id = UUID(uuidString: routeSelection),
@@ -1798,7 +1801,7 @@ private struct ModelPickerPopover: View {
                 ) {
                     Task {
                         await model.refreshMetadata()
-                        await model.refreshAccountCatalogs(force: true)
+                        await model.providerAccountsModel.refreshAccountCatalogs(force: true)
                     }
                 }
                 pickerAction(
@@ -1849,7 +1852,7 @@ private struct ModelPickerPopover: View {
                 }
                 .accessibilityIdentifier("workspace.modelPicker.manageTeam")
                 Button("Switch to Solo") {
-                    model.selectAgentTeam(nil)
+                    model.agentTeamsModel.selectAgentTeam(nil)
                 }
                 .accessibilityIdentifier("workspace.modelPicker.switchToSolo")
             }
@@ -1860,7 +1863,7 @@ private struct ModelPickerPopover: View {
 
     private func routeSection(_ section: ModelPickerSection) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            sectionLabel(model.teamModeEnabled ? "SOLO · \(section.title)" : section.title.uppercased())
+            sectionLabel(model.agentTeamsModel.teamModeEnabled ? "SOLO · \(section.title)" : section.title.uppercased())
             if let message = section.emptyMessage {
                 Text(message)
                     .font(.locus(size: 9))
@@ -1868,7 +1871,7 @@ private struct ModelPickerPopover: View {
             }
             ForEach(section.models, id: \.self) { name in
                 Button {
-                    if model.teamModeEnabled { model.selectAgentTeam(nil) }
+                    if model.agentTeamsModel.teamModeEnabled { model.agentTeamsModel.selectAgentTeam(nil) }
                     model.selectModel(account: section.account, model: name)
                     dismiss()
                 } label: {
@@ -1961,7 +1964,7 @@ private struct TeamActivityPanel: View {
             if expanded {
                 ScrollView(.vertical) {
                     VStack(alignment: .leading, spacing: 7) {
-                        ForEach(model.agentActivities) { activity in
+                        ForEach(model.teamRunLive.agentActivities) { activity in
                             AgentActivityRow(
                                 activity: activity,
                                 thinkingVisibility: model.thinkingVisibility
@@ -1985,18 +1988,18 @@ private struct TeamActivityPanel: View {
     private func taskActions(_ task: TaskRecord) -> some View {
         HStack(spacing: 8) {
             Label(
-                model.taskHasChanges
-                    ? "\(ByteCountFormatter.string(fromByteCount: Int64(model.taskPatchBytes), countStyle: .file)) ready"
+                model.landingFlow.taskHasChanges
+                    ? "\(ByteCountFormatter.string(fromByteCount: Int64(model.landingFlow.taskPatchBytes), countStyle: .file)) ready"
                     : "Private checkout",
                 systemImage: "arrow.triangle.branch"
             )
             .font(.locus(size: 8, design: .monospaced))
             .foregroundStyle(LocusTheme.muted)
             Spacer()
-            Button("Review & Land") { model.prepareReviewAndLand() }
-                .disabled(model.isBusy || !model.taskHasChanges)
+            Button("Review & Land") { model.landingFlow.prepareReviewAndLand() }
+                .disabled(model.isBusy || !model.landingFlow.taskHasChanges)
             Button("Copy Patch") { model.copyActiveTaskPatch() }
-                .disabled(model.isBusy || !model.taskHasChanges)
+                .disabled(model.isBusy || !model.landingFlow.taskHasChanges)
             Menu {
                 Button("Open Checkout") { model.openActiveTaskCheckout() }
                 Button("Reveal in Finder") { model.revealActiveTaskCheckout() }
@@ -2135,9 +2138,9 @@ private struct WorkStatusStrip: View {
                         Text("~\(model.estimatedStreamingTokens.formatted()) streamed tokens")
                     }
                     if model.orchestrationState != nil {
-                        Text("\(model.teamModelCalls.formatted()) team calls")
-                        if model.teamMeteredTokens > 0 {
-                            Text("\(model.teamMeteredTokens.formatted()) hosted tokens")
+                        Text("\(model.teamRunLive.teamModelCalls.formatted()) team calls")
+                        if model.teamRunLive.teamMeteredTokens > 0 {
+                            Text("\(model.teamRunLive.teamMeteredTokens.formatted()) hosted tokens")
                         }
                     }
                     if let info = model.sessionInfo {
