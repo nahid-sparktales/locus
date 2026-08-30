@@ -170,7 +170,7 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$direct/Contents/Info.plist")" = \
             'https://github.com/nahid-sparktales/locus/releases/latest/download/appcast.xml'
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
-            "$direct/Contents/Frameworks/Sparkle.framework/Resources/Info.plist")" = '2.9.4'
+            "$direct/Contents/Frameworks/Sparkle.framework/Resources/Info.plist")" = '2.9.6'
           /usr/bin/otool -L "$direct/Contents/MacOS/Locus" | grep -q 'Sparkle.framework'
           ! /usr/bin/otool -L "$app_store/Contents/MacOS/Locus" | grep -q 'Sparkle.framework'
           ! /usr/bin/plutil -p "$app_store/Contents/Info.plist" | grep -Eq '^  "SU[^" ]*"'
