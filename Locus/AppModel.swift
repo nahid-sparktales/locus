@@ -143,14 +143,12 @@ final class AppModel: ObservableObject {
     @Published var reviewAndLandPresented = false
     let activity = ActivityCenterModel()
     private var activityBridge: AnyCancellable?
-    @Published private(set) var scheduledTasks: [ScheduledTask] = []
+    let schedule = ScheduleModel()
+    private var scheduleBridge: AnyCancellable?
     let companionGateway = CompanionGateway()
     @Published private(set) var companionGatewayState = CompanionGatewayState.disabled
     @Published var companionPairingPayload: CompanionPairingPayload?  // internal(for: AppModel+MobileCompanion)
     @Published var companionPairingError: String?  // internal(for: AppModel+MobileCompanion)
-    @Published var scheduleEditorDraft: ScheduleEditorDraft?
-    @Published private(set) var isSavingSchedule = false
-    @Published private(set) var isRefreshingSchedules = false
     let backgroundServicesModel = BackgroundServicesModel()
     private var backgroundServicesBridge: AnyCancellable?
     let extensionsModel = ExtensionsModel()
@@ -565,8 +563,6 @@ final class AppModel: ObservableObject {
     private var activationObserver: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
     private var privacyLockObservers: [NSObjectProtocol] = []
-    private var scheduleCoordinatorTask: Task<Void, Never>?
-    private var isDispatchingSchedules = false
     /// False for unit and UI tests. Views check it before touching the
     /// credential file: a test must not read — or delete — the secrets of
     /// whoever is running the suite.
@@ -942,6 +938,30 @@ final class AppModel: ObservableObject {
         }
         transcriptSearch.configure(backend: backend)
         transcriptSearchBridge = transcriptSearch.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        schedule.configure(
+            backend: backend,
+            persistenceEnabled: persistenceEnabled,
+            isShuttingDown: { [weak self] in self?.isShuttingDown ?? true },
+            draftIssue: { [weak self] draft in self?.scheduleConfigurationIssue(for: draft) },
+            taskIssue: { [weak self] task in self?.scheduleConfigurationIssue(for: task) },
+            refreshMetadata: { [weak self] in await self?.refreshMetadata() },
+            refreshActivity: { [weak self] in
+                await self?.refreshActivityRuns(announceFailure: false)
+            },
+            restoreQueuedRuns: { [weak self] in self?.restorePersistedQueuedRuns() },
+            admitQueuedRun: { [weak self] run in
+                guard let self, self.restoredQueuedRunIDs.insert(run.id).inserted else { return }
+                await self.dispatchPersistedQueuedRun(run)
+            },
+            openRun: { [weak self] run in self?.openActivityRun(run) },
+            notifyPaused: { [weak self] body in
+                self?.notifyNeedsAttentionIfInactive(body: body)
+            },
+            toastHandler: { [weak self] message in self?.showToast(message) }
+        )
+        scheduleBridge = schedule.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         simulatorControl.capabilityDidChange = { [weak self] in
@@ -1741,7 +1761,7 @@ final class AppModel: ObservableObject {
         restorePersistedQueuedRuns()
         await refreshScheduledTasks(announceFailure: false)
         await processDueSchedules()
-        startScheduleCoordinator()
+        schedule.startScheduleCoordinator()
         requestNotificationAuthorization()
         startRuntimeMonitor()
     }
@@ -2100,8 +2120,7 @@ final class AppModel: ObservableObject {
         orchestrationRunsTasks.removeAll()
         orchestrationDetailTasks.removeAll()
         orchestrationEventTasks.removeAll()
-        scheduleCoordinatorTask?.cancel()
-        scheduleCoordinatorTask = nil
+        schedule.cancelAll()
         backend.disconnect()
         backendProcess.stop()
         taskWorkers.values.forEach { $0.stop() }
@@ -5199,12 +5218,6 @@ final class AppModel: ObservableObject {
         }
     }
 
-    var nextScheduledTask: ScheduledTask? {
-        scheduledTasks
-            .filter { $0.enabled && $0.nextRunAt != nil }
-            .min { ($0.nextRunAt ?? .greatestFiniteMagnitude) < ($1.nextRunAt ?? .greatestFiniteMagnitude) }
-    }
-
     func presentScheduleEditor(task: ScheduledTask? = nil, prompt: String? = nil) {
         if let task {
             scheduleEditorDraft = ScheduleEditorDraft(task: task)
@@ -5244,223 +5257,6 @@ final class AppModel: ObservableObject {
         activityCenterPresented = true
         Task { @MainActor [weak self] in
             await self?.refreshScheduledTasks()
-        }
-    }
-
-    func refreshScheduledTasks(announceFailure: Bool = true) async {
-        guard !isRefreshingSchedules else { return }
-        isRefreshingSchedules = true
-        defer { isRefreshingSchedules = false }
-        do {
-            let response: SchedulesResponse = try await backend.get(
-                "/api/schedules", as: SchedulesResponse.self
-            )
-            scheduledTasks = response.schedules
-        } catch {
-            if announceFailure {
-                showToast("Could not load schedules: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    func saveSchedule(_ draft: ScheduleEditorDraft) async -> Bool {
-        guard let rule = encodedJSONObject(draft.rule()) else {
-            showToast("The schedule rule could not be saved")
-            return false
-        }
-        if let issue = scheduleConfigurationIssue(for: draft) {
-            showToast(issue)
-            return false
-        }
-        var body: [String: Any] = [
-            "name": draft.name,
-            "prompt": draft.prompt,
-            "workspace_root": draft.workspaceRoot,
-            "mode": draft.mode.rawValue,
-            "execution_environment": draft.executionEnvironment.rawValue,
-            "runner": draft.runner.rawValue,
-            "provider": draft.provider,
-            "model": draft.model,
-            "timezone": draft.timezone,
-            "rule": rule,
-        ]
-        if draft.runner == .team {
-            body["team_id"] = draft.teamID ?? ""
-            body["team_name"] = draft.teamName
-        }
-        if draft.provider != "ollama" {
-            body["provider_account_id"] = draft.providerAccountID ?? ""
-        }
-        if draft.id == nil { body["enabled"] = true }
-        isSavingSchedule = true
-        defer { isSavingSchedule = false }
-        do {
-            let saved: ScheduledTask
-            if let id = draft.id {
-                saved = try await backend.patch(
-                    "/api/schedules/\(id)", body: body, as: ScheduledTask.self
-                )
-            } else {
-                saved = try await backend.post(
-                    "/api/schedules", body: body, as: ScheduledTask.self
-                )
-            }
-            scheduledTasks.removeAll { $0.id == saved.id }
-            scheduledTasks.append(saved)
-            scheduledTasks.sort {
-                ($0.nextRunAt ?? .greatestFiniteMagnitude) < ($1.nextRunAt ?? .greatestFiniteMagnitude)
-            }
-            scheduleEditorDraft = nil
-            showToast(draft.id == nil ? "Schedule created" : "Schedule updated")
-            return true
-        } catch {
-            showToast("Could not save schedule: \(error.localizedDescription)")
-            return false
-        }
-    }
-
-    func setScheduleEnabled(_ task: ScheduledTask, enabled: Bool) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let updated: ScheduledTask = try await backend.patch(
-                    "/api/schedules/\(task.id)", body: ["enabled": enabled],
-                    as: ScheduledTask.self
-                )
-                replaceScheduledTask(updated)
-                showToast(enabled ? "Schedule resumed" : "Schedule paused")
-            } catch {
-                showToast("Could not update schedule: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    func deleteSchedule(_ task: ScheduledTask) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let _: DeleteScheduleResponse = try await backend.delete(
-                    "/api/schedules/\(task.id)", as: DeleteScheduleResponse.self
-                )
-                scheduledTasks.removeAll { $0.id == task.id }
-                showToast("Schedule deleted; its chats were kept")
-            } catch {
-                showToast("Could not delete schedule: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    func runScheduleNow(_ task: ScheduledTask) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            await dispatchSchedule(
-                task, trigger: "manual", requestID: UUID().uuidString,
-                announceFailure: true
-            )
-        }
-    }
-
-    func openLatestRun(for task: ScheduledTask) {
-        guard let runID = task.lastRunID else { return }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let run: OrchestrationRun = try await backend.get(
-                    "/api/runs/\(runID)", as: OrchestrationRun.self
-                )
-                await refreshMetadata()
-                openActivityRun(run)
-            } catch {
-                showToast("That scheduled result is no longer available")
-            }
-        }
-    }
-
-    private func startScheduleCoordinator() {
-        guard persistenceEnabled, scheduleCoordinatorTask == nil else { return }
-        scheduleCoordinatorTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(30))
-                guard !Task.isCancelled, let self else { return }
-                await self.processDueSchedules()
-            }
-        }
-    }
-
-    func processDueSchedules(now: Date = Date()) async {
-        guard persistenceEnabled, !isDispatchingSchedules, !isShuttingDown else { return }
-        isDispatchingSchedules = true
-        defer { isDispatchingSchedules = false }
-        await refreshScheduledTasks(announceFailure: false)
-        let due = scheduledTasks
-            .filter { $0.enabled && ($0.nextRunAt ?? .greatestFiniteMagnitude) <= now.timeIntervalSince1970 }
-            .sorted { ($0.nextRunAt ?? 0) < ($1.nextRunAt ?? 0) }
-        for task in due {
-            if let issue = scheduleConfigurationIssue(for: task) {
-                await pauseScheduledTask(task, reason: issue)
-                continue
-            }
-            await dispatchSchedule(task, trigger: "due", requestID: "", announceFailure: false)
-        }
-        await refreshScheduledTasks(announceFailure: false)
-        await refreshActivityRuns(announceFailure: false)
-        restorePersistedQueuedRuns()
-    }
-
-    func dispatchSchedule(  // internal(for: AppModel extension files)
-        _ task: ScheduledTask, trigger: String, requestID: String,
-        announceFailure: Bool
-    ) async {
-        if let issue = scheduleConfigurationIssue(for: task) {
-            await pauseScheduledTask(task, reason: issue)
-            if announceFailure { showToast(issue) }
-            return
-        }
-        do {
-            let response: ScheduleDispatchResponse = try await backend.post(
-                "/api/schedules/\(task.id)/dispatch",
-                body: ["trigger": trigger, "request_id": requestID],
-                timeout: 30,
-                as: ScheduleDispatchResponse.self
-            )
-            if let schedule = response.schedule { replaceScheduledTask(schedule) }
-            await refreshMetadata()
-            await refreshActivityRuns()
-            if response.run.state == "queued",
-               restoredQueuedRunIDs.insert(response.run.id).inserted {
-                await dispatchPersistedQueuedRun(response.run)
-            }
-            if announceFailure {
-                showToast(response.claimed ? "Scheduled task queued" : "That run is already queued")
-            }
-        } catch {
-            if announceFailure {
-                showToast("Could not run schedule: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    private func pauseScheduledTask(_ task: ScheduledTask, reason: String) async {
-        do {
-            let updated: ScheduledTask = try await backend.post(
-                "/api/schedules/\(task.id)/pause", body: ["reason": reason],
-                as: ScheduledTask.self
-            )
-            replaceScheduledTask(updated)
-            notifyNeedsAttentionIfInactive(
-                body: "\(task.name) was paused: \(reason)"
-            )
-        } catch {
-            // Keep the due item in memory so a later refresh can retry the
-            // durable pause after a temporary service outage.
-        }
-    }
-
-    func replaceScheduledTask(_ task: ScheduledTask) {  // internal(for: AppModel extension files)
-        if let index = scheduledTasks.firstIndex(where: { $0.id == task.id }) {
-            scheduledTasks[index] = task
-        } else {
-            scheduledTasks.append(task)
         }
     }
 
