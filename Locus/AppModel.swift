@@ -72,12 +72,9 @@ final class AppModel: ObservableObject {
     @Published var activeTaskRecord: TaskRecord?  // internal(for: AppModel+UITestFixtures)
     @Published var taskHasChanges = false  // internal(for: AppModel+UITestFixtures)
     @Published var taskPatchBytes = 0  // internal(for: AppModel+UITestFixtures)
-    @Published var orchestrationRuns: [OrchestrationRun] = []  // internal(for: AppModel+UITestFixtures)
+    let runs = OrchestrationRunsModel()
+    private var runsBridge: AnyCancellable?
     @Published var runsNavigationRequest: RunsNavigationRequest?  // internal(for: AppModel+UITestFixtures)
-    @Published var selectedOrchestrationRun: OrchestrationRun?  // internal(for: AppModel+UITestFixtures)
-    @Published private(set) var runDetailsByID: [String: OrchestrationRun] = [:]
-    @Published var orchestrationEvents: [OrchestrationEvent] = []  // internal(for: AppModel+UITestFixtures)
-    @Published private(set) var isLoadingOrchestrationRuns = false
     @Published var pendingDispatchPlan: DispatchPlan?  // internal(for: AppModel+UITestFixtures)
     let evaluations = EvaluationsModel()
     private var evaluationsBridge: AnyCancellable?
@@ -101,7 +98,6 @@ final class AppModel: ObservableObject {
     private var backgroundServicesBridge: AnyCancellable?
     let extensionsModel = ExtensionsModel()
     private var extensionsBridge: AnyCancellable?
-    var orchestrationEventIDs: Set<String> = []  // internal(for: AppModel+UITestFixtures)
     @Published var sessions: [SessionSummary] = []
     @Published var chatFolders: [ChatFolderRecord] = []
     @Published var currentSessionID = ""
@@ -495,13 +491,6 @@ final class AppModel: ObservableObject {
     private var workspaceToOpenAfterReconnect: String?
     private var appliedWorkspacePath: String?
     private var sessionResetWatchdog: Task<Void, Never>?
-    private var orchestrationRunsTasks: [String: (generation: Int, task: Task<OrchestrationRunsResponse, Error>)] = [:]
-    private var orchestrationDetailTasks: [String: Task<OrchestrationRun, Error>] = [:]
-    private var orchestrationEventTasks: [String: Task<OrchestrationEventsResponse, Error>] = [:]
-    private var orchestrationRunsGeneration = 0
-    private var orchestrationSelectionGeneration = 0
-    private var requestedOrchestrationRunID: String?
-    private var requestedOrchestrationLoadKey: String?
     private var terminalRefreshRunIDs: Set<String> = []
     var restoredQueuedRunIDs: Set<String> = []  // internal(for: AppModel extension files)
     private let lifecycleJournal: AppLifecycleJournal?
@@ -926,6 +915,20 @@ final class AppModel: ObservableObject {
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
         agentTeamsBridge = agentTeamsModel.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        runs.configure(
+            backend: backend,
+            sessionIDProvider: { [weak self] in self?.currentSessionID ?? "" },
+            transportProvider: { [weak self] runID in
+                self?.orchestrationBackend(for: runID) ?? BackendService()
+            },
+            liveRunID: { [weak self] in self?.orchestrationRunID },
+            liveState: { [weak self] in self?.orchestrationState },
+            setLiveState: { [weak self] state in self?.orchestrationState = state },
+            toastHandler: { [weak self] message in self?.showToast(message) }
+        )
+        runsBridge = runs.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         simulatorControl.capabilityDidChange = { [weak self] in
@@ -2069,12 +2072,7 @@ final class AppModel: ObservableObject {
         workspaceFiles.stop()
         knowledge.cancelAll()
         agentInstructions.cancelAll()
-        orchestrationRunsTasks.values.forEach { $0.task.cancel() }
-        orchestrationDetailTasks.values.forEach { $0.cancel() }
-        orchestrationEventTasks.values.forEach { $0.cancel() }
-        orchestrationRunsTasks.removeAll()
-        orchestrationDetailTasks.removeAll()
-        orchestrationEventTasks.removeAll()
+        runs.cancelAll()
         schedule.cancelAll()
         backend.disconnect()
         backendProcess.stop()
@@ -3931,239 +3929,6 @@ final class AppModel: ObservableObject {
         ]
         if let id = mention.agent?.id { manifest["forced_agent_id"] = id.uuidString }
         return manifest
-    }
-
-    func refreshOrchestrationRuns(
-        select runID: String? = nil,
-        terminal: Bool = false
-    ) async {
-        let sessionID = currentSessionID
-        let requestKey = [sessionID, terminal ? "terminal:\(runID ?? "")" : "routine"]
-            .joined(separator: "|")
-        let request: (generation: Int, task: Task<OrchestrationRunsResponse, Error>)
-        if let existing = orchestrationRunsTasks[requestKey] {
-            request = existing
-        } else {
-            orchestrationRunsGeneration += 1
-            let generation = orchestrationRunsGeneration
-            isLoadingOrchestrationRuns = true
-            let query = sessionID.isEmpty
-                ? []
-                : [URLQueryItem(name: "session_id", value: sessionID)]
-            let task = Task { [backend] in
-                try await backend.get(
-                    "/api/orchestrations",
-                    query: query,
-                    as: OrchestrationRunsResponse.self
-                )
-            }
-            request = (generation, task)
-            orchestrationRunsTasks[requestKey] = request
-        }
-        do {
-            let response = try await request.task.value
-            if orchestrationRunsTasks[requestKey]?.generation == request.generation {
-                orchestrationRunsTasks.removeValue(forKey: requestKey)
-            }
-            guard request.generation == orchestrationRunsGeneration,
-                  currentSessionID == sessionID
-            else { return }
-            isLoadingOrchestrationRuns = false
-            if orchestrationRuns != response.runs {
-                orchestrationRuns = response.runs
-            }
-            let selectedInCurrentSession = selectedOrchestrationRun.flatMap { selected in
-                selected.sessionID == nil || selected.sessionID == sessionID ? selected.id : nil
-            }
-            let selectedID = runID ?? orchestrationRunID
-                ?? selectedInCurrentSession ?? response.runs.first?.id
-            if let selectedID {
-                await loadOrchestrationRun(selectedID, terminal: terminal)
-            } else if selectedOrchestrationRun?.sessionID != sessionID {
-                selectedOrchestrationRun = nil
-                orchestrationEvents = []
-                orchestrationEventIDs = []
-            }
-        } catch {
-            if orchestrationRunsTasks[requestKey]?.generation == request.generation {
-                orchestrationRunsTasks.removeValue(forKey: requestKey)
-            }
-            guard !Task.isCancelled, request.generation == orchestrationRunsGeneration else { return }
-            isLoadingOrchestrationRuns = false
-            showToast("Could not load runs: \(error.localizedDescription)")
-        }
-    }
-
-    func loadOrchestrationRun(_ runID: String, terminal: Bool = false) async {
-        let sameRun = selectedOrchestrationRun?.id == runID
-        // Sequences are numbered per run, and the array can hold a second,
-        // still-executing run's events: a watermark taken across both would
-        // skip this run's tail whenever the other run had counted further.
-        let afterSequence = sameRun
-            ? orchestrationEvents(for: runID).map(\.sequence).max() ?? 0 : 0
-        let transport = orchestrationBackend(for: runID)
-        let transportKey = transport.currentBaseURL.absoluteString
-        let loadKey = "\(transportKey)|\(runID)|\(afterSequence)|\(terminal ? "terminal" : "routine")"
-        let generation: Int
-        if requestedOrchestrationLoadKey == loadKey {
-            generation = orchestrationSelectionGeneration
-        } else {
-            orchestrationSelectionGeneration += 1
-            generation = orchestrationSelectionGeneration
-            requestedOrchestrationLoadKey = loadKey
-            requestedOrchestrationRunID = runID
-        }
-        let detailKey = "\(transportKey)|\(runID)|\(terminal ? "terminal" : "routine")"
-        let eventsKey = "\(transportKey)|\(runID)|\(afterSequence)|\(terminal ? "terminal" : "routine")"
-        let detailTask = orchestrationDetailTask(
-            runID: runID, key: detailKey, transport: transport
-        )
-        let eventsTask = orchestrationEventsTask(
-            runID: runID,
-            afterSequence: afterSequence,
-            key: eventsKey,
-            transport: transport
-        )
-        do {
-            let detail = try await detailTask.value
-            let response = try await eventsTask.value
-            if orchestrationDetailTasks[detailKey] != nil {
-                orchestrationDetailTasks.removeValue(forKey: detailKey)
-            }
-            if orchestrationEventTasks[eventsKey] != nil {
-                orchestrationEventTasks.removeValue(forKey: eventsKey)
-            }
-            guard generation == orchestrationSelectionGeneration,
-                  requestedOrchestrationRunID == runID
-            else { return }
-            let base = sameRun ? orchestrationEvents : []
-            let merged = Self.mergeOrchestrationEvents(base, with: response.events)
-            if selectedOrchestrationRun != detail {
-                selectedOrchestrationRun = detail
-            }
-            runDetailsByID[runID] = detail
-            if orchestrationEvents != merged {
-                orchestrationEvents = merged
-            }
-            orchestrationEventIDs = Set(merged.map(\.id))
-            if orchestrationRunID == runID,
-               orchestrationState == nil,
-               let state = TeamRunState(rawValue: detail.state),
-               orchestrationState != state
-            {
-                orchestrationState = state
-            }
-        } catch {
-            orchestrationDetailTasks.removeValue(forKey: detailKey)
-            orchestrationEventTasks.removeValue(forKey: eventsKey)
-            guard !Task.isCancelled, generation == orchestrationSelectionGeneration else { return }
-            showToast("Could not inspect that run: \(error.localizedDescription)")
-        }
-    }
-
-    func backfillOrchestrationEvents(_ runID: String) async {
-        // Strict on the stamp, unlike the selected-run reads: this can run for
-        // the live run while a different run's unstamped events fill the array,
-        // and counting those would inflate the watermark past unseen events.
-        let after = orchestrationEvents
-            .filter { $0.runID == runID }
-            .map(\.sequence)
-            .max() ?? 0
-        let transport = orchestrationBackend(for: runID)
-        let key = "\(transport.currentBaseURL.absoluteString)|\(runID)|\(after)|routine"
-        let task = orchestrationEventsTask(
-            runID: runID, afterSequence: after, key: key, transport: transport
-        )
-        do {
-            let response = try await task.value
-            orchestrationEventTasks.removeValue(forKey: key)
-            guard selectedOrchestrationRun?.id == runID || orchestrationRunID == runID else { return }
-            let merged = Self.mergeOrchestrationEvents(orchestrationEvents, with: response.events)
-            if merged != orchestrationEvents {
-                orchestrationEvents = merged
-                orchestrationEventIDs = Set(merged.map(\.id))
-            }
-        } catch {
-            orchestrationEventTasks.removeValue(forKey: key)
-            // The inspector can still reload the full run on demand. A failed
-            // reconnect backfill must not disturb the active transcript.
-        }
-    }
-
-    /// Events attributable to one run, read out of the shared array.
-    ///
-    /// `handle(_:)` deliberately appends for both the selected run and the one
-    /// currently executing, so while a historical run is open during a live
-    /// turn the array interleaves two runs — folding it whole credited the
-    /// live run's files, steps, and model to whichever run was on screen.
-    /// Every per-run fact must read through this filter. An event without a
-    /// `run_id` stamp can only have arrived via the per-run fetch for the
-    /// selected run (live appends are admitted by their stamp), so it counts
-    /// as the requested run's rather than being dropped.
-    func orchestrationEvents(for runID: String) -> [OrchestrationEvent] {
-        Self.runScopedEvents(orchestrationEvents, runID: runID)
-    }
-
-    nonisolated static func runScopedEvents(
-        _ events: [OrchestrationEvent],
-        runID: String
-    ) -> [OrchestrationEvent] {
-        events.filter { $0.runID == nil || $0.runID == runID }
-    }
-
-    nonisolated static func mergeOrchestrationEvents(
-        _ existing: [OrchestrationEvent],
-        with incoming: [OrchestrationEvent]
-    ) -> [OrchestrationEvent] {
-        var byID: [String: OrchestrationEvent] = [:]
-        for event in existing where !event.isTransientStream { byID[event.id] = event }
-        for event in incoming where !event.isTransientStream { byID[event.id] = event }
-        return byID.values.sorted {
-            $0.sequence == $1.sequence ? $0.id < $1.id : $0.sequence < $1.sequence
-        }
-    }
-
-    nonisolated static func orchestrationPickerRuns(
-        _ runs: [OrchestrationRun],
-        selected: OrchestrationRun?
-    ) -> [OrchestrationRun] {
-        guard let selected,
-              !runs.contains(where: { $0.id == selected.id })
-        else { return runs }
-        return [selected] + runs
-    }
-
-    private func orchestrationDetailTask(
-        runID: String,
-        key: String,
-        transport: BackendService
-    ) -> Task<OrchestrationRun, Error> {
-        if let existing = orchestrationDetailTasks[key] { return existing }
-        let task = Task {
-            try await transport.get(
-                "/api/orchestrations/\(runID)", as: OrchestrationRun.self
-            )
-        }
-        orchestrationDetailTasks[key] = task
-        return task
-    }
-
-    private func orchestrationEventsTask(
-        runID: String,
-        afterSequence: Int,
-        key: String,
-        transport: BackendService
-    ) -> Task<OrchestrationEventsResponse, Error> {
-        if let existing = orchestrationEventTasks[key] { return existing }
-        let task = Task {
-            try await transport.get(
-                "/api/orchestrations/\(runID)/events",
-                query: [URLQueryItem(name: "after_seq", value: String(afterSequence))],
-                as: OrchestrationEventsResponse.self
-            )
-        }
-        orchestrationEventTasks[key] = task
-        return task
     }
 
     func exportOrchestration(_ runID: String, includeContent: Bool) async {
