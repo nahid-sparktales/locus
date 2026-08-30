@@ -1486,7 +1486,7 @@ struct InspectorRunsTab: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
-                Image(systemName: "point.3.connected.trianglepath.dotted")
+                Image(systemName: InspectorTab.runs.symbol)
                     .foregroundStyle(LocusTheme.signalDeep)
                     // Decoration beside the panel's own title: unhidden, it is
                     // exposed with its raw SF Symbol name as its label.
@@ -1615,7 +1615,7 @@ struct InspectorRunsTab: View {
 
     private var adaptiveSoloInfo: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Label("Solo delegates automatically", systemImage: "point.3.connected.trianglepath.dotted")
+            Label("Solo delegates automatically", systemImage: "person.2")
                 .font(.locus(size: 9, weight: .semibold))
             Text("When parallel work would help, temporary workers share the selected model and inherit the current tools and permission mode.")
                 .font(.locus(size: 8))
@@ -1651,7 +1651,7 @@ struct InspectorRunsTab: View {
                     Text(scope == .soloSwarm ? "No Solo runs yet" : "No matching runs")
                         .font(.locus(size: 11, weight: .bold))
                     Text(scope == .soloSwarm
-                        ? "Send a Solo Work, Plan, or GSD request. Locus delegates automatically when parallel investigation would help."
+                        ? "Send a Solo Work, Plan, or Grill request. Locus delegates automatically when parallel investigation would help."
                         : "Try another run type, status, or search term.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)

@@ -878,14 +878,28 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(WorkMode.ask.instruction.contains("explicitly attached"))
         XCTAssertTrue(WorkMode.ask.instruction.contains("Do not inspect attachment paths"))
         XCTAssertTrue(WorkMode.plan.instruction.contains("do not modify"))
-        XCTAssertTrue(WorkMode.build.instruction.contains("Implement"))
+        XCTAssertTrue(WorkMode.grill.instruction.contains("Do not modify"))
         XCTAssertTrue(WorkMode.work.instruction.contains("Choose whether"))
-        // The composer shows GSD, but the raw value stays `build` for stored
-        // profiles and the runtime's `[Locus mode:]` header; the `$` mention
-        // is what makes the runtime preload the gsd-workflow skill.
-        XCTAssertEqual(WorkMode.build.title, "GSD")
-        XCTAssertEqual(WorkMode.build.rawValue, "build")
-        XCTAssertTrue(WorkMode.build.instruction.contains("$gsd-workflow"))
+        // The `$` mention is what makes the runtime preload the grilling skill.
+        XCTAssertEqual(WorkMode.grill.title, "Grill")
+        XCTAssertEqual(WorkMode.grill.rawValue, "grill")
+        XCTAssertTrue(WorkMode.grill.instruction.contains("$grilling"))
+    }
+
+    func testRetiredBuildModeStillDecodesOntoWork() throws {
+        // "build" was GSD's raw value. Profiles and manifests that stored it
+        // land on Work — the mode that kept its implement-things behavior —
+        // while anything unrecognized still fails loudly.
+        let decoded = try JSONDecoder().decode(
+            [WorkMode].self,
+            from: Data(#"["build", "grill", "plan"]"#.utf8)
+        )
+        XCTAssertEqual(decoded, [.work, .grill, .plan])
+        XCTAssertEqual(WorkMode.canonical("build"), .work)
+        XCTAssertNil(WorkMode.canonical("construct"))
+        XCTAssertThrowsError(try JSONDecoder().decode(
+            WorkMode.self, from: Data(#""construct""#.utf8)
+        ))
     }
 
     @MainActor
@@ -1167,7 +1181,7 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testLegacyBuildProfilesMigrateOnceWithoutChangingPlan() {
+    func testLegacyBuildProfilesDecodeOntoWorkWithoutChangingPlan() throws {
         func profile(_ mode: WorkMode, path: String) -> WorkspaceProfile {
             WorkspaceProfile(
                 path: path,
@@ -1180,11 +1194,18 @@ final class AppModelTests: XCTestCase {
                 draft: ""
             )
         }
-        let migrated = AppModel.migrateLegacyBuildProfiles([
-            profile(.build, path: "/tmp/build"),
+        // Migration happens at decode time now: a stored "build" profile
+        // comes back as Work without a separate migration pass.
+        let stored = try JSONEncoder().encode([
+            profile(.grill, path: "/tmp/grill"),
             profile(.plan, path: "/tmp/plan"),
             profile(.work, path: "/tmp/work"),
         ])
+        let json = String(decoding: stored, as: UTF8.self)
+            .replacingOccurrences(of: #""grill""#, with: #""build""#)
+        let migrated = try JSONDecoder().decode(
+            [WorkspaceProfile].self, from: Data(json.utf8)
+        )
         XCTAssertEqual(migrated.map(\.mode), [.work, .plan, .work])
     }
 
@@ -1205,7 +1226,7 @@ final class AppModelTests: XCTestCase {
             ),
         ]
 
-        for mode in [WorkMode.work, .plan, .build] {
+        for mode in [WorkMode.work, .plan, .grill] {
             let prompt = model.decoratedPrompt(
                 "Fix it", mode: mode, chatAttachments: attachments
             )
@@ -1616,7 +1637,7 @@ final class AppModelTests: XCTestCase {
             lastOpened: Date(),
             model: "",
             accountID: nil,
-            mode: .build,
+            mode: .grill,
             previewURL: "",
             contextFiles: [],
             draft: ""
@@ -2530,7 +2551,7 @@ final class AppModelTests: XCTestCase {
     @MainActor
     func testWorkSlashCommandReturnsToAdaptiveMode() {
         let model = AppModel(startImmediately: false)
-        model.selectedMode = .build
+        model.selectedMode = .grill
 
         model.send("/work")
 
@@ -4170,21 +4191,21 @@ final class AppModelTests: XCTestCase {
     @MainActor
     func testJustChatKeepsInspectorClosedWhenItWasAlreadyClosed() {
         let model = AppModel(startImmediately: false)
-        model.selectedMode = .build
+        model.selectedMode = .grill
         model.inspectorCollapsed = true
 
         model.setJustChatEnabled(true)
         XCTAssertTrue(model.inspectorCollapsed)
 
         model.setJustChatEnabled(false)
-        XCTAssertEqual(model.selectedMode, .build)
+        XCTAssertEqual(model.selectedMode, .grill)
         XCTAssertTrue(model.inspectorCollapsed, "leaving Just Chat preserves a previously closed inspector")
     }
 
     @MainActor
-    func testCompletedBuildTurnAddsTimingMarkerAndFinishesTheActivePlanStep() {
+    func testCompletedWorkTurnAddsTimingMarkerAndFinishesTheActivePlanStep() {
         let model = AppModel(startImmediately: false)
-        model.turnDispatchedMode = .build
+        model.turnDispatchedMode = .work
         model.todos = [
             TodoItem(content: "Inspect the sidebar", status: .completed),
             TodoItem(content: "Add the completion cue", status: .inProgress),
@@ -4199,15 +4220,15 @@ final class AppModelTests: XCTestCase {
 
         XCTAssertEqual(model.todos.map(\.status), [.completed, .completed, .pending])
         let completion = model.blocks.last?.completion
-        XCTAssertEqual(completion?.title, "Task finished")
+        XCTAssertEqual(completion?.title, "Work finished")
         XCTAssertEqual(completion?.durationText, "1m 24s")
         XCTAssertEqual(completion?.outcome, .complete)
     }
 
     @MainActor
-    func testInterruptedBuildTurnDoesNotClaimTheActivePlanStepFinished() {
+    func testInterruptedWorkTurnDoesNotClaimTheActivePlanStepFinished() {
         let model = AppModel(startImmediately: false)
-        model.turnDispatchedMode = .build
+        model.turnDispatchedMode = .work
         model.todos = [TodoItem(content: "Verify the app", status: .inProgress)]
 
         model.handleEventForTesting([
@@ -4255,9 +4276,9 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testPlanPanelPreservesStoppedBuildPlan() {
+    func testPlanPanelPreservesStoppedWorkPlan() {
         let model = AppModel(startImmediately: false)
-        model.turnDispatchedMode = .build
+        model.turnDispatchedMode = .work
         model.isBusy = true
         model.todos = [TodoItem(content: "Verify the app", status: .inProgress)]
 
@@ -4300,17 +4321,17 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testBuildTurnDoesNotOfferApprovalEvenAfterAMidRunSwitchToPlan() {
+    func testWorkTurnDoesNotOfferApprovalEvenAfterAMidRunSwitchToPlan() {
         let model = AppModel(startImmediately: false)
-        // What send() latches when a turn is dispatched in Build mode.
-        model.selectedMode = .build
+        // What send() latches when a turn is dispatched in Work mode.
+        model.selectedMode = .work
         model.turnDispatchedInPlanMode = false
 
         model.handleEventForTesting([
             "type": "todo_update",
             "todos": [["content": "Implement the header", "status": "in_progress"]],
         ])
-        // Flipping the picker to Plan while the Build run streams must not
+        // Flipping the picker to Plan while the Work run streams must not
         // turn its todo bookkeeping into an "implement this plan?" offer.
         model.selectedMode = .plan
         model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
@@ -4451,7 +4472,7 @@ final class AppModelTests: XCTestCase {
         model.resolvePlanApproval(.proceed)
 
         XCTAssertFalse(model.planApprovalPending)
-        XCTAssertEqual(model.selectedMode, .build, "implementation happens in Build mode")
+        XCTAssertEqual(model.selectedMode, .work, "implementation happens in Work mode")
     }
 
     @MainActor

@@ -85,14 +85,37 @@ struct AgentModeOverlays: Codable, Hashable {
     var ask = ""
     var work = ""
     var plan = ""
-    var build = ""
+    var grill = ""
+
+    private enum CodingKeys: String, CodingKey { case ask, work, plan, grill, build }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ask = try container.decodeIfPresent(String.self, forKey: .ask) ?? ""
+        work = try container.decodeIfPresent(String.self, forKey: .work) ?? ""
+        plan = try container.decodeIfPresent(String.self, forKey: .plan) ?? ""
+        // Configs saved before the Grill rename keyed this overlay "build".
+        // Their custom text carries over rather than silently vanishing.
+        grill = try container.decodeIfPresent(String.self, forKey: .grill)
+            ?? container.decodeIfPresent(String.self, forKey: .build) ?? ""
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(ask, forKey: .ask)
+        try container.encode(work, forKey: .work)
+        try container.encode(plan, forKey: .plan)
+        try container.encode(grill, forKey: .grill)
+    }
 
     func instruction(for mode: WorkMode) -> String {
         switch mode {
         case .ask: ask
         case .work: work
         case .plan: plan
-        case .build: build
+        case .grill: grill
         }
     }
 }
@@ -324,7 +347,7 @@ struct AgentBehavior: Codable, Hashable {
         modeInstructions.ask = String(modeInstructions.ask.prefix(4_000))
         modeInstructions.work = String(modeInstructions.work.prefix(4_000))
         modeInstructions.plan = String(modeInstructions.plan.prefix(4_000))
-        modeInstructions.build = String(modeInstructions.build.prefix(4_000))
+        modeInstructions.grill = String(modeInstructions.grill.prefix(4_000))
         memoryPolicy.clamp()
         runtimePolicy.clamp()
     }

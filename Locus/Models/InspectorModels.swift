@@ -57,7 +57,9 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .simulator: "ipad.and.iphone"
         case .notes: "note.text"
         case .checkpoints: "clock.arrow.circlepath"
-        case .runs: "point.3.connected.trianglepath.dotted"
+        // Runs stopped being Teams-only; the three-node orchestration graph
+        // now belongs to the team dispatcher alone.
+        case .runs: "play.square.stack"
         case .agents: "doc.text.fill"
         case .router: "arrow.triangle.branch"
         case .proxies: "network.badge.shield.half.filled"

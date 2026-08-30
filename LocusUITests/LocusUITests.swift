@@ -1680,7 +1680,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("composer.addChatAttachment").exists)
         XCTAssertFalse(anyElement("composer.context").exists)
         XCTAssertFalse(anyElement("composer.mode.plan").exists)
-        XCTAssertFalse(anyElement("composer.mode.build").exists)
+        XCTAssertFalse(anyElement("composer.mode.grill").exists)
         XCTAssertFalse(anyElement("plan.context").exists)
         // Just Chat is not a workspace surface, so the rail goes with the
         // panel — the whole right side disappears.
@@ -1699,7 +1699,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(work.isSelected)
         let planMode = anyElement("composer.mode.plan")
         XCTAssertTrue(planMode.waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("composer.mode.build").exists)
+        XCTAssertTrue(anyElement("composer.mode.grill").exists)
         XCTAssertGreaterThanOrEqual(
             planMode.frame.minY,
             app.textViews["composer.input"].frame.maxY - 2,

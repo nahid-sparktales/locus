@@ -34,7 +34,10 @@ struct PlanPanelPresentation: Equatable {
             switch dispatchedMode {
             case .plan:
                 return PlanPanelPresentation(phase: .planning, stoppedOutcome: nil)
-            case .build where !todos.isEmpty:
+            case .work where !todos.isEmpty:
+                // Plan execution rides Work since GSD retired; any busy turn
+                // holding a todo list is following it, which is what this
+                // phase has always meant.
                 return PlanPanelPresentation(phase: .executing, stoppedOutcome: nil)
             default:
                 return PlanPanelPresentation(phase: .working, stoppedOutcome: nil)
@@ -43,7 +46,7 @@ struct PlanPanelPresentation: Equatable {
         if !todos.isEmpty,
            let completion = latestCompletion,
            completion.outcome != .complete,
-           completion.mode == .work || completion.mode == .plan || completion.mode == .build
+           completion.mode == .work || completion.mode == .plan || completion.mode == .grill
         {
             return PlanPanelPresentation(
                 phase: .stopped,
