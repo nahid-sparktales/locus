@@ -25,6 +25,20 @@ first_updater_build=17
     exit 1
 }
 
+# The appcast never travels alone: installed apps also resolve
+# LocusComponentFeedURL against releases/latest/download, so the release that
+# carries this feed must republish components.json and its archive(s) too.
+# Missing components fail a public (notarized) run outright; a feed-generation
+# dry run only warns, so it does not require building the component first.
+if ! "${repo_root}/Tools/VerifyComponentAssets.sh" "${zip_path:h}" >/dev/null; then
+    if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
+        echo "error: refusing to prepare a public appcast without the component assets above." >&2
+        exit 1
+    fi
+    echo "WARNING: continuing without verified component assets (details above)." >&2
+    echo "Do not publish a release without components.json and its archive." >&2
+fi
+
 tools_root="${LOCUS_SPARKLE_TOOLS_DIR:-${repo_root}/.release-tools/Sparkle-${sparkle_version}}"
 tools_archive="${tools_root:h}/Sparkle-${sparkle_version}.tar.xz"
 if [[ ! -x "${tools_root}/bin/generate_appcast" ]]; then
