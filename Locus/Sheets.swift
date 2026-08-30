@@ -2844,15 +2844,12 @@ struct SettingsView: View {
                 }
 
                 Menu("Add Account…") {
+                    // Menu flattens custom Label icons: monogram logos (A, K, …)
+                    // replace the item title with invisible white text, so the
+                    // dropdown stays text-only.
                     ForEach(ProviderKind.allCases) { kind in
-                        Button {
+                        Button(kind.title) {
                             addingAccount = ProviderAccount(kind: kind)
-                        } label: {
-                            Label {
-                                Text(kind.title)
-                            } icon: {
-                                ProviderLogo(kind: kind, size: 18)
-                            }
                         }
                     }
                 }
