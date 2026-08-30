@@ -339,16 +339,14 @@ final class AppModel: ObservableObject {
     @Published var isClearingSessions = false
     @Published var showArchivedSessions = false
     @Published var searchQuery = "" {
-        didSet { scheduleTranscriptHitSearch() }
+        didSet { transcriptSearch.scheduleHitSearch(query: searchQuery) }
     }
-    @Published var transcriptHits: [TranscriptSearchHit] = []
-    @Published var isSearchingTranscripts = false
-    @Published var transcriptSearchIndexing = false
+    let transcriptSearch = TranscriptSearchModel()
+    private var transcriptSearchBridge: AnyCancellable?
     @Published var sidebarSearchFocusToken = UUID()
     @Published var globalNewFolderPresented = false
     @Published var globalNewFolderName = ""
     @Published var composerFocusToken = UUID()
-    private var transcriptHitsTask: Task<Void, Never>?
     private var pendingSearchHit: TranscriptSearchHit?
     @Published var expandedWorkspaceIDs: Set<String> = []
     @Published var transcriptSearchPresented = false
@@ -940,6 +938,10 @@ final class AppModel: ObservableObject {
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
         backgroundServicesBridge = backgroundServicesModel.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        transcriptSearch.configure(backend: backend)
+        transcriptSearchBridge = transcriptSearch.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         simulatorControl.capabilityDidChange = { [weak self] in
@@ -1675,34 +1677,6 @@ final class AppModel: ObservableObject {
     /// Debounced fetch behind the sidebar search field. Title filtering stays
     /// client-side and instant; transcript hits arrive from the agent's FTS
     /// index shortly after. An old agent (404) degrades to titles-only.
-    private func scheduleTranscriptHitSearch() {
-        transcriptHitsTask?.cancel()
-        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard query.count >= 2 else {
-            transcriptHits = []
-            isSearchingTranscripts = false
-            transcriptSearchIndexing = false
-            return
-        }
-        isSearchingTranscripts = true
-        transcriptHitsTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            guard let self, !Task.isCancelled else { return }
-            let response = try? await backend.get(
-                "/api/sessions/search",
-                query: [
-                    URLQueryItem(name: "query", value: query),
-                    URLQueryItem(name: "limit", value: "20"),
-                ],
-                as: TranscriptSearchResponse.self
-            )
-            guard !Task.isCancelled else { return }
-            isSearchingTranscripts = false
-            transcriptSearchIndexing = response?.indexing ?? false
-            transcriptHits = response?.results ?? []
-        }
-    }
-
     /// Open the hit's session and outline the matched message, reusing the
     /// in-conversation find for the scroll-and-outline work.
     func openSearchHit(_ hit: TranscriptSearchHit) {
