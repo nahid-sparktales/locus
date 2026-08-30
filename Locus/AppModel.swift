@@ -207,7 +207,7 @@ final class AppModel: ObservableObject {
     @Published var activePlan: PlanDocument?  // internal(for: AppModel+UITestFixtures)
     /// The question a completed turn asked the user. While set, the composer
     /// input is replaced by QuestionPromptView, the way plan approval is.
-    @Published private(set) var pendingUserQuestion: UserQuestion?
+    @Published var pendingUserQuestion: UserQuestion?  // internal(for: AppModel+UITestFixtures)
     /// Captured from `question_ready` mid-turn; armed only when the turn
     /// completes, so an interrupted or errored turn never offers a stale
     /// question.
