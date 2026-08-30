@@ -22,6 +22,8 @@ import io
 import json
 import os
 import subprocess
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -519,6 +521,156 @@ def test_spawned_child_never_sees_the_raw_credential_var(tmp_path, monkeypatch):
     execute_tool("bash", {"command": "true"}, ToolContext(cwd=str(tmp_path)))
 
     assert "s3cret" not in str(calls[0][1]["env"])
+
+
+def test_codex_helper_env_is_credential_stripped(tmp_path, monkeypatch, credentialed_environ):
+    """Both ChatGPT helper spawns: the --version probe and the App Server
+    itself, which runs for the whole session with its exec-time environment
+    ps-readable the whole time."""
+    from ollama_code import codex_app_server as codex_mod
+
+    helper = tmp_path / "codex-app-server"
+    helper.write_text(f"#!/bin/sh\necho '{codex_mod.PINNED_CODEX_APP_SERVER_VERSION}'\n")
+    helper.chmod(0o755)
+    monkeypatch.delenv("LOCUS_CODEX_SKIP_VERSION_CHECK", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "user-api-key")
+
+    run_wrapper, run_calls = _recording(subprocess.run)
+    monkeypatch.setattr(codex_mod.subprocess, "run", run_wrapper)
+
+    real_popen = subprocess.Popen
+    popen_calls: list[tuple[tuple, dict]] = []
+
+    class _HelperStub:
+        stdout = None
+        stderr = None
+
+        def poll(self):
+            return None
+
+    def fake_popen(*args, **kwargs):
+        # Intercept only the App Server launch; the --version probe above runs
+        # through subprocess.run, whose internal Popen must stay real.
+        command = args[0] if args else kwargs.get("args")
+        if command and command[-1] == "stdio://":
+            popen_calls.append((args, kwargs))
+            return _HelperStub()
+        return real_popen(*args, **kwargs)
+
+    monkeypatch.setattr(codex_mod.subprocess, "Popen", fake_popen)
+
+    manager = codex_mod.CodexAppServerManager(
+        helper_path=str(helper), codex_home=tmp_path / "codex-home"
+    )
+    monkeypatch.setattr(manager, "_rpc", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(manager, "notify", lambda *_args, **_kwargs: None)
+
+    manager.ensure_started()
+
+    version_env = run_calls[0][1]["env"]
+    assert version_env["HTTP_PROXY"] == CLEAN
+    assert "s3cret" not in str(version_env)
+    env = popen_calls[0][1]["env"]
+    assert env["HTTP_PROXY"] == CLEAN
+    assert env["NO_PROXY"] == "localhost", "the proxy stays usable, just credential-free"
+    assert env["CODEX_HOME"] == str(tmp_path / "codex-home")
+    assert "OPENAI_API_KEY" not in env, "the manager's own key pops still apply"
+    assert "s3cret" not in str(env)
+
+
+def test_worktree_git_plumbing_env_is_credential_stripped(
+    tmp_path, monkeypatch, credentialed_environ
+):
+    """Every spawn helper in worktrees.py: an env of None would hand the whole
+    credentialed parent environment to git and to whatever git runs."""
+    from ollama_code import worktrees
+
+    wrapper, calls = _recording(subprocess.run)
+    monkeypatch.setattr(worktrees.subprocess, "run", wrapper)
+
+    worktrees.is_git_workspace(str(tmp_path))
+    worktrees._git(tmp_path, "version")
+    worktrees._git_bytes(tmp_path, "version")
+    worktrees._git_input(tmp_path, b"delta", "hash-object", "--stdin")
+
+    assert len(calls) == 4
+    for _args, kwargs in calls:
+        env = kwargs["env"]
+        assert env is not None
+        assert env["HTTP_PROXY"] == CLEAN
+        assert "s3cret" not in str(env)
+
+
+def test_worktree_private_index_env_override_is_still_sanitized(
+    tmp_path, monkeypatch, credentialed_environ
+):
+    """capture_tree spawns git with {**os.environ, GIT_INDEX_FILE: ...}: the
+    override must survive, the credential must not ride along with it."""
+    from ollama_code import worktrees
+
+    wrapper, calls = _recording(subprocess.run)
+    monkeypatch.setattr(worktrees.subprocess, "run", wrapper)
+
+    worktrees._git(tmp_path, "version", env={**os.environ, "GIT_INDEX_FILE": "/private-index"})
+
+    env = calls[0][1]["env"]
+    assert env["GIT_INDEX_FILE"] == "/private-index"
+    assert env["HTTP_PROXY"] == CLEAN
+    assert "s3cret" not in str(env)
+
+
+def _repository(path: Path) -> Path:
+    path.mkdir()
+    for arguments in (
+        ("init",),
+        ("config", "user.name", "Test"),
+        ("config", "user.email", "test@example.com"),
+    ):
+        subprocess.run(["git", *arguments], cwd=path, capture_output=True, check=True)
+    (path / "tracked.txt").write_text("base\n")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=path, capture_output=True, check=True)
+    return path
+
+
+def test_landing_check_child_env_is_credential_stripped(
+    tmp_path, monkeypatch, credentialed_environ
+):
+    """The landing-check runner executes explicit commands in a login shell for
+    up to ten minutes — the longest-lived, most script-shaped child there is."""
+    from ollama_code import worktrees
+    from ollama_code.api import runs as runs_mod
+
+    source = _repository(tmp_path / "source")
+    monkeypatch.setattr(worktrees, "TASKS_DIR", tmp_path / "tasks")
+    worktrees.TaskCheckoutStore.create(str(source), "task-landing")
+
+    wrapper, calls = _recording(subprocess.Popen)
+    monkeypatch.setattr(runs_mod.subprocess, "Popen", wrapper)
+
+    class _RunStoreStub:
+        def start_run(self, *_args, **_kwargs):
+            return None
+
+        def append_event(self, *_args, **_kwargs):
+            return None
+
+        def set_state(self, *_args, **_kwargs):
+            return None
+
+    service = SimpleNamespace(run_store=_RunStoreStub())
+
+    result = runs_mod.task_landing_checks(service, "task-landing", {"commands": ["true"]})
+
+    assert result["passed"] is True, "the check ran and exited 0 under the stripped env"
+    zsh_calls = [
+        (args, kwargs) for args, kwargs in calls
+        if args and args[0] and args[0][0] == "/bin/zsh"
+    ]
+    env = zsh_calls[0][1]["env"]
+    assert env["HTTP_PROXY"] == CLEAN
+    assert env["GIT_TERMINAL_PROMPT"] == "0", "the runner's own override survives"
+    assert "s3cret" not in str(env)
 
 
 def test_web_fetch_error_text_is_redacted(monkeypatch, credentialed_environ):

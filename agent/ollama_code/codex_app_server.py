@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import proxy
 from .paths import APP_DIR
 
 logger = logging.getLogger(__name__)
@@ -298,6 +299,7 @@ class CodexAppServerManager:
                 text=True,
                 timeout=10,
                 check=False,
+                env=proxy.sanitized_child_environment(),
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             raise CodexAppServerError(f"Could not verify the ChatGPT helper: {error}") from error
@@ -316,7 +318,7 @@ class CodexAppServerManager:
                 raise CodexAppServerError("The bundled ChatGPT helper is unavailable")
             self._verify_version()
             self._prepare_home()
-            environment = dict(os.environ)
+            environment = proxy.sanitized_child_environment()
             environment["CODEX_HOME"] = str(self.codex_home)
             environment.pop("OPENAI_API_KEY", None)
             environment.pop("LOCUS_REMOTE_API_KEY", None)
