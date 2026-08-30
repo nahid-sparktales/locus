@@ -5193,7 +5193,7 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(refreshed["access_token"] as? String, "new-access")
         XCTAssertEqual(refreshed["refresh_token"] as? String, "new-refresh")
 
-        let runtime = AppModel.runtimeMCPCredentials(refreshed)
+        let runtime = ExtensionsModel.runtimeMCPCredentials(refreshed)
         XCTAssertEqual(runtime["access_token"] as? String, "new-access")
         XCTAssertNotNil(runtime["headers"])
         XCTAssertNil(runtime["refresh_token"])

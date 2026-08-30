@@ -4854,23 +4854,23 @@ final class AppModelTests: XCTestCase {
             """#.utf8)
         )
 
-        XCTAssertTrue(AppModel.mcpCredentials([
+        XCTAssertTrue(ExtensionsModel.mcpCredentials([
             "access_token": "token",
             "resource": "https://mcp.example/mcp",
             "issuer": "https://auth.example",
         ], areBoundTo: server))
-        XCTAssertFalse(AppModel.mcpCredentials([
+        XCTAssertFalse(ExtensionsModel.mcpCredentials([
             "access_token": "token",
             "resource": "https://other.example/mcp",
             "issuer": "https://auth.example",
         ], areBoundTo: server))
-        XCTAssertFalse(AppModel.mcpCredentials([
+        XCTAssertFalse(ExtensionsModel.mcpCredentials([
             "access_token": "token",
             "resource": "https://mcp.example/mcp",
             "issuer": "https://other-auth.example",
         ], areBoundTo: server))
         XCTAssertTrue(
-            AppModel.mcpCredentials(["access_token": "legacy-token"], areBoundTo: server),
+            ExtensionsModel.mcpCredentials(["access_token": "legacy-token"], areBoundTo: server),
             "version-1 credentials without binding metadata must remain migratable"
         )
     }
