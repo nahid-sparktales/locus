@@ -153,9 +153,12 @@ struct QuestionPromptView: View {
                     freeTextRow(index: index)
                 }
             }
+            // `muted` measures under the audit's 4.5:1 floor at 1x on the
+            // bare panel; standalone hint text takes the secondary role, the
+            // way the Runs panel's small text does.
             Text("esc dismisses and answers in the composer")
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(LocusTheme.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 8)
                 .padding(.top, 5)
@@ -224,14 +227,20 @@ struct QuestionPromptView: View {
 
     private func freeTextRow(index: Int) -> some View {
         let isSelected = index == selection
+        // Unlike the option rows, this row is not a Button, so its decorative
+        // glyphs would surface as bare StaticTexts — the blank caret
+        // placeholder reads as zero-contrast "text" to the audit. The
+        // TextField carries the row's semantics.
         return HStack(spacing: 8) {
             Text(isSelected ? "❯" : " ")
                 .font(.locus(size: 10, weight: .bold, design: .monospaced))
                 .foregroundStyle(LocusTheme.signalDeep)
                 .frame(width: 10)
+                .accessibilityHidden(true)
             Text("\(index + 1).")
                 .font(.locus(size: 10, design: .monospaced))
                 .foregroundStyle(LocusTheme.muted)
+                .accessibilityHidden(true)
             TextField("Type your own answer…", text: $answerText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.locus(size: 11))
@@ -255,6 +264,7 @@ struct QuestionPromptView: View {
                 Text("↵")
                     .font(.locus(size: 8, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
+                    .accessibilityHidden(true)
             }
         }
         .padding(.horizontal, 8)
