@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 import requests
 
 from . import paths
+from .proxy import sanitized_child_environment
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_FILES = 20_000
@@ -290,7 +291,8 @@ class KnowledgeStore:
         try:
             result = subprocess.run(
                 ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-                cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                cwd=self.root, env=sanitized_child_environment(),
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 timeout=30, check=False,
             )
             if result.returncode == 0:

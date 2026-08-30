@@ -1568,6 +1568,7 @@ class AgentCore:
             result = subprocess.run(
                 ["git", "rev-parse", "--show-toplevel"],
                 cwd=self.workspace_root,
+                env=proxy.sanitized_child_environment(),
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,

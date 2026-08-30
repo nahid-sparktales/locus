@@ -22,6 +22,7 @@ from ..orchestration import (
     orchestration_fingerprint,
     parse_manifest,
 )
+from ..proxy import sanitized_child_environment
 from ..runstore import RunStoreError
 from ..session_runtime import session_has_active_run
 from ..sessions import SessionMeta, SessionStore
@@ -751,7 +752,7 @@ def task_landing_checks(
                     cwd=task.execution_path,
                     stdout=output_file,
                     stderr=subprocess.STDOUT,
-                    env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                    env={**sanitized_child_environment(), "GIT_TERMINAL_PROMPT": "0"},
                     start_new_session=True,
                 )
                 with _LANDING_CHECK_LOCK:

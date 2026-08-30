@@ -32,6 +32,7 @@ from .openai_responses_multi_agent import (
     OpenAIResponsesMultiAgentClient,
     OpenAIResponsesMultiAgentError,
 )
+from .proxy import sanitized_child_environment
 from .remote import AUTH_ANTHROPIC, RemoteClient
 from .runstore import RunStore
 
@@ -2602,6 +2603,7 @@ def collect_workspace_evidence(workspace: str) -> str:
             result = subprocess.run(
                 command,
                 cwd=root,
+                env=sanitized_child_environment(),
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
