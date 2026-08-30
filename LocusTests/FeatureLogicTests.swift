@@ -1084,17 +1084,62 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
-    func testFileCardsAreReservedForTopLevelReferences() {
+    func testFileReferencesGetFullCardAtTopLevelAndChipInLists() {
         // A reply that lists a directory writes one bullet per file. Promoting
         // each of those to a 58pt card with three buttons turned a seven-file
-        // answer into a wall of chrome, which is what made the reply read as a
-        // raw dump rather than an answer.
-        XCTAssertTrue(MarkdownArtifactPromotion.allowsCard(nestingDepth: 0))
-        XCTAssertFalse(
-            MarkdownArtifactPromotion.allowsCard(nestingDepth: 1),
-            "inside a list the reference stays an inline, still-clickable link"
+        // answer into a wall of chrome, so nested references take the compact
+        // chip tier instead of losing the tile entirely.
+        XCTAssertEqual(MarkdownArtifactPromotion.presentation(nestingDepth: 0), .fullCard)
+        XCTAssertEqual(
+            MarkdownArtifactPromotion.presentation(nestingDepth: 1), .compactChip,
+            "inside a list the reference keeps a tile, just a single-line one"
         )
-        XCTAssertFalse(MarkdownArtifactPromotion.allowsCard(nestingDepth: 2))
+        XCTAssertEqual(MarkdownArtifactPromotion.presentation(nestingDepth: 2), .compactChip)
+    }
+
+    func testLeadingArtifactPromotesAnnotatedBulletsButNotComparisons() throws {
+        let workspace = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("locus-chip-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        try Data("a".utf8).write(to: workspace.appendingPathComponent("notes.md"))
+        try Data("b".utf8).write(to: workspace.appendingPathComponent("todo.md"))
+
+        func reference(_ runs: [MarkdownInlineRun]) -> WorkspaceArtifactReference? {
+            MarkdownArtifactPromotion.leadingArtifact(in: runs, workspacePath: workspace.path)
+        }
+
+        // A bare backticked name and a bare link both promote.
+        XCTAssertEqual(
+            reference([.init(text: "notes.md", style: .code)])?.relativePath, "notes.md"
+        )
+        XCTAssertEqual(
+            reference([.init(text: "notes.md", destination: "notes.md")])?.relativePath,
+            "notes.md"
+        )
+        // The answer contract annotates every bullet; the annotation rides
+        // along instead of demoting the reference to prose.
+        XCTAssertEqual(
+            reference([
+                .init(text: "notes.md", style: .code),
+                .init(text: " — the working notes"),
+            ])?.relativePath,
+            "notes.md"
+        )
+        // Prose that merely mentions a file does not lead with it.
+        XCTAssertNil(reference([
+            .init(text: "see "),
+            .init(text: "notes.md", style: .code),
+        ]))
+        // A comparison of two files stays prose: a chip's actions would be
+        // attributed to just one of them.
+        XCTAssertNil(reference([
+            .init(text: "notes.md", style: .code),
+            .init(text: " duplicates "),
+            .init(text: "todo.md", style: .code),
+        ]))
+        // Names that resolve to nothing in the workspace never promote.
+        XCTAssertNil(reference([.init(text: "missing.md", style: .code)]))
     }
 
     @MainActor
@@ -1462,6 +1507,15 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertTrue(RunScope.soloSwarm.includes(explicit))
         XCTAssertFalse(RunScope.teams.includes(explicit))
         XCTAssertTrue(RunScope.all.includes(ordinary))
+
+        // Eligibility keeps the Solo scope; delegation needs real evidence
+        // (job_count in the list payload, attempts in the detail payload).
+        let counted = try decodeRun(",\"manifest\":{\"solo_swarm\":true},\"job_count\":3")
+        XCTAssertFalse(explicit.didDelegateWorkers)
+        XCTAssertFalse(neverDelegated.didDelegateWorkers)
+        XCTAssertFalse(ordinary.didDelegateWorkers)
+        XCTAssertTrue(legacy.didDelegateWorkers)
+        XCTAssertTrue(counted.didDelegateWorkers)
     }
 
     func testZoomedChatWidthIsClampedToTheUsableRange() {

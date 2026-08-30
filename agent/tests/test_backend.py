@@ -3368,6 +3368,92 @@ def test_submit_plan_emits_structured_plan_ready(tmp_path):
     assert ready["plan"]["tests"] == ["Stream a 100 KB reply"]
 
 
+def test_ask_user_question_emits_structured_question_ready(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(tool_calls=[ToolCall("ask_user_question", {
+            "title": "Reddit scope",
+            "question": "Should latest posts mean the site-wide feed or one subreddit?",
+            # String options and object options both normalize.
+            "options": [
+                "Site-wide /new feed",
+                {"label": "One subreddit", "detail": "Passed as an argument"},
+            ],
+            "recommended": "Site-wide /new feed",
+        })], done=True),
+        ChatResponse(content_parts=["Question sent."], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn("stress-test the request")
+
+    ready = next(event for event in events if event["type"] == "question_ready")
+    question = ready["question"]
+    assert question["title"] == "Reddit scope"
+    assert question["question"].startswith("Should latest posts")
+    assert question["options"] == [
+        {"label": "Site-wide /new feed", "detail": ""},
+        {"label": "One subreddit", "detail": "Passed as an argument"},
+    ]
+    assert question["recommended"] == "Site-wide /new feed"
+    assert question["id"]
+    # Asking never prompts for permission.
+    assert not [event for event in events if event["type"] == "permission_request"]
+
+
+def test_ask_user_question_requires_a_question(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(tool_calls=[ToolCall("ask_user_question", {
+            "options": ["Yes", "No"],
+        })], done=True),
+        ChatResponse(content_parts=["No question."], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn("do the work")
+
+    assert not [event for event in events if event["type"] == "question_ready"]
+    result = next(event for event in events if event["type"] == "tool_result")
+    assert result["result"].startswith("Error:")
+
+
+def test_reset_conversation_clears_the_pending_question(tmp_path):
+    core = _core(tmp_path, [ChatResponse(content_parts=["ok"], done=True)])
+    core.tool_ctx.user_question = {"id": "abc", "question": "Stale?"}
+    core.reset_conversation()
+    assert core.tool_ctx.user_question is None
+
+
+def test_ask_user_question_suppresses_the_final_answer_nudge(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(tool_calls=[ToolCall("ask_user_question", {
+            "question": "Which feed should the script read?",
+        })], done=True),
+        ChatResponse(content_parts=[""], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn("do the work")
+
+    done = next(event for event in events if event["type"] == "turn_done")
+    assert done["reason"] == "complete"
+    # The question is the turn's deliverable. Without the guard the empty
+    # final text would trigger the nudge's extra tool-free model call, talking
+    # over the popup the model was just told to wait for.
+    assert core.client.calls == 2
+
+
 def test_local_and_inline_reasoning_are_resumable_without_provider_state(tmp_path):
     core = _core(tmp_path, [
         ChatResponse(

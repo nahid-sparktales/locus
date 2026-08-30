@@ -294,9 +294,11 @@ final class PinnedSummaryTests: XCTestCase {
          "team_name":"Checkers","created_at":1,"updated_at":2,"last_seq":0,
          "pinned":false,"legacy":false,"recoverable":false,"run_kind":"team"}
         """)
+        // Production stamps `manifest.solo_swarm` on every non-Ask turn, so the
+        // fixture must carry it too — eligibility alone stays excluded.
         let soloTurn = try decodeRun("""
         {"id":"solo-1","session_id":"s","state":"running","request":"Fix bug",
-         "created_at":1,"updated_at":3,"last_seq":0,
+         "created_at":1,"updated_at":3,"last_seq":0,"manifest":{"solo_swarm":true},
          "pinned":false,"legacy":false,"recoverable":false,"run_kind":"solo"}
         """)
         let otherSession = try decodeRun("""
@@ -304,11 +306,36 @@ final class PinnedSummaryTests: XCTestCase {
          "created_at":1,"updated_at":4,"last_seq":0,
          "pinned":false,"legacy":false,"recoverable":false,"run_kind":"team"}
         """)
-        let fallback = PinnedSummary.subagents(activities: [], runs: [soloTurn, otherSession, teamRun], sessionID: "s")
-        XCTAssertEqual(fallback.map(\.id), ["team-1"])
-        XCTAssertEqual(fallback.first?.name, "Checkers")
-        XCTAssertEqual(fallback.first?.status, .working)
-        XCTAssertEqual(fallback.first?.runID, "team-1")
+        let delegatedByJobs = try decodeRun("""
+        {"id":"solo-2","session_id":"s","state":"completed","request":"Sweep tests",
+         "created_at":1,"updated_at":5,"last_seq":0,"manifest":{"solo_swarm":true},
+         "job_count":2,"completed_job_count":2,
+         "pinned":false,"legacy":false,"recoverable":false,"run_kind":"solo"}
+        """)
+        let delegatedByAttempts = try decodeRun("""
+        {"id":"solo-3","session_id":"s","state":"completed","request":"Audit",
+         "created_at":1,"updated_at":6,"last_seq":0,"manifest":{"solo_swarm":true},
+         "attempts":[{"run_id":"solo-3","job_id":"worker-1","attempt":1,
+                      "attempt_id":"worker-1:1","state":"completed","goal":"Read API"}],
+         "pinned":false,"legacy":false,"recoverable":false,"run_kind":"solo"}
+        """)
+        let fallback = PinnedSummary.subagents(activities: [], runs: [soloTurn, otherSession, teamRun, delegatedByJobs, delegatedByAttempts], sessionID: "s")
+        XCTAssertEqual(fallback.map(\.id), ["solo-3", "solo-2", "team-1"])
+        XCTAssertEqual(fallback.last?.name, "Checkers")
+        XCTAssertEqual(fallback.last?.status, .working)
+        XCTAssertEqual(fallback.last?.runID, "team-1")
+        XCTAssertEqual(fallback.first?.name, "Solo")
+
+        // Regression: a session of ordinary eligible-but-alone turns must not
+        // masquerade as subagents ("Subagents 8" for a chat with zero workers).
+        let plainTurns = try (0..<8).map { index in
+            try decodeRun("""
+            {"id":"plain-\(index)","session_id":"s","state":"completed","request":"Turn \(index)",
+             "created_at":1,"updated_at":\(10 + index),"last_seq":0,"manifest":{"solo_swarm":true},
+             "pinned":false,"legacy":false,"recoverable":false,"run_kind":"solo"}
+            """)
+        }
+        XCTAssertTrue(PinnedSummary.subagents(activities: [], runs: plainTurns, sessionID: "s").isEmpty)
 
         let activity = AgentActivity(
             id: "job-1", agentName: "Reader", role: "researcher", provider: "", model: "",

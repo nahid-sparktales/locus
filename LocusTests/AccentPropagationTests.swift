@@ -52,7 +52,48 @@ final class AccentPropagationTests: XCTestCase {
         super.tearDown()
     }
 
+    func testMarkdownArtifactChipFollowsAccentWithoutBeingRebuilt() throws {
+        // A list-item reference mounts the compact chip, whose kind icon is
+        // accent-tinted.
+        try assertMarkdownArtifactFollowsAccent(text: "- `notes.md`")
+    }
+
+    func testListItemFileReferenceMountsAChipNotProse() throws {
+        // Same-length names, one resolving to a real workspace file and one
+        // not: if the chip failed to mount, both bullets would render as the
+        // identical pill-styled prose and the images could not differ.
+        let workspace = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("locus-chip-mount-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        try Data("notes".utf8).write(to: workspace.appendingPathComponent("notes.md"))
+
+        let lime = selection(.lime)
+        apply(lime)
+        let chip = mount(StableMarkdownHost(
+            accent: AccentBox(lime),
+            text: "- `notes.md`",
+            workspacePath: workspace.path
+        ))
+        let prose = mount(StableMarkdownHost(
+            accent: AccentBox(lime),
+            text: "- `notas.md`",
+            workspacePath: workspace.path
+        ))
+        let chipImage = try XCTUnwrap(snapshot(chip))
+        let proseImage = try XCTUnwrap(snapshot(prose))
+        XCTAssertGreaterThan(
+            differingPixels(chipImage, proseImage), 0,
+            "A resolvable list-item file reference must mount the chip's chrome"
+        )
+    }
+
     func testMarkdownArtifactCardFollowsAccentWithoutBeingRebuilt() throws {
+        // A top-level reference mounts the full card.
+        try assertMarkdownArtifactFollowsAccent(text: "`notes.md`")
+    }
+
+    private func assertMarkdownArtifactFollowsAccent(text: String) throws {
         let workspace = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("locus-accent-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(
@@ -69,7 +110,7 @@ final class AccentPropagationTests: XCTestCase {
         let box = AccentBox(lime)
         let live = mount(StableMarkdownHost(
             accent: box,
-            text: "- `notes.md`",
+            text: text,
             workspacePath: workspace.path
         ))
         let onLime = try XCTUnwrap(snapshot(live))
@@ -84,18 +125,18 @@ final class AccentPropagationTests: XCTestCase {
         // values keeps the assertion out of the display's colour space.
         let rebuilt = mount(StableMarkdownHost(
             accent: AccentBox(pink),
-            text: "- `notes.md`",
+            text: text,
             workspacePath: workspace.path
         ))
         let rebuiltOnPink = try XCTUnwrap(snapshot(rebuilt))
 
         XCTAssertGreaterThan(
             differingPixels(onLime, onPink), 0,
-            "The mounted card kept the previous accent instead of following the change"
+            "The mounted artifact tile kept the previous accent instead of following the change"
         )
         XCTAssertEqual(
             differingPixels(onPink, rebuiltOnPink), 0,
-            "A mounted card must match one built fresh under the same accent"
+            "A mounted artifact tile must match one built fresh under the same accent"
         )
     }
 

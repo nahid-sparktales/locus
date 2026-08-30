@@ -242,7 +242,8 @@ struct CompactToolActivitySummary: Equatable {
                 .last
                 .map(String.init) ?? name
 
-            if name.contains("request_user_input") || name.contains("ask_question") {
+            if name.contains("request_user_input") || name.contains("ask_question")
+                || name.contains("user_question") {
                 self = .question
             } else if name.contains("update_plan") || name.contains("todo_write")
                         || name.contains("submit_plan") {

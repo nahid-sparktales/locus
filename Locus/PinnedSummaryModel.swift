@@ -315,7 +315,8 @@ enum PinnedSummary {
 
     /// Live agent activities describe the current session's subagents while a
     /// team runs; once they are gone, the session's team runs stand in. Plain
-    /// solo turns are excluded — every chat turn is a run.
+    /// and non-delegating solo turns are excluded — every chat turn is a run,
+    /// and eligibility (`isSoloSwarm`) alone is not delegation.
     static func subagents(
         activities: [AgentActivity],
         runs: [OrchestrationRun],
@@ -329,7 +330,7 @@ enum PinnedSummary {
         if !live.isEmpty { return live }
         guard !sessionID.isEmpty else { return [] }
         return runs
-            .filter { $0.sessionID == sessionID && ($0.runKind == "team" || $0.isSoloSwarm) }
+            .filter { $0.sessionID == sessionID && ($0.runKind == "team" || $0.didDelegateWorkers) }
             .sorted { $0.updatedAt > $1.updatedAt }
             .compactMap { run -> SubagentRow? in
                 guard let status = subagentStatus(run.state) else { return nil }

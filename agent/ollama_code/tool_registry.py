@@ -1062,7 +1062,8 @@ class ToolRegistry:
         adaptive delegation tool when available. The user's capability policy
         is applied against each canonical tool, the same gate `schemas()` uses.
         `submit_plan` joins only in Plan mode, where Locus's plan-approval flow
-        depends on it.
+        depends on it; `ask_user_question` joins every parity turn, so the
+        question popup works in Work and Grill as well.
         """
         schemas = [
             schema for schema in PARITY_TOOL_SCHEMAS
@@ -1074,11 +1075,11 @@ class ToolRegistry:
             and self._user_allows("delegate_read_only")
         ):
             schemas.append(DELEGATE_READ_ONLY_SCHEMA)
-        if plan_mode:
-            schemas.extend(
-                schema for schema in TOOL_SCHEMAS
-                if schema["function"]["name"] == "submit_plan"
-            )
+        wanted = {"ask_user_question", "submit_plan"} if plan_mode else {"ask_user_question"}
+        schemas.extend(
+            schema for schema in TOOL_SCHEMAS
+            if schema["function"]["name"] in wanted
+        )
         schemas.extend(
             schema for schema in self.simulator_schemas()
             if self._user_allows(schema["function"]["name"])

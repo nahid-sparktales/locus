@@ -73,6 +73,12 @@ struct ComposerView: View {
                 PlanApprovalPromptView()
                     .frame(maxWidth: 740)
                     .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
+            } else if let question = model.pendingUserQuestion {
+                // A question the agent asked is the same kind of decision
+                // point; esc hands the answer back to the composer instead.
+                QuestionPromptView(question: question)
+                    .frame(maxWidth: 740)
+                    .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
             } else {
                 VStack(spacing: 0) {
                     if let popup = activePopup {

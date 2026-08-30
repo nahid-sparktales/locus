@@ -317,6 +317,16 @@ struct LocusApp: App {
                 .padding(24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .background(LocusTheme.surfaceCanvas)
+        case "question-prompt":
+            Group {
+                if let question = model.pendingUserQuestion {
+                    QuestionPromptView(question: question)
+                        .frame(maxWidth: 740)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            .background(LocusTheme.surfaceCanvas)
         default:
             RootView()
         }

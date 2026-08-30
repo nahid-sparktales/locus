@@ -1171,6 +1171,88 @@ final class AppModelTests: XCTestCase {
         ))
     }
 
+    func testUserQuestionDecodesPartialPayloadsAndStringOptions() throws {
+        let question = try JSONDecoder().decode(
+            UserQuestion.self,
+            from: Data(#"{"question":"Which store?","options":["SQLite",{"label":"Core Data","detail":"Heavier"}]}"#.utf8)
+        )
+        XCTAssertEqual(question.title, "Question")
+        XCTAssertEqual(question.question, "Which store?")
+        XCTAssertEqual(question.options.map(\.label), ["SQLite", "Core Data"])
+        XCTAssertEqual(question.options.last?.detail, "Heavier")
+        XCTAssertTrue(question.recommended.isEmpty)
+        XCTAssertFalse(question.id.isEmpty)
+
+        let recommended = UserQuestion(
+            options: [UserQuestionOption(label: "SQLite")],
+            recommended: "sqlite"
+        )
+        XCTAssertEqual(recommended.recommendedOptionIndex, 0, "label matching is case-insensitive")
+    }
+
+    func testQuestionDetectorParsesTheGrillBlock() throws {
+        let text = """
+        Mapping the design tree first.
+
+        ❓ **Q1** - **Reddit scope**: Should "latest posts" mean the site-wide feed or one subreddit?
+
+        - Site-wide /new feed
+        - A subreddit argument
+
+        ➡️ Site-wide /new feed
+        """
+        let question = try XCTUnwrap(QuestionSignalDetector.question(from: text))
+        XCTAssertEqual(question.title, "Reddit scope")
+        XCTAssertEqual(
+            question.question,
+            #"Should "latest posts" mean the site-wide feed or one subreddit?"#
+        )
+        XCTAssertEqual(
+            question.options.map(\.label),
+            ["Site-wide /new feed", "A subreddit argument"]
+        )
+        XCTAssertEqual(question.recommended, "Site-wide /new feed")
+        XCTAssertEqual(question.recommendedOptionIndex, 0)
+    }
+
+    func testQuestionDetectorNeedsTheMarkerAndSurvivesSparseBlocks() throws {
+        XCTAssertNil(
+            QuestionSignalDetector.question(from: "Should the retries back off exponentially?"),
+            "prose ending in a question mark is not the Grill block"
+        )
+        XCTAssertNil(QuestionSignalDetector.question(from: ""))
+
+        // No options, no recommendation, multi-paragraph body.
+        let sparse = try XCTUnwrap(QuestionSignalDetector.question(
+            from: "❓ **Q3** - **Storage**: Where should results persist?\n\nThe workspace has no database yet."
+        ))
+        XCTAssertEqual(sparse.title, "Storage")
+        XCTAssertTrue(sparse.question.contains("no database yet"))
+        XCTAssertTrue(sparse.options.isEmpty)
+        XCTAssertTrue(sparse.recommended.isEmpty)
+
+        // Missing the bold title convention entirely.
+        let untitled = try XCTUnwrap(QuestionSignalDetector.question(
+            from: "❓ Which port should the server bind?\n➡️ 8791"
+        ))
+        XCTAssertEqual(untitled.title, "Question")
+        XCTAssertEqual(untitled.question, "Which port should the server bind?")
+        XCTAssertEqual(untitled.recommended, "8791")
+
+        // The emoji markers come in both grapheme forms: with the variation
+        // selector and without. Models emit both.
+        let withSelector = try XCTUnwrap(QuestionSignalDetector.question(
+            from: "\u{2753}\u{FE0F} **Q2** - **Port**: Which port?\n\u{27A1}\u{FE0F} 8791"
+        ))
+        XCTAssertEqual(withSelector.title, "Port")
+        XCTAssertEqual(withSelector.recommended, "8791")
+        let bareArrow = try XCTUnwrap(QuestionSignalDetector.question(
+            from: "\u{2753} **Q2** - **Port**: Which port?\n\u{27A1} 8791"
+        ))
+        XCTAssertEqual(bareArrow.title, "Port")
+        XCTAssertEqual(bareArrow.recommended, "8791")
+    }
+
     @MainActor
     func testAdaptiveWorkPromptDecorationNamesTheNeutralMode() {
         let model = AppModel(startImmediately: false)
@@ -4030,6 +4112,9 @@ final class AppModelTests: XCTestCase {
             tool("q3", "request_user_input"),
         ]).title, "Asked 3 questions")
         XCTAssertEqual(CompactToolActivitySummary(tools: [
+            tool("q1", "ask_user_question"),
+        ]).title, "Asked a question")
+        XCTAssertEqual(CompactToolActivitySummary(tools: [
             tool("e1", "apply_patch"),
             tool("e2", "edit_file"),
         ]).title, "Edited files")
@@ -4406,6 +4491,159 @@ final class AppModelTests: XCTestCase {
         model.handleEventForTesting(["type": "turn_done"])
 
         XCTAssertTrue(model.planApprovalPending, "an agent that omits the reason completed normally")
+    }
+
+    private static let questionReadyEvent: [String: Any] = [
+        "type": "question_ready",
+        "question": [
+            "id": "q-1",
+            "title": "Reddit scope",
+            "question": "Site-wide feed or one subreddit?",
+            "options": [
+                ["label": "Site-wide /new feed", "detail": ""],
+                "A subreddit argument",
+            ],
+            "recommended": "Site-wide /new feed",
+        ] as [String: Any],
+    ]
+
+    @MainActor
+    func testQuestionReadyArmsThePopupWhenTheTurnCompletes() {
+        let model = AppModel(startImmediately: false)
+        model.turnDispatchedMode = .grill
+        model.isBusy = true
+
+        model.handleEventForTesting(Self.questionReadyEvent)
+        XCTAssertNil(model.pendingUserQuestion, "the popup waits for the turn to finish")
+
+        model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
+
+        let question = model.pendingUserQuestion
+        XCTAssertEqual(question?.title, "Reddit scope")
+        XCTAssertEqual(
+            question?.options.map(\.label),
+            ["Site-wide /new feed", "A subreddit argument"]
+        )
+        XCTAssertEqual(question?.recommendedOptionIndex, 0)
+    }
+
+    @MainActor
+    func testInterruptedTurnNeverOffersItsQuestion() {
+        let model = AppModel(startImmediately: false)
+        model.turnDispatchedMode = .grill
+        model.isBusy = true
+
+        model.handleEventForTesting(Self.questionReadyEvent)
+        model.handleEventForTesting(["type": "turn_done", "reason": "interrupted"])
+
+        XCTAssertNil(model.pendingUserQuestion, "a stopped run was already a decision")
+
+        // The captured question must not leak into the next turn either.
+        model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
+        XCTAssertNil(model.pendingUserQuestion)
+    }
+
+    @MainActor
+    func testGrillTurnFallsBackToDetectingTheQuestionBlock() {
+        let model = AppModel(startImmediately: false)
+        model.turnDispatchedMode = .grill
+        model.isBusy = true
+        model.blocks.append(ChatBlock(
+            kind: .assistant,
+            text: "❓ **Q1** - **Scope**: Site-wide feed or one subreddit?\n\n➡️ Site-wide"
+        ))
+
+        model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
+
+        XCTAssertEqual(model.pendingUserQuestion?.title, "Scope")
+        XCTAssertEqual(model.pendingUserQuestion?.recommended, "Site-wide")
+    }
+
+    @MainActor
+    func testWorkTurnsDoNotSniffQuestionsFromText() {
+        let model = AppModel(startImmediately: false)
+        model.turnDispatchedMode = .work
+        model.isBusy = true
+        model.blocks.append(ChatBlock(
+            kind: .assistant,
+            text: "❓ **Q1** - **Scope**: Site-wide feed or one subreddit?\n\n➡️ Site-wide"
+        ))
+
+        model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
+
+        XCTAssertNil(model.pendingUserQuestion, "the fallback is Grill's contract, not Work's")
+    }
+
+    @MainActor
+    func testStructuredQuestionOutranksPlanApproval() {
+        let model = AppModel(startImmediately: false)
+        model.selectedMode = .plan
+        model.turnDispatchedInPlanMode = true
+        model.turnDispatchedMode = .plan
+        model.isBusy = true
+
+        model.handleEventForTesting([
+            "type": "plan_ready",
+            "plan": [
+                "id": "p-1", "title": "The plan", "summary": "",
+                "steps": ["Inspect", "Fix"], "tests": [],
+            ] as [String: Any],
+        ])
+        model.handleEventForTesting(Self.questionReadyEvent)
+        model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
+
+        XCTAssertNotNil(model.pendingUserQuestion)
+        XCTAssertFalse(
+            model.planApprovalPending,
+            "a model still asking is not yet proposing"
+        )
+    }
+
+    @MainActor
+    func testQuestionClearsOnModeSwitchDismissAndError() {
+        let arm = { () -> AppModel in
+            let model = AppModel(startImmediately: false)
+            model.selectedMode = .grill
+            model.turnDispatchedMode = .grill
+            model.isBusy = true
+            model.handleEventForTesting(Self.questionReadyEvent)
+            model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
+            XCTAssertNotNil(model.pendingUserQuestion)
+            return model
+        }
+
+        let switched = arm()
+        switched.selectedMode = .work
+        XCTAssertNil(switched.pendingUserQuestion)
+
+        let dismissed = arm()
+        dismissed.dismissUserQuestion()
+        XCTAssertNil(dismissed.pendingUserQuestion)
+
+        let errored = arm()
+        errored.handleEventForTesting(["type": "error", "message": "boom"])
+        XCTAssertNil(errored.pendingUserQuestion)
+    }
+
+    func testComposedQuestionAnswerJoinsOptionAndElaboration() {
+        XCTAssertEqual(
+            AppModel.composedQuestionAnswer(
+                option: UserQuestionOption(label: "SQLite"), freeText: ""
+            ),
+            "SQLite"
+        )
+        XCTAssertEqual(
+            AppModel.composedQuestionAnswer(option: nil, freeText: "  Use Postgres  "),
+            "Use Postgres"
+        )
+        XCTAssertEqual(
+            AppModel.composedQuestionAnswer(
+                option: UserQuestionOption(label: "SQLite"),
+                freeText: "but only if it stays single-writer"
+            ),
+            "SQLite\n\nbut only if it stays single-writer"
+        )
+        XCTAssertNil(AppModel.composedQuestionAnswer(option: nil, freeText: "   "))
     }
 
     @MainActor

@@ -2425,6 +2425,16 @@ final class LocusUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(anyElement("planApproval.panel").waitForExistence(timeout: 10))
         try auditCurrentSurface()
+
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_PLAN_APPROVAL"] = nil
+        app.launchEnvironment["LOCUS_UI_TESTING_QUESTION_PROMPT"] = "1"
+        app.launchEnvironment["LOCUS_UI_TESTING_ACCESSIBILITY_SURFACE"] = "question-prompt"
+        app.launch()
+        XCTAssertTrue(anyElement("questionPrompt.panel").waitForExistence(timeout: 10))
+        XCTAssertTrue(anyElement("questionPrompt.option.0").exists)
+        XCTAssertTrue(anyElement("questionPrompt.freeText").exists)
+        try auditCurrentSurface()
     }
 
     func testDocumentationScreenshots() {

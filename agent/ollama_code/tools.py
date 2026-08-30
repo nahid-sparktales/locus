@@ -45,6 +45,7 @@ IGNORE_DIRS = {
 #: Read-only tools that never require permission.
 SAFE_TOOLS = {
     "read_file", "glob", "grep", "list_dir", "todo_write", "submit_plan",
+    "ask_user_question",
     "search_workspace_knowledge", "search_memory", "propose_memory",
     "record_skill_observation", "capture_context_snapshot",
     "computer_list_apps", "computer_get_state",
@@ -72,6 +73,8 @@ class ToolContext:
 
     todos: list[dict[str, str]] = field(default_factory=list)
     plan_document: dict[str, Any] | None = None
+    #: The question this turn asked the user, surfaced as a popup by the app.
+    user_question: dict[str, Any] | None = None
     cwd: str = ""
     #: Files read this turn, so edit_file can warn about blind edits.
     read_files: set[str] = field(default_factory=set)
@@ -893,6 +896,39 @@ def _impl_submit_plan(args: dict[str, Any], ctx: ToolContext) -> str:
     return f"Plan submitted for approval ({len(steps)} steps)."
 
 
+def _impl_ask_user_question(args: dict[str, Any], ctx: ToolContext) -> str:
+    question = str(args.get("question") or "").strip()[:4_000]
+    if not question:
+        return "Error: 'question' is required."
+    title = str(args.get("title") or "").strip()[:160]
+    if not title:
+        title = question.splitlines()[0][:160]
+    raw_options = args.get("options")
+    options: list[dict[str, str]] = []
+    if isinstance(raw_options, list):
+        for item in raw_options[:8]:
+            if isinstance(item, dict):
+                label = str(item.get("label") or "").strip()[:200]
+                detail = str(item.get("detail") or "").strip()[:400]
+            else:
+                label = str(item).strip()[:200]
+                detail = ""
+            if label:
+                options.append({"label": label, "detail": detail})
+    recommended = str(args.get("recommended") or "").strip()[:600]
+    ctx.user_question = {
+        "id": secrets.token_hex(8),
+        "title": title,
+        "question": question,
+        "options": options,
+        "recommended": recommended,
+    }
+    return (
+        "Question delivered to the user. End your turn now and wait for "
+        "their answer before continuing."
+    )
+
+
 def _impl_search_workspace_knowledge(args: dict[str, Any], ctx: ToolContext) -> str:
     query = str(args.get("query") or "").strip()
     if not query:
@@ -1087,6 +1123,7 @@ _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
     "git_status": _impl_git_status,
     "git_diff": _impl_git_diff,
     "submit_plan": _impl_submit_plan,
+    "ask_user_question": _impl_ask_user_question,
     "search_workspace_knowledge": _impl_search_workspace_knowledge,
     "search_memory": _impl_search_memory,
     "propose_memory": _impl_propose_memory,
@@ -1334,6 +1371,31 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
         },
         ["title", "summary", "steps", "tests"],
+    ),
+    _schema(
+        "ask_user_question",
+        "Ask the user one clarifying or decision question and end your turn; the app presents it as a popup and their answer arrives as the next user message. Supply multiple-choice options when the answer space is known, and always include your recommended answer. Call at most once per turn.",
+        {
+            "title": {"type": "string", "description": "Short question title."},
+            "question": {"type": "string", "description": "The full question, may span paragraphs."},
+            "options": {
+                "type": "array",
+                "description": "Possible answers, when the space is known.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "label": {"type": "string", "description": "Concise answer."},
+                        "detail": {"type": "string", "description": "What choosing it means."},
+                    },
+                    "required": ["label"],
+                },
+            },
+            "recommended": {
+                "type": "string",
+                "description": "Your recommended answer — an option label, or freeform.",
+            },
+        },
+        ["question"],
     ),
     _schema(
         "web_fetch",
