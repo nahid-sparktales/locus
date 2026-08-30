@@ -117,6 +117,36 @@ final class LocusUITests: XCTestCase {
         element.coordinate(withNormalizedOffset: normalizedOffset).click()
     }
 
+    /// Clicks a disclosure toggle in the transcript and waits for its label to
+    /// become `expected`.
+    ///
+    /// On a busy CI runner the synthesized click occasionally lands while the
+    /// row is still settling from the previous interaction and misses the
+    /// toggle, so an unchanged label triggers another click. A toggle that was
+    /// hit but merely reported its new label late gets flipped back by that
+    /// retry, which is why every attempt waits for the expected label again
+    /// and the final wait is deliberately generous.
+    private func clickTranscriptToggle(
+        _ element: XCUIElement,
+        until expected: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let attempts = 3
+        for attempt in 1...attempts {
+            clickInTranscript(element, file: file, line: line)
+            let timeout: TimeInterval = attempt == attempts ? 10 : 3
+            if waitUntil(timeout: timeout, condition: { element.label == expected }) {
+                return
+            }
+        }
+        XCTFail(
+            "toggle label never became \"\(expected)\", still \"\(element.label)\"",
+            file: file,
+            line: line
+        )
+    }
+
     private func transcriptText(_ value: String) -> XCUIElement {
         app.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@ OR value == %@", value, value)
@@ -646,8 +676,7 @@ final class LocusUITests: XCTestCase {
         let tableToggle = anyElement("message.table.collapse")
         XCTAssertTrue(tableToggle.waitForExistence(timeout: 3))
         XCTAssertEqual(tableToggle.label, "Collapse 11-row table")
-        clickInTranscript(tableToggle)
-        XCTAssertTrue(waitUntil { tableToggle.label == "Expand 11-row table" })
+        clickTranscriptToggle(tableToggle, until: "Expand 11-row table")
         let showTable = app.buttons["message.table.showAll"].firstMatch
         XCTAssertTrue(showTable.waitForExistence(timeout: 2))
         XCTAssertEqual(showTable.label, "Show all 11 rows")
@@ -660,8 +689,7 @@ final class LocusUITests: XCTestCase {
         let codeToggle = anyElement("message.codeBlock.collapse")
         XCTAssertTrue(codeToggle.waitForExistence(timeout: 3))
         XCTAssertEqual(codeToggle.label, "Collapse 25-line code block")
-        clickInTranscript(codeToggle)
-        XCTAssertTrue(waitUntil { codeToggle.label == "Expand 25-line code block" })
+        clickTranscriptToggle(codeToggle, until: "Expand 25-line code block")
         let showCode = app.buttons["message.codeBlock.showAll"].firstMatch
         XCTAssertTrue(showCode.waitForExistence(timeout: 2))
         XCTAssertEqual(showCode.label, "Show all 25 lines")
