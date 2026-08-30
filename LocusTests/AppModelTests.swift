@@ -1238,6 +1238,19 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(untitled.title, "Question")
         XCTAssertEqual(untitled.question, "Which port should the server bind?")
         XCTAssertEqual(untitled.recommended, "8791")
+
+        // The emoji markers come in both grapheme forms: with the variation
+        // selector and without. Models emit both.
+        let withSelector = try XCTUnwrap(QuestionSignalDetector.question(
+            from: "\u{2753}\u{FE0F} **Q2** - **Port**: Which port?\n\u{27A1}\u{FE0F} 8791"
+        ))
+        XCTAssertEqual(withSelector.title, "Port")
+        XCTAssertEqual(withSelector.recommended, "8791")
+        let bareArrow = try XCTUnwrap(QuestionSignalDetector.question(
+            from: "\u{2753} **Q2** - **Port**: Which port?\n\u{27A1} 8791"
+        ))
+        XCTAssertEqual(bareArrow.title, "Port")
+        XCTAssertEqual(bareArrow.recommended, "8791")
     }
 
     @MainActor

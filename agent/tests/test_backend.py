@@ -3431,6 +3431,29 @@ def test_reset_conversation_clears_the_pending_question(tmp_path):
     assert core.tool_ctx.user_question is None
 
 
+def test_ask_user_question_suppresses_the_final_answer_nudge(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(tool_calls=[ToolCall("ask_user_question", {
+            "question": "Which feed should the script read?",
+        })], done=True),
+        ChatResponse(content_parts=[""], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn("do the work")
+
+    done = next(event for event in events if event["type"] == "turn_done")
+    assert done["reason"] == "complete"
+    # The question is the turn's deliverable. Without the guard the empty
+    # final text would trigger the nudge's extra tool-free model call, talking
+    # over the popup the model was just told to wait for.
+    assert core.client.calls == 2
+
+
 def test_local_and_inline_reasoning_are_resumable_without_provider_state(tmp_path):
     core = _core(tmp_path, [
         ChatResponse(

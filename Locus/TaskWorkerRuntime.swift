@@ -56,6 +56,12 @@ final class ChatWorkerRuntime {
     var streamingBlockID: UUID?
     var streamingText = ""
     var streamingReasoning = ""
+    /// A question_ready captured while this chat runs in the background; armed
+    /// into `pendingQuestion` when its turn completes.
+    var capturedQuestion: UserQuestion?
+    /// A completed background turn's unanswered question, promoted to the
+    /// popup when the chat is brought to the foreground.
+    var pendingQuestion: UserQuestion?
 
     var occupiesExecutionSlot: Bool {
         switch executionState {

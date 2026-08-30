@@ -1442,7 +1442,8 @@ class AgentCore:
             sections.append(
                 "You are in Locus Plan mode: investigate, then call the "
                 "submit_plan tool exactly once with your final implementation "
-                "plan. Do not modify any files in this mode."
+                "plan. Ask clarifying questions through the ask_user_question "
+                "tool. Do not modify any files in this mode."
             )
         if self.agent_mode == "grill":
             sections.append(
@@ -1644,6 +1645,9 @@ class AgentCore:
         persisted_user_metadata: dict[str, Any] | None = None,
     ) -> None:
         """Run one local-agent turn."""
+        # A question belongs to the turn that asks it. A stale one would
+        # wrongly suppress the next turn's final-answer pass.
+        self.tool_ctx.user_question = None
         if self.provider == "chatgpt":
             self._run_chatgpt_turn(
                 user_text,
@@ -1859,6 +1863,10 @@ class AgentCore:
                     self._chatgpt_thread_protocol = manager.runtime_version
                     self._chatgpt_thread_history_revision = len(self.messages)
                     self._chatgpt_thread_needs_resume = False
+                    # A replacement thread's totals restart from zero; a stale
+                    # baseline from the retired thread would under-bill it.
+                    self._chatgpt_thread_total_input = 0
+                    self._chatgpt_thread_total_output = 0
                     self.session.append({
                         "type": "chatgpt_thread",
                         "thread_id": self._chatgpt_thread_id,
@@ -2222,18 +2230,35 @@ class AgentCore:
                 total = usage.get("total") if isinstance(usage.get("total"), dict) else {}
                 total_input = max(int(total.get("inputTokens") or 0), 0)
                 total_output = max(int(total.get("outputTokens") or 0), 0)
-                if (
-                    total_input < self._chatgpt_thread_total_input
-                    or total_output < self._chatgpt_thread_total_output
-                ):
-                    # The helper restarted or compacted the thread: totals reset.
-                    self._chatgpt_thread_total_input = 0
-                    self._chatgpt_thread_total_output = 0
-                delta_input = max(total_input - self._chatgpt_thread_total_input, 0)
-                delta_output = max(total_output - self._chatgpt_thread_total_output, 0)
+                delta_input = 0
+                delta_output = 0
                 if total_input or total_output:
+                    # A turn that reported no totals at all must leave the
+                    # baselines alone: zeros are absence, not a reset.
+                    if (
+                        total_input < self._chatgpt_thread_total_input
+                        or total_output < self._chatgpt_thread_total_output
+                    ):
+                        # The helper restarted or compacted the thread.
+                        self._chatgpt_thread_total_input = 0
+                        self._chatgpt_thread_total_output = 0
+                    delta_input = max(total_input - self._chatgpt_thread_total_input, 0)
+                    delta_output = max(total_output - self._chatgpt_thread_total_output, 0)
                     self._chatgpt_thread_total_input = total_input
                     self._chatgpt_thread_total_output = total_output
+                    if self._chatgpt_thread_id:
+                        # Re-stamp the resume marker so a resumed session
+                        # inherits the baselines along with the thread, rather
+                        # than re-billing the whole thread to its first turn.
+                        self.session.append({
+                            "type": "chatgpt_thread",
+                            "thread_id": self._chatgpt_thread_id,
+                            "protocol_version": self._chatgpt_thread_protocol,
+                            "history_revision": self._chatgpt_thread_history_revision,
+                            "tool_schema_fingerprint": self._chatgpt_thread_fingerprint,
+                            "total_input_tokens": self._chatgpt_thread_total_input,
+                            "total_output_tokens": self._chatgpt_thread_total_output,
+                        })
                 prompt = native_prompt_tokens or delta_input
                 completion = native_completion_tokens or delta_output
                 self.total_prompt_tokens += prompt
@@ -2639,6 +2664,11 @@ class AgentCore:
             # Team workers and background runs are collected programmatically.
             # Nobody is reading a write-up, and an extra call would be spent on
             # text that is thrown away.
+            return False
+        if self.tool_ctx.user_question is not None:
+            # The question is this turn's deliverable, and the tool result just
+            # told the model to end its turn and wait. A nudge here would talk
+            # over the pending popup.
             return False
         text = self._last_final_answer_text()
         if not text:
@@ -3733,6 +3763,14 @@ class AgentCore:
                 self._chatgpt_thread_protocol = str(marker["protocol_version"])
                 self._chatgpt_thread_history_revision = int(marker["history_revision"])
                 self._chatgpt_thread_needs_resume = True
+                # The resumed thread keeps its cumulative totals; without the
+                # stored baselines its first turn would re-bill all of them.
+                self._chatgpt_thread_total_input = max(
+                    int(marker.get("total_input_tokens") or 0), 0
+                )
+                self._chatgpt_thread_total_output = max(
+                    int(marker.get("total_output_tokens") or 0), 0
+                )
         self._pending_computer_screenshot = None
         self._ax_only_routes.clear()
         # Continue appending to the session the user resumed.

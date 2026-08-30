@@ -8120,6 +8120,12 @@ final class AppModel: ObservableObject {
     private func detachForegroundWorkerUIIfNeeded() {
         guard let runtime = taskWorkers[currentSessionID] else { return }
         runtime.queuedMessages = queuedMessages
+        // A question belongs to its chat: park it on the runtime so it comes
+        // back when this chat does, and never fronts another session — an
+        // answer sent there would start a turn in the wrong conversation.
+        if let captured = capturedQuestionThisTurn { runtime.capturedQuestion = captured }
+        if let pending = pendingUserQuestion { runtime.pendingQuestion = pending }
+        clearPendingQuestion()
         computerControl.cancelPendingActions()
         // No browser cancellation here, at any scope: the worker keeps running
         // in the background and its browser actions are served on its own
@@ -8150,6 +8156,9 @@ final class AppModel: ObservableObject {
         finalizeStreamingBlocks()
         streamingAssistantID = nil
         streamingReply.resetTurn()
+        // The previous session's question must not front this one; this
+        // session's own parked question is restored below.
+        clearPendingQuestion()
         currentSessionID = runtime.sessionID
         sendComputerControlCapability(to: runtime.service, sessionID: runtime.sessionID)
         sendSimulatorControlCapability(to: runtime.service, sessionID: runtime.sessionID)
@@ -8196,6 +8205,14 @@ final class AppModel: ObservableObject {
                 turnDispatchedMode = runtime.dispatchedMode
                 turnDispatchedTeamRunID = runtime.dispatchedTeamRunID
                 turnDispatchedInPlanMode = runtime.dispatchedInPlanMode
+                if let captured = runtime.capturedQuestion {
+                    runtime.capturedQuestion = nil
+                    capturedQuestionThisTurn = captured
+                }
+                if let question = runtime.pendingQuestion {
+                    runtime.pendingQuestion = nil
+                    pendingUserQuestion = question
+                }
                 if let pending = runtime.pendingForegroundEvent {
                     runtime.pendingForegroundEvent = nil
                     handle(pending)
@@ -9513,10 +9530,15 @@ final class AppModel: ObservableObject {
     }
 
     /// Dismisses the question popup without answering; the question stays
-    /// readable in the transcript and the composer takes over.
-    func dismissUserQuestion() {
+    /// readable in the transcript and the composer takes over. A partially
+    /// typed answer moves into the composer draft rather than vanishing.
+    func dismissUserQuestion(keepingDraft draft: String = "") {
         guard pendingUserQuestion != nil else { return }
         pendingUserQuestion = nil
+        let typed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !typed.isEmpty, draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            draftText = typed
+        }
         drainQueuedMessages()
     }
 
@@ -11628,6 +11650,14 @@ final class AppModel: ObservableObject {
         if type == "error" {
             state = .failed
             runtime.lastError = event["message"] as? String
+            runtime.capturedQuestion = nil
+        }
+        if type == "question_ready",
+           let raw = event["question"] as? [String: Any],
+           let question = decode(UserQuestion.self, from: raw),
+           !question.question.isEmpty || !question.options.isEmpty
+        {
+            runtime.capturedQuestion = question
         }
         if type == "turn_done" {
             let reason = event["reason"] as? String ?? "complete"
@@ -11639,6 +11669,10 @@ final class AppModel: ObservableObject {
             if runtime.dispatchedTeamRunID == nil {
                 state = reason == "complete" ? .completed : .failed
             }
+            if reason == "complete", let captured = runtime.capturedQuestion {
+                runtime.pendingQuestion = captured
+            }
+            runtime.capturedQuestion = nil
             runtime.startedAt = nil
             runtime.dispatchedMode = nil
             runtime.dispatchedTeamRunID = nil
@@ -11699,11 +11733,19 @@ final class AppModel: ObservableObject {
             )
         } else if type == "turn_done" {
             if state == .completed {
-                notifyTurnCompleteIfInactive(
-                    sessionID: runtime.sessionID,
-                    runID: notificationRunID,
-                    workspace: runtime.sessionInfo?.workspaceRoot ?? runtime.sessionInfo?.cwd
-                )
+                if runtime.pendingQuestion != nil {
+                    notifyNeedsAttentionIfInactive(
+                        body: "A background chat asked you a question.",
+                        sessionID: runtime.sessionID,
+                        runID: notificationRunID
+                    )
+                } else {
+                    notifyTurnCompleteIfInactive(
+                        sessionID: runtime.sessionID,
+                        runID: notificationRunID,
+                        workspace: runtime.sessionInfo?.workspaceRoot ?? runtime.sessionInfo?.cwd
+                    )
+                }
             } else if state == .failed || state == .interrupted {
                 notifyNeedsAttentionIfInactive(
                     body: "A background chat stopped and needs attention.",
@@ -16099,6 +16141,9 @@ extension AppModel {
                 dismissUserQuestion()
                 return .object(["resolved": .bool(true)])
             }
+            guard isAgentOnline else {
+                throw CompanionProtocolError(code: "runtime_offline", message: "That chat is no longer connected.", retryable: true)
+            }
             let freeText = CompanionPayload.string("text", in: payload) ?? ""
             let option = question.options.first {
                 $0.label.caseInsensitiveCompare(decision) == .orderedSame
@@ -16230,8 +16275,12 @@ extension AppModel {
                 "title": .string(question.title),
                 "detail": .string(String(question.question.prefix(1_000))),
                 "recommended": question.recommended.nilIfEmpty.map(JSONValue.string) ?? .null,
+                // "answer" is the free-text decision: the client sends it with
+                // a `text` field. Always advertised, so option-less questions
+                // stay answerable from the phone.
                 "decisions": .array(
-                    question.options.map { .string($0.label) } + [.string("dismiss")]
+                    question.options.map { .string($0.label) }
+                        + [.string("answer"), .string("dismiss")]
                 ),
             ]))
         }

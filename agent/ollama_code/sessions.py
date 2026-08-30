@@ -829,11 +829,27 @@ class SessionStore:
                         and isinstance(fingerprint, str) and fingerprint
                         and isinstance(revision, int) and revision >= 0
                     ):
+                        total_input = record.get("total_input_tokens")
+                        total_output = record.get("total_output_tokens")
                         latest = {
                             "thread_id": thread_id,
                             "protocol_version": protocol,
                             "tool_schema_fingerprint": fingerprint,
                             "history_revision": revision,
+                            # Token baselines ride the marker so a resumed
+                            # thread's first turn is billed as a delta, not the
+                            # thread's whole cumulative total. Older markers
+                            # simply lack them.
+                            "total_input_tokens": (
+                                total_input
+                                if isinstance(total_input, int) and total_input >= 0
+                                else 0
+                            ),
+                            "total_output_tokens": (
+                                total_output
+                                if isinstance(total_output, int) and total_output >= 0
+                                else 0
+                            ),
                         }
         except OSError:
             return None

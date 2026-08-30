@@ -34,7 +34,7 @@ Example: leave the composer in Work and send `Find why the tests fail and fix it
 
 ### Reliable plan approval
 
-Plan mode recognizes a completed plan through the structured plan tool and safe deterministic fallbacks. Clarifying questions do not trigger approval — they raise the question prompt instead (see below).
+Plan mode recognizes a completed plan through the structured plan tool and safe deterministic fallbacks. Clarifying questions do not trigger approval — asked through the question tool, they raise the question prompt instead (see below).
 
 After a successful planning turn, Locus offers:
 

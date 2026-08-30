@@ -888,6 +888,123 @@ def test_managed_turn_survives_a_shrinking_thread_total(tmp_path):
     assert terminal["completion_tokens"] == 10
 
 
+def test_usage_less_turn_leaves_token_baselines_alone(tmp_path):
+    """Zeros mean absence: a turn with no usage must not reset the baselines.
+
+    An interrupted turn that never saw a tokenUsage update reports totals of
+    0/0; treating that as a thread restart re-billed the whole thread to the
+    next turn.
+    """
+    runtime = MeteredManagedRuntime(
+        calls=1, include_last=False,
+        total={"inputTokens": 900, "outputTokens": 90},
+    )
+    core = _managed_core(tmp_path, runtime)
+    _turn_done(core, runtime, allow_tools=False)
+
+    runtime.calls = 0
+    quiet = _turn_done(core, runtime, allow_tools=False)
+    assert quiet["prompt_tokens"] == 0
+    assert quiet["completion_tokens"] == 0
+
+    runtime.calls = 1
+    runtime.total = {"inputTokens": 950, "outputTokens": 100}
+    terminal = _turn_done(core, runtime, allow_tools=False)
+    assert terminal["prompt_tokens"] == 50
+    assert terminal["completion_tokens"] == 10
+
+
+def test_baselines_stay_continuous_across_per_call_and_delta_paths(tmp_path):
+    """A per-call-summed turn still advances the baseline the next turn needs."""
+    runtime = MeteredManagedRuntime(
+        calls=2, total={"inputTokens": 900, "outputTokens": 90}
+    )
+    core = _managed_core(tmp_path, runtime)
+    first = _turn_done(core, runtime, allow_tools=False)
+    assert first["prompt_tokens"] == 200
+
+    runtime.calls = 1
+    runtime.include_last = False
+    runtime.total = {"inputTokens": 950, "outputTokens": 100}
+    second = _turn_done(core, runtime, allow_tools=False)
+    assert second["prompt_tokens"] == 50
+    assert second["completion_tokens"] == 10
+
+
+def test_replacement_thread_resets_token_baselines(tmp_path):
+    """A fingerprint change starts a new thread whose totals restart at zero."""
+    runtime = MeteredManagedRuntime(
+        calls=1, include_last=False,
+        total={"inputTokens": 100, "outputTokens": 10},
+    )
+    core = _managed_core(tmp_path, runtime)
+    first = _turn_done(core, runtime, allow_tools=False)
+    assert first["prompt_tokens"] == 100
+
+    # Flipping web search changes the thread contract and forces a restart.
+    core.use_chatgpt(
+        account_id="managed-account", model="gpt-test",
+        account_label="ChatGPT plan", manager=runtime, web_search=True,
+    )
+    runtime.total = {"inputTokens": 150, "outputTokens": 15}
+    second = _turn_done(core, runtime, allow_tools=False)
+    assert runtime.started == ["thread-1", "thread-2"]
+    assert second["prompt_tokens"] == 150, "the new thread's total is all this turn's"
+    assert second["completion_tokens"] == 15
+
+
+def test_resumed_session_inherits_token_baselines(tmp_path):
+    """The resume marker carries the baselines, so the first post-resume turn
+    is billed as a delta rather than the thread's whole cumulative total."""
+    runtime = MeteredManagedRuntime(
+        calls=1, include_last=False,
+        total={"inputTokens": 900, "outputTokens": 90},
+    )
+    core = _managed_core(tmp_path, runtime)
+    _turn_done(core, runtime, allow_tools=False)
+    session_id = core.session.session_id
+
+    core.start_new_session()
+    core.resume_session(session_id)
+    runtime.total = {"inputTokens": 950, "outputTokens": 100}
+    terminal = _turn_done(core, runtime, allow_tools=False)
+
+    assert runtime.resumed == ["thread-1"]
+    assert terminal["prompt_tokens"] == 50
+    assert terminal["completion_tokens"] == 10
+
+
+def test_ask_user_question_over_the_parity_route_emits_question_ready(tmp_path):
+    runtime = MeteredManagedRuntime(
+        calls=1,
+        tools=[(
+            "ask_user_question",
+            {
+                "title": "Feed scope",
+                "question": "Which feed should the script read?",
+                "options": ["Site-wide /new", {"label": "One subreddit"}],
+                "recommended": "Site-wide /new",
+            },
+        )],
+    )
+    core = _managed_core(tmp_path, runtime)
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn(DECORATED)
+
+    ready = next(event for event in events if event["type"] == "question_ready")
+    assert ready["question"]["title"] == "Feed scope"
+    assert [option["label"] for option in ready["question"]["options"]] == [
+        "Site-wide /new", "One subreddit",
+    ]
+    result = next(
+        event for event in events
+        if event["type"] == "tool_result" and event["tool"] == "ask_user_question"
+    )
+    assert "End your turn" in result["result"]
+
+
 def test_managed_turn_without_usage_updates_still_reports_one_call(tmp_path):
     runtime = MeteredManagedRuntime(calls=0)
     core = _managed_core(tmp_path, runtime)

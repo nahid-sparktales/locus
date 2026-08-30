@@ -58,6 +58,36 @@ final class AccentPropagationTests: XCTestCase {
         try assertMarkdownArtifactFollowsAccent(text: "- `notes.md`")
     }
 
+    func testListItemFileReferenceMountsAChipNotProse() throws {
+        // Same-length names, one resolving to a real workspace file and one
+        // not: if the chip failed to mount, both bullets would render as the
+        // identical pill-styled prose and the images could not differ.
+        let workspace = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("locus-chip-mount-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        try Data("notes".utf8).write(to: workspace.appendingPathComponent("notes.md"))
+
+        let lime = selection(.lime)
+        apply(lime)
+        let chip = mount(StableMarkdownHost(
+            accent: AccentBox(lime),
+            text: "- `notes.md`",
+            workspacePath: workspace.path
+        ))
+        let prose = mount(StableMarkdownHost(
+            accent: AccentBox(lime),
+            text: "- `notas.md`",
+            workspacePath: workspace.path
+        ))
+        let chipImage = try XCTUnwrap(snapshot(chip))
+        let proseImage = try XCTUnwrap(snapshot(prose))
+        XCTAssertGreaterThan(
+            differingPixels(chipImage, proseImage), 0,
+            "A resolvable list-item file reference must mount the chip's chrome"
+        )
+    }
+
     func testMarkdownArtifactCardFollowsAccentWithoutBeingRebuilt() throws {
         // A top-level reference mounts the full card.
         try assertMarkdownArtifactFollowsAccent(text: "`notes.md`")

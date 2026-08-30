@@ -70,7 +70,7 @@ struct QuestionPromptView: View {
             return .handled
         }
         .onKeyPress(.escape) {
-            model.dismissUserQuestion()
+            model.dismissUserQuestion(keepingDraft: answerText)
             return .handled
         }
         .onKeyPress(characters: CharacterSet(charactersIn: "123456789")) { press in
