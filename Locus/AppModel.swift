@@ -67,8 +67,8 @@ final class AppModel: ObservableObject {
     let teamRunLive = TeamRunLiveModel()
     private var teamRunLiveBridge: AnyCancellable?
     @Published var activeTaskRecord: TaskRecord?  // internal(for: AppModel+UITestFixtures)
-    @Published var taskHasChanges = false  // internal(for: AppModel+UITestFixtures)
-    @Published var taskPatchBytes = 0  // internal(for: AppModel+UITestFixtures)
+    let landingFlow = LandingFlowModel()
+    private var landingFlowBridge: AnyCancellable?
     let runs = OrchestrationRunsModel()
     private var runsBridge: AnyCancellable?
     @Published var runsNavigationRequest: RunsNavigationRequest?  // internal(for: AppModel+UITestFixtures)
@@ -76,12 +76,6 @@ final class AppModel: ObservableObject {
     private var evaluationsBridge: AnyCancellable?
     let knowledge = WorkspaceKnowledgeModel()
     private var knowledgeBridge: AnyCancellable?
-    @Published var landingPreflight: LandingPreflight?  // internal(for: AppModel+UITestFixtures)
-    @Published private(set) var landingCheckRun: LandingCheckRun?
-    @Published var landingPatch = ""  // internal(for: AppModel+UITestFixtures)
-    @Published private(set) var activeLandingCheckRunID: String?
-    @Published private(set) var isLandingOperationRunning = false
-    @Published var reviewAndLandPresented = false
     let activity = ActivityCenterModel()
     private var activityBridge: AnyCancellable?
     let schedule = ScheduleModel()
@@ -938,6 +932,30 @@ final class AppModel: ObservableObject {
             selectedTeamProvider: { [weak self] in self?.selectedAgentTeam }
         )
         teamRunLiveBridge = teamRunLive.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        landingFlow.configure(
+            backend: backend,
+            isUITesting: isUITesting,
+            isBusy: { [weak self] in self?.isBusy ?? false },
+            hasPendingPermission: { [weak self] in self?.hasPendingPermission ?? false },
+            activeTask: { [weak self] in self?.activeTaskRecord },
+            setActiveTask: { [weak self] task in self?.activeTaskRecord = task },
+            replaceSessionTask: { [weak self] task in
+                self?.sessionInfo = self?.sessionInfo?.replacingTask(task)
+            },
+            sourceRunID: { [weak self] in
+                guard let self else { return "" }
+                return self.orchestrationRunID
+                    ?? self.taskConversationStates[self.currentSessionID]?.runID ?? ""
+            },
+            saveCheckCommands: { [weak self] commands in
+                self?.saveLandingCheckCommands(commands)
+            },
+            gitRefresh: { [weak self] in self?.gitWorkspace.refreshStatus() },
+            toastHandler: { [weak self] message in self?.showToast(message) }
+        )
+        landingFlowBridge = landingFlow.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         simulatorControl.capabilityDidChange = { [weak self] in
@@ -4422,32 +4440,6 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func applyActiveTaskToWorkspace() {
-        guard let task = activeTaskRecord else { return }
-        guard !isBusy, !hasPendingPermission else {
-            showToast("Wait for the team run to finish before applying changes")
-            return
-        }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let response: TaskApplyResponse = try await backend.post(
-                    "/api/tasks/\(task.id)/apply",
-                    body: [:],
-                    timeout: 120,
-                    as: TaskApplyResponse.self
-                )
-                activeTaskRecord = response.task
-                taskHasChanges = false
-                taskPatchBytes = 0
-                gitWorkspace.refreshStatus()
-                showToast(response.applied ? "Applied task changes to the workspace" : "No new task changes to apply")
-            } catch {
-                showToast("Workspace left untouched: \(error.localizedDescription)")
-            }
-        }
-    }
-
     var currentLandingCheckCommands: [String] {
         workspaceProfiles.first(where: {
             SessionSummary.canonicalWorkspacePath($0.path)
@@ -4466,142 +4458,6 @@ final class AppModel: ObservableObject {
         }) {
             workspaceProfiles[index].landingCheckCommands = clean
             persistWorkspaceProfiles()
-        }
-    }
-
-    func prepareReviewAndLand() {
-        guard let task = activeTaskRecord, !isBusy else { return }
-        if isUITesting, landingPreflight != nil {
-            reviewAndLandPresented = true
-            return
-        }
-        isLandingOperationRunning = true
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { isLandingOperationRunning = false }
-            do {
-                async let preflight: LandingPreflight = backend.get(
-                    "/api/tasks/\(task.id)/landing/preflight", as: LandingPreflight.self
-                )
-                async let detail: TaskDetailResponse = backend.get(
-                    "/api/tasks/\(task.id)", as: TaskDetailResponse.self
-                )
-                landingPreflight = try await preflight
-                let loadedDetail = try await detail
-                landingPatch = loadedDetail.patch
-                landingCheckRun = nil
-                reviewAndLandPresented = true
-            } catch {
-                showToast("Could not review the worktree: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    func refreshLandingReview() async {
-        guard reviewAndLandPresented, !isLandingOperationRunning,
-              let task = activeTaskRecord else { return }
-        do {
-            async let preflight: LandingPreflight = backend.get(
-                "/api/tasks/\(task.id)/landing/preflight", as: LandingPreflight.self
-            )
-            async let detail: TaskDetailResponse = backend.get(
-                "/api/tasks/\(task.id)", as: TaskDetailResponse.self
-            )
-            let refreshedPreflight = try await preflight
-            let refreshedDetail = try await detail
-            guard reviewAndLandPresented, activeTaskRecord?.id == task.id else { return }
-            landingPreflight = refreshedPreflight
-            landingPatch = refreshedDetail.patch
-        } catch {
-            // The next poll retries. Landing still performs its own atomic,
-            // current-tree validation before making any change.
-        }
-    }
-
-    func runLandingChecks(commands: [String]) {
-        guard let task = activeTaskRecord, !commands.isEmpty else { return }
-        saveLandingCheckCommands(commands)
-        isLandingOperationRunning = true
-        let runID = UUID().uuidString
-        activeLandingCheckRunID = runID
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                isLandingOperationRunning = false
-                activeLandingCheckRunID = nil
-            }
-            do {
-                landingCheckRun = try await backend.post(
-                    "/api/tasks/\(task.id)/checks",
-                    body: ["commands": commands, "run_id": runID],
-                    timeout: 4_900, as: LandingCheckRun.self
-                )
-                landingPreflight = try await backend.get(
-                    "/api/tasks/\(task.id)/landing/preflight", as: LandingPreflight.self
-                )
-            } catch {
-                showToast("Checks stopped: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    func stopLandingChecks() {
-        guard let runID = activeLandingCheckRunID else { return }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let _: SimpleActionResponse = try await backend.post(
-                    "/api/runs/\(runID)/cancel", body: [:],
-                    as: SimpleActionResponse.self
-                )
-                showToast("Stopping checks")
-            } catch {
-                showToast("Could not stop checks: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    func landActiveTask(
-        destination: String, branch: String, commitMessage: String,
-        overrideFailedChecks: Bool
-    ) {
-        guard let task = activeTaskRecord, let preflight = landingPreflight else { return }
-        isLandingOperationRunning = true
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { isLandingOperationRunning = false }
-            do {
-                let response: TaskLandingResponse = try await backend.post(
-                    "/api/tasks/\(task.id)/landing",
-                    body: [
-                        "destination": destination,
-                        "expected_tree": preflight.tree,
-                        "check_tree": landingCheckRun?.tree ?? "",
-                        "check_run_id": landingCheckRun?.runID ?? "",
-                        "checks_passed": landingCheckRun?.passed ?? false,
-                        "override_failed_checks": overrideFailedChecks,
-                        "branch": branch,
-                        "commit_message": commitMessage,
-                        "source_run_id": orchestrationRunID
-                            ?? taskConversationStates[currentSessionID]?.runID ?? "",
-                    ],
-                    timeout: 120,
-                    as: TaskLandingResponse.self
-                )
-                activeTaskRecord = response.task
-                sessionInfo = sessionInfo?.replacingTask(response.task)
-                if destination == "local" { reviewAndLandPresented = false }
-                gitWorkspace.refreshStatus()
-                if let detail = try? await backend.get(
-                    "/api/tasks/\(task.id)", as: TaskDetailResponse.self
-                ) {
-                    taskHasChanges = detail.patchBytes > 0
-                    taskPatchBytes = detail.patchBytes
-                }
-                showToast(destination == "local" ? "Applied changes to Local" : "Created worktree commit")
-            } catch {
-                showToast("Landing stopped safely: \(error.localizedDescription)")
-            }
         }
     }
 
@@ -10298,8 +10154,7 @@ final class AppModel: ObservableObject {
                let record = decode(TaskRecord.self, from: raw)
             {
                 activeTaskRecord = record
-                taskHasChanges = false
-                taskPatchBytes = 0
+                landingFlow.ingest(type, event)
                 updateTaskConversation(
                     state: record.state ?? orchestrationState ?? .running,
                     event: event,
@@ -10319,8 +10174,7 @@ final class AppModel: ObservableObject {
             }
 
         case "task_changes":
-            taskHasChanges = event["has_changes"] as? Bool == true
-            taskPatchBytes = event["patch_bytes"] as? Int ?? 0
+            landingFlow.ingest(type, event)
 
         case "task_applied":
             if let raw = event["task"] as? [String: Any],
@@ -10328,8 +10182,7 @@ final class AppModel: ObservableObject {
             {
                 activeTaskRecord = record
             }
-            taskHasChanges = false
-            taskPatchBytes = 0
+            landingFlow.ingest(type, event)
             showToast("Applied task changes to the workspace")
 
         case "computer_action_request":
