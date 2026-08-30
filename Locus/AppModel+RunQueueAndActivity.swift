@@ -413,9 +413,9 @@ extension AppModel {
         guard let task = activeTaskRecord, let branch = task.branch,
               GitRemoteFeatures.isAvailable else { return }
         let client = GitClient(workspaceRoot: task.executionPath)
-        isLandingOperationRunning = true
+        landingFlow.isLandingOperationRunning = true
         Task { @MainActor [weak self] in
-            defer { self?.isLandingOperationRunning = false }
+            defer { self?.landingFlow.isLandingOperationRunning = false }
             do {
                 let upstream = try? await client.run([
                     "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}",

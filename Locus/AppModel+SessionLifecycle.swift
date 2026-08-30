@@ -316,8 +316,8 @@ extension AppModel {
         dispatcherValidationReason = nil
         teamRunLive.restoreActivities([])
         activeTaskRecord = nil
-        taskHasChanges = false
-        taskPatchBytes = 0
+        landingFlow.taskHasChanges = false
+        landingFlow.taskPatchBytes = 0
     }
 
     private func activateWorkerSession(_ session: SessionSummary, runtime: ChatWorkerRuntime) {
@@ -396,8 +396,8 @@ extension AppModel {
                        as: TaskDetailResponse.self
                    )
                 {
-                    taskHasChanges = taskDetail.patchBytes > 0
-                    taskPatchBytes = taskDetail.patchBytes
+                    landingFlow.taskHasChanges = taskDetail.patchBytes > 0
+                    landingFlow.taskPatchBytes = taskDetail.patchBytes
                 }
                 touchWorkspaceProfile(session.workspacePath ?? workspacePath)
                 showToast(isBusy ? "Running task opened" : "Task opened")

@@ -392,8 +392,8 @@ struct TeamRunBoardView: View {
                         .accessibilityIdentifier("teamBoard.stop")
                 }
             }
-            if state == .completed, model.taskHasChanges, isActive {
-                Button("Review & Land") { model.prepareReviewAndLand() }
+            if state == .completed, model.landingFlow.taskHasChanges, isActive {
+                Button("Review & Land") { model.landingFlow.prepareReviewAndLand() }
                     .buttonStyle(.borderedProminent)
                     .tint(LocusTheme.ink)
             }
@@ -505,7 +505,7 @@ struct TeamRunBoardView: View {
         } else {
             duration = ""
         }
-        let changes = isActive && model.taskHasChanges ? "changes ready" : ""
+        let changes = isActive && model.landingFlow.taskHasChanges ? "changes ready" : ""
         let failure = state == .completed ? "" : (run?.recoveryReason ?? "")
         return [jobs, duration, changes, failure]
             .filter { !$0.isEmpty }

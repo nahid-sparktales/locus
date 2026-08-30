@@ -902,8 +902,8 @@ extension AppModel {
             dispatcherValidationReason = nil
             teamRunLive.restoreActivities([])
             teamRunLive.resetMetering()
-            taskHasChanges = false
-            taskPatchBytes = 0
+            landingFlow.taskHasChanges = false
+            landingFlow.taskPatchBytes = 0
             synchronizeSessionPlan([])
             showToast(reason == "deleted_active" ? "Fresh chat opened" : "Fresh chat started")
         }

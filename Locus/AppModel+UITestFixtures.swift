@@ -456,9 +456,9 @@ extension AppModel {
                 sessionID: currentSessionID,
                 startingRef: "main"
             )
-            taskHasChanges = true
-            taskPatchBytes = 184
-            landingPreflight = LandingPreflight(
+            landingFlow.taskHasChanges = true
+            landingFlow.taskPatchBytes = 184
+            landingFlow.landingPreflight = LandingPreflight(
                 ok: true,
                 tree: "2222222222222222222222222222222222222222",
                 baseTree: "1111111111111111111111111111111111111111",
@@ -468,7 +468,7 @@ extension AppModel {
                 conflict: "",
                 branch: nil
             )
-            landingPatch = """
+            landingFlow.landingPatch = """
             diff --git a/Locus/AppModel.swift b/Locus/AppModel.swift
             --- a/Locus/AppModel.swift
             +++ b/Locus/AppModel.swift

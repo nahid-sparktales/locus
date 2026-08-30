@@ -171,8 +171,8 @@ struct WorkspaceView: View {
                     .environmentObject(model)
             }
 
-            if model.activeTaskRecord != nil, model.taskHasChanges {
-                Button("Review & Land") { model.prepareReviewAndLand() }
+            if model.activeTaskRecord != nil, model.landingFlow.taskHasChanges {
+                Button("Review & Land") { model.landingFlow.prepareReviewAndLand() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .tint(LocusTheme.ink)
@@ -769,7 +769,7 @@ struct ReviewAndLandView: View {
     }
 
     private var checksAreCurrentAndPassing: Bool {
-        guard let check = model.landingCheckRun, let preflight = model.landingPreflight else {
+        guard let check = model.landingFlow.landingCheckRun, let preflight = model.landingFlow.landingPreflight else {
             return false
         }
         return check.passed && check.tree == preflight.tree
@@ -780,8 +780,8 @@ struct ReviewAndLandView: View {
     }
 
     private var canLand: Bool {
-        guard let preflight = model.landingPreflight, preflight.patchBytes > 0,
-              !model.isLandingOperationRunning else { return false }
+        guard let preflight = model.landingFlow.landingPreflight, preflight.patchBytes > 0,
+              !model.landingFlow.isLandingOperationRunning else { return false }
         if destination == "local" { return preflight.canApplyLocal }
         return branchProblem == nil
             && !commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -809,7 +809,7 @@ struct ReviewAndLandView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         stageHeader("1", "Review changes")
-                        if let preflight = model.landingPreflight {
+                        if let preflight = model.landingFlow.landingPreflight {
                             HStack {
                                 Text("\(preflight.paths.count) file\(preflight.paths.count == 1 ? "" : "s")")
                                 Text(ByteCountFormatter.string(
@@ -823,7 +823,7 @@ struct ReviewAndLandView: View {
                             .foregroundStyle(LocusTheme.muted)
 
                             ScrollView([.horizontal, .vertical]) {
-                                Text(model.landingPatch.isEmpty ? "No changes." : model.landingPatch)
+                                Text(model.landingFlow.landingPatch.isEmpty ? "No changes." : model.landingFlow.landingPatch)
                                     .font(.locus(size: 9, design: .monospaced))
                                     .textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -851,24 +851,24 @@ struct ReviewAndLandView: View {
                             .overlay { RoundedRectangle(cornerRadius: 8).stroke(LocusTheme.line) }
                             .accessibilityIdentifier("landing.checkCommands")
                         HStack {
-                            if model.activeLandingCheckRunID != nil {
+                            if model.landingFlow.activeLandingCheckRunID != nil {
                                 ProgressView().controlSize(.small)
                                 Text("Running checks…")
                                     .font(.locus(size: 9))
-                                Button("Stop") { model.stopLandingChecks() }
+                                Button("Stop") { model.landingFlow.stopLandingChecks() }
                                     .accessibilityIdentifier("landing.stopChecks")
                             } else {
-                                Button("Run Checks") { model.runLandingChecks(commands: commands) }
-                                    .disabled(commands.isEmpty || model.isLandingOperationRunning)
+                                Button("Run Checks") { model.landingFlow.runLandingChecks(commands: commands) }
+                                    .disabled(commands.isEmpty || model.landingFlow.isLandingOperationRunning)
                                     .accessibilityIdentifier("landing.runChecks")
                             }
                             Spacer()
                             if checksAreCurrentAndPassing {
                                 Label("Checks passed", systemImage: "checkmark.circle.fill")
                                     .foregroundStyle(LocusTheme.success)
-                            } else if let check = model.landingCheckRun {
+                            } else if let check = model.landingFlow.landingCheckRun {
                                 Label(
-                                    check.tree == model.landingPreflight?.tree
+                                    check.tree == model.landingFlow.landingPreflight?.tree
                                         ? "Checks did not pass" : "Checks are stale",
                                     systemImage: "exclamationmark.triangle.fill"
                                 )
@@ -880,7 +880,7 @@ struct ReviewAndLandView: View {
                         }
                         .font(.locus(size: 9, weight: .semibold))
 
-                        if let run = model.landingCheckRun {
+                        if let run = model.landingFlow.landingCheckRun {
                             VStack(alignment: .leading, spacing: 6) {
                                 ForEach(run.results) { result in
                                     DisclosureGroup {
@@ -915,13 +915,13 @@ struct ReviewAndLandView: View {
                         landingDestinationControl
 
                         if destination == "local" {
-                            if model.landingPreflight?.canApplyLocal == true {
+                            if model.landingFlow.landingPreflight?.canApplyLocal == true {
                                 Text("The complete patch will be applied unstaged to Local. This chat remains in its worktree.")
                                     .font(.locus(size: 9))
                                     .foregroundStyle(LocusTheme.muted)
                             } else {
                                 Label(
-                                    model.landingPreflight?.conflict.nilIfEmpty
+                                    model.landingFlow.landingPreflight?.conflict.nilIfEmpty
                                         ?? "The patch conflicts with Local. Both checkouts are unchanged.",
                                     systemImage: "exclamationmark.triangle.fill"
                                 )
@@ -934,7 +934,7 @@ struct ReviewAndLandView: View {
                                     .foregroundStyle(LocusTheme.success)
                                 HStack {
                                     Button("Publish") { model.publishLandedWorktree() }
-                                        .disabled(model.isLandingOperationRunning)
+                                        .disabled(model.landingFlow.isLandingOperationRunning)
                                     Button("Open Pull Request") { model.openLandedPullRequest() }
                                     Text(task.landingCommit?.prefix(10) ?? "")
                                         .font(.locus(size: 8, design: .monospaced))
@@ -999,7 +999,7 @@ struct ReviewAndLandView: View {
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
-                await model.refreshLandingReview()
+                await model.landingFlow.refreshLandingReview()
             }
         }
         .alert("Land without passing current checks?", isPresented: $confirmOverride) {
@@ -1059,7 +1059,7 @@ struct ReviewAndLandView: View {
     }
 
     private func land(override: Bool) {
-        model.landActiveTask(
+        model.landingFlow.landActiveTask(
             destination: destination,
             branch: branchName,
             commitMessage: commitMessage,
@@ -1988,18 +1988,18 @@ private struct TeamActivityPanel: View {
     private func taskActions(_ task: TaskRecord) -> some View {
         HStack(spacing: 8) {
             Label(
-                model.taskHasChanges
-                    ? "\(ByteCountFormatter.string(fromByteCount: Int64(model.taskPatchBytes), countStyle: .file)) ready"
+                model.landingFlow.taskHasChanges
+                    ? "\(ByteCountFormatter.string(fromByteCount: Int64(model.landingFlow.taskPatchBytes), countStyle: .file)) ready"
                     : "Private checkout",
                 systemImage: "arrow.triangle.branch"
             )
             .font(.locus(size: 8, design: .monospaced))
             .foregroundStyle(LocusTheme.muted)
             Spacer()
-            Button("Review & Land") { model.prepareReviewAndLand() }
-                .disabled(model.isBusy || !model.taskHasChanges)
+            Button("Review & Land") { model.landingFlow.prepareReviewAndLand() }
+                .disabled(model.isBusy || !model.landingFlow.taskHasChanges)
             Button("Copy Patch") { model.copyActiveTaskPatch() }
-                .disabled(model.isBusy || !model.taskHasChanges)
+                .disabled(model.isBusy || !model.landingFlow.taskHasChanges)
             Menu {
                 Button("Open Checkout") { model.openActiveTaskCheckout() }
                 Button("Reveal in Finder") { model.revealActiveTaskCheckout() }

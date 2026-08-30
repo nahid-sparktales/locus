@@ -751,7 +751,10 @@ struct RootView: View {
                     )
                 }
         }
-        .sheet(isPresented: $model.reviewAndLandPresented) {
+        .sheet(isPresented: Binding(
+            get: { model.landingFlow.reviewAndLandPresented },
+            set: { model.landingFlow.reviewAndLandPresented = $0 }
+        )) {
             ReviewAndLandView()
                 .environmentObject(model)
         }

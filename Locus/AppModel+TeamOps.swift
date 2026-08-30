@@ -306,7 +306,7 @@ extension AppModel {
                 )
                 if activeTaskRecord?.id == taskID {
                     activeTaskRecord = response.task
-                    taskHasChanges = false
+                    landingFlow.taskHasChanges = false
                 }
                 showToast("Managed checkout archived with a restorable snapshot")
                 await refreshOrchestrationRuns(select: run.id)
