@@ -71,7 +71,7 @@ struct AgentTeamsSettingsView: View {
         }
         .sheet(item: $editingSuite) { suite in
             EvaluationSuiteEditor(suite: suite) {
-                model.saveEvaluationSuite($0)
+                model.evaluations.saveEvaluationSuite($0)
                 editingSuite = nil
             }
             .environmentObject(model)
@@ -303,23 +303,23 @@ struct AgentTeamsSettingsView: View {
 
     private var evaluationsSection: some View {
         settingsSection(title: "Evaluation Lab", actionTitle: "Add Suite") {
-            model.createEvaluationSuite()
+            model.evaluations.createEvaluationSuite()
         } content: {
             HStack {
                 Text("Local, reproducible suites")
                     .font(.locus(size: 8))
                     .foregroundStyle(LocusTheme.muted)
                 Spacer()
-                Button("Import JSON") { model.importEvaluationSuite() }
+                Button("Import JSON") { model.evaluations.importEvaluationSuite() }
                     .buttonStyle(.locus())
                     .font(.locus(size: 8, weight: .semibold))
             }
             .padding(.vertical, 7)
             Divider()
-            if model.evaluationSuites.isEmpty {
+            if model.evaluations.evaluationSuites.isEmpty {
                 emptyRow("Reusable local cases compare team quality, reliability, latency, tokens, and cost without touching the source workspace.")
             } else {
-                ForEach(model.evaluationSuites) { suite in
+                ForEach(model.evaluations.evaluationSuites) { suite in
                     HStack(spacing: 10) {
                         Image(systemName: "checkmark.seal")
                             .foregroundStyle(LocusTheme.signalDeep)
@@ -330,7 +330,7 @@ struct AgentTeamsSettingsView: View {
                                 .foregroundStyle(LocusTheme.muted)
                         }
                         Spacer()
-                        Button("Run") { model.runEvaluationSuite(suite) }
+                        Button("Run") { model.evaluations.runEvaluationSuite(suite) }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                             .disabled(
@@ -340,14 +340,14 @@ struct AgentTeamsSettingsView: View {
                             )
                         Button("Edit") { editingSuite = suite }.buttonStyle(.locus())
                         Button("Results") {
-                            Task { evaluationReport = await model.loadEvaluationReport(suite) }
+                            Task { evaluationReport = await model.evaluations.loadEvaluationReport(suite) }
                         }
                         .buttonStyle(.locus())
-                        Button { model.exportEvaluationSuite(suite) } label: {
+                        Button { model.evaluations.exportEvaluationSuite(suite) } label: {
                             Image(systemName: "square.and.arrow.up")
                         }
                         .buttonStyle(.locus())
-                        Button(role: .destructive) { model.deleteEvaluationSuite(suite) } label: {
+                        Button(role: .destructive) { model.evaluations.deleteEvaluationSuite(suite) } label: {
                             Image(systemName: "trash")
                         }
                         .buttonStyle(.locus())
@@ -357,14 +357,14 @@ struct AgentTeamsSettingsView: View {
                     Divider()
                 }
             }
-            if let status = model.evaluationStatus {
-                Label(status, systemImage: model.activeEvaluationID == nil ? "checkmark.circle" : "progress.indicator")
+            if let status = model.evaluations.evaluationStatus {
+                Label(status, systemImage: model.evaluations.activeEvaluationID == nil ? "checkmark.circle" : "progress.indicator")
                     .font(.locus(size: 9, weight: .medium))
                     .foregroundStyle(LocusTheme.muted)
                     .padding(.vertical, 6)
             }
         }
-        .task { await model.refreshEvaluations() }
+        .task { await model.evaluations.refreshEvaluations() }
     }
 
     private var nextSuggestedRole: AgentRole {
