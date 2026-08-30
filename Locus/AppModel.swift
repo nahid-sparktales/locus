@@ -295,12 +295,8 @@ final class AppModel: ObservableObject {
     let notebook = NotebookModel()
     private var gitWorkspaceBridge: AnyCancellable?
     private var workspaceFilesBridge: AnyCancellable?
-    @Published var agentInstructionsExists = false  // internal(for: AppModel+UITestFixtures)
-    @Published var agentInstructionsDraft = ""
-    @Published var savedAgentInstructions = ""  // internal(for: AppModel+UITestFixtures)
-    @Published private(set) var agentInstructionsError: String?
-    @Published private(set) var isLoadingAgentInstructions = false
-    @Published private(set) var isSavingAgentInstructions = false
+    let agentInstructions = AgentInstructionsModel()
+    private var agentInstructionsBridge: AnyCancellable?
     @Published var contextFiles: [ContextFile] = []
     @Published var chatAttachments: [ChatAttachment] = []
     @Published var chatAttachmentNotice: String?
@@ -586,7 +582,6 @@ final class AppModel: ObservableObject {
     private var workspaceToOpenAfterReconnect: String?
     private var appliedWorkspacePath: String?
     private var sessionResetWatchdog: Task<Void, Never>?
-    private var agentInstructionsTask: Task<Void, Never>?
     private var orchestrationRunsTasks: [String: (generation: Int, task: Task<OrchestrationRunsResponse, Error>)] = [:]
     private var orchestrationDetailTasks: [String: Task<OrchestrationRun, Error>] = [:]
     private var orchestrationEventTasks: [String: Task<OrchestrationEventsResponse, Error>] = [:]
@@ -910,6 +905,20 @@ final class AppModel: ObservableObject {
             self?.objectWillChange.send()
         }
         workspaceFilesBridge = workspaceFiles.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        agentInstructions.configure(
+            backend: backend,
+            isUITesting: isUITesting,
+            workspacePathProvider: { [weak self] in self?.workspacePath ?? "" },
+            runIsActive: { [weak self] in
+                guard let self else { return true }
+                return self.isBusy || self.hasPendingPermission
+            },
+            toastHandler: { [weak self] message in self?.showToast(message) },
+            workspaceFilesChanged: { [weak self] in self?.workspaceFiles.refresh(force: true) }
+        )
+        agentInstructionsBridge = agentInstructions.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         simulatorControl.capabilityDidChange = { [weak self] in
@@ -2090,7 +2099,7 @@ final class AppModel: ObservableObject {
         workspaceFiles.stop()
         knowledgeReindexTask?.cancel()
         knowledgeWatcher.stop()
-        agentInstructionsTask?.cancel()
+        agentInstructions.cancelAll()
         orchestrationRunsTasks.values.forEach { $0.task.cancel() }
         orchestrationDetailTasks.values.forEach { $0.cancel() }
         orchestrationEventTasks.values.forEach { $0.cancel() }
@@ -2160,117 +2169,6 @@ final class AppModel: ObservableObject {
         if !contextFiles.contains(where: { $0.url.standardizedFileURL == standardized }) {
             loadContext(from: [url])
         }
-    }
-
-    // MARK: - Workspace AGENTS.md
-
-    var agentInstructionsHasUnsavedChanges: Bool {
-        agentInstructionsDraft != savedAgentInstructions
-    }
-
-    var agentInstructionsURL: URL {
-        AgentInstructionsFile.url(for: workspacePath)
-    }
-
-    /// Reads the workspace-root AGENTS.md without ever wandering outside the
-    /// selected folder. A dirty editor is protected unless the user explicitly
-    /// chooses Revert.
-    func refreshAgentInstructions(discardingChanges: Bool = false) {
-        guard !isUITesting else { return }
-        if agentInstructionsHasUnsavedChanges, !discardingChanges {
-            showToast("Save or revert the AGENTS.md edits first")
-            return
-        }
-
-        let root = workspacePath
-        agentInstructionsTask?.cancel()
-        isLoadingAgentInstructions = true
-        agentInstructionsError = nil
-        agentInstructionsTask = Task { [weak self] in
-            let snapshot = await Task.detached(priority: .utility) {
-                AgentInstructionsFile.load(from: root)
-            }.value
-            guard let self, self.workspacePath == root, !Task.isCancelled else { return }
-            self.isLoadingAgentInstructions = false
-            self.agentInstructionsExists = snapshot.exists
-            self.agentInstructionsError = snapshot.error
-            guard snapshot.error == nil else { return }
-            self.savedAgentInstructions = snapshot.content
-            self.agentInstructionsDraft = snapshot.content
-        }
-    }
-
-    func createAgentInstructions() {
-        guard !agentInstructionsExists else {
-            refreshAgentInstructions()
-            return
-        }
-        agentInstructionsDraft = "# Workspace instructions\n\n"
-        saveAgentInstructions()
-    }
-
-    func saveAgentInstructions() {
-        guard !isBusy, !hasPendingPermission else {
-            showToast("Wait for the current run to finish before saving AGENTS.md")
-            return
-        }
-        guard agentInstructionsHasUnsavedChanges || !agentInstructionsExists else { return }
-
-        let root = workspacePath
-        let contents = agentInstructionsDraft
-        isSavingAgentInstructions = true
-        agentInstructionsError = nil
-        agentInstructionsTask?.cancel()
-        agentInstructionsTask = Task { [weak self] in
-            let errorMessage = await Task.detached(priority: .utility) { () -> String? in
-                do {
-                    try AgentInstructionsFile.save(contents, in: root)
-                    return nil
-                } catch {
-                    return error.localizedDescription
-                }
-            }.value
-            guard let self, self.workspacePath == root, !Task.isCancelled else { return }
-            self.isSavingAgentInstructions = false
-            if let errorMessage {
-                self.agentInstructionsError = errorMessage
-                self.showToast("Could not save AGENTS.md")
-                return
-            }
-
-            self.agentInstructionsExists = true
-            self.savedAgentInstructions = contents
-            self.workspaceFiles.refresh(force: true)
-
-            do {
-                let _: ProjectContextReloadResponse = try await self.backend.post(
-                    "/api/context/reload",
-                    body: [:],
-                    as: ProjectContextReloadResponse.self
-                )
-                self.showToast("Saved AGENTS.md — instructions reloaded")
-            } catch {
-                // The file is already safely on disk. The backend also reloads
-                // project instructions at the next Work turn, so a reconnect or
-                // narrow race with a finishing turn never loses the edit.
-                self.showToast("Saved AGENTS.md — applies on the next Work turn")
-            }
-        }
-    }
-
-    func revertAgentInstructions() {
-        if agentInstructionsExists {
-            refreshAgentInstructions(discardingChanges: true)
-        } else {
-            agentInstructionsDraft = ""
-            savedAgentInstructions = ""
-            agentInstructionsError = nil
-        }
-    }
-
-    func revealAgentInstructionsInFinder() {
-        guard agentInstructionsExists else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([agentInstructionsURL])
     }
 
     // MARK: - Notifications
