@@ -192,8 +192,8 @@ struct ComposerView: View {
         .onChange(of: model.composerFocusToken) {
             restoreFocus()
         }
-        .onChange(of: model.shouldShowTeamDispatchApproval) {
-            if !model.shouldShowTeamDispatchApproval && !model.shouldShowTeamDispatchProgress {
+        .onChange(of: model.teamRunLive.shouldShowTeamDispatchApproval) {
+            if !model.teamRunLive.shouldShowTeamDispatchApproval && !model.teamRunLive.shouldShowTeamDispatchProgress {
                 restoreFocus()
             }
         }

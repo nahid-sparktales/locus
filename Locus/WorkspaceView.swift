@@ -1964,7 +1964,7 @@ private struct TeamActivityPanel: View {
             if expanded {
                 ScrollView(.vertical) {
                     VStack(alignment: .leading, spacing: 7) {
-                        ForEach(model.agentActivities) { activity in
+                        ForEach(model.teamRunLive.agentActivities) { activity in
                             AgentActivityRow(
                                 activity: activity,
                                 thinkingVisibility: model.thinkingVisibility
@@ -2138,9 +2138,9 @@ private struct WorkStatusStrip: View {
                         Text("~\(model.estimatedStreamingTokens.formatted()) streamed tokens")
                     }
                     if model.orchestrationState != nil {
-                        Text("\(model.teamModelCalls.formatted()) team calls")
-                        if model.teamMeteredTokens > 0 {
-                            Text("\(model.teamMeteredTokens.formatted()) hosted tokens")
+                        Text("\(model.teamRunLive.teamModelCalls.formatted()) team calls")
+                        if model.teamRunLive.teamMeteredTokens > 0 {
+                            Text("\(model.teamRunLive.teamMeteredTokens.formatted()) hosted tokens")
                         }
                     }
                     if let info = model.sessionInfo {

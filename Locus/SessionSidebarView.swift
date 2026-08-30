@@ -1093,7 +1093,7 @@ struct TeamProgressPopover: View {
 
     @ViewBuilder
     private func dispatcherSection(now: Date) -> some View {
-        let activity = model.dispatcherActivity
+        let activity = model.teamRunLive.dispatcherActivity
         let dispatcher = selectedDispatcher
         let startedAt = activity?.startedAt ?? model.activeWorkStartedAt
         let elapsed = startedAt.map { max(now.timeIntervalSince($0), 0) } ?? 0
@@ -1125,7 +1125,7 @@ struct TeamProgressPopover: View {
             }
             if model.orchestrationState == .dispatching,
                elapsed >= 30,
-               model.agentActivities.isEmpty
+               model.teamRunLive.agentActivities.isEmpty
             {
                 Label(
                     "Still waiting for the dispatcher. No plan or delegated jobs have started.",
@@ -1152,11 +1152,11 @@ struct TeamProgressPopover: View {
             HStack {
                 sectionLabel("DELEGATED JOBS")
                 Spacer()
-                Text("\(completedJobs)/\(model.agentActivities.count)")
+                Text("\(completedJobs)/\(model.teamRunLive.agentActivities.count)")
                     .font(.locus(size: 8, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
             }
-            if model.agentActivities.isEmpty {
+            if model.teamRunLive.agentActivities.isEmpty {
                 Text(model.orchestrationState == nil
                     ? "No run yet. Send a task with this team selected."
                     : "Jobs appear here after the dispatcher returns a plan.")
@@ -1164,7 +1164,7 @@ struct TeamProgressPopover: View {
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                ForEach(model.agentActivities) { activity in
+                ForEach(model.teamRunLive.agentActivities) { activity in
                     HStack(spacing: 7) {
                         Image(systemName: dispatcherSymbol(activity.state))
                             .foregroundStyle(dispatcherColor(activity.state))
@@ -1209,8 +1209,8 @@ struct TeamProgressPopover: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
-            Text("\(model.teamModelCalls.formatted()) calls")
-            Text("\(model.teamMeteredTokens.formatted()) hosted tokens")
+            Text("\(model.teamRunLive.teamModelCalls.formatted()) calls")
+            Text("\(model.teamRunLive.teamMeteredTokens.formatted()) hosted tokens")
             Spacer()
             if presentation?.canStop == true, let runID = model.orchestrationRunID {
                 Button("Stop", role: .destructive) {
@@ -1249,7 +1249,7 @@ struct TeamProgressPopover: View {
     }
 
     private var completedJobs: Int {
-        model.agentActivities.filter { $0.state == .completed }.count
+        model.teamRunLive.agentActivities.filter { $0.state == .completed }.count
     }
 
     private func activityTitle(_ activity: AgentActivity) -> String {
@@ -1265,7 +1265,7 @@ struct TeamProgressPopover: View {
 
     private var presentation: TeamRunPresentation? {
         guard let runID = model.orchestrationRunID else { return nil }
-        let durable = model.orchestrationRuns.first(where: { $0.id == runID })
+        let durable = model.runs.orchestrationRuns.first(where: { $0.id == runID })
         return model.teamRunPresentation(for: runID, durable: durable)
     }
 
