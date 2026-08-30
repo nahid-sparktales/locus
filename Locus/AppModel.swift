@@ -58,42 +58,8 @@ final class AppModel: ObservableObject {
         CodexComponent.bundledHelper == nil && !CodexComponent.isInstalled
         #endif
     }
-    @Published private(set) var primaryAgentBehavior = AgentBehavior.primaryDefault()
-    @Published var agentProfiles: [AgentProfile] = []  // internal(for: AppModel+UITestFixtures)
-    @Published var agentTeams: [AgentTeam] = []  // internal(for: AppModel+UITestFixtures)
-    @Published private(set) var teamRoutingConsentAccountIDs: Set<UUID> = []
-    @Published var globalAgentConcurrency = 3 {
-        didSet {
-            let bounded = min(max(globalAgentConcurrency, 1), 8)
-            if bounded != globalAgentConcurrency {
-                globalAgentConcurrency = bounded
-                return
-            }
-            if persistenceEnabled {
-                UserDefaults.standard.set(bounded, forKey: AgentTeamStore.globalConcurrencyKey)
-            }
-        }
-    }
-    @Published var selectedAgentTeamID: UUID? = nil {
-        didSet {
-            if selectedAgentTeamID != nil, soloSwarmEnabled {
-                soloSwarmEnabled = false
-            }
-            guard persistenceEnabled else { return }
-            UserDefaults.standard.set(selectedAgentTeamID?.uuidString, forKey: AgentTeamStore.selectionKey)
-        }
-    }
-    /// Compatibility state for profiles written before Solo delegation became
-    /// adaptive. Every non-team Solo Work/Plan/Grill turn now enables it.
-    @Published var soloSwarmEnabled = true {
-        didSet {
-            guard soloSwarmEnabled != oldValue else { return }
-            if soloSwarmEnabled, selectedAgentTeamID != nil {
-                selectedAgentTeamID = nil
-            }
-            scheduleWorkspacePersistence()
-        }
-    }
+    let agentTeamsModel = AgentTeamsModel()
+    private var agentTeamsBridge: AnyCancellable?
     @Published var orchestrationRunID: String?  // internal(for: AppModel+UITestFixtures)
     @Published var orchestrationState: TeamRunState?  // internal(for: AppModel+UITestFixtures)
     @Published private(set) var activeWorkerID: String?
@@ -662,26 +628,10 @@ final class AppModel: ObservableObject {
                 defaults.set(data, forKey: "Locus.settings")
             }
         }
-        if !isUITesting, persistenceEnabled {
-            primaryAgentBehavior = AgentTeamStore.loadPrimaryBehavior(from: defaults)
-            let loadedProfiles = AgentTeamStore.loadProfiles(from: defaults)
-            let storedTeams = AgentTeamStore.loadTeams(from: defaults)
-            let approvalMigration = AgentTeamStore.migrateToOneTimeApproval(storedTeams)
-            let budgetMigration = AgentTeamStore.migrateLegacyCallBudgets(approvalMigration.teams)
-            let loadedTeams = budgetMigration.teams
-            let loadedSelection = defaults.string(forKey: AgentTeamStore.selectionKey)
-                .flatMap(UUID.init(uuidString:))
-            agentProfiles = loadedProfiles
-            agentTeams = loadedTeams
-            if approvalMigration.changed || budgetMigration.changed {
-                AgentTeamStore.save(profiles: loadedProfiles, teams: loadedTeams, to: defaults)
-            }
-            teamRoutingConsentAccountIDs = AgentTeamStore.loadConsent(from: defaults)
-            let storedConcurrency = defaults.integer(forKey: AgentTeamStore.globalConcurrencyKey)
-            globalAgentConcurrency = storedConcurrency == 0 ? 3 : min(max(storedConcurrency, 1), 8)
-            selectedAgentTeamID = loadedTeams.contains(where: { $0.id == loadedSelection })
-                ? loadedSelection : nil
-        }
+        agentTeamsModel.restore(
+            persistenceEnabled: !isUITesting && persistenceEnabled,
+            defaults: defaults
+        )
         let restoredOpenInspectorTabs = loadedSettings.resolvedInspectorOpenTabs
         loadedSettings.inspectorOpenTabs = restoredOpenInspectorTabs.map(\.rawValue)
         if !loadedSettings.inspectorCollapsed, restoredOpenInspectorTabs.isEmpty {
@@ -965,6 +915,17 @@ final class AppModel: ObservableObject {
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
         providerAccountsBridge = providerAccountsModel.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        agentTeamsModel.configure(
+            isBusyProvider: { [weak self] in self?.isBusy ?? false },
+            workspacePersistenceRequested: { [weak self] in self?.scheduleWorkspacePersistence() },
+            localModelsProvider: { [weak self] in self?.localModels ?? [] },
+            accountsProvider: { [weak self] in self?.providerAccounts ?? [] },
+            accountModelsProvider: { [weak self] id in self?.accountModels[id] },
+            toastHandler: { [weak self] message in self?.showToast(message) }
+        )
+        agentTeamsBridge = agentTeamsModel.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         simulatorControl.capabilityDidChange = { [weak self] in
@@ -3754,95 +3715,6 @@ final class AppModel: ObservableObject {
 
     // MARK: - Agents and teams
 
-    var selectedAgentTeam: AgentTeam? {
-        selectedAgentTeamID.flatMap { id in agentTeams.first(where: { $0.id == id }) }
-    }
-
-    var teamModeEnabled: Bool { selectedAgentTeam != nil }
-
-    func suggestedQuickTeamName() -> String {
-        QuickTeamFactory.suggestedTeamName(existingTeams: agentTeams)
-    }
-
-    func missingQuickTeamRoutingAccounts(for draft: QuickTeamDraft) -> [ProviderAccount] {
-        draft.selectedAccountIDs
-            .subtracting(teamRoutingConsentAccountIDs)
-            .compactMap { id in providerAccounts.first(where: { $0.id == id }) }
-            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
-    }
-
-    @discardableResult
-    func createAndSelectQuickTeam(
-        _ draft: QuickTeamDraft
-    ) -> Result<AgentTeam, QuickTeamCreationError> {
-        if isBusy { return quickTeamFailure(.activeRun) }
-        if let account = missingQuickTeamRoutingAccounts(for: draft).first {
-            return quickTeamFailure(.routingConsentRequired(account.displayName))
-        }
-        if let availabilityError = quickTeamAvailabilityError(for: draft) {
-            return quickTeamFailure(availabilityError)
-        }
-
-        do {
-            let build = try QuickTeamFactory.build(
-                draft: draft,
-                existingProfiles: agentProfiles,
-                existingTeams: agentTeams
-            )
-            // Publish only after the complete staged result validates. This
-            // prevents a failed quick setup from leaving orphaned profiles.
-            agentProfiles = build.profiles
-            agentTeams.append(build.team)
-            persistAgentTeams()
-            soloSwarmEnabled = false
-            selectedAgentTeamID = build.team.id
-            showToast("Created and selected \(build.team.name)")
-            return .success(build.team)
-        } catch let error as QuickTeamCreationError {
-            return quickTeamFailure(error)
-        } catch {
-            return quickTeamFailure(.invalidTeam(error.localizedDescription))
-        }
-    }
-
-    private func quickTeamAvailabilityError(
-        for draft: QuickTeamDraft
-    ) -> QuickTeamCreationError? {
-        for choice in draft.selectedChoices {
-            switch choice.route {
-            case .localOllama:
-                if !localModels.isEmpty,
-                   !localModels.contains(where: {
-                       $0.name.caseInsensitiveCompare(choice.model) == .orderedSame
-                   })
-                {
-                    return .unavailableModel(choice.model)
-                }
-            case .providerAccount(let accountID):
-                guard let account = providerAccounts.first(where: { $0.id == accountID }),
-                      account.hasKey
-                else {
-                    return .unavailableProvider(choice.providerName)
-                }
-                guard let reported = accountModels[accountID],
-                      reported.contains(where: {
-                          $0.caseInsensitiveCompare(choice.model) == .orderedSame
-                      })
-                else {
-                    return .unavailableModel(choice.model)
-                }
-            }
-        }
-        return nil
-    }
-
-    private func quickTeamFailure(
-        _ error: QuickTeamCreationError
-    ) -> Result<AgentTeam, QuickTeamCreationError> {
-        showToast(error.localizedDescription)
-        return .failure(error)
-    }
-
     var shouldShowTeamDispatchProgress: Bool {
         isBusy && orchestrationRunID != nil && orchestrationState == .dispatching
             && pendingDispatchPlan == nil
@@ -3859,117 +3731,6 @@ final class AppModel: ObservableObject {
             return team
         }
         return selectedAgentTeam
-    }
-
-    func selectAgentTeam(_ id: UUID?) {
-        soloSwarmEnabled = id == nil
-        selectedAgentTeamID = id
-        showToast(id == nil ? "Solo mode" : "Team mode")
-    }
-
-    func selectSoloRoute() {
-        selectedAgentTeamID = nil
-        soloSwarmEnabled = true
-        showToast("Solo mode")
-    }
-
-    func savePrimaryAgentBehavior(_ behavior: AgentBehavior) {
-        var updated = behavior
-        updated.clamp()
-        primaryAgentBehavior = updated
-        if persistenceEnabled {
-            AgentTeamStore.savePrimaryBehavior(updated)
-        }
-        showToast("Primary agent settings saved — they apply on the next turn")
-    }
-
-    func saveAgentProfile(_ profile: AgentProfile) {
-        var updated = profile
-        updated.clamp()
-        guard updated.isConfigured else {
-            showToast("Give the agent a name and exact model")
-            return
-        }
-        let collision = agentProfiles.contains {
-            $0.id != updated.id
-                && $0.name.caseInsensitiveCompare(updated.name) == .orderedSame
-        }
-        guard !collision else {
-            showToast("Agent names must be unique")
-            return
-        }
-        if let index = agentProfiles.firstIndex(where: { $0.id == updated.id }) {
-            agentProfiles[index] = updated
-        } else {
-            agentProfiles.append(updated)
-        }
-        persistAgentTeams()
-        showToast("Saved \(updated.name)")
-    }
-
-    func removeAgentProfile(_ profile: AgentProfile) {
-        guard !isBusy else {
-            showToast("Stop the active run before removing an agent")
-            return
-        }
-        agentProfiles.removeAll { $0.id == profile.id }
-        agentTeams = agentTeams.compactMap { team in
-            var updated = team
-            updated.memberIDs.removeAll { $0 == profile.id }
-            if updated.dispatcherID == profile.id { updated.dispatcherID = nil }
-            if updated.fallbackDispatcherID == profile.id { updated.fallbackDispatcherID = nil }
-            if updated.defaultWriterID == profile.id { updated.defaultWriterID = nil }
-            return updated
-        }
-        if selectedAgentTeamID.flatMap({ id in agentTeams.first(where: { $0.id == id }) }) == nil {
-            selectedAgentTeamID = nil
-        }
-        persistAgentTeams()
-    }
-
-    func saveAgentTeam(_ team: AgentTeam) {
-        var updated = team
-        updated.clamp()
-        let errors = AgentTeamValidation.errors(team: updated, profiles: agentProfiles)
-        guard errors.isEmpty else {
-            showToast(errors[0])
-            return
-        }
-        let collision = agentTeams.contains {
-            $0.id != updated.id
-                && $0.name.caseInsensitiveCompare(updated.name) == .orderedSame
-        }
-        guard !collision else {
-            showToast("Team names must be unique")
-            return
-        }
-        if let index = agentTeams.firstIndex(where: { $0.id == updated.id }) {
-            agentTeams[index] = updated
-        } else {
-            agentTeams.append(updated)
-        }
-        persistAgentTeams()
-        showToast("Saved \(updated.name)")
-    }
-
-    func removeAgentTeam(_ team: AgentTeam) {
-        guard !isBusy else {
-            showToast("Stop the active run before removing a team")
-            return
-        }
-        agentTeams.removeAll { $0.id == team.id }
-        if selectedAgentTeamID == team.id { selectedAgentTeamID = nil }
-        persistAgentTeams()
-    }
-
-    func grantAutomaticRoutingConsent(for accountID: UUID) {
-        teamRoutingConsentAccountIDs.insert(accountID)
-        persistAgentTeams()
-    }
-
-    func revokeAutomaticRoutingConsent(for accountID: UUID) {
-        teamRoutingConsentAccountIDs.remove(accountID)
-        persistAgentTeams()
     }
 
     func testAgentProfileConnection(_ profile: AgentProfile) async -> String {
@@ -4012,15 +3773,6 @@ final class AppModel: ObservableObject {
             }
             return result.status.summary
         }
-    }
-
-    private func persistAgentTeams() {
-        guard persistenceEnabled else { return }
-        AgentTeamStore.save(profiles: agentProfiles, teams: agentTeams)
-        UserDefaults.standard.set(
-            teamRoutingConsentAccountIDs.map(\.uuidString).sorted(),
-            forKey: AgentTeamStore.consentKey
-        )
     }
 
     /// Builds an in-memory manifest for one run. Provider credentials are
