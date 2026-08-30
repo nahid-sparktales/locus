@@ -138,7 +138,8 @@ jobs:
           actual="$(shasum -a 256 "$foundry_dir/$asset" | awk '{print $1}')"
           test "$actual" = "$expected"
           tar -xzf "$foundry_dir/$asset" -C "$foundry_dir"
-          LOCUS_ANVIL_BIN="$foundry_dir/anvil" Tools/RunWalletChainTests.sh
+          LOCUS_ANVIL_BIN="$foundry_dir/anvil" Tools/RunWalletChainTests.sh \
+            CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=
       - name: Direct and App Store release configurations compile
         env:
           LOCUS_BUNDLE_MODE: skip
