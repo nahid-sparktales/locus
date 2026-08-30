@@ -175,7 +175,7 @@ struct ComposerView: View {
         .animation(LocusMotion.spatial, value: model.activePermissionRequest?.requestID)
         .animation(LocusMotion.spatial, value: model.planApprovalPending)
         .sheet(isPresented: $quickTeamPresented) {
-            QuickTeamBuilderView(suggestedName: model.suggestedQuickTeamName())
+            QuickTeamBuilderView(suggestedName: model.agentTeamsModel.suggestedQuickTeamName())
                 .environmentObject(model)
         }
         .onAppear { restoreFocus() }
@@ -580,13 +580,13 @@ struct ComposerView: View {
                 teamPickerPresented.toggle()
             } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: model.teamModeEnabled
+                    Image(systemName: model.agentTeamsModel.teamModeEnabled
                         ? "person.2.fill" : "person.fill")
                     Text(model.selectedAgentTeam?.name ?? "Solo")
                         .lineLimit(1)
                 }
                 .font(.locus(size: 9, weight: .semibold))
-                .foregroundStyle(model.teamModeEnabled ? accentAction : LocusTheme.muted)
+                .foregroundStyle(model.agentTeamsModel.teamModeEnabled ? accentAction : LocusTheme.muted)
                 .padding(.horizontal, 8)
                 .frame(height: 24)
                     .background(LocusTheme.paperDeep.opacity(0.8))
@@ -1255,9 +1255,9 @@ private struct ComposerTeamPickerPopover: View {
     }
 
     private var soloCard: some View {
-        let selected = model.selectedAgentTeamID == nil
+        let selected = model.agentTeamsModel.selectedAgentTeamID == nil
         return Button {
-            model.selectSoloRoute()
+            model.agentTeamsModel.selectSoloRoute()
             dismiss()
         } label: {
             HStack(spacing: 10) {
@@ -1294,7 +1294,7 @@ private struct ComposerTeamPickerPopover: View {
     }
 
     private func teamCard(_ team: AgentTeam) -> some View {
-        let selected = model.selectedAgentTeamID == team.id
+        let selected = model.agentTeamsModel.selectedAgentTeamID == team.id
         let profiles = team.memberIDs.compactMap { id in
             model.agentProfiles.first(where: { $0.id == id })
         }
@@ -1308,7 +1308,7 @@ private struct ComposerTeamPickerPopover: View {
         let issue = teamIssue(team)
 
         return Button {
-            model.selectAgentTeam(team.id)
+            model.agentTeamsModel.selectAgentTeam(team.id)
             dismiss()
         } label: {
             VStack(alignment: .leading, spacing: 7) {
@@ -1406,7 +1406,7 @@ private struct ComposerTeamPickerPopover: View {
         ).first {
             return error
         }
-        if let missingID = memberAccountIDs.subtracting(model.teamRoutingConsentAccountIDs).first {
+        if let missingID = memberAccountIDs.subtracting(model.agentTeamsModel.teamRoutingConsentAccountIDs).first {
             let name = model.providerAccounts.first(where: { $0.id == missingID })?.displayName
                 ?? "a hosted provider"
             return "Allow automatic routing for \(name) in Advanced settings."

@@ -629,8 +629,8 @@ final class AppModelTests: XCTestCase {
             role: .implementer,
             accessCeiling: .workspaceWrite
         )
-        model.saveAgentProfile(dispatcher)
-        model.saveAgentProfile(writer)
+        model.agentTeamsModel.saveAgentProfile(dispatcher)
+        model.agentTeamsModel.saveAgentProfile(writer)
         let team = AgentTeam(
             name: "LocalTeam",
             dispatcherID: dispatcher.id,
@@ -638,8 +638,8 @@ final class AppModelTests: XCTestCase {
             memberIDs: [dispatcher.id, writer.id],
             defaultWriterID: writer.id
         )
-        model.saveAgentTeam(team)
-        model.selectAgentTeam(team.id)
+        model.agentTeamsModel.saveAgentTeam(team)
+        model.agentTeamsModel.selectAgentTeam(team.id)
 
         let manifest = try XCTUnwrap(model.teamManifest(for: "Implement this"))
         let profiles = try XCTUnwrap(manifest["profiles"] as? [[String: Any]])
@@ -675,7 +675,7 @@ final class AppModelTests: XCTestCase {
             model: "qwen-code"
         )
 
-        let result = model.createAndSelectQuickTeam(QuickTeamDraft(
+        let result = model.agentTeamsModel.createAndSelectQuickTeam(QuickTeamDraft(
             name: "Quick Team",
             dispatcher: dispatcher,
             leadEditor: lead
@@ -686,11 +686,11 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.agentTeams, [team])
         XCTAssertEqual(model.selectedAgentTeamID, team.id)
         XCTAssertFalse(model.soloSwarmEnabled)
-        XCTAssertEqual(model.suggestedQuickTeamName(), "Quick Team 2")
+        XCTAssertEqual(model.agentTeamsModel.suggestedQuickTeamName(), "Quick Team 2")
 
         let profilesBeforeFailure = model.agentProfiles
         let teamsBeforeFailure = model.agentTeams
-        let duplicate = model.createAndSelectQuickTeam(QuickTeamDraft(
+        let duplicate = model.agentTeamsModel.createAndSelectQuickTeam(QuickTeamDraft(
             name: "quick team",
             dispatcher: dispatcher,
             leadEditor: lead
@@ -716,7 +716,7 @@ final class AppModelTests: XCTestCase {
             model: "claude-sonnet"
         )
 
-        let result = model.createAndSelectQuickTeam(QuickTeamDraft(
+        let result = model.agentTeamsModel.createAndSelectQuickTeam(QuickTeamDraft(
             name: "Hosted Team",
             dispatcher: choice,
             leadEditor: choice
@@ -912,15 +912,15 @@ final class AppModelTests: XCTestCase {
     @MainActor
     func testSoloDelegationAndTeamRoutesAreMutuallyExclusive() {
         let model = AppModel(startImmediately: false)
-        model.selectSoloRoute()
+        model.agentTeamsModel.selectSoloRoute()
         XCTAssertTrue(model.soloSwarmEnabled)
         XCTAssertNil(model.selectedAgentTeamID)
 
-        model.selectAgentTeam(UUID())
+        model.agentTeamsModel.selectAgentTeam(UUID())
         XCTAssertFalse(model.soloSwarmEnabled)
         XCTAssertNotNil(model.selectedAgentTeamID)
 
-        model.selectAgentTeam(nil)
+        model.agentTeamsModel.selectAgentTeam(nil)
         XCTAssertTrue(model.soloSwarmEnabled)
         XCTAssertNil(model.selectedAgentTeamID)
     }
@@ -2293,9 +2293,9 @@ final class AppModelTests: XCTestCase {
             role: .implementer,
             accessCeiling: .workspaceWrite
         )
-        model.saveAgentProfile(dispatcher)
-        model.saveAgentProfile(planner)
-        model.saveAgentProfile(writer)
+        model.agentTeamsModel.saveAgentProfile(dispatcher)
+        model.agentTeamsModel.saveAgentProfile(planner)
+        model.agentTeamsModel.saveAgentProfile(writer)
         let team = AgentTeam(
             name: "Codex Team",
             dispatcherID: dispatcher.id,
@@ -2303,8 +2303,8 @@ final class AppModelTests: XCTestCase {
             memberIDs: [dispatcher.id, planner.id, writer.id],
             defaultWriterID: writer.id
         )
-        model.saveAgentTeam(team)
-        model.selectAgentTeam(team.id)
+        model.agentTeamsModel.saveAgentTeam(team)
+        model.agentTeamsModel.selectAgentTeam(team.id)
 
         XCTAssertEqual(model.selectedTeamModelNames, ["qwen", "kimi"])
         XCTAssertEqual(model.modelPickerLabel, "Codex Team · 2 models")
@@ -4889,7 +4889,7 @@ final class AppModelTests: XCTestCase {
             name: "UI", model: "claude", role: .implementer,
             accessCeiling: .computerControl
         )
-        [dispatcher, backend, ui].forEach(model.saveAgentProfile)
+        [dispatcher, backend, ui].forEach(model.agentTeamsModel.saveAgentProfile)
         let team = AgentTeam(
             name: "Two Writers",
             dispatcherID: dispatcher.id,
@@ -4897,8 +4897,8 @@ final class AppModelTests: XCTestCase {
             memberIDs: [dispatcher.id, backend.id, ui.id],
             defaultWriterID: backend.id
         )
-        model.saveAgentTeam(team)
-        model.selectAgentTeam(team.id)
+        model.agentTeamsModel.saveAgentTeam(team)
+        model.agentTeamsModel.selectAgentTeam(team.id)
         let ordered = DispatchPlan(
             summary: "Backend then UI",
             jobs: [

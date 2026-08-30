@@ -40,28 +40,28 @@ struct AgentTeamsSettingsView: View {
         .accessibilityIdentifier("settings.agents.root")
         .sheet(item: $editingProfile) { profile in
             AgentProfileEditor(profile: profile) {
-                model.saveAgentProfile($0)
+                model.agentTeamsModel.saveAgentProfile($0)
                 editingProfile = nil
             }
             .environmentObject(model)
         }
         .sheet(isPresented: $quickTeamPresented) {
-            QuickTeamBuilderView(suggestedName: model.suggestedQuickTeamName())
+            QuickTeamBuilderView(suggestedName: model.agentTeamsModel.suggestedQuickTeamName())
                 .environmentObject(model)
         }
         .sheet(isPresented: $editingPrimaryAgent) {
             AgentBehaviorEditor(
                 title: "Primary Agent",
-                behavior: model.primaryAgentBehavior,
+                behavior: model.agentTeamsModel.primaryAgentBehavior,
                 modelName: model.selectedModel
             ) {
-                model.savePrimaryAgentBehavior($0)
+                model.agentTeamsModel.savePrimaryAgentBehavior($0)
                 editingPrimaryAgent = false
             }
         }
         .sheet(item: $editingTeam) { team in
             AgentTeamEditor(team: team) {
-                model.saveAgentTeam($0)
+                model.agentTeamsModel.saveAgentTeam($0)
                 editingTeam = nil
             }
             .environmentObject(model)
@@ -86,7 +86,7 @@ struct AgentTeamsSettingsView: View {
         ) {
             if let account = consentAccount {
                 Button("Allow \(account.displayName)") {
-                    model.grantAutomaticRoutingConsent(for: account.id)
+                    model.agentTeamsModel.grantAutomaticRoutingConsent(for: account.id)
                     consentAccount = nil
                 }
             }
@@ -127,7 +127,7 @@ struct AgentTeamsSettingsView: View {
     private var runtimeSection: some View {
         Section("Scheduler") {
             Stepper(
-                "Up to \(model.globalAgentConcurrency) simultaneous model calls",
+                "Up to \(model.agentTeamsModel.globalAgentConcurrency) simultaneous model calls",
                 value: $model.globalAgentConcurrency,
                 in: 1...8
             )
@@ -141,7 +141,7 @@ struct AgentTeamsSettingsView: View {
         Section("Primary agent") {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(model.primaryAgentBehavior.displayName)
+                    Text(model.agentTeamsModel.primaryAgentBehavior.displayName)
                         .font(.locus(size: 11, weight: .semibold))
                     Text("Conversation model · \(model.selectedModel)")
                         .font(.caption)
@@ -186,7 +186,7 @@ struct AgentTeamsSettingsView: View {
                         Spacer()
                         Button("Edit") { editingProfile = profile }
                             .buttonStyle(.locus())
-                        Button(role: .destructive) { model.removeAgentProfile(profile) } label: {
+                        Button(role: .destructive) { model.agentTeamsModel.removeAgentProfile(profile) } label: {
                             Image(systemName: "trash")
                         }
                         .buttonStyle(.locus())
@@ -233,7 +233,7 @@ struct AgentTeamsSettingsView: View {
                         Spacer()
                         Button("Edit") { editingTeam = team }
                             .buttonStyle(.locus())
-                        Button(role: .destructive) { model.removeAgentTeam(team) } label: {
+                        Button(role: .destructive) { model.agentTeamsModel.removeAgentTeam(team) } label: {
                             Image(systemName: "trash")
                         }
                         .buttonStyle(.locus())
@@ -264,8 +264,8 @@ struct AgentTeamsSettingsView: View {
                             .foregroundStyle(LocusTheme.muted)
                     }
                     Spacer()
-                    if model.teamRoutingConsentAccountIDs.contains(account.id) {
-                        Button("Revoke") { model.revokeAutomaticRoutingConsent(for: account.id) }
+                    if model.agentTeamsModel.teamRoutingConsentAccountIDs.contains(account.id) {
+                        Button("Revoke") { model.agentTeamsModel.revokeAutomaticRoutingConsent(for: account.id) }
                             .buttonStyle(.locus())
                     } else {
                         Button("Allow…") { consentAccount = account }
@@ -514,7 +514,7 @@ struct QuickTeamBuilderView: View {
         ) {
             if let account = consentAccount {
                 Button("Allow \(account.displayName)") {
-                    model.grantAutomaticRoutingConsent(for: account.id)
+                    model.agentTeamsModel.grantAutomaticRoutingConsent(for: account.id)
                     consentAccount = nil
                 }
             }
@@ -801,7 +801,7 @@ struct QuickTeamBuilderView: View {
 
     @ViewBuilder
     private var consentSection: some View {
-        let accounts = model.missingQuickTeamRoutingAccounts(for: draft)
+        let accounts = model.agentTeamsModel.missingQuickTeamRoutingAccounts(for: draft)
         if !accounts.isEmpty {
             VStack(alignment: .leading, spacing: 9) {
                 Label("Hosted routing needs your approval", systemImage: "lock.shield.fill")
@@ -919,7 +919,7 @@ struct QuickTeamBuilderView: View {
         {
             return "A selected model is no longer available. Refresh and choose again."
         }
-        if let account = model.missingQuickTeamRoutingAccounts(for: draft).first {
+        if let account = model.agentTeamsModel.missingQuickTeamRoutingAccounts(for: draft).first {
             return "Allow routing for \(account.displayName) to continue."
         }
         return nil
@@ -983,7 +983,7 @@ struct QuickTeamBuilderView: View {
 
     private func createTeam() {
         creationError = nil
-        switch model.createAndSelectQuickTeam(draft) {
+        switch model.agentTeamsModel.createAndSelectQuickTeam(draft) {
         case .success:
             dismiss()
         case .failure(let error):
@@ -2335,7 +2335,7 @@ struct WorkspaceKnowledgeSettingsView: View {
         Form {
             Section("Saved memory") {
                 Picker("Memory owner", selection: $selectedMemoryAgentID) {
-                    Text("Primary · \(model.primaryAgentBehavior.displayName)")
+                    Text("Primary · \(model.agentTeamsModel.primaryAgentBehavior.displayName)")
                         .tag("primary")
                     ForEach(model.agentProfiles) { profile in
                         Text(profile.name).tag(profile.id.uuidString)
@@ -2760,7 +2760,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                     Text("Memory owner")
                         .font(.locus(size: 9, weight: .semibold))
                     Picker("Memory owner", selection: $selectedMemoryAgentID) {
-                        Text("Primary · \(model.primaryAgentBehavior.displayName)")
+                        Text("Primary · \(model.agentTeamsModel.primaryAgentBehavior.displayName)")
                             .tag("primary")
                         ForEach(model.agentProfiles) { profile in
                             Text(profile.name).tag(profile.id.uuidString)

@@ -210,10 +210,10 @@ struct WorkspaceView: View {
                 .frame(maxWidth: 176)
             }
             .buttonStyle(.locus())
-            .help(model.teamModeEnabled
+            .help(model.agentTeamsModel.teamModeEnabled
                 ? "Active team: \(model.selectedTeamModelNames.joined(separator: ", "))"
                 : "Select model")
-            .accessibilityLabel(model.teamModeEnabled
+            .accessibilityLabel(model.agentTeamsModel.teamModeEnabled
                 ? "Active team, \(model.modelPickerLabel), \(runtimeHealthTitle)"
                 : "Select model, \(model.modelPickerLabel), \(runtimeHealthTitle)")
             .accessibilityIdentifier("workspace.modelPicker")
@@ -1852,7 +1852,7 @@ private struct ModelPickerPopover: View {
                 }
                 .accessibilityIdentifier("workspace.modelPicker.manageTeam")
                 Button("Switch to Solo") {
-                    model.selectAgentTeam(nil)
+                    model.agentTeamsModel.selectAgentTeam(nil)
                 }
                 .accessibilityIdentifier("workspace.modelPicker.switchToSolo")
             }
@@ -1863,7 +1863,7 @@ private struct ModelPickerPopover: View {
 
     private func routeSection(_ section: ModelPickerSection) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            sectionLabel(model.teamModeEnabled ? "SOLO · \(section.title)" : section.title.uppercased())
+            sectionLabel(model.agentTeamsModel.teamModeEnabled ? "SOLO · \(section.title)" : section.title.uppercased())
             if let message = section.emptyMessage {
                 Text(message)
                     .font(.locus(size: 9))
@@ -1871,7 +1871,7 @@ private struct ModelPickerPopover: View {
             }
             ForEach(section.models, id: \.self) { name in
                 Button {
-                    if model.teamModeEnabled { model.selectAgentTeam(nil) }
+                    if model.agentTeamsModel.teamModeEnabled { model.agentTeamsModel.selectAgentTeam(nil) }
                     model.selectModel(account: section.account, model: name)
                     dismiss()
                 } label: {
