@@ -61,7 +61,7 @@ packages:
     exactVersion: 0.8.0
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle.git
-    exactVersion: 2.9.4
+    exactVersion: 2.9.6
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm.git
     exactVersion: 1.18.0

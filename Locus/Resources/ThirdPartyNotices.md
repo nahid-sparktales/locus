@@ -134,13 +134,13 @@ attached Xcode iOS Simulators and is absent from the Mac App Store build.
 
 ## Sparkle
 
-Direct-download builds use Sparkle 2.9.4 at commit
-`b6496a74a087257ef5e6da1c5b29a447a60f5bd7` to verify, download, and install
+Direct-download builds use Sparkle 2.9.6 at commit
+`ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a` to verify, download, and install
 Locus updates. Sparkle is not linked or bundled in the Mac App Store build.
 
-- Source: https://github.com/sparkle-project/Sparkle/releases/tag/2.9.4
+- Source: https://github.com/sparkle-project/Sparkle/releases/tag/2.9.6
 - License: MIT and bundled permissive component licenses
-- License text: `ThirdPartyLicenses/Sparkle-2.9.4/LICENSE`
+- License text: `ThirdPartyLicenses/Sparkle-2.9.6/LICENSE`
 
 ## Locus WalletSigner cryptography
 
