@@ -15348,38 +15348,6 @@ final class AppModel: ObservableObject {
         return output
     }
 
-    nonisolated private static func exportMarkdown(
-        session: SessionSummary,
-        messages: [HistoryMessage],
-        workspace: String?,
-        model: String?,
-        started: String?
-    ) -> String {
-        var lines = [
-            "# \(session.displayTitle)",
-            "",
-            "- Exported: \(Date().formatted(date: .abbreviated, time: .shortened))",
-            "- Started: \(started?.nilIfEmpty ?? session.date.formatted(date: .abbreviated, time: .shortened))",
-            "- Model: \(model?.nilIfEmpty ?? "Unknown")",
-            "- Workspace: `\(workspace?.nilIfEmpty ?? "Unknown")`",
-            "- Session: `\(session.id)`",
-            "",
-        ]
-        for message in messages {
-            switch message.role {
-            case "user":
-                lines.append("## You\n\n\(displayUserText(message.content))\n")
-            case "assistant":
-                lines.append("## Locus\n\n\(message.content)\n")
-            case "tool":
-                lines.append("### Tool: \(message.name ?? "tool")\n\n```\n\(message.content)\n```\n")
-            default:
-                continue
-            }
-        }
-        return lines.joined(separator: "\n")
-    }
-
     nonisolated private static func safeFilename(_ value: String) -> String {
         let cleaned = value.replacingOccurrences(
             of: #"[^a-zA-Z0-9._-]+"#,
