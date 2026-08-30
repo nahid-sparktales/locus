@@ -1619,7 +1619,10 @@ struct InspectorRunsTab: View {
                 .font(.locus(size: 9, weight: .semibold))
             Text("When parallel work would help, temporary workers share the selected model and inherit the current tools and permission mode.")
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                // `muted` measures ~4.3:1 against this tinted card once the
+                // text is actually drawn, and fails outright on a 1x display
+                // where there is no subpixel coverage to help it.
+                .foregroundStyle(LocusTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityIdentifier("runs.solo.adaptiveDelegation")
