@@ -141,9 +141,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var activeLandingCheckRunID: String?
     @Published private(set) var isLandingOperationRunning = false
     @Published var reviewAndLandPresented = false
-    @Published var activityCenterPresented = false
-    @Published var activityCenterSection: ActivityCenterSection = .activity
-    @Published var activityRuns: [OrchestrationRun] = []  // internal(for: AppModel+UITestFixtures)
+    let activity = ActivityCenterModel()
+    private var activityBridge: AnyCancellable?
     @Published private(set) var scheduledTasks: [ScheduledTask] = []
     let companionGateway = CompanionGateway()
     @Published private(set) var companionGatewayState = CompanionGatewayState.disabled
@@ -152,8 +151,6 @@ final class AppModel: ObservableObject {
     @Published var scheduleEditorDraft: ScheduleEditorDraft?
     @Published private(set) var isSavingSchedule = false
     @Published private(set) var isRefreshingSchedules = false
-    @Published private(set) var activitySeenUpdates: [String: Double] = [:]
-    @Published private(set) var dismissedActivityRunIDs: Set<String> = []
     @Published private(set) var backgroundServices: [BackgroundServiceRecord] = []
     private var backgroundServicesRefreshGeneration = 0
     let extensionsModel = ExtensionsModel()
@@ -174,18 +171,6 @@ final class AppModel: ObservableObject {
     private var splitPaneSearchQueries: [String: String] = [:]
     private static let splitRestorationKey = "Locus.chatSplitRestoration"
     private var didRestoreChatSplit = false
-
-    var activityNeedsAttentionCount: Int {
-        let states = Set(["waiting_permission", "waiting_computer",
-                          "waiting_dispatch_approval", "paused", "interrupted", "failed"])
-        return visibleActivityRuns.filter {
-            states.contains($0.state) && activityIsUnseen($0)
-        }.count
-    }
-
-    var visibleActivityRuns: [OrchestrationRun] {
-        activityRuns.filter { !dismissedActivityRunIDs.contains($0.id) }
-    }
     @Published var sessionInfo: SessionInfo? {
         didSet {
             // Session changes must retarget the app-owned PTY even when its
@@ -611,14 +596,8 @@ final class AppModel: ObservableObject {
         self.lifecycleJournal = persistenceEnabled ? launchJournal : nil
         pendingLifecycleRecovery = persistenceEnabled ? launchJournal.beginLaunch() : nil
         let defaults = UserDefaults.standard
+        activity.restore(persistenceEnabled: !isUITesting && persistenceEnabled)
         if !isUITesting, persistenceEnabled {
-            if let data = defaults.data(forKey: "Locus.activitySeenUpdates"),
-               let saved = try? JSONDecoder().decode([String: Double].self, from: data) {
-                activitySeenUpdates = saved
-            }
-            dismissedActivityRunIDs = Set(
-                defaults.stringArray(forKey: "Locus.dismissedActivityRunIDs") ?? []
-            )
             if let data = defaults.data(forKey: Self.splitRestorationKey),
                let restoration = try? JSONDecoder().decode(ChatSplitRestoration.self, from: data)
             {
@@ -939,6 +918,13 @@ final class AppModel: ObservableObject {
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
         extensionsBridge = extensionsModel.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        activity.configure(
+            backend: backend,
+            toastHandler: { [weak self] message in self?.showToast(message) }
+        )
+        activityBridge = activity.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         simulatorControl.capabilityDidChange = { [weak self] in
@@ -5652,76 +5638,6 @@ final class AppModel: ObservableObject {
             }
         }
         return nil
-    }
-
-    func refreshActivityRuns(announceFailure: Bool = true) async {
-        do {
-            let response: OrchestrationRunsResponse = try await backend.get(
-                "/api/runs", query: [URLQueryItem(name: "limit", value: "200")],
-                as: OrchestrationRunsResponse.self
-            )
-            activityRuns = response.runs
-            if activityCenterPresented { markAllActivitySeen() }
-        } catch where announceFailure {
-            showToast("Could not load activity: \(error.localizedDescription)")
-        } catch {
-            // Coordinator refreshes are best-effort. Runtime recovery owns
-            // persistent service errors so a hidden app never repeats toasts.
-        }
-    }
-
-    func openActivityCenter() {
-        activityCenterPresented = true
-        markAllActivitySeen()
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            await refreshActivityRuns()
-            markAllActivitySeen()
-        }
-    }
-
-    func toggleActivityCenter() {
-        if activityCenterPresented {
-            activityCenterPresented = false
-        } else {
-            openActivityCenter()
-        }
-    }
-
-    func activityIsUnseen(_ run: OrchestrationRun) -> Bool {
-        guard !dismissedActivityRunIDs.contains(run.id) else { return false }
-        return (activitySeenUpdates[run.id] ?? -Double.greatestFiniteMagnitude) < run.updatedAt
-    }
-
-    func markActivitySeen(_ run: OrchestrationRun) {
-        guard activityIsUnseen(run) else { return }
-        activitySeenUpdates[run.id] = run.updatedAt
-        persistActivityPresentationState()
-    }
-
-    func markAllActivitySeen() {
-        var changed = false
-        for run in visibleActivityRuns where activityIsUnseen(run) {
-            activitySeenUpdates[run.id] = run.updatedAt
-            changed = true
-        }
-        if changed { persistActivityPresentationState() }
-    }
-
-    func dismissActivityRun(_ run: OrchestrationRun) {
-        guard TeamRunState(rawValue: run.state)?.isTerminal == true else { return }
-        dismissedActivityRunIDs.insert(run.id)
-        persistActivityPresentationState()
-    }
-
-    func clearFinishedActivityRuns() {
-        let finished = visibleActivityRuns.compactMap { run in
-            TeamRunState(rawValue: run.state)?.isTerminal == true ? run.id : nil
-        }
-        guard !finished.isEmpty else { return }
-        dismissedActivityRunIDs.formUnion(finished)
-        persistActivityPresentationState()
-        showToast("Cleared finished activity")
     }
 
     func updateQueuedRun(_ run: OrchestrationRun, action: String) {
@@ -12621,25 +12537,6 @@ final class AppModel: ObservableObject {
         UserDefaults.standard.set(
             expandedWorkspaceIDs.sorted(),
             forKey: "Locus.expandedWorkspaces"
-        )
-    }
-
-    private func persistActivityPresentationState() {
-        guard persistenceEnabled else { return }
-        if activitySeenUpdates.count > 1_000 {
-            activitySeenUpdates = Dictionary(
-                uniqueKeysWithValues: activitySeenUpdates
-                    .sorted { $0.value > $1.value }
-                    .prefix(1_000)
-                    .map { ($0.key, $0.value) }
-            )
-        }
-        if let data = try? JSONEncoder().encode(activitySeenUpdates) {
-            UserDefaults.standard.set(data, forKey: "Locus.activitySeenUpdates")
-        }
-        UserDefaults.standard.set(
-            Array(dismissedActivityRunIDs.prefix(1_000)),
-            forKey: "Locus.dismissedActivityRunIDs"
         )
     }
 
