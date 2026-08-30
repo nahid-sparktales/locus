@@ -80,6 +80,16 @@
 
 ### Fixed
 
+- **A run's Overview no longer borrows numbers from a run that is still
+  going.** Opening one run while another was executing folded both runs'
+  events into the same Files, Steps, and model readouts, and could make a
+  reload skip part of the open run's history when the live one had counted
+  further. Every fact in the Overview and Activity views now reads only the
+  selected run's own events. Two smaller repairs ride along: a file the run
+  created and then deleted is no longer listed as "created", and an expanded
+  request or "Show more" list no longer carries over into the next run you
+  open.
+
 - **Notes whose plain-text mirror went missing are no longer loaded as empty.**
   Each note is kept as a plain `.txt` alongside a formatting archive, and a note
   that had lost the `.txt` opened blank — so the first keystroke saved that

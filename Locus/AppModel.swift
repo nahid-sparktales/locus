@@ -5128,7 +5128,11 @@ final class AppModel: ObservableObject {
 
     func loadOrchestrationRun(_ runID: String, terminal: Bool = false) async {
         let sameRun = selectedOrchestrationRun?.id == runID
-        let afterSequence = sameRun ? orchestrationEvents.map(\.sequence).max() ?? 0 : 0
+        // Sequences are numbered per run, and the array can hold a second,
+        // still-executing run's events: a watermark taken across both would
+        // skip this run's tail whenever the other run had counted further.
+        let afterSequence = sameRun
+            ? orchestrationEvents(for: runID).map(\.sequence).max() ?? 0 : 0
         let transport = orchestrationBackend(for: runID)
         let transportKey = transport.currentBaseURL.absoluteString
         let loadKey = "\(transportKey)|\(runID)|\(afterSequence)|\(terminal ? "terminal" : "routine")"
@@ -5190,8 +5194,11 @@ final class AppModel: ObservableObject {
     }
 
     func backfillOrchestrationEvents(_ runID: String) async {
+        // Strict on the stamp, unlike the selected-run reads: this can run for
+        // the live run while a different run's unstamped events fill the array,
+        // and counting those would inflate the watermark past unseen events.
         let after = orchestrationEvents
-            .filter { $0.text("run_id") == runID }
+            .filter { $0.runID == runID }
             .map(\.sequence)
             .max() ?? 0
         let transport = orchestrationBackend(for: runID)
@@ -5213,6 +5220,27 @@ final class AppModel: ObservableObject {
             // The inspector can still reload the full run on demand. A failed
             // reconnect backfill must not disturb the active transcript.
         }
+    }
+
+    /// Events attributable to one run, read out of the shared array.
+    ///
+    /// `handle(_:)` deliberately appends for both the selected run and the one
+    /// currently executing, so while a historical run is open during a live
+    /// turn the array interleaves two runs — folding it whole credited the
+    /// live run's files, steps, and model to whichever run was on screen.
+    /// Every per-run fact must read through this filter. An event without a
+    /// `run_id` stamp can only have arrived via the per-run fetch for the
+    /// selected run (live appends are admitted by their stamp), so it counts
+    /// as the requested run's rather than being dropped.
+    func orchestrationEvents(for runID: String) -> [OrchestrationEvent] {
+        Self.runScopedEvents(orchestrationEvents, runID: runID)
+    }
+
+    nonisolated static func runScopedEvents(
+        _ events: [OrchestrationEvent],
+        runID: String
+    ) -> [OrchestrationEvent] {
+        events.filter { $0.runID == nil || $0.runID == runID }
     }
 
     nonisolated static func mergeOrchestrationEvents(
