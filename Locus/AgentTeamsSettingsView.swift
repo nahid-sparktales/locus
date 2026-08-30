@@ -1184,7 +1184,7 @@ private struct AgentBehaviorEditor: View {
                 TextField("Just Chat", text: $draft.modeInstructions.ask, axis: .vertical)
                 TextField("Adaptive Work", text: $draft.modeInstructions.work, axis: .vertical)
                 TextField("Plan", text: $draft.modeInstructions.plan, axis: .vertical)
-                TextField("GSD", text: $draft.modeInstructions.build, axis: .vertical)
+                TextField("Grill", text: $draft.modeInstructions.grill, axis: .vertical)
             }
             Divider()
             Group {
@@ -1309,7 +1309,7 @@ private struct AgentBehaviorEditor: View {
             ("Just Chat", draft.modeInstructions.ask),
             ("Work", draft.modeInstructions.work),
             ("Plan", draft.modeInstructions.plan),
-            ("GSD", draft.modeInstructions.build),
+            ("Grill", draft.modeInstructions.grill),
         ].filter { !$0.1.isEmpty }.map { "\($0.0): \($0.1)" }.joined(separator: "\n")
         return """
         [LOCKED · factual]
@@ -2938,7 +2938,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                         }
                         .disabled(model.contextSnapshots.isEmpty)
                     }
-                    Text("Only Work, Plan, and GSD can save or recall these snapshots. Automatic recall is capped by the selected agent's memory policy; Just Chat never receives them.")
+                    Text("Only Work, Plan, and Grill can save or recall these snapshots. Automatic recall is capped by the selected agent's memory policy; Just Chat never receives them.")
                         .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)

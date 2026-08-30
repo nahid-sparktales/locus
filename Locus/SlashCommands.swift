@@ -72,9 +72,9 @@ struct SlashCommand: Identifiable, Hashable {
             argumentHint: nil, symbol: "list.bullet.clipboard", action: .setMode(.plan)
         ),
         SlashCommand(
-            name: "gsd", aliases: ["build"],
-            summary: "Switch to GSD mode",
-            argumentHint: nil, symbol: "hammer", action: .setMode(.build)
+            name: "grill", aliases: ["gsd", "build"],
+            summary: "Switch to Grill mode",
+            argumentHint: nil, symbol: "flame", action: .setMode(.grill)
         ),
         SlashCommand(
             name: "checkpoint", aliases: ["save"],

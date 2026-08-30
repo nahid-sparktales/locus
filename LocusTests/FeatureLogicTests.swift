@@ -1348,7 +1348,7 @@ final class FeatureLogicTests: XCTestCase {
     @MainActor
     func testModelRoutingTagsClassifyLocallyWithoutReturningPromptContent() {
         let prompt = "Debug the failing Swift API test for CustomerSecretValue"
-        let tags = AppModel.modelRoutingTags(for: prompt, mode: .build)
+        let tags = AppModel.modelRoutingTags(for: prompt, mode: .grill)
         XCTAssertTrue(tags.contains("coding"))
         XCTAssertTrue(tags.contains("debugging"))
         XCTAssertTrue(tags.contains("testing"))
@@ -3758,23 +3758,28 @@ final class FeatureLogicTests: XCTestCase {
         // the number is what points at a setting instead — a config carrying
         // max_iterations: 5 stopped turns early for a week without saying so.
         let named = TurnCompletion(
-            outcome: .maxIterations, mode: .build, durationMilliseconds: 1_000,
+            outcome: .maxIterations, mode: .work, durationMilliseconds: 1_000,
             iterationLimit: 5
         )
         XCTAssertEqual(named.title, "Iteration limit reached (5 steps)")
 
         let unknown = TurnCompletion(
-            outcome: .maxIterations, mode: .build, durationMilliseconds: 1_000
+            outcome: .maxIterations, mode: .work, durationMilliseconds: 1_000
         )
         XCTAssertEqual(unknown.title, "Iteration limit reached", "no number, no parenthetical")
 
         let finished = TurnCompletion(
-            outcome: .complete, mode: .build, durationMilliseconds: 1_000
+            outcome: .complete, mode: .work, durationMilliseconds: 1_000
         )
-        XCTAssertEqual(finished.title, "Task finished")
+        XCTAssertEqual(finished.title, "Work finished")
+
+        let grilled = TurnCompletion(
+            outcome: .complete, mode: .grill, durationMilliseconds: 1_000
+        )
+        XCTAssertEqual(grilled.title, "Grill finished")
 
         let teamBudget = TurnCompletion(
-            outcome: .modelCallBudget, mode: .build, durationMilliseconds: 1_000,
+            outcome: .modelCallBudget, mode: .work, durationMilliseconds: 1_000,
             iterationLimit: 24
         )
         XCTAssertEqual(teamBudget.title, "Team call budget reached (24 calls)")
@@ -3915,7 +3920,7 @@ final class FeatureLogicTests: XCTestCase {
         let complete = [TodoItem(content: "Inspect the panel", status: .completed)]
         let stopped = TurnCompletion(
             outcome: .interrupted,
-            mode: .build,
+            mode: .work,
             durationMilliseconds: 2_000,
             iterationLimit: nil
         )
@@ -3929,8 +3934,11 @@ final class FeatureLogicTests: XCTestCase {
             .readyForApproval
         )
         XCTAssertEqual(planPhase(busy: true, mode: .plan), .planning)
-        XCTAssertEqual(planPhase(busy: true, mode: .build, todos: pending), .executing)
+        // Plan execution rides Work now: a busy Work turn holding todos is
+        // following them; without todos it is just working.
+        XCTAssertEqual(planPhase(busy: true, mode: .work, todos: pending), .executing)
         XCTAssertEqual(planPhase(busy: true, mode: .work), .working)
+        XCTAssertEqual(planPhase(busy: true, mode: .grill, todos: pending), .working)
         XCTAssertEqual(planPhase(todos: complete), .completed)
         XCTAssertEqual(planPhase(todos: pending, completion: stopped), .stopped)
         XCTAssertEqual(
@@ -4035,7 +4043,7 @@ final class FeatureLogicTests: XCTestCase {
         behavior.responseStyle.tone = .analytical
         behavior.responseStyle.verbosity = .detailed
         behavior.customInstructions = "Prefer focused patches."
-        behavior.modeInstructions.build = "Run the smallest relevant tests."
+        behavior.modeInstructions.grill = "Run the smallest relevant tests."
         behavior.capabilityPolicy.network = false
         behavior.memoryPolicy.scopes = [.personal, .agent, .personal]
         behavior.memoryPolicy.maxAutomaticMemories = 500
@@ -4049,7 +4057,15 @@ final class FeatureLogicTests: XCTestCase {
 
         XCTAssertEqual(restored.displayName, "Research Builder")
         XCTAssertEqual(restored.responseStyle.tone, .analytical)
-        XCTAssertEqual(restored.modeInstructions.build, "Run the smallest relevant tests.")
+        XCTAssertEqual(restored.modeInstructions.grill, "Run the smallest relevant tests.")
+
+        // A config saved before the Grill rename keyed this overlay "build";
+        // the custom text carries over instead of silently vanishing.
+        let legacy = try JSONDecoder().decode(
+            AgentModeOverlays.self,
+            from: Data(#"{"ask":"","work":"","plan":"","build":"Old GSD text."}"#.utf8)
+        )
+        XCTAssertEqual(legacy.grill, "Old GSD text.")
         XCTAssertFalse(restored.capabilityPolicy.network)
         XCTAssertEqual(restored.memoryPolicy.scopes, [.personal, .agent])
         XCTAssertEqual(restored.memoryPolicy.maxAutomaticMemories, 20)

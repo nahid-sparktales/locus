@@ -1149,7 +1149,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "goal": {"type": "string"},
             "outcome": {"type": "string"},
             "pending": {"type": "string"},
-            "mode": {"type": "string", "enum": ["work", "plan", "build"]},
+            # "build" stays for replayed transcripts from GSD sessions.
+            "mode": {"type": "string", "enum": ["work", "plan", "grill", "build"]},
             "pinned": {"type": "boolean"},
         },
         ["goal", "outcome"],

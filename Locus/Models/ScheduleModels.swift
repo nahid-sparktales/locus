@@ -5,18 +5,34 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
     case ask
     case work
     case plan
-    case build
+    case grill
 
     var id: String { rawValue }
 
-    /// User-facing name. `build` keeps its raw value for stored profiles and
-    /// the runtime's `[Locus mode:]` header; GSD is its display identity.
+    /// Resolve a stored or wire mode, accepting history. "build" was the GSD
+    /// mode, retired in favor of Grill; its profiles and older mobile clients
+    /// land on Work, the mode that kept GSD's implement-things behavior.
+    static func canonical(_ raw: String) -> WorkMode? {
+        WorkMode(rawValue: raw) ?? (raw == "build" ? .work : nil)
+    }
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        guard let mode = WorkMode.canonical(raw) else {
+            throw DecodingError.dataCorrupted(DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription: "Unknown work mode: \(raw)"
+            ))
+        }
+        self = mode
+    }
+
     var title: String {
         switch self {
         case .ask: "Ask"
         case .work: "Work"
         case .plan: "Plan"
-        case .build: "GSD"
+        case .grill: "Grill"
         }
     }
 
@@ -25,7 +41,7 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
         case .ask: "Answers without workspace access"
         case .work: "Chooses the right approach for the request"
         case .plan: "Maps the work before editing"
-        case .build: "Gets it done end-to-end with the GSD workflow"
+        case .grill: "Stress-tests an idea one question at a time"
         }
     }
 
@@ -37,8 +53,8 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
             "Solve the request using the workspace and tools when useful. Choose whether to answer, inspect, plan, or implement from the request itself. Follow the current permission policy for every action."
         case .plan:
             "Inspect files if useful, but do not modify anything. Ask clarifying questions when needed. When the plan is final and decision-complete, call submit_plan exactly once with its title, summary, ordered steps, and test scenarios; do not call submit_plan for a question or partial plan."
-        case .build:
-            "Implement the request completely using the Get Shit Done method: follow the activated $gsd-workflow skill — resolve open decisions, plan, execute in bounded steps, and verify against concrete evidence. Inspect, edit, and verify the relevant files, asking for permission when required."
+        case .grill:
+            "Stress-test the request with the activated $grilling skill: map the design tree of decisions, ask exactly one highest-leverage frontier question at a time with your recommended answer, and discover facts from the workspace yourself instead of asking for them. Do not modify anything, and do not implement until the user explicitly confirms the shared understanding."
         }
     }
 }

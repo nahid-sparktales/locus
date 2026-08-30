@@ -552,7 +552,7 @@ struct ComposerView: View {
 
     private var modeControls: some View {
         HStack(spacing: 3) {
-            ForEach([WorkMode.plan, WorkMode.build]) { mode in
+            ForEach([WorkMode.plan, WorkMode.grill]) { mode in
                 Button {
                     model.selectedMode = model.selectedMode == mode ? .work : mode
                 } label: {
@@ -1084,7 +1084,7 @@ struct ComposerView: View {
         case .ask: "Ask anything"
         case .work: "Ask Locus to work on something…"
         case .plan: "Describe what you want to plan…"
-        case .build: "What should we build next?"
+        case .grill: "What should we stress-test?"
         }
     }
 

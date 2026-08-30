@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Changed
+
+- **GSD mode retired; Grill mode takes its place.** The fourth composer mode is
+  now Grill (⌥G, `/grill`): a relentless one-question-at-a-time interview that
+  stress-tests a plan or idea using the built-in grilling skill, and never
+  modifies anything until you confirm the shared understanding. Approving a
+  plan now implements it in Work mode, which already carries GSD's
+  end-to-end behavior. Everything saved under the old mode keeps working:
+  stored workspaces and older mobile clients that still say "build" land on
+  Work, and custom GSD instructions in an agent's per-mode guidance carry over
+  to Grill. The Runs panel also gets its own icon — the three-node
+  orchestration glyph now belongs to the team dispatcher alone.
+
 ### Added
 
 - **Notebook gathers every note you have into one page.** The sidebar gear

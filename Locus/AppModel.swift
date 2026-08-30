@@ -239,7 +239,7 @@ final class AppModel: ObservableObject {
         }
     }
     /// Compatibility state for profiles written before Solo delegation became
-    /// adaptive. Every non-team Solo Work/Plan/GSD turn now enables it.
+    /// adaptive. Every non-team Solo Work/Plan/Grill turn now enables it.
     @Published var soloSwarmEnabled = true {
         didSet {
             guard soloSwarmEnabled != oldValue else { return }
@@ -922,7 +922,6 @@ final class AppModel: ObservableObject {
         {
             var recent = saved.sorted { $0.lastOpened > $1.lastOpened }
             if migrateLegacyBuildMode {
-                recent = Self.migrateLegacyBuildProfiles(recent)
                 if persistenceEnabled,
                    let migratedData = try? JSONEncoder().encode(recent)
                 {
@@ -3921,7 +3920,7 @@ final class AppModel: ObservableObject {
     }
 
     private func hasLocalWriterCollision(for runtime: ChatWorkerRuntime) -> Bool {
-        guard runtime.dispatchedMode == .work || runtime.dispatchedMode == .build,
+        guard runtime.dispatchedMode == .work || runtime.dispatchedMode == .grill,
               runtime.sessionInfo?.environment?["type"] != ChatExecutionEnvironment.worktree.rawValue,
               let root = runtime.sessionInfo?.environment?["canonical_repository"]
                 ?? runtime.sessionInfo?.workspaceRoot ?? runtime.sessionInfo?.cwd
@@ -3929,7 +3928,7 @@ final class AppModel: ObservableObject {
         let canonical = URL(fileURLWithPath: root).standardizedFileURL.path
         return taskWorkers.values.contains { other in
             guard other !== runtime, other.occupiesExecutionSlot,
-                  other.dispatchedMode == .work || other.dispatchedMode == .build,
+                  other.dispatchedMode == .work || other.dispatchedMode == .grill,
                   other.sessionInfo?.environment?["type"]
                     != ChatExecutionEnvironment.worktree.rawValue,
                   let otherRoot = other.sessionInfo?.environment?["canonical_repository"]
@@ -7133,7 +7132,7 @@ final class AppModel: ObservableObject {
                     return
                 }
                 let retryMode = retry.manifest?["mode"]?.string
-                    .flatMap(WorkMode.init(rawValue:)) ?? .work
+                    .flatMap { WorkMode.canonical($0) } ?? .work
                 worker.reservedRunID = retry.id
                 worker.dispatchedMode = retryMode
                 worker.executionState = .queued
@@ -7217,7 +7216,7 @@ final class AppModel: ObservableObject {
             showToast("A saved queued run needs its original chat and workspace")
             return
         }
-        let mode = run.manifest?["mode"]?.string.flatMap(WorkMode.init(rawValue:)) ?? .work
+        let mode = run.manifest?["mode"]?.string.flatMap { WorkMode.canonical($0) } ?? .work
         worker.reservedRunID = run.id
         worker.dispatchedMode = mode
         worker.executionState = .queued
@@ -9453,7 +9452,7 @@ final class AppModel: ObservableObject {
                 return
             }
             planApprovalPending = false
-            selectedMode = .build
+            selectedMode = .work
             Task { [weak self] in
                 guard let self else { return }
                 send(
@@ -11047,7 +11046,7 @@ final class AppModel: ObservableObject {
         case .askMode: selectedMode = .ask
         case .workMode: selectedMode = .work
         case .planMode: selectedMode = .plan
-        case .buildMode: selectedMode = .build
+        case .grillMode: selectedMode = .grill
         case .chooseWorkspace: chooseWorkspace()
         case .newWorkspace: createWorkspace()
         case .browseModels: modelLibraryPresented = true
@@ -11115,15 +11114,6 @@ final class AppModel: ObservableObject {
 
     func prepareOpenSettingsForUpdate() -> Bool {
         settingsUpdatePreparation?.handler() ?? true
-    }
-
-    static func migrateLegacyBuildProfiles(_ profiles: [WorkspaceProfile]) -> [WorkspaceProfile] {
-        profiles.map { profile in
-            guard profile.mode == .build else { return profile }
-            var migrated = profile
-            migrated.mode = .work
-            return migrated
-        }
     }
 
     private func backendIsHealthy() async -> Bool {
@@ -13177,7 +13167,10 @@ final class AppModel: ObservableObject {
             let completedRunID = event["run_id"] as? String
             let dispatchedMode = turnDispatchedMode
                 ?? (turnDispatchedInPlanMode ? .plan : nil)
-            if reason == "complete", dispatchedMode == .build {
+            if reason == "complete", dispatchedMode == .work {
+                // Plan execution rides Work since GSD retired. For any Work
+                // turn, a todo still in progress after a *complete* turn is
+                // one the model forgot to close, so the tidy stays safe.
                 reconcileFinishedPlanStep()
             }
             if turnDispatchedTeamRunID == nil {
@@ -13998,7 +13991,7 @@ final class AppModel: ObservableObject {
                 kind: .note,
                 completion: TurnCompletion(
                     outcome: .complete,
-                    mode: .build,
+                    mode: .work,
                     durationMilliseconds: 84_000
                 )
             ),
@@ -14325,7 +14318,7 @@ final class AppModel: ObservableObject {
                 lastOpened: Date(),
                 model: "qwen3:8b",
                 accountID: nil,
-                mode: .build,
+                mode: .work,
                 previewURL: "http://localhost:3000",
                 contextFiles: [],
                 draft: ""
@@ -15878,8 +15871,9 @@ extension AppModel {
             throw CompanionProtocolError(code: "prompt_too_large", message: "That message is too large.")
         }
         let modeRaw = CompanionPayload.string("mode", in: request.payload) ?? WorkMode.work.rawValue
-        guard let mode = WorkMode(rawValue: modeRaw) else {
-            throw CompanionProtocolError(code: "invalid_mode", message: "Choose Ask, Work, Plan, or GSD.")
+        // `canonical` keeps older mobile builds working: they still say "build".
+        guard let mode = WorkMode.canonical(modeRaw) else {
+            throw CompanionProtocolError(code: "invalid_mode", message: "Choose Ask, Work, Plan, or Grill.")
         }
         var body: [String: Any] = [
             "request_id": request.id,
@@ -16141,7 +16135,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
     case askMode
     case workMode
     case planMode
-    case buildMode
+    case grillMode
     case chooseWorkspace
     case newWorkspace
     case browseModels
@@ -16166,7 +16160,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .askMode: "Turn on Just Chat"
         case .workMode: "Use adaptive Work mode"
         case .planMode: "Switch to Plan mode"
-        case .buildMode: "Switch to GSD mode"
+        case .grillMode: "Switch to Grill mode"
         case .chooseWorkspace: "Choose a workspace"
         case .newWorkspace: "Create a new workspace folder"
         case .browseModels: "Browse Hugging Face models"
@@ -16191,7 +16185,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .askMode: "bubble.left"
         case .workMode: "sparkles"
         case .planMode: "list.bullet.clipboard"
-        case .buildMode: "hammer"
+        case .grillMode: "flame"
         case .chooseWorkspace: "folder"
         case .newWorkspace: "folder.badge.plus"
         case .browseModels: "shippingbox.and.arrow.backward"
@@ -16216,7 +16210,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .askMode: "⌥A"
         case .workMode: "⌥W"
         case .planMode: "⌥P"
-        case .buildMode: "⌥B"
+        case .grillMode: "⌥G"
         case .showShortcuts: "⌘/"
         case .showNotebook: "⇧⌘9"
         case .searchConversations: "⇧⌘F"
