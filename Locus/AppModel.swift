@@ -62,7 +62,7 @@ final class AppModel: ObservableObject {
     private var agentTeamsBridge: AnyCancellable?
     @Published var orchestrationRunID: String?  // internal(for: AppModel+UITestFixtures)
     @Published var orchestrationState: TeamRunState?  // internal(for: AppModel+UITestFixtures)
-    @Published private(set) var activeWorkerID: String?
+    @Published var activeWorkerID: String?  // internal(for: AppModel extension files)
     @Published var taskConversationStates: [String: TaskConversationState] = [:]  // internal(for: AppModel+UITestFixtures)
     let teamRunLive = TeamRunLiveModel()
     private var teamRunLiveBridge: AnyCancellable?
@@ -92,18 +92,18 @@ final class AppModel: ObservableObject {
     @Published var sessions: [SessionSummary] = []
     @Published var chatFolders: [ChatFolderRecord] = []
     @Published var currentSessionID = ""
-    @Published private(set) var chatSplitRestoration = ChatSplitRestoration.empty
+    @Published var chatSplitRestoration = ChatSplitRestoration.empty  // internal(for: AppModel extension files)
     let primaryChatPaneState = ChatPaneState(id: .primary)
     let secondaryChatPaneState = ChatPaneState(id: .secondary)
-    @Published private(set) var splitPaneBlocks: [String: [ChatBlock]] = [:]
-    @Published private(set) var splitPaneDrafts: [String: String] = [:]
-    private var splitPaneAttachments: [String: [ChatAttachment]] = [:]
-    private var splitPaneModes: [String: WorkMode] = [:]
-    private var splitPaneTeams: [String: UUID?] = [:]
-    private var splitPaneSoloRouting: [String: Bool] = [:]
-    private var splitPaneSearchQueries: [String: String] = [:]
-    private static let splitRestorationKey = "Locus.chatSplitRestoration"
-    private var didRestoreChatSplit = false
+    @Published var splitPaneBlocks: [String: [ChatBlock]] = [:]  // internal(for: AppModel extension files)
+    @Published var splitPaneDrafts: [String: String] = [:]  // internal(for: AppModel extension files)
+    var splitPaneAttachments: [String: [ChatAttachment]] = [:]  // internal(for: AppModel extension files)
+    var splitPaneModes: [String: WorkMode] = [:]  // internal(for: AppModel extension files)
+    var splitPaneTeams: [String: UUID?] = [:]  // internal(for: AppModel extension files)
+    var splitPaneSoloRouting: [String: Bool] = [:]  // internal(for: AppModel extension files)
+    var splitPaneSearchQueries: [String: String] = [:]  // internal(for: AppModel extension files)
+    static let splitRestorationKey = "Locus.chatSplitRestoration"  // internal(for: AppModel extension files)
+    var didRestoreChatSplit = false  // internal(for: AppModel extension files)
     @Published var sessionInfo: SessionInfo? {
         didSet {
             // Session changes must retarget the app-owned PTY even when its
@@ -198,7 +198,7 @@ final class AppModel: ObservableObject {
     /// Captured from `question_ready` mid-turn; armed only when the turn
     /// completes, so an interrupted or errored turn never offers a stale
     /// question.
-    private var capturedQuestionThisTurn: UserQuestion?
+    var capturedQuestionThisTurn: UserQuestion?  // internal(for: AppModel extension files)
     let gitWorkspace = GitWorkspaceModel()
     let workspaceFiles = WorkspaceFileModel()
     /// Deliberately not bridged into `objectWillChange`: the Notebook sheet
@@ -215,7 +215,7 @@ final class AppModel: ObservableObject {
     @Published var isLoadingChatAttachments = false
     /// One explicitly selected Mac application per task. Stored only in
     /// memory; reconnects and app relaunches require a fresh scoped consent.
-    @Published private(set) var liveApplicationTargets: [String: ApplicationTarget] = [:]
+    @Published var liveApplicationTargets: [String: ApplicationTarget] = [:]  // internal(for: AppModel extension files)
     @Published var checkpoints: [SessionCheckpoint] = []
     @Published var workspaceProfiles: [WorkspaceProfile] = []
     @Published var draftText = "" {
@@ -256,9 +256,9 @@ final class AppModel: ObservableObject {
     @Published var usageDashboardPresented = false
     @Published var lastModelRoutingDecision: ModelRoutingDecision?  // internal(for: AppModel extension files)
     @Published var modelRouterMessage = "No scorecard has been run yet."  // internal(for: AppModel extension files)
-    @Published private(set) var proxyHealthRecords: [ProxyHealthRecord] = []
-    @Published private(set) var proxyHealthMessage = "Proxy health has not been checked yet."
-    @Published private(set) var isCheckingProxyHealth = false
+    @Published var proxyHealthRecords: [ProxyHealthRecord] = []  // internal(for: AppModel extension files)
+    @Published var proxyHealthMessage = "Proxy health has not been checked yet."  // internal(for: AppModel extension files)
+    @Published var isCheckingProxyHealth = false  // internal(for: AppModel extension files)
     @Published var settingsPage: SettingsPage = .general
     @Published var modelLibraryPresented = false
     private var modelLibraryPendingSettingsDismissal = false
@@ -315,7 +315,7 @@ final class AppModel: ObservableObject {
 
     let backend: BackendService  // internal(for: AppModel extension files)
     let providerCredentialWriter: (String, String) -> Bool  // internal(for: AppModel extension files)
-    private let backendProcess = BackendProcess()
+    let backendProcess = BackendProcess()  // internal(for: AppModel extension files)
     var taskWorkers: [String: ChatWorkerRuntime] = [:]  // internal(for: AppModel extension files)
     var chatAdmissionQueue = ChatAdmissionQueue()  // internal(for: AppModel extension files)
     var pendingChatTurns: [String: Task<Void, Never>] = [:]  // internal(for: AppModel extension files)
@@ -401,10 +401,10 @@ final class AppModel: ObservableObject {
             canRecover: canRecover
         )
     }
-    private let ollamaRuntime = OllamaRuntime()
+    let ollamaRuntime = OllamaRuntime()  // internal(for: AppModel extension files)
     let workspaceAccess: WorkspaceAccess  // internal(for: AppModel extension files)
-    private var initialWorkspacePath: String?
-    private var streamingAssistantID: UUID?
+    var initialWorkspacePath: String?  // internal(for: AppModel extension files)
+    var streamingAssistantID: UUID?  // internal(for: AppModel extension files)
     private var pendingTokens = ""
     private var pendingReasoning = ""
     private var pendingReasoningSections: [Int: String] = [:]
@@ -412,21 +412,21 @@ final class AppModel: ObservableObject {
     /// context meter moves during a turn instead of freezing at the pre-turn
     /// value. Reset whenever the backend supplies a real count.
     private var streamedCharsThisTurn = 0
-    private lazy var streamFlushDriver = DisplaySynchronizedFlushDriver { [weak self] in
+    lazy var streamFlushDriver = DisplaySynchronizedFlushDriver { [weak self] in
         self?.flushPendingTokens()
     }
-    private var refreshTask: Task<Void, Never>?
-    private var runtimeRecoveryTask: Task<Void, Never>?
-    private var runtimeRecoveryAttempt = 0
-    private var proxyHealthMonitorTask: Task<Void, Never>?
-    private var proxyRouteRestartPending = false
+    var refreshTask: Task<Void, Never>?  // internal(for: AppModel extension files)
+    var runtimeRecoveryTask: Task<Void, Never>?  // internal(for: AppModel extension files)
+    var runtimeRecoveryAttempt = 0  // internal(for: AppModel extension files)
+    var proxyHealthMonitorTask: Task<Void, Never>?  // internal(for: AppModel extension files)
+    var proxyRouteRestartPending = false  // internal(for: AppModel extension files)
     var restoredTranscriptContext: String?  // internal(for: AppModel extension files)
-    private var pendingDeletedChat: DeletedChatUndo?
-    private var profilePersistenceTask: Task<Void, Never>?
-    private var settingsPersistenceTask: Task<Void, Never>?
+    var pendingDeletedChat: DeletedChatUndo?  // internal(for: AppModel extension files)
+    var profilePersistenceTask: Task<Void, Never>?  // internal(for: AppModel extension files)
+    var settingsPersistenceTask: Task<Void, Never>?  // internal(for: AppModel extension files)
     var promptHistoryCursor: Int?  // internal(for: AppModel extension files)
     var stashedDraft: String?  // internal(for: AppModel extension files)
-    private var pendingSessionReset = false
+    var pendingSessionReset = false  // internal(for: AppModel extension files)
     /// Whether the turn in flight rewrote the todo list. The approval prompt
     /// is offered only for turns that actually produced a plan — a Plan-mode
     /// chat answer must not re-offer a plan left over from an earlier run.
@@ -476,26 +476,26 @@ final class AppModel: ObservableObject {
     /// wait for the interrupted turn's terminal event before it can create a
     /// fresh provider turn and conversation-history boundary.
     var pendingStopAndSend: String?  // internal(for: AppModel extension files)
-    private var pendingCheckpointRestore: SessionCheckpoint?
+    var pendingCheckpointRestore: SessionCheckpoint?  // internal(for: AppModel extension files)
     var pendingRewindDraft: String?  // internal(for: AppModel extension files)
-    private var pendingWorkspacePath: String?
-    private var workspaceToOpenAfterReconnect: String?
-    private var appliedWorkspacePath: String?
-    private var sessionResetWatchdog: Task<Void, Never>?
+    var pendingWorkspacePath: String?  // internal(for: AppModel extension files)
+    var workspaceToOpenAfterReconnect: String?  // internal(for: AppModel extension files)
+    var appliedWorkspacePath: String?  // internal(for: AppModel extension files)
+    var sessionResetWatchdog: Task<Void, Never>?  // internal(for: AppModel extension files)
     private var terminalRefreshRunIDs: Set<String> = []
     var restoredQueuedRunIDs: Set<String> = []  // internal(for: AppModel extension files)
-    private let lifecycleJournal: AppLifecycleJournal?
-    private var pendingLifecycleRecovery: AppLifecycleRecovery?
+    let lifecycleJournal: AppLifecycleJournal?  // internal(for: AppModel extension files)
+    var pendingLifecycleRecovery: AppLifecycleRecovery?  // internal(for: AppModel extension files)
     private var terminationObserver: NSObjectProtocol?
-    private var activationObserver: NSObjectProtocol?
-    private var wakeObserver: NSObjectProtocol?
-    private var privacyLockObservers: [NSObjectProtocol] = []
+    var activationObserver: NSObjectProtocol?  // internal(for: AppModel extension files)
+    var wakeObserver: NSObjectProtocol?  // internal(for: AppModel extension files)
+    var privacyLockObservers: [NSObjectProtocol] = []  // internal(for: AppModel extension files)
     /// False for unit and UI tests. Views check it before touching the
     /// credential file: a test must not read — or delete — the secrets of
     /// whoever is running the suite.
     let persistenceEnabled: Bool
     let isUITesting: Bool  // internal(for: AppModel extension files)
-    private var isShuttingDown = false
+    var isShuttingDown = false  // internal(for: AppModel extension files)
     private var settingsUpdatePreparation: (
         id: UUID,
         handler: @MainActor () -> Bool
@@ -1736,2245 +1736,6 @@ final class AppModel: ObservableObject {
         transcriptSearchSelection = ((clamped + delta) % count + count) % count
     }
 
-    func bootstrap() async {
-        let recovery = scheduleRuntimeRecovery(
-            reason: "Starting the local services…",
-            immediate: true
-        )
-        await recovery?.value
-        await restoreAfterUncleanExitIfNeeded()
-        await refreshActivityRuns(announceFailure: false)
-        restorePersistedQueuedRuns()
-        await refreshScheduledTasks(announceFailure: false)
-        await processDueSchedules()
-        schedule.startScheduleCoordinator()
-        requestNotificationAuthorization()
-        startRuntimeMonitor()
-    }
-
-    private func restoreAfterUncleanExitIfNeeded() async {
-        guard let recovery = pendingLifecycleRecovery else { return }
-        pendingLifecycleRecovery = nil
-
-        if let snapshot = recovery.snapshot {
-            if currentSessionID != snapshot.sessionID,
-               let session = sessions.first(where: { $0.id == snapshot.sessionID })
-            {
-                resume(session)
-                // `resume` also serves ordinary UI actions and owns its Task.
-                // Wait briefly for that existing path instead of duplicating
-                // its transcript/workspace restoration logic here.
-                for _ in 0..<50 {
-                    guard currentSessionID != snapshot.sessionID else { break }
-                    try? await Task.sleep(for: .milliseconds(100))
-                }
-            }
-            if currentSessionID == snapshot.sessionID {
-                await refreshOrchestrationRuns(
-                    select: snapshot.runID,
-                    terminal: snapshot.state == .completed
-                        || snapshot.state == .failed
-                        || snapshot.state == .cancelled
-                        || snapshot.state == .discarded
-                        || snapshot.state == .interrupted
-                )
-            }
-        }
-
-        let message = lifecycleRecoveryExplanation(fallback: recovery)
-        if let run = selectedOrchestrationRun,
-           teamRunPresentation(for: run.id, durable: run).canRecover
-        {
-            lifecycleRecoveryMessage = message
-            showToast("A saved team run can be resumed", duration: 6)
-        } else {
-            // Terminal runs already have durable boards in the conversation.
-            // Restoring one is normal data loading, not a warning condition.
-            lifecycleRecoveryMessage = nil
-        }
-    }
-
-    private func lifecycleRecoveryExplanation(fallback: AppLifecycleRecovery) -> String {
-        guard let run = selectedOrchestrationRun else { return fallback.message }
-        if run.state == TeamRunState.completed.rawValue {
-            return "Locus was force quit after the team run completed. Its results were restored."
-        }
-        if teamRunPresentation(for: run.id, durable: run).canRecover {
-            return "Locus closed unexpectedly. This team run can be resumed from its saved checkpoint."
-        }
-        if let state = TeamRunState(rawValue: run.state) {
-            return "Locus did not close normally. The restored team run is \(state.title.lowercased())."
-        }
-        return fallback.message
-    }
-
-    func dismissLifecycleRecoveryMessage() {
-        lifecycleRecoveryMessage = nil
-    }
-
-    @discardableResult
-    private func scheduleRuntimeRecovery(
-        reason: String,
-        immediate: Bool = false
-    ) -> Task<Void, Never>? {
-        guard !isShuttingDown else { return nil }
-        if let runtimeRecoveryTask { return runtimeRecoveryTask }
-
-        let attempt = runtimeRecoveryAttempt
-        let delay = immediate ? 0 : BackendService.reconnectDelay(for: attempt)
-        let task = Task { [weak self] in
-            guard let self else { return }
-            if delay > 0 {
-                self.agentRuntimePhase = .recovering(
-                    "Restarting the local agent in \(Int(delay)) second\(delay == 1 ? "" : "s")…"
-                )
-                try? await Task.sleep(for: .seconds(delay))
-            }
-            guard !Task.isCancelled, !self.isShuttingDown else {
-                self.runtimeRecoveryTask = nil
-                return
-            }
-            let recovered = await self.performRuntimeRecovery(reason: reason)
-            self.runtimeRecoveryTask = nil
-            if recovered {
-                self.runtimeRecoveryAttempt = 0
-            } else if !self.isShuttingDown {
-                self.runtimeRecoveryAttempt += 1
-                self.scheduleRuntimeRecovery(reason: "Retrying the local agent.")
-            }
-        }
-        runtimeRecoveryTask = task
-        return task
-    }
-
-    private func performRuntimeRecovery(reason: String) async -> Bool {
-        agentRuntimePhase = runtimeRecoveryAttempt == 0
-            ? .starting(reason)
-            : .recovering(reason)
-
-        if !(await backendIsHealthy()) {
-            guard let configuredURL = URL(string: settings.backendURL),
-                  OllamaRuntime.isLoopback(configuredURL)
-            else {
-                agentRuntimePhase = .unavailable(
-                    "The configured agent is unavailable. Locus only auto-starts loopback agents."
-                )
-                return false
-            }
-
-            if backendProcess.isRunning {
-                await backendProcess.stopAndWait()
-            }
-            let preferredPort = backend.currentBaseURL.port ?? configuredURL.port ?? 8791
-            switch backendProcess.start(
-                root: settings.backendRoot,
-                port: preferredPort,
-                cwd: workspacePath,
-                environmentOverlay: ProxyRuntime.shared.environmentOverlay(
-                    scope: .modelAndAgent,
-                    workspacePath: workspacePath,
-                    providerAccountID: settings.activeAccountID
-                ),
-                proxyCredential: ProxyRuntime.shared.childCredential(
-                    scope: .modelAndAgent,
-                    workspacePath: workspacePath,
-                    providerAccountID: settings.activeAccountID
-                )
-            ) {
-            case .running(let endpoint):
-                if endpoint != backend.currentBaseURL {
-                    backend.updateBaseURL(endpoint)
-                }
-                backendLogHint = endpoint.port == configuredURL.port
-                    ? "Started the bundled local agent service."
-                    : "Port \(configuredURL.port ?? 8791) was occupied; started the local agent on port \(endpoint.port ?? 0)."
-            case .failed(let message):
-                backendLogHint = message
-                agentRuntimePhase = .unavailable(message)
-                return false
-            }
-
-            // A cold bundled Python runtime can take several seconds. An
-            // immediate child exit is noticed by the process callback and the
-            // failed health check below keeps the same recovery loop moving.
-            for _ in 0..<60 {
-                guard !Task.isCancelled else { return false }
-                if await backendIsHealthy() { break }
-                try? await Task.sleep(for: .milliseconds(250))
-            }
-        }
-
-        guard await backendIsHealthy() else {
-            let output = backendProcess.recentOutput
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let message = output.isEmpty
-                ? "The local agent did not become ready."
-                : String(output.suffix(1_000))
-            backendLogHint = message
-            agentRuntimePhase = .unavailable(message)
-            return false
-        }
-
-        // The app is the source of truth for provider routing and credentials,
-        // so it must reapply them after every agent restart. A live HTTP server
-        // is not a recovered runtime until that handoff succeeds: hosted keys
-        // live only in the app's credential file and process memory, never in
-        // the agent config it just reloaded.
-        guard await applyProvider(announce: false) else {
-            agentRuntimePhase = .recovering("Restoring the model provider…")
-            return false
-        }
-        agentRuntimePhase = .online
-        backend.connect()
-        return true
-    }
-
-    private func startRuntimeMonitor() {
-        guard refreshTask == nil else { return }
-        refreshTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(15))
-                guard !Task.isCancelled, let self, !self.isShuttingDown else { return }
-                if await self.backendIsHealthy() {
-                    self.agentRuntimePhase = .online
-                    self.runtimeRecoveryAttempt = 0
-                    var ollamaFailure: RuntimePhase?
-                    if self.activeAccount == nil {
-                        await self.ensureLocalOllama(at: self.lastOllamaHost)
-                        if !self.modelRuntimePhase.isOnline {
-                            ollamaFailure = self.modelRuntimePhase
-                        }
-                    }
-                    await self.refreshMetadata()
-                    if let ollamaFailure, !self.modelRuntimePhase.isOnline {
-                        self.modelRuntimePhase = ollamaFailure
-                    }
-                    self.backend.connect()
-                } else {
-                    if self.agentRuntimePhase.isOnline {
-                        self.recoverFromLostConnection()
-                    }
-                    self.agentRuntimePhase = .recovering("Restarting the local agent…")
-                    self.scheduleRuntimeRecovery(reason: "The local agent health check failed.")
-                }
-            }
-        }
-    }
-
-    private func ensureLocalOllama(at hostValue: String) async {
-        guard activeAccount == nil else { return }
-        var normalized = hostValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !normalized.contains("://") { normalized = "http://\(normalized)" }
-        guard let host = URL(string: normalized), OllamaRuntime.isLoopback(host) else {
-            modelRuntimePhase = .unavailable(
-                "The configured Ollama host is not local, so Locus will not launch it automatically."
-            )
-            return
-        }
-        lastOllamaHost = host.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if await OllamaRuntime.isHealthy(at: host) {
-            modelRuntimePhase = .online
-            return
-        }
-
-        modelRuntimePhase = modelRuntimePhase.isOnline
-            ? .recovering("Restarting Ollama…")
-            : .starting("Starting Ollama…")
-        switch await ollamaRuntime.ensureRunning(at: host) {
-        case .online(let message):
-            backendLogHint = message
-            modelRuntimePhase = .online
-        case .unavailable(let message):
-            modelRuntimePhase = .unavailable(message)
-        }
-    }
-
-    func retryLocalServices() {
-        guard !isShuttingDown else { return }
-        runtimeRecoveryTask?.cancel()
-        runtimeRecoveryTask = nil
-        runtimeRecoveryAttempt = 0
-        scheduleRuntimeRecovery(reason: "Retrying local services…", immediate: true)
-    }
-
-    func refreshProxyHealth() {
-        guard !isCheckingProxyHealth else { return }
-        Task { @MainActor [weak self] in
-            await self?.performProxyHealthCheck()
-        }
-    }
-
-    private func performProxyHealthCheck() async {
-        guard settings.resolvedProxyMode == .manual else {
-            proxyHealthRecords = []
-            proxyHealthMessage = "Choose Manual proxy mode to check profiles."
-            return
-        }
-        guard !isCheckingProxyHealth else { return }
-        isCheckingProxyHealth = true
-        proxyHealthMessage = "Checking every enabled proxy…"
-        let result = await ProxyRuntime.shared.refreshHealth()
-        proxyHealthRecords = result.records
-        let healthy = result.records.filter(\.ok).count
-        if result.records.isEmpty {
-            proxyHealthMessage = "No enabled, complete proxy profiles are available."
-        } else if healthy == result.records.count {
-            proxyHealthMessage = "All (healthy) proxy profile\(healthy == 1 ? " is" : "s are") healthy."
-        } else {
-            proxyHealthMessage = "(healthy) of (result.records.count) proxy profiles are healthy."
-        }
-        isCheckingProxyHealth = false
-        if result.routingChanged { requestProxyRouteRestart() }
-    }
-
-    private func scheduleProxyHealthMonitoring() {
-        proxyHealthMonitorTask?.cancel()
-        proxyHealthMonitorTask = nil
-        proxyHealthRecords = ProxyRuntime.shared.healthSnapshot
-        guard persistenceEnabled,
-              settings.resolvedProxyMode == .manual,
-              settings.proxyAutoFailoverEnabled
-        else { return }
-        proxyHealthMonitorTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            while !Task.isCancelled, !self.isShuttingDown {
-                await self.performProxyHealthCheck()
-                do {
-                    try await Task.sleep(for: .seconds(60))
-                } catch {
-                    return
-                }
-            }
-        }
-    }
-
-    /// URL sessions move immediately because they are rebuilt from the proxy
-    /// generation. Local agent services inherit proxy variables at launch, so
-    /// an idle service is relaunched; active work is allowed to finish first.
-    private func requestProxyRouteRestart() {
-        let hasActiveWorker = taskWorkers.values.contains {
-            $0.occupiesExecutionSlot || $0.startedAt != nil
-        }
-        guard !isBusy, !hasActiveWorker, pendingChatTurns.isEmpty else {
-            proxyRouteRestartPending = true
-            if !proxyHealthMessage.contains("active agent") {
-                proxyHealthMessage += " The active agent will switch routes after its work finishes."
-            }
-            return
-        }
-        proxyRouteRestartPending = false
-        taskWorkers.values.forEach { $0.stop() }
-        taskWorkers.removeAll()
-        syncBrowserProtectedSessions()
-        backend.disconnect()
-        Task { [backendProcess] in
-            await backendProcess.stopAndWait()
-            await self.bootstrap()
-        }
-    }
-
-    private func applyPendingProxyRouteRestartIfPossible() {
-        guard proxyRouteRestartPending else { return }
-        requestProxyRouteRestart()
-    }
-
-    func shutdown() {
-        isShuttingDown = true
-        Task { await companionGateway.setEnabled(false) }
-        terminal.terminate()
-        lifecycleJournal?.markCleanExit()
-        // Zoom is transient and relaunch never restores it, so hand back the
-        // room it borrowed before the layout is flushed to disk.
-        setInspectorZoomed(false)
-        persistCurrentWorkspaceProfile()
-        // Flush rather than cancel: a debounced settings write that is still
-        // pending at quit would otherwise be dropped.
-        persistSettings()
-        refreshTask?.cancel()
-        runtimeRecoveryTask?.cancel()
-        proxyHealthMonitorTask?.cancel()
-        streamFlushDriver.invalidate()
-        profilePersistenceTask?.cancel()
-        settingsPersistenceTask?.cancel()
-        sessionResetWatchdog?.cancel()
-        workspaceFiles.stop()
-        knowledge.cancelAll()
-        agentInstructions.cancelAll()
-        runs.cancelAll()
-        schedule.cancelAll()
-        backend.disconnect()
-        backendProcess.stop()
-        taskWorkers.values.forEach { $0.stop() }
-        taskWorkers.removeAll()
-        ollamaRuntime.stopOwnedCLI()
-        if let activationObserver {
-            NotificationCenter.default.removeObserver(activationObserver)
-            self.activationObserver = nil
-        }
-        if let wakeObserver {
-            NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
-            self.wakeObserver = nil
-        }
-        privacyLockObservers.forEach {
-            NSWorkspace.shared.notificationCenter.removeObserver($0)
-        }
-        privacyLockObservers.removeAll()
-    }
-
-    /// Completes the active "@query" token with the chosen file and attaches
-    /// it to the context pack.
-    func applyMention(_ url: URL) {
-        guard let mention = WorkspaceIndex.activeMention(in: draftText) else { return }
-        let relative = WorkspaceIndex.relativePath(url, root: workspacePath)
-        draftText.replaceSubrange(mention.range, with: "@\(relative) ")
-        let standardized = url.standardizedFileURL
-        if !contextFiles.contains(where: { $0.url.standardizedFileURL == standardized }) {
-            loadContext(from: [url])
-        }
-    }
-
-    // MARK: - Notifications
-
-    private func requestNotificationAuthorization() {
-        guard persistenceEnabled,
-              settings.notifyOnCompletion || settings.notifyOnNeedsAttention else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-    }
-
-    private func notifyTurnCompleteIfInactive(
-        sessionID: String? = nil,
-        runID: String? = nil,
-        workspace: String? = nil
-    ) {
-        let resolvedWorkspace = workspace ?? workspacePath
-        deliverNotification(
-            body: "Finished responding in \(URL(fileURLWithPath: resolvedWorkspace).lastPathComponent).",
-            enabled: settings.notifyOnCompletion,
-            sessionID: sessionID,
-            runID: runID
-        )
-    }
-
-    private func notifyNeedsAttentionIfInactive(
-        body: String = "Locus needs permission to continue.",
-        sessionID: String? = nil,
-        runID: String? = nil
-    ) {
-        deliverNotification(
-            body: body,
-            enabled: settings.notifyOnNeedsAttention,
-            sessionID: sessionID,
-            runID: runID
-        )
-    }
-
-    private func deliverNotification(
-        body: String,
-        enabled: Bool,
-        sessionID: String? = nil,
-        runID: String? = nil
-    ) {
-        guard persistenceEnabled, enabled, !NSApp.isActive else { return }
-        let resolvedSessionID = sessionID ?? currentSessionID
-        let resolvedRunID = runID
-            ?? orchestrationRunID
-            ?? taskConversationStates[resolvedSessionID]?.runID
-            ?? ""
-        let content = UNMutableNotificationContent()
-        content.title = "Locus"
-        content.body = body
-        content.sound = .default
-        content.userInfo = [
-            "session_id": resolvedSessionID,
-            "run_id": resolvedRunID,
-        ]
-        UNUserNotificationCenter.current().add(
-            UNNotificationRequest(
-                identifier: UUID().uuidString,
-                content: content,
-                trigger: nil
-            )
-        )
-    }
-
-    func refreshMetadata() async {
-        // UI tests run against seeded fixtures; a live agent on the same port
-        // must never replace them mid-test.
-        guard !isUITesting else { return }
-        do {
-            let health = try await backend.get("/api/health", as: HealthResponse.self)
-            if activeAccount == nil, let host = health.host, !host.isEmpty {
-                lastOllamaHost = host.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            }
-            modelRuntimePhase = health.ollama
-                ? .online
-                : .unavailable(health.error ?? "The model provider is unavailable.")
-        } catch {
-            modelRuntimePhase = agentRuntimePhase.isOnline
-                ? .unavailable(error.localizedDescription)
-                : .recovering("Waiting for the local agent…")
-        }
-
-        do {
-            let response = try await backend.get("/api/models", as: ModelsResponse.self)
-            // `/api/models` describes the active provider. Only trust it as the
-            // local list when local is what is active.
-            if activeAccount == nil {
-                installedLocalModels = response.models
-                localModels = visibleLocalModels(in: response.models)
-                models = localModels
-            } else {
-                models = response.models
-            }
-        } catch {
-            // Connection state communicates backend failures.
-        }
-        if activeAccount != nil { await refreshLocalModels() }
-        await refreshAccountCatalogs()
-        await migrateTerminalSettingsIfNeeded()
-
-        do {
-            let suffix = showArchivedSessions
-                ? "?include_archived=true&limit=500"
-                : "?limit=500"
-            let response = try await backend.get("/api/sessions\(suffix)", as: SessionsResponse.self)
-            sessions = response.sessions
-            if let folders = try? await backend.get(
-                "/api/chat-folders", as: ChatFoldersResponse.self
-            ) {
-                chatFolders = folders.folders
-            }
-            if taskWorkers[currentSessionID] == nil {
-                currentSessionID = response.current
-            }
-            reconcileChatSplitRestoration()
-            if let path = workspaceToOpenAfterReconnect {
-                workspaceToOpenAfterReconnect = nil
-                let canonical = SessionSummary.canonicalWorkspacePath(path)
-                expandedWorkspaceIDs.insert(canonical)
-                persistExpandedWorkspaces()
-                if let latest = sessions
-                    .filter({ $0.workspacePath == canonical })
-                    .max(by: { $0.mtime < $1.mtime })
-                {
-                    resume(latest)
-                }
-            }
-        } catch {
-            // Preserve the last-known list during reconnects.
-        }
-
-        await refreshExtensions()
-        gitWorkspace.refreshBranch()
-    }
-
-    func requestClearChat() {
-        guard (!isBusy && !hasPendingPermission) || taskWorkers[currentSessionID] != nil else {
-            showToast("Finish or stop the active run before clearing")
-            return
-        }
-        commandPalettePresented = false
-        if blocks.isEmpty {
-            clearChatConfirmed()
-        } else {
-            clearChatConfirmationPresented = true
-        }
-    }
-
-    func clearChatConfirmed() {
-        clearChatConfirmationPresented = false
-        // Re-checked here, not just in requestClearChat(): a permission
-        // request can arrive while the confirmation alert is open, and
-        // clearing then would orphan the backend's blocked decision.
-        guard !hasPendingPermission || taskWorkers[currentSessionID] != nil else {
-            showToast("Answer the permission request before clearing")
-            return
-        }
-        guard !isBusy || taskWorkers[currentSessionID] != nil, !pendingSessionReset else { return }
-        detachForegroundWorkerUIIfNeeded()
-        pendingSessionReset = true
-        armSessionResetWatchdog()
-        showToast("Starting a fresh chat…")
-        Task {
-            do {
-                let response = try await backend.post(
-                    "/api/sessions/new",
-                    body: ["reason": "clear_chat"],
-                    as: NewSessionResponse.self
-                )
-                applySessionStarted(response.sessionInfo, reason: response.reason)
-            } catch {
-                guard pendingSessionReset else { return }
-                if (error as NSError).code == 404,
-                   backend.send(["type": "new_session"])
-                {
-                    showToast("Starting a fresh chat…")
-                    return
-                }
-                pendingSessionReset = false
-                sessionResetWatchdog?.cancel()
-                showToast("Could not clear the chat: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    /// If the backend accepts a reset request but its acknowledgement never
-    /// arrives, release the latch so Clear Chat is not silently disabled.
-    private func armSessionResetWatchdog() {
-        sessionResetWatchdog?.cancel()
-        sessionResetWatchdog = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(10))
-            guard !Task.isCancelled, let self, self.pendingSessionReset else { return }
-            self.pendingSessionReset = false
-            self.pendingCheckpointRestore = nil
-            self.pendingRewindDraft = nil
-            self.showToast("The agent did not confirm the new session — try again")
-        }
-    }
-
-    func newSession() {
-        startNewChat(in: workspacePath, environment: nil)
-    }
-
-    func newSession(in workspacePath: String) {
-        startNewChat(in: workspacePath, environment: nil)
-    }
-
-    func newSession(in workspacePath: String, environment: ChatExecutionEnvironment) {
-        startNewChat(in: workspacePath, environment: environment, baseRef: "HEAD")
-    }
-
-    func newWorktreeSession(in workspacePath: String, baseRef: String) {
-        startNewChat(in: workspacePath, environment: .worktree, baseRef: baseRef)
-    }
-
-    func openWorkspace(_ group: WorkspaceChatGroup) {
-        setWorkspaceExpanded(group.id, expanded: true)
-        if let latest = group.chats.max(by: { $0.mtime < $1.mtime }) {
-            resume(latest)
-        } else if let path = group.path {
-            startNewChat(in: path, environment: nil)
-        }
-    }
-
-    private func startNewChat(
-        in rawPath: String,
-        environment requestedEnvironment: ChatExecutionEnvironment?,
-        baseRef: String = "HEAD"
-    ) {
-        activityCenterPresented = false
-        guard !pendingSessionReset else {
-            showToast("Wait for the current chat change to finish")
-            return
-        }
-        detachForegroundWorkerUIIfNeeded()
-        let path = SessionSummary.canonicalWorkspacePath(rawPath)
-        guard FileManager.default.fileExists(atPath: path) else {
-            showToast("That workspace is no longer available")
-            return
-        }
-        guard workspaceAccess.activateStored(path: path) else {
-            showToast("Choose that workspace again to restore access")
-            return
-        }
-        persistCurrentWorkspaceProfile()
-        pendingWorkspacePath = path
-        initialWorkspacePath = path
-        expandedWorkspaceIDs.insert(path)
-        persistExpandedWorkspaces()
-        pendingSessionReset = true
-        armSessionResetWatchdog()
-        showToast("Starting a new chat in \(URL(fileURLWithPath: path).lastPathComponent)…")
-        Task {
-            do {
-                let isGit = (try? await GitClient(workspaceRoot: path).run(
-                    ["rev-parse", "--show-toplevel"]
-                )) != nil
-                let environment = requestedEnvironment
-                    ?? (settings.newGitChatsUseWorktree && isGit ? .worktree : .local)
-                let response = try await backend.post(
-                    "/api/sessions/new",
-                    body: [
-                        "reason": "workspace_chat",
-                        "cwd": path,
-                        "environment": environment.rawValue,
-                        "base_ref": baseRef,
-                        "worktree_retention_limit": settings.worktreeRetentionLimit,
-                    ],
-                    as: NewSessionResponse.self
-                )
-                applySessionStarted(response.sessionInfo, reason: response.reason)
-            } catch {
-                pendingSessionReset = false
-                pendingWorkspacePath = nil
-                sessionResetWatchdog?.cancel()
-                showToast("Could not start the chat: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    func requestClearSavedSessions() {
-        commandPalettePresented = false
-        guard !isClearingSessions else { return }
-        clearSessionsConfirmationPresented = true
-    }
-
-    func clearSavedSessionsConfirmed() {
-        clearSessionsConfirmationPresented = false
-        guard !isClearingSessions else { return }
-        isClearingSessions = true
-        Task {
-            do {
-                let response = try await backend.delete(
-                    "/api/sessions",
-                    as: ClearSessionsResponse.self
-                )
-                let suffix = showArchivedSessions
-                    ? "?include_archived=true&limit=500"
-                    : "?limit=500"
-                let list = try await backend.get(
-                    "/api/sessions\(suffix)",
-                    as: SessionsResponse.self
-                )
-                sessions = list.sessions
-                currentSessionID = list.current
-                reconcileChatSplitRestoration()
-                if response.count == 0 {
-                    showToast("No previous sessions to clear")
-                } else {
-                    showToast(
-                        "\(response.count) saved \(response.count == 1 ? "session" : "sessions") moved to recovery"
-                    )
-                }
-            } catch {
-                showToast("Could not clear saved sessions: \(error.localizedDescription)")
-            }
-            isClearingSessions = false
-        }
-    }
-
-    func resume(_ session: SessionSummary) {
-        activityCenterPresented = false
-        let currentIsBackgroundCapable = taskWorkers[currentSessionID] != nil
-        if let path = session.workspacePath {
-            guard FileManager.default.fileExists(atPath: path) else {
-                showToast("That chat's workspace is no longer available")
-                return
-            }
-            guard workspaceAccess.activateStored(path: path) else {
-                showToast("Choose that workspace again to restore access")
-                return
-            }
-            pendingWorkspacePath = path
-            initialWorkspacePath = path
-            expandedWorkspaceIDs.insert(path)
-            persistExpandedWorkspaces()
-        }
-        prepareSplitSelection(session.id)
-        if let runtime = taskWorkers[session.id] {
-            activateWorkerSession(session, runtime: runtime)
-            return
-        }
-        if currentIsBackgroundCapable { detachForegroundWorkerUIIfNeeded() }
-        Task {
-            do {
-                let response = try await backend.post(
-                    "/api/sessions/\(session.id)/resume",
-                    body: [:],
-                    as: ResumeResponse.self
-                )
-                flushPendingTokens()
-                streamingAssistantID = nil
-                streamingReply.resetTurn()
-                isBusy = false
-                todos = []
-                activePlan = nil
-                planApprovalPending = false
-                clearPendingQuestion()
-                queuedMessages = []
-                restoredTranscriptContext = nil
-                // Pre-acknowledge the session's workspace so a later
-                // session_info event doesn't wipe the freshly loaded transcript.
-                appliedWorkspacePath = response.sessionInfo.cwd
-                pendingWorkspacePath = nil
-                blocks = ChatTranscriptBuilder.blocks(from: response.messages)
-                splitPaneBlocks[response.sessionInfo.sessionID] = blocks
-                paneState(containing: response.sessionInfo.sessionID)?.blocks = blocks
-                if let error = taskConversationStates[response.sessionInfo.sessionID]?
-                    .errorMessage?.nilIfEmpty,
-                   blocks.last?.text != error {
-                    blocks.append(ChatBlock(kind: .error, text: error))
-                }
-                refreshAnchoredRunsIfNeeded()
-                applyPendingSearchHitIfNeeded()
-                sessionInfo = response.sessionInfo
-                currentSessionID = response.sessionInfo.sessionID
-                sendComputerControlCapability()
-                sendSimulatorControlCapability()
-                dispatcherActivity = nil
-                dispatcherValidationReason = nil
-                teamRunLive.restoreActivities(response.agentActivities)
-                orchestrationState = response.orchestrationState
-                orchestrationRunID = response.orchestrationRunID
-                activeWorkerID = response.workerID
-                if let state = response.orchestrationState {
-                    taskConversationStates[response.sessionInfo.sessionID] = TaskConversationState(
-                        sessionID: response.sessionInfo.sessionID,
-                        taskID: response.sessionInfo.task?.id,
-                        teamID: session.team?.id,
-                        workerID: response.workerID,
-                        runID: response.orchestrationRunID,
-                        state: state,
-                        updatedAt: Date(),
-                        errorMessage: taskConversationStates[
-                            response.sessionInfo.sessionID
-                        ]?.errorMessage
-                    )
-                    if let runID = response.orchestrationRunID {
-                        lifecycleJournal?.record(
-                            sessionID: response.sessionInfo.sessionID,
-                            runID: runID,
-                            state: state
-                        )
-                    }
-                }
-                touchWorkspaceProfile(response.sessionInfo.cwd)
-                showToast("Session resumed")
-            } catch {
-                blocks.append(ChatBlock(kind: .error, text: error.localizedDescription))
-            }
-        }
-    }
-
-    private func detachForegroundWorkerUIIfNeeded() {
-        guard let runtime = taskWorkers[currentSessionID] else { return }
-        runtime.queuedMessages = queuedMessages
-        // A question belongs to its chat: park it on the runtime so it comes
-        // back when this chat does, and never fronts another session — an
-        // answer sent there would start a turn in the wrong conversation.
-        if let captured = capturedQuestionThisTurn { runtime.capturedQuestion = captured }
-        if let pending = pendingUserQuestion { runtime.pendingQuestion = pending }
-        clearPendingQuestion()
-        computerControl.cancelPendingActions()
-        // No browser cancellation here, at any scope: the worker keeps running
-        // in the background and its browser actions are served on its own
-        // socket regardless of which conversation is in front — cancelling
-        // would kill an action that is still going to be answered.
-        flushPendingTokens()
-        finalizeStreamingBlocks()
-        runtime.streamingBlockID = streamingAssistantID
-        if let streamingAssistantID,
-           let block = blocks.first(where: { $0.id == streamingAssistantID }) {
-            runtime.streamingText = block.text
-            runtime.streamingReasoning = block.reasoningText ?? ""
-        }
-        streamingAssistantID = nil
-        streamingReply.resetTurn()
-        isBusy = false
-        orchestrationState = nil
-        dispatcherActivity = nil
-        dispatcherValidationReason = nil
-        teamRunLive.restoreActivities([])
-        activeTaskRecord = nil
-        taskHasChanges = false
-        taskPatchBytes = 0
-    }
-
-    private func activateWorkerSession(_ session: SessionSummary, runtime: ChatWorkerRuntime) {
-        flushPendingTokens()
-        finalizeStreamingBlocks()
-        streamingAssistantID = nil
-        streamingReply.resetTurn()
-        // The previous session's question must not front this one; this
-        // session's own parked question is restored below.
-        clearPendingQuestion()
-        currentSessionID = runtime.sessionID
-        sendComputerControlCapability(to: runtime.service, sessionID: runtime.sessionID)
-        sendSimulatorControlCapability(to: runtime.service, sessionID: runtime.sessionID)
-        queuedMessages = runtime.queuedMessages
-        sessionInfo = runtime.sessionInfo
-        if let info = runtime.sessionInfo { computerControl.beginSession(info.sessionID) }
-        if let info = runtime.sessionInfo { browser.beginSession(info.sessionID) }
-        syncBrowserProfile()
-        Task {
-            do {
-                let detail = try await backend.get(
-                    "/api/sessions/\(runtime.sessionID)",
-                    as: SessionDetailResponse.self
-                )
-                blocks = ChatTranscriptBuilder.blocks(from: detail.messages)
-                splitPaneBlocks[runtime.sessionID] = blocks
-                paneState(containing: runtime.sessionID)?.blocks = blocks
-                if let streamingID = runtime.streamingBlockID {
-                    blocks.append(ChatBlock(
-                        id: streamingID,
-                        kind: .assistant,
-                        text: runtime.streamingText,
-                        reasoningText: runtime.streamingReasoning.nilIfEmpty,
-                        isStreaming: true
-                    ))
-                    streamingAssistantID = streamingID
-                }
-                refreshAnchoredRunsIfNeeded()
-                teamRunLive.restoreActivities(detail.agentActivities ?? [])
-                orchestrationState = detail.orchestrationState
-                    ?? taskConversationStates[runtime.sessionID]?.state
-                    ?? detail.task?.state
-                orchestrationRunID = detail.orchestrationRunID
-                    ?? taskConversationStates[runtime.sessionID]?.runID
-                activeWorkerID = detail.workerID
-                activeTaskRecord = detail.task ?? runtime.sessionInfo?.task
-                let activeStates: Set<TeamRunState> = [
-                    .queued, .dispatching, .running, .waitingPermission,
-                    .waitingComputer, .waitingDispatchApproval, .reviewing,
-                ]
-                isBusy = orchestrationState.map(activeStates.contains)
-                    ?? runtime.occupiesExecutionSlot
-                turnStartedAt = runtime.startedAt
-                turnDispatchedMode = runtime.dispatchedMode
-                turnDispatchedTeamRunID = runtime.dispatchedTeamRunID
-                turnDispatchedInPlanMode = runtime.dispatchedInPlanMode
-                if let captured = runtime.capturedQuestion {
-                    runtime.capturedQuestion = nil
-                    capturedQuestionThisTurn = captured
-                }
-                if let question = runtime.pendingQuestion {
-                    runtime.pendingQuestion = nil
-                    pendingUserQuestion = question
-                }
-                if let pending = runtime.pendingForegroundEvent {
-                    runtime.pendingForegroundEvent = nil
-                    handle(pending)
-                }
-                if let error = runtime.lastError?.nilIfEmpty,
-                   blocks.last?.text != error {
-                    blocks.append(ChatBlock(kind: .error, text: error))
-                }
-                if let task = activeTaskRecord,
-                   let taskDetail = try? await backend.get(
-                       "/api/tasks/\(task.id)",
-                       as: TaskDetailResponse.self
-                   )
-                {
-                    taskHasChanges = taskDetail.patchBytes > 0
-                    taskPatchBytes = taskDetail.patchBytes
-                }
-                touchWorkspaceProfile(session.workspacePath ?? workspacePath)
-                showToast(isBusy ? "Running task opened" : "Task opened")
-            } catch {
-                blocks.append(ChatBlock(kind: .error, text: error.localizedDescription))
-                isBusy = false
-            }
-        }
-    }
-
-    func renameSession(_ session: SessionSummary, title: String) {
-        updateSession(session, body: ["title": title], success: "Session renamed")
-    }
-
-    func togglePin(_ session: SessionSummary) {
-        updateSession(session, body: ["pinned": !session.isPinned], success: session.isPinned ? "Session unpinned" : "Session pinned")
-    }
-
-    func createChatFolder(in workspace: String, name: String, parentID: String? = nil) {
-        var body: [String: Any] = ["workspace": workspace, "name": name]
-        if let parentID { body["parent_id"] = parentID }
-        Task {
-            do {
-                let response = try await backend.post(
-                    "/api/chat-folders", body: body, as: ChatFolderMutationResponse.self
-                )
-                chatFolders.append(response.folder)
-                expandedChatFolderIDs.insert(response.folder.id)
-                persistExpandedChatFolders()
-                showToast("Folder created")
-            } catch {
-                showToast("Could not create folder: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    func renameChatFolder(_ folder: ChatFolderRecord, name: String) {
-        Task {
-            do {
-                let response = try await backend.patch(
-                    "/api/chat-folders/\(folder.id)",
-                    body: ["name": name],
-                    as: ChatFolderMutationResponse.self
-                )
-                if let index = chatFolders.firstIndex(where: { $0.id == folder.id }) {
-                    chatFolders[index] = response.folder
-                }
-                showToast("Folder renamed")
-            } catch {
-                showToast("Could not rename folder: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    func deleteChatFolder(_ folder: ChatFolderRecord) {
-        Task {
-            do {
-                let _: ChatFolderDeleteResponse = try await backend.delete(
-                    "/api/chat-folders/\(folder.id)", as: ChatFolderDeleteResponse.self
-                )
-                await refreshChatOrganization()
-                showToast("Folder removed — chats kept")
-            } catch {
-                showToast("Could not remove folder: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    func moveChat(_ session: SessionSummary, to folderID: String?, index: Int? = nil) {
-        var body: [String: Any] = ["folder_id": folderID ?? NSNull()]
-        if let index { body["index"] = index }
-        Task {
-            do {
-                let response = try await backend.patch(
-                    "/api/sessions/\(session.id)/organization",
-                    body: body,
-                    as: SessionOrganizationResponse.self
-                )
-                if let position = sessions.firstIndex(where: { $0.id == session.id }) {
-                    sessions[position] = session.withOrganization(
-                        folderID: response.placement.folderID,
-                        sortOrder: response.placement.order
-                    )
-                }
-                await refreshMetadata()
-                showToast("Chat moved")
-            } catch {
-                showToast("Could not move chat: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    func moveChatFolder(
-        _ folder: ChatFolderRecord, to parentID: String?, index: Int? = nil
-    ) {
-        var body: [String: Any] = ["parent_id": parentID ?? NSNull()]
-        if let index { body["index"] = index }
-        Task {
-            do {
-                let response = try await backend.patch(
-                    "/api/chat-folders/\(folder.id)",
-                    body: body,
-                    as: ChatFolderMutationResponse.self
-                )
-                if let position = chatFolders.firstIndex(where: { $0.id == folder.id }) {
-                    chatFolders[position] = response.folder
-                }
-                await refreshChatOrganization()
-                showToast("Folder moved")
-            } catch {
-                showToast("Could not move folder: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    func canMoveChatFolder(_ folder: ChatFolderRecord, into target: ChatFolderRecord) -> Bool {
-        guard folder.id != target.id,
-              SessionSummary.canonicalWorkspacePath(folder.workspace)
-                == SessionSummary.canonicalWorkspacePath(target.workspace)
-        else { return false }
-        var cursor: ChatFolderRecord? = target
-        while let current = cursor {
-            if current.id == folder.id { return false }
-            cursor = current.parentID.flatMap { parentID in
-                chatFolders.first(where: { $0.id == parentID })
-            }
-        }
-        return true
-    }
-
-    func reorderChatFolder(_ folder: ChatFolderRecord, offset: Int) {
-        let siblings = chatFolders.filter {
-            SessionSummary.canonicalWorkspacePath($0.workspace)
-                == SessionSummary.canonicalWorkspacePath(folder.workspace)
-                && $0.parentID == folder.parentID
-        }.sorted { $0.order < $1.order }
-        guard let current = siblings.firstIndex(where: { $0.id == folder.id }) else { return }
-        let target = min(max(current + offset, 0), max(siblings.count - 1, 0))
-        guard target != current else { return }
-        moveChatFolder(folder, to: folder.parentID, index: target)
-    }
-
-    func reorderChat(_ session: SessionSummary, offset: Int) {
-        let siblings = sessions.filter {
-            $0.workspacePath == session.workspacePath
-                && $0.folderID == session.folderID
-                && $0.isPinned == session.isPinned
-                && $0.isArchived == session.isArchived
-        }.sorted {
-            if $0.sortOrder != $1.sortOrder {
-                return ($0.sortOrder ?? .max) < ($1.sortOrder ?? .max)
-            }
-            return $0.mtime > $1.mtime
-        }
-        guard let current = siblings.firstIndex(where: { $0.id == session.id }) else { return }
-        let target = min(max(current + offset, 0), max(siblings.count - 1, 0))
-        guard target != current else { return }
-        moveChat(session, to: session.folderID, index: target)
-    }
-
-    func duplicateSession(_ session: SessionSummary, withWorktree: Bool = false) {
-        guard !chatHasActiveRun(session) else {
-            showToast("Wait for this chat to stop before duplicating it")
-            return
-        }
-        Task {
-            do {
-                let response = try await backend.post(
-                    "/api/sessions/\(session.id)/duplicate",
-                    body: ["mode": withWorktree ? "worktree" : "conversation"],
-                    timeout: withWorktree ? 120 : 20,
-                    as: DuplicateSessionResponse.self
-                )
-                await refreshMetadata()
-                if let copy = sessions.first(where: { $0.id == response.session.id }) {
-                    resume(copy)
-                }
-                showToast(withWorktree ? "Chat and worktree duplicated" : "Chat duplicated")
-            } catch {
-                showToast("Could not duplicate chat: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    var expandedChatFolderIDs: Set<String> {
-        get { Set(UserDefaults.standard.stringArray(forKey: "Locus.expandedChatFolders") ?? []) }
-        set { UserDefaults.standard.set(Array(newValue).sorted(), forKey: "Locus.expandedChatFolders") }
-    }
-
-    func isChatFolderExpanded(_ id: String) -> Bool {
-        expandedChatFolderIDs.contains(id)
-    }
-
-    func setChatFolderExpanded(_ id: String, expanded: Bool) {
-        var values = expandedChatFolderIDs
-        if expanded { values.insert(id) } else { values.remove(id) }
-        expandedChatFolderIDs = values
-    }
-
-    private func persistExpandedChatFolders() {
-        expandedChatFolderIDs = expandedChatFolderIDs
-    }
-
-    private func refreshChatOrganization() async {
-        if let response = try? await backend.get(
-            "/api/chat-folders", as: ChatFoldersResponse.self
-        ) {
-            chatFolders = response.folders
-        }
-        let suffix = showArchivedSessions ? "?include_archived=true&limit=500" : "?limit=500"
-        if let response = try? await backend.get(
-            "/api/sessions\(suffix)", as: SessionsResponse.self
-        ) {
-            sessions = response.sessions
-            reconcileChatSplitRestoration()
-        }
-    }
-
-    func archive(_ session: SessionSummary) {
-        guard session.id != currentSessionID else {
-            showToast("Start a new chat before archiving the active session")
-            return
-        }
-        guard !chatHasActiveRun(session) else {
-            showToast("Wait for this chat to stop before archiving it")
-            return
-        }
-        updateSession(session, body: ["archived": !session.isArchived], success: session.isArchived ? "Session restored" : "Session archived")
-    }
-
-    func deleteChat(_ session: SessionSummary) {
-        guard !chatHasActiveRun(session) else {
-            showToast("Wait for this chat to stop before deleting it")
-            return
-        }
-        guard !isBusy, !hasPendingPermission, !pendingSessionReset else {
-            showToast("Finish the active run before deleting a chat")
-            return
-        }
-        let wasActive = session.id == currentSessionID
-        if wasActive {
-            pendingSessionReset = true
-            armSessionResetWatchdog()
-        }
-        Task {
-            do {
-                let response = try await backend.delete(
-                    "/api/sessions/\(session.id)",
-                    as: DeleteSessionResponse.self
-                )
-                if let replacement = response.replacementSessionInfo {
-                    applySessionStarted(replacement, reason: "deleted_active")
-                }
-                sessions.removeAll { $0.id == session.id }
-                // The conversation is gone; its pages have nothing to belong
-                // to. (An Undo restores the transcript, not live tabs.)
-                browser.closeTabs(ownedBy: session.id)
-                pendingDeletedChat = DeletedChatUndo(
-                    session: session,
-                    trashBatch: response.trashBatch,
-                    wasActive: response.deletedActive
-                )
-                showToast(
-                    "Moved “\(session.displayTitle)” to recovery",
-                    actionTitle: "Undo",
-                    duration: 7
-                )
-            } catch {
-                if wasActive {
-                    pendingSessionReset = false
-                    sessionResetWatchdog?.cancel()
-                }
-                showToast("Could not delete the chat: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    func performToastAction() {
-        guard toast?.actionTitle != nil, let deletion = pendingDeletedChat else { return }
-        toastCenter.cancelPendingDismissal()
-        toast = nil
-        pendingDeletedChat = nil
-        Task {
-            do {
-                let response = try await backend.post(
-                    "/api/sessions/restore",
-                    body: ["batch": deletion.trashBatch],
-                    as: RestoreSessionsResponse.self
-                )
-                await refreshMetadata()
-                guard response.restored > 0 else {
-                    showToast("That chat could not be restored")
-                    return
-                }
-                showToast("Chat restored")
-                if deletion.wasActive,
-                   let restoredID = response.sessionIDs.first,
-                   let restored = sessions.first(where: { $0.id == restoredID })
-                {
-                    resume(restored)
-                }
-            } catch {
-                showToast("Could not restore the chat: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    func setShowArchived(_ value: Bool) {
-        showArchivedSessions = value
-        Task { await refreshMetadata() }
-    }
-
-    // MARK: - Split chat panes
-
-    var splitViewActive: Bool { chatSplitRestoration.isSplit }
-
-    func chatPaneState(for pane: ChatPaneID) -> ChatPaneState {
-        pane == .primary ? primaryChatPaneState : secondaryChatPaneState
-    }
-
-    func splitSessionID(for pane: ChatPaneID) -> String? {
-        chatSplitRestoration.sessionID(for: pane)
-    }
-
-    func paneBlocks(for sessionID: String) -> [ChatBlock] {
-        if sessionID == currentSessionID { return blocks }
-        var snapshot = splitPaneBlocks[sessionID] ?? []
-        if let runtime = taskWorkers[sessionID],
-           let streamingID = runtime.streamingBlockID
-        {
-            snapshot.removeAll { $0.id == streamingID || $0.isStreaming }
-            snapshot.append(ChatBlock(
-                id: streamingID,
-                kind: .assistant,
-                text: runtime.streamingText,
-                reasoningText: runtime.streamingReasoning.nilIfEmpty,
-                isStreaming: true
-            ))
-        }
-        return snapshot
-    }
-
-    func paneDraft(for sessionID: String) -> String {
-        if sessionID == currentSessionID { return draftText }
-        return splitPaneDrafts[sessionID] ?? ""
-    }
-
-    func setPaneDraft(_ value: String, for sessionID: String) {
-        if sessionID == currentSessionID {
-            draftText = value
-        } else {
-            splitPaneDrafts[sessionID] = value
-        }
-        paneState(containing: sessionID)?.draft = value
-    }
-
-    func toggleSplitView() {
-        if chatSplitRestoration.isSplit {
-            closeChatPane(.secondary)
-            return
-        }
-        guard let session = sessions.first(where: {
-            !$0.isArchived && $0.id != currentSessionID
-        }) else {
-            showToast("Open another saved chat before splitting the view")
-            return
-        }
-        openInOtherPane(session)
-    }
-
-    func openInOtherPane(_ session: SessionSummary) {
-        guard session.id != currentSessionID else {
-            showToast("That chat is already open in this pane")
-            return
-        }
-        if !chatSplitRestoration.isSplit {
-            chatSplitRestoration.primarySessionID = currentSessionID.nilIfEmpty
-        }
-        let other = chatSplitRestoration.focusedPane.other
-        if other == .primary {
-            chatSplitRestoration.primarySessionID = session.id
-        } else {
-            chatSplitRestoration.secondarySessionID = session.id
-        }
-        chatSplitRestoration.focusedPane = other
-        persistChatSplitRestoration()
-        refreshSplitPane(session.id)
-        resume(session)
-    }
-
-    func open(_ session: SessionSummary, in pane: ChatPaneID) {
-        if !chatSplitRestoration.isSplit {
-            openInOtherPane(session)
-            return
-        }
-        if chatSplitRestoration.sessionID(for: pane) == session.id {
-            focusChatPane(pane)
-            return
-        }
-        if pane == .primary {
-            chatSplitRestoration.primarySessionID = session.id
-        } else {
-            chatSplitRestoration.secondarySessionID = session.id
-        }
-        chatSplitRestoration.focusedPane = pane
-        persistChatSplitRestoration()
-        resume(session)
-    }
-
-    func focusChatPane(_ pane: ChatPaneID) {
-        guard let sessionID = splitSessionID(for: pane), sessionID != currentSessionID,
-              let session = sessions.first(where: { $0.id == sessionID })
-        else {
-            if splitSessionID(for: pane) != nil {
-                chatSplitRestoration.focusedPane = pane
-                persistChatSplitRestoration()
-            }
-            return
-        }
-        chatSplitRestoration.focusedPane = pane
-        persistChatSplitRestoration()
-        resume(session)
-    }
-
-    func closeChatPane(_ pane: ChatPaneID) {
-        guard chatSplitRestoration.isSplit else { return }
-        captureForegroundPane()
-        let remainingPane = pane.other
-        guard let remainingSessionID = splitSessionID(for: remainingPane) else { return }
-        let shouldActivate = currentSessionID != remainingSessionID
-        chatSplitRestoration = ChatSplitRestoration(
-            primarySessionID: remainingSessionID,
-            secondarySessionID: nil,
-            focusedPane: .primary,
-            dividerRatio: chatSplitRestoration.dividerRatio
-        )
-        persistChatSplitRestoration()
-        if shouldActivate,
-           let remaining = sessions.first(where: { $0.id == remainingSessionID })
-        {
-            resume(remaining)
-        }
-    }
-
-    func setSplitDividerRatio(_ value: Double) {
-        chatSplitRestoration.dividerRatio = min(max(value, 0.28), 0.72)
-        persistChatSplitRestoration()
-    }
-
-    func submitDraft(in pane: ChatPaneID) {
-        guard let sessionID = splitSessionID(for: pane) else { return }
-        let text = paneDraft(for: sessionID).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        setPaneDraft(text, for: sessionID)
-        if currentSessionID == sessionID {
-            submitDraft()
-            return
-        }
-        focusChatPane(pane)
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            for _ in 0..<100 {
-                if currentSessionID == sessionID,
-                   sessionInfo?.sessionID == sessionID
-                {
-                    draftText = text
-                    submitDraft()
-                    return
-                }
-                try? await Task.sleep(for: .milliseconds(50))
-            }
-            showToast("That pane is still reconnecting — your draft is preserved")
-        }
-    }
-
-    func refreshSplitPane(_ sessionID: String) {
-        guard sessionID != currentSessionID else {
-            splitPaneBlocks[sessionID] = blocks
-            return
-        }
-        Task {
-            guard let detail = try? await backend.get(
-                "/api/sessions/\(sessionID)",
-                as: SessionDetailResponse.self
-            ) else { return }
-            splitPaneBlocks[sessionID] = ChatTranscriptBuilder.blocks(from: detail.messages)
-            paneState(containing: sessionID)?.blocks = splitPaneBlocks[sessionID] ?? []
-        }
-    }
-
-    private func prepareSplitSelection(_ sessionID: String) {
-        guard sessionID != currentSessionID else { return }
-        captureForegroundPane()
-        if !chatSplitRestoration.isSplit {
-            chatSplitRestoration.primarySessionID = sessionID
-            chatSplitRestoration.secondarySessionID = nil
-            chatSplitRestoration.focusedPane = .primary
-        } else if chatSplitRestoration.primarySessionID == sessionID {
-            chatSplitRestoration.focusedPane = .primary
-        } else if chatSplitRestoration.secondarySessionID == sessionID {
-            chatSplitRestoration.focusedPane = .secondary
-        } else if chatSplitRestoration.focusedPane == .primary {
-            chatSplitRestoration.primarySessionID = sessionID
-        } else {
-            chatSplitRestoration.secondarySessionID = sessionID
-        }
-        restorePanePreferences(for: sessionID)
-        persistChatSplitRestoration()
-    }
-
-    private func captureForegroundPane() {
-        guard !currentSessionID.isEmpty else { return }
-        splitPaneBlocks[currentSessionID] = blocks
-        splitPaneDrafts[currentSessionID] = draftText
-        splitPaneAttachments[currentSessionID] = chatAttachments
-        splitPaneModes[currentSessionID] = selectedMode
-        splitPaneTeams[currentSessionID] = selectedAgentTeamID
-        splitPaneSoloRouting[currentSessionID] = soloSwarmEnabled
-        splitPaneSearchQueries[currentSessionID] = transcriptSearchQuery
-        if let state = paneState(containing: currentSessionID) {
-            state.blocks = blocks
-            state.draft = draftText
-            state.attachments = chatAttachments
-            state.mode = selectedMode
-            state.selectedTeamID = selectedAgentTeamID
-            state.soloRouting = soloSwarmEnabled
-            state.transcriptSearchQuery = transcriptSearchQuery
-            state.contextFiles = contextFiles
-            state.queuedMessages = queuedMessages
-            state.selectedRouteModel = selectedModel
-            state.runStatus = orchestrationState
-            state.isBusy = isBusy
-            state.hasPendingPermission = hasPendingPermission
-        }
-    }
-
-    private func restorePanePreferences(for sessionID: String) {
-        let state = paneState(containing: sessionID)
-        draftText = state?.draft ?? splitPaneDrafts[sessionID] ?? ""
-        chatAttachments = state?.attachments ?? splitPaneAttachments[sessionID] ?? []
-        contextFiles = state?.contextFiles ?? []
-        queuedMessages = state?.queuedMessages ?? []
-        if let mode = state?.mode ?? splitPaneModes[sessionID] { selectedMode = mode }
-        selectedAgentTeamID = state?.selectedTeamID ?? splitPaneTeams[sessionID] ?? nil
-        soloSwarmEnabled = selectedAgentTeamID == nil
-        if let query = state?.transcriptSearchQuery { transcriptSearchQuery = query }
-    }
-
-    private func paneState(containing sessionID: String) -> ChatPaneState? {
-        if primaryChatPaneState.sessionID == sessionID { return primaryChatPaneState }
-        if secondaryChatPaneState.sessionID == sessionID { return secondaryChatPaneState }
-        return nil
-    }
-
-    private func persistChatSplitRestoration() {
-        assign(primaryChatPaneState, to: chatSplitRestoration.primarySessionID)
-        assign(secondaryChatPaneState, to: chatSplitRestoration.secondarySessionID)
-        guard persistenceEnabled,
-              let data = try? JSONEncoder().encode(chatSplitRestoration)
-        else { return }
-        UserDefaults.standard.set(data, forKey: Self.splitRestorationKey)
-    }
-
-    private func assign(_ state: ChatPaneState, to sessionID: String?) {
-        guard state.sessionID != sessionID else { return }
-        state.sessionID = sessionID
-        guard let sessionID else {
-            state.blocks = []
-            state.draft = ""
-            state.attachments = []
-            return
-        }
-        state.blocks = splitPaneBlocks[sessionID] ?? []
-        state.draft = splitPaneDrafts[sessionID] ?? ""
-        state.attachments = splitPaneAttachments[sessionID] ?? []
-        state.mode = splitPaneModes[sessionID] ?? .work
-        state.selectedTeamID = splitPaneTeams[sessionID] ?? nil
-        state.soloRouting = splitPaneSoloRouting[sessionID] ?? false
-        state.transcriptSearchQuery = splitPaneSearchQueries[sessionID] ?? ""
-    }
-
-    private func reconcileChatSplitRestoration() {
-        let existing = Set(sessions.map(\.id))
-        var restoration = chatSplitRestoration
-        if let primary = restoration.primarySessionID, !existing.contains(primary) {
-            restoration.primarySessionID = nil
-        }
-        if let secondary = restoration.secondarySessionID, !existing.contains(secondary) {
-            restoration.secondarySessionID = nil
-        }
-        if restoration.primarySessionID == nil, let secondary = restoration.secondarySessionID {
-            restoration.primarySessionID = secondary
-            restoration.secondarySessionID = nil
-            restoration.focusedPane = .primary
-        }
-        if restoration.primarySessionID == restoration.secondarySessionID {
-            restoration.secondarySessionID = nil
-            restoration.focusedPane = .primary
-        }
-        if restoration.primarySessionID == nil {
-            restoration.primarySessionID = currentSessionID.nilIfEmpty
-        }
-        chatSplitRestoration = restoration
-        persistChatSplitRestoration()
-        if let secondary = restoration.secondarySessionID {
-            refreshSplitPane(secondary)
-        }
-        if let primary = restoration.primarySessionID, primary != currentSessionID {
-            refreshSplitPane(primary)
-        }
-        if !didRestoreChatSplit {
-            didRestoreChatSplit = true
-            if let focusedID = restoration.sessionID(for: restoration.focusedPane),
-               focusedID != currentSessionID,
-               let focused = sessions.first(where: { $0.id == focusedID })
-            {
-                resume(focused)
-            }
-        }
-    }
-
-    func exportCurrentSession(format: ChatExportFormat = .markdown) {
-        guard let session = sessions.first(where: { $0.id == currentSessionID }) else {
-            showToast("Send a message first — there is no saved session to export yet")
-            return
-        }
-        exportSession(session, format: format)
-    }
-
-    func exportSession(_ session: SessionSummary, format: ChatExportFormat = .markdown) {
-        Task {
-            do {
-                let panel = NSSavePanel()
-                panel.title = "Export Locus Session"
-                panel.nameFieldStringValue = "\(ChatTranscriptBuilder.safeFilename(session.displayTitle)).\(format.pathExtension)"
-                panel.allowedContentTypes = switch format {
-                case .pdf: [.pdf]
-                case .markdown: [UTType(filenameExtension: "md") ?? .plainText]
-                case .plainText: [.plainText]
-                }
-                let accessory = ChatExportAccessoryView(frame: .zero)
-                panel.accessoryView = accessory
-                guard panel.runModal() == .OK, let url = panel.url else { return }
-                let options = accessory.options
-                let document = try await backend.get(
-                    "/api/sessions/\(session.id)/export-data",
-                    query: [
-                        URLQueryItem(
-                            name: "include_reasoning",
-                            value: options.includeReasoning ? "true" : "false"
-                        ),
-                        URLQueryItem(
-                            name: "include_tool_details",
-                            value: options.includeToolDetails ? "true" : "false"
-                        ),
-                        URLQueryItem(
-                            name: "include_attachments",
-                            value: options.includeAttachments ? "true" : "false"
-                        ),
-                    ],
-                    timeout: 60,
-                    as: ChatExportDocument.self
-                )
-                try ChatExportRenderer.write(document, format: format, to: url)
-                showToast("Session exported as \(format.title)")
-            } catch {
-                showToast("Export failed: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    func chooseWorkspace() {
-        guard !chatNavigationDisabled else {
-            showToast("Finish the active run before adding a workspace")
-            return
-        }
-        let panel = NSOpenPanel()
-        panel.title = "Choose a workspace"
-        panel.message = "Pick a project folder, or use New Folder to start a new one."
-        panel.prompt = "Use Workspace"
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.directoryURL = URL(fileURLWithPath: workspacePath)
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        guard workspaceAccess.rememberAndActivate(url) else {
-            showToast("Locus could not retain access to that workspace")
-            return
-        }
-        switchWorkspace(to: url.path)
-    }
-
-    /// Creates a folder and opens it as the workspace in one step.
-    func createWorkspace() {
-        guard !chatNavigationDisabled else {
-            showToast("Finish the active run before creating a workspace")
-            return
-        }
-        let panel = NSSavePanel()
-        panel.title = "New Workspace"
-        panel.message = "Name the folder Locus should create and open as the workspace."
-        panel.prompt = "Create Workspace"
-        panel.nameFieldLabel = "Workspace name:"
-        panel.nameFieldStringValue = "New Project"
-        panel.canCreateDirectories = true
-        panel.directoryURL = URL(fileURLWithPath: workspacePath)
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-
-        var isDirectory: ObjCBool = false
-        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) {
-            guard isDirectory.boolValue else {
-                showToast("A file with that name already exists")
-                return
-            }
-            // The folder already exists — just open it.
-            guard workspaceAccess.rememberAndActivate(url) else {
-                showToast("Locus could not retain access to that workspace")
-                return
-            }
-            switchWorkspace(to: url.path)
-            return
-        }
-        do {
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        } catch {
-            showToast("Could not create the folder: \(error.localizedDescription)")
-            return
-        }
-        guard workspaceAccess.rememberAndActivate(url) else {
-            showToast("Locus could not retain access to that workspace")
-            return
-        }
-        showToast("Created \(url.lastPathComponent)")
-        switchWorkspace(to: url.path)
-    }
-
-    func switchWorkspace(to path: String) {
-        guard (!isBusy && !hasPendingPermission) || taskWorkers[currentSessionID] != nil else {
-            showToast("Finish the active run before switching workspaces")
-            return
-        }
-        let path = SessionSummary.canonicalWorkspacePath(path)
-        guard workspaceAccess.activateStored(path: path) else {
-            showToast("Choose that workspace again to restore access")
-            return
-        }
-        guard FileManager.default.fileExists(atPath: path) else {
-            showToast("That workspace is no longer available")
-            removeWorkspaceProfile(path)
-            return
-        }
-        persistCurrentWorkspaceProfile()
-        pendingWorkspacePath = path
-        initialWorkspacePath = path
-        expandedWorkspaceIDs.insert(path)
-        persistExpandedWorkspaces()
-        if backendProcess.isRunning, WorkspaceAccess.isSandboxed {
-            workspaceToOpenAfterReconnect = path
-            backend.disconnect()
-            sessionInfo = nil
-            Task { [backendProcess] in
-                await backendProcess.stopAndWait()
-                await self.bootstrap()
-            }
-            showToast("Switching to \(URL(fileURLWithPath: path).lastPathComponent)")
-            return
-        }
-        if let latest = sessions
-            .filter({ $0.workspacePath == path })
-            .max(by: { $0.mtime < $1.mtime })
-        {
-            resume(latest)
-        } else {
-            startNewChat(in: path, environment: nil)
-        }
-        showToast("Switching to \(URL(fileURLWithPath: path).lastPathComponent)")
-    }
-
-    func removeWorkspaceProfile(_ path: String) {
-        let canonical = SessionSummary.canonicalWorkspacePath(path)
-        workspaceProfiles.removeAll {
-            SessionSummary.canonicalWorkspacePath($0.path) == canonical
-        }
-        expandedWorkspaceIDs.remove(canonical)
-        persistExpandedWorkspaces()
-        persistWorkspaceProfiles()
-    }
-
-    /// Every unarchived chat that keeps a workspace group alive in the
-    /// sidebar. Deliberately reads the full session list — the group's own
-    /// snapshot is search- and archive-filtered, so it can hide chats that
-    /// would resurrect the row after removal.
-    func removableSidebarChats(for group: WorkspaceChatGroup) -> [SessionSummary] {
-        guard let path = group.path else { return [] }
-        let canonical = SessionSummary.canonicalWorkspacePath(path)
-        return sessions.filter { $0.workspacePath == canonical && !$0.isArchived }
-    }
-
-    func workspaceHasActiveRun(_ group: WorkspaceChatGroup) -> Bool {
-        guard let path = group.path else { return false }
-        let canonical = SessionSummary.canonicalWorkspacePath(path)
-        return sessions.contains { $0.workspacePath == canonical && chatHasActiveRun($0) }
-    }
-
-    /// Remove a workspace group from the sidebar. The profile disappears
-    /// immediately; chats that would resurrect the group move to the archive,
-    /// where the "All Workspaces" view can still restore them. Nothing on
-    /// disk is touched.
-    func removeWorkspaceFromSidebar(_ group: WorkspaceChatGroup) {
-        guard let path = group.path else { return }
-        let canonical = SessionSummary.canonicalWorkspacePath(path)
-        guard canonical != activeWorkspaceID else {
-            showToast("Switch to another workspace before removing this one")
-            return
-        }
-        guard !workspaceHasActiveRun(group) else {
-            showToast("Wait for this workspace's runs to finish first")
-            return
-        }
-        removeWorkspaceProfile(canonical)
-        let toArchive = removableSidebarChats(for: group).filter { $0.id != currentSessionID }
-        guard !toArchive.isEmpty else {
-            showToast("Removed \(group.title) from the sidebar")
-            return
-        }
-        Task {
-            var failures = 0
-            for chat in toArchive {
-                do {
-                    _ = try await backend.patch(
-                        "/api/sessions/\(chat.id)",
-                        body: ["archived": true],
-                        as: SessionMetadataResponse.self
-                    )
-                } catch {
-                    failures += 1
-                }
-            }
-            await refreshMetadata()
-            if failures == 0 {
-                showToast(
-                    "Removed \(group.title) — \(toArchive.count) "
-                        + "\(toArchive.count == 1 ? "chat" : "chats") archived"
-                )
-            } else {
-                showToast(
-                    "Removed \(group.title), but \(failures) "
-                        + "\(failures == 1 ? "chat" : "chats") could not be archived"
-                )
-            }
-        }
-    }
-
-    func addContext() {
-        let panel = NSOpenPanel()
-        panel.title = "Add files or folders to context"
-        panel.prompt = "Add Context"
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = true
-        panel.directoryURL = URL(fileURLWithPath: workspacePath)
-        guard panel.runModal() == .OK else { return }
-        for url in panel.urls {
-            _ = workspaceAccess.rememberAndActivate(url)
-        }
-        loadContext(from: panel.urls)
-    }
-
-    func addChatAttachments() {
-        let panel = NSOpenPanel()
-        panel.title = "Attach files to this message"
-        panel.message = "Locus will send only the files you choose; attachments never grant folder access."
-        panel.prompt = "Attach"
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = true
-        guard panel.runModal() == .OK else { return }
-        loadChatAttachments(from: panel.urls)
-    }
-
-    func loadChatAttachments(from urls: [URL]) {
-        guard !urls.isEmpty else { return }
-        let remainingSlots = max(10 - chatAttachments.count, 0)
-        guard remainingSlots > 0 else {
-            chatAttachmentNotice = "A chat message can include up to 10 attachments."
-            return
-        }
-        isLoadingChatAttachments = true
-        chatAttachmentNotice = "Preparing attachments…"
-        let existing = Set(chatAttachments.map { $0.url.standardizedFileURL })
-        let selected = Array(urls.prefix(remainingSlots))
-        let scopedURLs = selected.filter { $0.startAccessingSecurityScopedResource() }
-        Task { [weak self] in
-            let result = await Task.detached(priority: .userInitiated) {
-                ChatAttachmentLoader.readChatAttachments(selected, excluding: existing)
-            }.value
-            scopedURLs.forEach { $0.stopAccessingSecurityScopedResource() }
-            guard let self else { return }
-            chatAttachments.append(contentsOf: result.attachments)
-            chatAttachmentNotice = result.notice
-            isLoadingChatAttachments = false
-            showToast(
-                result.attachments.isEmpty
-                    ? (result.notice ?? "No supported attachments were added")
-                    : "Attached \(result.attachments.count) file\(result.attachments.count == 1 ? "" : "s")"
-            )
-        }
-    }
-
-    func removeChatAttachment(_ attachment: ChatAttachment) {
-        chatAttachments.removeAll { $0.id == attachment.id }
-        if chatAttachments.isEmpty { chatAttachmentNotice = nil }
-    }
-
-    var currentLiveApplicationTarget: ApplicationTarget? {
-        liveApplicationTargets[currentSessionID]
-    }
-
-    var currentSimulatorTarget: SimulatorTarget? {
-        simulatorControl.target(for: currentSessionID)
-    }
-
-    var hasComposerContextChips: Bool {
-        !chatAttachments.isEmpty
-            || currentLiveApplicationTarget != nil
-            || currentSimulatorTarget != nil
-    }
-
-    var currentLiveApplicationIsConnected: Bool {
-        currentLiveApplicationTarget.map(applicationContext.isConnected) ?? false
-    }
-
-    func attachCurrentApplicationSnapshot() {
-        guard let target = applicationContext.lastExternalApplication else {
-            showToast("Activate an application window, then return to Locus")
-            return
-        }
-        attachApplicationSnapshot(target)
-    }
-
-    func attachApplicationSnapshot(_ target: ApplicationTarget) {
-        guard chatAttachments.count < 10 else {
-            chatAttachmentNotice = "A chat message can include up to 10 attachments."
-            return
-        }
-        isLoadingChatAttachments = true
-        chatAttachmentNotice = "Capturing \(target.name)…"
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { isLoadingChatAttachments = false }
-            do {
-                let attachment = try await applicationContext.captureSnapshot(of: target)
-                let imageBytes = chatAttachments.reduce(0) { $0 + ($1.imageData?.count ?? 0) }
-                guard imageBytes + (attachment.imageData?.count ?? 0) <= 25_000_000 else {
-                    chatAttachmentNotice = "The message can include up to 25 MB of images."
-                    showToast("The Appshot exceeds the message image limit")
-                    return
-                }
-                chatAttachments.append(attachment)
-                chatAttachmentNotice = nil
-                showToast("Attached \(target.name) Appshot")
-            } catch {
-                chatAttachmentNotice = error.localizedDescription
-                showToast(error.localizedDescription)
-            }
-        }
-    }
-
-    func attachLiveApplication(_ target: ApplicationTarget) {
-        guard !justChatEnabled else {
-            showToast("Live application control is unavailable in Just Chat")
-            return
-        }
-        if currentLiveApplicationTarget?.id == target.id { return }
-        let alert = NSAlert()
-        alert.messageText = currentLiveApplicationTarget == nil
-            ? "Attach \(target.name) to this task?"
-            : "Replace the attached application with \(target.name)?"
-        alert.informativeText = "Locus will let this task inspect the selected app’s Accessibility text and window screenshots and control only this exact running process. Secure fields remain blocked. The attachment is forgotten when Locus quits."
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: currentLiveApplicationTarget == nil ? "Attach" : "Replace")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        liveApplicationTargets[currentSessionID] = target
-        computerControl.refreshPermissionStatus()
-        announceComputerControlCapability()
-        showToast("\(target.name) attached to this task")
-    }
-
-    func detachLiveApplication(sessionID: String? = nil) {
-        let owner = sessionID ?? currentSessionID
-        guard let target = liveApplicationTargets.removeValue(forKey: owner) else { return }
-        computerControl.cancelPendingActions()
-        announceComputerControlCapability()
-        showToast("Detached \(target.name)")
-    }
-
-    func refreshSimulatorDevices() {
-        Task { @MainActor [weak self] in await self?.simulatorControl.refreshDevices() }
-    }
-
-    func attachSimulator(_ device: SimulatorDevice) {
-        guard !justChatEnabled else {
-            showToast("Simulator control is unavailable in Just Chat")
-            return
-        }
-        let existing = currentSimulatorTarget
-        if existing?.udid == device.udid {
-            selectInspectorTab(.simulator)
-            return
-        }
-        let alert = NSAlert()
-        alert.messageText = existing == nil
-            ? "Attach \(device.name) to this task?"
-            : "Replace \(existing?.device.name ?? "the simulator") with \(device.name)?"
-        alert.informativeText = "Locus and this task will be able to view the simulator, send touch and keyboard input, build and launch apps, and capture screenshots. Hosted models may receive screenshots after separate provider consent. Avoid real accounts and sensitive data."
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: existing == nil ? "Attach" : "Replace")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        settings.simulatorControlEnabled = true
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                _ = try await simulatorControl.attach(
-                    sessionID: currentSessionID,
-                    udid: device.udid
-                )
-                objectWillChange.send()
-                sendSimulatorControlCapability()
-                selectInspectorTab(.simulator)
-                showToast("Attached \(device.name)")
-            } catch {
-                showToast(error.localizedDescription)
-            }
-        }
-    }
-
-    func detachSimulator(sessionID: String? = nil) {
-        let owner = sessionID ?? currentSessionID
-        guard let target = simulatorControl.target(for: owner) else { return }
-        cancelSimulatorActions(sessionID: owner)
-        simulatorControl.detach(sessionID: owner)
-        objectWillChange.send()
-        announceSimulatorControlCapability()
-        showToast("Detached \(target.device.name)")
-    }
-
-    func simulatorDidDetachNatively() {
-        objectWillChange.send()
-        announceSimulatorControlCapability()
-        showToast("Simulator shut down and detached")
-    }
-
-    func setSimulatorControlEnabled(_ enabled: Bool) {
-        guard SimulatorControlService.isSupportedBuild else {
-            settings.simulatorControlEnabled = false
-            showToast("iOS Simulator control is unavailable in the App Store build")
-            return
-        }
-        settings.simulatorControlEnabled = enabled
-        if !enabled {
-            cancelSimulatorActions()
-            simulatorControl.detachAll()
-            objectWillChange.send()
-        }
-        announceSimulatorControlCapability()
-        showToast(enabled ? "iOS Simulator control enabled" : "iOS Simulator control disabled")
-    }
-
-    /// Attach images that exist only on the pasteboard — or were captured by
-    /// the browser's annotator — under the same caps as file attachments:
-    /// 10 files, 15 MB each, 25 MB of image data in total. Returns whether
-    /// anything was attached, so callers holding user work (the annotation
-    /// sheet) can refuse to discard it on a rejection.
-    @discardableResult
-    func addPastedImages(
-        _ images: [(data: Data, mimeType: String)],
-        nameStem: String = "Pasted image"
-    ) -> Bool {
-        guard !images.isEmpty else { return false }
-        let remainingSlots = max(10 - chatAttachments.count, 0)
-        guard remainingSlots > 0 else {
-            chatAttachmentNotice = "A chat message can include up to 10 attachments."
-            return false
-        }
-        var totalImageBytes = chatAttachments.reduce(0) { $0 + ($1.imageData?.count ?? 0) }
-        var added: [ChatAttachment] = []
-        var oversized = 0
-        for image in images.prefix(remainingSlots) {
-            guard image.data.count <= 15_000_000,
-                  totalImageBytes + image.data.count <= 25_000_000
-            else {
-                oversized += 1
-                continue
-            }
-            totalImageBytes += image.data.count
-            added.append(ChatAttachment.pasted(
-                imageData: image.data,
-                mimeType: image.mimeType,
-                nameStem: nameStem
-            ))
-        }
-        chatAttachments.append(contentsOf: added)
-        chatAttachmentNotice = oversized > 0
-            ? "Skipped or limited: \(oversized) over the size limit."
-            : chatAttachmentNotice
-        if !added.isEmpty {
-            showToast("Attached \(added.count) image\(added.count == 1 ? "" : "s")")
-        } else if oversized > 0 {
-            showToast("The pasted image is over the size limit")
-        }
-        return !added.isEmpty
-    }
-
-    /// True only when the selected local model is known to refuse images.
-    /// Remote models report nothing about vision, and an unknown is not a
-    /// warning — the runtime strip-and-retry covers an actual rejection.
-    var activeModelRejectsImages: Bool {
-        guard activeAccount == nil else { return false }
-        return models.first { $0.name == selectedModel }?.visionCapable == false
-    }
-
-    func loadContext(from urls: [URL]) {
-        guard !urls.isEmpty else { return }
-        isLoadingContext = true
-        contextNotice = "Reading selected files…"
-        let existing = Set(contextFiles.map { $0.url.standardizedFileURL })
-        let remainingSlots = max(50 - contextFiles.count, 0)
-        Task { [weak self] in
-            let result = await Task.detached(priority: .userInitiated) {
-                ContextPackLoader.readContextSelection(urls, excluding: existing, limit: remainingSlots)
-            }.value
-            guard let self else { return }
-            contextFiles.append(contentsOf: result.files)
-            contextNotice = result.notice
-            isLoadingContext = false
-            rebalanceContextBudget()
-            scheduleWorkspacePersistence()
-            showToast(result.files.isEmpty ? (result.notice ?? "No readable text files were added") : "Added \(result.files.count) context files")
-        }
-    }
-
-    func refreshContextFiles() async {
-        guard !contextFiles.isEmpty else { return }
-        let references = contextFiles
-        let refreshed = await Task.detached(priority: .utility) {
-            references.map(ContextPackLoader.reloadContextReference)
-        }.value
-        // Merge by id onto the CURRENT list: files removed or added while the
-        // refresh ran off-thread must not be resurrected or dropped.
-        let refreshedByID = Dictionary(uniqueKeysWithValues: refreshed.map { ($0.id, $0) })
-        contextFiles = contextFiles.map { refreshedByID[$0.id] ?? $0 }
-        rebalanceContextBudget()
-        scheduleWorkspacePersistence()
-    }
-
-    func removeContext(_ file: ContextFile) {
-        contextFiles.removeAll { $0.id == file.id }
-        scheduleWorkspacePersistence()
-    }
-
-    func toggleContext(_ file: ContextFile) {
-        guard let index = contextFiles.firstIndex(where: { $0.id == file.id }) else { return }
-        guard contextFiles[index].isAvailable else {
-            showToast(contextFiles[index].issue ?? "This file is unavailable")
-            return
-        }
-        contextFiles[index].isIncluded.toggle()
-        rebalanceContextBudget()
-        scheduleWorkspacePersistence()
-    }
-
-    func createCheckpoint(title: String? = nil) {
-        let fallbackTitle = blocks.last(where: { $0.kind == .user })?.text
-            .components(separatedBy: .newlines)
-            .first
-            .map { String($0.prefix(54)) }
-        let checkpoint = SessionCheckpoint(
-            id: UUID(),
-            title: title?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-                ?? fallbackTitle?.nilIfEmpty
-                ?? "Session snapshot",
-            createdAt: Date(),
-            blocks: blocks,
-            todos: todos,
-            contextFiles: contextFiles,
-            workspacePath: workspacePath,
-            model: selectedModel,
-            activePlan: activePlan
-        )
-        checkpoints.insert(checkpoint, at: 0)
-        checkpoints = Array(checkpoints.prefix(12))
-        persistCheckpoints()
-        checkpointPresented = false
-        showToast("Session checkpoint created")
-    }
-
-    func restore(_ checkpoint: SessionCheckpoint) {
-        guard !isBusy, !hasPendingPermission else {
-            showToast("Finish the active run before restoring a checkpoint")
-            return
-        }
-        guard workspaceAccess.activateStored(path: checkpoint.workspacePath) else {
-            showToast("Choose that workspace again before restoring this checkpoint")
-            return
-        }
-        guard backend.send(["type": "new_session"]) else {
-            showToast("Reconnect before restoring a checkpoint")
-            return
-        }
-        pendingSessionReset = true
-        pendingCheckpointRestore = checkpoint
-        checkpointPresented = false
-        showToast("Restoring checkpoint…")
-    }
-
-    func delete(_ checkpoint: SessionCheckpoint) {
-        checkpoints.removeAll { $0.id == checkpoint.id }
-        persistCheckpoints()
-    }
-
-    func requestPlan(
-        prompt: String = "Create a concise implementation plan for the current request and workspace."
-    ) {
-        guard !isBusy, !hasPendingPermission else {
-            showToast("Finish the active run before creating a plan")
-            return
-        }
-        guard isAgentOnline else {
-            showToast("Reconnect the local agent to create a plan")
-            return
-        }
-        selectedMode = .plan
-        send(prompt, preservingDraftOnFailure: false)
-    }
-
-    /// Resolves the final Plan-mode decision without changing permissions.
-    func resolvePlanApproval(_ decision: PlanApprovalDecision) {
-        guard planApprovalPending else { return }
-        switch decision {
-        case .revise:
-            planApprovalPending = false
-            selectedMode = .plan
-            drainQueuedMessages()
-        case .cancel:
-            planApprovalPending = false
-            selectedMode = .work
-            drainQueuedMessages()
-        case .proceed:
-            guard isAgentOnline else {
-                showToast("Reconnect the local agent to implement the plan")
-                return
-            }
-            planApprovalPending = false
-            selectedMode = .work
-            Task { [weak self] in
-                guard let self else { return }
-                send(
-                    "Implement the plan you just created, in order. Keep the todo list updated as you complete each step.",
-                    preservingDraftOnFailure: false,
-                    requeueingOnFailure: true
-                )
-            }
-        }
-    }
-
-    /// The chosen option's label, the typed elaboration, or both — the plain
-    /// prose the model reads back as the next user message.
-    nonisolated static func composedQuestionAnswer(
-        option: UserQuestionOption?, freeText: String
-    ) -> String? {
-        var parts: [String] = []
-        if let label = option?.label.trimmingCharacters(in: .whitespaces), !label.isEmpty {
-            parts.append(label)
-        }
-        let typed = freeText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !typed.isEmpty { parts.append(typed) }
-        guard !parts.isEmpty else { return nil }
-        return parts.joined(separator: "\n\n")
-    }
-
-    /// Sends the user's answer to the pending question as an ordinary user
-    /// message — the turn already ended, so there is nothing to unblock.
-    func resolveUserQuestion(option: UserQuestionOption?, freeText: String) {
-        guard pendingUserQuestion != nil,
-              let answer = Self.composedQuestionAnswer(option: option, freeText: freeText)
-        else { return }
-        guard isAgentOnline else {
-            showToast("Reconnect the local agent to answer")
-            return
-        }
-        pendingUserQuestion = nil
-        Task { [weak self] in
-            guard let self else { return }
-            send(answer, preservingDraftOnFailure: false, requeueingOnFailure: true)
-        }
-    }
-
-    /// Dismisses the question popup without answering; the question stays
-    /// readable in the transcript and the composer takes over. A partially
-    /// typed answer moves into the composer draft rather than vanishing.
-    func dismissUserQuestion(keepingDraft draft: String = "") {
-        guard pendingUserQuestion != nil else { return }
-        pendingUserQuestion = nil
-        let typed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !typed.isEmpty, draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            draftText = typed
-        }
-        drainQueuedMessages()
-    }
-
-    func clearPendingQuestion() {
-        pendingUserQuestion = nil
-        capturedQuestionThisTurn = nil
-    }
 
     func openWorkspaceInFinder() {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: workspacePath)])
@@ -4189,7 +1950,7 @@ final class AppModel: ObservableObject {
         appearancePreview = nil
     }
 
-    private func migrateTerminalSettingsIfNeeded() async {
+    func migrateTerminalSettingsIfNeeded() async {
         guard !settings.terminalSettingsMigrated else { return }
         do {
             let state = try await backend.get("/api/config", as: ConfigStateResponse.self)
@@ -4880,7 +2641,7 @@ final class AppModel: ObservableObject {
         selectInspectorTab(.runs, selecting: runID)
     }
 
-    private func refreshAnchoredRunsIfNeeded() {
+    func refreshAnchoredRunsIfNeeded() {
         guard blocks.contains(where: { $0.runID != nil }) else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -5340,18 +3101,18 @@ final class AppModel: ObservableObject {
         showToast(enabled ? "Computer Control enabled" : "Computer Control disabled")
     }
 
-    private func sendComputerControlCapability() {
+    func sendComputerControlCapability() {
         sendComputerControlCapability(to: conversationBackend, sessionID: currentSessionID)
     }
 
-    private func announceComputerControlCapability() {
+    func announceComputerControlCapability() {
         sendComputerControlCapability(to: backend, sessionID: currentSessionID)
         for runtime in taskWorkers.values {
             sendComputerControlCapability(to: runtime.service, sessionID: runtime.sessionID)
         }
     }
 
-    private func sendComputerControlCapability(
+    func sendComputerControlCapability(
         to transport: BackendService,
         sessionID: String? = nil
     ) {
@@ -5380,18 +3141,18 @@ final class AppModel: ObservableObject {
         hasLiveApplication ? liveApplicationConnected : globalEnabled
     }
 
-    private func sendSimulatorControlCapability() {
+    func sendSimulatorControlCapability() {
         sendSimulatorControlCapability(to: conversationBackend, sessionID: currentSessionID)
     }
 
-    private func announceSimulatorControlCapability() {
+    func announceSimulatorControlCapability() {
         sendSimulatorControlCapability(to: backend, sessionID: currentSessionID)
         for runtime in taskWorkers.values {
             sendSimulatorControlCapability(to: runtime.service, sessionID: runtime.sessionID)
         }
     }
 
-    private func sendSimulatorControlCapability(
+    func sendSimulatorControlCapability(
         to transport: BackendService,
         sessionID: String? = nil
     ) {
@@ -5611,7 +3372,7 @@ final class AppModel: ObservableObject {
         settingsUpdatePreparation?.handler() ?? true
     }
 
-    private func backendIsHealthy() async -> Bool {
+    func backendIsHealthy() async -> Bool {
         guard BackendProcess.loopbackPortIsListening(at: backend.currentBaseURL) else {
             return false
         }
@@ -5942,7 +3703,7 @@ final class AppModel: ObservableObject {
 
     /// Mirror the live worker set into the browser so tab eviction never
     /// sacrifices a tab an active agent is standing on.
-    private func syncBrowserProtectedSessions() {
+    func syncBrowserProtectedSessions() {
         browser.setProtectedSessions(Set(taskWorkers.values.map(\.sessionID)))
     }
 
@@ -6823,7 +4584,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func handle(_ event: [String: Any]) {
+    func handle(_ event: [String: Any]) {
         guard let type = event["type"] as? String else { return }
         if type != "agent_job_stream",
            event["event_id"] != nil,
@@ -7614,7 +5375,7 @@ final class AppModel: ObservableObject {
         return "\(message)\n\nUpdate the key for \(account.displayName) in Settings → Model providers."
     }
 
-    private func applySessionStarted(_ info: SessionInfo, reason: String?) {
+    func applySessionStarted(_ info: SessionInfo, reason: String?) {
         let previousSessionID = currentSessionID
         let isDuplicateAcknowledgement = currentSessionID == info.sessionID
             && !pendingSessionReset
@@ -7756,7 +5517,7 @@ final class AppModel: ObservableObject {
 
     /// No assistant bubble may stay in the streaming state once the turn is
     /// over — a missed message_end otherwise leaves a blinking cursor forever.
-    private func finalizeStreamingBlocks() {
+    func finalizeStreamingBlocks() {
         if let id = streamingAssistantID {
             commitStreamingReply(id, finished: true)
         }
@@ -7839,7 +5600,7 @@ final class AppModel: ObservableObject {
 
     /// Called when the WebSocket drops mid-session: resolve every UI state
     /// that only a backend event could clear, so nothing stays stuck.
-    private func recoverFromLostConnection() {
+    func recoverFromLostConnection() {
         cancelSimulatorActions()
         flushPendingTokens()
         finalizeStreamingBlocks()
@@ -7892,7 +5653,7 @@ final class AppModel: ObservableObject {
         streamFlushDriver.request()
     }
 
-    private func flushPendingTokens() {
+    func flushPendingTokens() {
         streamFlushDriver.cancelPending()
         guard !pendingTokens.isEmpty || !pendingReasoning.isEmpty
                 || !pendingReasoningSections.isEmpty,
@@ -7916,7 +5677,7 @@ final class AppModel: ObservableObject {
         pendingReasoningSections = [:]
     }
 
-    private func updateSession(_ session: SessionSummary, body: [String: Any], success: String) {
+    func updateSession(_ session: SessionSummary, body: [String: Any], success: String) {
         Task {
             do {
                 _ = try await backend.patch(
@@ -8028,7 +5789,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func scheduleWorkspacePersistence() {
+    func scheduleWorkspacePersistence() {
         guard persistenceEnabled else { return }
         profilePersistenceTask?.cancel()
         profilePersistenceTask = Task { [weak self] in
@@ -8128,7 +5889,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func rebalanceContextBudget() {
+    func rebalanceContextBudget() {
         var used = 0
         var excluded = 0
         for index in contextFiles.indices where contextFiles[index].isIncluded {
@@ -8151,7 +5912,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func persistExpandedWorkspaces() {
+    func persistExpandedWorkspaces() {
         guard persistenceEnabled else { return }
         UserDefaults.standard.set(
             expandedWorkspaceIDs.sorted(),
@@ -8166,7 +5927,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func persistCheckpoints() {
+    func persistCheckpoints() {
         guard persistenceEnabled else { return }
         if let data = try? JSONEncoder().encode(checkpoints) {
             UserDefaults.standard.set(data, forKey: "Locus.checkpoints")
