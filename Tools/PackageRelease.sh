@@ -73,6 +73,15 @@ if [[ "${LOCUS_NOTARIZE:-0}" == "1" && "${zip_out:t}" != "Locus-macOS.zip" ]]; t
     echo "error: public direct-download releases must be named Locus-macOS.zip" >&2
     exit 1
 fi
+component_archives=()
+if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
+    # The shipped app resolves LocusComponentFeedURL against
+    # releases/latest/download, so the release this zip is destined for must
+    # also republish components.json and the archive(s) it points at.
+    # Checked before any signing so a missing component fails in seconds,
+    # not after the notarization wait.
+    component_archives=("${(@f)$("${repo_root}/Tools/VerifyComponentAssets.sh" "${zip_out:h}")}")
+fi
 revision_label="${revision}"
 if [[ "${dirty}" == "1" ]]; then
     revision_label="${revision}-dirty"
@@ -227,5 +236,10 @@ fi
 /bin/ls -lh "${zip_out}"
 if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
     "${repo_root}/Tools/GenerateAppcast.sh" "${zip_out}" "${zip_out:h}/appcast.xml"
-    echo "Upload Locus-macOS.zip and appcast.xml to the same draft GitHub release."
+    echo "Upload Locus-macOS.zip, appcast.xml, components.json, and" \
+        "${(j:, :)component_archives} to the same draft GitHub release."
+    echo "They travel together: installed apps resolve both the appcast and the"
+    echo "component feed via releases/latest/download, so a release published"
+    echo "without the component pair 404s the ChatGPT-plan download for every"
+    echo "installed copy."
 fi

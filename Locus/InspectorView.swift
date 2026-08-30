@@ -1758,7 +1758,7 @@ struct InspectorRunsTab: View {
                 Text(runCategoryTitle(run).uppercased())
                     .font(.locus(size: 7, weight: .bold))
                     .tracking(0.5)
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(LocusTheme.textSecondary)
             }
             .padding(.horizontal, 12)
             .frame(height: 31)
@@ -1797,7 +1797,12 @@ struct InspectorRunsTab: View {
                         .font(.locus(size: 11, weight: .bold))
                     Text(runStateTitle(run))
                         .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        // The darkest pixel `muted` glyphs draw at 1x is
+                        // #72746B — about 4.0:1 against the panel, under the
+                        // audit's 4.5:1 floor. Same class as the delegation
+                        // card fixed for #46, so every small text run on this
+                        // surface uses the secondary role instead.
+                        .foregroundStyle(LocusTheme.textSecondary)
                         .accessibilityIdentifier("runs.state")
                 }
                 Spacer()
@@ -1990,7 +1995,7 @@ struct InspectorRunsTab: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Changed files")
                                     .font(.locus(size: 8))
-                                    .foregroundStyle(LocusTheme.muted)
+                                    .foregroundStyle(LocusTheme.textSecondary)
                                 ForEach(model.gitWorkspace.gitChanges.prefix(8)) { change in
                                     Text("\(change.status.marker)  \(change.path)")
                                         .font(.locus(size: 7, design: .monospaced))
@@ -1999,7 +2004,7 @@ struct InspectorRunsTab: View {
                                 if model.gitWorkspace.gitChanges.count > 8 {
                                     Text("+ \(model.gitWorkspace.gitChanges.count - 8) more")
                                         .font(.locus(size: 7))
-                                        .foregroundStyle(LocusTheme.muted)
+                                        .foregroundStyle(LocusTheme.textSecondary)
                                 }
                             }
                         }
@@ -2027,7 +2032,7 @@ struct InspectorRunsTab: View {
                         }
                     }
                     .font(.locus(size: 7, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(LocusTheme.textSecondary)
                     .padding(.top, 6)
                 }
                 .font(.locus(size: 8, weight: .semibold))
@@ -2051,7 +2056,7 @@ struct InspectorRunsTab: View {
                 if attempts.isEmpty && waitingJobs.isEmpty {
                     Text("No jobs were assigned for this run.")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(LocusTheme.textSecondary)
                 } else {
                     ForEach(attempts) { attempt in
                         agentTreeRow(attempt, run: run)
@@ -2065,7 +2070,7 @@ struct InspectorRunsTab: View {
                                     .font(.locus(size: 8, weight: .bold))
                                 Text("· waiting")
                                     .font(.locus(size: 7, design: .monospaced))
-                                    .foregroundStyle(LocusTheme.muted)
+                                    .foregroundStyle(LocusTheme.textSecondary)
                             }
                             Text(job.goal)
                                 .font(.locus(size: 8))
@@ -2074,7 +2079,7 @@ struct InspectorRunsTab: View {
                             if !job.dependencies.isEmpty {
                                 Text("Runs after: \(job.dependencies.joined(separator: ", "))")
                                     .font(.locus(size: 7))
-                                    .foregroundStyle(LocusTheme.muted)
+                                    .foregroundStyle(LocusTheme.textSecondary)
                             }
                         }
                         .padding(.leading, 3)
@@ -2440,7 +2445,7 @@ struct InspectorRunsTab: View {
                 Spacer()
                 Text(activity.state.title)
                     .font(.locus(size: 7, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(LocusTheme.textSecondary)
             }
             Text(activity.goal)
                 .font(.locus(size: 8))
@@ -2450,7 +2455,7 @@ struct InspectorRunsTab: View {
                   activity.executionEngine.replacingOccurrences(of: "_", with: " ")]
                 .filter { !$0.isEmpty }.joined(separator: " · "))
                 .font(.locus(size: 7, design: .monospaced))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(LocusTheme.textSecondary)
                 .lineLimit(1)
             if !activity.output.isEmpty, activity.output != "Branch started" {
                 Text(activity.output)
@@ -2489,7 +2494,7 @@ struct InspectorRunsTab: View {
                 Spacer()
                 Text(attempt.state.replacingOccurrences(of: "_", with: " "))
                     .font(.locus(size: 7, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(LocusTheme.textSecondary)
             }
             Text(attempt.goal)
                 .font(.locus(size: 8))
@@ -2499,7 +2504,7 @@ struct InspectorRunsTab: View {
                   attempt.resolvedExecutionEngine.replacingOccurrences(of: "_", with: " ")]
                 .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                 .font(.locus(size: 7, design: .monospaced))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(LocusTheme.textSecondary)
                 .lineLimit(1)
             if let output = attempt.output, !output.isEmpty {
                 Text(output)
@@ -2511,7 +2516,7 @@ struct InspectorRunsTab: View {
             if !attempt.evidence.isEmpty {
                 Text("Evidence · \(attempt.evidence.joined(separator: ", "))")
                     .font(.locus(size: 7))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(LocusTheme.textSecondary)
                     .lineLimit(4)
             }
             if !attempt.uncertainties.isEmpty {
@@ -2522,7 +2527,7 @@ struct InspectorRunsTab: View {
             }
             Text("\(attempt.modelCalls) calls · \((attempt.promptTokens + attempt.completionTokens).formatted()) tokens")
                 .font(.locus(size: 7, design: .monospaced))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(LocusTheme.textSecondary)
         }
         .padding(8)
         .background(LocusTheme.white.opacity(0.55))
@@ -2604,7 +2609,7 @@ struct InspectorRunsTab: View {
                                 ? "Events will appear here as this run progresses."
                                 : "Try a different search term, or switch on Raw events.")
                                 .font(.locus(size: 8))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(LocusTheme.textSecondary)
                                 .multilineTextAlignment(.center)
                         }
                         .padding(24)
@@ -2684,7 +2689,7 @@ struct InspectorRunsTab: View {
 
     private func metricRow(_ title: String, _ value: String) -> some View {
         HStack {
-            Text(title).foregroundStyle(LocusTheme.muted)
+            Text(title).foregroundStyle(LocusTheme.textSecondary)
             Spacer()
             Text(value).fontWeight(.semibold)
         }
@@ -2741,11 +2746,11 @@ struct InspectorRunsTab: View {
                         .font(.locus(size: 8, weight: .bold))
                     Text("· \(attempt.state.replacingOccurrences(of: "_", with: " "))")
                         .font(.locus(size: 7, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(LocusTheme.textSecondary)
                 }
                 Text("\(attempt.provider ?? "Unknown provider") · \(attempt.model ?? "Unknown model") · \(attempt.resolvedExecutionEngine.replacingOccurrences(of: "_", with: " "))")
                     .font(.locus(size: 7, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(LocusTheme.textSecondary)
                     .lineLimit(1)
                 Text(attempt.goal)
                     .font(.locus(size: 8))
@@ -2760,12 +2765,12 @@ struct InspectorRunsTab: View {
                 if !attempt.evidence.isEmpty {
                     Text("Evidence · \(attempt.evidence.joined(separator: ", "))")
                         .font(.locus(size: 7))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(LocusTheme.textSecondary)
                         .lineLimit(3)
                 }
                 Text("\(attempt.modelCalls) calls · \(attempt.promptTokens + attempt.completionTokens) tokens · \(attempt.elapsedMilliseconds) ms")
                     .font(.locus(size: 7, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(LocusTheme.textSecondary)
             }
             Spacer(minLength: 0)
             if !run.isSoloSwarm,
@@ -2804,7 +2809,7 @@ struct InspectorRunsTab: View {
                         HStack(alignment: .top, spacing: 8) {
                             Text("\(event.sequence)")
                                 .font(.locus(size: 7, design: .monospaced))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(LocusTheme.textSecondary)
                                 .frame(width: 30, alignment: .trailing)
                             Circle().fill(color(for: event.type)).frame(width: 6, height: 6).padding(.top, 3)
                             VStack(alignment: .leading, spacing: 2) {
@@ -2817,14 +2822,14 @@ struct InspectorRunsTab: View {
                                 if let detail = event.detail, detail != event.title {
                                     Text(detail)
                                         .font(.locus(size: 7, design: .monospaced))
-                                        .foregroundStyle(LocusTheme.muted)
+                                        .foregroundStyle(LocusTheme.textSecondary)
                                         .lineLimit(12)
                                         .textSelection(.enabled)
                                 }
                                 if let job = event.jobID {
                                     Text("job \(job)\(event.attemptID.map { " · \($0)" } ?? "")")
                                         .font(.locus(size: 7, design: .monospaced))
-                                        .foregroundStyle(LocusTheme.muted)
+                                        .foregroundStyle(LocusTheme.textSecondary)
                                 }
                             }
                             Spacer(minLength: 0)
@@ -2851,7 +2856,7 @@ struct InspectorRunsTab: View {
                                     .font(.locus(size: 9, weight: .bold))
                                 Text("attempt \(attempt.attempt)")
                                     .font(.locus(size: 7, design: .monospaced))
-                                    .foregroundStyle(LocusTheme.muted)
+                                    .foregroundStyle(LocusTheme.textSecondary)
                                 Spacer()
                                 if model.teamRunPresentation(
                                     for: run.id, durable: run
@@ -2886,11 +2891,11 @@ struct InspectorRunsTab: View {
                             Text(attempt.goal).font(.locus(size: 8)).lineLimit(4)
                             Text("\(attempt.role ?? "specialist") · \(attempt.state)")
                                 .font(.locus(size: 7, design: .monospaced))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(LocusTheme.textSecondary)
                             if let provider = attempt.provider, !provider.isEmpty {
                                 Text("\(provider) · \(attempt.model ?? "")")
                                     .font(.locus(size: 7, design: .monospaced))
-                                    .foregroundStyle(LocusTheme.muted)
+                                    .foregroundStyle(LocusTheme.textSecondary)
                             }
                             if let output = attempt.output, !output.isEmpty {
                                 Text(output)
