@@ -1404,6 +1404,10 @@ struct OrchestrationEvent: Identifiable, Codable, Hashable {
     /// attempt carries the bounded output, while hundreds of token rows make
     /// the durable timeline and Accessibility tree needlessly expensive.
     var isTransientStream: Bool { type == "agent_job_stream" }
+    /// Most emitters stamp their run's id into the payload; a few backend
+    /// paths (landing checks, memory review) persist without one, so absence
+    /// means "the run this event was fetched for", not "no run".
+    var runID: String? { text("run_id") }
     var jobID: String? { text("job_id") }
     var attemptID: String? { text("attempt_id") }
     var nodeID: String? { text("node_id") }
@@ -1498,10 +1502,12 @@ struct RunWork: Equatable {
                 guard case .object(let object) = item,
                       let path = object["path"]?.string, !path.isEmpty else { continue }
                 if effects[path] == nil { order.append(path) }
+                let effect = object["effect"]?.string ?? "edit"
                 // A file created and then edited in the same run is still new to
-                // the reader, so "create" is the fact worth keeping.
-                if effects[path] != "create" {
-                    effects[path] = object["effect"]?.string ?? "edit"
+                // the reader, so "create" is the fact worth keeping — but a later
+                // delete undoes the creation rather than being masked by it.
+                if effects[path] != "create" || effect == "delete" {
+                    effects[path] = effect
                 }
             }
         }
