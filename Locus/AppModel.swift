@@ -361,7 +361,8 @@ final class AppModel: ObservableObject {
     /// through to transcript UI state.
     @Published var transcriptJumpTarget: UUID?
     @Published var streamRevision = 0
-    @Published var toast: AppToast?
+    let toastCenter = ToastCenter()
+    private var toastCenterBridge: AnyCancellable?
     var toastMessage: String? { toast?.message }
     @Published var lifecycleRecoveryMessage: String?  // internal(for: AppModel+UITestFixtures)
     @Published var backendLogHint = ""
@@ -490,7 +491,6 @@ final class AppModel: ObservableObject {
     private var proxyHealthMonitorTask: Task<Void, Never>?
     private var proxyRouteRestartPending = false
     private var restoredTranscriptContext: String?
-    private var toastTask: Task<Void, Never>?
     private var pendingDeletedChat: DeletedChatUndo?
     private var profilePersistenceTask: Task<Void, Never>?
     private var settingsPersistenceTask: Task<Void, Never>?
@@ -925,6 +925,10 @@ final class AppModel: ObservableObject {
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
         activityBridge = activity.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        toastCenter.onToastReplaced = { [weak self] in self?.pendingDeletedChat = nil }
+        toastCenterBridge = toastCenter.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         simulatorControl.capabilityDidChange = { [weak self] in
@@ -7052,7 +7056,7 @@ final class AppModel: ObservableObject {
 
     func performToastAction() {
         guard toast?.actionTitle != nil, let deletion = pendingDeletedChat else { return }
-        toastTask?.cancel()
+        toastCenter.cancelPendingDismissal()
         toast = nil
         pendingDeletedChat = nil
         Task {
@@ -12510,25 +12514,6 @@ final class AppModel: ObservableObject {
             contextNotice = "\(excluded) file\(excluded == 1 ? "" : "s") excluded to preserve model response space."
         } else if used >= Int(Double(contextBudgetTokens) * 0.8) {
             contextNotice = "Context pack is near its \(contextBudgetTokens.formatted()) token budget."
-        }
-    }
-
-    func showToast(
-        _ message: String,
-        actionTitle: String? = nil,
-        duration: Double = 2.4
-    ) {
-        toastTask?.cancel()
-        if actionTitle == nil { pendingDeletedChat = nil }
-        toast = AppToast(
-            message: message,
-            actionTitle: actionTitle
-        )
-        toastTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(duration))
-            guard !Task.isCancelled else { return }
-            self?.toast = nil
-            self?.pendingDeletedChat = nil
         }
     }
 
