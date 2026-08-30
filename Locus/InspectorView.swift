@@ -2143,13 +2143,19 @@ struct InspectorRunsTab: View {
     private func runSummaryStrip(_ run: OrchestrationRun, work: RunWork) -> some View {
         let files = work.files.count
         let tokens = swarmTotalTokens(run)
+        let tokensHelp = if let calls = swarmModelCalls(run) {
+            "Billed input + output across \(calls) model call\(calls == 1 ? "" : "s"). Each call re-sends the conversation and tool context."
+        } else {
+            "Billed input + output across every model call. Each call re-sends the conversation and tool context."
+        }
         return ViewThatFits(in: .horizontal) {
             HStack(alignment: .top, spacing: 10) {
                 summaryStat(runDuration(run), "Duration")
                 summaryStat(runStepCount(run, work: work).formatted(), "Steps")
                 summaryStat(files.formatted(), files == 1 ? "File" : "Files")
                 summaryStat(
-                    tokens?.formatted(.number.notation(.compactName)) ?? "—", "Tokens"
+                    tokens?.formatted(.number.notation(.compactName)) ?? "—", "Tokens",
+                    help: tokensHelp
                 )
             }
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 10) {
@@ -2160,7 +2166,8 @@ struct InspectorRunsTab: View {
                 GridRow {
                     summaryStat(files.formatted(), files == 1 ? "File" : "Files")
                     summaryStat(
-                        tokens?.formatted(.number.notation(.compactName)) ?? "—", "Tokens"
+                        tokens?.formatted(.number.notation(.compactName)) ?? "—", "Tokens",
+                        help: tokensHelp
                     )
                 }
             }
@@ -2172,7 +2179,7 @@ struct InspectorRunsTab: View {
         .accessibilityIdentifier("runs.summaryStrip")
     }
 
-    private func summaryStat(_ value: String, _ label: String) -> some View {
+    private func summaryStat(_ value: String, _ label: String, help: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(value)
                 .font(.locus(size: 15, weight: .semibold))
@@ -2185,6 +2192,7 @@ struct InspectorRunsTab: View {
                 .foregroundStyle(LocusTheme.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .help(help ?? "")
         // One element, one phrase: read as "Steps, 4" rather than as two
         // unrelated fragments. A collapsed element does not carry a separate
         // accessibility value, so the number belongs in the label.

@@ -778,11 +778,12 @@ def test_parity_schemas_add_submit_plan_only_in_plan_mode(tmp_path):
 class MeteredManagedRuntime(FakeManagedRuntime):
     """A helper that bills each model call separately, as the real one does."""
 
-    def __init__(self, *, total=None, calls=2, tools=()):
+    def __init__(self, *, total=None, calls=2, tools=(), include_last=True):
         super().__init__()
         self.total = total
         self.calls = calls
         self.tools = list(tools)
+        self.include_last = include_last
 
     def run_turn(self, *, text, event_handler, tool_handler=None, **_kwargs):
         self.turn_texts.append(text)
@@ -790,7 +791,9 @@ class MeteredManagedRuntime(FakeManagedRuntime):
             for name, arguments in self.tools:
                 tool_handler(name, arguments, f"call-{name}")
         for index in range(self.calls):
-            usage = {"last": {"inputTokens": 100, "outputTokens": 10 + index}}
+            usage = {}
+            if self.include_last:
+                usage["last"] = {"inputTokens": 100, "outputTokens": 10 + index}
             if self.total is not None:
                 usage["total"] = self.total
             event_handler({
@@ -828,7 +831,13 @@ def test_managed_turn_counts_every_model_call_and_tool_step(tmp_path):
     assert terminal["completion_tokens"] == 10 + 11 + 12
 
 
-def test_managed_turn_prefers_a_server_reported_total(tmp_path):
+def test_managed_turn_reports_the_per_call_sum_even_when_a_total_is_present(tmp_path):
+    """The thread ``total`` is cumulative; it must never displace the turn's own sum.
+
+    An earlier build preferred the total wholesale, so every turn re-billed
+    the whole thread and a trivial late turn read as tens of thousands of
+    tokens in the Runs panel.
+    """
     runtime = MeteredManagedRuntime(
         calls=2, total={"inputTokens": 900, "outputTokens": 90}
     )
@@ -836,10 +845,43 @@ def test_managed_turn_prefers_a_server_reported_total(tmp_path):
 
     terminal = _turn_done(core, runtime, allow_tools=False)
 
-    assert terminal["prompt_tokens"] == 900
-    assert terminal["completion_tokens"] == 90
+    assert terminal["prompt_tokens"] == 200
+    assert terminal["completion_tokens"] == 10 + 11
     assert terminal["model_calls"] == 2
     assert terminal["tool_steps"] == 0
+
+
+def test_managed_turn_attributes_only_the_thread_total_delta(tmp_path):
+    """Without per-call updates, a turn claims only its slice of the total."""
+    runtime = MeteredManagedRuntime(
+        calls=1, include_last=False,
+        total={"inputTokens": 900, "outputTokens": 90},
+    )
+    core = _managed_core(tmp_path, runtime)
+
+    first = _turn_done(core, runtime, allow_tools=False)
+    assert first["prompt_tokens"] == 900
+    assert first["completion_tokens"] == 90
+
+    runtime.total = {"inputTokens": 950, "outputTokens": 100}
+    second = _turn_done(core, runtime, allow_tools=False)
+    assert second["prompt_tokens"] == 50
+    assert second["completion_tokens"] == 10
+
+
+def test_managed_turn_survives_a_shrinking_thread_total(tmp_path):
+    """A restarted or compacted thread resets the baseline, never goes negative."""
+    runtime = MeteredManagedRuntime(
+        calls=1, include_last=False,
+        total={"inputTokens": 900, "outputTokens": 90},
+    )
+    core = _managed_core(tmp_path, runtime)
+    _turn_done(core, runtime, allow_tools=False)
+
+    runtime.total = {"inputTokens": 100, "outputTokens": 10}
+    terminal = _turn_done(core, runtime, allow_tools=False)
+    assert terminal["prompt_tokens"] == 100
+    assert terminal["completion_tokens"] == 10
 
 
 def test_managed_turn_without_usage_updates_still_reports_one_call(tmp_path):

@@ -345,6 +345,10 @@ class AgentCore:
         self._chatgpt_thread_protocol = ""
         self._chatgpt_thread_history_revision = 0
         self._chatgpt_thread_needs_resume = False
+        # The helper's ``total`` token usage is cumulative for the whole
+        # thread; these baselines let a turn claim only its own delta.
+        self._chatgpt_thread_total_input = 0
+        self._chatgpt_thread_total_output = 0
         self.max_iterations = iteration_limit(
             max_iterations or self.config.get("max_iterations")
         )
@@ -1391,6 +1395,8 @@ class AgentCore:
         self._chatgpt_thread_protocol = ""
         self._chatgpt_thread_history_revision = 0
         self._chatgpt_thread_needs_resume = False
+        self._chatgpt_thread_total_input = 0
+        self._chatgpt_thread_total_output = 0
 
     def chatgpt_parity_active(self, allow_tools: bool = True) -> bool:
         """True when this turn runs under the Codex-native parity contract.
@@ -2197,13 +2203,28 @@ class AgentCore:
                             "type": "note",
                             "text": "Locus could not write a closing summary for this turn.",
                         })
-                # A helper that reports a running ``total`` is authoritative;
-                # otherwise the per-call sum built above is the honest figure.
+                # The per-call sum built above is turn-scoped by construction.
+                # The helper's ``total`` is cumulative for the whole thread, so
+                # it may only stand in as a delta against the previous turn's
+                # baseline — attributing it wholesale re-billed the entire
+                # thread to every turn.
                 total = usage.get("total") if isinstance(usage.get("total"), dict) else {}
-                prompt = max(int(total.get("inputTokens") or 0), 0) or native_prompt_tokens
-                completion = (
-                    max(int(total.get("outputTokens") or 0), 0) or native_completion_tokens
-                )
+                total_input = max(int(total.get("inputTokens") or 0), 0)
+                total_output = max(int(total.get("outputTokens") or 0), 0)
+                if (
+                    total_input < self._chatgpt_thread_total_input
+                    or total_output < self._chatgpt_thread_total_output
+                ):
+                    # The helper restarted or compacted the thread: totals reset.
+                    self._chatgpt_thread_total_input = 0
+                    self._chatgpt_thread_total_output = 0
+                delta_input = max(total_input - self._chatgpt_thread_total_input, 0)
+                delta_output = max(total_output - self._chatgpt_thread_total_output, 0)
+                if total_input or total_output:
+                    self._chatgpt_thread_total_input = total_input
+                    self._chatgpt_thread_total_output = total_output
+                prompt = native_prompt_tokens or delta_input
+                completion = native_completion_tokens or delta_output
                 self.total_prompt_tokens += prompt
                 self.total_completion_tokens += completion
                 if self._interrupt.is_set():
