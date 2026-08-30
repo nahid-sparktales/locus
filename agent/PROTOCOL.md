@@ -836,6 +836,31 @@ plan-decision boundary, not a general progress event.
 The client presents Proceed, Revise, and Cancel only after the surrounding Plan
 turn completes successfully. Reconnection replay preserves this event's order.
 
+### `question_ready`
+
+Emitted after the permission-free `ask_user_question` tool succeeds. The tool
+does not block the turn: the model is told to end its turn, and the client
+presents the question popup only after the surrounding turn completes with
+`reason: "complete"`. The user's answer returns as an ordinary `user_message`
+— there is no dedicated reply message. Reconnection replay preserves this
+event's order.
+
+```json
+{ "type": "question_ready", "question": {
+  "id": "8f38c1d2d9a04bc1", "title": "Reddit scope",
+  "question": "Should latest posts mean the site-wide feed or one subreddit?",
+  "options": [
+    { "label": "Site-wide /new feed", "detail": "" },
+    { "label": "One subreddit", "detail": "Passed as an argument" }
+  ],
+  "recommended": "Site-wide /new feed"
+} }
+```
+
+`options` may be empty; the client always offers a free-text answer. `recommended`
+is the model's suggested answer — an option label when it matches one, freeform
+otherwise.
+
 ### `steer_ack` / `steer_applied`
 
 `steer_ack {text, state}` accepts a steering message. `state` is
@@ -1016,8 +1041,9 @@ or `tool_result` for the same call.
 ```
 
 `id` (10 hex chars) correlates this call across all later events. `auto` is true
-when the tool runs without asking (safe tools `read_file`/`glob`/`grep`/`list_dir`,
-tools previously allowed with `always`, or `--dangerously-skip-permissions`).
+when the tool runs without asking (safe tools `read_file`/`glob`/`grep`/`list_dir`/
+`ask_user_question`, tools previously allowed with `always`, or
+`--dangerously-skip-permissions`).
 
 ### `permission_request`
 Only when `auto` is false. The turn blocks until a `permission_decision` arrives.

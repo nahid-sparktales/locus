@@ -836,4 +836,6 @@ def test_root_plan_surface_is_read_only_and_keeps_external_research(tmp_path):
     assert names.isdisjoint({
         "write_file", "edit_file", "multi_edit", "bash", "background_service",
         "delegate_read_only", "todo_write", "submit_plan", "propose_memory",
+        # Only the visible root may address the user.
+        "ask_user_question",
     })

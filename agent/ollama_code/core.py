@@ -94,6 +94,7 @@ _SOLO_ROOT_ONLY_TOOLS = {
     "delegate_read_only",
     "todo_write",
     "submit_plan",
+    "ask_user_question",
     "capture_context_snapshot",
     "propose_memory",
     "record_skill_observation",
@@ -1334,6 +1335,7 @@ class AgentCore:
         self._clear_chatgpt_thread()
         self.tool_ctx.todos = []
         self.tool_ctx.plan_document = None
+        self.tool_ctx.user_question = None
         self._emit({"type": "todo_update", "todos": []})
         self.mcp.refresh(wait=False)
         self._emit_info()
@@ -1381,6 +1383,7 @@ class AgentCore:
         self._clear_chatgpt_thread()
         self.tool_ctx.todos = []
         self.tool_ctx.plan_document = None
+        self.tool_ctx.user_question = None
         self.tool_ctx.read_files.clear()
         self._last_user_message = None
         self._pending_computer_screenshot = None
@@ -1440,6 +1443,14 @@ class AgentCore:
                 "You are in Locus Plan mode: investigate, then call the "
                 "submit_plan tool exactly once with your final implementation "
                 "plan. Do not modify any files in this mode."
+            )
+        if self.agent_mode == "grill":
+            sections.append(
+                "You are in Locus Grill mode: after writing your question in "
+                "the transcript, deliver it by calling the ask_user_question "
+                "tool with the same title, question, options, and your "
+                "recommended answer, then end your turn. Do not modify any "
+                "files in this mode."
             )
         sections.append("## Locus answer contract\n" + ANSWER_CONTRACT)
         return "\n\n".join(sections)
@@ -3407,6 +3418,8 @@ class AgentCore:
             self._emit({"type": "todo_update", "todos": self.tool_ctx.todos})
         if tc.name == "submit_plan" and self.tool_ctx.plan_document is not None and ok:
             self._emit({"type": "plan_ready", "plan": dict(self.tool_ctx.plan_document)})
+        if tc.name == "ask_user_question" and self.tool_ctx.user_question is not None and ok:
+            self._emit({"type": "question_ready", "question": dict(self.tool_ctx.user_question)})
         return result
 
     def _targets_workspace(self, tc: ToolCall) -> bool:

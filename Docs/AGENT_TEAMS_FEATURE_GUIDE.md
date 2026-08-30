@@ -34,7 +34,7 @@ Example: leave the composer in Work and send `Find why the tests fail and fix it
 
 ### Reliable plan approval
 
-Plan mode recognizes a completed plan through the structured plan tool and safe deterministic fallbacks. Clarifying questions do not trigger approval.
+Plan mode recognizes a completed plan through the structured plan tool and safe deterministic fallbacks. Clarifying questions do not trigger approval — they raise the question prompt instead (see below).
 
 After a successful planning turn, Locus offers:
 
@@ -43,6 +43,10 @@ After a successful planning turn, Locus offers:
 - **Cancel**: return to adaptive Work without implementing
 
 Queued work waits until the decision is resolved, and the pending choice survives reconnects. Use `1`–`3`, arrow keys, Return, or Escape; Escape maps to Cancel.
+
+### Questions from the agent
+
+When the agent asks the user a question — most prominently Grill mode's one-at-a-time clarifying questions — it calls the `ask_user_question` tool, and the question replaces the composer once the turn completes, the way plan approval does. The popup shows the question, its multiple-choice options when there are any (the agent's recommended answer preselected), and always a free-text row for typing your own answer. Grill turns that write the `❓` question block without calling the tool are detected from the text as a fallback. The answer is sent back as an ordinary user message; Escape dismisses the popup so you can answer in the composer instead, and queued work waits until the question is resolved or dismissed.
 
 Example: ask Plan mode to design a database migration. Choose Revise and send `Keep the old schema readable for one release`, then choose Proceed when the revised plan is ready.
 

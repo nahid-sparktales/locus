@@ -15,6 +15,8 @@ Each question should be formatted like so:
 ➡️ <your recommended answer>
 ```
 
+After writing the question block, deliver it by calling the `ask_user_question` tool with the same title, question body, the multiple choices as `options`, and the `➡️` recommendation as `recommended` — the app raises it as an answer popup. Then end your turn and wait. Keep the markdown block too: it is the transcript's readable record.
+
 Each answer reshapes the tree: settled decisions push the frontier outward and unblock questions that depended on them. Recompute the frontier before asking the next single question. A question whose answer depends on the current question belongs later.
 
 Finding _facts_ is your job, never the user's. When a frontier question needs a fact from the environment, inspect the repository and available evidence directly; don't ask the user for anything you can discover safely. The _decisions_ are the user's: put each to them and wait.

@@ -355,8 +355,12 @@ final class AppModel: ObservableObject {
     @Published var selectedMode: WorkMode = .work {
         didSet {
             // Changing modes is taking a stance on what happens next, so a
-            // pending "implement this plan?" prompt would only contradict it.
-            if selectedMode != oldValue { planApprovalPending = false }
+            // pending "implement this plan?" prompt — or an unanswered
+            // question — would only contradict it.
+            if selectedMode != oldValue {
+                planApprovalPending = false
+                clearPendingQuestion()
+            }
             if selectedMode != .ask { lastAgenticMode = selectedMode }
             // Just Chat is deliberately not a workspace surface. Remember the
             // inspector's prior state so leaving Chat restores exactly what
@@ -413,6 +417,13 @@ final class AppModel: ObservableObject {
     /// is replaced by PlanApprovalPromptView, the way permission requests are.
     @Published private(set) var planApprovalPending = false
     @Published private(set) var activePlan: PlanDocument?
+    /// The question a completed turn asked the user. While set, the composer
+    /// input is replaced by QuestionPromptView, the way plan approval is.
+    @Published private(set) var pendingUserQuestion: UserQuestion?
+    /// Captured from `question_ready` mid-turn; armed only when the turn
+    /// completes, so an interrupted or errored turn never offers a stale
+    /// question.
+    private var capturedQuestionThisTurn: UserQuestion?
     let gitWorkspace = GitWorkspaceModel()
     let workspaceFiles = WorkspaceFileModel()
     /// Deliberately not bridged into `objectWillChange`: the Notebook sheet
@@ -3612,6 +3623,7 @@ final class AppModel: ObservableObject {
         planApprovalPending = false
         planTodosChangedThisTurn = false
         planReadyThisTurn = false
+        clearPendingQuestion()
         // Agent-side slash commands (/init and friends) may write todos, but
         // running one is housekeeping, never a plan worth offering to build.
         turnDispatchedInPlanMode = dispatchedMode == .plan && !isSlashPassthrough
@@ -4001,6 +4013,7 @@ final class AppModel: ObservableObject {
         turnStartedAt = Date()
         planApprovalPending = false
         planTodosChangedThisTurn = false
+        clearPendingQuestion()
         turnDispatchedInPlanMode = false
         turnDispatchedMode = nil
         blocks.append(ChatBlock(kind: .user, text: text))
@@ -4078,7 +4091,8 @@ final class AppModel: ObservableObject {
     }
 
     private func drainQueuedMessages() {
-        guard !isBusy, !hasPendingPermission, !planApprovalPending, !queuedMessages.isEmpty else {
+        guard !isBusy, !hasPendingPermission, !planApprovalPending,
+              pendingUserQuestion == nil, !queuedMessages.isEmpty else {
             return
         }
         guard isAgentOnline else { return }
@@ -4180,6 +4194,7 @@ final class AppModel: ObservableObject {
         planApprovalPending = false
         planTodosChangedThisTurn = false
         planReadyThisTurn = false
+        clearPendingQuestion()
         turnDispatchedInPlanMode = selectedMode == .plan
         turnDispatchedMode = selectedMode
         sessionOverview.emit(.status(
@@ -8046,6 +8061,7 @@ final class AppModel: ObservableObject {
                 todos = []
                 activePlan = nil
                 planApprovalPending = false
+                clearPendingQuestion()
                 queuedMessages = []
                 restoredTranscriptContext = nil
                 // Pre-acknowledge the session's workspace so a later
@@ -9462,6 +9478,51 @@ final class AppModel: ObservableObject {
                 )
             }
         }
+    }
+
+    /// The chosen option's label, the typed elaboration, or both — the plain
+    /// prose the model reads back as the next user message.
+    nonisolated static func composedQuestionAnswer(
+        option: UserQuestionOption?, freeText: String
+    ) -> String? {
+        var parts: [String] = []
+        if let label = option?.label.trimmingCharacters(in: .whitespaces), !label.isEmpty {
+            parts.append(label)
+        }
+        let typed = freeText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !typed.isEmpty { parts.append(typed) }
+        guard !parts.isEmpty else { return nil }
+        return parts.joined(separator: "\n\n")
+    }
+
+    /// Sends the user's answer to the pending question as an ordinary user
+    /// message — the turn already ended, so there is nothing to unblock.
+    func resolveUserQuestion(option: UserQuestionOption?, freeText: String) {
+        guard pendingUserQuestion != nil,
+              let answer = Self.composedQuestionAnswer(option: option, freeText: freeText)
+        else { return }
+        guard isAgentOnline else {
+            showToast("Reconnect the local agent to answer")
+            return
+        }
+        pendingUserQuestion = nil
+        Task { [weak self] in
+            guard let self else { return }
+            send(answer, preservingDraftOnFailure: false, requeueingOnFailure: true)
+        }
+    }
+
+    /// Dismisses the question popup without answering; the question stays
+    /// readable in the transcript and the composer takes over.
+    func dismissUserQuestion() {
+        guard pendingUserQuestion != nil else { return }
+        pendingUserQuestion = nil
+        drainQueuedMessages()
+    }
+
+    private func clearPendingQuestion() {
+        pendingUserQuestion = nil
+        capturedQuestionThisTurn = nil
     }
 
     func openWorkspaceInFinder() {
@@ -13150,6 +13211,14 @@ final class AppModel: ObservableObject {
                 }
             }
 
+        case "question_ready":
+            if let raw = event["question"] as? [String: Any],
+               let question = decode(UserQuestion.self, from: raw),
+               !question.question.isEmpty || !question.options.isEmpty
+            {
+                capturedQuestionThisTurn = question
+            }
+
         case "background_services_changed":
             refreshBackgroundServices(recordingOutputs: (event["action"] as? String) == "start")
 
@@ -13202,8 +13271,19 @@ final class AppModel: ObservableObject {
             streamingAssistantID = nil
             streamedCharsThisTurn = 0
             streamingReply.resetTurn()
+            let assistantText = blocks.last(where: { $0.kind == .assistant })?.text ?? ""
+            if reason == "complete" {
+                if let captured = capturedQuestionThisTurn {
+                    pendingUserQuestion = captured
+                } else if dispatchedMode == .grill,
+                          let detected = QuestionSignalDetector.question(from: assistantText)
+                {
+                    // The Grill skill's ❓ block, for a model that wrote the
+                    // question but skipped the tool, or a backend without it.
+                    pendingUserQuestion = detected
+                }
+            }
             if reason == "complete", turnDispatchedInPlanMode, selectedMode == .plan {
-                let assistantText = blocks.last(where: { $0.kind == .assistant })?.text ?? ""
                 if !planReadyThisTurn,
                    let fallback = PlanSignalDetector.document(
                     from: assistantText,
@@ -13213,12 +13293,16 @@ final class AppModel: ObservableObject {
                     activePlan = fallback
                     planReadyThisTurn = true
                 }
+                // A structured question outranks the plan prompt: the model
+                // is explicitly still asking, not proposing.
                 planApprovalPending = planReadyThisTurn
+                    && pendingUserQuestion == nil
                     && !(activePlan?.steps.isEmpty ?? true)
                     && !PlanSignalDetector.isClarifyingResponse(assistantText)
             }
             planTodosChangedThisTurn = false
             planReadyThisTurn = false
+            capturedQuestionThisTurn = nil
             turnDispatchedInPlanMode = false
             turnDispatchedMode = nil
             turnDispatchedTeamRunID = nil
@@ -13255,6 +13339,7 @@ final class AppModel: ObservableObject {
             pendingRetry = false
             steeringState = nil
             planApprovalPending = false
+            clearPendingQuestion()
             planTodosChangedThisTurn = false
             turnDispatchedInPlanMode = false
             turnDispatchedMode = nil
@@ -13311,6 +13396,7 @@ final class AppModel: ObservableObject {
                 todos = []
                 activePlan = nil
                 planApprovalPending = false
+                clearPendingQuestion()
             } else if let text = event["text"] as? String, !text.isEmpty {
                 blocks.append(
                     ChatBlock(
@@ -13376,6 +13462,8 @@ final class AppModel: ObservableObject {
             todos = checkpoint.todos
             activePlan = checkpoint.activePlan
             planApprovalPending = false
+            // Questions are deliberately not persisted in checkpoints.
+            clearPendingQuestion()
             contextFiles = checkpoint.contextFiles
             queuedMessages = []
             restoredTranscriptContext = transcriptContext(from: checkpoint.blocks)
@@ -13402,6 +13490,7 @@ final class AppModel: ObservableObject {
             todos = []
             activePlan = nil
             planApprovalPending = false
+            clearPendingQuestion()
             planTodosChangedThisTurn = false
             pendingRetry = false
             isBusy = true
@@ -13420,6 +13509,7 @@ final class AppModel: ObservableObject {
             todos = []
             activePlan = nil
             planApprovalPending = false
+            clearPendingQuestion()
             queuedMessages = []
             streamingAssistantID = nil
             streamingReply.resetTurn()
@@ -13664,6 +13754,7 @@ final class AppModel: ObservableObject {
             todos = []
             activePlan = nil
             planApprovalPending = false
+            clearPendingQuestion()
             restoredTranscriptContext = nil
         }
         soloSwarmEnabled = true
@@ -14389,6 +14480,25 @@ final class AppModel: ObservableObject {
             )
             todos = activePlan?.steps.map { TodoItem(content: $0, status: .pending) } ?? []
             planApprovalPending = true
+        }
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_QUESTION_PROMPT"] == "1" {
+            selectedMode = .grill
+            pendingUserQuestion = UserQuestion(
+                id: "seed-question-prompt",
+                title: "Retry backoff shape",
+                question: "Should retries back off exponentially or on a fixed interval?",
+                options: [
+                    UserQuestionOption(
+                        label: "Exponential with jitter",
+                        detail: "Spreads thundering herds"
+                    ),
+                    UserQuestionOption(
+                        label: "Fixed interval",
+                        detail: "Predictable, simpler to reason about"
+                    ),
+                ],
+                recommended: "Exponential with jitter"
+            )
         }
         seedUITestRunFixtureIfNeeded()
 
@@ -15979,6 +16089,26 @@ extension AppModel {
             resolvePlanApproval(decision == "approve" ? .proceed : .cancel)
             return .object(["resolved": .bool(true)])
         }
+        if kind == "question" {
+            guard let sessionID = CompanionPayload.string("chat_id", in: payload),
+                  sessionID == currentSessionID,
+                  let question = pendingUserQuestion else {
+                throw CompanionProtocolError(code: "approval_expired", message: "That question is no longer waiting.")
+            }
+            if decision == "dismiss" {
+                dismissUserQuestion()
+                return .object(["resolved": .bool(true)])
+            }
+            let freeText = CompanionPayload.string("text", in: payload) ?? ""
+            let option = question.options.first {
+                $0.label.caseInsensitiveCompare(decision) == .orderedSame
+            }
+            guard option != nil || !freeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw CompanionProtocolError(code: "invalid_approval", message: "Choose an answer or type one.")
+            }
+            resolveUserQuestion(option: option, freeText: freeText)
+            return .object(["resolved": .bool(true)])
+        }
         guard let runID = CompanionPayload.string("run_id", in: payload),
               let run = visibleActivityRuns.first(where: { $0.id == runID }),
               let sessionID = run.sessionID,
@@ -16091,6 +16221,18 @@ extension AppModel {
                 "title": .string("Implementation plan is ready"),
                 "detail": .string("Approve to build it, or cancel and keep the plan."),
                 "decisions": .array([.string("approve"), .string("cancel")]),
+            ]))
+        }
+        if let question = pendingUserQuestion {
+            approvals.append(.object([
+                "kind": .string("question"),
+                "chat_id": .string(currentSessionID),
+                "title": .string(question.title),
+                "detail": .string(String(question.question.prefix(1_000))),
+                "recommended": question.recommended.nilIfEmpty.map(JSONValue.string) ?? .null,
+                "decisions": .array(
+                    question.options.map { .string($0.label) } + [.string("dismiss")]
+                ),
             ]))
         }
         return approvals
