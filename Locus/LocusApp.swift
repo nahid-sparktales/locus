@@ -901,7 +901,7 @@ private struct RememberConfirmationView: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                 Button("Save Memory") {
-                    model.rememberWorkspaceFact(
+                    model.knowledge.rememberWorkspaceFact(
                         title: title,
                         content: content,
                         tags: tags.split(separator: ",").map {

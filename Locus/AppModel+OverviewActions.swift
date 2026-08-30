@@ -188,7 +188,7 @@ extension AppModel {
             hasPendingPlanSteps: state.plan.contains { $0.state != .done },
             hasTestFiles: workspaceContainsTests,
             projectKind: workspaceProjectKind,
-            memoryConflictCount: memoryCandidates.filter(\.hasConflicts).count,
+            memoryConflictCount: knowledge.memoryCandidates.filter(\.hasConflicts).count,
             legacySuggestions: state.suggestions
         )
     }

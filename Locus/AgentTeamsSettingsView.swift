@@ -2345,7 +2345,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                if let vault = model.memoryVaultStatus {
+                if let vault = model.knowledge.memoryVaultStatus {
                     Label {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(vault.encrypted ? "Private on this Mac" : "Encryption needs attention")
@@ -2364,9 +2364,9 @@ struct WorkspaceKnowledgeSettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Memory Inbox")
                             .fontWeight(.semibold)
-                        Text(model.memoryCandidates.isEmpty
+                        Text(model.knowledge.memoryCandidates.isEmpty
                             ? "No suggestions waiting for review"
-                            : "\(model.memoryCandidates.count) suggestion\(model.memoryCandidates.count == 1 ? "" : "s") waiting")
+                            : "\(model.knowledge.memoryCandidates.count) suggestion\(model.knowledge.memoryCandidates.count == 1 ? "" : "s") waiting")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -2375,7 +2375,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                 }
                 .id("settings.memory.saved")
 
-                ForEach(model.memoryCandidates) { memory in
+                ForEach(model.knowledge.memoryCandidates) { memory in
                     VStack(alignment: .leading, spacing: 6) {
                         Text(memory.title).fontWeight(.semibold)
                         Text(memory.content)
@@ -2390,14 +2390,14 @@ struct WorkspaceKnowledgeSettingsView: View {
                             }
                             Spacer()
                             Button("Reject", role: .destructive) {
-                                model.deleteWorkspaceMemory(memory, agentID: selectedMemoryAgentID)
+                                model.knowledge.deleteWorkspaceMemory(memory, agentID: selectedMemoryAgentID)
                             }
                             if memory.hasConflicts {
                                 Button("Keep Both") {
-                                    model.approveMemoryCandidate(memory, agentID: selectedMemoryAgentID)
+                                    model.knowledge.approveMemoryCandidate(memory, agentID: selectedMemoryAgentID)
                                 }
                                 Button("Replace Older") {
-                                    model.approveMemoryCandidate(
+                                    model.knowledge.approveMemoryCandidate(
                                         memory,
                                         agentID: selectedMemoryAgentID,
                                         replacingConflicts: true
@@ -2407,7 +2407,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                                 .tint(LocusTheme.ink)
                             } else {
                                 Button("Approve") {
-                                    model.approveMemoryCandidate(memory, agentID: selectedMemoryAgentID)
+                                    model.knowledge.approveMemoryCandidate(memory, agentID: selectedMemoryAgentID)
                                 }
                                 .buttonStyle(.borderedProminent)
                                 .tint(LocusTheme.ink)
@@ -2417,7 +2417,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                     .padding(.vertical, 3)
                 }
 
-                ForEach(model.workspaceMemories) { memory in
+                ForEach(model.knowledge.workspaceMemories) { memory in
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: memory.pinned ? "pin.fill" : "bookmark")
                             .foregroundStyle(memory.stale ? LocusTheme.warning : LocusTheme.accentAction)
@@ -2462,14 +2462,14 @@ struct WorkspaceKnowledgeSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Text(model.contextSnapshots.count.formatted())
+                    Text(model.knowledge.contextSnapshots.count.formatted())
                         .foregroundStyle(.secondary)
-                    Button("Clear All", role: .destructive) { model.clearContextSnapshots() }
-                        .disabled(model.contextSnapshots.isEmpty)
+                    Button("Clear All", role: .destructive) { model.knowledge.clearContextSnapshots() }
+                        .disabled(model.knowledge.contextSnapshots.isEmpty)
                 }
                 .id("settings.memory.context")
 
-                ForEach(model.contextSnapshots.prefix(8)) { snapshot in
+                ForEach(model.knowledge.contextSnapshots.prefix(8)) { snapshot in
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: snapshot.pinned ? "pin.fill" : "clock.arrow.circlepath")
                             .foregroundStyle(snapshot.pinned ? LocusTheme.accentAction : .secondary)
@@ -2484,9 +2484,9 @@ struct WorkspaceKnowledgeSettingsView: View {
                         }
                         Spacer()
                         Button(snapshot.pinned ? "Unpin" : "Pin") {
-                            model.setContextSnapshotPinned(snapshot, pinned: !snapshot.pinned)
+                            model.knowledge.setContextSnapshotPinned(snapshot, pinned: !snapshot.pinned)
                         }
-                        Button(role: .destructive) { model.deleteContextSnapshot(snapshot) } label: {
+                        Button(role: .destructive) { model.knowledge.deleteContextSnapshot(snapshot) } label: {
                             Image(systemName: "trash")
                         }
                     }
@@ -2509,10 +2509,10 @@ struct WorkspaceKnowledgeSettingsView: View {
         .formStyle(.grouped)
         .accessibilityIdentifier("settings.knowledge.root")
         .task(id: selectedMemoryAgentID) {
-            await model.refreshWorkspaceKnowledge(agentID: selectedMemoryAgentID)
+            await model.knowledge.refreshWorkspaceKnowledge(agentID: selectedMemoryAgentID)
             syncDraft()
         }
-        .onChange(of: model.knowledgeStatus) { _, _ in syncDraft() }
+        .onChange(of: model.knowledge.knowledgeStatus) { _, _ in syncDraft() }
         .sheet(item: $memoryDraft) { draft in
             WorkspaceMemoryEditor(draft: draft) { value in
                 saveMemoryDraft(value)
@@ -2525,7 +2525,7 @@ struct WorkspaceKnowledgeSettingsView: View {
             titleVisibility: .visible
         ) {
             Button("Delete Index and Memories", role: .destructive) {
-                model.deleteAllWorkspaceKnowledge(agentID: selectedMemoryAgentID)
+                model.knowledge.deleteAllWorkspaceKnowledge(agentID: selectedMemoryAgentID)
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -2537,7 +2537,7 @@ struct WorkspaceKnowledgeSettingsView: View {
             titleVisibility: .visible
         ) {
             Button("Delete Personal, Workspace & Agent Memory", role: .destructive) {
-                model.deleteAllMemory(agentID: selectedMemoryAgentID)
+                model.knowledge.deleteAllMemory(agentID: selectedMemoryAgentID)
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -2571,7 +2571,7 @@ struct WorkspaceKnowledgeSettingsView: View {
             )
             HStack {
                 Button("Save Index Settings") {
-                    model.configureWorkspaceKnowledge(
+                    model.knowledge.configureWorkspaceKnowledge(
                         enabled: enabled,
                         embeddingModel: embeddingModel,
                         exclusions: exclusions.split(separator: ",").map {
@@ -2581,10 +2581,10 @@ struct WorkspaceKnowledgeSettingsView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(LocusTheme.ink)
-                Button("Rebuild Index") { model.rebuildWorkspaceKnowledge() }
+                Button("Rebuild Index") { model.knowledge.rebuildWorkspaceKnowledge() }
                     .disabled(!enabled || model.isBusy)
             }
-            if let status = model.knowledgeStatus {
+            if let status = model.knowledge.knowledgeStatus {
                 Text("\(status.documentCount) indexed files · \(status.chunkCount) searchable chunks")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -2599,11 +2599,11 @@ struct WorkspaceKnowledgeSettingsView: View {
 
         Section("Backup and maintenance") {
             HStack {
-                Button("Review Health") { model.reviewMemoryHealth(agentID: selectedMemoryAgentID) }
-                Button("Import Memory…") { model.importMemory(agentID: selectedMemoryAgentID) }
-                Button("Export Memory…") { model.exportMemory(agentID: selectedMemoryAgentID) }
+                Button("Review Health") { model.knowledge.reviewMemoryHealth(agentID: selectedMemoryAgentID) }
+                Button("Import Memory…") { model.knowledge.importMemory(agentID: selectedMemoryAgentID) }
+                Button("Export Memory…") { model.knowledge.exportMemory(agentID: selectedMemoryAgentID) }
             }
-            if let vault = model.memoryVaultStatus {
+            if let vault = model.knowledge.memoryVaultStatus {
                 Text("\(vault.cipher) · memory text and optional vectors are encrypted together on this Mac.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -2618,15 +2618,15 @@ struct WorkspaceKnowledgeSettingsView: View {
 
         Section("Skill observations") {
             HStack {
-                Text(model.skillObservations.isEmpty
+                Text(model.knowledge.skillObservations.isEmpty
                     ? "No observations recorded"
-                    : "\(model.skillObservations.count) improvement note\(model.skillObservations.count == 1 ? "" : "s")")
+                    : "\(model.knowledge.skillObservations.count) improvement note\(model.knowledge.skillObservations.count == 1 ? "" : "s")")
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("Export…") { model.exportSkillObservations() }
-                    .disabled(model.skillObservations.isEmpty)
+                Button("Export…") { model.knowledge.exportSkillObservations() }
+                    .disabled(model.knowledge.skillObservations.isEmpty)
             }
-            ForEach(model.skillObservations.prefix(20)) { observation in
+            ForEach(model.knowledge.skillObservations.prefix(20)) { observation in
                 HStack(alignment: .top, spacing: 10) {
                     Text("#\(observation.number)")
                         .font(.caption.monospacedDigit())
@@ -2640,17 +2640,17 @@ struct WorkspaceKnowledgeSettingsView: View {
                     Spacer()
                     if observation.status == "OPEN" {
                         Button("Actioned") {
-                            model.setSkillObservationStatus(observation, status: "ACTIONED")
+                            model.knowledge.setSkillObservationStatus(observation, status: "ACTIONED")
                         }
                         Button("Decline") {
-                            model.setSkillObservationStatus(observation, status: "DECLINED")
+                            model.knowledge.setSkillObservationStatus(observation, status: "DECLINED")
                         }
                     } else {
                         Button("Reopen") {
-                            model.setSkillObservationStatus(observation, status: "OPEN")
+                            model.knowledge.setSkillObservationStatus(observation, status: "OPEN")
                         }
                     }
-                    Button(role: .destructive) { model.deleteSkillObservation(observation) } label: {
+                    Button(role: .destructive) { model.knowledge.deleteSkillObservation(observation) } label: {
                         Image(systemName: "trash")
                     }
                 }
@@ -2659,11 +2659,11 @@ struct WorkspaceKnowledgeSettingsView: View {
 
         Section("Memory health") {
             Button("Analyze Selected Chat") {
-                model.reprocessCurrentChatMemory(agentID: selectedMemoryAgentID)
+                model.knowledge.reprocessCurrentChatMemory(agentID: selectedMemoryAgentID)
             }
             .disabled(model.currentSessionID.isEmpty || model.isBusy)
             .accessibilityIdentifier("memory.health.analyze")
-            if let report = model.memoryDiagnosticReport {
+            if let report = model.knowledge.memoryDiagnosticReport {
                 Text("\(report.approvedCount) approved · \(report.candidateCount) pending · \(report.staleCount ?? 0) stale")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -2682,7 +2682,7 @@ struct WorkspaceKnowledgeSettingsView: View {
     }
 
     private var knowledgeSummary: String {
-        guard let status = model.knowledgeStatus else { return "Loading index status…" }
+        guard let status = model.knowledge.knowledgeStatus else { return "Loading index status…" }
         let method = status.embeddingModel.isEmpty ? "text search" : "text and local semantic search"
         return status.enabled
             ? "\(status.documentCount) files indexed with \(method)."
@@ -2698,16 +2698,16 @@ struct WorkspaceKnowledgeSettingsView: View {
             Button(memory.pinned ? "Unpin" : "Pin") {
                 var value = memory
                 value.pinned.toggle()
-                model.updateWorkspaceMemory(value, agentID: selectedMemoryAgentID)
+                model.knowledge.updateWorkspaceMemory(value, agentID: selectedMemoryAgentID)
             }
             Button(memory.stale ? "Mark Current" : "Mark Stale") {
                 var value = memory
                 value.stale.toggle()
-                model.updateWorkspaceMemory(value, agentID: selectedMemoryAgentID)
+                model.knowledge.updateWorkspaceMemory(value, agentID: selectedMemoryAgentID)
             }
             Divider()
             Button("Delete", role: .destructive) {
-                model.deleteWorkspaceMemory(memory, agentID: selectedMemoryAgentID)
+                model.knowledge.deleteWorkspaceMemory(memory, agentID: selectedMemoryAgentID)
             }
         } label: {
             Image(systemName: "ellipsis.circle")
@@ -2719,7 +2719,7 @@ struct WorkspaceKnowledgeSettingsView: View {
     private func saveMemoryDraft(_ value: WorkspaceMemoryDraft) {
         switch value.original {
         case .none:
-            model.rememberWorkspaceFact(
+            model.knowledge.rememberWorkspaceFact(
                 title: value.title,
                 content: value.content,
                 tags: value.tags.split(separator: ",").map(String.init),
@@ -2737,7 +2737,7 @@ struct WorkspaceKnowledgeSettingsView: View {
             memory.kind = value.kind.rawValue
             memory.confidence = value.confidence
             memory.validUntil = value.expires ? value.validUntil.timeIntervalSince1970 : nil
-            model.updateWorkspaceMemory(memory, agentID: selectedMemoryAgentID)
+            model.knowledge.updateWorkspaceMemory(memory, agentID: selectedMemoryAgentID)
         }
     }
 
@@ -2822,7 +2822,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                         HStack {
                             Button("Save") {
-                                model.configureWorkspaceKnowledge(
+                                model.knowledge.configureWorkspaceKnowledge(
                                     enabled: enabled,
                                     embeddingModel: embeddingModel,
                                     exclusions: exclusions.split(separator: ",").map {
@@ -2832,7 +2832,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .tint(LocusTheme.ink)
-                            Button("Rebuild Index") { model.rebuildWorkspaceKnowledge() }
+                            Button("Rebuild Index") { model.knowledge.rebuildWorkspaceKnowledge() }
                                 .disabled(!enabled || model.isBusy)
                             Spacer()
                             Button("Delete All Workspace Knowledge…", role: .destructive) {
@@ -2846,15 +2846,15 @@ struct WorkspaceKnowledgeSettingsView: View {
                                 .foregroundStyle(LocusTheme.muted)
                             Spacer()
                             Button("Review Health") {
-                                model.reviewMemoryHealth(agentID: selectedMemoryAgentID)
+                                model.knowledge.reviewMemoryHealth(agentID: selectedMemoryAgentID)
                             }
                             .buttonStyle(.locus())
                             Button("Import Memory") {
-                                model.importMemory(agentID: selectedMemoryAgentID)
+                                model.knowledge.importMemory(agentID: selectedMemoryAgentID)
                             }
                             .buttonStyle(.locus())
                             Button("Export Memory") {
-                                model.exportMemory(agentID: selectedMemoryAgentID)
+                                model.knowledge.exportMemory(agentID: selectedMemoryAgentID)
                             }
                             .buttonStyle(.locus())
                             Button("Delete All Memory…", role: .destructive) {
@@ -2862,11 +2862,11 @@ struct WorkspaceKnowledgeSettingsView: View {
                             }
                             .buttonStyle(.locus())
                         }
-                        if let status = model.knowledgeStatus {
+                        if let status = model.knowledge.knowledgeStatus {
                             HStack(spacing: 14) {
                                 metric("Indexed files", status.documentCount)
                                 metric("Search chunks", status.chunkCount)
-                                metric("Saved memories", model.workspaceMemories.count)
+                                metric("Saved memories", model.knowledge.workspaceMemories.count)
                                 Spacer()
                                 Text(status.embeddingModel.isEmpty ? "FTS5 text search" : "Text + local vectors")
                                     .font(.locus(size: 8, design: .monospaced))
@@ -2882,7 +2882,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                                     .foregroundStyle(LocusTheme.coral)
                             }
                         }
-                        if let vault = model.memoryVaultStatus {
+                        if let vault = model.knowledge.memoryVaultStatus {
                             Divider()
                             Text("LOCAL STORAGE")
                                 .font(.locus(size: 8, weight: .bold))
@@ -2899,7 +2899,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                     .transition(LocusMotion.transition(edge: .top, reduceMotion: reduceMotion))
                 }
 
-                if let vault = model.memoryVaultStatus {
+                if let vault = model.knowledge.memoryVaultStatus {
                     HStack(spacing: 10) {
                         Image(systemName: vault.encrypted ? "lock.fill" : "lock.open.fill")
                             .foregroundStyle(vault.encrypted ? LocusTheme.signalDeep : LocusTheme.warning)
@@ -2930,24 +2930,24 @@ struct WorkspaceKnowledgeSettingsView: View {
                                 .font(.locus(size: 10, weight: .semibold))
                         }
                         Spacer()
-                        Text("\(model.contextSnapshots.count)")
+                        Text("\(model.knowledge.contextSnapshots.count)")
                             .font(.locus(size: 9, design: .monospaced))
                             .foregroundStyle(LocusTheme.muted)
                         Button("Clear All", role: .destructive) {
-                            model.clearContextSnapshots()
+                            model.knowledge.clearContextSnapshots()
                         }
-                        .disabled(model.contextSnapshots.isEmpty)
+                        .disabled(model.knowledge.contextSnapshots.isEmpty)
                     }
                     Text("Only Work, Plan, and Grill can save or recall these snapshots. Automatic recall is capped by the selected agent's memory policy; Just Chat never receives them.")
                         .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
-                    if model.contextSnapshots.isEmpty {
+                    if model.knowledge.contextSnapshots.isEmpty {
                         Text("No session handoffs have been saved yet.")
                             .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.muted)
                     } else {
-                        ForEach(model.contextSnapshots.prefix(12)) { snapshot in
+                        ForEach(model.knowledge.contextSnapshots.prefix(12)) { snapshot in
                             HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: snapshot.pinned ? "pin.fill" : "clock.arrow.circlepath")
                                     .foregroundStyle(snapshot.pinned ? LocusTheme.signalDeep : LocusTheme.muted)
@@ -2967,11 +2967,11 @@ struct WorkspaceKnowledgeSettingsView: View {
                                 }
                                 Spacer()
                                 Button(snapshot.pinned ? "Unpin" : "Pin") {
-                                    model.setContextSnapshotPinned(snapshot, pinned: !snapshot.pinned)
+                                    model.knowledge.setContextSnapshotPinned(snapshot, pinned: !snapshot.pinned)
                                 }
                                 .buttonStyle(.locus())
                                 Button(role: .destructive) {
-                                    model.deleteContextSnapshot(snapshot)
+                                    model.knowledge.deleteContextSnapshot(snapshot)
                                 } label: {
                                     Image(systemName: "trash")
                                 }
@@ -2995,15 +2995,15 @@ struct WorkspaceKnowledgeSettingsView: View {
                                 .font(.locus(size: 10, weight: .semibold))
                         }
                         Spacer()
-                        Button("Export") { model.exportSkillObservations() }
-                            .disabled(model.skillObservations.isEmpty)
+                        Button("Export") { model.knowledge.exportSkillObservations() }
+                            .disabled(model.knowledge.skillObservations.isEmpty)
                     }
-                    if model.skillObservations.isEmpty {
+                    if model.knowledge.skillObservations.isEmpty {
                         Text("No observations recorded.")
                             .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.muted)
                     } else {
-                        ForEach(model.skillObservations.prefix(20)) { observation in
+                        ForEach(model.knowledge.skillObservations.prefix(20)) { observation in
                             HStack(alignment: .top, spacing: 10) {
                                 Text("#\(observation.number)")
                                     .font(.locus(size: 8, design: .monospaced))
@@ -3024,21 +3024,21 @@ struct WorkspaceKnowledgeSettingsView: View {
                                 Spacer()
                                 if observation.status == "OPEN" {
                                     Button("Actioned") {
-                                        model.setSkillObservationStatus(observation, status: "ACTIONED")
+                                        model.knowledge.setSkillObservationStatus(observation, status: "ACTIONED")
                                     }
                                     .buttonStyle(.locus())
                                     Button("Decline") {
-                                        model.setSkillObservationStatus(observation, status: "DECLINED")
+                                        model.knowledge.setSkillObservationStatus(observation, status: "DECLINED")
                                     }
                                     .buttonStyle(.locus())
                                 } else {
                                     Button("Reopen") {
-                                        model.setSkillObservationStatus(observation, status: "OPEN")
+                                        model.knowledge.setSkillObservationStatus(observation, status: "OPEN")
                                     }
                                     .buttonStyle(.locus())
                                 }
                                 Button(role: .destructive) {
-                                    model.deleteSkillObservation(observation)
+                                    model.knowledge.deleteSkillObservation(observation)
                                 } label: {
                                     Image(systemName: "trash")
                                 }
@@ -3063,13 +3063,13 @@ struct WorkspaceKnowledgeSettingsView: View {
                         }
                         Spacer()
                         Button("Analyze Selected Chat") {
-                            model.reprocessCurrentChatMemory(agentID: selectedMemoryAgentID)
+                            model.knowledge.reprocessCurrentChatMemory(agentID: selectedMemoryAgentID)
                         }
                         .disabled(model.currentSessionID.isEmpty || model.isBusy)
                         .accessibilityIdentifier("memory.analyzeSelectedChat")
                     }
 
-                    if let report = model.memoryDiagnosticReport {
+                    if let report = model.knowledge.memoryDiagnosticReport {
                         HStack(spacing: 18) {
                             metric("Indexed files", report.indexedFiles)
                             metric("Search chunks", report.searchChunks)
@@ -3168,8 +3168,8 @@ struct WorkspaceKnowledgeSettingsView: View {
                         Text("Memory suggestions")
                             .font(LocusType.title)
                         Spacer()
-                        if !model.memoryCandidates.isEmpty {
-                            Text("\(model.memoryCandidates.count) waiting")
+                        if !model.knowledge.memoryCandidates.isEmpty {
+                            Text("\(model.knowledge.memoryCandidates.count) waiting")
                                 .font(LocusType.badge)
                                 .foregroundStyle(LocusTheme.brandInk)
                                 .padding(.horizontal, 8)
@@ -3181,13 +3181,13 @@ struct WorkspaceKnowledgeSettingsView: View {
                     Text("In work modes, the agent may suggest only explicit preferences, repeated constraints, and confirmed decisions or outcomes. Suggestions never affect future answers until you approve them.")
                         .font(LocusType.callout)
                         .foregroundStyle(LocusTheme.textTertiary)
-                    if model.memoryCandidates.isEmpty {
+                    if model.knowledge.memoryCandidates.isEmpty {
                         Text("No suggestions waiting for review.")
                             .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.muted)
                             .padding(.vertical, 8)
                     }
-                    ForEach(model.memoryCandidates) { memory in
+                    ForEach(model.knowledge.memoryCandidates) { memory in
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
                                 Text(memory.title).font(.locus(size: 10, weight: .semibold))
@@ -3196,7 +3196,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                                     .foregroundStyle(LocusTheme.accentAction)
                                 Spacer()
                                 Button("Reject", role: .destructive) {
-                                    model.deleteWorkspaceMemory(
+                                    model.knowledge.deleteWorkspaceMemory(
                                         memory,
                                         agentID: selectedMemoryAgentID
                                     )
@@ -3204,7 +3204,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                                 .buttonStyle(.locus())
                                 if !memory.hasConflicts {
                                     Button("Approve") {
-                                        model.approveMemoryCandidate(
+                                        model.knowledge.approveMemoryCandidate(
                                             memory,
                                             agentID: selectedMemoryAgentID
                                         )
@@ -3228,12 +3228,12 @@ struct WorkspaceKnowledgeSettingsView: View {
                                     .foregroundStyle(LocusTheme.warning)
                                 HStack {
                                     Button("Keep Both") {
-                                        model.approveMemoryCandidate(
+                                        model.knowledge.approveMemoryCandidate(
                                             memory, agentID: selectedMemoryAgentID
                                         )
                                     }
                                     Button("Replace Older") {
-                                        model.approveMemoryCandidate(
+                                        model.knowledge.approveMemoryCandidate(
                                             memory,
                                             agentID: selectedMemoryAgentID,
                                             replacingConflicts: true
@@ -3264,13 +3264,13 @@ struct WorkspaceKnowledgeSettingsView: View {
                     Text("The vault stays encrypted on disk. An exported JSON file is intentionally readable so you can inspect or move it.")
                         .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.muted)
-                    if model.workspaceMemories.isEmpty {
+                    if model.knowledge.workspaceMemories.isEmpty {
                         Text("No approved decisions, conventions, or facts yet.")
                             .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.muted)
                             .padding(.vertical, 10)
                     }
-                    ForEach(model.workspaceMemories) { memory in
+                    ForEach(model.knowledge.workspaceMemories) { memory in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Image(systemName: memory.pinned ? "pin.fill" : "bookmark")
@@ -3295,21 +3295,21 @@ struct WorkspaceKnowledgeSettingsView: View {
                                     Button("Edit") { memoryDraft = .existing(memory) }
                                     Button(memory.pinned ? "Unpin" : "Pin") {
                                         var value = memory; value.pinned.toggle()
-                                        model.updateWorkspaceMemory(
+                                        model.knowledge.updateWorkspaceMemory(
                                             value,
                                             agentID: selectedMemoryAgentID
                                         )
                                     }
                                     Button(memory.stale ? "Mark Current" : "Mark Stale") {
                                         var value = memory; value.stale.toggle()
-                                        model.updateWorkspaceMemory(
+                                        model.knowledge.updateWorkspaceMemory(
                                             value,
                                             agentID: selectedMemoryAgentID
                                         )
                                     }
                                     Divider()
                                     Button("Delete", role: .destructive) {
-                                        model.deleteWorkspaceMemory(
+                                        model.knowledge.deleteWorkspaceMemory(
                                             memory,
                                             agentID: selectedMemoryAgentID
                                         )
@@ -3345,15 +3345,15 @@ struct WorkspaceKnowledgeSettingsView: View {
             .padding(20)
         }
         .task(id: selectedMemoryAgentID) {
-            await model.refreshWorkspaceKnowledge(agentID: selectedMemoryAgentID)
+            await model.knowledge.refreshWorkspaceKnowledge(agentID: selectedMemoryAgentID)
             syncDraft()
         }
-        .onChange(of: model.knowledgeStatus) { _, _ in syncDraft() }
+        .onChange(of: model.knowledge.knowledgeStatus) { _, _ in syncDraft() }
         .sheet(item: $memoryDraft) { draft in
             WorkspaceMemoryEditor(draft: draft) { value in
                 switch value.original {
                 case .none:
-                    model.rememberWorkspaceFact(
+                    model.knowledge.rememberWorkspaceFact(
                         title: value.title, content: value.content,
                         tags: value.tags.split(separator: ",").map(String.init),
                         scope: value.scope,
@@ -3371,7 +3371,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                     memory.confidence = value.confidence
                     memory.validUntil = value.expires
                         ? value.validUntil.timeIntervalSince1970 : nil
-                    model.updateWorkspaceMemory(
+                    model.knowledge.updateWorkspaceMemory(
                         memory,
                         agentID: selectedMemoryAgentID
                     )
@@ -3385,7 +3385,7 @@ struct WorkspaceKnowledgeSettingsView: View {
             titleVisibility: .visible
         ) {
             Button("Delete Index and Memories", role: .destructive) {
-                model.deleteAllWorkspaceKnowledge(agentID: selectedMemoryAgentID)
+                model.knowledge.deleteAllWorkspaceKnowledge(agentID: selectedMemoryAgentID)
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -3397,7 +3397,7 @@ struct WorkspaceKnowledgeSettingsView: View {
             titleVisibility: .visible
         ) {
             Button("Delete Personal, Workspace & Agent Memory", role: .destructive) {
-                model.deleteAllMemory(agentID: selectedMemoryAgentID)
+                model.knowledge.deleteAllMemory(agentID: selectedMemoryAgentID)
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -3406,7 +3406,7 @@ struct WorkspaceKnowledgeSettingsView: View {
     }
 
     private func syncDraft() {
-        guard let status = model.knowledgeStatus else { return }
+        guard let status = model.knowledge.knowledgeStatus else { return }
         enabled = status.enabled
         embeddingModel = status.embeddingModel
         exclusions = (status.exclusions ?? []).joined(separator: ", ")
