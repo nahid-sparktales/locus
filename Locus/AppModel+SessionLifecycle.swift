@@ -102,7 +102,7 @@ extension AppModel {
         environment requestedEnvironment: ChatExecutionEnvironment?,
         baseRef: String = "HEAD"
     ) {
-        activityCenterPresented = false
+        activity.activityCenterPresented = false
         guard !pendingSessionReset else {
             showToast("Wait for the current chat change to finish")
             return
@@ -194,7 +194,7 @@ extension AppModel {
     }
 
     func resume(_ session: SessionSummary) {
-        activityCenterPresented = false
+        activity.activityCenterPresented = false
         let currentIsBackgroundCapable = taskWorkers[currentSessionID] != nil
         if let path = session.workspacePath {
             guard FileManager.default.fileExists(atPath: path) else {

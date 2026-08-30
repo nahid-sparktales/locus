@@ -17,7 +17,7 @@ extension AppModel {
         )
         await recovery?.value
         await restoreAfterUncleanExitIfNeeded()
-        await refreshActivityRuns(announceFailure: false)
+        await activity.refreshActivityRuns(announceFailure: false)
         restorePersistedQueuedRuns()
         await schedule.refreshScheduledTasks(announceFailure: false)
         await schedule.processDueSchedules()

@@ -31,7 +31,7 @@ struct WorkspaceView: View {
                 chatContent
                     .frame(width: proxy.size.width, height: proxy.size.height)
 
-                if model.activityCenterPresented {
+                if model.activity.activityCenterPresented {
                     ActivityCenterView()
                         .environmentObject(model)
                         .frame(
@@ -1101,13 +1101,16 @@ struct ActivityCenterView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Activity Center")
                         .font(.locus(size: 15, weight: .bold))
-                    Text(model.activityCenterSection == .activity
+                    Text(model.activity.activityCenterSection == .activity
                         ? "Work keeps running when you move between chats."
                         : "Create recurring work that starts in a fresh chat.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
-                Picker("Section", selection: $model.activityCenterSection) {
+                Picker("Section", selection: Binding(
+                    get: { model.activity.activityCenterSection },
+                    set: { model.activity.activityCenterSection = $0 }
+                )) {
                     ForEach(ActivityCenterSection.allCases) { section in
                         Text(section.title).tag(section)
                     }
@@ -1116,22 +1119,22 @@ struct ActivityCenterView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 180)
                 Spacer()
-                if model.activityCenterSection == .activity,
-                   model.visibleActivityRuns.contains(where: { model.activityIsUnseen($0) }) {
-                    Button("Mark All Seen") { model.markAllActivitySeen() }
+                if model.activity.activityCenterSection == .activity,
+                   model.visibleActivityRuns.contains(where: { model.activity.activityIsUnseen($0) }) {
+                    Button("Mark All Seen") { model.activity.markAllActivitySeen() }
                         .accessibilityIdentifier("activity.markAllSeen")
                 }
-                if model.activityCenterSection == .activity,
+                if model.activity.activityCenterSection == .activity,
                    model.visibleActivityRuns.contains(where: {
                     TeamRunState(rawValue: $0.state)?.isTerminal == true
                 }) {
-                    Button("Clear Finished") { model.clearFinishedActivityRuns() }
+                    Button("Clear Finished") { model.activity.clearFinishedActivityRuns() }
                         .accessibilityIdentifier("activity.clearFinished")
                 }
                 Button {
                     Task {
-                        if model.activityCenterSection == .activity {
-                            await model.refreshActivityRuns()
+                        if model.activity.activityCenterSection == .activity {
+                            await model.activity.refreshActivityRuns()
                         } else {
                             await model.schedule.refreshScheduledTasks()
                         }
@@ -1142,7 +1145,7 @@ struct ActivityCenterView: View {
                 .accessibilityIdentifier("activity.refresh")
                 Button {
                     withAnimation(LocusMotion.spatial) {
-                        model.toggleActivityCenter()
+                        model.activity.toggleActivityCenter()
                     }
                 } label: {
                     Image(systemName: "xmark")
@@ -1157,7 +1160,7 @@ struct ActivityCenterView: View {
             .padding(.vertical, 14)
             .background(LocusTheme.paperDeep.opacity(0.55))
 
-            if model.activityCenterSection == .schedules {
+            if model.activity.activityCenterSection == .schedules {
                 schedulesView
             } else if model.visibleActivityRuns.isEmpty {
                 ContentUnavailableView(
@@ -1199,8 +1202,8 @@ struct ActivityCenterView: View {
         }
         .task {
             while !Task.isCancelled {
-                if model.activityCenterSection == .activity {
-                    await model.refreshActivityRuns()
+                if model.activity.activityCenterSection == .activity {
+                    await model.activity.refreshActivityRuns()
                 } else {
                     await model.schedule.refreshScheduledTasks(announceFailure: false)
                 }
@@ -1290,7 +1293,7 @@ struct ActivityCenterView: View {
                         Text(run.state.replacingOccurrences(of: "_", with: " ").uppercased())
                             .font(.locus(size: 7, weight: .bold, design: .monospaced))
                             .foregroundStyle(color(for: run))
-                        if model.activityIsUnseen(run) {
+                        if model.activity.activityIsUnseen(run) {
                             Text("NEW")
                                 .font(.locus(size: 7, weight: .bold, design: .monospaced))
                                 .foregroundStyle(LocusTheme.brandInk)
@@ -1345,7 +1348,7 @@ struct ActivityCenterView: View {
                     Button("Retry") { model.retryRun(run) }
                 }
                 if TeamRunState(rawValue: run.state)?.isTerminal == true {
-                    Button("Remove") { model.dismissActivityRun(run) }
+                    Button("Remove") { model.activity.dismissActivityRun(run) }
                         .help("Remove from Activity; the run timeline is preserved")
                         .accessibilityIdentifier("activity.remove.\(run.id)")
                 }

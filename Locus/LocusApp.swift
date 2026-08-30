@@ -700,7 +700,7 @@ struct RootView: View {
         .animation(LocusMotion.spatial, value: model.inspectorZoomed)
         .background(LocusTheme.paper)
         .overlay(alignment: .bottomTrailing) {
-            if let toast = model.toast {
+            if let toast = model.toastCenter.toast {
                 HStack(spacing: 12) {
                     Label(toast.message, systemImage: toast.systemImage)
                         .font(.locus(size: 11, weight: .semibold))
@@ -722,7 +722,7 @@ struct RootView: View {
                 .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
             }
         }
-        .animation(LocusMotion.content, value: model.toast?.id)
+        .animation(LocusMotion.content, value: model.toastCenter.toast?.id)
         // Reduced Motion is an app-wide contract. Individual components still
         // choose a gentler transition where useful, while this guard prevents
         // an overlooked state mutation from introducing spatial movement.

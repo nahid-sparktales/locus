@@ -861,7 +861,7 @@ final class AppModel: ObservableObject {
             taskIssue: { [weak self] task in self?.scheduleConfigurationIssue(for: task) },
             refreshMetadata: { [weak self] in await self?.refreshMetadata() },
             refreshActivity: { [weak self] in
-                await self?.refreshActivityRuns(announceFailure: false)
+                await self?.activity.refreshActivityRuns(announceFailure: false)
             },
             restoreQueuedRuns: { [weak self] in self?.restorePersistedQueuedRuns() },
             admitQueuedRun: { [weak self] run in

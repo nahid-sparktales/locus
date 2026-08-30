@@ -80,8 +80,8 @@ extension AppModel {
     }
 
     func openSchedules() {
-        activityCenterSection = .schedules
-        activityCenterPresented = true
+        activity.activityCenterSection = .schedules
+        activity.activityCenterPresented = true
         Task { @MainActor [weak self] in
             await self?.schedule.refreshScheduledTasks()
         }
@@ -174,7 +174,7 @@ extension AppModel {
                         chatAdmissionQueue.move(sessionID, action: action)
                     }
                 }
-                await refreshActivityRuns()
+                await activity.refreshActivityRuns()
             } catch { showToast(error.localizedDescription) }
         }
     }
@@ -257,13 +257,13 @@ extension AppModel {
                 worker.startedAt = Date()
                 updateBackgroundChatState(worker)
                 showToast("Retry queued in \(session.displayTitle)")
-                await refreshActivityRuns()
+                await activity.refreshActivityRuns()
             } catch { showToast(error.localizedDescription) }
         }
     }
 
     func restorePersistedQueuedRuns() {
-        let queued = activityRuns.filter { $0.state == "queued" }.sorted {
+        let queued = activity.activityRuns.filter { $0.state == "queued" }.sorted {
             ($0.queuePosition ?? .max) < ($1.queuePosition ?? .max)
         }
         for run in queued where restoredQueuedRunIDs.insert(run.id).inserted {
@@ -353,14 +353,14 @@ extension AppModel {
         guard let sessionID = run.sessionID,
               let session = sessions.first(where: { $0.id == sessionID })
         else { showToast("That chat is no longer available"); return }
-        markActivitySeen(run)
-        activityCenterPresented = false
+        activity.markActivitySeen(run)
+        activity.activityCenterPresented = false
         resume(session)
         Task { await loadOrchestrationRun(run.id) }
     }
 
     func openNotification(sessionID: String, runID: String) {
-        activityCenterPresented = false
+        activity.activityCenterPresented = false
         if let session = sessions.first(where: { $0.id == sessionID }) {
             resume(session)
         }
@@ -406,7 +406,7 @@ extension AppModel {
         runtime.executionState = .running
         updateBackgroundChatState(runtime)
         showToast(decision == "deny" ? "Permission denied" : "Permission granted")
-        Task { await refreshActivityRuns() }
+        Task { await activity.refreshActivityRuns() }
     }
 
     func publishLandedWorktree() {

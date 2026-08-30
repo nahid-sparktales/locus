@@ -65,7 +65,7 @@ extension AppModel {
             case .chatCreate:
                 data = try await companionDispatchChat(request, create: true)
             case .activityList:
-                await refreshActivityRuns(announceFailure: false)
+                await activity.refreshActivityRuns(announceFailure: false)
                 data = companionActivityPayload()
             case .runStop:
                 data = try companionStopRun(request.payload)
@@ -253,7 +253,7 @@ extension AppModel {
             as: CompanionChatDispatchResponse.self
         )
         await refreshMetadata()
-        await refreshActivityRuns(announceFailure: false)
+        await activity.refreshActivityRuns(announceFailure: false)
         if response.run.state == "queued",
            restoredQueuedRunIDs.insert(response.run.id).inserted {
             await dispatchPersistedQueuedRun(response.run)

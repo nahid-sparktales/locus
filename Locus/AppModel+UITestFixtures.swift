@@ -643,7 +643,7 @@ extension AppModel {
                     tail: nil
                 ),
             ])
-            activityRuns.append(OrchestrationRun(
+            activity.activityRuns.append(OrchestrationRun(
                 id: "seed-subagent",
                 sessionID: currentSessionID,
                 teamID: "seed-team",
@@ -913,7 +913,7 @@ extension AppModel {
         orchestrationState = state
         if fixture == "swarm-live" || fixture == "solo-swarm-live" { isBusy = true }
         if fixture == "activity" || fixture == "swarm-live" || fixture == "solo-swarm-live" {
-            activityRuns = [run]
+            activity.activityRuns = [run]
         }
         if fixture == "activity" {
             return

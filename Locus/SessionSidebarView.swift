@@ -385,15 +385,15 @@ struct SessionSidebarView: View {
     private var activityButton: some View {
         Button {
             withAnimation(LocusMotion.spatial) {
-                model.toggleActivityCenter()
+                model.activity.toggleActivityCenter()
             }
         } label: {
-            Image(systemName: model.activityCenterPresented ? "bell.fill" : "bell")
+            Image(systemName: model.activity.activityCenterPresented ? "bell.fill" : "bell")
                 .font(.locus(size: 12, weight: .semibold))
-                .foregroundStyle(model.activityCenterPresented
+                .foregroundStyle(model.activity.activityCenterPresented
                     ? LocusTheme.ink : LocusTheme.inkSoft)
                 .frame(width: 36, height: 36)
-                .background(model.activityCenterPresented
+                .background(model.activity.activityCenterPresented
                     ? LocusTheme.signal.opacity(0.9)
                     : LocusTheme.white.opacity(0.82))
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -402,8 +402,8 @@ struct SessionSidebarView: View {
                         .stroke(LocusTheme.line, lineWidth: 1)
                 }
                 .overlay(alignment: .topTrailing) {
-                    if model.activityNeedsAttentionCount > 0 {
-                        Text("\(model.activityNeedsAttentionCount)")
+                    if model.activity.activityNeedsAttentionCount > 0 {
+                        Text("\(model.activity.activityNeedsAttentionCount)")
                             .font(.locus(size: 7, weight: .bold, design: .monospaced))
                             .foregroundStyle(Color.white)
                             .frame(minWidth: 14, minHeight: 14)
@@ -419,8 +419,8 @@ struct SessionSidebarView: View {
         .accessibilityLabel("Activities")
         .accessibilityIdentifier("sidebar.activity")
         .accessibilityValue(
-            model.activityNeedsAttentionCount > 0
-                ? "\(model.activityNeedsAttentionCount) needs attention"
+            model.activity.activityNeedsAttentionCount > 0
+                ? "\(model.activity.activityNeedsAttentionCount) needs attention"
                 : "No new activity"
         )
     }
@@ -691,11 +691,11 @@ struct SessionSidebarView: View {
         if query.count >= 2 {
             SectionLabel("In conversations")
                 .padding(.top, 8)
-            if model.isSearchingTranscripts || model.transcriptSearchIndexing {
+            if model.transcriptSearch.isSearchingTranscripts || model.transcriptSearch.transcriptSearchIndexing {
                 HStack(spacing: 7) {
                     ProgressView()
                         .controlSize(.mini)
-                    Text(model.transcriptSearchIndexing
+                    Text(model.transcriptSearch.transcriptSearchIndexing
                         ? "Indexing conversations…" : "Searching…")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
@@ -705,8 +705,8 @@ struct SessionSidebarView: View {
                 .padding(.vertical, 6)
                 .accessibilityIdentifier("sidebar.search.progress")
             }
-            if model.transcriptHits.isEmpty,
-               !model.isSearchingTranscripts, !model.transcriptSearchIndexing {
+            if model.transcriptSearch.transcriptHits.isEmpty,
+               !model.transcriptSearch.isSearchingTranscripts, !model.transcriptSearch.transcriptSearchIndexing {
                 Text("No matching messages")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
@@ -714,7 +714,7 @@ struct SessionSidebarView: View {
                     .padding(.horizontal, SidebarMetrics.rowInset)
                     .padding(.vertical, 6)
             }
-            ForEach(model.transcriptHits) { hit in
+            ForEach(model.transcriptSearch.transcriptHits) { hit in
                 transcriptHitRow(hit)
             }
         }
