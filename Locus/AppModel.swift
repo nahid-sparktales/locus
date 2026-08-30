@@ -43,7 +43,7 @@ final class AppModel: ObservableObject {
         codexComponent.install()
         await codexComponent.waitForCompletion()
         if case .installed = codexComponent.state {
-            await refreshChatGPTAccount(for: account)
+            await providerAccountsModel.refreshChatGPTAccount(for: account)
         }
     }
     #endif

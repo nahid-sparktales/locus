@@ -25,12 +25,12 @@ extension AppModel {
         switch type {
         case "chatgpt_account_updated":
             Task {
-                await refreshChatGPTAccounts()
-                await refreshAccountCatalogs(force: true)
+                await providerAccountsModel.refreshChatGPTAccounts()
+                await providerAccountsModel.refreshAccountCatalogs(force: true)
             }
 
         case "chatgpt_usage_updated":
-            Task { await refreshActiveChatGPTUsage() }
+            Task { await providerAccountsModel.refreshActiveChatGPTUsage() }
 
         case "worker_identity":
             activeWorkerID = event["worker_id"] as? String
@@ -56,7 +56,7 @@ extension AppModel {
                     streamedCharsThisTurn = 0
                     streamingReply.resetTurn()
                 }
-                noteLocalHost(from: info)
+                providerAccountsModel.noteLocalHost(from: info)
                 applyWorkspaceProfileIfNeeded(for: info)
                 activateSessionOverview(info)
             }

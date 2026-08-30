@@ -1701,7 +1701,7 @@ struct ScheduleEditorView: View {
 
     private var availableModels: [String] {
         if routeSelection == "ollama" {
-            let names = model.installedLocalModels.map(\.name)
+            let names = model.providerAccountsModel.installedLocalModels.map(\.name)
             return names.isEmpty ? [draft.model].filter { !$0.isEmpty } : names
         }
         guard let id = UUID(uuidString: routeSelection),
@@ -1801,7 +1801,7 @@ private struct ModelPickerPopover: View {
                 ) {
                     Task {
                         await model.refreshMetadata()
-                        await model.refreshAccountCatalogs(force: true)
+                        await model.providerAccountsModel.refreshAccountCatalogs(force: true)
                     }
                 }
                 pickerAction(

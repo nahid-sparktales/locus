@@ -2818,7 +2818,7 @@ struct SettingsView: View {
                         .overlay(alignment: .bottomTrailing) {
                             Circle()
                                 .fill(
-                                    model.accountStatus[account.id]?.isHealthy ?? account.hasKey
+                                    model.providerAccountsModel.accountStatus[account.id]?.isHealthy ?? account.hasKey
                                         ? LocusTheme.success
                                         : LocusTheme.coral
                                 )
@@ -2872,14 +2872,14 @@ struct SettingsView: View {
                         .foregroundStyle(LocusTheme.muted)
                 }
 
-                if model.installedLocalModels.isEmpty {
+                if model.providerAccountsModel.installedLocalModels.isEmpty {
                     Text(model.isModelOnline
                         ? "No local models are installed."
                         : "Connect to Ollama to see installed models.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 } else {
-                    ForEach(model.installedLocalModels) { localModel in
+                    ForEach(model.providerAccountsModel.installedLocalModels) { localModel in
                         localModelRow(localModel)
                     }
                 }
@@ -3170,16 +3170,16 @@ struct SettingsView: View {
     }
 
     private func accountDetail(_ account: ProviderAccount) -> String {
-        let status = model.accountStatus[account.id]
+        let status = model.providerAccountsModel.accountStatus[account.id]
             ?? (account.hasKey ? .keySaved : .noKey)
         if account.kind == .chatGPT,
-           let window = model.chatGPTUsageByAccount[account.id]?.rateLimits.rateLimits?.primary
+           let window = model.providerAccountsModel.chatGPTUsageByAccount[account.id]?.rateLimits.rateLimits?.primary
         {
             let reset = window.resetsAt.map {
                 "resets " + Date(timeIntervalSince1970: Double($0))
                     .formatted(.relative(presentation: .named))
             }
-            let activity = model.chatGPTUsageByAccount[account.id]?
+            let activity = model.providerAccountsModel.chatGPTUsageByAccount[account.id]?
                 .activity.summary?.lifetimeTokens.map {
                 $0.formatted(.number.notation(.compactName)) + " activity tokens"
             }

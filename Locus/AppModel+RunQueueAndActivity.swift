@@ -618,10 +618,10 @@ extension AppModel {
         } else {
             providerAccounts.append(updated)
         }
-        persistProviderAccounts()
-        forgetAccountCatalog(updated.id)
+        providerAccountsModel.persistProviderAccounts()
+        providerAccountsModel.forgetAccountCatalog(updated.id)
         Task {
-            await refreshAccountCatalogs(force: true)
+            await providerAccountsModel.refreshAccountCatalogs(force: true)
             // The live agent is holding the old endpoint or key until it is
             // told otherwise.
             if updated.id.uuidString == settings.activeAccountID {
@@ -637,8 +637,8 @@ extension AppModel {
     func removeProviderAccount(_ account: ProviderAccount) {
         providerAccounts.removeAll { $0.id == account.id }
         CredentialStore.remove(account: account.credentialAccount)
-        persistProviderAccounts()
-        forgetAccountCatalog(account.id)
+        providerAccountsModel.persistProviderAccounts()
+        providerAccountsModel.forgetAccountCatalog(account.id)
         guard account.id.uuidString == settings.activeAccountID else {
             showToast("Removed \(account.displayName)")
             return
@@ -658,7 +658,7 @@ extension AppModel {
     func removeProviderAccountKey(_ account: ProviderAccount) {
         CredentialStore.remove(account: account.credentialAccount)
         accountStatus[account.id] = .noKey
-        forgetAccountCatalog(account.id)
+        providerAccountsModel.forgetAccountCatalog(account.id)
         guard account.id.uuidString == settings.activeAccountID else { return }
         // Sends an empty key, which the agent treats as "clear it". Held until
         // the turn finishes when one is running, because /api/provider refuses
@@ -720,7 +720,7 @@ extension AppModel {
         guard !isLocalModelHidden(model.name) else { return }
         settings.hiddenLocalModels.append(model.name)
         settings.hiddenLocalModels.sort { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-        localModels = visibleLocalModels(in: installedLocalModels)
+        localModels = providerAccountsModel.visibleLocalModels(in: installedLocalModels)
         if activeAccount == nil { models = localModels }
         showToast("Removed \(model.name) from Locus — it is still installed")
     }
@@ -729,7 +729,7 @@ extension AppModel {
         settings.hiddenLocalModels.removeAll {
             $0.caseInsensitiveCompare(model.name) == .orderedSame
         }
-        localModels = visibleLocalModels(in: installedLocalModels)
+        localModels = providerAccountsModel.visibleLocalModels(in: installedLocalModels)
         if activeAccount == nil { models = localModels }
         showToast("Restored \(model.name) to Locus")
     }
@@ -750,7 +750,7 @@ extension AppModel {
         settings.hiddenLocalModels.removeAll {
             $0.caseInsensitiveCompare(model.name) == .orderedSame
         }
-        localModels = visibleLocalModels(in: installedLocalModels)
+        localModels = providerAccountsModel.visibleLocalModels(in: installedLocalModels)
         if activeAccount == nil {
             models = localModels
             if selectedModel.caseInsensitiveCompare(model.name) == .orderedSame,

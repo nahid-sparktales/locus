@@ -281,7 +281,7 @@ extension AppModel {
               providerAccounts[index].preferredModel != model
         else { return }
         providerAccounts[index].preferredModel = model
-        persistProviderAccounts()
+        providerAccountsModel.persistProviderAccounts()
     }
 
     func modelBelongsToAccount(_ model: String, account: ProviderAccount) -> Bool {

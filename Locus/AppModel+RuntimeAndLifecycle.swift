@@ -495,7 +495,7 @@ extension AppModel {
             // local list when local is what is active.
             if activeAccount == nil {
                 installedLocalModels = response.models
-                localModels = visibleLocalModels(in: response.models)
+                localModels = providerAccountsModel.visibleLocalModels(in: response.models)
                 models = localModels
             } else {
                 models = response.models
@@ -503,8 +503,8 @@ extension AppModel {
         } catch {
             // Connection state communicates backend failures.
         }
-        if activeAccount != nil { await refreshLocalModels() }
-        await refreshAccountCatalogs()
+        if activeAccount != nil { await providerAccountsModel.refreshLocalModels() }
+        await providerAccountsModel.refreshAccountCatalogs()
         await migrateTerminalSettingsIfNeeded()
 
         do {

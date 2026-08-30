@@ -502,7 +502,7 @@ struct QuickTeamBuilderView: View {
         .accessibilityIdentifier("quickTeam.builder")
         .task {
             await model.refreshMetadata()
-            await model.refreshAccountCatalogs(force: true)
+            await model.providerAccountsModel.refreshAccountCatalogs(force: true)
         }
         .confirmationDialog(
             "Allow automatic hosted routing?",
@@ -1762,7 +1762,7 @@ struct AgentProfileEditor: View {
         let values: [String]
         switch draft.route {
         case .localOllama:
-            values = model.localModels.map(\.name)
+            values = model.providerAccountsModel.localModels.map(\.name)
         case .providerAccount(let id):
             guard let account = model.providerAccounts.first(where: { $0.id == id }) else {
                 return []
@@ -1799,7 +1799,7 @@ struct AgentProfileEditor: View {
         case .localOllama:
             await model.refreshMetadata()
         case .providerAccount:
-            await model.refreshAccountCatalogs(force: true)
+            await model.providerAccountsModel.refreshAccountCatalogs(force: true)
         }
     }
 
