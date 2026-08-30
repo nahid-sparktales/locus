@@ -1462,6 +1462,15 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertTrue(RunScope.soloSwarm.includes(explicit))
         XCTAssertFalse(RunScope.teams.includes(explicit))
         XCTAssertTrue(RunScope.all.includes(ordinary))
+
+        // Eligibility keeps the Solo scope; delegation needs real evidence
+        // (job_count in the list payload, attempts in the detail payload).
+        let counted = try decodeRun(",\"manifest\":{\"solo_swarm\":true},\"job_count\":3")
+        XCTAssertFalse(explicit.didDelegateWorkers)
+        XCTAssertFalse(neverDelegated.didDelegateWorkers)
+        XCTAssertFalse(ordinary.didDelegateWorkers)
+        XCTAssertTrue(legacy.didDelegateWorkers)
+        XCTAssertTrue(counted.didDelegateWorkers)
     }
 
     func testZoomedChatWidthIsClampedToTheUsableRange() {

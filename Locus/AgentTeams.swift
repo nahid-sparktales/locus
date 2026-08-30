@@ -1698,10 +1698,20 @@ struct OrchestrationRun: Identifiable, Codable, Hashable {
         case scheduledFor = "scheduled_for"
     }
 
+    /// Solo-swarm *eligible*: the backend stamps `manifest.solo_swarm` on every
+    /// non-Ask turn before any delegation happens, so this alone never proves
+    /// workers ran. Use `didDelegateWorkers` for that.
     var isSoloSwarm: Bool {
         guard runKind == "solo" else { return false }
         if manifest?["solo_swarm"]?.boolean == true { return true }
         return !(attempts ?? []).isEmpty
+    }
+
+    /// Evidence this Solo run actually spawned workers. The runs list payload
+    /// carries `job_count` (computed from job_attempts); the detail payload
+    /// carries the attempts themselves.
+    var didDelegateWorkers: Bool {
+        isSoloSwarm && ((jobCount ?? 0) > 0 || !(attempts ?? []).isEmpty)
     }
 
     var runScope: RunScope {
