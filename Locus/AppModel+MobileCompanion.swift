@@ -72,7 +72,7 @@ extension AppModel {
             case .approvalRespond:
                 data = try companionRespondToApproval(request.payload)
             case .schedulesList:
-                await refreshScheduledTasks(announceFailure: false)
+                await schedule.refreshScheduledTasks(announceFailure: false)
                 data = companionSchedulesPayload()
             case .scheduleRunNow:
                 data = try await companionRunSchedule(request.payload)
@@ -112,7 +112,7 @@ extension AppModel {
             "running_count": .number(Double(companionRunningRuns.count)),
             "pending_approvals": .number(Double(companionApprovalObjects().count)),
             "approvals": companionApprovalsPayload(),
-            "next_schedule": nextScheduledTask.map(companionScheduleObject) ?? .null,
+            "next_schedule": schedule.nextScheduledTask.map(companionScheduleObject) ?? .null,
             "workspaces": .array(companionWorkspaces().map { workspace in
                 .object([
                     "id": .string(companionWorkspaceID(workspace.path)),
@@ -365,7 +365,7 @@ extension AppModel {
     }
 
     private func companionSchedulesPayload() -> JSONValue {
-        .array(scheduledTasks.map(companionScheduleObject))
+        .array(schedule.scheduledTasks.map(companionScheduleObject))
     }
 
     private func companionScheduleObject(_ task: ScheduledTask) -> JSONValue {
@@ -382,10 +382,10 @@ extension AppModel {
 
     private func companionRunSchedule(_ payload: [String: JSONValue]) async throws -> JSONValue {
         guard let scheduleID = CompanionPayload.string("schedule_id", in: payload),
-              let task = scheduledTasks.first(where: { $0.id == scheduleID }) else {
+              let task = schedule.scheduledTasks.first(where: { $0.id == scheduleID }) else {
             throw CompanionProtocolError(code: "schedule_not_found", message: "That schedule is no longer available.")
         }
-        await dispatchSchedule(
+        await schedule.dispatchSchedule(
             task, trigger: "manual", requestID: UUID().uuidString,
             announceFailure: false
         )
@@ -395,14 +395,14 @@ extension AppModel {
     private func companionSetScheduleEnabled(_ payload: [String: JSONValue]) async throws -> JSONValue {
         guard let scheduleID = CompanionPayload.string("schedule_id", in: payload),
               let enabled = CompanionPayload.bool("enabled", in: payload),
-              scheduledTasks.contains(where: { $0.id == scheduleID }) else {
+              schedule.scheduledTasks.contains(where: { $0.id == scheduleID }) else {
             throw CompanionProtocolError(code: "schedule_not_found", message: "That schedule is no longer available.")
         }
         let updated: ScheduledTask = try await backend.patch(
             "/api/schedules/\(scheduleID)", body: ["enabled": enabled],
             as: ScheduledTask.self
         )
-        replaceScheduledTask(updated)
+        schedule.replaceScheduledTask(updated)
         return companionScheduleObject(updated)
     }
 

@@ -1022,7 +1022,7 @@ final class AppModel: ObservableObject {
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    Task { await self.processDueSchedules() }
+                    Task { await self.schedule.processDueSchedules() }
                     if !self.agentRuntimePhase.isOnline || !self.modelRuntimePhase.isOnline {
                         self.scheduleRuntimeRecovery(
                             reason: "Checking local services after Locus became active.",
@@ -1036,7 +1036,7 @@ final class AppModel: ObservableObject {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                Task { @MainActor in await self?.processDueSchedules() }
+                Task { @MainActor in await self?.schedule.processDueSchedules() }
             }
             let workspaceNotifications = NSWorkspace.shared.notificationCenter
             privacyLockObservers = [

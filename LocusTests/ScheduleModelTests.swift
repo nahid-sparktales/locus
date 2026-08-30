@@ -124,7 +124,7 @@ final class ScheduleModelTests: XCTestCase {
         let republished = expectation(description: "AppModel.objectWillChange fired")
         republished.assertForOverFulfill = false
         let cancellable = app.objectWillChange.sink { _ in republished.fulfill() }
-        app.scheduleEditorDraft = ScheduleEditorDraft()
+        app.schedule.scheduleEditorDraft = ScheduleEditorDraft()
         await fulfillment(of: [republished], timeout: 1.0)
         cancellable.cancel()
     }

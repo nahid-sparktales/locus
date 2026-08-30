@@ -47,7 +47,7 @@ extension AppModel {
 
     func presentScheduleEditor(task: ScheduledTask? = nil, prompt: String? = nil) {
         if let task {
-            scheduleEditorDraft = ScheduleEditorDraft(task: task)
+            schedule.scheduleEditorDraft = ScheduleEditorDraft(task: task)
             return
         }
         var draft = ScheduleEditorDraft()
@@ -71,7 +71,7 @@ extension AppModel {
             draft.provider = "ollama"
             draft.model = selectedModel
         }
-        scheduleEditorDraft = draft
+        schedule.scheduleEditorDraft = draft
     }
 
     func rememberScheduleWorkspace(_ url: URL) -> String? {
@@ -83,7 +83,7 @@ extension AppModel {
         activityCenterSection = .schedules
         activityCenterPresented = true
         Task { @MainActor [weak self] in
-            await self?.refreshScheduledTasks()
+            await self?.schedule.refreshScheduledTasks()
         }
     }
 

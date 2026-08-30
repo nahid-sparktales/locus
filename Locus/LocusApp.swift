@@ -449,7 +449,7 @@ private struct LocusMenuBarView: View {
         } else {
             Text("No work running")
         }
-        if let next = model.nextScheduledTask, let date = next.nextRunDate {
+        if let next = model.schedule.nextScheduledTask, let date = next.nextRunDate {
             Text("Next: \(next.name) · \(date.formatted(date: .omitted, time: .shortened))")
         } else {
             Text("No upcoming schedules")
@@ -783,10 +783,10 @@ struct RootView: View {
             ShortcutsSheet()
         }
         .sheet(isPresented: Binding(
-            get: { model.scheduleEditorDraft != nil },
-            set: { if !$0 { model.scheduleEditorDraft = nil } }
+            get: { model.schedule.scheduleEditorDraft != nil },
+            set: { if !$0 { model.schedule.scheduleEditorDraft = nil } }
         )) {
-            if let draft = model.scheduleEditorDraft {
+            if let draft = model.schedule.scheduleEditorDraft {
                 ScheduleEditorView(draft: draft)
                     .environmentObject(model)
             }

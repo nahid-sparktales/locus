@@ -1133,7 +1133,7 @@ struct ActivityCenterView: View {
                         if model.activityCenterSection == .activity {
                             await model.refreshActivityRuns()
                         } else {
-                            await model.refreshScheduledTasks()
+                            await model.schedule.refreshScheduledTasks()
                         }
                     }
                 } label: {
@@ -1202,7 +1202,7 @@ struct ActivityCenterView: View {
                 if model.activityCenterSection == .activity {
                     await model.refreshActivityRuns()
                 } else {
-                    await model.refreshScheduledTasks(announceFailure: false)
+                    await model.schedule.refreshScheduledTasks(announceFailure: false)
                 }
                 try? await Task.sleep(for: .seconds(2))
             }
@@ -1227,7 +1227,7 @@ struct ActivityCenterView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
 
-            if model.scheduledTasks.isEmpty {
+            if model.schedule.scheduledTasks.isEmpty {
                 ContentUnavailableView(
                     "No Scheduled Tasks",
                     systemImage: "calendar.badge.clock",
@@ -1238,7 +1238,7 @@ struct ActivityCenterView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 10) {
-                        ForEach(model.scheduledTasks) { task in
+                        ForEach(model.schedule.scheduledTasks) { task in
                             ScheduleRow(task: task)
                                 .environmentObject(model)
                         }
@@ -1468,15 +1468,15 @@ private struct ScheduleRow: View {
             }
 
             HStack(spacing: 7) {
-                Button("Run Now") { model.runScheduleNow(task) }
+                Button("Run Now") { model.schedule.runScheduleNow(task) }
                 Button("Edit") { model.presentScheduleEditor(task: task) }
                 if task.enabled {
-                    Button("Pause") { model.setScheduleEnabled(task, enabled: false) }
+                    Button("Pause") { model.schedule.setScheduleEnabled(task, enabled: false) }
                 } else if task.rule.kind != .once || task.nextRunAt != nil {
-                    Button("Resume") { model.setScheduleEnabled(task, enabled: true) }
+                    Button("Resume") { model.schedule.setScheduleEnabled(task, enabled: true) }
                 }
                 if task.lastRunID != nil {
-                    Button("Latest Result") { model.openLatestRun(for: task) }
+                    Button("Latest Result") { model.schedule.openLatestRun(for: task) }
                 }
                 Spacer()
                 Button("Delete", role: .destructive) { confirmsDelete = true }
@@ -1492,7 +1492,7 @@ private struct ScheduleRow: View {
         .accessibilityIdentifier("schedule.row.\(task.id)")
         .alert("Delete \(task.name)?", isPresented: $confirmsDelete) {
             Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) { model.deleteSchedule(task) }
+            Button("Delete", role: .destructive) { model.schedule.deleteSchedule(task) }
         } message: {
             Text("Its generated chats and run history will be kept.")
         }
@@ -1545,12 +1545,12 @@ struct ScheduleEditorView: View {
                         .foregroundStyle(LocusTheme.muted)
                 }
                 Spacer()
-                Button("Cancel") { model.scheduleEditorDraft = nil }
+                Button("Cancel") { model.schedule.scheduleEditorDraft = nil }
                 Button(draft.id == nil ? "Create" : "Save") {
-                    Task { _ = await model.saveSchedule(draft) }
+                    Task { _ = await model.schedule.saveSchedule(draft) }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.isSavingSchedule)
+                .disabled(model.schedule.isSavingSchedule)
                 .accessibilityIdentifier("scheduleEditor.save")
             }
             .padding(18)

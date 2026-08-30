@@ -80,7 +80,6 @@
 		30037D111D86ABD1B1B7500E /* TeamRunLiveModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DCB3095568BA552C019498D /* TeamRunLiveModel.swift */; };
 		3050F95BC9E1777B2A77516F /* CompanionProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17A2C2357DB9117DF77AA7E7 /* CompanionProtocol.swift */; };
 		3289EF28FA26892D662C153C /* AppModel+SplitChatPanes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D16150F05480F3D9E417239 /* AppModel+SplitChatPanes.swift */; };
-		34BE1E9E4B671F95CCAA4B49 /* AppModel+ScheduleFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E3D2BAE130FC1CD958DDAE8 /* AppModel+ScheduleFacade.swift */; };
 		35872DC7D25B9CE5D3A43C6E /* InspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF3D3389D598BBECBE77E38F /* InspectorView.swift */; };
 		364C9E06FDFB847FA556FFCA /* ContextPackLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53E5A0F19569788DA77F88B9 /* ContextPackLoader.swift */; };
 		36FB90131DA798FF79E9A5FD /* WorkspaceKnowledgeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2ABFAA15924627CFCA8729D3 /* WorkspaceKnowledgeModel.swift */; };
@@ -233,7 +232,6 @@
 		998395FD905117F6B142F681 /* AppModel+BackendEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BAFC6DFED15705B38AC0CE2 /* AppModel+BackendEvents.swift */; };
 		9A0515892C46D782017B431C /* BrowserFavicons.swift in Sources */ = {isa = PBXBuildFile; fileRef = A256B308D8C600193136B212 /* BrowserFavicons.swift */; };
 		9A4FA5BE6FDCA68FEEF8039F /* InspectorModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 059B4B4EC6DB6EA4BF29D8E1 /* InspectorModels.swift */; };
-		9AAC3A3B0350695A5EA069D9 /* AppModel+ScheduleFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E3D2BAE130FC1CD958DDAE8 /* AppModel+ScheduleFacade.swift */; };
 		9B809359453C0BE9E930B7D6 /* TranscriptSearchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C8089379A9D8E1CAC5D5D1F /* TranscriptSearchModel.swift */; };
 		9B9504C3676C7751AAC78C90 /* ProviderModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A074779950EBBB250C3F62FF /* ProviderModels.swift */; };
 		9BA74BC9037E134CFD57420B /* CommandAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADFF6B3CE2F946B371F8A9EA /* CommandAction.swift */; };
@@ -492,7 +490,6 @@
 		3D508444E398AA3AB5441198 /* InspectorRail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorRail.swift; sourceTree = "<group>"; };
 		3D6CB3BEB98FC222452EF5BD /* LocusWalletChainTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocusWalletChainTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3DDCC477A47A2FB0E5FF77D2 /* SessionOutputWatcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionOutputWatcherTests.swift; sourceTree = "<group>"; };
-		3E3D2BAE130FC1CD958DDAE8 /* AppModel+ScheduleFacade.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+ScheduleFacade.swift"; sourceTree = "<group>"; };
 		3FEC18063F2B5DD71D342F67 /* AppModel+ChatOrganization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+ChatOrganization.swift"; sourceTree = "<group>"; };
 		40301E70BE817C7039EA22EB /* ThirdPartyLicenses */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ThirdPartyLicenses; path = Locus/Resources/ThirdPartyLicenses; sourceTree = SOURCE_ROOT; };
 		418F31828D4EE1F1E605A01F /* TranscriptSelectionGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptSelectionGeometry.swift; sourceTree = "<group>"; };
@@ -813,7 +810,6 @@
 				0AF5C1FAF2115086B439E46E /* AppModel+ProviderAccountsFacade.swift */,
 				8F806C35C762C83FB3B82CD9 /* AppModel+RunQueueAndActivity.swift */,
 				68D6F1CB03EC460FC68F13FB /* AppModel+RuntimeAndLifecycle.swift */,
-				3E3D2BAE130FC1CD958DDAE8 /* AppModel+ScheduleFacade.swift */,
 				EA7FD883EC568C4DBCE948DC /* AppModel+SendPipeline.swift */,
 				532B1372E8A5EE9DED6EAE97 /* AppModel+SessionActivity.swift */,
 				F6957EFEAE0E05AC5893C23F /* AppModel+SessionLifecycle.swift */,
@@ -1442,7 +1438,6 @@
 				D197DCED1129238A03118D2D /* AppModel+ProviderAccountsFacade.swift in Sources */,
 				4DA79DCF7630A692E19D8E67 /* AppModel+RunQueueAndActivity.swift in Sources */,
 				3F68866037C1281300CEB9A3 /* AppModel+RuntimeAndLifecycle.swift in Sources */,
-				34BE1E9E4B671F95CCAA4B49 /* AppModel+ScheduleFacade.swift in Sources */,
 				9C6012D17B4BC97AFEEDB80F /* AppModel+SendPipeline.swift in Sources */,
 				0D23F7C37380B8E236371737 /* AppModel+SessionActivity.swift in Sources */,
 				8823B3235ECB849BD3AC4A23 /* AppModel+SessionLifecycle.swift in Sources */,
@@ -1606,7 +1601,6 @@
 				237BEAEF803DCEA8F715FF79 /* AppModel+ProviderAccountsFacade.swift in Sources */,
 				69B215034F56A66C29C0F9EE /* AppModel+RunQueueAndActivity.swift in Sources */,
 				9CB91C972A280ACEF023341D /* AppModel+RuntimeAndLifecycle.swift in Sources */,
-				9AAC3A3B0350695A5EA069D9 /* AppModel+ScheduleFacade.swift in Sources */,
 				BA8944E773EEA161CD7A2F95 /* AppModel+SendPipeline.swift in Sources */,
 				B0CCC5369F8741A6284D9424 /* AppModel+SessionActivity.swift in Sources */,
 				9164D6778F06D2BABCA617C2 /* AppModel+SessionLifecycle.swift in Sources */,
