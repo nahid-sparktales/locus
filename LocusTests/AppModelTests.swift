@@ -1435,7 +1435,7 @@ final class AppModelTests: XCTestCase {
         ]
         """.utf8))
 
-        let blocks = AppModel.blocks(from: messages)
+        let blocks = ChatTranscriptBuilder.blocks(from: messages)
 
         XCTAssertEqual(blocks.count, 3)
         XCTAssertEqual(blocks[0].historyIndex, 0)

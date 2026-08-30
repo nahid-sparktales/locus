@@ -5911,7 +5911,7 @@ final class FeatureLogicTests: XCTestCase {
         User request:
         make a stock checker
         """
-        XCTAssertEqual(AppModel.displayUserText(decorated), "make a stock checker")
-        XCTAssertEqual(AppModel.displayUserText("plain ask"), "plain ask")
+        XCTAssertEqual(ChatTranscriptBuilder.displayUserText(decorated), "make a stock checker")
+        XCTAssertEqual(ChatTranscriptBuilder.displayUserText("plain ask"), "plain ask")
     }
 }

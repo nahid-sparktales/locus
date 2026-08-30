@@ -3626,7 +3626,7 @@ final class AppModel: ObservableObject {
             let refreshedContextFiles = dispatchedMode == .ask || dispatchedContextFiles.isEmpty
                 ? dispatchedContextFiles
                 : await Task.detached(priority: .utility) {
-                    dispatchedContextFiles.map(Self.reloadContextReference)
+                    dispatchedContextFiles.map(ContextPackLoader.reloadContextReference)
                 }.value
             guard !Task.isCancelled else {
                 self.discardAutomaticModelRoutingTurn(
@@ -7959,7 +7959,7 @@ final class AppModel: ObservableObject {
                 // session_info event doesn't wipe the freshly loaded transcript.
                 appliedWorkspacePath = response.sessionInfo.cwd
                 pendingWorkspacePath = nil
-                blocks = Self.blocks(from: response.messages)
+                blocks = ChatTranscriptBuilder.blocks(from: response.messages)
                 splitPaneBlocks[response.sessionInfo.sessionID] = blocks
                 paneState(containing: response.sessionInfo.sessionID)?.blocks = blocks
                 if let error = taskConversationStates[response.sessionInfo.sessionID]?
@@ -8064,7 +8064,7 @@ final class AppModel: ObservableObject {
                     "/api/sessions/\(runtime.sessionID)",
                     as: SessionDetailResponse.self
                 )
-                blocks = Self.blocks(from: detail.messages)
+                blocks = ChatTranscriptBuilder.blocks(from: detail.messages)
                 splitPaneBlocks[runtime.sessionID] = blocks
                 paneState(containing: runtime.sessionID)?.blocks = blocks
                 if let streamingID = runtime.streamingBlockID {
@@ -8605,7 +8605,7 @@ final class AppModel: ObservableObject {
                 "/api/sessions/\(sessionID)",
                 as: SessionDetailResponse.self
             ) else { return }
-            splitPaneBlocks[sessionID] = Self.blocks(from: detail.messages)
+            splitPaneBlocks[sessionID] = ChatTranscriptBuilder.blocks(from: detail.messages)
             paneState(containing: sessionID)?.blocks = splitPaneBlocks[sessionID] ?? []
         }
     }
@@ -8754,7 +8754,7 @@ final class AppModel: ObservableObject {
             do {
                 let panel = NSSavePanel()
                 panel.title = "Export Locus Session"
-                panel.nameFieldStringValue = "\(Self.safeFilename(session.displayTitle)).\(format.pathExtension)"
+                panel.nameFieldStringValue = "\(ChatTranscriptBuilder.safeFilename(session.displayTitle)).\(format.pathExtension)"
                 panel.allowedContentTypes = switch format {
                 case .pdf: [.pdf]
                 case .markdown: [UTType(filenameExtension: "md") ?? .plainText]
@@ -9015,7 +9015,7 @@ final class AppModel: ObservableObject {
         let scopedURLs = selected.filter { $0.startAccessingSecurityScopedResource() }
         Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
-                Self.readChatAttachments(selected, excluding: existing)
+                ChatAttachmentLoader.readChatAttachments(selected, excluding: existing)
             }.value
             scopedURLs.forEach { $0.stopAccessingSecurityScopedResource() }
             guard let self else { return }
@@ -9252,7 +9252,7 @@ final class AppModel: ObservableObject {
         let remainingSlots = max(50 - contextFiles.count, 0)
         Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
-                Self.readContextSelection(urls, excluding: existing, limit: remainingSlots)
+                ContextPackLoader.readContextSelection(urls, excluding: existing, limit: remainingSlots)
             }.value
             guard let self else { return }
             contextFiles.append(contentsOf: result.files)
@@ -9268,7 +9268,7 @@ final class AppModel: ObservableObject {
         guard !contextFiles.isEmpty else { return }
         let references = contextFiles
         let refreshed = await Task.detached(priority: .utility) {
-            references.map(Self.reloadContextReference)
+            references.map(ContextPackLoader.reloadContextReference)
         }.value
         // Merge by id onto the CURRENT list: files removed or added while the
         // refresh ran off-thread must not be resurrected or dropped.
@@ -13399,7 +13399,7 @@ final class AppModel: ObservableObject {
             clearPendingQuestion()
             contextFiles = checkpoint.contextFiles
             queuedMessages = []
-            restoredTranscriptContext = transcriptContext(from: checkpoint.blocks)
+            restoredTranscriptContext = ChatTranscriptBuilder.transcriptContext(from: checkpoint.blocks)
             if let rewindDraft = pendingRewindDraft {
                 pendingRewindDraft = nil
                 draftText = rewindDraft
@@ -13890,19 +13890,6 @@ final class AppModel: ObservableObject {
         } else if used >= Int(Double(contextBudgetTokens) * 0.8) {
             contextNotice = "Context pack is near its \(contextBudgetTokens.formatted()) token budget."
         }
-    }
-
-    private func transcriptContext(from blocks: [ChatBlock]) -> String {
-        blocks.compactMap { block -> String? in
-            switch block.kind {
-            case .user: "User: \(block.text)"
-            case .assistant: "Assistant: \(block.text)"
-            case .note: block.completion == nil ? "Note: \(block.text)" : nil
-            case .tool, .error: nil
-            }
-        }
-        .suffix(12)
-        .joined(separator: "\n\n")
     }
 
     private func seedUITestState() {
@@ -15086,330 +15073,6 @@ final class AppModel: ObservableObject {
         }
     }
 
-    nonisolated private static func readChatAttachments(
-        _ selected: [URL],
-        excluding existing: Set<URL>
-    ) -> ChatAttachmentLoadResult {
-        let directImageTypes = [
-            "png": "image/png",
-            "jpg": "image/jpeg",
-            "jpeg": "image/jpeg",
-            "gif": "image/gif",
-            "webp": "image/webp",
-        ]
-        var attachments: [ChatAttachment] = []
-        var unsupported = 0
-        var oversized = 0
-        var unreadable = 0
-        var truncatedPDFs = 0
-        var totalImageBytes = 0
-        var totalTextBytes = 0
-
-        for selectedURL in selected {
-            let url = selectedURL.standardizedFileURL
-            guard !existing.contains(url) else { continue }
-            let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-            guard values?.isRegularFile == true else {
-                unsupported += 1
-                continue
-            }
-            let size = values?.fileSize ?? 0
-            let ext = url.pathExtension.lowercased()
-
-            if ext == "pdf" {
-                guard size <= 10_000_000, totalTextBytes < 750_000 else {
-                    oversized += 1
-                    continue
-                }
-                guard let document = PDFDocument(url: url),
-                      let rawText = document.string?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !rawText.isEmpty
-                else {
-                    unreadable += 1
-                    continue
-                }
-                let remaining = max(750_000 - totalTextBytes, 0)
-                let content = String(rawText.prefix(min(500_000, remaining)))
-                if content.count < rawText.count { truncatedPDFs += 1 }
-                totalTextBytes += content.utf8.count
-                attachments.append(
-                    ChatAttachment(url: url, kind: .text, textContent: content)
-                )
-                continue
-            }
-
-            let type = UTType(filenameExtension: ext)
-            if type?.conforms(to: .image) == true {
-                guard size <= 15_000_000, totalImageBytes < 25_000_000 else {
-                    oversized += 1
-                    continue
-                }
-                let imageData: Data?
-                let mimeType: String?
-                if let directMIME = directImageTypes[ext] {
-                    imageData = try? Data(contentsOf: url, options: .mappedIfSafe)
-                    mimeType = directMIME
-                } else if let image = NSImage(contentsOf: url),
-                          let tiff = image.tiffRepresentation,
-                          let bitmap = NSBitmapImageRep(data: tiff),
-                          let jpeg = bitmap.representation(
-                              using: .jpeg,
-                              properties: [.compressionFactor: 0.88]
-                          ) {
-                    imageData = jpeg
-                    mimeType = "image/jpeg"
-                } else {
-                    imageData = nil
-                    mimeType = nil
-                }
-                guard let imageData, let mimeType,
-                      imageData.count <= 15_000_000,
-                      totalImageBytes + imageData.count <= 25_000_000
-                else {
-                    unreadable += 1
-                    continue
-                }
-                totalImageBytes += imageData.count
-                attachments.append(
-                    ChatAttachment(
-                        url: url,
-                        kind: .image,
-                        imageData: imageData,
-                        mimeType: mimeType
-                    )
-                )
-                continue
-            }
-
-            if ContextFileTypes.allowedExtensions.contains(ext)
-                || type?.conforms(to: .text) == true {
-                guard size <= 500_000,
-                      totalTextBytes + size <= 750_000
-                else {
-                    oversized += 1
-                    continue
-                }
-                guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
-                      let content = String(data: data, encoding: .utf8),
-                      !content.isEmpty
-                else {
-                    unreadable += 1
-                    continue
-                }
-                totalTextBytes += data.count
-                attachments.append(
-                    ChatAttachment(url: url, kind: .text, textContent: content)
-                )
-                continue
-            }
-
-            unsupported += 1
-        }
-
-        var warnings: [String] = []
-        if unsupported > 0 { warnings.append("\(unsupported) unsupported") }
-        if oversized > 0 { warnings.append("\(oversized) over the size limit") }
-        if unreadable > 0 { warnings.append("\(unreadable) unreadable") }
-        if truncatedPDFs > 0 { warnings.append("\(truncatedPDFs) PDF truncated") }
-        let notice = warnings.isEmpty ? nil : "Skipped or limited: \(warnings.joined(separator: ", "))."
-        return ChatAttachmentLoadResult(attachments: attachments, notice: notice)
-    }
-
-    nonisolated private static func readContextSelection(
-        _ selected: [URL],
-        excluding existing: Set<URL>,
-        limit: Int
-    ) -> ContextLoadResult {
-        guard limit > 0 else {
-            return ContextLoadResult(files: [], notice: "Context packs support up to 50 files.")
-        }
-        let urls = expandedContextURLs(selected, limit: limit)
-        var files: [ContextFile] = []
-        var oversized = 0
-        var unreadable = 0
-        var overPackBudget = 0
-        var totalBytes = 0
-
-        for url in urls where files.count < limit {
-            let normalized = url.standardizedFileURL
-            guard !existing.contains(normalized) else { continue }
-            let values = try? normalized.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-            let size = values?.fileSize ?? 0
-            guard size <= 256_000 else {
-                oversized += 1
-                continue
-            }
-            guard totalBytes + size <= 1_000_000 else {
-                overPackBudget += 1
-                continue
-            }
-            guard let data = try? Data(contentsOf: normalized, options: .mappedIfSafe),
-                  let content = String(data: data, encoding: .utf8)
-            else {
-                unreadable += 1
-                continue
-            }
-            totalBytes += data.count
-            files.append(
-                ContextFile(
-                    url: normalized,
-                    content: content,
-                    modificationDate: values?.contentModificationDate
-                )
-            )
-        }
-
-        var warnings: [String] = []
-        if oversized > 0 {
-            warnings.append("\(oversized) oversized")
-        }
-        if unreadable > 0 {
-            warnings.append("\(unreadable) binary or unreadable")
-        }
-        if overPackBudget > 0 {
-            warnings.append("\(overPackBudget) over the 1 MB pack limit")
-        }
-        if urls.count == limit {
-            warnings.append("selection capped at 50 text files")
-        }
-        let notice = warnings.isEmpty ? nil : "Skipped: \(warnings.joined(separator: ", "))."
-        return ContextLoadResult(files: files, notice: notice)
-    }
-
-    nonisolated private static func reloadContextReference(_ reference: ContextFile) -> ContextFile {
-        let url = reference.url.standardizedFileURL
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return ContextFile(
-                id: reference.id,
-                url: url,
-                isIncluded: false,
-                issue: "File is missing"
-            )
-        }
-        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-        guard (values?.fileSize ?? 0) <= 256_000 else {
-            return ContextFile(
-                id: reference.id,
-                url: url,
-                isIncluded: false,
-                modificationDate: values?.contentModificationDate,
-                issue: "File is larger than 256 KB"
-            )
-        }
-        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
-              let content = String(data: data, encoding: .utf8)
-        else {
-            return ContextFile(
-                id: reference.id,
-                url: url,
-                isIncluded: false,
-                modificationDate: values?.contentModificationDate,
-                issue: "File is unreadable or not UTF-8 text"
-            )
-        }
-        return ContextFile(
-            id: reference.id,
-            url: url,
-            content: content,
-            isIncluded: reference.isIncluded,
-            modificationDate: values?.contentModificationDate
-        )
-    }
-
-    nonisolated private static func expandedContextURLs(_ selected: [URL], limit: Int) -> [URL] {
-        var output: [URL] = []
-
-        for url in selected where output.count < limit {
-            var isDirectory: ObjCBool = false
-            FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
-            if !isDirectory.boolValue {
-                output.append(url)
-                continue
-            }
-
-            guard let enumerator = FileManager.default.enumerator(
-                at: url,
-                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
-                options: [.skipsHiddenFiles, .skipsPackageDescendants]
-            ) else { continue }
-
-            for case let child as URL in enumerator {
-                if ContextFileTypes.skippedDirectories.contains(child.lastPathComponent) {
-                    enumerator.skipDescendants()
-                    continue
-                }
-                guard output.count < limit,
-                      ContextFileTypes.allowedExtensions.contains(child.pathExtension.lowercased()),
-                      (try? child.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
-                else { continue }
-                output.append(child)
-            }
-        }
-        return output
-    }
-
-    nonisolated private static func safeFilename(_ value: String) -> String {
-        let cleaned = value.replacingOccurrences(
-            of: #"[^a-zA-Z0-9._-]+"#,
-            with: "-",
-            options: .regularExpression
-        )
-        return String(cleaned.trimmingCharacters(in: CharacterSet(charactersIn: "-")).prefix(60))
-            .nilIfEmpty ?? "locus-session"
-    }
-
-    /// The user's own words, with the composer's `[Locus mode: …]` wrapper and
-    /// context sections removed. The transcript has always shown this; the Runs
-    /// panel showed the raw decorated prompt, so the request itself was the part
-    /// that got truncated away.
-    nonisolated static func displayUserText(_ content: String) -> String {
-        guard let range = content.range(of: "User request:\n", options: .backwards) else {
-            return content
-        }
-        return String(content[range.upperBound...])
-    }
-
-    static func blocks(from messages: [HistoryMessage]) -> [ChatBlock] {
-        messages.enumerated().compactMap { index, message in
-            switch message.role {
-            case "user":
-                ChatBlock(
-                    kind: .user,
-                    text: displayUserText(message.content),
-                    runID: message.runID,
-                    historyIndex: index
-                )
-            case "assistant" where !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || !(message.reasoning?.isEmpty ?? true)
-                || !(message.reasoningSections?.isEmpty ?? true):
-                ChatBlock(
-                    kind: .assistant,
-                    text: message.content,
-                    assistantPhase: message.phase,
-                    sourceItemID: message.itemID,
-                    reasoningText: message.reasoning,
-                    reasoningSections: message.reasoningSections,
-                    historyIndex: index
-                )
-            case "tool":
-                ChatBlock(
-                    kind: .tool,
-                    tool: ToolPayload(
-                        toolID: UUID().uuidString,
-                        tool: message.name ?? "tool",
-                        summary: message.name ?? "tool",
-                        detail: "",
-                        status: .done,
-                        result: message.content
-                    ),
-                    historyIndex: index
-                )
-            default:
-                nil
-            }
-        }
-    }
-
 }
 
 // MARK: - Mobile companion
@@ -15582,7 +15245,7 @@ extension AppModel {
         let messages: [JSONValue] = detail.messages.suffix(500).compactMap { message in
             guard message.role == "user" || message.role == "assistant" else { return nil }
             let visible = message.role == "user"
-                ? Self.displayUserText(message.content)
+                ? ChatTranscriptBuilder.displayUserText(message.content)
                 : message.content
             guard !visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             return .object([
