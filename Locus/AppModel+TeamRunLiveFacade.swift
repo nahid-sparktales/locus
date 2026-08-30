@@ -1,8 +1,8 @@
 import Foundation
 
-/// Forwarders kept while consumers still reach the live team run's
-/// presentation through AppModel; each is deleted once its last caller
-/// observes `model.teamRunLive` directly.
+// Facade API — kept for InspectorView (a concurrent branch owns it),
+// AppModelTests, and the dispatcher seams. Shrinks to nothing once that
+// branch lands and the tests are re-pointed in the follow-up.
 extension AppModel {
     var dispatcherActivity: AgentActivity? {
         get { teamRunLive.dispatcherActivity }

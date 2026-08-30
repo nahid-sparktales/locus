@@ -1,7 +1,8 @@
 import Foundation
 
-/// Forwarders kept while consumers still reach run history through AppModel;
-/// each is deleted once its last caller observes `model.runs` directly.
+// Facade API — kept for InspectorView (a concurrent branch owns it),
+// AppModelTests, and the dispatcher/run-queue seams. Shrinks to nothing
+// once that branch lands and the tests are re-pointed in the follow-up.
 extension AppModel {
     var orchestrationRuns: [OrchestrationRun] {
         get { runs.orchestrationRuns }
