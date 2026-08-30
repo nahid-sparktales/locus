@@ -63,6 +63,8 @@ if ! curl -fsS \
 fi
 
 cd "$repo_root"
+# Extra arguments pass through to xcodebuild. CI and contributors outside
+# the team append `CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=` (CONTRIBUTING.md).
 LOCUS_BUNDLE_MODE=skip \
 xcodebuild test \
   -project Locus.xcodeproj \
@@ -71,4 +73,5 @@ xcodebuild test \
   -destination 'platform=macOS' \
   -only-testing:LocusWalletChainTests \
   LOCUS_ANVIL_RPC_URL="$rpc_url" \
-  LOCUS_ANVIL_VERSION="$pinned_version"
+  LOCUS_ANVIL_VERSION="$pinned_version" \
+  "$@"
