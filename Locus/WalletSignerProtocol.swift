@@ -302,6 +302,7 @@ enum WalletReviewedAdapters {
         "solana-associated-token-create-idempotent-v1"
     static let suiNativeTransfer = "sui-native-transfer-v1"
     static let suiCoinTransfer = "sui-coin-transfer-v1"
+    static let suiObjectTransfer = "sui-object-transfer-v1"
     static let erc20 = "erc20-v1"
     static let erc721SafeTransfer = "erc721-safe-transfer-v1"
     static let erc1155SafeTransfer = "erc1155-safe-transfer-v1"
@@ -311,7 +312,7 @@ enum WalletReviewedAdapters {
         ethereumNativeTransfer, solanaNativeTransfer, solanaSPLTransferChecked,
         solanaToken2022TransferChecked,
         solanaAssociatedTokenCreateIdempotent,
-        suiNativeTransfer, suiCoinTransfer,
+        suiNativeTransfer, suiCoinTransfer, suiObjectTransfer,
         erc20, erc721SafeTransfer, erc1155SafeTransfer,
         uniswapUniversalRouterV2ExactIn,
     ]
@@ -805,6 +806,10 @@ struct WalletSuiPreparationPacket: Codable, Equatable, Sendable {
     let coinBalanceBaseUnits: String?
     let coinCheckpointSequence: UInt64?
     let coinCheckpointTimestamp: Date?
+    let transferredObject: WalletSuiObjectReference?
+    let objectHasPublicTransfer: Bool?
+    let objectCheckpointSequence: UInt64?
+    let objectCheckpointTimestamp: Date?
     let gasObject: WalletSuiObjectReference
     let gasBalanceBaseUnits: String
     let gasBudgetBaseUnits: String
@@ -834,6 +839,9 @@ struct WalletSuiSimulationPacket: Codable, Equatable, Sendable {
     let assetID: String
     let coinType: String
     let coinObjectID: String?
+    let transferredObjectInput: WalletSuiObjectReference?
+    let transferredObjectOutput: WalletSuiObjectReference?
+    let objectHasPublicTransfer: Bool?
     let amountBaseUnits: String
     let senderDebitBaseUnits: String
     let senderGasDebitBaseUnits: String?
@@ -853,6 +861,10 @@ struct WalletSuiRecheckPacket: Codable, Equatable, Sendable {
     let coinBalanceBaseUnits: String?
     let coinCheckpointSequence: UInt64?
     let coinCheckpointTimestamp: Date?
+    let transferredObject: WalletSuiObjectReference?
+    let objectHasPublicTransfer: Bool?
+    let objectCheckpointSequence: UInt64?
+    let objectCheckpointTimestamp: Date?
     let gasObject: WalletSuiObjectReference
     let gasBalanceBaseUnits: String
     let gasCheckpointSequence: UInt64

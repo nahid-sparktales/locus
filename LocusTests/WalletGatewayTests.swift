@@ -1736,6 +1736,71 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertNil(signer.preparedContracts.last ?? nil)
     }
 
+    @MainActor
+    func testGatewayPreparesOnlySignedManifestSuiObjectTransfer() async throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let issuedAt = Date().addingTimeInterval(-60)
+        let objectID = "0x" + String(repeating: "3", count: 64)
+        let identity = WalletSuiObjectIdentity(
+            networkID: WalletNetworkCatalog.suiTestnet.id,
+            objectID: objectID
+        )
+        let asset = WalletAsset(
+            canonicalID: identity.canonicalID, networkID: identity.networkID,
+            chain: .sui, kind: .collectible, reference: identity.objectID,
+            name: "Reviewed Object", symbol: "OBJECT", decimals: nil,
+            trust: .curated, manifestRevision: 5
+        )
+        let manifest = WalletReviewManifest(
+            schemaVersion: 1, revision: 5, issuedAt: issuedAt,
+            expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
+            assets: [asset], evmContracts: [], explorerTemplates: [:],
+            adapterIDs: [WalletReviewedAdapters.suiObjectTransfer]
+        )
+        let registry = try WalletReviewRegistry(
+            signedManifest: signedReview(manifest, key: key),
+            publicKey: key.publicKey
+        )
+        let signer = FakeWalletSigner()
+        signer.accountChain = .sui
+        signer.accountAddress = "0x" + String(repeating: "1", count: 64)
+        signer.accountNetworkIDs = [WalletNetworkCatalog.suiTestnet.id]
+        signer.adapterID = WalletReviewedAdapters.suiObjectTransfer
+        let defaults = UserDefaults(
+            suiteName: "WalletGatewayTests.sui-object.\(UUID().uuidString)"
+        )!
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            userDefaults: defaults,
+            publicStore: try WalletPublicStore(path: ":memory:"),
+            reviewRegistry: registry, buildSupportsWalletAlpha: true
+        )
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        let response = await gateway.perform(
+            tool: "wallet_prepare_transaction",
+            arguments: [
+                "network_id": WalletNetworkCatalog.suiTestnet.id,
+                "account_id": "account-1",
+                "maximum_fee_base_units": "10000000",
+                "action": [
+                    "type": WalletActionKind.nftTransfer.rawValue,
+                    "asset_id": identity.canonicalID,
+                    "token_id": identity.objectID,
+                    "recipient": "0x" + String(repeating: "2", count: 64),
+                ],
+            ],
+            source: .human
+        )
+        XCTAssertNil(response["error"])
+        XCTAssertEqual(signer.preparedRequests.last?.action.type, .nftTransfer)
+        XCTAssertEqual(signer.preparedRequests.last?.action.assetID, identity.canonicalID)
+        XCTAssertEqual(signer.preparedRequests.last?.action.tokenID, identity.objectID)
+        XCTAssertEqual(signer.preparedRequests.last?.action.amountBaseUnits, "1")
+        XCTAssertNil(signer.preparedContracts.last ?? nil)
+    }
+
     func testSuiNativeTransferSimulationBindsExactEffectsAndSignerBytes() async throws {
         let now = try XCTUnwrap(ISO8601DateFormatter().date(
             from: "2026-08-31T12:05:00Z"
@@ -1922,6 +1987,104 @@ final class WalletGatewayTests: XCTestCase {
                     maximumFeeBaseUnits: "10000", gasObjectID: gasObjectID
                 )
                 XCTFail("Substituted Sui Coin effects must fail closed.")
+            } catch WalletRPCError.invalidResponse {
+                // Expected.
+            }
+        }
+    }
+
+    func testSuiObjectTransferSimulationBindsOwnershipAndGasEffects() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let sender = "0x" + String(repeating: "1", count: 64)
+        let recipient = "0x" + String(repeating: "2", count: 64)
+        let input = WalletSuiObjectReference(
+            objectID: "0x" + String(repeating: "3", count: 64), version: 19,
+            digest: WalletSolanaBase58.encode(Data(repeating: 61, count: 32)),
+            type: "0x1234::collectible::LOCUS"
+        )
+        let gas = WalletSuiObjectReference(
+            objectID: "0x" + String(repeating: "4", count: 64), version: 42,
+            digest: WalletSolanaBase58.encode(Data(repeating: 62, count: 32)),
+            type: "0x2::coin::Coin<0x2::sui::SUI>"
+        )
+        let digest = WalletSolanaBase58.encode(Data(repeating: 63, count: 32))
+        let effectsDigest = WalletSolanaBase58.encode(Data(repeating: 64, count: 32))
+        let transactionBCS = Data([9, 8, 7, 6]).base64EncodedString()
+        let client = makeSuiGraphQLClient(
+            network: WalletNetworkCatalog.suiMainnet, now: now
+        ) { request in
+            let body = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            XCTAssertTrue((body["query"] as? String)?.contains(
+                "objectChanges(first: 3)"
+            ) == true)
+            return try self.suiObjectTransferSimulationResponse(
+                sender: sender, recipient: recipient, input: input, gas: gas,
+                transactionDigest: digest, effectsDigest: effectsDigest
+            )
+        }
+        let result = try await client.simulateObjectTransfer(
+            transactionBCS: transactionBCS,
+            expectedTransactionDigest: digest,
+            sender: sender, recipient: recipient, inputObject: input,
+            maximumFeeBaseUnits: "10000", gasObject: gas
+        )
+        XCTAssertEqual(result.inputObject, input)
+        XCTAssertEqual(result.outputObject.objectID, input.objectID)
+        XCTAssertEqual(result.outputObject.version, 20)
+        XCTAssertEqual(result.outputObject.type, input.type)
+        XCTAssertEqual(result.senderGasDebitBaseUnits, "1300")
+        XCTAssertTrue(result.hasPublicTransfer)
+    }
+
+    func testSuiObjectTransferSimulationRejectsOwnershipOrTypeSubstitution() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let sender = "0x" + String(repeating: "1", count: 64)
+        let recipient = "0x" + String(repeating: "2", count: 64)
+        let input = WalletSuiObjectReference(
+            objectID: "0x" + String(repeating: "3", count: 64), version: 19,
+            digest: WalletSolanaBase58.encode(Data(repeating: 65, count: 32)),
+            type: "0x1234::collectible::LOCUS"
+        )
+        let gas = WalletSuiObjectReference(
+            objectID: "0x" + String(repeating: "4", count: 64), version: 42,
+            digest: WalletSolanaBase58.encode(Data(repeating: 66, count: 32)),
+            type: "0x2::coin::Coin<0x2::sui::SUI>"
+        )
+        let digest = WalletSolanaBase58.encode(Data(repeating: 67, count: 32))
+        let effectsDigest = WalletSolanaBase58.encode(Data(repeating: 68, count: 32))
+        let transactionBCS = Data([9, 8, 7, 6]).base64EncodedString()
+        let substitutions = [
+            (sender, input.type, true),
+            (recipient, "0x1234::other::OBJECT", true),
+            (recipient, input.type, false),
+        ]
+        for (outputOwner, outputType, isPublic) in substitutions {
+            let client = makeSuiGraphQLClient(
+                network: WalletNetworkCatalog.suiMainnet, now: now
+            ) { _ in
+                try self.suiObjectTransferSimulationResponse(
+                    sender: sender, recipient: recipient, input: input, gas: gas,
+                    transactionDigest: digest, effectsDigest: effectsDigest,
+                    outputOwner: outputOwner, outputType: outputType,
+                    outputHasPublicTransfer: isPublic
+                )
+            }
+            do {
+                _ = try await client.simulateObjectTransfer(
+                    transactionBCS: transactionBCS,
+                    expectedTransactionDigest: digest,
+                    sender: sender, recipient: recipient, inputObject: input,
+                    maximumFeeBaseUnits: "10000", gasObject: gas
+                )
+                XCTFail("Substituted Sui object effects must fail closed.")
             } catch WalletRPCError.invalidResponse {
                 // Expected.
             }
@@ -3761,6 +3924,116 @@ final class WalletGatewayTests: XCTestCase {
                 ],
             ],
         ])
+    }
+
+    private func suiObjectTransferSimulationResponse(
+        sender: String,
+        recipient: String,
+        input: WalletSuiObjectReference,
+        gas: WalletSuiObjectReference,
+        transactionDigest: String,
+        effectsDigest: String,
+        outputOwner: String? = nil,
+        outputType: String? = nil,
+        outputHasPublicTransfer: Bool = true
+    ) throws -> Data {
+        let output = WalletSuiObjectReference(
+            objectID: input.objectID, version: input.version + 1,
+            digest: WalletSolanaBase58.encode(Data(repeating: 69, count: 32)),
+            type: outputType ?? input.type
+        )
+        let gasOutput = WalletSuiObjectReference(
+            objectID: gas.objectID, version: gas.version + 1,
+            digest: WalletSolanaBase58.encode(Data(repeating: 70, count: 32)),
+            type: gas.type
+        )
+        return try JSONSerialization.data(withJSONObject: [
+            "data": [
+                "chainIdentifier": WalletSuiChainIdentity.mainnetBase58,
+                "checkpoint": [
+                    "sequenceNumber": 123_456,
+                    "timestamp": "2026-08-31T12:00:00Z",
+                    "epoch": ["epochId": 900, "referenceGasPrice": "1000"],
+                ],
+                "simulateTransaction": [
+                    "effects": [
+                        "digest": transactionDigest,
+                        "effectsDigest": effectsDigest,
+                        "status": "SUCCESS",
+                        "executionError": NSNull(),
+                        "gasEffects": [
+                            "gasObject": ["address": gas.objectID],
+                            "gasSummary": [
+                                "computationCost": 1_000,
+                                "storageCost": 500,
+                                "storageRebate": 200,
+                                "nonRefundableStorageFee": 100,
+                            ],
+                        ],
+                        "balanceChanges": [
+                            "nodes": [self.suiBalanceChangeJSON(
+                                owner: sender,
+                                coinType: WalletSuiAssetIdentity.nativeCoinType,
+                                amount: "-1300"
+                            )],
+                            "pageInfo": ["hasNextPage": false],
+                        ],
+                        "objectChanges": [
+                            "nodes": [
+                                [
+                                    "address": input.objectID,
+                                    "idCreated": false,
+                                    "idDeleted": false,
+                                    "inputState": self.suiObjectStateJSON(
+                                        reference: input, owner: sender,
+                                        hasPublicTransfer: true
+                                    ),
+                                    "outputState": self.suiObjectStateJSON(
+                                        reference: output,
+                                        owner: outputOwner ?? recipient,
+                                        hasPublicTransfer: outputHasPublicTransfer
+                                    ),
+                                ],
+                                [
+                                    "address": gas.objectID,
+                                    "idCreated": false,
+                                    "idDeleted": false,
+                                    "inputState": self.suiObjectStateJSON(
+                                        reference: gas, owner: sender,
+                                        hasPublicTransfer: true
+                                    ),
+                                    "outputState": self.suiObjectStateJSON(
+                                        reference: gasOutput, owner: sender,
+                                        hasPublicTransfer: true
+                                    ),
+                                ],
+                            ],
+                            "pageInfo": ["hasNextPage": false],
+                        ],
+                    ],
+                ],
+            ],
+        ])
+    }
+
+    private func suiObjectStateJSON(
+        reference: WalletSuiObjectReference,
+        owner: String,
+        hasPublicTransfer: Bool
+    ) -> [String: Any] {
+        [
+            "address": reference.objectID,
+            "version": reference.version,
+            "digest": reference.digest,
+            "owner": [
+                "__typename": "AddressOwner",
+                "address": ["address": owner],
+            ],
+            "asMoveObject": [
+                "hasPublicTransfer": hasPublicTransfer,
+                "contents": ["type": ["repr": reference.type]],
+            ],
+        ]
     }
 
     private func suiBalanceChangeJSON(

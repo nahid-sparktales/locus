@@ -74,6 +74,12 @@ struct WalletSuiCoinObjectSelection: Equatable, Sendable {
     let requiredBalanceBaseUnits: String
 }
 
+struct WalletSuiOwnedObjectSnapshot: Equatable, Sendable {
+    let network: WalletSuiNetworkStatus
+    let owner: String
+    let objects: [WalletSuiOwnedObject]
+}
+
 struct WalletSuiGasCostSummary: Codable, Equatable, Sendable {
     let computationCost: String
     let storageCost: String
@@ -109,6 +115,26 @@ struct WalletSuiCoinTransferSimulation: Equatable, Sendable {
     let recipientCreditBaseUnits: String
     let gasObjectID: String
     let gas: WalletSuiGasCostSummary
+}
+
+struct WalletSuiObjectTransferSimulation: Equatable, Sendable {
+    let network: WalletSuiNetworkStatus
+    let transactionDigest: String
+    let effectsDigest: String
+    let sender: String
+    let recipient: String
+    let inputObject: WalletSuiObjectReference
+    let outputObject: WalletSuiObjectReference
+    let hasPublicTransfer: Bool
+    let senderGasDebitBaseUnits: String
+    let gasObjectID: String
+    let gas: WalletSuiGasCostSummary
+}
+
+private struct WalletSuiSimulatedObjectState {
+    let reference: WalletSuiObjectReference
+    let owner: String
+    let hasPublicTransfer: Bool
 }
 
 struct WalletSuiExecutionResult: Equatable, Sendable {
@@ -226,6 +252,40 @@ actor WalletSuiGraphQLClient {
             }
             pageInfo { hasNextPage }
           }
+          objectChanges(first: 3) {
+            nodes {
+              address
+              idCreated
+              idDeleted
+              inputState {
+                address
+                version
+                digest
+                owner {
+                  __typename
+                  ... on AddressOwner { address { address } }
+                }
+                asMoveObject {
+                  hasPublicTransfer
+                  contents { type { repr } }
+                }
+              }
+              outputState {
+                address
+                version
+                digest
+                owner {
+                  __typename
+                  ... on AddressOwner { address { address } }
+                }
+                asMoveObject {
+                  hasPublicTransfer
+                  contents { type { repr } }
+                }
+              }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
         }
       }
     }
@@ -307,7 +367,6 @@ actor WalletSuiGraphQLClient {
           pageInfo { hasNextPage endCursor }
         }
       }
-    }
     """
 
     private static let ownedObjectsQuery = """
@@ -590,6 +649,12 @@ actor WalletSuiGraphQLClient {
     }
 
     func ownedObjects(owner: String) async throws -> [WalletSuiOwnedObject] {
+        try await ownedObjectSnapshot(owner: owner).objects
+    }
+
+    func ownedObjectSnapshot(
+        owner: String
+    ) async throws -> WalletSuiOwnedObjectSnapshot {
         guard Self.isCanonicalAddress(owner) else {
             throw WalletGateway.Error.invalidArguments(
                 "Sui object discovery requires a canonical 32-byte owner address."
@@ -654,9 +719,12 @@ actor WalletSuiGraphQLClient {
                         "Sui returned malformed terminal object pagination evidence"
                     )
                 }
-                return results.sorted {
-                    $0.identity.canonicalID < $1.identity.canonicalID
-                }
+                return WalletSuiOwnedObjectSnapshot(
+                    network: status, owner: owner,
+                    objects: results.sorted {
+                        $0.identity.canonicalID < $1.identity.canonicalID
+                    }
+                )
             }
             guard let cursor = pageInfo["endCursor"] as? String,
                   !cursor.isEmpty, cursor.utf8.count <= 1_024,
@@ -1162,6 +1230,150 @@ actor WalletSuiGraphQLClient {
         )
     }
 
+    func simulateObjectTransfer(
+        transactionBCS: String,
+        expectedTransactionDigest: String,
+        sender: String,
+        recipient: String,
+        inputObject: WalletSuiObjectReference,
+        maximumFeeBaseUnits: String,
+        gasObject: WalletSuiObjectReference
+    ) async throws -> WalletSuiObjectTransferSimulation {
+        guard inputObject.objectID != gasObject.objectID,
+              inputObject.type != Self.nativeCoinObjectType,
+              let transaction = Data(base64Encoded: transactionBCS),
+              !transaction.isEmpty, transaction.count <= Self.maximumRequestBytes / 2,
+              transaction.base64EncodedString() == transactionBCS,
+              WalletSolanaBase58.decode(expectedTransactionDigest, exactLength: 32) != nil,
+              Self.isCanonicalAddress(sender), Self.isCanonicalAddress(recipient),
+              sender != recipient,
+              Self.isCanonicalAddress(inputObject.objectID), inputObject.version > 0,
+              WalletSolanaBase58.decode(inputObject.digest, exactLength: 32) != nil,
+              Self.isSafeMoveTypeLabel(inputObject.type),
+              Self.isCanonicalAddress(gasObject.objectID), gasObject.version > 0,
+              WalletSolanaBase58.decode(gasObject.digest, exactLength: 32) != nil,
+              gasObject.type == Self.nativeCoinObjectType,
+              let maximumFee = Self.canonicalUInt64(maximumFeeBaseUnits),
+              maximumFee != "0" else {
+            throw WalletGateway.Error.invalidArguments(
+                "Sui object simulation requires canonical signer-built evidence."
+            )
+        }
+        let data = try await query(
+            document: Self.nativeTransferSimulationQuery,
+            variables: ["transaction": ["bcs": ["value": transactionBCS]]]
+        )
+        let status = try parseNetworkStatus(data)
+        guard let simulation = data["simulateTransaction"] as? [String: Any],
+              let effects = simulation["effects"] as? [String: Any],
+              effects["digest"] as? String == expectedTransactionDigest,
+              let effectsDigest = effects["effectsDigest"] as? String,
+              WalletSolanaBase58.decode(effectsDigest, exactLength: 32) != nil,
+              effects["status"] as? String == "SUCCESS",
+              effects["executionError"] == nil || effects["executionError"] is NSNull,
+              let gasEffects = effects["gasEffects"] as? [String: Any],
+              let returnedGasObject = gasEffects["gasObject"] as? [String: Any],
+              returnedGasObject["address"] as? String == gasObject.objectID,
+              let summary = gasEffects["gasSummary"] as? [String: Any],
+              let computation = Self.canonicalUInt53BaseUnits(summary["computationCost"]),
+              let storage = Self.canonicalUInt53BaseUnits(summary["storageCost"]),
+              let rebate = Self.canonicalUInt53BaseUnits(summary["storageRebate"]),
+              let nonRefundable = Self.canonicalUInt53BaseUnits(
+                  summary["nonRefundableStorageFee"]
+              ),
+              let gross = WalletBaseUnits.add(computation, storage),
+              let actualFee = WalletBaseUnits.subtract(gross, rebate),
+              actualFee != "0", WalletBaseUnits.lessThanOrEqual(actualFee, maximumFee),
+              let balances = effects["balanceChanges"] as? [String: Any],
+              let balanceNodes = balances["nodes"] as? [[String: Any]],
+              balanceNodes.count == 1,
+              let balancePage = balances["pageInfo"] as? [String: Any],
+              balancePage["hasNextPage"] as? Bool == false,
+              let balanceOwner = balanceNodes[0]["owner"] as? [String: Any],
+              balanceOwner["address"] as? String == sender,
+              let balanceType = balanceNodes[0]["coinType"] as? [String: Any],
+              balanceType["repr"] as? String == WalletSuiAssetIdentity.nativeCoinType,
+              let signedGas = Self.canonicalSignedBaseUnits(balanceNodes[0]["amount"]),
+              signedGas == "-\(actualFee)",
+              let changes = effects["objectChanges"] as? [String: Any],
+              let nodes = changes["nodes"] as? [[String: Any]], nodes.count == 2,
+              let objectPage = changes["pageInfo"] as? [String: Any],
+              objectPage["hasNextPage"] as? Bool == false else {
+            throw WalletRPCError.invalidResponse(
+                "Sui simulation did not return exact successful object-transfer effects"
+            )
+        }
+        var transferredInput: WalletSuiSimulatedObjectState?
+        var transferredOutput: WalletSuiSimulatedObjectState?
+        var gasInput: WalletSuiSimulatedObjectState?
+        var gasOutput: WalletSuiSimulatedObjectState?
+        for node in nodes {
+            guard node["idCreated"] as? Bool == false,
+                  node["idDeleted"] as? Bool == false,
+                  let address = node["address"] as? String,
+                  address == inputObject.objectID || address == gasObject.objectID,
+                  let input = node["inputState"] as? [String: Any],
+                  let output = node["outputState"] as? [String: Any],
+                  let parsedInput = Self.parseSimulationObjectState(input),
+                  let parsedOutput = Self.parseSimulationObjectState(output),
+                  parsedInput.reference.objectID == address,
+                  parsedOutput.reference.objectID == address,
+                  parsedOutput.reference.version > parsedInput.reference.version else {
+                throw WalletRPCError.invalidResponse(
+                    "Sui simulation returned malformed object ownership effects"
+                )
+            }
+            if address == inputObject.objectID {
+                guard transferredInput == nil,
+                      parsedInput.reference == inputObject,
+                      parsedInput.owner == sender,
+                      parsedInput.hasPublicTransfer,
+                      parsedOutput.owner == recipient,
+                      parsedOutput.reference.type == inputObject.type,
+                      parsedOutput.hasPublicTransfer else {
+                    throw WalletRPCError.invalidResponse(
+                        "Sui simulation changed the reviewed transferred object"
+                    )
+                }
+                transferredInput = parsedInput
+                transferredOutput = parsedOutput
+            } else {
+                guard gasInput == nil,
+                      parsedInput.reference == gasObject,
+                      parsedInput.owner == sender,
+                      parsedInput.reference.type == Self.nativeCoinObjectType,
+                      parsedOutput.owner == sender,
+                      parsedOutput.reference.type == Self.nativeCoinObjectType else {
+                    throw WalletRPCError.invalidResponse(
+                        "Sui simulation changed the reviewed gas object"
+                    )
+                }
+                gasInput = parsedInput
+                gasOutput = parsedOutput
+            }
+        }
+        guard let transferredInput, let transferredOutput,
+              gasInput != nil, gasOutput != nil else {
+            throw WalletRPCError.invalidResponse(
+                "Sui simulation omitted a reviewed object effect"
+            )
+        }
+        return WalletSuiObjectTransferSimulation(
+            network: status, transactionDigest: expectedTransactionDigest,
+            effectsDigest: effectsDigest, sender: sender, recipient: recipient,
+            inputObject: transferredInput.reference,
+            outputObject: transferredOutput.reference,
+            hasPublicTransfer: transferredOutput.hasPublicTransfer,
+            senderGasDebitBaseUnits: actualFee,
+            gasObjectID: gasObject.objectID,
+            gas: WalletSuiGasCostSummary(
+                computationCost: computation, storageCost: storage,
+                storageRebate: rebate, nonRefundableStorageFee: nonRefundable,
+                actualFeeBaseUnits: actualFee
+            )
+        )
+    }
+
     func executeTransaction(
         transactionBCS: String,
         signature: String,
@@ -1433,6 +1645,34 @@ actor WalletSuiGraphQLClient {
             ),
             version: version, digest: digest,
             moveType: moveType, hasPublicTransfer: hasPublicTransfer
+        )
+    }
+
+    private static func parseSimulationObjectState(
+        _ value: [String: Any]
+    ) -> WalletSuiSimulatedObjectState? {
+        guard let objectID = value["address"] as? String,
+              isCanonicalAddress(objectID),
+              let version = unsigned53(value["version"]), version > 0,
+              let digest = value["digest"] as? String,
+              WalletSolanaBase58.decode(digest, exactLength: 32) != nil,
+              let owner = value["owner"] as? [String: Any],
+              owner["__typename"] as? String == "AddressOwner",
+              let ownerValue = owner["address"] as? [String: Any],
+              let ownerAddress = ownerValue["address"] as? String,
+              isCanonicalAddress(ownerAddress),
+              let moveObject = value["asMoveObject"] as? [String: Any],
+              let hasPublicTransfer = moveObject["hasPublicTransfer"] as? Bool,
+              let contents = moveObject["contents"] as? [String: Any],
+              let type = contents["type"] as? [String: Any],
+              let moveType = type["repr"] as? String,
+              isSafeMoveTypeLabel(moveType) else { return nil }
+        return WalletSuiSimulatedObjectState(
+            reference: WalletSuiObjectReference(
+                objectID: objectID, version: version,
+                digest: digest, type: moveType
+            ),
+            owner: ownerAddress, hasPublicTransfer: hasPublicTransfer
         )
     }
 
@@ -1764,10 +2004,16 @@ actor WalletSuiProviderCoordinator {
     }
 
     func ownedObjects(owner: String) async throws -> [WalletSuiOwnedObject] {
-        do { return try await primary.ownedObjects(owner: owner) }
+        try await ownedObjectSnapshot(owner: owner).objects
+    }
+
+    func ownedObjectSnapshot(
+        owner: String
+    ) async throws -> WalletSuiOwnedObjectSnapshot {
+        do { return try await primary.ownedObjectSnapshot(owner: owner) }
         catch {
             guard let fallback else { throw error }
-            return try await fallback.ownedObjects(owner: owner)
+            return try await fallback.ownedObjectSnapshot(owner: owner)
         }
     }
 
@@ -1886,6 +2132,35 @@ actor WalletSuiProviderCoordinator {
                 coinObjectID: coinObjectID, amountBaseUnits: amountBaseUnits,
                 maximumFeeBaseUnits: maximumFeeBaseUnits,
                 gasObjectID: gasObjectID
+            )
+        }
+    }
+
+    func simulateObjectTransfer(
+        transactionBCS: String,
+        expectedTransactionDigest: String,
+        sender: String,
+        recipient: String,
+        inputObject: WalletSuiObjectReference,
+        maximumFeeBaseUnits: String,
+        gasObject: WalletSuiObjectReference
+    ) async throws -> WalletSuiObjectTransferSimulation {
+        do {
+            return try await primary.simulateObjectTransfer(
+                transactionBCS: transactionBCS,
+                expectedTransactionDigest: expectedTransactionDigest,
+                sender: sender, recipient: recipient, inputObject: inputObject,
+                maximumFeeBaseUnits: maximumFeeBaseUnits,
+                gasObject: gasObject
+            )
+        } catch {
+            guard let fallback else { throw error }
+            return try await fallback.simulateObjectTransfer(
+                transactionBCS: transactionBCS,
+                expectedTransactionDigest: expectedTransactionDigest,
+                sender: sender, recipient: recipient, inputObject: inputObject,
+                maximumFeeBaseUnits: maximumFeeBaseUnits,
+                gasObject: gasObject
             )
         }
     }

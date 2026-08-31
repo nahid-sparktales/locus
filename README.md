@@ -195,11 +195,20 @@ the Coin sender debit, recipient credit, and separate native-SUI gas debit; the
 signer then rechecks both object references, balances, checkpoints, type, fee,
 and effects before consuming an exactly approved intent. Only Coin metadata in
 the signed review manifest can reach this mainnet adapter.
+Signed-manifest Sui collectibles have a similarly narrow transfer path for one
+exact, non-generic Move object that the provider proves is publicly transferable
+and owned by the sender. The signer rebuilds only `TransferObjects` for that
+object with a distinct reviewed SUI gas coin. A fresh checkpoint recheck must
+preserve object ID, version, digest, type, owner, and public-transfer status;
+simulation must show the exact object changing to the reviewed recipient while
+the gas object remains sender-owned and the only balance change is the bounded
+SUI fee. Arbitrary object BCS and Move calls never enter exported authority, and
+mainnet remains launch- and adapter-gated.
 Solana token sends use the signer-derived recipient associated token account,
 creating it idempotently through an exact reviewed instruction when it is still
 unallocated. Token-2022 transfer-altering extensions, collectible transfers,
-versioned messages, Sui object/NFT-transfer adapters, full
-swaps, external wallets, and WalletConnect remain closed until their
+versioned messages, Sui object-effect activity and gRPC execution migration,
+full swaps, external wallets, and WalletConnect remain closed until their
 implementation and evidence gates pass.
 
 The Mac App Store target embeds neither recovery nor signer service. See the

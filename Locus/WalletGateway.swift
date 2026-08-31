@@ -2679,9 +2679,18 @@ final class WalletGateway: ObservableObject {
                 )
             }
         case .nftTransfer:
-            contract = try reviewedAssetContract(
-                for: request.action, networkID: request.networkID
-            )
+            if WalletNetworkCatalog.descriptor(
+                id: request.networkID
+            )?.chain == .sui {
+                try validateReviewedSuiObject(
+                    for: request.action, networkID: request.networkID
+                )
+                contract = nil
+            } else {
+                contract = try reviewedAssetContract(
+                    for: request.action, networkID: request.networkID
+                )
+            }
         default:
             contract = nil
         }
@@ -2793,6 +2802,29 @@ final class WalletGateway: ObservableObject {
         }
     }
 
+    private func validateReviewedSuiObject(
+        for action: WalletSemanticAction,
+        networkID: String
+    ) throws {
+        guard action.type == .nftTransfer,
+              let assetID = action.assetID,
+              let identity = WalletSuiObjectIdentity.parse(assetID),
+              identity.networkID == networkID,
+              action.tokenID == identity.objectID,
+              action.amountBaseUnits == "1",
+              let asset = assets.first(where: { $0.id == assetID }),
+              asset.networkID == networkID, asset.chain == .sui,
+              asset.kind == .nft || asset.kind == .collectible,
+              asset.reference == identity.objectID,
+              asset.decimals == nil || asset.decimals == 0,
+              asset.trust == .curated,
+              reviewRegistry?.containsExactAsset(asset) == true else {
+            throw Error.invalidArguments(
+                "The selected Sui object is not present in the signed asset manifest."
+            )
+        }
+    }
+
     private func parsePrepareRequest(
         _ arguments: [String: Any],
         source: WalletRequestSource
@@ -2863,17 +2895,34 @@ final class WalletGateway: ObservableObject {
                 assetID: assetID, recipient: recipient, amountBaseUnits: amount
             )
         case .nftTransfer:
-            guard descriptor.chain == .evm,
+            guard descriptor.chain == .evm || descriptor.chain == .sui,
                   let assetID = nonempty(actionObject["asset_id"]),
-                  let tokenID = WalletBaseUnits.normalize(
-                      nonempty(actionObject["token_id"]) ?? ""
-                  ),
                   let recipient = nonempty(actionObject["recipient"]),
-                  Self.validAddress(recipient, chain: .evm),
+                  Self.validAddress(recipient, chain: descriptor.chain),
                   actionObject["calldata"] == nil else {
                 throw Error.invalidArguments(
                     "An NFT transfer requires a canonical asset ID, uint256 token ID, and raw recipient."
                 )
+            }
+            let tokenID: String
+            if descriptor.chain == .sui {
+                guard let identity = WalletSuiObjectIdentity.parse(assetID),
+                      identity.networkID == networkID,
+                      nonempty(actionObject["token_id"]) == identity.objectID else {
+                    throw Error.invalidArguments(
+                        "A Sui object transfer requires the canonical object ID as token_id."
+                    )
+                }
+                tokenID = identity.objectID
+            } else {
+                guard let normalized = WalletBaseUnits.normalize(
+                    nonempty(actionObject["token_id"]) ?? ""
+                ) else {
+                    throw Error.invalidArguments(
+                        "An EVM NFT transfer requires a canonical uint256 token ID."
+                    )
+                }
+                tokenID = normalized
             }
             action = .nftTransfer(
                 assetID: assetID, tokenID: tokenID, recipient: recipient

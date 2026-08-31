@@ -76,13 +76,19 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   and native gas simulation, dual-object freshness recheck, exact approval,
   one-provider execution, and frozen BCS/digest/signature fixtures. Fragmented
   Coin balances and mainnet activation remain gated.
+- [x] End-to-end signed-manifest Sui object transfer for one exact publicly
+  transferable, non-generic owned object: checkpoint-bound owner/version/digest/
+  type evidence, one distinct SUI gas object, isolated `TransferObjects` rebuild,
+  exact object-ownership and gas simulation, fresh dual-object recheck, exact
+  approval, one-provider execution, and frozen BCS/digest/signature fixtures.
+  Shared objects, batches, Move calls, and mainnet activation remain gated.
 - [ ] Ethereum curated token and ERC-721/1155 discovery/transfer complete.
 - [ ] Solana transfer-altering Token-2022 extensions and reviewed
   NFT/compressed-collectible transfer implementation complete.
-- [ ] Sui object/NFT transfer, object-effect activity, gRPC execution migration,
-  multi-object Coin merge, and localnet coverage complete. The exact native and
-  single-object curated Coin GraphQL subsets are implemented but not
-  mainnet-enabled.
+- [ ] Sui object-effect activity, gRPC execution migration, multi-object Coin
+  merge/object batching, and localnet coverage complete. The exact native,
+  single-object curated Coin, and publicly transferable object GraphQL subsets
+  are implemented but not mainnet-enabled.
 - [ ] Uniswap v2/v3/v4, Jupiter `/build`, and Cetus V3 reviewed swap subsets complete.
 - [ ] MetaMask, Phantom, Slush, Wallet Standards, and Reown WalletKit lifecycle complete.
 - [ ] Sandboxed remote collectible-media fetch and rendering complete.

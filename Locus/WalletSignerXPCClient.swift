@@ -246,7 +246,8 @@ final class XPCWalletSignerClient: WalletSignerClient {
         case .sui:
             guard contract == nil,
                   request.action.type == .nativeTransfer
-                    || request.action.type == .fungibleTokenTransfer,
+                    || request.action.type == .fungibleTokenTransfer
+                    || request.action.type == .nftTransfer,
                   let amount = request.action.amountBaseUnits else {
                 throw WalletGateway.Error.invalidArguments(
                     "Sui supports only reviewed native and curated Coin transfers."
@@ -260,6 +261,11 @@ final class XPCWalletSignerClient: WalletSignerClient {
             let coinCheckpoint: UInt64?
             let coinCheckpointTimestamp: Date?
             let coinNetwork: WalletSuiNetworkStatus?
+            let transferredObject: WalletSuiObjectReference?
+            let objectHasPublicTransfer: Bool?
+            let objectCheckpoint: UInt64?
+            let objectCheckpointTimestamp: Date?
+            let objectNetwork: WalletSuiNetworkStatus?
             let gasRequired: String
             if request.action.type == .nativeTransfer {
                 guard let required = WalletBaseUnits.add(
@@ -276,8 +282,13 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 coinCheckpoint = nil
                 coinCheckpointTimestamp = nil
                 coinNetwork = nil
+                transferredObject = nil
+                objectHasPublicTransfer = nil
+                objectCheckpoint = nil
+                objectCheckpointTimestamp = nil
+                objectNetwork = nil
                 gasRequired = required
-            } else {
+            } else if request.action.type == .fungibleTokenTransfer {
                 guard let requestedAssetID = request.action.assetID,
                       let identity = WalletSuiAssetIdentity.parse(requestedAssetID),
                       identity.networkID == request.networkID,
@@ -297,6 +308,45 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 coinCheckpoint = selection.snapshot.network.checkpointSequence
                 coinCheckpointTimestamp = selection.snapshot.network.checkpointTimestamp
                 coinNetwork = selection.snapshot.network
+                transferredObject = nil
+                objectHasPublicTransfer = nil
+                objectCheckpoint = nil
+                objectCheckpointTimestamp = nil
+                objectNetwork = nil
+                gasRequired = request.maximumFeeBaseUnits
+            } else {
+                guard let requestedAssetID = request.action.assetID,
+                      let identity = WalletSuiObjectIdentity.parse(requestedAssetID),
+                      identity.networkID == request.networkID,
+                      request.action.tokenID == identity.objectID else {
+                    throw WalletGateway.Error.invalidArguments(
+                        "The reviewed Sui object identity is invalid."
+                    )
+                }
+                let snapshot = try await rpc.ownedObjectSnapshot(owner: account.address)
+                guard let object = snapshot.objects.first(where: {
+                    $0.identity == identity
+                }), object.hasPublicTransfer,
+                   WalletSuiAssetIdentity.isCanonicalCoinType(object.moveType) else {
+                    throw WalletGateway.Error.invalidArguments(
+                        "The reviewed Sui object is missing, generic, or not publicly transferable."
+                    )
+                }
+                assetID = identity.canonicalID
+                coinType = ""
+                coinObject = nil
+                coinBalance = nil
+                coinCheckpoint = nil
+                coinCheckpointTimestamp = nil
+                coinNetwork = nil
+                transferredObject = WalletSuiObjectReference(
+                    objectID: identity.objectID, version: object.version,
+                    digest: object.digest, type: object.moveType
+                )
+                objectHasPublicTransfer = true
+                objectCheckpoint = snapshot.network.checkpointSequence
+                objectCheckpointTimestamp = snapshot.network.checkpointTimestamp
+                objectNetwork = snapshot.network
                 gasRequired = request.maximumFeeBaseUnits
             }
             let gasSelection = try await rpc.selectNativeGasCoin(
@@ -315,6 +365,20 @@ final class XPCWalletSignerClient: WalletSignerClient {
                     )
                 }
             }
+            if let objectNetwork, let objectCheckpoint,
+               let objectCheckpointTimestamp {
+                guard status.checkpointSequence >= objectCheckpoint,
+                      status.checkpointTimestamp >= objectCheckpointTimestamp,
+                      status.chainIdentifier == objectNetwork.chainIdentifier,
+                      status.epoch == objectNetwork.epoch,
+                      status.referenceGasPrice == objectNetwork.referenceGasPrice,
+                      transferredObject?.objectID
+                        != gasSelection.coin.reference.objectID else {
+                    throw WalletGateway.Error.invalidArguments(
+                        "The Sui object and gas evidence do not share a safe checkpoint lineage."
+                    )
+                }
+            }
             let packet = WalletSuiPreparationPacket(
                 request: request, chainIdentifier: status.chainIdentifier,
                 checkpointSequence: status.checkpointSequence,
@@ -323,6 +387,10 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 coinObject: coinObject, coinBalanceBaseUnits: coinBalance,
                 coinCheckpointSequence: coinCheckpoint,
                 coinCheckpointTimestamp: coinCheckpointTimestamp,
+                transferredObject: transferredObject,
+                objectHasPublicTransfer: objectHasPublicTransfer,
+                objectCheckpointSequence: objectCheckpoint,
+                objectCheckpointTimestamp: objectCheckpointTimestamp,
                 gasObject: gasSelection.coin.reference,
                 gasBalanceBaseUnits: gasSelection.coin.balanceBaseUnits,
                 gasBudgetBaseUnits: request.maximumFeeBaseUnits,
@@ -503,6 +571,37 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 coinCheckpoint = nil
                 coinCheckpointTimestamp = nil
             }
+            let transferredObject: WalletSuiObjectReference?
+            let objectHasPublicTransfer: Bool?
+            let objectCheckpoint: UInt64?
+            let objectCheckpointTimestamp: Date?
+            if let expectedObject = intent.packet.transferredObject {
+                let objectSnapshot = try await rpc.ownedObjectSnapshot(
+                    owner: intent.packet.sender
+                )
+                guard let current = objectSnapshot.objects.first(where: {
+                    $0.identity.objectID == expectedObject.objectID
+                }), current.version == expectedObject.version,
+                   current.digest == expectedObject.digest,
+                   current.moveType == expectedObject.type,
+                   current.hasPublicTransfer,
+                   current.identity.canonicalID == intent.packet.assetID,
+                   objectSnapshot.network.chainIdentifier
+                    == intent.packet.chainIdentifier else {
+                    throw WalletGateway.Error.invalidArguments(
+                        "The selected Sui object changed before signing."
+                    )
+                }
+                transferredObject = expectedObject
+                objectHasPublicTransfer = true
+                objectCheckpoint = objectSnapshot.network.checkpointSequence
+                objectCheckpointTimestamp = objectSnapshot.network.checkpointTimestamp
+            } else {
+                transferredObject = nil
+                objectHasPublicTransfer = nil
+                objectCheckpoint = nil
+                objectCheckpointTimestamp = nil
+            }
             let simulation = try await suiSimulation(
                 intent: intent, rpc: rpc
             )
@@ -511,6 +610,10 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 coinBalanceBaseUnits: coinBalance,
                 coinCheckpointSequence: coinCheckpoint,
                 coinCheckpointTimestamp: coinCheckpointTimestamp,
+                transferredObject: transferredObject,
+                objectHasPublicTransfer: objectHasPublicTransfer,
+                objectCheckpointSequence: objectCheckpoint,
+                objectCheckpointTimestamp: objectCheckpointTimestamp,
                 gasObject: gasCoin.reference,
                 gasBalanceBaseUnits: gasCoin.balanceBaseUnits,
                 gasCheckpointSequence: snapshot.network.checkpointSequence,
@@ -1050,7 +1153,9 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 effectsDigest: result.effectsDigest,
                 sender: result.sender, recipient: result.recipient,
                 assetID: intent.packet.assetID, coinType: intent.packet.coinType,
-                coinObjectID: nil, amountBaseUnits: result.amountBaseUnits,
+                coinObjectID: nil, transferredObjectInput: nil,
+                transferredObjectOutput: nil, objectHasPublicTransfer: nil,
+                amountBaseUnits: result.amountBaseUnits,
                 senderDebitBaseUnits: result.senderDebitBaseUnits,
                 senderGasDebitBaseUnits: nil,
                 recipientCreditBaseUnits: result.recipientCreditBaseUnits,
@@ -1092,10 +1197,52 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 assetID: result.identity.canonicalID,
                 coinType: result.identity.coinType,
                 coinObjectID: result.coinObjectID,
+                transferredObjectInput: nil,
+                transferredObjectOutput: nil,
+                objectHasPublicTransfer: nil,
                 amountBaseUnits: result.amountBaseUnits,
                 senderDebitBaseUnits: result.senderAssetDebitBaseUnits,
                 senderGasDebitBaseUnits: result.senderGasDebitBaseUnits,
                 recipientCreditBaseUnits: result.recipientCreditBaseUnits,
+                gasObjectID: result.gasObjectID,
+                computationCost: result.gas.computationCost,
+                storageCost: result.gas.storageCost,
+                storageRebate: result.gas.storageRebate,
+                nonRefundableStorageFee: result.gas.nonRefundableStorageFee,
+                actualFeeBaseUnits: result.gas.actualFeeBaseUnits,
+                observedAt: Date()
+            )
+        case .nftTransfer:
+            guard let object = intent.packet.transferredObject else {
+                throw WalletGateway.Error.invalidArguments(
+                    "The reviewed Sui object preparation is incomplete."
+                )
+            }
+            let result = try await rpc.simulateObjectTransfer(
+                transactionBCS: intent.unsigned.transactionBCS,
+                expectedTransactionDigest: intent.unsigned.prepared.digest,
+                sender: intent.packet.sender, recipient: recipient,
+                inputObject: object,
+                maximumFeeBaseUnits: intent.packet.request.maximumFeeBaseUnits,
+                gasObject: intent.packet.gasObject
+            )
+            return WalletSuiSimulationPacket(
+                intentID: intent.unsigned.prepared.id,
+                chainIdentifier: result.network.chainIdentifier,
+                checkpointSequence: result.network.checkpointSequence,
+                checkpointTimestamp: result.network.checkpointTimestamp,
+                currentEpoch: result.network.epoch,
+                referenceGasPriceBaseUnits: result.network.referenceGasPrice,
+                transactionDigest: result.transactionDigest,
+                effectsDigest: result.effectsDigest,
+                sender: result.sender, recipient: result.recipient,
+                assetID: intent.packet.assetID, coinType: "", coinObjectID: nil,
+                transferredObjectInput: result.inputObject,
+                transferredObjectOutput: result.outputObject,
+                objectHasPublicTransfer: result.hasPublicTransfer,
+                amountBaseUnits: "1", senderDebitBaseUnits: "0",
+                senderGasDebitBaseUnits: result.senderGasDebitBaseUnits,
+                recipientCreditBaseUnits: "1",
                 gasObjectID: result.gasObjectID,
                 computationCost: result.gas.computationCost,
                 storageCost: result.gas.storageCost,

@@ -88,6 +88,18 @@ private func rustSignSuiCoinTransfer(
     _ transactionJSON: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("locus_wallet_prepare_sui_object_transfer_json")
+private func rustPrepareSuiObjectTransfer(
+    _ entropyHex: UnsafePointer<CChar>,
+    _ transactionJSON: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("locus_wallet_sign_sui_object_transfer_json")
+private func rustSignSuiObjectTransfer(
+    _ entropyHex: UnsafePointer<CChar>,
+    _ transactionJSON: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("locus_wallet_derive_solana_associated_token_json")
 private func rustDeriveSolanaAssociatedToken(
     _ requestJSON: UnsafePointer<CChar>
@@ -232,6 +244,26 @@ private struct RustSuiCoinTransfer: Encodable {
     let gasObjectDigest: String
     let gasBalanceBaseUnits: String
     let amountBaseUnits: String
+    let referenceGasPriceBaseUnits: String
+    let gasPriceBaseUnits: String
+    let gasBudgetBaseUnits: String
+    let currentEpoch: UInt64
+    let expirationEpoch: UInt64
+}
+
+private struct RustSuiObjectTransfer: Encodable {
+    let chainIdentifier: String
+    let sender: String
+    let recipient: String
+    let objectID: String
+    let objectVersion: UInt64
+    let objectDigest: String
+    let objectType: String
+    let hasPublicTransfer: Bool
+    let gasObjectID: String
+    let gasObjectVersion: UInt64
+    let gasObjectDigest: String
+    let gasBalanceBaseUnits: String
     let referenceGasPriceBaseUnits: String
     let gasPriceBaseUnits: String
     let gasBudgetBaseUnits: String
@@ -1079,6 +1111,10 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                     intent = try self.prepareSuiCoinTransfer(
                         packet: packet, entropy: entropy
                     )
+                case .nftTransfer:
+                    intent = try self.prepareSuiObjectTransfer(
+                        packet: packet, entropy: entropy
+                    )
                 default:
                     throw self.signerError(
                         "That Sui semantic action has no reviewed signer adapter."
@@ -1750,6 +1786,10 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
               packet.coinBalanceBaseUnits == nil,
               packet.coinCheckpointSequence == nil,
               packet.coinCheckpointTimestamp == nil,
+              packet.transferredObject == nil,
+              packet.objectHasPublicTransfer == nil,
+              packet.objectCheckpointSequence == nil,
+              packet.objectCheckpointTimestamp == nil,
               let recipient = action.recipient,
               let amount = action.amountBaseUnits.flatMap(SignerUnsignedInteger.normalize),
               let amountValue = UInt64(amount), amountValue > 0,
@@ -1851,6 +1891,10 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
               identity.coinType != WalletSuiAssetIdentity.nativeCoinType,
               packet.assetID == identity.canonicalID,
               packet.coinType == identity.coinType,
+              packet.transferredObject == nil,
+              packet.objectHasPublicTransfer == nil,
+              packet.objectCheckpointSequence == nil,
+              packet.objectCheckpointTimestamp == nil,
               action.tokenID == nil, action.inputAssetID == nil,
               action.outputAssetID == nil, action.minimumOutputBaseUnits == nil,
               action.adapterID == nil, action.authorizationFormat == nil,
@@ -1966,6 +2010,136 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             simulation: "Awaiting exact Sui Coin effects",
             simulationSucceeded: false,
             nonce: "\(coinObject.objectID)@\(coinObject.version):\(packet.gasObject.objectID)@\(packet.gasObject.version)",
+            createdAt: now, expiresAt: now.addingTimeInterval(120),
+            policyDecision: "exact_confirmation_required", policyID: nil
+        )
+        return StoredSuiIntent(
+            packet: packet, rust: rust, prepared: prepared, simulation: nil
+        )
+    }
+
+    private func prepareSuiObjectTransfer(
+        packet: WalletSuiPreparationPacket,
+        entropy: Data
+    ) throws -> StoredSuiIntent {
+        let action = packet.request.action
+        guard action.type == .nftTransfer,
+              let assetID = action.assetID,
+              let identity = WalletSuiObjectIdentity.parse(assetID),
+              identity.networkID == packet.request.networkID,
+              packet.assetID == identity.canonicalID,
+              packet.coinType.isEmpty,
+              packet.coinObject == nil, packet.coinBalanceBaseUnits == nil,
+              packet.coinCheckpointSequence == nil,
+              packet.coinCheckpointTimestamp == nil,
+              action.tokenID == identity.objectID,
+              action.amountBaseUnits == "1",
+              action.inputAssetID == nil, action.outputAssetID == nil,
+              action.minimumOutputBaseUnits == nil, action.adapterID == nil,
+              action.authorizationFormat == nil, action.metadataDigest == nil,
+              action.contractID == nil, action.function == nil,
+              action.arguments.isEmpty, action.valueBaseUnits == nil,
+              let recipient = action.recipient,
+              WalletSuiAddress.isCanonical(packet.sender),
+              WalletSuiAddress.isCanonical(recipient), packet.sender != recipient,
+              let object = packet.transferredObject,
+              object.objectID == identity.objectID,
+              WalletSuiAddress.isCanonical(object.objectID), object.version > 0,
+              WalletSolanaBase58.decode(object.digest, exactLength: 32) != nil,
+              WalletSuiAssetIdentity.isCanonicalCoinType(object.type),
+              object.type != WalletSuiAssetIdentity.nativeCoinType,
+              packet.objectHasPublicTransfer == true,
+              let objectCheckpoint = packet.objectCheckpointSequence,
+              objectCheckpoint > 0, objectCheckpoint <= packet.checkpointSequence,
+              let objectTimestamp = packet.objectCheckpointTimestamp,
+              objectTimestamp <= packet.checkpointTimestamp,
+              objectTimestamp <= Date().addingTimeInterval(120),
+              objectTimestamp >= Date().addingTimeInterval(-15 * 60),
+              packet.gasObject.type == "0x2::coin::Coin<0x2::sui::SUI>",
+              WalletSuiAddress.isCanonical(packet.gasObject.objectID),
+              packet.gasObject.objectID != object.objectID,
+              packet.gasObject.version > 0,
+              WalletSolanaBase58.decode(packet.gasObject.digest, exactLength: 32) != nil,
+              let gasBalance = SignerUnsignedInteger.normalize(
+                  packet.gasBalanceBaseUnits
+              ), UInt64(gasBalance) != nil, gasBalance == packet.gasBalanceBaseUnits,
+              let gasBudget = SignerUnsignedInteger.normalize(
+                  packet.gasBudgetBaseUnits
+              ), let gasBudgetValue = UInt64(gasBudget), gasBudgetValue > 0,
+              gasBudget == packet.request.maximumFeeBaseUnits,
+              SignerUnsignedInteger.lessThanOrEqual(gasBudget, gasBalance),
+              let referenceGasPrice = SignerUnsignedInteger.normalize(
+                  packet.referenceGasPriceBaseUnits
+              ), let referenceGasPriceValue = UInt64(referenceGasPrice),
+              referenceGasPriceValue > 0,
+              packet.gasPriceBaseUnits == referenceGasPrice,
+              packet.currentEpoch == packet.expirationEpoch,
+              packet.checkpointSequence > 0,
+              abs(packet.observedAt.timeIntervalSinceNow) <= 30,
+              packet.checkpointTimestamp <= Date().addingTimeInterval(120),
+              packet.checkpointTimestamp >= Date().addingTimeInterval(-15 * 60) else {
+            throw signerError(
+                "The provider evidence does not match a fresh reviewed Sui object transfer."
+            )
+        }
+        let account = try store.accounts().first {
+            $0.id == packet.request.accountID && $0.chain == .sui
+                && $0.networkIDs.contains(packet.request.networkID)
+        }
+        guard let account, account.address == packet.sender else {
+            throw signerError("The requested Sui object account roles are invalid.")
+        }
+        try authorizeReviewedAdapter(
+            WalletReviewedAdapters.suiObjectTransfer,
+            networkID: packet.request.networkID
+        )
+        if WalletNetworkCatalog.descriptor(
+            id: packet.request.networkID
+        )?.environment == .mainnet {
+            guard reviewRegistry?.assets.contains(where: {
+                $0.id == identity.canonicalID && $0.networkID == identity.networkID
+                    && $0.chain == .sui
+                    && ($0.kind == .nft || $0.kind == .collectible)
+                    && $0.reference == identity.objectID && $0.trust == .curated
+            }) == true else {
+                throw signerError(
+                    "The Sui object is absent from the signed review manifest."
+                )
+            }
+        }
+        let rust = try rustPrepareSui(packet: packet, entropy: entropy)
+        guard rust.from == account.address,
+              rust.chainIdentifier == packet.chainIdentifier,
+              WalletSolanaBase58.decode(rust.transactionDigest, exactLength: 32) != nil,
+              rust.signingDigest.hasPrefix("blake2b256:"),
+              rust.signingDigest.count == 75,
+              let transactionBCS = Data(base64Encoded: rust.transactionBCS),
+              !transactionBCS.isEmpty,
+              transactionBCS.base64EncodedString() == rust.transactionBCS else {
+            throw signerError(
+                "The signer-rebuilt Sui object transaction is not canonical."
+            )
+        }
+        let now = Date()
+        let intentID = UUID().uuidString.lowercased()
+        let prepared = WalletPreparedTransaction(
+            id: intentID, digest: rust.transactionDigest,
+            networkID: packet.request.networkID,
+            accountID: packet.request.accountID,
+            source: packet.request.source, action: action,
+            summary: "Send Sui object \(identity.objectID) to \(recipient)",
+            effects: [WalletDecodedEffect(
+                id: "\(intentID):sui-object-transfer", kind: "nft_transfer",
+                assetID: identity.canonicalID, amountBaseUnits: "1",
+                from: account.address, to: recipient, spender: nil
+            )],
+            riskFlags: [], contract: nil,
+            adapterID: WalletReviewedAdapters.suiObjectTransfer,
+            budgetAssetID: identity.canonicalID, spendBaseUnits: "1",
+            maximumFeeBaseUnits: gasBudget, feeQuoteBaseUnits: "0",
+            simulation: "Awaiting exact Sui object ownership effects",
+            simulationSucceeded: false,
+            nonce: "\(object.objectID)@\(object.version):\(packet.gasObject.objectID)@\(packet.gasObject.version)",
             createdAt: now, expiresAt: now.addingTimeInterval(120),
             policyDecision: "exact_confirmation_required", policyID: nil
         )
@@ -3023,6 +3197,12 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 && $0.assetID == simulation.assetID
                 && $0.coinType == simulation.coinType
                 && $0.coinObjectID == simulation.coinObjectID
+                && $0.transferredObjectInput
+                    == simulation.transferredObjectInput
+                && $0.transferredObjectOutput
+                    == simulation.transferredObjectOutput
+                && $0.objectHasPublicTransfer
+                    == simulation.objectHasPublicTransfer
                 && $0.senderDebitBaseUnits == simulation.senderDebitBaseUnits
                 && $0.senderGasDebitBaseUnits
                     == simulation.senderGasDebitBaseUnits
@@ -3077,6 +3257,9 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         case .nativeTransfer:
             guard simulation.coinType == WalletSuiAssetIdentity.nativeCoinType,
                   simulation.coinObjectID == nil,
+                  simulation.transferredObjectInput == nil,
+                  simulation.transferredObjectOutput == nil,
+                  simulation.objectHasPublicTransfer == nil,
                   simulation.senderGasDebitBaseUnits == nil,
                   simulation.recipientCreditBaseUnits == simulation.amountBaseUnits,
                   SignerUnsignedInteger.add(simulation.amountBaseUnits, fee)
@@ -3090,11 +3273,33 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                   identity.coinType == simulation.coinType,
                   identity.coinType != WalletSuiAssetIdentity.nativeCoinType,
                   simulation.coinObjectID == intent.packet.coinObject?.objectID,
+                  simulation.transferredObjectInput == nil,
+                  simulation.transferredObjectOutput == nil,
+                  simulation.objectHasPublicTransfer == nil,
                   simulation.senderDebitBaseUnits == simulation.amountBaseUnits,
                   simulation.senderGasDebitBaseUnits == fee,
                   simulation.recipientCreditBaseUnits == simulation.amountBaseUnits else {
                 throw signerError(
                     "Sui Coin-transfer effects changed after preparation."
+                )
+            }
+        case .nftTransfer:
+            guard simulation.coinType.isEmpty,
+                  simulation.coinObjectID == nil,
+                  let expectedObject = intent.packet.transferredObject,
+                  simulation.transferredObjectInput == expectedObject,
+                  let output = simulation.transferredObjectOutput,
+                  output.objectID == expectedObject.objectID,
+                  output.type == expectedObject.type,
+                  output.version > expectedObject.version,
+                  WalletSolanaBase58.decode(output.digest, exactLength: 32) != nil,
+                  simulation.objectHasPublicTransfer == true,
+                  simulation.amountBaseUnits == "1",
+                  simulation.senderDebitBaseUnits == "0",
+                  simulation.senderGasDebitBaseUnits == fee,
+                  simulation.recipientCreditBaseUnits == "1" else {
+                throw signerError(
+                    "Sui object-transfer effects changed after preparation."
                 )
             }
         default:
@@ -3132,7 +3337,33 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 && recheck.coinCheckpointSequence == nil
                 && recheck.coinCheckpointTimestamp == nil
         }
-        guard coinMatches,
+        let objectMatches: Bool
+        if let expectedObject = intent.packet.transferredObject,
+           let preparedCheckpoint = intent.packet.objectCheckpointSequence,
+           let preparedTimestamp = intent.packet.objectCheckpointTimestamp {
+            objectMatches = recheck.transferredObject == expectedObject
+                && recheck.objectHasPublicTransfer == true
+                && recheck.objectCheckpointSequence.map {
+                    $0 >= preparedCheckpoint
+                } == true
+                && recheck.objectCheckpointTimestamp.map {
+                    $0 >= preparedTimestamp
+                        && $0 <= Date().addingTimeInterval(120)
+                        && $0 >= Date().addingTimeInterval(-15 * 60)
+                } == true
+                && recheck.objectCheckpointSequence.map {
+                    recheck.simulation.checkpointSequence >= $0
+                } == true
+                && recheck.objectCheckpointTimestamp.map {
+                    recheck.simulation.checkpointTimestamp >= $0
+                } == true
+        } else {
+            objectMatches = recheck.transferredObject == nil
+                && recheck.objectHasPublicTransfer == nil
+                && recheck.objectCheckpointSequence == nil
+                && recheck.objectCheckpointTimestamp == nil
+        }
+        guard coinMatches, objectMatches,
               recheck.gasObject == intent.packet.gasObject,
               recheck.gasBalanceBaseUnits == intent.packet.gasBalanceBaseUnits,
               recheck.gasCheckpointSequence >= intent.packet.checkpointSequence,
@@ -3291,6 +3522,11 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 packet: packet, entropy: entropy,
                 function: rustPrepareSuiCoinTransfer
             )
+        case .nftTransfer:
+            return try rustSuiObjectCall(
+                packet: packet, entropy: entropy,
+                function: rustPrepareSuiObjectTransfer
+            )
         default:
             throw signerError("The Sui signer adapter is unavailable.")
         }
@@ -3310,6 +3546,11 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             return try rustSuiCoinCall(
                 packet: packet, entropy: entropy,
                 function: rustSignSuiCoinTransfer
+            )
+        case .nftTransfer:
+            return try rustSuiObjectCall(
+                packet: packet, entropy: entropy,
+                function: rustSignSuiObjectTransfer
             )
         default:
             throw signerError("The Sui signer adapter is unavailable.")
@@ -3368,6 +3609,37 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             gasObjectDigest: packet.gasObject.digest,
             gasBalanceBaseUnits: packet.gasBalanceBaseUnits,
             amountBaseUnits: amount,
+            referenceGasPriceBaseUnits: packet.referenceGasPriceBaseUnits,
+            gasPriceBaseUnits: packet.gasPriceBaseUnits,
+            gasBudgetBaseUnits: packet.gasBudgetBaseUnits,
+            currentEpoch: packet.currentEpoch,
+            expirationEpoch: packet.expirationEpoch
+        )
+        return try rustSuiEncodedCall(
+            request: request, entropy: entropy, function: function
+        )
+    }
+
+    private func rustSuiObjectCall<Result: Decodable>(
+        packet: WalletSuiPreparationPacket,
+        entropy: Data,
+        function: (UnsafePointer<CChar>, UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+    ) throws -> Result {
+        guard let recipient = packet.request.action.recipient,
+              let object = packet.transferredObject,
+              let hasPublicTransfer = packet.objectHasPublicTransfer else {
+            throw signerError("The semantic Sui object transfer is incomplete.")
+        }
+        let request = RustSuiObjectTransfer(
+            chainIdentifier: packet.chainIdentifier,
+            sender: packet.sender, recipient: recipient,
+            objectID: object.objectID, objectVersion: object.version,
+            objectDigest: object.digest, objectType: object.type,
+            hasPublicTransfer: hasPublicTransfer,
+            gasObjectID: packet.gasObject.objectID,
+            gasObjectVersion: packet.gasObject.version,
+            gasObjectDigest: packet.gasObject.digest,
+            gasBalanceBaseUnits: packet.gasBalanceBaseUnits,
             referenceGasPriceBaseUnits: packet.referenceGasPriceBaseUnits,
             gasPriceBaseUnits: packet.gasPriceBaseUnits,
             gasBudgetBaseUnits: packet.gasBudgetBaseUnits,

@@ -23,8 +23,9 @@ digest signing, raw messages, opaque calldata, unresolved Solana instructions,
 and unknown Move calls are not exported authority. Implemented Solana builders
 accept only one canonical native transfer or one reviewed SPL/Token-2022
 `TransferChecked`, optionally preceded by one exact idempotent
-associated-token-account creation; all other Solana and Sui transaction shapes
-remain fail-closed.
+associated-token-account creation; other Solana and Sui transaction shapes stay
+fail-closed except the separately typed native SUI, single-object `Coin<T>`, and
+publicly transferable object subsets described below.
 
 ## Mainnet capability manifest
 
@@ -137,6 +138,18 @@ signing adapter.
   excluded from the collectible path. BCS contents, display metadata, and
   remote media do not cross the provider boundary; every new object begins in
   quarantine, and discovery creates no transfer or Move-call authority.
+- Reviewed Sui object transfer is limited to one exact non-generic Move object
+  whose signed-manifest identity matches its canonical object ID. Preparation
+  pins the provider checkpoint and binds the owner, version, digest, type, and
+  `hasPublicTransfer` evidence plus one distinct SUI gas object. The signer
+  independently rebuilds a transaction containing only
+  `TransferObjects([Input(0)], Input(1))`; arbitrary object BCS, programmable
+  Move calls, shared objects, dynamic fields, and batches are not accepted.
+  Recheck requires a fresh checkpoint with unchanged owned-object and gas
+  references. Simulation requires exactly the transferred object's input/output
+  ownership change, the sender-owned gas object's input/output states, and one
+  native-SUI sender debit equal to the recomputed bounded fee. Human approval is
+  exact, and mainnet also requires signed launch and adapter-review authorization.
 - Finalized Sui activity pins every page to the first verified checkpoint and
   requires matching transaction/effects digests, a canonical sender when one is
   present, a bounded timestamp and checkpoint, terminal nested balance-change
@@ -192,8 +205,9 @@ until their implementation and evidence gates pass:
   NFT/compressed-collectible transfer adapters, remote-media rendering,
   versioned-message and lookup-table
   decoding, indexed history, priority fees, and local-validator coverage; all
-  Sui object/NFT transfers, object-effect activity, gRPC execution migration,
-  and localnet suites; native SUI and Coin mainnet activation remain gated;
+  Sui object-effect activity, gRPC execution migration, multi-object transfers,
+  and localnet suites; native SUI, Coin, and object-transfer mainnet activation
+  remain gated;
 - full v2/v3/v4 Universal Router, Jupiter `/build`, and pinned Cetus V3 swaps;
 - live MetaMask, Phantom, Slush, and Reown WalletKit sessions;
 - complete ERC-721/1155 holdings discovery, metadata/media sandboxing, and
