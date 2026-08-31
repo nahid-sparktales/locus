@@ -2918,6 +2918,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
         mutateState { $0.jumpToLatest() }
         pinPending = false
         displayLink?.isPaused = true
+        scrollToBottom(animated: true)
     }
 
     func detachAll() {
