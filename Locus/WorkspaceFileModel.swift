@@ -6,6 +6,15 @@ struct WorkspacePreviewLocation: Hashable, Sendable {
     let column: Int?
 }
 
+/// A request to read one workspace file in the large viewer sheet.
+struct WorkspaceFileViewerRequest: Identifiable, Equatable, Sendable {
+    let url: URL
+    let relativePath: String
+    let location: WorkspacePreviewLocation?
+
+    var id: String { relativePath }
+}
+
 /// Feature-owned state for workspace file discovery and inline previews.
 ///
 /// The application root supplies only the current workspace and whether a
@@ -90,20 +99,31 @@ final class WorkspaceFileModel: ObservableObject {
         }
         previewTask?.cancel()
         previewTask = Task { [weak self] in
-            let result = await Task.detached(priority: .userInitiated) { () -> String in
-                guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
-                      (values.fileSize ?? 0) <= 256_000
-                else { return "This file is larger than 256 KB." }
-                guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
-                      let text = String(data: data, encoding: .utf8)
-                else { return "This file is not readable as UTF-8 text." }
-                return text
-            }.value
+            let result = await Self.previewText(at: url)
             guard !Task.isCancelled, let self, self.workspacePath == root,
                   self.previewedPath == relativePath
             else { return }
             previewedContents = result
         }
+    }
+
+    /// Reads a file for on-screen preview: size-capped, UTF-8 text only. The
+    /// failure strings render in place of content.
+    static func previewText(at url: URL, byteLimit: Int = 256_000) async -> String {
+        await Task.detached(priority: .userInitiated) { () -> String in
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
+                  (values.fileSize ?? 0) <= byteLimit
+            else {
+                let limit = ByteCountFormatter.string(
+                    fromByteCount: Int64(byteLimit), countStyle: .file
+                )
+                return "This file is larger than \(limit)."
+            }
+            guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+                  let text = String(data: data, encoding: .utf8)
+            else { return "This file is not readable as UTF-8 text." }
+            return text
+        }.value
     }
 
     func closePreview() {

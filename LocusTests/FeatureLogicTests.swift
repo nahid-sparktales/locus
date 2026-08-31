@@ -1246,6 +1246,52 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(spec.foreground, LocusTheme.ink)
     }
 
+    /// A file mentioned as inline code navigates like a link but reads like a
+    /// code pill: the blue-underline treatment stays reserved for authored
+    /// links and remote URLs.
+    func testWorkspaceFileCodeRunsKeepThePillInsteadOfLinkBlue() {
+        let classified = MarkdownInlineStyleSpec.resolve(
+            run: MarkdownInlineRun(text: "AppModel.swift:12", style: [.code]),
+            baseSize: 13,
+            baseWeight: .regular,
+            baseColor: LocusTheme.inkSoft,
+            inlineCodeSize: 12,
+            link: URL(string: "locus-workspace://open/AppModel.swift?line=12")
+        )
+        XCTAssertEqual(classified.foreground, LocusTheme.ink)
+        XCTAssertFalse(classified.isUnderlined)
+        XCTAssertEqual(classified.pillFill, LocusTheme.inlineCodeFill)
+
+        let authored = MarkdownInlineStyleSpec.resolve(
+            run: MarkdownInlineRun(
+                text: "the model",
+                style: [.code],
+                destination: "AppModel.swift"
+            ),
+            baseSize: 13,
+            baseWeight: .regular,
+            baseColor: LocusTheme.inkSoft,
+            inlineCodeSize: 12,
+            link: URL(string: "locus-workspace://open/AppModel.swift")
+        )
+        // `signalDeep` mints a fresh accent-dynamic Color per access, so the
+        // link treatment is asserted structurally: underlined, and no longer
+        // the code pill's ink.
+        XCTAssertNotEqual(authored.foreground, LocusTheme.ink)
+        XCTAssertTrue(authored.isUnderlined)
+
+        let remote = MarkdownInlineStyleSpec.resolve(
+            run: MarkdownInlineRun(text: "docs", destination: "https://example.com"),
+            baseSize: 13,
+            baseWeight: .regular,
+            baseColor: LocusTheme.inkSoft,
+            inlineCodeSize: 12,
+            link: URL(string: "https://example.com")
+        )
+        XCTAssertNotEqual(remote.foreground, LocusTheme.inkSoft)
+        XCTAssertTrue(remote.isUnderlined)
+    }
+
     /// Regression guard for the drift that motivated the shared spec: the
     /// AppKit leaf and the SwiftUI fallback must resolve one run identically.
     func testInlineCodeResolvesTheSameOnBothRenderPaths() {

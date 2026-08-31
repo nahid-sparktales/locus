@@ -751,6 +751,10 @@ struct RootView: View {
                     )
                 }
         }
+        .sheet(item: $model.fileViewerRequest) { request in
+            WorkspaceFileViewerSheet(request: request)
+                .environmentObject(model)
+        }
         .sheet(isPresented: Binding(
             get: { model.landingFlow.reviewAndLandPresented },
             set: { model.landingFlow.reviewAndLandPresented = $0 }

@@ -265,6 +265,8 @@ final class AppModel: ObservableObject {
     @Published var commandPalettePresented = false
     @Published var checkpointPresented = false
     @Published var notebookPresented = false
+    /// A workspace file opened for reading in the large viewer sheet.
+    @Published var fileViewerRequest: WorkspaceFileViewerRequest?
     @Published var rememberConfirmationText: String?
     @Published var clearChatConfirmationPresented = false
     @Published var clearSessionsConfirmationPresented = false

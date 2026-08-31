@@ -43,11 +43,13 @@ final class TranscriptRelayoutTests: XCTestCase {
             pump(2)
         }
         pump()
+        parkTranscriptAtTop(in: live)
         let dragged = try XCTUnwrap(snapshot(live))
 
         // The same model state, laid out from scratch, is the answer the
         // dragged transcript has to agree with.
         let rebuilt = mount(makeModel(inspectorWidth: endWidth), size: size)
+        parkTranscriptAtTop(in: rebuilt)
         let reference = try XCTUnwrap(snapshot(rebuilt))
 
         // A few tenths of a percent of drift is the scroll anchor settling in
@@ -116,6 +118,31 @@ final class TranscriptRelayoutTests: XCTestCase {
     private func pump(_ rounds: Int = 40) {
         for _ in 0..<rounds {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+        }
+    }
+
+    /// The transcript follows output, so both mounts sit pinned at the bottom
+    /// — at offsets that can disagree by a pixel of accumulated text
+    /// measurement, which a pixel comparison reads as a whole-page diff.
+    /// Layout quality wants a common origin, so park both viewports at the
+    /// top the way a reader would; the gesture also detaches following.
+    private func parkTranscriptAtTop(in root: NSView) {
+        guard let scroll = transcriptScrollView(in: root) else { return }
+        // Parking realizes the top rows, whose re-measurement at the final
+        // width can shift the origin through lazy-stack scroll anchoring —
+        // so park until the viewport actually rests at the top.
+        for _ in 0..<4 {
+            var target: CGFloat = 0
+            simulateUserScroll(scroll, pump: pump) { origin, document in
+                guard let document else { return origin }
+                target = document.isFlipped
+                    ? document.bounds.minY
+                    : max(document.bounds.maxY - scroll.contentView.bounds.height,
+                          document.bounds.minY)
+                return NSPoint(x: origin.x, y: target)
+            }
+            pump()
+            if abs(scroll.contentView.bounds.origin.y - target) < 0.5 { break }
         }
     }
 

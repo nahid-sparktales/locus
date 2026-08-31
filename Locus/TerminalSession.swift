@@ -103,6 +103,20 @@ final class TerminalSession: NSObject, ObservableObject {
         }
     }
 
+    /// Types a command into the shell as if entered at the prompt — the
+    /// trailing newline is what submits it — starting the shell first if the
+    /// terminal surface has never been opened.
+    func run(command: String) {
+        ensureStarted()
+        guard let terminalView else { return }
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        terminalView.send(
+            source: terminalView,
+            data: ArraySlice(Array((trimmed + "\n").utf8))
+        )
+    }
+
     /// SwiftTerm resolves its native colors when they are assigned, so a
     /// terminal created under Light would otherwise stay white after the app
     /// switches to Dark. Keep its default foreground/background synchronized

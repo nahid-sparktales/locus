@@ -138,6 +138,20 @@ struct InspectorFilesTab: View {
                 }
                 Spacer()
                 Button {
+                    model.openFileViewer(
+                        path: path,
+                        location: workspaceFiles.previewedLocation
+                    )
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.locus(size: 9, weight: .semibold))
+                }
+                .buttonStyle(.locus())
+                .foregroundStyle(LocusTheme.muted)
+                .help("Open in the file viewer")
+                .accessibilityLabel("Open \(path) in the file viewer")
+                .accessibilityIdentifier("files.preview.expand")
+                Button {
                     workspaceFiles.closePreview()
                 } label: {
                     Image(systemName: "xmark")
@@ -152,10 +166,11 @@ struct InspectorFilesTab: View {
             .frame(height: 30)
 
             if let contents = workspaceFiles.previewedContents {
-                WorkspaceSourcePreview(
+                WorkspaceSourceTextView(
                     contents: contents,
                     location: workspaceFiles.previewedLocation
                 )
+                .accessibilityIdentifier("files.preview.source")
                 .frame(maxHeight: 260)
             } else {
                 ProgressView()
@@ -168,77 +183,6 @@ struct InspectorFilesTab: View {
         .overlay(alignment: .top) {
             Rectangle().fill(LocusTheme.line).frame(height: 1)
         }
-    }
-}
-
-private struct WorkspaceSourcePreview: View {
-    let contents: String
-    let location: WorkspacePreviewLocation?
-
-    private var lines: [String] {
-        contents.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-    }
-
-    var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView([.vertical, .horizontal]) {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
-                        let number = index + 1
-                        WorkspaceSourcePreviewRow(
-                            line: line,
-                            number: number,
-                            isHighlighted: number == location?.line
-                        )
-                        .id(number)
-                    }
-                }
-                .padding(.vertical, 7)
-            }
-            .background(LocusTheme.paperDeep.opacity(0.34))
-            .onAppear { scroll(to: location?.line, proxy: proxy) }
-            .onChange(of: location) { _, next in
-                scroll(to: next?.line, proxy: proxy)
-            }
-        }
-        .accessibilityIdentifier("files.preview.source")
-    }
-
-    private func scroll(to line: Int?, proxy: ScrollViewProxy) {
-        guard let line else { return }
-        Task { @MainActor in
-            await Task.yield()
-            proxy.scrollTo(min(max(line, 1), max(lines.count, 1)), anchor: .center)
-        }
-    }
-}
-
-private struct WorkspaceSourcePreviewRow: View {
-    let line: String
-    let number: Int
-    let isHighlighted: Bool
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 9) {
-            Text(String(number))
-                .font(.locus(size: 8, design: .monospaced))
-                .foregroundStyle(isHighlighted ? LocusTheme.signalDeep : LocusTheme.muted)
-                .frame(width: 34, alignment: .trailing)
-                .textSelection(.disabled)
-            Text(line.isEmpty ? " " : line)
-                .font(.locus(size: 9, design: .monospaced))
-                .foregroundStyle(LocusTheme.inkSoft)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: true, vertical: false)
-        }
-        .padding(.horizontal, 8)
-        .frame(minHeight: 20, alignment: .leading)
-        .background(isHighlighted ? LocusTheme.signalDeep.opacity(0.11) : Color.clear)
-        .accessibilityLabel(
-            isHighlighted
-                ? "Highlighted line \(number): \(line)"
-                : "Line \(number): \(line)"
-        )
     }
 }
 
@@ -303,6 +247,7 @@ private struct WorkspaceFileRow: View {
             Button("Add to Context") { model.addWorkspaceFileToContext(relativePath) }
             Button("Mention in Composer") { model.mentionFileInComposer(url) }
             Divider()
+            Button("Open in Viewer") { model.openFileViewer(path: relativePath) }
             Button("Reveal in Finder") { model.revealInFinder(relativePath) }
             Button("Open in Default App") { NSWorkspace.shared.open(url) }
             Button("Copy Relative Path") { model.copyMessage(relativePath) }
