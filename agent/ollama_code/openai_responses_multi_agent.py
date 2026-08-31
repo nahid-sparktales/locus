@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .proxy import sanitized_child_environment
+
 BETA_HEADER = "responses_multi_agent=v1"
 SAFE_TOOL_NAMES = frozenset({
     "read_file", "glob", "grep", "list_dir", "git_status", "git_diff",
@@ -141,7 +143,8 @@ class ReadOnlyWorkspaceTools:
                         "--glob", "!**/credentials", "--glob", "!**/credentials.json",
                         "--glob", "!**/service-account.json", "--", query, str(target),
                     ],
-                    cwd=self.root, text=True, stdout=subprocess.PIPE,
+                    cwd=self.root, env=sanitized_child_environment(),
+                    text=True, stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT, timeout=15, check=False,
                 )
             except FileNotFoundError:
@@ -164,7 +167,8 @@ class ReadOnlyWorkspaceTools:
                 ":(exclude)**/service-account.json",
             ]
             result = subprocess.run(
-                command, cwd=self.root, text=True, stdout=subprocess.PIPE,
+                command, cwd=self.root, env=sanitized_child_environment(),
+                text=True, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, timeout=20, check=False,
             )
             return result.stdout[:120_000]

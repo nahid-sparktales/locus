@@ -214,14 +214,14 @@ struct AccountEditorView: View {
                 nativeMode = account.codexNativeModeEnabled
                 webSearch = account.codexWebSearchEnabled
                 reasoningEffort = account.codexReasoningEffortValue
-                Task { await model.refreshChatGPTAccount(for: account) }
+                Task { await model.providerAccountsModel.refreshChatGPTAccount(for: account) }
             }
         }
     }
 
     @ViewBuilder
     private var chatGPTControls: some View {
-        let status = model.chatGPTAccounts[account.id]
+        let status = model.providerAccountsModel.chatGPTAccounts[account.id]
         VStack(alignment: .leading, spacing: 10) {
             if let status, status.status == "signed_in" {
                 Label("Signed in", systemImage: "checkmark.circle.fill")
@@ -237,25 +237,25 @@ struct AccountEditorView: View {
                 HStack {
                     Button("Refresh") {
                         Task {
-                            await model.refreshChatGPTAccount(
+                            await model.providerAccountsModel.refreshChatGPTAccount(
                                 for: account,
                                 forceTokenRefresh: true
                             )
                         }
                     }
                     Button("Sign Out") {
-                        Task { await model.signOutChatGPT(from: account) }
+                        Task { await model.providerAccountsModel.signOutChatGPT(from: account) }
                     }
                 }
-            } else if model.chatGPTLoginIDs[account.id] != nil {
+            } else if model.providerAccountsModel.chatGPTLoginIDs[account.id] != nil {
                 Label("Finish signing in in your browser", systemImage: "safari")
                     .font(.locus(size: 10, weight: .semibold))
                 HStack {
                     Button("Refresh Status") {
-                        Task { await model.refreshChatGPTAccount(for: account) }
+                        Task { await model.providerAccountsModel.refreshChatGPTAccount(for: account) }
                     }
                     Button("Cancel Login") {
-                        Task { await model.cancelChatGPTLogin(for: account) }
+                        Task { await model.providerAccountsModel.cancelChatGPTLogin(for: account) }
                     }
                 }
             } else if model.chatGPTComponentMissing {
@@ -268,7 +268,7 @@ struct AccountEditorView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Button("Sign in with ChatGPT") {
-                    Task { await model.startChatGPTLogin(for: account) }
+                    Task { await model.providerAccountsModel.startChatGPTLogin(for: account) }
                 }
                 .disabled(status?.runtimeAvailable == false)
                 .accessibilityIdentifier("accountEditor.chatGPT.signIn")
@@ -311,7 +311,7 @@ struct AccountEditorView: View {
     /// catalog; a fixed list stands in before the catalog has arrived. The
     /// stored choice is kept selectable even when the catalog drops it.
     private var reasoningEffortOptions: [String] {
-        var efforts = model.accountModelCatalogs[account.id]?
+        var efforts = model.providerAccountsModel.accountModelCatalogs[account.id]?
             .first(where: { $0.id == account.preferredModel })?
             .supportedReasoningEfforts?
             .map(\.effort) ?? []

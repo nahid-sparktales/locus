@@ -1,8 +1,19 @@
 # Changelog
 
-## Unreleased
+## 2.1.0 — 2026-08-30
 
 ### Changed
+
+- **Every feature now has its own model under the hood.** The app core that
+  used to hold nearly all interface state in one 16,600-line object has been
+  decomposed: provider accounts, agent teams, run history, the live team-run
+  card, extensions and MCP, workspace knowledge, evaluations, schedules, the
+  activity center, transcript search, background services, the AGENTS.md
+  editor, the landing flow, and toasts each live in their own tested,
+  observable model, and views read those models directly. Behavior is
+  deliberately unchanged; what you gain today is faster, safer iteration on
+  every one of those features — and it clears the runway for making each
+  panel redraw only when its own feature changes.
 
 - **GSD mode retired; Grill mode takes its place.** The fourth composer mode is
   now Grill (⌥G, `/grill`): a relentless one-question-at-a-time interview that
@@ -79,6 +90,22 @@
   actions remain with its final answer.
 
 ### Fixed
+
+- **The Add Account menu is readable again.** Providers whose logo is a
+  lettermark (Anthropic, Kimi, custom endpoints) rendered as invisible
+  white-on-white rows because macOS menus flatten a custom icon view into
+  the item's text. The menu lists plain provider names now; logos still
+  appear everywhere else.
+
+- **A run's Overview no longer borrows numbers from a run that is still
+  going.** Opening one run while another was executing folded both runs'
+  events into the same Files, Steps, and model readouts, and could make a
+  reload skip part of the open run's history when the live one had counted
+  further. Every fact in the Overview and Activity views now reads only the
+  selected run's own events. Two smaller repairs ride along: a file the run
+  created and then deleted is no longer listed as "created", and an expanded
+  request or "Show more" list no longer carries over into the next run you
+  open.
 
 - **Notes whose plain-text mirror went missing are no longer loaded as empty.**
   Each note is kept as a plain `.txt` alongside a formatting archive, and a note

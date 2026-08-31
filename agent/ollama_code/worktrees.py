@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .paths import APP_DIR
+from .proxy import sanitized_child_environment
 
 MAX_PATCH_BYTES = 128 * 1024 * 1024
 TASKS_DIR = APP_DIR / "tasks"
@@ -33,6 +34,7 @@ def is_git_workspace(workspace: str) -> bool:
     result = subprocess.run(
         ["git", "rev-parse", "--is-inside-work-tree"],
         cwd=workspace,
+        env=sanitized_child_environment(),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         timeout=10,
@@ -720,10 +722,13 @@ def _changed_paths(checkout: Path, base: str, current: str) -> list[str]:
 
 
 def _git(cwd: Path, *arguments: str, env: dict[str, str] | None = None) -> str:
+    # env=None means "inherit os.environ" — sanitized either way, because git
+    # itself spawns model-adjacent children (hooks, credential helpers) and the
+    # exec-time environment stays ps-readable for the life of the process.
     result = subprocess.run(
         ["git", *arguments],
         cwd=cwd,
-        env=env,
+        env=sanitized_child_environment(env),
         text=True,
         capture_output=True,
         timeout=120,
@@ -739,6 +744,7 @@ def _git_bytes(cwd: Path, *arguments: str) -> bytes:
     result = subprocess.run(
         ["git", *arguments],
         cwd=cwd,
+        env=sanitized_child_environment(),
         capture_output=True,
         timeout=120,
         check=False,
@@ -753,6 +759,7 @@ def _git_input(cwd: Path, data: bytes, *arguments: str) -> subprocess.CompletedP
         ["git", *arguments],
         cwd=cwd,
         input=data,
+        env=sanitized_child_environment(),
         capture_output=True,
         timeout=120,
         check=False,

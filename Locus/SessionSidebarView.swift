@@ -385,15 +385,15 @@ struct SessionSidebarView: View {
     private var activityButton: some View {
         Button {
             withAnimation(LocusMotion.spatial) {
-                model.toggleActivityCenter()
+                model.activity.toggleActivityCenter()
             }
         } label: {
-            Image(systemName: model.activityCenterPresented ? "bell.fill" : "bell")
+            Image(systemName: model.activity.activityCenterPresented ? "bell.fill" : "bell")
                 .font(.locus(size: 12, weight: .semibold))
-                .foregroundStyle(model.activityCenterPresented
+                .foregroundStyle(model.activity.activityCenterPresented
                     ? LocusTheme.ink : LocusTheme.inkSoft)
                 .frame(width: 36, height: 36)
-                .background(model.activityCenterPresented
+                .background(model.activity.activityCenterPresented
                     ? LocusTheme.signal.opacity(0.9)
                     : LocusTheme.white.opacity(0.82))
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -402,8 +402,8 @@ struct SessionSidebarView: View {
                         .stroke(LocusTheme.line, lineWidth: 1)
                 }
                 .overlay(alignment: .topTrailing) {
-                    if model.activityNeedsAttentionCount > 0 {
-                        Text("\(model.activityNeedsAttentionCount)")
+                    if model.activity.activityNeedsAttentionCount > 0 {
+                        Text("\(model.activity.activityNeedsAttentionCount)")
                             .font(.locus(size: 7, weight: .bold, design: .monospaced))
                             .foregroundStyle(Color.white)
                             .frame(minWidth: 14, minHeight: 14)
@@ -419,8 +419,8 @@ struct SessionSidebarView: View {
         .accessibilityLabel("Activities")
         .accessibilityIdentifier("sidebar.activity")
         .accessibilityValue(
-            model.activityNeedsAttentionCount > 0
-                ? "\(model.activityNeedsAttentionCount) needs attention"
+            model.activity.activityNeedsAttentionCount > 0
+                ? "\(model.activity.activityNeedsAttentionCount) needs attention"
                 : "No new activity"
         )
     }
@@ -691,11 +691,11 @@ struct SessionSidebarView: View {
         if query.count >= 2 {
             SectionLabel("In conversations")
                 .padding(.top, 8)
-            if model.isSearchingTranscripts || model.transcriptSearchIndexing {
+            if model.transcriptSearch.isSearchingTranscripts || model.transcriptSearch.transcriptSearchIndexing {
                 HStack(spacing: 7) {
                     ProgressView()
                         .controlSize(.mini)
-                    Text(model.transcriptSearchIndexing
+                    Text(model.transcriptSearch.transcriptSearchIndexing
                         ? "Indexing conversations…" : "Searching…")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
@@ -705,8 +705,8 @@ struct SessionSidebarView: View {
                 .padding(.vertical, 6)
                 .accessibilityIdentifier("sidebar.search.progress")
             }
-            if model.transcriptHits.isEmpty,
-               !model.isSearchingTranscripts, !model.transcriptSearchIndexing {
+            if model.transcriptSearch.transcriptHits.isEmpty,
+               !model.transcriptSearch.isSearchingTranscripts, !model.transcriptSearch.transcriptSearchIndexing {
                 Text("No matching messages")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
@@ -714,7 +714,7 @@ struct SessionSidebarView: View {
                     .padding(.horizontal, SidebarMetrics.rowInset)
                     .padding(.vertical, 6)
             }
-            ForEach(model.transcriptHits) { hit in
+            ForEach(model.transcriptSearch.transcriptHits) { hit in
                 transcriptHitRow(hit)
             }
         }
@@ -1093,7 +1093,7 @@ struct TeamProgressPopover: View {
 
     @ViewBuilder
     private func dispatcherSection(now: Date) -> some View {
-        let activity = model.dispatcherActivity
+        let activity = model.teamRunLive.dispatcherActivity
         let dispatcher = selectedDispatcher
         let startedAt = activity?.startedAt ?? model.activeWorkStartedAt
         let elapsed = startedAt.map { max(now.timeIntervalSince($0), 0) } ?? 0
@@ -1125,7 +1125,7 @@ struct TeamProgressPopover: View {
             }
             if model.orchestrationState == .dispatching,
                elapsed >= 30,
-               model.agentActivities.isEmpty
+               model.teamRunLive.agentActivities.isEmpty
             {
                 Label(
                     "Still waiting for the dispatcher. No plan or delegated jobs have started.",
@@ -1152,11 +1152,11 @@ struct TeamProgressPopover: View {
             HStack {
                 sectionLabel("DELEGATED JOBS")
                 Spacer()
-                Text("\(completedJobs)/\(model.agentActivities.count)")
+                Text("\(completedJobs)/\(model.teamRunLive.agentActivities.count)")
                     .font(.locus(size: 8, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
             }
-            if model.agentActivities.isEmpty {
+            if model.teamRunLive.agentActivities.isEmpty {
                 Text(model.orchestrationState == nil
                     ? "No run yet. Send a task with this team selected."
                     : "Jobs appear here after the dispatcher returns a plan.")
@@ -1164,7 +1164,7 @@ struct TeamProgressPopover: View {
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                ForEach(model.agentActivities) { activity in
+                ForEach(model.teamRunLive.agentActivities) { activity in
                     HStack(spacing: 7) {
                         Image(systemName: dispatcherSymbol(activity.state))
                             .foregroundStyle(dispatcherColor(activity.state))
@@ -1209,8 +1209,8 @@ struct TeamProgressPopover: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
-            Text("\(model.teamModelCalls.formatted()) calls")
-            Text("\(model.teamMeteredTokens.formatted()) hosted tokens")
+            Text("\(model.teamRunLive.teamModelCalls.formatted()) calls")
+            Text("\(model.teamRunLive.teamMeteredTokens.formatted()) hosted tokens")
             Spacer()
             if presentation?.canStop == true, let runID = model.orchestrationRunID {
                 Button("Stop", role: .destructive) {
@@ -1249,7 +1249,7 @@ struct TeamProgressPopover: View {
     }
 
     private var completedJobs: Int {
-        model.agentActivities.filter { $0.state == .completed }.count
+        model.teamRunLive.agentActivities.filter { $0.state == .completed }.count
     }
 
     private func activityTitle(_ activity: AgentActivity) -> String {
@@ -1265,7 +1265,7 @@ struct TeamProgressPopover: View {
 
     private var presentation: TeamRunPresentation? {
         guard let runID = model.orchestrationRunID else { return nil }
-        let durable = model.orchestrationRuns.first(where: { $0.id == runID })
+        let durable = model.runs.orchestrationRuns.first(where: { $0.id == runID })
         return model.teamRunPresentation(for: runID, durable: durable)
     }
 

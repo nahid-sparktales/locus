@@ -22,6 +22,7 @@ from .orchestration import (
     TeamOrchestrator,
     parse_manifest,
 )
+from .proxy import sanitized_child_environment
 from .worktrees import TaskCheckout, TaskCheckoutStore, WorktreeError
 
 EvaluationTeamRunner = Callable[[ChatService, str, dict[str, Any]], None]
@@ -352,7 +353,8 @@ def run_evaluation_suite(
 def _evaluation_changed_paths(task: TaskCheckout, current_tree: str) -> list[str]:
     result = subprocess.run(
         ["git", "diff", "--name-only", "-z", task.baseline_tree, current_tree, "--"],
-        cwd=task.execution_path, capture_output=True, timeout=120, check=False,
+        cwd=task.execution_path, env=sanitized_child_environment(),
+        capture_output=True, timeout=120, check=False,
     )
     if result.returncode != 0:
         raise WorktreeError(result.stderr.decode("utf-8", errors="replace").strip())

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .orchestration import OrchestrationBudget, OrchestrationError
+from .proxy import sanitized_child_environment
 from .runstore import RunStore, sanitize_event
 from .worktrees import TaskCheckoutStore, WorktreeError
 
@@ -290,6 +291,7 @@ def _grade_assertion(
         try:
             result = subprocess.run(
                 ["/bin/zsh", "-lc", command], cwd=root, text=True,
+                env=sanitized_child_environment(),
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 timeout=int(spec.get("timeout_seconds") or 120), check=False,
             )
@@ -446,7 +448,8 @@ def _is_git_workspace(workspace: str) -> bool:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
-            cwd=workspace, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cwd=workspace, env=sanitized_child_environment(),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             timeout=10, check=False,
         )
     except (OSError, subprocess.TimeoutExpired):

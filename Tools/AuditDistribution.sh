@@ -46,8 +46,8 @@ resolved="${repo_root}/Locus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
     exit 1
 }
 [[ -f "${resolved}" ]] \
-    && /usr/bin/grep -Fq -- "b6496a74a087257ef5e6da1c5b29a447a60f5bd7" "${resolved}" || {
-    echo "error: Sparkle is not pinned to the audited 2.9.4 revision" >&2
+    && /usr/bin/grep -Fq -- "ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a" "${resolved}" || {
+    echo "error: Sparkle is not pinned to the audited 2.9.6 revision" >&2
     exit 1
 }
 [[ -f "${resolved}" ]] \
@@ -155,7 +155,7 @@ for notice in \
     "SwiftTerm 1.18.0" \
     "Swift Markdown 0.8.0" \
     "Swift CMark 0.8.0" \
-    "Sparkle 2.9.4" \
+    "Sparkle 2.9.6" \
     "ios-mcp-server Simulator bridge" \
     "Anthropic Frontend Design" \
     "Vercel React Best Practices" \
@@ -171,7 +171,7 @@ for required in \
     "SwiftTerm-1.18.0/LICENSE" \
     "SwiftMarkdown-0.8.0/LICENSE" \
     "SwiftCMark-0.8.0/COPYING" \
-    "Sparkle-2.9.4/LICENSE" \
+    "Sparkle-2.9.6/LICENSE" \
     "builtin-skills-anthropic/LICENSE" \
     "builtin-skills-vercel/LICENSE" \
     "builtin-skills-superpowers/LICENSE"
@@ -451,8 +451,8 @@ else
     }
     sparkle_version="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - \
         "${sparkle}/Resources/Info.plist" 2>/dev/null || true)"
-    [[ "${sparkle_version}" == "2.9.4" ]] || {
-        echo "error: bundled Sparkle is ${sparkle_version:-unknown}, expected 2.9.4" >&2
+    [[ "${sparkle_version}" == "2.9.6" ]] || {
+        echo "error: bundled Sparkle is ${sparkle_version:-unknown}, expected 2.9.6" >&2
         exit 1
     }
     for required in \

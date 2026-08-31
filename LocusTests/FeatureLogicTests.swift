@@ -5239,7 +5239,7 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(refreshed["access_token"] as? String, "new-access")
         XCTAssertEqual(refreshed["refresh_token"] as? String, "new-refresh")
 
-        let runtime = AppModel.runtimeMCPCredentials(refreshed)
+        let runtime = ExtensionsModel.runtimeMCPCredentials(refreshed)
         XCTAssertEqual(runtime["access_token"] as? String, "new-access")
         XCTAssertNotNil(runtime["headers"])
         XCTAssertNil(runtime["refresh_token"])
@@ -5850,6 +5850,81 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(work.commands.map(\.ok), [false])
     }
 
+    func testRunWorkDropsAFileCreatedAndThenDeletedInTheSameRun() throws {
+        let work = RunWork(events: try runEvents([
+            [
+                "seq": 1, "type": "tool_result", "tool": "write_file", "ok": true,
+                "event_id": "a", "summary": "write scratch.py",
+                "file_effects": [["path": "scratch.py", "effect": "create"]],
+            ],
+            [
+                "seq": 2, "type": "tool_result", "tool": "delete_file", "ok": true,
+                "event_id": "b", "summary": "delete scratch.py",
+                "file_effects": [["path": "scratch.py", "effect": "delete"]],
+            ],
+            [
+                "seq": 3, "type": "tool_result", "tool": "write_file", "ok": true,
+                "event_id": "c", "summary": "write kept.py",
+                "file_effects": [["path": "kept.py", "effect": "create"]],
+            ],
+        ]))
+
+        // "Created" must not survive the file's own deletion; a file that no
+        // longer exists cannot be listed and offered to open.
+        XCTAssertEqual(work.files, [RunWork.FileChange(path: "kept.py", effect: "created")])
+    }
+
+    func testRunWorkListsAFileRecreatedAfterDeletionAsCreated() throws {
+        let work = RunWork(events: try runEvents([
+            [
+                "seq": 1, "type": "tool_result", "tool": "write_file", "ok": true,
+                "event_id": "a", "summary": "write app.py",
+                "file_effects": [["path": "app.py", "effect": "create"]],
+            ],
+            [
+                "seq": 2, "type": "tool_result", "tool": "delete_file", "ok": true,
+                "event_id": "b", "summary": "delete app.py",
+                "file_effects": [["path": "app.py", "effect": "delete"]],
+            ],
+            [
+                "seq": 3, "type": "tool_result", "tool": "write_file", "ok": true,
+                "event_id": "c", "summary": "write app.py",
+                "file_effects": [["path": "app.py", "effect": "create"]],
+            ],
+        ]))
+
+        XCTAssertEqual(work.files, [RunWork.FileChange(path: "app.py", effect: "created")])
+    }
+
+    func testRunScopedEventsSeparateInterleavedRuns() throws {
+        // While a historical run is open during a live turn, the shared array
+        // holds both: the selected run's fetched history (including backend
+        // events persisted without a run_id stamp) and the live run's stamped
+        // stream. Scoping must keep the former and exclude the latter.
+        let events = try runEvents([
+            ["seq": 1, "type": "run_started", "event_id": "a1", "run_id": "run-a"],
+            [
+                "seq": 2, "type": "tool_result", "tool": "bash", "ok": true,
+                "event_id": "a2", "summary": "$ pytest", "run_id": "run-a",
+            ],
+            ["seq": 3, "type": "orchestration_completed", "event_id": "a3"],
+            ["seq": 1, "type": "run_started", "event_id": "b1", "run_id": "run-b"],
+            [
+                "seq": 2, "type": "tool_result", "tool": "write_file", "ok": true,
+                "event_id": "b2", "summary": "write app.py", "run_id": "run-b",
+                "file_effects": [["path": "app.py", "effect": "create"]],
+            ],
+        ])
+
+        let scoped = AppModel.runScopedEvents(events, runID: "run-a")
+
+        XCTAssertEqual(scoped.map(\.id), ["a1", "a2", "a3"])
+        let work = RunWork(events: scoped)
+        XCTAssertTrue(work.files.isEmpty)
+        XCTAssertEqual(work.toolSteps, 1)
+        XCTAssertEqual(work.commands.map(\.summary), ["$ pytest"])
+    }
+
     func testRunWorkSeparatesUnavailableDelegationFromAnAgentDecliningIt() throws {
         let quiet = RunWork(events: try runEvents([
             ["seq": 1, "type": "note", "text": "Nothing to split here."],
@@ -5882,7 +5957,7 @@ final class FeatureLogicTests: XCTestCase {
         User request:
         make a stock checker
         """
-        XCTAssertEqual(AppModel.displayUserText(decorated), "make a stock checker")
-        XCTAssertEqual(AppModel.displayUserText("plain ask"), "plain ask")
+        XCTAssertEqual(ChatTranscriptBuilder.displayUserText(decorated), "make a stock checker")
+        XCTAssertEqual(ChatTranscriptBuilder.displayUserText("plain ask"), "plain ask")
     }
 }

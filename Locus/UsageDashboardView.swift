@@ -168,7 +168,7 @@ struct UsageDashboardView: View {
         VStack(spacing: 0) {
             header
             Divider().overlay(LocusTheme.line)
-            if let summary = model.usageSummary {
+            if let summary = model.providerAccountsModel.usageSummary {
                 content(summary)
             } else {
                 VStack(spacing: 10) {
@@ -184,11 +184,11 @@ struct UsageDashboardView: View {
         .frame(width: 780, height: 620)
         .background(LocusTheme.panel)
         .onAppear {
-            model.refreshUsageSummary(since: window.since)
-            Task { await model.refreshActiveChatGPTUsage() }
+            model.providerAccountsModel.refreshUsageSummary(since: window.since)
+            Task { await model.providerAccountsModel.refreshActiveChatGPTUsage() }
         }
         .onChange(of: window) {
-            model.refreshUsageSummary(since: window.since)
+            model.providerAccountsModel.refreshUsageSummary(since: window.since)
         }
     }
 
@@ -231,7 +231,7 @@ struct UsageDashboardView: View {
     private func content(_ summary: UsageSummary) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                if let usage = model.activeChatGPTUsage, usage.status == "signed_in" {
+                if let usage = model.providerAccountsModel.activeChatGPTUsage, usage.status == "signed_in" {
                     chatGPTPlanUsage(usage)
                 }
                 totals(summary)

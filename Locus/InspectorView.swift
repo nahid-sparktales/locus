@@ -1426,7 +1426,11 @@ struct InspectorRunsTab: View {
             } else if showingRunDetail,
                       let detailRunID,
                       let run = model.runRecord(for: detailRunID) {
+                // A different run is a different document: re-identifying the
+                // subtree resets scroll, "Show N more" lists, and disclosure
+                // groups instead of carrying one run's expansions into another.
                 runBody(run)
+                    .id(run.id)
             } else if showingRunDetail {
                 ProgressView("Loading run…")
                     .controlSize(.small)
@@ -1441,6 +1445,9 @@ struct InspectorRunsTab: View {
             }
         }
         .onChange(of: model.pendingDispatchPlan) { _, value in draftPlan = value }
+        // Tab-level state, so a run switch would otherwise carry it over and
+        // open the next run's request pre-expanded.
+        .onChange(of: detailRunID) { requestExpanded = false }
         .task(id: model.runsNavigationRequest?.id) {
             guard let request = model.runsNavigationRequest else {
                 showingRunDetail = false
@@ -2374,7 +2381,7 @@ struct InspectorRunsTab: View {
     }
 
     private func runWork(_ run: OrchestrationRun) -> RunWork {
-        RunWork(events: model.orchestrationEvents)
+        RunWork(events: model.orchestrationEvents(for: run.id))
     }
 
     private func technicalDetails(_ run: OrchestrationRun) -> some View {
@@ -2419,7 +2426,7 @@ struct InspectorRunsTab: View {
     /// Provider and model are reported on the turn's terminal event, which the
     /// run row itself does not carry.
     private func runModelLabel(_ run: OrchestrationRun) -> String? {
-        guard let terminal = model.orchestrationEvents.last(where: {
+        guard let terminal = model.orchestrationEvents(for: run.id).last(where: {
             $0.type == "turn_done" || $0.type == "orchestration_completed"
         }) else { return nil }
         let name = terminal.text("model") ?? ""
@@ -2579,7 +2586,8 @@ struct InspectorRunsTab: View {
     }
 
     private func activity(_ run: OrchestrationRun) -> some View {
-        VStack(spacing: 0) {
+        let groups = activityGroups(run)
+        return VStack(spacing: 0) {
             HStack {
                 TextField("Filter run activity", text: $filter)
                     .textFieldStyle(.roundedBorder)
@@ -2598,7 +2606,7 @@ struct InspectorRunsTab: View {
                 timeline(run, showsFilter: false)
             } else {
                 ScrollView {
-                    if activityGroups.isEmpty {
+                    if groups.isEmpty {
                         VStack(spacing: 8) {
                             Image(systemName: "clock")
                                 .font(.locus(size: 20))
@@ -2616,7 +2624,7 @@ struct InspectorRunsTab: View {
                         .frame(maxWidth: .infinity)
                     } else {
                         LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(activityGroups) { group in
+                            ForEach(groups) { group in
                                 Text(group.title.uppercased())
                                     .font(.locus(size: 7, weight: .bold))
                                     .tracking(0.6)
@@ -2805,7 +2813,7 @@ struct InspectorRunsTab: View {
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(filteredEvents) { event in
+                    ForEach(filteredEvents(run)) { event in
                         HStack(alignment: .top, spacing: 8) {
                             Text("\(event.sequence)")
                                 .font(.locus(size: 7, design: .monospaced))
@@ -3087,9 +3095,10 @@ struct InspectorRunsTab: View {
         draftPlan?.jobs.append(job)
     }
 
-    private var filteredEvents: [OrchestrationEvent] {
+    private func filteredEvents(_ run: OrchestrationRun) -> [OrchestrationEvent] {
         let query = filter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let durableEvents = model.orchestrationEvents.filter { !$0.isTransientStream }
+        let durableEvents = model.orchestrationEvents(for: run.id)
+            .filter { !$0.isTransientStream }
         guard !query.isEmpty else { return durableEvents }
         return durableEvents.filter { event in
             [
@@ -3193,8 +3202,8 @@ struct InspectorRunsTab: View {
         var id: String { title }
     }
 
-    private var activityGroups: [ActivityGroup] {
-        let visible = withoutRedundantWork(filteredEvents.filter(isUserFacingEvent))
+    private func activityGroups(_ run: OrchestrationRun) -> [ActivityGroup] {
+        let visible = withoutRedundantWork(filteredEvents(run).filter(isUserFacingEvent))
         // Phase headings describe a team's shape. A solo turn that delegated
         // nothing has one phase, and filing its whole timeline under a "Solo
         // workers" heading described workers that never existed.

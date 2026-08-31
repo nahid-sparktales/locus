@@ -254,6 +254,8 @@ module map, dependency rules, and reviewability guardrails.
 
 The SwiftUI app owns the interface, workspace access, native terminal, Keychain integration, and permission surfaces. A bundled Python service owns agent orchestration, model streaming, tools, sessions, and run persistence. They communicate over authenticated REST and WebSocket endpoints bound to `127.0.0.1`.
 
+Inside the app, each feature — provider accounts, agent teams, run history, live team runs, extensions, workspace knowledge, evaluations, schedules, the activity center, and more — is its own observable model with its own tests, and views observe those models directly. `AppModel` stays a thin composition root: it wires the models together, runs the turn state machine, and translates backend events into one-line calls on the feature that owns them.
+
 ChatGPT-plan requests use a pinned Codex App Server child process over local JSONL/stdio while keeping Locus's permission manager and tool set in control. In the direct download that child is the downloaded component; in the App Store build it is bundled. Either way the agent resolves it from one path that it re-checks on demand, so installing the component takes effect without restarting the agent or losing a session.
 
 ```text

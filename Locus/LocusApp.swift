@@ -449,7 +449,7 @@ private struct LocusMenuBarView: View {
         } else {
             Text("No work running")
         }
-        if let next = model.nextScheduledTask, let date = next.nextRunDate {
+        if let next = model.schedule.nextScheduledTask, let date = next.nextRunDate {
             Text("Next: \(next.name) · \(date.formatted(date: .omitted, time: .shortened))")
         } else {
             Text("No upcoming schedules")
@@ -700,7 +700,7 @@ struct RootView: View {
         .animation(LocusMotion.spatial, value: model.inspectorZoomed)
         .background(LocusTheme.paper)
         .overlay(alignment: .bottomTrailing) {
-            if let toast = model.toast {
+            if let toast = model.toastCenter.toast {
                 HStack(spacing: 12) {
                     Label(toast.message, systemImage: toast.systemImage)
                         .font(.locus(size: 11, weight: .semibold))
@@ -722,7 +722,7 @@ struct RootView: View {
                 .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
             }
         }
-        .animation(LocusMotion.content, value: model.toast?.id)
+        .animation(LocusMotion.content, value: model.toastCenter.toast?.id)
         // Reduced Motion is an app-wide contract. Individual components still
         // choose a gentler transition where useful, while this guard prevents
         // an overlooked state mutation from introducing spatial movement.
@@ -755,7 +755,10 @@ struct RootView: View {
             WorkspaceFileViewerSheet(request: request)
                 .environmentObject(model)
         }
-        .sheet(isPresented: $model.reviewAndLandPresented) {
+        .sheet(isPresented: Binding(
+            get: { model.landingFlow.reviewAndLandPresented },
+            set: { model.landingFlow.reviewAndLandPresented = $0 }
+        )) {
             ReviewAndLandView()
                 .environmentObject(model)
         }
@@ -787,19 +790,19 @@ struct RootView: View {
             ShortcutsSheet()
         }
         .sheet(isPresented: Binding(
-            get: { model.scheduleEditorDraft != nil },
-            set: { if !$0 { model.scheduleEditorDraft = nil } }
+            get: { model.schedule.scheduleEditorDraft != nil },
+            set: { if !$0 { model.schedule.scheduleEditorDraft = nil } }
         )) {
-            if let draft = model.scheduleEditorDraft {
+            if let draft = model.schedule.scheduleEditorDraft {
                 ScheduleEditorView(draft: draft)
                     .environmentObject(model)
             }
         }
         .sheet(item: Binding(
-            get: { model.mcpInputRequest },
+            get: { model.extensionsModel.mcpInputRequest },
             set: { value in
-                if value == nil, model.mcpInputRequest != nil {
-                    model.answerMCPInput(action: "cancel")
+                if value == nil, model.extensionsModel.mcpInputRequest != nil {
+                    model.extensionsModel.answerMCPInput(action: "cancel")
                 }
             }
         )) { request in
@@ -905,7 +908,7 @@ private struct RememberConfirmationView: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                 Button("Save Memory") {
-                    model.rememberWorkspaceFact(
+                    model.knowledge.rememberWorkspaceFact(
                         title: title,
                         content: content,
                         tags: tags.split(separator: ",").map {
@@ -978,11 +981,11 @@ private struct MCPInputRequestView: View {
                     .foregroundStyle(LocusTheme.muted)
             }
             HStack {
-                Button("Decline") { model.answerMCPInput(action: "decline") }
-                Button("Cancel") { model.answerMCPInput(action: "cancel") }
+                Button("Decline") { model.extensionsModel.answerMCPInput(action: "decline") }
+                Button("Cancel") { model.extensionsModel.answerMCPInput(action: "cancel") }
                 Spacer()
                 Button(request.mode == "url" ? "I've Completed It" : "Submit") {
-                    model.answerMCPInput(action: "accept", content: formContent)
+                    model.extensionsModel.answerMCPInput(action: "accept", content: formContent)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(LocusTheme.ink)

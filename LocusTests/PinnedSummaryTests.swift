@@ -641,7 +641,13 @@ final class PinnedSummaryTests: XCTestCase {
         model.inspectorCollapsed = false
         let token = model.composerFocusToken
         model.insertCreationPrompt(.document)
-        for _ in 0..<3 { await Task.yield() }
+        // The prefill re-applies after one main-actor turn; a fixed yield
+        // count raced it on slow CI runners, so poll with a bound instead.
+        var attempts = 0
+        while model.composerFocusToken == token, attempts < 500 {
+            attempts += 1
+            await Task.yield()
+        }
         XCTAssertEqual(model.draftText, SummaryCreationKind.document.prompt)
         XCTAssertFalse(model.inspectorCollapsed)
         XCTAssertNotEqual(model.composerFocusToken, token)
@@ -650,7 +656,7 @@ final class PinnedSummaryTests: XCTestCase {
     @MainActor
     func testStopAllBackgroundServicesDropsRunningRowsOptimistically() {
         let model = AppModel(startImmediately: false)
-        model.applyBackgroundServicesForTesting([
+        model.backgroundServicesModel.applyBackgroundServicesForTesting([
             BackgroundServiceRecord(
                 name: "vite", command: "npm run dev", cwd: "/tmp", port: 5173, pid: 1, running: true,
                 exitCode: nil, startedAt: "", uptimeSeconds: 1, tail: nil
@@ -660,7 +666,7 @@ final class PinnedSummaryTests: XCTestCase {
                 exitCode: 0, startedAt: "", uptimeSeconds: 0, tail: nil
             ),
         ])
-        model.stopAllBackgroundServices()
-        XCTAssertEqual(model.backgroundServices.map(\.name), ["old"])
+        model.backgroundServicesModel.stopAllBackgroundServices()
+        XCTAssertEqual(model.backgroundServicesModel.backgroundServices.map(\.name), ["old"])
     }
 }
