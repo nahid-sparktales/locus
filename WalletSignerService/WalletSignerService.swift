@@ -2684,7 +2684,9 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         default:
             switch WalletReviewedAdapters.validatedID(for: entry) {
             case WalletReviewedAdapters.erc20: .fungibleTokenTransfer
-            case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn: .exactInputSwap
+            case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
+                 WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn:
+                .exactInputSwap
             default: .reviewedCall
             }
         }
@@ -2898,11 +2900,10 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 ? WalletReviewedAdapters.erc20 : nil
             budgetAssetID = tokenAsset
             spendBaseUnits = amount
-        } else if reviewedAdapterID == WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
-                  let swap = WalletUniversalRouterV2Adapter.decode(
-                    action: action, accountAddress: account.address,
-                    networkID: entry.networkID
-                  ) {
+        } else if let swap = Self.reviewedUniversalRouterSwap(
+            adapterID: reviewedAdapterID, action: action,
+            accountAddress: account.address, networkID: entry.networkID
+        ) {
             effects = [
                 WalletDecodedEffect(
                     id: "\(intentID):uniswap-spend", kind: "token_swap_exact_in",
@@ -2916,7 +2917,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 ),
             ]
             riskFlags = []
-            adapterID = WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn
+            adapterID = reviewedAdapterID
             budgetAssetID = swap.inputAssetID
             spendBaseUnits = swap.amountIn
         } else {
@@ -2943,6 +2944,28 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
 
     private static let maximumUInt256Decimal =
         "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+
+    private static func reviewedUniversalRouterSwap(
+        adapterID: String?,
+        action: WalletSemanticAction,
+        accountAddress: String,
+        networkID: String
+    ) -> WalletUniversalRouterV2Swap? {
+        switch adapterID {
+        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn:
+            WalletUniversalRouterV2Adapter.decode(
+                action: action, accountAddress: accountAddress,
+                networkID: networkID
+            )
+        case WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn:
+            WalletUniversalRouterV2V3Adapter.decode(
+                action: action, accountAddress: accountAddress,
+                networkID: networkID
+            )
+        default:
+            nil
+        }
+    }
 
     private func validatePolicy(_ policy: WalletSessionPolicy) throws {
         try authorizeNetwork(policy.networkID, capability: .autonomousPolicy)
@@ -3007,6 +3030,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         let contractPolicy = descriptor.chain == .evm && [
             WalletReviewedAdapters.erc20,
             WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
+            WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
         ].contains(adapterID)
             && policy.allowedContractIDs.count == 1
             && policy.allowedAssetIDs.allSatisfy {
@@ -3027,7 +3051,9 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                WalletReviewedAdapters.solanaSPLTransferChecked,
                WalletReviewedAdapters.solanaToken2022TransferChecked,
                WalletReviewedAdapters.erc20,
-               WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn].contains(adapterID),
+               WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
+               WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn]
+                .contains(adapterID),
               transaction.riskFlags.isEmpty,
               let counterparties = policyCounterparties(for: transaction),
               !counterparties.isEmpty else {
@@ -3084,7 +3110,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 return nil
             }
             return values
-        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn:
+        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
+             WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn:
             guard transaction.action.arguments.count == 3,
                   let deadline = UInt64(transaction.action.arguments[2].value),
                   deadline >= UInt64(max(0, Date().timeIntervalSince1970.rounded(.down))) else {

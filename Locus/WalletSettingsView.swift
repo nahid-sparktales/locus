@@ -961,7 +961,8 @@ struct WalletSettingsView: View {
         case WalletReviewedAdapters.ethereumNativeTransfer: "Native ETH"
         case WalletReviewedAdapters.solanaNativeTransfer: "Native SOL"
         case WalletReviewedAdapters.erc20: "ERC-20"
-        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn:
+        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
+             WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn:
             "Uniswap exact input"
         default: "Reviewed adapter"
         }
@@ -1709,7 +1710,7 @@ private struct WalletContractPolicySheet: View {
                 .foregroundStyle(LocusTheme.muted).textSelection(.enabled)
             Text("This authorization is bound to this registry ID, runtime code hash, adapter, token asset, counterparty, fee ceiling, and signer session.")
                 .font(.callout).foregroundStyle(LocusTheme.muted)
-            if entry.reviewedAdapterID == WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn {
+            if isSwapAdapter {
                 field("Input token address", placeholder: "0x…", text: $inputToken)
             }
             field(counterpartyTitle, placeholder: "0x…", text: $counterparty)
@@ -1737,7 +1738,9 @@ private struct WalletContractPolicySheet: View {
         switch entry.reviewedAdapterID {
         case WalletReviewedAdapters.erc20: "ERC-20 transfer / finite approval"
         case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn:
-            "Universal Router V2 exact-input"
+            "Universal Router legacy V2 exact-input"
+        case WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn:
+            "Universal Router V2/V3 exact-input"
         default: "Exact confirmation only"
         }
     }
@@ -1751,7 +1754,19 @@ private struct WalletContractPolicySheet: View {
         if entry.reviewedAdapterID == WalletReviewedAdapters.erc20 {
             return "Unlimited approvals and any unrecognized side effect still require exact confirmation."
         }
-        return "Only one V2 exact-input command, a nonzero minimum output, the current account as recipient, and a 20-minute deadline are eligible."
+        if entry.reviewedAdapterID
+            == WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn {
+            return "Only one V2 or V3 exact-input command, canonical route and per-hop limits, a nonzero minimum output, the current account as recipient, and a 20-minute deadline are eligible."
+        }
+        return "Only one legacy V2 exact-input command, a nonzero minimum output, the current account as recipient, and a 20-minute deadline are eligible."
+    }
+
+    private var isSwapAdapter: Bool {
+        guard let adapterID = entry.reviewedAdapterID else { return false }
+        return [
+            WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
+            WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+        ].contains(adapterID)
     }
 
     private var assetAddress: String {

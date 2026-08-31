@@ -828,6 +828,21 @@ final class WalletGatewayTests: XCTestCase {
                 normalizedABI: routerABI,
                 permittedFunctions: ["execute(bytes,bytes[],uint256)"]
             ),
+            WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn
+        )
+        let legacyRouter = WalletContractRegistryEntry(
+            id: "uniswap.legacy", networkID: WalletGateway.sepoliaNetworkID,
+            checksumAddress: "0x1111111111111111111111111111111111111111",
+            label: "Legacy Router", normalizedABI: routerABI,
+            abiDigest: "sha256:test", runtimeCodeHash: "0xcode",
+            permittedFunctions: ["execute(bytes,bytes[],uint256)"],
+            permittedSelectors: ["0x3593564c"],
+            reviewedAdapterID:
+                WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
+            verifiedAt: Date()
+        )
+        XCTAssertEqual(
+            WalletReviewedAdapters.validatedID(for: legacyRouter),
             WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn
         )
         XCTAssertNil(WalletReviewedAdapters.classify(
@@ -945,6 +960,35 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertNil(gateway.contractRegistry.first?.reviewedAdapterID)
     }
 
+    func testPersistedLegacyRouterAdapterIsNotSilentlyBroadened() throws {
+        let suiteName = "WalletRegistryLegacyRouterTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let routerABI = #"[{"type":"function","name":"execute","stateMutability":"payable","inputs":[{"name":"commands","type":"bytes"},{"name":"inputs","type":"bytes[]"},{"name":"deadline","type":"uint256"}],"outputs":[]}]"#
+        let legacy = WalletContractRegistryEntry(
+            id: "uniswap.legacy", networkID: WalletGateway.sepoliaNetworkID,
+            checksumAddress: "0x1111111111111111111111111111111111111111",
+            label: "Legacy Router", normalizedABI: routerABI,
+            abiDigest: "sha256:test", runtimeCodeHash: "0xcode",
+            permittedFunctions: ["execute(bytes,bytes[],uint256)"],
+            permittedSelectors: ["0x3593564c"],
+            reviewedAdapterID:
+                WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
+            verifiedAt: Date()
+        )
+        defaults.set(
+            try JSONEncoder().encode([legacy]),
+            forKey: "LocusWalletContractRegistryV1"
+        )
+        let gateway = WalletGateway(
+            signer: FakeWalletSigner(), environment: [:], userDefaults: defaults
+        )
+        XCTAssertEqual(
+            gateway.contractRegistry.first?.reviewedAdapterID,
+            WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn
+        )
+    }
+
     func testUniversalRouterAdapterDecodesOnlyOneBoundedExactInputCommand() throws {
         let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         let inputToken = "1111111111111111111111111111111111111111"
@@ -968,6 +1012,7 @@ final class WalletGatewayTests: XCTestCase {
         ))
         XCTAssertEqual(swap.amountIn, "10")
         XCTAssertEqual(swap.minimumAmountOut, "9")
+        XCTAssertEqual(swap.protocolVersion, .v2)
         XCTAssertEqual(swap.recipient, account)
         XCTAssertTrue(swap.inputAssetID.hasSuffix(inputToken))
         XCTAssertTrue(swap.outputAssetID.hasSuffix(outputToken))
@@ -989,6 +1034,85 @@ final class WalletGatewayTests: XCTestCase {
         )
         XCTAssertNil(WalletUniversalRouterV2Adapter.decode(
             action: stale, accountAddress: account, now: now
+        ))
+    }
+
+    func testUniversalRouterV2V3AdapterBindsCurrentExactInputShapes() throws {
+        let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        let inputToken = "1111111111111111111111111111111111111111"
+        let outputToken = "2222222222222222222222222222222222222222"
+        let now = Date(timeIntervalSince1970: 1_000)
+        func action(command: String, words: [String]) -> WalletSemanticAction {
+            WalletSemanticAction.contractCall(
+                contractID: "uniswap.router",
+                function: "execute(bytes,bytes[],uint256)",
+                arguments: [
+                    WalletTypedArgument(type: "bytes", value: command),
+                    WalletTypedArgument(
+                        type: "bytes[]", value: "[0x\(words.joined())]"
+                    ),
+                    WalletTypedArgument(type: "uint256", value: "1100"),
+                ]
+            )
+        }
+
+        let v2Words = [
+            abiWord(String(account.dropFirst(2))), abiWord("a"), abiWord("9"),
+            abiWord("c0"), abiWord("1"), abiWord("120"), abiWord("2"),
+            abiWord(inputToken), abiWord(outputToken), abiWord("1"), abiWord("1"),
+        ]
+        let v2 = try XCTUnwrap(WalletUniversalRouterV2V3Adapter.decode(
+            action: action(command: "0x08", words: v2Words),
+            accountAddress: account, now: now
+        ))
+        XCTAssertEqual(v2.protocolVersion, .v2)
+        XCTAssertEqual(v2.amountIn, "10")
+        XCTAssertEqual(v2.minimumAmountOut, "9")
+        XCTAssertTrue(v2.inputAssetID.hasSuffix(inputToken))
+        XCTAssertTrue(v2.outputAssetID.hasSuffix(outputToken))
+
+        let packedPath = inputToken + "000bb8" + outputToken
+        let paddedPath = packedPath
+            + String(repeating: "0", count: 128 - packedPath.count)
+        let v3Words = [
+            abiWord(String(account.dropFirst(2))), abiWord("a"), abiWord("9"),
+            abiWord("c0"), abiWord("1"), abiWord("120"), abiWord("2b"),
+            String(paddedPath.prefix(64)), String(paddedPath.dropFirst(64)),
+            abiWord("1"), abiWord("1"),
+        ]
+        let v3 = try XCTUnwrap(WalletUniversalRouterV2V3Adapter.decode(
+            action: action(command: "0x00", words: v3Words),
+            accountAddress: account, now: now
+        ))
+        XCTAssertEqual(v3.protocolVersion, .v3)
+        XCTAssertEqual(v3.inputAssetID, v2.inputAssetID)
+        XCTAssertEqual(v3.outputAssetID, v2.outputAssetID)
+
+        XCTAssertNil(WalletUniversalRouterV2V3Adapter.decode(
+            action: action(command: "0x88", words: v2Words),
+            accountAddress: account, now: now
+        ))
+        var substitutedOffset = v2Words
+        substitutedOffset[5] = abiWord("100")
+        XCTAssertNil(WalletUniversalRouterV2V3Adapter.decode(
+            action: action(command: "0x08", words: substitutedOffset),
+            accountAddress: account, now: now
+        ))
+        var wrongPriceCount = v2Words
+        wrongPriceCount[9] = abiWord("2")
+        XCTAssertNil(WalletUniversalRouterV2V3Adapter.decode(
+            action: action(command: "0x08", words: wrongPriceCount),
+            accountAddress: account, now: now
+        ))
+        var routerPaid = v3Words
+        routerPaid[4] = abiWord("0")
+        XCTAssertNil(WalletUniversalRouterV2V3Adapter.decode(
+            action: action(command: "0x00", words: routerPaid),
+            accountAddress: account, now: now
+        ))
+        XCTAssertNil(WalletUniversalRouterV2V3Adapter.decode(
+            action: action(command: "0x10", words: v3Words),
+            accountAddress: account, now: now
         ))
     }
 

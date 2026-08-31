@@ -130,6 +130,16 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   locally trusted assets; safe Token-2022 remains subject to live extension
   evidence in the provider and signer path. Signed launch/review manifests
   remain independently required for any mainnet signature.
+- [x] Version-separated Universal Router V2/V3 exact-input command decoding.
+  Existing `uniswap-universal-router-v2-exact-in-v1` registry entries retain
+  their legacy V2-only authority. The new v2 adapter accepts exactly one
+  non-allow-revert V2 or V3 exact-input command using the current six-field
+  input ABI, the current account as literal recipient and payer, a deadline no
+  more than 20 minutes away, 1-3 acyclic hops, a nonzero global minimum output,
+  canonical dynamic offsets/padding, and either an empty per-hop price array or
+  one nonzero floor per hop. It remains separately review-manifest-bound; V4,
+  Permit2 forms, native wrapping, sub-plans, quote acquisition, Swap UI, and
+  end-to-end execution are not claimed by this item.
 - [ ] Ethereum sandboxed collectible metadata/media rendering complete. Curated
   token/NFT transfers, metadata-free ERC-20/721/1155 holdings, and indexed
   transfer-based quarantine are implemented.
@@ -143,7 +153,9 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   and localnet coverage complete. The
   exact native, single-object curated Coin, and publicly transferable object
   GraphQL subsets are implemented but not mainnet-enabled.
-- [ ] Uniswap v2/v3/v4, Jupiter `/build`, and Cetus V3 reviewed swap subsets complete.
+- [ ] Uniswap v2/v3/v4, Jupiter `/build`, and Cetus V3 reviewed swap subsets
+  complete. Universal Router V2/V3 decoding is implemented as described above;
+  V4 and all end-to-end quote/simulation/broadcast flows remain closed.
 - [ ] MetaMask, Phantom, Slush, Wallet Standards, and Reown WalletKit lifecycle complete.
 - [ ] Sandboxed remote collectible-media fetch and rendering complete.
 

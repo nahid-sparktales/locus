@@ -411,7 +411,8 @@ enum WalletPolicyEngine {
                 }
                 return nil
             }
-        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn:
+        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
+             WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn:
             counterparties = transaction.effects.filter {
                 $0.kind == "minimum_receive"
             }.compactMap(\.to)
@@ -821,6 +822,9 @@ final class WalletGateway: ObservableObject {
     private static func sanitizedRegistryEntry(
         _ entry: WalletContractRegistryEntry
     ) -> WalletContractRegistryEntry {
+        if WalletReviewedAdapters.validatedID(for: entry) != nil {
+            return entry
+        }
         let reviewedAdapterID = WalletReviewedAdapters.classify(
             normalizedABI: entry.normalizedABI,
             permittedFunctions: entry.permittedFunctions

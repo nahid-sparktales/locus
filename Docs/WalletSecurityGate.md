@@ -260,6 +260,16 @@ signing adapter.
   destination and fixed collectible/object identity visible, requires a
   nonzero native fee ceiling, and calls only the typed human semantic transfer
   APIs. It does not bypass signed mainnet launch or adapter-review gates.
+- Universal Router authority is versioned rather than inferred from the shared
+  `execute(bytes,bytes[],uint256)` ABI. A persisted or signed legacy adapter ID
+  continues to decode only one V2-pool exact-input command. The new V2/V3
+  adapter ID must be reviewed separately and accepts only one non-allow-revert
+  command. It binds the literal current-account recipient, user payer flag,
+  positive exact input and global minimum output, a deadline within 20 minutes,
+  canonical dynamic offsets and zero padding, an acyclic 1-3 hop ERC-20 route,
+  V3 fee bounds, and either zero hop floors or exactly one positive floor per
+  hop. Exact-output, Permit2, wrapping, partial-fill cleanup, multiple commands,
+  V4 nested actions, and sub-plans remain unrepresentable in this adapter.
 - Versioned SQLite public store for activity, assets, contacts, and connections.
 - Network-scoped EIP-1193/EIP-6963 browser grants; opaque message and typed-data
   signing remain rejected.
@@ -278,7 +288,8 @@ until their implementation and evidence gates pass:
   Sui gRPC execution migration, multi-object
   transfers, and localnet suites; native SUI, Coin, and object-transfer mainnet
   activation remain gated;
-- full v2/v3/v4 Universal Router, Jupiter `/build`, and pinned Cetus V3 swaps;
+- Universal Router V4 plus end-to-end quote/simulation/broadcast, Jupiter
+  `/build`, and pinned Cetus V3 swaps;
 - live MetaMask, Phantom, Slush, and Reown WalletKit sessions;
 - ERC-721/1155 metadata/media sandboxing and independent local-chain coverage
   for Ethereum asset paths;

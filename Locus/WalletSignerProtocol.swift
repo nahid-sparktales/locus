@@ -309,6 +309,8 @@ enum WalletReviewedAdapters {
     static let erc1155SafeTransfer = "erc1155-safe-transfer-v1"
     static let uniswapUniversalRouterV2ExactIn =
         "uniswap-universal-router-v2-exact-in-v1"
+    static let uniswapUniversalRouterV2V3ExactIn =
+        "uniswap-universal-router-v2-v3-exact-in-v2"
     static let staticallySupportedIDs: Set<String> = [
         ethereumNativeTransfer, solanaNativeTransfer, solanaSPLTransferChecked,
         solanaToken2022TransferChecked,
@@ -317,6 +319,7 @@ enum WalletReviewedAdapters {
         suiNativeTransfer, suiCoinTransfer, suiObjectTransfer,
         erc20, erc721SafeTransfer, erc1155SafeTransfer,
         uniswapUniversalRouterV2ExactIn,
+        uniswapUniversalRouterV2V3ExactIn,
     ]
 
     private struct FunctionShape: Equatable {
@@ -366,17 +369,25 @@ enum WalletReviewedAdapters {
         }
         if permitted == Set(universalRouterFunctions.keys),
            permitted.allSatisfy({ definitions[$0] == universalRouterFunctions[$0] }) {
-            return uniswapUniversalRouterV2ExactIn
+            return uniswapUniversalRouterV2V3ExactIn
         }
         return nil
     }
 
     static func validatedID(for entry: WalletContractRegistryEntry) -> String? {
-        guard let claimed = entry.reviewedAdapterID,
-              claimed == classify(
-                normalizedABI: entry.normalizedABI,
-                permittedFunctions: entry.permittedFunctions
-              ) else { return nil }
+        guard let claimed = entry.reviewedAdapterID else { return nil }
+        let classified = classify(
+            normalizedABI: entry.normalizedABI,
+            permittedFunctions: entry.permittedFunctions
+        )
+        // Preserve the authority of an existing signed v1 adapter. The same
+        // router ABI identifies both versions, but only the v2 adapter may
+        // decode the newer V2/V3 command payloads.
+        if claimed == uniswapUniversalRouterV2ExactIn,
+           classified == uniswapUniversalRouterV2V3ExactIn {
+            return claimed
+        }
+        guard claimed == classified else { return nil }
         return claimed
     }
 
@@ -550,11 +561,17 @@ enum WalletEVMAssetAdapter {
 }
 
 struct WalletUniversalRouterV2Swap: Equatable, Sendable {
+    let protocolVersion: WalletUniversalRouterSwapProtocol
     let inputAssetID: String
     let outputAssetID: String
     let amountIn: String
     let minimumAmountOut: String
     let recipient: String
+}
+
+enum WalletUniversalRouterSwapProtocol: String, Equatable, Sendable {
+    case v2
+    case v3
 }
 
 enum WalletUniversalRouterV2Adapter {
@@ -603,6 +620,7 @@ enum WalletUniversalRouterV2Adapter {
               path.first?.caseInsensitiveCompare(path.last ?? "") != .orderedSame,
               recipient.caseInsensitiveCompare(accountAddress) == .orderedSame else { return nil }
         return WalletUniversalRouterV2Swap(
+            protocolVersion: .v2,
             inputAssetID: "\(networkID)/erc20:\(path[0].lowercased())",
             outputAssetID: "\(networkID)/erc20:\(path[path.count - 1].lowercased())",
             amountIn: amountIn, minimumAmountOut: minimumOut, recipient: recipient
@@ -667,6 +685,219 @@ enum WalletUniversalRouterV2Adapter {
               word.suffix(40).allSatisfy(\.isHexDigit) else { return nil }
         let value = "0x" + String(word.suffix(40))
         return value.count == 42 ? value : nil
+    }
+}
+
+enum WalletUniversalRouterV2V3Adapter {
+    /// Decodes exactly one current Universal Router V2 or V3 exact-input
+    /// command. The input must use the six-field per-hop-price ABI introduced
+    /// for the v2.2 router deployment. Permit commands, native wrapping,
+    /// allow-revert, sub-plans, exact-output, and non-canonical ABI layouts are
+    /// not accepted by this adapter version.
+    static func decode(
+        action: WalletSemanticAction,
+        accountAddress: String,
+        networkID: String = "eip155:1",
+        now: Date = Date()
+    ) -> WalletUniversalRouterV2Swap? {
+        guard action.function == "execute(bytes,bytes[],uint256)",
+              action.arguments.count == 3,
+              action.arguments[0].type == "bytes",
+              let protocolVersion = command(action.arguments[0].value),
+              action.arguments[1].type == "bytes[]",
+              let encodedInput = singleBytesArray(action.arguments[1].value),
+              action.arguments[2].type == "uint256",
+              let deadline = UInt64(normalizedDecimal(action.arguments[2].value) ?? ""),
+              isAddress(accountAddress) else { return nil }
+        let timestamp = UInt64(max(0, now.timeIntervalSince1970.rounded(.down)))
+        guard deadline >= timestamp, deadline <= timestamp + 20 * 60 else {
+            return nil
+        }
+
+        let raw = encodedInput.lowercased().hasPrefix("0x")
+            ? String(encodedInput.dropFirst(2)) : encodedInput
+        guard raw.count >= 10 * 64, raw.count.isMultiple(of: 64),
+              raw.allSatisfy(\.isHexDigit) else { return nil }
+        let words = stride(from: 0, to: raw.count, by: 64).map { offset -> String in
+            let start = raw.index(raw.startIndex, offsetBy: offset)
+            let end = raw.index(start, offsetBy: 64)
+            return String(raw[start..<end])
+        }
+        guard let recipient = address(fromABIWord: words[0]),
+              let amountIn = decimal(fromABIWord: words[1]), amountIn != "0",
+              let minimumOut = decimal(fromABIWord: words[2]), minimumOut != "0",
+              decimal(fromABIWord: words[3]) == "192",
+              decimal(fromABIWord: words[4]) == "1",
+              let pricesOffsetText = decimal(fromABIWord: words[5]),
+              let pricesOffset = Int(pricesOffsetText),
+              pricesOffset.isMultiple(of: 32),
+              recipient.caseInsensitiveCompare(accountAddress) == .orderedSame else {
+            return nil
+        }
+
+        let route: [String]
+        let hopCount: Int
+        let priceWordIndex: Int
+        switch protocolVersion {
+        case .v2:
+            guard let pathCountText = decimal(fromABIWord: words[6]),
+                  let pathCount = Int(pathCountText), (2...4).contains(pathCount),
+                  words.count >= 8 + pathCount else { return nil }
+            let parsed = words[7..<(7 + pathCount)]
+                .compactMap(address(fromABIWord:))
+            guard parsed.count == pathCount else { return nil }
+            route = parsed
+            hopCount = pathCount - 1
+            priceWordIndex = 7 + pathCount
+        case .v3:
+            guard let byteCountText = decimal(fromABIWord: words[6]),
+                  let byteCount = Int(byteCountText), byteCount >= 43,
+                  (byteCount - 20).isMultiple(of: 23) else { return nil }
+            hopCount = (byteCount - 20) / 23
+            guard (1...3).contains(hopCount) else { return nil }
+            let pathWords = (byteCount + 31) / 32
+            guard words.count >= 8 + pathWords else { return nil }
+            let paddedPath = words[7..<(7 + pathWords)].joined()
+            let pathHexCount = byteCount * 2
+            let pathEnd = paddedPath.index(
+                paddedPath.startIndex, offsetBy: pathHexCount
+            )
+            guard paddedPath[pathEnd...].allSatisfy({ $0 == "0" }) else {
+                return nil
+            }
+            let path = String(paddedPath[..<pathEnd])
+            guard let parsed = v3Route(path, hopCount: hopCount) else {
+                return nil
+            }
+            route = parsed
+            priceWordIndex = 7 + pathWords
+        }
+        guard pricesOffset == priceWordIndex * 32,
+              words.indices.contains(priceWordIndex),
+              let priceCountText = decimal(fromABIWord: words[priceWordIndex]),
+              let priceCount = Int(priceCountText),
+              priceCount == 0 || priceCount == hopCount,
+              words.count == priceWordIndex + 1 + priceCount else { return nil }
+        if priceCount > 0 {
+            let prices = words[(priceWordIndex + 1)...]
+                .compactMap(decimal(fromABIWord:))
+            guard prices.count == priceCount,
+                  prices.allSatisfy({ $0 != "0" }) else { return nil }
+        }
+        guard route.count == hopCount + 1,
+              zip(route, route.dropFirst()).allSatisfy({ pair in
+                  pair.0.caseInsensitiveCompare(pair.1) != .orderedSame
+              }),
+              route.first?.caseInsensitiveCompare(route.last ?? "")
+                != .orderedSame else { return nil }
+        return WalletUniversalRouterV2Swap(
+            protocolVersion: protocolVersion,
+            inputAssetID: "\(networkID)/erc20:\(route[0].lowercased())",
+            outputAssetID: "\(networkID)/erc20:\(route[route.count - 1].lowercased())",
+            amountIn: amountIn, minimumAmountOut: minimumOut,
+            recipient: recipient
+        )
+    }
+
+    private static func command(
+        _ value: String
+    ) -> WalletUniversalRouterSwapProtocol? {
+        switch value.lowercased() {
+        case "0x08": .v2
+        case "0x00": .v3
+        default: nil
+        }
+    }
+
+    private static func v3Route(_ path: String, hopCount: Int) -> [String]? {
+        guard path.count == (20 + hopCount * 23) * 2 else { return nil }
+        var cursor = path.startIndex
+        func take(_ count: Int) -> String? {
+            guard let end = path.index(
+                cursor, offsetBy: count, limitedBy: path.endIndex
+            ) else { return nil }
+            defer { cursor = end }
+            return String(path[cursor..<end])
+        }
+        guard let first = take(40), isRawAddress(first) else { return nil }
+        var route = ["0x" + first.lowercased()]
+        for _ in 0..<hopCount {
+            guard let feeHex = take(6),
+                  let fee = UInt32(feeHex, radix: 16),
+                  fee > 0, fee <= 1_000_000,
+                  let token = take(40), isRawAddress(token) else { return nil }
+            route.append("0x" + token.lowercased())
+        }
+        return cursor == path.endIndex ? route : nil
+    }
+
+    private static func singleBytesArray(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.first == "[", trimmed.last == "]" else { return nil }
+        let inner = trimmed.dropFirst().dropLast()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !inner.isEmpty, !inner.contains(","),
+              inner.lowercased().hasPrefix("0x"),
+              inner.dropFirst(2).count.isMultiple(of: 2),
+              inner.dropFirst(2).allSatisfy(\.isHexDigit) else { return nil }
+        return inner
+    }
+
+    private static func normalizedDecimal(_ value: String) -> String? {
+        guard !value.isEmpty,
+              value.utf8.allSatisfy({ (48...57).contains($0) }) else { return nil }
+        let trimmed = value.drop(while: { $0 == "0" })
+        return trimmed.isEmpty ? "0" : String(trimmed)
+    }
+
+    private static func decimal(fromABIWord word: String) -> String? {
+        guard word.count == 64, word.allSatisfy(\.isHexDigit) else { return nil }
+        var result = "0"
+        for character in word.lowercased() {
+            guard let digit = Int(String(character), radix: 16),
+                  let next = multiplyAndAdd(
+                    result, multiplier: 16, addend: digit
+                  ) else { return nil }
+            result = next
+        }
+        return result
+    }
+
+    private static func multiplyAndAdd(
+        _ value: String, multiplier: Int, addend: Int
+    ) -> String? {
+        guard multiplier >= 0, addend >= 0, !value.isEmpty,
+              value.utf8.allSatisfy({ (48...57).contains($0) }) else { return nil }
+        var carry = addend
+        var digits: [Int] = []
+        for character in value.reversed() {
+            guard let digit = character.wholeNumberValue else { return nil }
+            let total = digit * multiplier + carry
+            digits.append(total % 10)
+            carry = total / 10
+        }
+        while carry > 0 {
+            digits.append(carry % 10)
+            carry /= 10
+        }
+        return digits.reversed().map(String.init).joined()
+    }
+
+    private static func address(fromABIWord word: String) -> String? {
+        guard word.count == 64,
+              word.prefix(24).allSatisfy({ $0 == "0" }) else { return nil }
+        let raw = String(word.suffix(40)).lowercased()
+        return isRawAddress(raw) ? "0x" + raw : nil
+    }
+
+    private static func isRawAddress(_ value: String) -> Bool {
+        value.count == 40 && value.allSatisfy(\.isHexDigit)
+            && value.contains(where: { $0 != "0" })
+    }
+
+    private static func isAddress(_ value: String) -> Bool {
+        value.count == 42 && value.hasPrefix("0x")
+            && isRawAddress(String(value.dropFirst(2)))
     }
 }
 

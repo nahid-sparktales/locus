@@ -60,6 +60,7 @@ let supportedAdapterIDs: Set<String> = [
     "erc721-safe-transfer-v1",
     "erc1155-safe-transfer-v1",
     "uniswap-universal-router-v2-exact-in-v1",
+    "uniswap-universal-router-v2-v3-exact-in-v2",
 ]
 
 func canonicalEncoder() -> JSONEncoder {

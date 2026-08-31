@@ -265,11 +265,16 @@ SUI fee. Arbitrary object BCS and Move calls never enter exported authority, and
 mainnet remains launch- and adapter-gated.
 Solana token sends use the signer-derived recipient associated token account,
 creating it idempotently through an exact reviewed instruction when it is still
-unallocated. Token-2022 transfer-altering extensions, Core collection/plugin
-variants, Token Metadata and compressed-collectible transfers, versioned
-message signing, Sui gRPC execution migration,
-full swaps, external wallets, and WalletConnect remain closed until their
-implementation and evidence gates pass. Finalized Sui activity records strict
+unallocated. The Universal Router now has version-separated reviewed decoders:
+the legacy adapter remains V2-pool-only, while a new adapter accepts one current
+V2 or V3 exact-input command with canonical ABI layout, route, payer, recipient,
+deadline, global minimum output, and per-hop price array. V4 actions, quote
+acquisition, the human Swap flow, and broadcast stay closed. Token-2022
+transfer-altering extensions, Core collection/plugin variants, Token Metadata
+and compressed-collectible transfers, versioned-message signing, Sui gRPC
+execution migration, Solana/Sui swaps, external wallets, and WalletConnect
+remain closed until their implementation and evidence gates pass. Finalized
+Sui activity records strict
 non-Coin lifecycle and ownership changes for the tracked account, while
 validating and ignoring same-owner writes and gas/Coin object mutations.
 
