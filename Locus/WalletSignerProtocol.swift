@@ -422,6 +422,10 @@ struct WalletEVMAssetIdentity: Codable, Equatable, Sendable {
         "\(networkID)/\(standard.rawValue):\(contractAddress.lowercased())"
     }
 
+    var canonicalID: String {
+        tokenID.map { "\(collectionID)/\($0)" } ?? collectionID
+    }
+
     static func parse(_ value: String) -> WalletEVMAssetIdentity? {
         let pieces = value.split(separator: "/", omittingEmptySubsequences: false)
         guard pieces.count == 2 || pieces.count == 3 else { return nil }

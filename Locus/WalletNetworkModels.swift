@@ -229,10 +229,16 @@ struct WalletEVMIndexedTransfer: Codable, Equatable, Identifiable, Sendable {
 /// an unknown contract remains quarantined until a signed manifest or the user
 /// supplies trust, and remote logos never cross this boundary.
 struct WalletEVMDiscoveredAsset: Codable, Equatable, Identifiable, Sendable {
-    var id: String { identity.collectionID }
+    var id: String { identity.canonicalID }
 
     let identity: WalletEVMAssetIdentity
     let balanceBaseUnits: String
+}
+
+struct WalletEVMNFTSnapshot: Codable, Equatable, Sendable {
+    let assets: [WalletEVMDiscoveredAsset]
+    let blockNumber: UInt64
+    let blockHash: String
 }
 
 enum WalletSolanaTokenProgram: String, Codable, CaseIterable, Sendable {

@@ -197,6 +197,20 @@ actor WalletEVMProviderCoordinator {
         throw WalletProviderCoordinatorError.noProvider(network.id)
     }
 
+    func nftBalances(address: String) async throws -> WalletEVMNFTSnapshot {
+        if primaryEndpoint.provider == .alchemy {
+            return try await primary.nftBalances(
+                provider: .alchemy, address: address
+            )
+        }
+        if let fallback, fallbackEndpoint?.provider == .alchemy {
+            return try await fallback.nftBalances(
+                provider: .alchemy, address: address
+            )
+        }
+        throw WalletProviderCoordinatorError.noProvider(network.id)
+    }
+
     func indexedTransfers(
         address: String,
         limit: Int = 250

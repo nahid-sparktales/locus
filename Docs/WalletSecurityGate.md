@@ -71,6 +71,15 @@ signing adapter.
   quarantine records and remain hidden until explicitly trusted; signed assets
   keep only their reviewed manifest metadata. QuickNode and user endpoints do
   not impersonate this vendor-specific discovery method.
+- Alchemy ERC-721/1155 ownership discovery is derived only from a validated
+  `*.alchemy.com/v2/<public-key>` endpoint and requests `withMetadata=false`.
+  Bounded pages must preserve one exact block number, block hash, and total.
+  Every holding binds a canonical contract, explicit ERC-721 or ERC-1155
+  standard, canonical uint256 token ID, and positive integer balance; ERC-721
+  balance must be one. Duplicate holdings, changed snapshots, invalid page keys,
+  and unexpected standards fail the batch. Names, descriptions, token URIs,
+  images, collection metadata, and spam labels are never imported, and every
+  unknown collectible begins in quarantine.
 - Reviewed native SOL transfers using one canonical legacy System Program
   message. The app and Rust signer rebuild it independently; genesis identity,
   blockhash lifetime, account privileges, fee, simulation, request source, and

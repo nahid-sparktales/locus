@@ -160,6 +160,13 @@ and integer base-unit balances, rejects duplicate contracts and unstable page
 keys, and imports no provider token names, decimals, logos, or media. Unknown
 contracts enter quarantine; signed-manifest assets retain their reviewed local
 metadata and can use the same snapshot balance.
+ERC-721 and ERC-1155 holdings use Alchemy's
+[metadata-free owner endpoint](https://www.alchemy.com/docs/reference/nft-api-endpoints/nft-api-endpoints/nft-ownership-endpoints/get-nf-ts-for-owner-v-3).
+Every page must keep the same block number, block hash, and total; each item is
+reduced to its canonical standard, contract, token ID, and positive integer
+quantity. ERC-721 quantities must be exactly one. Provider names, descriptions,
+URIs, images, collection data, and spam classifications are discarded before
+the wallet model sees the collectible.
 Digital Asset Standard responses for Metaplex Token Metadata, Core, and
 compressed Bubblegum holdings are ownership-validated; active SVG/HTML/script
 media is never promoted as a wallet image. Sui native balances now use the

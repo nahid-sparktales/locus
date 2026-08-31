@@ -19,6 +19,9 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
 - [x] Bounded, chain-verified Alchemy ERC-20 holding discovery with exact owner,
   unique canonical contracts, uint256 base-unit balances, stable pagination,
   metadata exclusion, and default quarantine for unknown contracts.
+- [x] Metadata-free Alchemy ERC-721/1155 owner discovery with one stable block
+  snapshot, canonical unique contract/token identities, exact integer balances,
+  strict standard binding, and default quarantine.
 - [x] Native SOL legacy message reconstruction, signing, simulation recheck,
   expiry handling, single-provider broadcast, status finality, and capped rules.
 - [x] Strict SPL and Token-2022 account discovery with raw base-unit balances,
@@ -89,8 +92,8 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   exact object-ownership and gas simulation, fresh dual-object recheck, exact
   approval, one-provider execution, and frozen BCS/digest/signature fixtures.
   Shared objects, batches, Move calls, and mainnet activation remain gated.
-- [ ] Ethereum ERC-721/1155 ownership discovery and sandboxed collectible
-  metadata complete. Curated token/NFT transfers, ERC-20 holdings, and indexed
+- [ ] Ethereum sandboxed collectible metadata/media rendering complete. Curated
+  token/NFT transfers, metadata-free ERC-20/721/1155 holdings, and indexed
   transfer-based quarantine are implemented.
 - [ ] Solana transfer-altering Token-2022 extensions and reviewed
   NFT/compressed-collectible transfer implementation complete.

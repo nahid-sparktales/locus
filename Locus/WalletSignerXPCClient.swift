@@ -797,16 +797,35 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 let balances = try await rpcClient(for: networkID).tokenBalances(
                     address: account.address
                 )
-                let rows: [[String: Any]] = balances.map { item in
+                let nftSnapshot = try await rpcClient(for: networkID).nftBalances(
+                    address: account.address
+                )
+                var rows: [[String: Any]] = balances.map { item in
                     [
-                        "asset_id": item.identity.collectionID,
+                        "asset_id": item.identity.canonicalID,
                         "asset_kind": WalletAssetKind.fungibleToken.rawValue,
                         "reference": item.identity.contractAddress,
                         "balance_base_units": item.balanceBaseUnits,
                     ]
                 }
+                rows.append(contentsOf: nftSnapshot.assets.map { item in
+                    [
+                        "asset_id": item.identity.canonicalID,
+                        "asset_kind": WalletAssetKind.collectible.rawValue,
+                        "reference": item.identity.contractAddress,
+                        "standard": item.identity.standard.rawValue,
+                        "token_id": item.identity.tokenID ?? "",
+                        "balance_base_units": item.balanceBaseUnits,
+                        "snapshot_block_number": String(nftSnapshot.blockNumber),
+                        "snapshot_block_hash": nftSnapshot.blockHash,
+                    ]
+                })
+                rows.sort {
+                    ($0["asset_id"] as? String ?? "")
+                        < ($1["asset_id"] as? String ?? "")
+                }
                 return [
-                    "text": "Loaded \(rows.count) ERC-20 balances.",
+                    "text": "Loaded \(rows.count) Ethereum assets and collectibles.",
                     "account_id": account.id,
                     "network_id": networkID,
                     "assets": rows,

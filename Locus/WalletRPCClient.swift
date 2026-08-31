@@ -442,6 +442,118 @@ actor WalletSepoliaRPCClient {
         )
     }
 
+    func nftBalances(
+        provider: WalletProviderKind,
+        address: String
+    ) async throws -> WalletEVMNFTSnapshot {
+        guard provider == .alchemy, Self.isAddress(address) else {
+            throw WalletProviderCoordinatorError.noProvider(networkID)
+        }
+        _ = try await verifiedChainID()
+        var pageKey: String?
+        var seenPageKeys: Set<String> = []
+        var seenAssets: Set<String> = []
+        var assets: [WalletEVMDiscoveredAsset] = []
+        var snapshotBlock: UInt64?
+        var snapshotHash: String?
+        var expectedTotal: UInt64?
+        for _ in 0..<50 {
+            guard let url = alchemyNFTURL(owner: address, pageKey: pageKey) else {
+                throw WalletProviderCoordinatorError.noProvider(networkID)
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.timeoutInterval = 20
+            request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode),
+                  data.count <= 1_048_576,
+                  let object = try JSONSerialization.jsonObject(with: data)
+                    as? [String: Any],
+                  object["error"] == nil,
+                  let owned = object["ownedNfts"] as? [[String: Any]],
+                  owned.count <= 100,
+                  let validAt = object["validAt"] as? [String: Any],
+                  let blockNumber = Self.exactUInt64(validAt["blockNumber"]),
+                  let blockHash = Self.validHash(validAt["blockHash"]),
+                  let total = Self.exactUInt64(object["totalCount"]),
+                  total <= 1_000_000 else {
+                throw WalletRPCError.invalidResponse(
+                    "Alchemy NFT ownership returned malformed snapshot evidence"
+                )
+            }
+            if let snapshotBlock {
+                guard snapshotBlock == blockNumber,
+                      snapshotHash?.caseInsensitiveCompare(blockHash) == .orderedSame,
+                      expectedTotal == total else {
+                    throw WalletRPCError.invalidResponse(
+                        "Alchemy NFT ownership changed during pagination"
+                    )
+                }
+            } else {
+                snapshotBlock = blockNumber
+                snapshotHash = blockHash.lowercased()
+                expectedTotal = total
+            }
+            for item in owned {
+                guard let contract = item["contract"] as? [String: Any],
+                      let contractAddress = contract["address"] as? String,
+                      Self.isAddress(contractAddress),
+                      let rawType = item["tokenType"] as? String,
+                      contract["tokenType"] as? String == rawType,
+                      let standard = Self.nftStandard(rawType),
+                      let tokenID = item["tokenId"] as? String,
+                      let balance = item["balance"] as? String,
+                      let normalizedBalance = WalletBaseUnits.normalize(balance),
+                      normalizedBalance == balance, normalizedBalance != "0",
+                      standard != .erc721 || normalizedBalance == "1",
+                      let identity = WalletEVMAssetIdentity.parse(
+                          "\(networkID)/\(standard.rawValue):\(contractAddress.lowercased())/\(tokenID)"
+                      ), identity.tokenID == tokenID,
+                      seenAssets.insert(identity.canonicalID).inserted else {
+                    throw WalletRPCError.invalidResponse(
+                        "Alchemy NFT ownership returned malformed asset evidence"
+                    )
+                }
+                assets.append(WalletEVMDiscoveredAsset(
+                    identity: identity, balanceBaseUnits: normalizedBalance
+                ))
+            }
+            guard assets.count <= 5_000 else {
+                throw WalletRPCError.invalidResponse(
+                    "Alchemy NFT ownership exceeded the wallet asset limit"
+                )
+            }
+            if object["pageKey"] == nil || object["pageKey"] is NSNull {
+                guard UInt64(assets.count) <= total,
+                      let snapshotBlock, let snapshotHash else {
+                    throw WalletRPCError.invalidResponse(
+                        "Alchemy NFT ownership returned inconsistent totals"
+                    )
+                }
+                return WalletEVMNFTSnapshot(
+                    assets: assets.sorted { $0.id < $1.id },
+                    blockNumber: snapshotBlock, blockHash: snapshotHash
+                )
+            }
+            guard let next = object["pageKey"] as? String,
+                  !next.isEmpty, next.utf8.count <= 512,
+                  next.unicodeScalars.allSatisfy({
+                      $0.isASCII && $0.value >= 0x21 && $0.value != 0x7f
+                  }), seenPageKeys.insert(next).inserted else {
+                throw WalletRPCError.invalidResponse(
+                    "Alchemy NFT ownership returned an invalid page key"
+                )
+            }
+            pageKey = next
+        }
+        throw WalletRPCError.invalidResponse(
+            "Alchemy NFT ownership pagination was truncated"
+        )
+    }
+
     func indexedTransfers(
         provider: WalletProviderKind,
         address: String,
@@ -739,6 +851,22 @@ actor WalletSepoliaRPCClient {
         return value.lowercased()
     }
 
+    private static func exactUInt64(_ value: Any?) -> UInt64? {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.decimalValue >= 0,
+              number.decimalValue == Decimal(number.uint64Value) else { return nil }
+        return number.uint64Value
+    }
+
+    private static func nftStandard(_ value: String) -> WalletEVMAssetStandard? {
+        switch value {
+        case "ERC721": .erc721
+        case "ERC1155": .erc1155
+        default: nil
+        }
+    }
+
     private static func normalizedBlock(_ value: Any?) -> String? {
         normalizedProviderInteger(value)
     }
@@ -780,6 +908,34 @@ actor WalletSepoliaRPCClient {
         let encoded = "0x" + lowercase.utf8.map { String(format: "%02x", $0) }.joined()
         let digest = try await stringResult(method: "web3_sha3", params: [encoded])
         return try Self.checksummedAddress(value, keccakHash: digest)
+    }
+
+    private func alchemyNFTURL(owner: String, pageKey: String?) -> URL? {
+        guard var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false),
+              components.scheme?.lowercased() == "https",
+              let host = components.host?.lowercased(),
+              host.hasSuffix(".alchemy.com"),
+              components.user == nil, components.password == nil,
+              components.query == nil, components.fragment == nil else { return nil }
+        let path = components.path.split(separator: "/", omittingEmptySubsequences: true)
+        guard path.count == 2, path[0] == "v2" else { return nil }
+        let apiKey = String(path[1])
+        guard !apiKey.isEmpty, apiKey.utf8.count <= 512,
+              apiKey.utf8.allSatisfy({ byte in
+                  (48...57).contains(byte) || (65...90).contains(byte)
+                    || (97...122).contains(byte) || byte == 45 || byte == 95
+              }) else { return nil }
+        components.path = "/nft/v3/\(apiKey)/getNFTsForOwner"
+        var items = [
+            URLQueryItem(name: "owner", value: owner),
+            URLQueryItem(name: "withMetadata", value: "false"),
+            URLQueryItem(name: "pageSize", value: "100"),
+        ]
+        if let pageKey {
+            items.append(URLQueryItem(name: "pageKey", value: pageKey))
+        }
+        components.queryItems = items
+        return components.url
     }
 
     static func checksummedAddress(_ value: String, keccakHash digest: String) throws -> String {

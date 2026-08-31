@@ -1057,6 +1057,118 @@ final class WalletGatewayTests: XCTestCase {
         }
     }
 
+    func testAlchemyNFTDiscoveryUsesMetadataFreeStableSnapshot() async throws {
+        let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        let erc721 = "0x1111111111111111111111111111111111111111"
+        let erc1155 = "0x2222222222222222222222222222222222222222"
+        let blockHash = "0x" + String(repeating: "a", count: 64)
+        var nftPage = 0
+        let client = try makeAlchemyEVMRPCClient { request in
+            if request.httpMethod == "POST" {
+                let object = try XCTUnwrap(
+                    try JSONSerialization.jsonObject(
+                        with: walletRPCRequestBody(request)
+                    ) as? [String: Any]
+                )
+                return try JSONSerialization.data(withJSONObject: [
+                    "jsonrpc": "2.0", "id": object["id"]!, "result": "0xaa36a7",
+                ])
+            }
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(
+                request.url?.path,
+                "/nft/v3/test_key-123/getNFTsForOwner"
+            )
+            let components = try XCTUnwrap(
+                URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
+            )
+            let query = Dictionary(uniqueKeysWithValues: try XCTUnwrap(
+                components.queryItems
+            ).map { ($0.name, $0.value) })
+            XCTAssertEqual(query["owner"]!, account)
+            XCTAssertEqual(query["withMetadata"]!, "false")
+            XCTAssertEqual(query["pageSize"]!, "100")
+            nftPage += 1
+            let item: [String: Any]
+            let next: Any
+            if nftPage == 1 {
+                XCTAssertNil(query["pageKey"] ?? nil)
+                item = [
+                    "contract": [
+                        "address": erc1155, "tokenType": "ERC1155",
+                        "name": "Ignored contract metadata",
+                    ],
+                    "tokenId": "9", "tokenType": "ERC1155", "balance": "42",
+                    "name": "Ignored NFT metadata",
+                    "image": ["originalUrl": "https://malicious.invalid/active.svg"],
+                ]
+                next = "next-page"
+            } else {
+                XCTAssertEqual(query["pageKey"]!, "next-page")
+                item = [
+                    "contract": ["address": erc721, "tokenType": "ERC721"],
+                    "tokenId": "7", "tokenType": "ERC721", "balance": "1",
+                ]
+                next = NSNull()
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "ownedNfts": [item], "totalCount": 2,
+                "validAt": ["blockNumber": 123_456, "blockHash": blockHash],
+                "pageKey": next,
+            ])
+        }
+        let snapshot = try await client.nftBalances(
+            provider: .alchemy, address: account
+        )
+        XCTAssertEqual(nftPage, 2)
+        XCTAssertEqual(snapshot.blockNumber, 123_456)
+        XCTAssertEqual(snapshot.blockHash, blockHash)
+        XCTAssertEqual(snapshot.assets.map(\.id), [
+            "eip155:11155111/erc1155:\(erc1155)/9",
+            "eip155:11155111/erc721:\(erc721)/7",
+        ])
+        XCTAssertEqual(snapshot.assets.map(\.balanceBaseUnits), ["42", "1"])
+    }
+
+    func testAlchemyNFTDiscoveryRejectsSnapshotAndOwnershipSubstitution() async throws {
+        let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        let contract = "0x1111111111111111111111111111111111111111"
+        let firstHash = "0x" + String(repeating: "a", count: 64)
+        let secondHash = "0x" + String(repeating: "b", count: 64)
+        var page = 0
+        let client = try makeAlchemyEVMRPCClient { request in
+            if request.httpMethod == "POST" {
+                let object = try XCTUnwrap(
+                    try JSONSerialization.jsonObject(
+                        with: walletRPCRequestBody(request)
+                    ) as? [String: Any]
+                )
+                return try JSONSerialization.data(withJSONObject: [
+                    "jsonrpc": "2.0", "id": object["id"]!, "result": "0xaa36a7",
+                ])
+            }
+            page += 1
+            return try JSONSerialization.data(withJSONObject: [
+                "ownedNfts": [[
+                    "contract": ["address": contract, "tokenType": "ERC721"],
+                    "tokenId": String(page), "tokenType": "ERC721", "balance": "1",
+                ]],
+                "totalCount": 2,
+                "validAt": [
+                    "blockNumber": page == 1 ? 123_456 : 123_457,
+                    "blockHash": page == 1 ? firstHash : secondHash,
+                ],
+                "pageKey": page == 1 ? "next-page" : NSNull(),
+            ])
+        }
+        do {
+            _ = try await client.nftBalances(provider: .alchemy, address: account)
+            XCTFail("NFT pagination must stay on one provider snapshot.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("changed"))
+        }
+    }
+
     func testAlchemyIndexedActivityNormalizesRawBaseUnitsWithoutFloatingPoint() async throws {
         let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         let contract = "0x1111111111111111111111111111111111111111"
@@ -1210,6 +1322,48 @@ final class WalletGatewayTests: XCTestCase {
             snapshot.balanceBaseUnits,
             "340282366920938463463374607431768211455"
         )
+        XCTAssertEqual(snapshot.freshness, .current)
+        XCTAssertTrue(try XCTUnwrap(
+            store.loadAssets().first { $0.id == assetID }
+        ).isVisibleByDefault)
+    }
+
+    func testGatewayQuarantinesMetadataFreeEthereumCollectibleSnapshot() async throws {
+        let signer = FakeWalletSigner()
+        signer.accountAddress = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        let contract = "0x2222222222222222222222222222222222222222"
+        let assetID = "eip155:11155111/erc1155:\(contract)/9"
+        signer.discoveredAssetRows = [[
+            "asset_id": assetID,
+            "asset_kind": WalletAssetKind.collectible.rawValue,
+            "reference": contract, "standard": "erc1155", "token_id": "9",
+            "balance_base_units": "42",
+            "snapshot_block_number": "123456",
+            "snapshot_block_hash": "0x" + String(repeating: "a", count: 64),
+        ]]
+        let store = try WalletPublicStore(path: ":memory:")
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            publicStore: store
+        )
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        await gateway.refreshAccountSnapshots()
+        let asset = try XCTUnwrap(gateway.assets.first { $0.id == assetID })
+        XCTAssertEqual(asset.name, "Unknown Ethereum collectible")
+        XCTAssertEqual(asset.symbol, "ERC1155 #9")
+        XCTAssertEqual(asset.kind, .collectible)
+        XCTAssertEqual(asset.trust, .quarantined)
+        XCTAssertEqual(asset.decimals, 0)
+        XCTAssertFalse(gateway.accountSnapshots.contains { $0.assetID == assetID })
+
+        gateway.trustQuarantinedAsset(id: assetID)
+        await gateway.refreshAccountSnapshots()
+        let snapshot = try XCTUnwrap(gateway.accountSnapshots.first {
+            $0.assetID == assetID
+        })
+        XCTAssertEqual(snapshot.balanceBaseUnits, "42")
         XCTAssertEqual(snapshot.freshness, .current)
         XCTAssertTrue(try XCTUnwrap(
             store.loadAssets().first { $0.id == assetID }
@@ -3896,6 +4050,19 @@ final class WalletGatewayTests: XCTestCase {
         configuration.protocolClasses = [WalletRPCURLProtocol.self]
         return WalletSepoliaRPCClient(
             endpoint: "https://wallet-rpc.test", session: URLSession(configuration: configuration)
+        )
+    }
+
+    private func makeAlchemyEVMRPCClient(
+        response: @escaping (URLRequest) throws -> Data
+    ) throws -> WalletSepoliaRPCClient {
+        WalletRPCURLProtocol.handler = { request in (200, try response(request)) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [WalletRPCURLProtocol.self]
+        return try WalletSepoliaRPCClient(
+            network: WalletNetworkCatalog.ethereumSepolia,
+            endpoint: "https://eth-sepolia.g.alchemy.com/v2/test_key-123",
+            session: URLSession(configuration: configuration)
         )
     }
 

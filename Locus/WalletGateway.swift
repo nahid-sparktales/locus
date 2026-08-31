@@ -1756,41 +1756,101 @@ final class WalletGateway: ObservableObject {
         guard WalletNetworkCatalog.descriptor(id: networkID)?.chain == .evm else {
             return [:]
         }
-        var balances: [String: String] = [:]
+        struct Candidate {
+            let identity: WalletEVMAssetIdentity
+            let kind: WalletAssetKind
+            let balance: String
+            let name: String
+            let symbol: String
+            let decimals: Int?
+        }
+        var candidates: [Candidate] = []
         var seenAssetIDs: Set<String> = []
+        var nftSnapshot: (block: String, hash: String)?
         for row in rows {
             guard let assetID = row["asset_id"] as? String,
                   seenAssetIDs.insert(assetID).inserted,
                   let identity = WalletEVMAssetIdentity.parse(assetID),
                   identity.networkID == networkID,
-                  identity.standard == .erc20, identity.tokenID == nil,
-                  assetID == identity.collectionID,
-                  row["asset_kind"] as? String
-                    == WalletAssetKind.fungibleToken.rawValue,
+                  assetID == identity.canonicalID,
                   let reference = row["reference"] as? String,
                   reference == identity.contractAddress,
                   let rawBalance = row["balance_base_units"] as? String,
                   let balance = WalletBaseUnits.normalize(rawBalance),
-                  balance == rawBalance, balance != "0" else { continue }
+                  balance == rawBalance, balance != "0" else { return [:] }
+            switch identity.standard {
+            case .erc20:
+                guard identity.tokenID == nil,
+                      row["asset_kind"] as? String
+                        == WalletAssetKind.fungibleToken.rawValue,
+                      row["standard"] == nil, row["token_id"] == nil,
+                      row["snapshot_block_number"] == nil,
+                      row["snapshot_block_hash"] == nil else { return [:] }
+                let abbreviated = "\(identity.contractAddress.prefix(6))…\(identity.contractAddress.suffix(4))"
+                candidates.append(Candidate(
+                    identity: identity, kind: .fungibleToken, balance: balance,
+                    name: "Unknown ERC-20 token", symbol: abbreviated,
+                    decimals: nil
+                ))
+            case .erc721, .erc1155:
+                guard let tokenID = identity.tokenID,
+                      row["asset_kind"] as? String
+                        == WalletAssetKind.collectible.rawValue,
+                      row["standard"] as? String == identity.standard.rawValue,
+                      row["token_id"] as? String == tokenID,
+                      identity.standard != .erc721 || balance == "1",
+                      let block = row["snapshot_block_number"] as? String,
+                      WalletBaseUnits.normalize(block) == block,
+                      let hash = row["snapshot_block_hash"] as? String,
+                      hash.count == 66, hash.hasPrefix("0x"),
+                      hash.dropFirst(2).allSatisfy(\.isHexDigit) else { return [:] }
+                if let nftSnapshot {
+                    guard nftSnapshot.block == block,
+                          nftSnapshot.hash.caseInsensitiveCompare(hash) == .orderedSame else {
+                        return [:]
+                    }
+                } else {
+                    nftSnapshot = (block, hash.lowercased())
+                }
+                candidates.append(Candidate(
+                    identity: identity, kind: .collectible, balance: balance,
+                    name: "Unknown Ethereum collectible",
+                    symbol: "\(identity.standard.rawValue.uppercased()) #\(tokenID.prefix(16))",
+                    decimals: 0
+                ))
+            }
+        }
+        for candidate in candidates {
+            let identity = candidate.identity
+            let assetID = identity.canonicalID
             if let known = assets.first(where: { $0.id == assetID }) {
                 guard known.chain == .evm, known.networkID == networkID,
-                      known.kind == .fungibleToken,
-                      known.reference?.lowercased() == identity.contractAddress else {
-                    continue
+                      known.kind == candidate.kind
+                        || (candidate.kind == .collectible && known.kind == .nft),
+                      known.reference?.lowercased() == identity.contractAddress,
+                      candidate.kind != .collectible
+                        || known.decimals == nil || known.decimals == 0 else {
+                    return [:]
                 }
-            } else {
-                let abbreviated = "\(identity.contractAddress.prefix(6))…\(identity.contractAddress.suffix(4))"
+            }
+        }
+        var balances: [String: String] = [:]
+        for candidate in candidates {
+            let identity = candidate.identity
+            let assetID = identity.canonicalID
+            if assets.contains(where: { $0.id == assetID }) == false {
                 let asset = WalletAsset(
                     canonicalID: assetID, networkID: networkID,
-                    chain: .evm, kind: .fungibleToken,
+                    chain: .evm, kind: candidate.kind,
                     reference: identity.contractAddress,
-                    name: "Unknown ERC-20 token", symbol: abbreviated,
-                    decimals: nil, trust: .quarantined, manifestRevision: 0
+                    name: candidate.name, symbol: candidate.symbol,
+                    decimals: candidate.decimals,
+                    trust: .quarantined, manifestRevision: 0
                 )
                 assets.append(asset)
                 try? publicStore?.upsertAsset(asset)
             }
-            balances["\(accountID):\(networkID):\(assetID)"] = balance
+            balances["\(accountID):\(networkID):\(assetID)"] = candidate.balance
         }
         return balances
     }
