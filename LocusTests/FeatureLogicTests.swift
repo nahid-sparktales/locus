@@ -1246,39 +1246,39 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(spec.foreground, LocusTheme.ink)
     }
 
-    /// A file mentioned as inline code navigates like a link but reads like a
-    /// code pill: the blue-underline treatment stays reserved for authored
-    /// links and remote URLs.
-    func testWorkspaceFileCodeRunsKeepThePillInsteadOfLinkBlue() {
-        let classified = MarkdownInlineStyleSpec.resolve(
-            run: MarkdownInlineRun(text: "AppModel.swift:12", style: [.code]),
-            baseSize: 13,
-            baseWeight: .regular,
-            baseColor: LocusTheme.inkSoft,
-            inlineCodeSize: 12,
-            link: URL(string: "locus-workspace://open/AppModel.swift?line=12")
-        )
-        XCTAssertEqual(classified.foreground, LocusTheme.ink)
-        XCTAssertFalse(classified.isUnderlined)
-        XCTAssertEqual(classified.pillFill, LocusTheme.inlineCodeFill)
+    /// A workspace file reference navigates like a link but reads like the
+    /// text around it — code runs keep the pill and ink, authored or not, and
+    /// plain runs keep only an underline. The accent-blue treatment stays
+    /// reserved for remote URLs.
+    func testWorkspaceFileLinksKeepTheSurroundingTextColor() {
+        for destination in [nil, "AppModel.swift"] {
+            let codeRun = MarkdownInlineStyleSpec.resolve(
+                run: MarkdownInlineRun(
+                    text: "AppModel.swift:12",
+                    style: [.code],
+                    destination: destination
+                ),
+                baseSize: 13,
+                baseWeight: .regular,
+                baseColor: LocusTheme.inkSoft,
+                inlineCodeSize: 12,
+                link: URL(string: "locus-workspace://open/AppModel.swift?line=12")
+            )
+            XCTAssertEqual(codeRun.foreground, LocusTheme.ink)
+            XCTAssertFalse(codeRun.isUnderlined)
+            XCTAssertEqual(codeRun.pillFill, LocusTheme.inlineCodeFill)
+        }
 
-        let authored = MarkdownInlineStyleSpec.resolve(
-            run: MarkdownInlineRun(
-                text: "the model",
-                style: [.code],
-                destination: "AppModel.swift"
-            ),
+        let plain = MarkdownInlineStyleSpec.resolve(
+            run: MarkdownInlineRun(text: "the app model", destination: "AppModel.swift"),
             baseSize: 13,
             baseWeight: .regular,
             baseColor: LocusTheme.inkSoft,
             inlineCodeSize: 12,
             link: URL(string: "locus-workspace://open/AppModel.swift")
         )
-        // `signalDeep` mints a fresh accent-dynamic Color per access, so the
-        // link treatment is asserted structurally: underlined, and no longer
-        // the code pill's ink.
-        XCTAssertNotEqual(authored.foreground, LocusTheme.ink)
-        XCTAssertTrue(authored.isUnderlined)
+        XCTAssertEqual(plain.foreground, LocusTheme.inkSoft)
+        XCTAssertTrue(plain.isUnderlined)
 
         let remote = MarkdownInlineStyleSpec.resolve(
             run: MarkdownInlineRun(text: "docs", destination: "https://example.com"),
@@ -1288,6 +1288,9 @@ final class FeatureLogicTests: XCTestCase {
             inlineCodeSize: 12,
             link: URL(string: "https://example.com")
         )
+        // `signalDeep` mints a fresh accent-dynamic Color per access, so the
+        // link treatment is asserted structurally: underlined, and no longer
+        // the base color.
         XCTAssertNotEqual(remote.foreground, LocusTheme.inkSoft)
         XCTAssertTrue(remote.isUnderlined)
     }

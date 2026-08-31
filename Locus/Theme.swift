@@ -729,6 +729,7 @@ private struct LocusButtonStyleBody: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.isFocused) private var isFocused
+    @Environment(\.isFocusEffectEnabled) private var focusEffectEnabled
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovering = false
 
@@ -751,7 +752,12 @@ private struct LocusButtonStyleBody: View {
             .overlay {
                 RoundedRectangle(cornerRadius: kind == .icon ? 7 : 9, style: .continuous)
                     .stroke(
-                        isFocused ? LocusTheme.focusRing : Color.clear,
+                        // `isFocused` reports the nearest focusable ancestor,
+                        // so inside a focused prompt panel every button would
+                        // ring at once — those panels disable the focus
+                        // effect, and the ring has to honor that.
+                        isFocused && focusEffectEnabled
+                            ? LocusTheme.focusRing : Color.clear,
                         lineWidth: contrast == .increased ? 3 : 2
                     )
                     .padding(-2)
