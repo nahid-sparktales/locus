@@ -29,22 +29,62 @@ struct WalletTypedArgument: Codable, Equatable, Sendable {
 
 enum WalletActionKind: String, Codable, Sendable {
     case nativeTransfer = "native_transfer"
+    case fungibleTokenTransfer = "fungible_token_transfer"
+    case nftTransfer = "nft_transfer"
+    case exactInputSwap = "exact_input_swap"
+    case reviewedCall = "reviewed_call"
+    case standardizedSignIn = "standardized_sign_in"
+    case reviewedTypedAuthorization = "reviewed_typed_authorization"
+    /// Protocol-v1 compatibility. New clients use `reviewedCall` and a
+    /// manifest-pinned adapter, while the signer continues to reject unknown
+    /// selectors and calldata.
     case contractCall = "contract_call"
 }
 
 enum WalletRequestSourceKind: String, Codable, Sendable {
+    case humanUI = "human_ui"
     case agent
+    case embeddedBrowser = "embedded_browser"
+    case walletConnectPeer = "wallet_connect_peer"
+    /// Protocol-v1 browser sessions decode to this value and retain their
+    /// original exact-confirmation semantics during migration.
     case browser
 }
 
 struct WalletRequestSource: Codable, Equatable, Sendable {
     let kind: WalletRequestSourceKind
     let origin: String?
+    let peerID: String?
+    let displayName: String?
 
+    init(
+        kind: WalletRequestSourceKind,
+        origin: String?,
+        peerID: String? = nil,
+        displayName: String? = nil
+    ) {
+        self.kind = kind
+        self.origin = origin
+        self.peerID = peerID
+        self.displayName = displayName
+    }
+
+    static let human = Self(kind: .humanUI, origin: nil)
     static let agent = Self(kind: .agent, origin: nil)
 
     static func browser(origin: String) -> Self {
         Self(kind: .browser, origin: origin)
+    }
+
+    static func embeddedBrowser(origin: String) -> Self {
+        Self(kind: .embeddedBrowser, origin: origin)
+    }
+
+    static func walletConnect(peerID: String, origin: String?, displayName: String?) -> Self {
+        Self(
+            kind: .walletConnectPeer, origin: origin,
+            peerID: peerID, displayName: displayName
+        )
     }
 }
 
@@ -58,6 +98,14 @@ struct WalletSemanticAction: Codable, Equatable, Sendable {
     let function: String?
     let arguments: [WalletTypedArgument]
     let valueBaseUnits: String?
+    var assetID: String? = nil
+    var tokenID: String? = nil
+    var inputAssetID: String? = nil
+    var outputAssetID: String? = nil
+    var minimumOutputBaseUnits: String? = nil
+    var adapterID: String? = nil
+    var authorizationFormat: String? = nil
+    var metadataDigest: String? = nil
 
     static func nativeTransfer(recipient: String, amountBaseUnits: String) -> Self {
         Self(type: .nativeTransfer, recipient: recipient, amountBaseUnits: amountBaseUnits,
@@ -73,6 +121,43 @@ struct WalletSemanticAction: Codable, Equatable, Sendable {
         Self(type: .contractCall, recipient: nil, amountBaseUnits: nil,
              contractID: contractID, function: function, arguments: arguments,
              valueBaseUnits: valueBaseUnits)
+    }
+
+    static func fungibleTokenTransfer(
+        assetID: String,
+        recipient: String,
+        amountBaseUnits: String
+    ) -> Self {
+        Self(
+            type: .fungibleTokenTransfer, recipient: recipient,
+            amountBaseUnits: amountBaseUnits, contractID: nil, function: nil,
+            arguments: [], valueBaseUnits: nil, assetID: assetID
+        )
+    }
+
+    static func nftTransfer(assetID: String, tokenID: String, recipient: String) -> Self {
+        Self(
+            type: .nftTransfer, recipient: recipient, amountBaseUnits: "1",
+            contractID: nil, function: nil, arguments: [], valueBaseUnits: nil,
+            assetID: assetID, tokenID: tokenID
+        )
+    }
+
+    static func exactInputSwap(
+        adapterID: String,
+        inputAssetID: String,
+        outputAssetID: String,
+        amountInBaseUnits: String,
+        minimumOutputBaseUnits: String,
+        recipient: String
+    ) -> Self {
+        Self(
+            type: .exactInputSwap, recipient: recipient,
+            amountBaseUnits: amountInBaseUnits, contractID: nil, function: nil,
+            arguments: [], valueBaseUnits: nil, inputAssetID: inputAssetID,
+            outputAssetID: outputAssetID,
+            minimumOutputBaseUnits: minimumOutputBaseUnits, adapterID: adapterID
+        )
     }
 }
 
@@ -103,6 +188,12 @@ enum WalletRiskFlag: String, Codable, Equatable, Sendable {
     case undecodableCall = "undecodable_call"
     case codeHashMismatch = "code_hash_mismatch"
     case staleQuote = "stale_quote"
+    case networkIdentityMismatch = "network_identity_mismatch"
+    case providerDisagreement = "provider_disagreement"
+    case staleBlockhash = "stale_blockhash"
+    case staleObjectVersion = "stale_object_version"
+    case lookupTableSubstitution = "lookup_table_substitution"
+    case packageUpgrade = "package_upgrade"
 }
 
 struct WalletDecodedEffect: Codable, Equatable, Identifiable, Sendable {
@@ -149,6 +240,8 @@ struct WalletPreparedTransaction: Codable, Equatable, Identifiable, Sendable {
     var policyID: String?
 }
 
+typealias WalletPreparedIntent = WalletPreparedTransaction
+
 struct WalletSessionPolicy: Codable, Equatable, Identifiable, Sendable {
     let id: String
     let accountID: String
@@ -161,6 +254,9 @@ struct WalletSessionPolicy: Codable, Equatable, Identifiable, Sendable {
     let maximumSessionBaseUnits: String
     let maximumFeeBaseUnits: String
     let expiresAt: Date
+    var allowedActionKinds: Set<WalletActionKind>? = nil
+    var maximumSlippageBPS: Int? = nil
+    var minimumOutputBaseUnits: String? = nil
 }
 
 struct WalletActivePolicyStatus: Codable, Equatable, Identifiable, Sendable {
@@ -283,6 +379,7 @@ enum WalletUniversalRouterV2Adapter {
     static func decode(
         action: WalletSemanticAction,
         accountAddress: String,
+        networkID: String = "eip155:11155111",
         now: Date = Date()
     ) -> WalletUniversalRouterV2Swap? {
         guard action.function == "execute(bytes,bytes[],uint256)",
@@ -321,8 +418,8 @@ enum WalletUniversalRouterV2Adapter {
               path.first?.caseInsensitiveCompare(path.last ?? "") != .orderedSame,
               recipient.caseInsensitiveCompare(accountAddress) == .orderedSame else { return nil }
         return WalletUniversalRouterV2Swap(
-            inputAssetID: "eip155:11155111/erc20:\(path[0].lowercased())",
-            outputAssetID: "eip155:11155111/erc20:\(path[path.count - 1].lowercased())",
+            inputAssetID: "\(networkID)/erc20:\(path[0].lowercased())",
+            outputAssetID: "\(networkID)/erc20:\(path[path.count - 1].lowercased())",
             amountIn: amountIn, minimumAmountOut: minimumOut, recipient: recipient
         )
     }
@@ -439,9 +536,113 @@ struct WalletEVMSignedTransaction: Codable, Equatable, Sendable {
     let transactionHash: String
 }
 
+enum WalletSolanaTransactionVersion: String, Codable, Sendable {
+    case legacy
+    case v0
+    case v1
+}
+
+struct WalletSolanaResolvedAccount: Codable, Equatable, Sendable {
+    let address: String
+    let isSigner: Bool
+    let isWritable: Bool
+    let lookupTableAddress: String?
+    let lookupTableSlot: UInt64?
+}
+
+struct WalletSolanaReviewedInstruction: Codable, Equatable, Sendable {
+    let programID: String
+    let adapterID: String
+    let semanticOperation: String
+    let accounts: [WalletSolanaResolvedAccount]
+    let canonicalArguments: [String: String]
+}
+
+struct WalletSolanaPreparationPacket: Codable, Equatable, Sendable {
+    let request: WalletPrepareRequest
+    let genesisHash: String
+    let version: WalletSolanaTransactionVersion
+    let recentBlockhash: String
+    let lastValidBlockHeight: UInt64
+    let feePayer: String
+    let priorityFeeBaseUnits: String
+    let maximumFeeBaseUnits: String
+    let instructions: [WalletSolanaReviewedInstruction]
+    let simulation: String
+    let simulationSucceeded: Bool
+    let observedAt: Date
+}
+
+struct WalletSolanaRecheckPacket: Codable, Equatable, Sendable {
+    let intentID: String
+    let genesisHash: String
+    let currentBlockHeight: UInt64
+    let resolvedAccountsDigest: String
+    let simulation: String
+    let simulationSucceeded: Bool
+    let observedAt: Date
+}
+
+struct WalletSolanaSignedTransaction: Codable, Equatable, Sendable {
+    let intentID: String
+    let transactionID: String
+    let canonicalMessageDigest: String
+    let signedTransaction: String
+}
+
+struct WalletSuiObjectReference: Codable, Equatable, Sendable {
+    let objectID: String
+    let version: UInt64
+    let digest: String
+    let type: String
+}
+
+struct WalletSuiReviewedCommand: Codable, Equatable, Sendable {
+    let adapterID: String
+    let packageID: String
+    let module: String
+    let function: String
+    let typeArguments: [String]
+    let canonicalArguments: [String: String]
+}
+
+struct WalletSuiPreparationPacket: Codable, Equatable, Sendable {
+    let request: WalletPrepareRequest
+    let chainIdentifier: String
+    let sender: String
+    let gasObjects: [WalletSuiObjectReference]
+    let inputObjects: [WalletSuiObjectReference]
+    let commands: [WalletSuiReviewedCommand]
+    let gasBudgetBaseUnits: String
+    let gasPriceBaseUnits: String
+    let simulation: String
+    let simulationSucceeded: Bool
+    let expectedEffectsDigest: String
+    let observedAt: Date
+}
+
+struct WalletSuiRecheckPacket: Codable, Equatable, Sendable {
+    let intentID: String
+    let chainIdentifier: String
+    let objectReferences: [WalletSuiObjectReference]
+    let gasPriceBaseUnits: String
+    let simulation: String
+    let simulationSucceeded: Bool
+    let effectsDigest: String
+    let observedAt: Date
+}
+
+struct WalletSuiSignedTransaction: Codable, Equatable, Sendable {
+    let intentID: String
+    let transactionDigest: String
+    let transactionBytes: String
+    let signature: String
+}
+
 enum WalletVaultState: String, Codable, Sendable {
     case missing
     case awaitingBackup
+    case rotationRequired = "rotation_required"
     case locked
     case unlocked
 }
@@ -451,16 +652,27 @@ struct WalletSignerStatus: Codable, Equatable, Sendable {
     let vaultState: WalletVaultState
     let sessionID: String?
     let accounts: [WalletAccount]
+    var recoveryOnlyVaultAvailable: Bool = false
+}
+
+enum WalletVaultCreationPurpose: String, Codable, Sendable {
+    case create
+    case rotateForMainnet = "rotate_for_mainnet"
 }
 
 struct WalletVaultCreation: Codable, Equatable, Sendable {
     let words: [String]
     /// Six zero-based word positions selected with secure randomness.
     let verificationIndices: [Int]
+    var purpose: WalletVaultCreationPurpose = .create
 }
 
 struct WalletBackupConfirmation: Codable, Equatable, Sendable {
     let wordsByIndex: [Int: String]
+}
+
+struct WalletVaultRestoreRequest: Codable, Equatable, Sendable {
+    let words: [String]
 }
 
 struct WalletSignerErrorPayload: Codable, Equatable, Sendable {
@@ -473,8 +685,10 @@ struct WalletSignerErrorPayload: Codable, Equatable, Sendable {
 @objc protocol WalletSignerXPCProtocol {
     func status(reply: @escaping (Data) -> Void)
     func beginCreateVault(reply: @escaping (Data) -> Void)
+    func beginRotateForMainnet(reply: @escaping (Data) -> Void)
     func confirmBackup(_ request: Data, reply: @escaping (Data) -> Void)
     func cancelCreateVault(reply: @escaping (Data) -> Void)
+    func restoreVault(_ request: Data, reply: @escaping (Data) -> Void)
     func authorizeSession(_ reason: String, reply: @escaping (Data) -> Void)
     func listAccounts(reply: @escaping (Data) -> Void)
     func encodeEVMContract(_ request: Data, reply: @escaping (Data) -> Void)
@@ -482,9 +696,18 @@ struct WalletSignerErrorPayload: Codable, Equatable, Sendable {
     func simulateEVM(_ request: Data, reply: @escaping (Data) -> Void)
     func confirmEVM(_ request: Data, reply: @escaping (Data) -> Void)
     func executeEVM(_ request: Data, reply: @escaping (Data) -> Void)
+    func prepareSolana(_ request: Data, reply: @escaping (Data) -> Void)
+    func simulateSolana(_ request: Data, reply: @escaping (Data) -> Void)
+    func confirmSolana(_ request: Data, reply: @escaping (Data) -> Void)
+    func executeSolana(_ request: Data, reply: @escaping (Data) -> Void)
+    func prepareSui(_ request: Data, reply: @escaping (Data) -> Void)
+    func simulateSui(_ request: Data, reply: @escaping (Data) -> Void)
+    func confirmSui(_ request: Data, reply: @escaping (Data) -> Void)
+    func executeSui(_ request: Data, reply: @escaping (Data) -> Void)
     func activatePolicy(_ request: Data, reply: @escaping (Data) -> Void)
     func listPolicies(_ request: Data, reply: @escaping (Data) -> Void)
     func clearPolicies(_ request: Data, reply: @escaping (Data) -> Void)
     func lock(reply: @escaping (Data) -> Void)
     func deleteVault(_ confirmation: String, reply: @escaping (Data) -> Void)
+    func deleteRecoveryVault(_ confirmation: String, reply: @escaping (Data) -> Void)
 }

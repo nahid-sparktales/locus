@@ -1,3 +1,4 @@
+import CryptoKit
 import XCTest
 @testable import Locus
 
@@ -47,18 +48,29 @@ private final class FakeWalletSigner: WalletSignerClient {
     var reportedVaultState: WalletVaultState?
 
     func signerStatus() async throws -> WalletSignerStatus {
-        WalletSignerStatus(protocolVersion: 1,
+        WalletSignerStatus(protocolVersion: 2,
                            vaultState: reportedVaultState ?? (sessionID == nil ? .locked : .unlocked),
                            sessionID: sessionID, accounts: try await listAccounts())
     }
     func beginVaultCreation() async throws -> WalletVaultCreation {
         WalletVaultCreation(words: Array(repeating: "word", count: 24), verificationIndices: [0, 2, 4, 6, 8, 10])
     }
+    func beginMainnetRotation() async throws -> WalletVaultCreation {
+        WalletVaultCreation(
+            words: Array(repeating: "word", count: 24),
+            verificationIndices: [0, 2, 4, 6, 8, 10],
+            purpose: .rotateForMainnet
+        )
+    }
     func confirmVaultBackup(_ confirmation: WalletBackupConfirmation) async throws -> WalletSignerStatus {
         try await signerStatus()
     }
     func cancelVaultCreation() async throws -> WalletSignerStatus { try await signerStatus() }
+    func restoreVault(words: [String]) async throws -> WalletSignerStatus { try await signerStatus() }
     func deleteVault(confirmation: String) async throws -> WalletSignerStatus { try await signerStatus() }
+    func deleteRecoveryVault(confirmation: String) async throws -> WalletSignerStatus {
+        try await signerStatus()
+    }
 
     func authorizeSession() async throws {
         authorizationCount += 1
@@ -107,7 +119,9 @@ private final class FakeWalletSigner: WalletSignerClient {
             verifiedAt: Date()
         )
     }
-    func browserRPC(method: String, params: [Any]) async throws -> Any { browserRPCResponse }
+    func browserRPC(networkID: String, method: String, params: [Any]) async throws -> Any {
+        browserRPCResponse
+    }
 
     func performRead(tool: String, arguments: [String: Any]) async throws -> [String: Any] {
         ["text": "ok", "balance_base_units": balanceBaseUnits]
@@ -185,6 +199,83 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(WalletEthereumQuantity.hexToDecimal("0x10000000000000000"),
                        "18446744073709551616")
         XCTAssertNil(WalletEthereumQuantity.hexToDecimal("0xnot-hex"))
+    }
+
+    func testProtocolV2SemanticActionsRoundTripWithoutRawSigningMaterial() throws {
+        let action = WalletSemanticAction.exactInputSwap(
+            adapterID: "reviewed-swap-v1",
+            inputAssetID: "eip155:1/erc20:0x1111111111111111111111111111111111111111",
+            outputAssetID: "eip155:1/erc20:0x2222222222222222222222222222222222222222",
+            amountInBaseUnits: "1000", minimumOutputBaseUnits: "975",
+            recipient: "0x3333333333333333333333333333333333333333"
+        )
+        let encoded = try JSONEncoder().encode(action)
+        let text = String(decoding: encoded, as: UTF8.self)
+        XCTAssertFalse(text.contains("private_key"))
+        XCTAssertFalse(text.contains("raw_transaction"))
+        XCTAssertFalse(text.contains("digest"))
+        XCTAssertEqual(try JSONDecoder().decode(WalletSemanticAction.self, from: encoded), action)
+    }
+
+    func testSignedLaunchManifestCanOnlyNarrowBundledAuthority() throws {
+        let privateKey = Curve25519.Signing.PrivateKey()
+        let limited = WalletNetworkDescriptor(
+            canonicalID: "eip155:1", chain: .evm, environment: .mainnet,
+            displayName: "Ethereum", identity: .init(kind: .eip155ChainID, value: "1"),
+            nativeAssetID: "eip155:1/slip44:60", nativeSymbol: "ETH", nativeDecimals: 18,
+            explorerTransactionURLTemplate: "https://etherscan.io/tx/{transaction}",
+            staticallyReviewedCapabilities: [.nativeTransfer]
+        )
+        let manifest = WalletCapabilityManifest(
+            schemaVersion: 1, revision: 1,
+            issuedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            expiresAt: Date(timeIntervalSince1970: 1_900_000_000),
+            enabledNetworkIDs: [limited.id],
+            enabledCapabilities: [.nativeTransfer, .exactInputSwap],
+            approvedRegions: ["CA"],
+            completedApprovals: WalletLaunchGate.requiredGAApprovals
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let signature = try privateKey.signature(for: encoder.encode(manifest)).base64EncodedString()
+        let gate = try WalletLaunchGate(
+            bundledNetworks: [limited],
+            signedManifest: .init(manifest: manifest, signatureBase64: signature),
+            publicKey: privateKey.publicKey,
+            now: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        XCTAssertNoThrow(try gate.authorize(
+            networkID: limited.id, capability: .nativeTransfer, regionCode: "ca"
+        ))
+        XCTAssertThrowsError(try gate.authorize(
+            networkID: limited.id, capability: .exactInputSwap, regionCode: "CA"
+        )) { error in
+            XCTAssertEqual(error as? WalletLaunchGateError, .capabilityNotReviewed)
+        }
+    }
+
+    func testPublicWalletSQLiteStorePersistsOnlyPublicRecordsAndQuarantine() throws {
+        let store = try WalletPublicStore(path: ":memory:")
+        let record = WalletActivityRecord(
+            id: "0xtx", intentID: "intent", transactionHash: "0xtx",
+            networkID: WalletGateway.ethereumMainnetNetworkID, accountID: "account",
+            summary: "Submitted transfer", submittedAt: Date(timeIntervalSince1970: 100),
+            state: .submitted, blockNumber: nil, lastCheckedAt: nil, detail: nil
+        )
+        try store.upsertActivity(record)
+        XCTAssertEqual(try store.loadActivities(), [record])
+
+        let unknown = WalletAsset(
+            canonicalID: "eip155:1/erc20:0x1111111111111111111111111111111111111111",
+            networkID: "eip155:1", chain: .evm, kind: .fungibleToken,
+            reference: "0x1111111111111111111111111111111111111111",
+            name: "Unknown", symbol: "UNKNOWN", decimals: nil,
+            trust: .quarantined, manifestRevision: 0
+        )
+        try store.upsertAsset(unknown)
+        XCTAssertEqual(try store.loadAssets(), [unknown])
+        XCTAssertFalse(try XCTUnwrap(store.loadAssets().first).isVisibleByDefault)
     }
 
     func testContractRegistryAddressUsesEIP55Checksum() throws {
@@ -531,12 +622,30 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertNil(WalletAmountFormatter.wei(fromEther: "١"))
     }
 
-    func testReceiveURIUsesERC681SepoliaChainWithoutAmount() {
+    func testReceivePayloadBindsCanonicalNetworkWithoutAmount() {
         XCTAssertEqual(
-            WalletReceiveURI.erc681(address: "0xabc"),
+            WalletReceiveURI.payload(
+                address: "0xabc", networkID: WalletGateway.sepoliaNetworkID
+            ),
             "ethereum:0xabc@11155111"
         )
-        XCTAssertFalse(WalletReceiveURI.erc681(address: "0xabc").contains("?value="))
+        XCTAssertEqual(
+            WalletReceiveURI.payload(
+                address: "0xabc", networkID: WalletGateway.ethereumMainnetNetworkID
+            ),
+            "ethereum:0xabc@1"
+        )
+        XCTAssertEqual(
+            WalletReceiveURI.payload(address: "SolAddress", networkID: "solana:mainnet-beta"),
+            "solana:SolAddress"
+        )
+        XCTAssertEqual(
+            WalletReceiveURI.payload(address: "0xsui", networkID: "sui:mainnet"),
+            "0xsui"
+        )
+        XCTAssertFalse(WalletReceiveURI.payload(
+            address: "0xabc", networkID: WalletGateway.sepoliaNetworkID
+        ).contains("?value="))
     }
 
     func testWalletFeatureSettingsMigrateEnvironmentOnceAndAppStoreStaysOff() {
@@ -584,6 +693,10 @@ final class WalletGatewayTests: XCTestCase {
         signer.reportedVaultState = .awaitingBackup
         await gateway.refreshStatus()
         XCTAssertEqual(gateway.hubState, .backupIncomplete)
+        signer.reportedVaultState = .rotationRequired
+        await gateway.refreshStatus()
+        XCTAssertEqual(gateway.hubState, .rotationRequired)
+        XCTAssertTrue(gateway.canRotateForMainnet)
         signer.reportedVaultState = .locked
         await gateway.refreshStatus()
         XCTAssertEqual(gateway.hubState, .locked)
@@ -654,7 +767,7 @@ final class WalletGatewayTests: XCTestCase {
                                     environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"])
         let authorized = await gateway.authorizeSession()
         XCTAssertTrue(authorized)
-        XCTAssertEqual(gateway.capability?["protocol_version"] as? Int, 1)
+        XCTAssertEqual(gateway.capability?["protocol_version"] as? Int, 2)
 
         let prepared = await gateway.perform(tool: "wallet_prepare_transaction", arguments: [
             "network_id": WalletGateway.sepoliaNetworkID,

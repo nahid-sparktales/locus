@@ -110,6 +110,7 @@ targets:
     sources:
       - path: WalletSignerService
       - path: Locus/WalletSignerProtocol.swift
+      - path: Locus/WalletNetworkModels.swift
     preBuildScripts:
       - name: Build pinned Rust signer core
         basedOnDependencyAnalysis: false
@@ -139,6 +140,8 @@ targets:
         ARCHS: arm64
         LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/WalletSignerCore/target/aarch64-apple-darwin/release"
         OTHER_LDFLAGS: "$(inherited) -llocus_wallet_signer_core"
+        LOCUS_WALLET_CAPABILITY_PUBLIC_KEY: ""
+        LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64: ""
       configs:
         Debug:
           CODE_SIGN_STYLE: Manual
@@ -159,6 +162,10 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Locus/Info.plist
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD"
+        LOCUS_WALLET_ALCHEMY_ETHEREUM_MAINNET_RPC_URL: ""
+        LOCUS_WALLET_QUICKNODE_ETHEREUM_MAINNET_RPC_URL: ""
+        LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL: ""
+        LOCUS_WALLET_QUICKNODE_ETHEREUM_SEPOLIA_RPC_URL: ""
     dependencies:
       - target: WalletSignerService
         embed: true

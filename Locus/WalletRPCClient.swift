@@ -10,10 +10,10 @@ enum WalletRPCError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidEndpoint: "The Sepolia RPC URL is not a valid HTTPS address."
-        case .invalidResponse(let message): "The Sepolia RPC returned an invalid response: \(message)"
-        case .rpc(_, let message): "Sepolia RPC error: \(message)"
-        case .wrongChain(let value): "The configured RPC is on chain \(value), not Sepolia."
+        case .invalidEndpoint: "The wallet RPC URL is not a valid HTTPS address."
+        case .invalidResponse(let message): "The wallet RPC returned an invalid response: \(message)"
+        case .rpc(_, let message): "Wallet RPC error: \(message)"
+        case .wrongChain(let value): "The configured RPC returned the wrong chain identity: \(value)."
         case .simulation(let message): "Transaction simulation failed: \(message)"
         }
     }
@@ -63,15 +63,44 @@ enum WalletEthereumQuantity {
 
 actor WalletSepoliaRPCClient {
     static let defaultEndpoint = "https://ethereum-sepolia-rpc.publicnode.com"
+    static let mainnetDefaultEndpoint = "https://ethereum-rpc.publicnode.com"
     static let chainID: UInt64 = 11_155_111
 
     private var endpoint: URL
+    private let networkID: String
+    private let networkName: String
+    private let expectedChainID: UInt64
     private let session: URLSession
     private var nextID = 1
 
     init(endpoint: String = WalletSepoliaRPCClient.defaultEndpoint, session: URLSession = .shared) {
         self.endpoint = Self.validatedEndpoint(endpoint)
             ?? URL(string: WalletSepoliaRPCClient.defaultEndpoint)!
+        networkID = WalletNetworkCatalog.ethereumSepolia.canonicalID
+        networkName = "Ethereum Sepolia"
+        expectedChainID = Self.chainID
+        self.session = session
+    }
+
+    init(
+        network: WalletNetworkDescriptor,
+        endpoint: String? = nil,
+        session: URLSession = .shared
+    ) throws {
+        guard network.chain == .evm,
+              network.identity.kind == .eip155ChainID,
+              let chainID = UInt64(network.identity.value) else {
+            throw WalletRPCError.wrongChain(network.identity.value)
+        }
+        let fallback = network.canonicalID == WalletNetworkCatalog.ethereumMainnet.canonicalID
+            ? Self.mainnetDefaultEndpoint : Self.defaultEndpoint
+        guard let resolved = Self.validatedEndpoint(endpoint ?? fallback) else {
+            throw WalletRPCError.invalidEndpoint
+        }
+        self.endpoint = resolved
+        networkID = network.canonicalID
+        networkName = network.displayName
+        expectedChainID = chainID
         self.session = session
     }
 
@@ -86,6 +115,9 @@ actor WalletSepoliaRPCClient {
             throw WalletRPCError.invalidEndpoint
         }
         endpoint = url
+        networkID = WalletNetworkCatalog.ethereumSepolia.canonicalID
+        networkName = "Ethereum Sepolia local validator"
+        expectedChainID = Self.chainID
         self.session = session
     }
     #endif
@@ -98,7 +130,7 @@ actor WalletSepoliaRPCClient {
     func health() async throws -> String {
         let chain = try await verifiedChainID()
         let block = try await stringResult(method: "eth_blockNumber")
-        return "Sepolia · chain \(chain) · block \(WalletEthereumQuantity.hexToDecimal(block) ?? block)"
+        return "\(networkName) · chain \(chain) · block \(WalletEthereumQuantity.hexToDecimal(block) ?? block)"
     }
 
     func prepare(
@@ -107,7 +139,7 @@ actor WalletSepoliaRPCClient {
         contract: WalletContractRegistryEntry? = nil,
         encodedContract: WalletEncodedContractCall? = nil
     ) async throws -> WalletEVMPreparationPacket {
-        guard request.networkID == "eip155:11155111" else {
+        guard request.networkID == networkID else {
             throw WalletRPCError.wrongChain(request.networkID)
         }
         let recipient: String
@@ -148,6 +180,11 @@ actor WalletSepoliaRPCClient {
             amount = nativeValue
             input = encodedContract.input
             observedRuntimeCodeHash = currentCodeHash
+        case .fungibleTokenTransfer, .nftTransfer, .exactInputSwap, .reviewedCall,
+             .standardizedSignIn, .reviewedTypedAuthorization:
+            throw WalletGateway.Error.invalidArguments(
+                "This semantic action requires a reviewed chain adapter."
+            )
         }
         _ = try await verifiedChainID()
         let nonceHex = try await stringResult(
@@ -188,7 +225,7 @@ actor WalletSepoliaRPCClient {
             request: request,
             fromAddress: fromAddress,
             transaction: WalletEVMTransactionFields(
-                chainID: Self.chainID,
+                chainID: expectedChainID,
                 nonce: nonce,
                 gasLimit: gasLimit.partialValue,
                 maxFeePerGas: fees.maxFeePerGas,
@@ -247,7 +284,7 @@ actor WalletSepoliaRPCClient {
         }
         return WalletEVMRecheckPacket(
             intentID: intentID,
-            chainID: Self.chainID,
+            chainID: expectedChainID,
             pendingNonce: nonce,
             feeQuoteBaseUnits: feeQuote,
             simulation: "Refreshed eth_call succeeded; estimated gas \(gas)",
@@ -270,13 +307,13 @@ actor WalletSepoliaRPCClient {
     }
 
     func verifyContract(_ draft: WalletContractRegistryDraft) async throws -> WalletContractRegistryEntry {
-        guard draft.networkID == "eip155:11155111", Self.isAddress(draft.address),
+        guard draft.networkID == networkID, Self.isAddress(draft.address),
               !draft.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, draft.id.count <= 128,
               !draft.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, draft.label.count <= 128,
               !draft.permittedFunctions.isEmpty, draft.permittedFunctions.count <= 64,
               draft.abiJSON.utf8.count <= 256 * 1024 else {
             throw WalletGateway.Error.invalidArguments(
-                "A Sepolia registry ID, contract address, label, ABI, and at least one canonical function are required."
+                "A network-bound registry ID, contract address, label, ABI, and at least one canonical function are required."
             )
         }
         _ = try await verifiedChainID()
@@ -352,7 +389,7 @@ actor WalletSepoliaRPCClient {
     private func runtimeCodeHash(address: String) async throws -> String {
         let code = try await stringResult(method: "eth_getCode", params: [address, "latest"])
         guard code != "0x", code != "0x0" else {
-            throw WalletGateway.Error.invalidArguments("No runtime bytecode exists at that Sepolia address.")
+            throw WalletGateway.Error.invalidArguments("No runtime bytecode exists at that network address.")
         }
         return try await stringResult(method: "web3_sha3", params: [code]).lowercased()
     }
@@ -388,7 +425,7 @@ actor WalletSepoliaRPCClient {
         guard let chain = WalletEthereumQuantity.hexToUInt64(value) else {
             throw WalletRPCError.invalidResponse("invalid chain ID")
         }
-        guard chain == Self.chainID else { throw WalletRPCError.wrongChain(String(chain)) }
+        guard chain == expectedChainID else { throw WalletRPCError.wrongChain(String(chain)) }
         return chain
     }
 

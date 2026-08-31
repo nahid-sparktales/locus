@@ -43,6 +43,14 @@
 	<string>https://github.com/nahid-sparktales/locus/releases/latest/download/components.json</string>
 	<key>LocusGitHubOAuthClientID</key>
 	<string>$(LOCUS_GITHUB_OAUTH_CLIENT_ID)</string>
+	<key>LocusWalletAlchemyEthereumMainnetRPCURL</key>
+	<string>$(LOCUS_WALLET_ALCHEMY_ETHEREUM_MAINNET_RPC_URL)</string>
+	<key>LocusWalletQuickNodeEthereumMainnetRPCURL</key>
+	<string>$(LOCUS_WALLET_QUICKNODE_ETHEREUM_MAINNET_RPC_URL)</string>
+	<key>LocusWalletAlchemyEthereumSepoliaRPCURL</key>
+	<string>$(LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL)</string>
+	<key>LocusWalletQuickNodeEthereumSepoliaRPCURL</key>
+	<string>$(LOCUS_WALLET_QUICKNODE_ETHEREUM_SEPOLIA_RPC_URL)</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_locus-remote._tcp</string>

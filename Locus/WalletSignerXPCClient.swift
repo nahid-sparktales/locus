@@ -35,10 +35,23 @@ final class XPCWalletSignerClient: WalletSignerClient {
     private var connection: NSXPCConnection?
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
-    private let rpc = WalletSepoliaRPCClient()
+    private let rpcClients: [String: WalletEVMProviderCoordinator]
     private var preparationPackets: [String: WalletEVMPreparationPacket] = [:]
 
     init(bundle: Bundle = .main) {
+        var clients: [String: WalletEVMProviderCoordinator] = [:]
+        for network in [
+            WalletNetworkCatalog.ethereumSepolia,
+            WalletNetworkCatalog.ethereumMainnet,
+        ] {
+            guard let configuration = WalletBundledProviderConfiguration.ethereum(
+                network: network, bundle: bundle
+            ), let coordinator = try? WalletEVMProviderCoordinator(
+                network: network, configuration: configuration
+            ) else { continue }
+            clients[network.id] = coordinator
+        }
+        rpcClients = clients
         let serviceURL = bundle.bundleURL
             .appendingPathComponent("Contents", isDirectory: true)
             .appendingPathComponent("XPCServices", isDirectory: true)
@@ -56,6 +69,10 @@ final class XPCWalletSignerClient: WalletSignerClient {
         try await call { proxy, reply in proxy.beginCreateVault(reply: reply) }
     }
 
+    func beginMainnetRotation() async throws -> WalletVaultCreation {
+        try await call { proxy, reply in proxy.beginRotateForMainnet(reply: reply) }
+    }
+
     func confirmVaultBackup(_ confirmation: WalletBackupConfirmation) async throws -> WalletSignerStatus {
         let data = try encoder.encode(confirmation)
         return try await call { proxy, reply in proxy.confirmBackup(data, reply: reply) }
@@ -65,12 +82,23 @@ final class XPCWalletSignerClient: WalletSignerClient {
         try await call { proxy, reply in proxy.cancelCreateVault(reply: reply) }
     }
 
+    func restoreVault(words: [String]) async throws -> WalletSignerStatus {
+        let data = try encoder.encode(WalletVaultRestoreRequest(words: words))
+        return try await call { proxy, reply in proxy.restoreVault(data, reply: reply) }
+    }
+
     func deleteVault(confirmation: String) async throws -> WalletSignerStatus {
         let status: WalletSignerStatus = try await call { proxy, reply in
             proxy.deleteVault(confirmation, reply: reply)
         }
         sessionID = nil
         return status
+    }
+
+    func deleteRecoveryVault(confirmation: String) async throws -> WalletSignerStatus {
+        try await call { proxy, reply in
+            proxy.deleteRecoveryVault(confirmation, reply: reply)
+        }
     }
 
     func authorizeSession() async throws {
@@ -112,6 +140,7 @@ final class XPCWalletSignerClient: WalletSignerClient {
         } else {
             encodedContract = nil
         }
+        let rpc = try rpcClient(for: request.networkID)
         let packet = try await rpc.prepare(
             request: request,
             fromAddress: account.address,
@@ -130,6 +159,7 @@ final class XPCWalletSignerClient: WalletSignerClient {
         guard let packet = preparationPackets[intentID] else {
             throw WalletGateway.Error.intentNotFound
         }
+        let rpc = try rpcClient(for: packet.request.networkID)
         let recheck = try await rpc.recheck(intentID: intentID, packet: packet)
         let data = try authorized(recheck, source: packet.request.source)
         return try await call { proxy, reply in proxy.simulateEVM(data, reply: reply) }
@@ -149,6 +179,7 @@ final class XPCWalletSignerClient: WalletSignerClient {
         guard let packet = preparationPackets[intentID] else {
             throw WalletGateway.Error.intentNotFound
         }
+        let rpc = try rpcClient(for: packet.request.networkID)
         let recheck = try await rpc.recheck(intentID: intentID, packet: packet)
         let request = try authorized(recheck, source: packet.request.source)
         let signed: WalletEVMSignedTransaction = try await call { proxy, reply in
@@ -169,14 +200,14 @@ final class XPCWalletSignerClient: WalletSignerClient {
         guard broadcastHash.caseInsensitiveCompare(signed.transactionHash) == .orderedSame else {
             throw WalletGateway.Error.broadcastUnknown(
                 transactionHash: signed.transactionHash,
-                message: "Sepolia returned a transaction hash that does not match the signed bytes."
+                message: "The provider returned a transaction hash that does not match the signed bytes."
             )
         }
         return [
-            "text": "Submitted Sepolia transaction \(broadcastHash)",
+            "text": "Submitted \(packet.request.networkID) transaction \(broadcastHash)",
             "intent_id": intentID,
             "transaction_hash": broadcastHash,
-            "network_id": WalletGateway.sepoliaNetworkID,
+            "network_id": packet.request.networkID,
             "status": "submitted",
         ]
     }
@@ -199,27 +230,33 @@ final class XPCWalletSignerClient: WalletSignerClient {
     }
 
     func verifyContract(_ draft: WalletContractRegistryDraft) async throws -> WalletContractRegistryEntry {
-        try await rpc.verifyContract(draft)
+        let rpc = try rpcClient(for: draft.networkID)
+        return try await rpc.verifyContract(draft)
     }
 
-    func browserRPC(method: String, params: [Any]) async throws -> Any {
-        try await rpc.publicRead(method: method, params: params)
+    func browserRPC(networkID: String, method: String, params: [Any]) async throws -> Any {
+        let rpc = try rpcClient(for: networkID)
+        return try await rpc.publicRead(method: method, params: params)
     }
 
     func performRead(tool: String, arguments: [String: Any]) async throws -> [String: Any] {
         switch tool {
         case "wallet_get_balance":
             let accountID = arguments["account_id"] as? String
+            let networkID = arguments["network_id"] as? String ?? WalletGateway.sepoliaNetworkID
             let accounts = try await listAccounts()
-            guard let account = accounts.first(where: { $0.id == accountID && $0.chain == .evm }) else {
+            guard let account = accounts.first(where: {
+                $0.id == accountID && $0.chain == .evm && $0.networkIDs.contains(networkID)
+            }) else {
                 throw WalletGateway.Error.invalidArguments("Select the Locus Vault EVM account.")
             }
+            let rpc = try rpcClient(for: networkID)
             let balance = try await rpc.balance(address: account.address)
             return [
-                "text": "Sepolia balance: \(balance) wei",
+                "text": "\(networkID) balance: \(balance) wei",
                 "account_id": account.id,
-                "network_id": WalletGateway.sepoliaNetworkID,
-                "asset_id": "slip44:60",
+                "network_id": networkID,
+                "asset_id": "\(networkID)/slip44:60",
                 "balance_base_units": balance,
             ]
         case "wallet_get_activity":
@@ -233,12 +270,16 @@ final class XPCWalletSignerClient: WalletSignerClient {
     }
 
     func rpcHealth() async throws -> String {
-        try await rpc.health()
+        let rpc = try rpcClient(for: WalletGateway.sepoliaNetworkID)
+        return try await rpc.health()
     }
 
     func configureRPCURL(_ value: String) {
         Task {
-            try? await rpc.configure(endpoint: value.isEmpty ? WalletSepoliaRPCClient.defaultEndpoint : value)
+            guard let rpc = rpcClients[WalletGateway.sepoliaNetworkID] else { return }
+            try? await rpc.configurePrimary(
+                endpoint: value.isEmpty ? WalletSepoliaRPCClient.defaultEndpoint : value
+            )
         }
     }
 
@@ -263,6 +304,15 @@ final class XPCWalletSignerClient: WalletSignerClient {
                           userInfo: [NSLocalizedDescriptionKey: error.error])
         }
         return try decoder.decode(T.self, from: data)
+    }
+
+    private func rpcClient(for networkID: String) throws -> WalletEVMProviderCoordinator {
+        guard let rpc = rpcClients[networkID] else {
+            throw WalletGateway.Error.invalidArguments(
+                "No reviewed EVM provider is configured for \(networkID)."
+            )
+        }
+        return rpc
     }
 
     private func authorized<Payload: Codable & Equatable & Sendable>(

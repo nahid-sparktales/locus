@@ -116,6 +116,53 @@ pub extern "C" fn locus_wallet_generate_vault_json() -> *mut c_char {
     }
 }
 
+/// Validate and canonicalize one 24-word English BIP-39 recovery phrase. The
+/// phrase is accepted only by the network-isolated recovery/signer process;
+/// callers receive entropy solely so it can be encrypted into the local vault.
+///
+/// # Safety
+/// `phrase` must point to a live NUL-terminated UTF-8 string for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn locus_wallet_restore_vault_json(phrase: *const c_char) -> *mut c_char {
+    if phrase.is_null() {
+        return json_pointer(&ErrorResponse {
+            error: "missing recovery phrase",
+        });
+    }
+    // SAFETY: The recovery service owns this NUL-terminated string for the
+    // duration of the synchronous call.
+    let bytes = unsafe { CStr::from_ptr(phrase) }.to_bytes();
+    if bytes.len() > 512 {
+        return json_pointer(&ErrorResponse {
+            error: "recovery phrase is too large",
+        });
+    }
+    let Ok(mut phrase_text) = std::str::from_utf8(bytes).map(str::to_owned) else {
+        return json_pointer(&ErrorResponse {
+            error: "recovery phrase is not UTF-8",
+        });
+    };
+    let parsed = Mnemonic::parse_in_normalized(Language::English, &phrase_text);
+    phrase_text.zeroize();
+    let Ok(mnemonic) = parsed else {
+        return json_pointer(&ErrorResponse {
+            error: "invalid BIP-39 recovery phrase",
+        });
+    };
+    if mnemonic.word_count() != 24 {
+        return json_pointer(&ErrorResponse {
+            error: "Locus Vault requires exactly 24 recovery words",
+        });
+    }
+    let mut entropy = mnemonic.to_entropy();
+    let result = GeneratedVault {
+        entropy_hex: hex::encode(&entropy),
+        words: mnemonic.words().map(str::to_owned).collect(),
+    };
+    entropy.zeroize();
+    json_pointer(&result)
+}
+
 fn mnemonic_from_entropy_hex(value: *const c_char) -> Result<(Mnemonic, Vec<u8>), &'static str> {
     if value.is_null() {
         return Err("missing entropy");
@@ -152,8 +199,8 @@ fn parse_evm_request(value: *const c_char) -> Result<EvmTransactionRequest, &'st
 }
 
 fn build_evm_transaction(request: &EvmTransactionRequest) -> Result<TxEip1559, &'static str> {
-    if request.chain_id != 11_155_111 {
-        return Err("only Sepolia transactions are supported");
+    if ![1, 11_155_111].contains(&request.chain_id) {
+        return Err("unsupported EVM chain ID");
     }
     let to = request
         .to
@@ -355,21 +402,21 @@ pub extern "C" fn locus_wallet_derive_accounts_json(entropy_hex: *const c_char) 
                 chain: "evm",
                 address: evm_signer.address().to_string(),
                 label: "Locus Vault EVM",
-                network_ids: vec!["eip155:11155111"],
+                network_ids: vec!["eip155:1", "eip155:11155111"],
             },
             DerivedAccount {
                 id: "locus-vault-solana-0",
                 chain: "solana",
                 address: solana_address,
                 label: "Locus Vault Solana",
-                network_ids: vec!["solana:devnet"],
+                network_ids: vec!["solana:mainnet-beta", "solana:devnet"],
             },
             DerivedAccount {
                 id: "locus-vault-sui-0",
                 chain: "sui",
                 address: sui_address,
                 label: "Locus Vault Sui",
-                network_ids: vec!["sui:testnet"],
+                network_ids: vec!["sui:mainnet", "sui:testnet"],
             },
         ],
     };
@@ -424,6 +471,25 @@ mod tests {
         );
         assert_eq!(mnemonic.to_entropy(), entropy);
         entropy.zeroize();
+    }
+
+    #[test]
+    fn recovery_phrase_restores_canonical_entropy() {
+        let phrase = CString::new(
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+        )
+        .unwrap();
+        let pointer = unsafe { locus_wallet_restore_vault_json(phrase.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(pointer) };
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            value["entropy_hex"],
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(value["words"].as_array().unwrap().len(), 24);
     }
 
     #[test]
@@ -522,7 +588,7 @@ mod tests {
     }
 
     #[test]
-    fn evm_transaction_core_rejects_non_sepolia_chain() {
+    fn evm_transaction_core_accepts_ethereum_mainnet() {
         let entropy =
             CString::new("0000000000000000000000000000000000000000000000000000000000000000")
                 .unwrap();
@@ -536,7 +602,26 @@ mod tests {
             .to_string_lossy()
             .into_owned();
         unsafe { locus_wallet_string_free(pointer) };
-        assert!(json.contains("only Sepolia"));
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["from"], "0xF278cF59F82eDcf871d630F28EcC8056f25C1cdb");
+    }
+
+    #[test]
+    fn evm_transaction_core_rejects_unknown_chain() {
+        let entropy =
+            CString::new("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let transaction = CString::new(
+            r#"{"chain_id":31337,"nonce":0,"gas_limit":21000,"max_fee_per_gas":"1","max_priority_fee_per_gas":"1","to":"0x1111111111111111111111111111111111111111","value":"0","input":"0x"}"#,
+        )
+        .unwrap();
+        let pointer =
+            locus_wallet_prepare_evm_transaction_json(entropy.as_ptr(), transaction.as_ptr());
+        let json = unsafe { CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(pointer) };
+        assert!(json.contains("unsupported EVM chain ID"));
     }
 
     #[test]

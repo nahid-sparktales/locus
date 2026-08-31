@@ -6,6 +6,9 @@ import Security
 @_silgen_name("locus_wallet_generate_vault_json")
 private func rustGenerateVault() -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("locus_wallet_restore_vault_json")
+private func rustRestoreVault(_ phrase: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("locus_wallet_derive_accounts_json")
 private func rustDeriveAccounts(_ entropyHex: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
@@ -158,8 +161,10 @@ private final class WalletVaultStore {
         }
     }
 
-    private let service = "io.sparktales.locus.WalletSigner.wrap.v1"
-    private let account = "locus-vault"
+    private let productionService = "io.sparktales.locus.WalletSigner.wrap.v2"
+    private let productionAccount = "locus-mainnet-vault"
+    private let legacyService = "io.sparktales.locus.WalletSigner.wrap.v1"
+    private let legacyAccount = "locus-vault"
     private let fileManager = FileManager.default
 
     private var directory: URL {
@@ -167,9 +172,12 @@ private final class WalletVaultStore {
         return base.appendingPathComponent("LocusWalletSigner", isDirectory: true)
     }
 
-    var vaultURL: URL { directory.appendingPathComponent("vault-v1.aesgcm") }
-    var accountsURL: URL { directory.appendingPathComponent("accounts-v1.json") }
+    var vaultURL: URL { directory.appendingPathComponent("vault-mainnet-v2.aesgcm") }
+    var accountsURL: URL { directory.appendingPathComponent("accounts-mainnet-v2.json") }
+    var legacyVaultURL: URL { directory.appendingPathComponent("vault-v1.aesgcm") }
+    var legacyAccountsURL: URL { directory.appendingPathComponent("accounts-v1.json") }
     var exists: Bool { fileManager.fileExists(atPath: vaultURL.path) }
+    var legacyExists: Bool { fileManager.fileExists(atPath: legacyVaultURL.path) }
 
     func create(entropy: Data, accounts: [WalletAccount]) throws {
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -188,8 +196,8 @@ private final class WalletVaultStore {
             &accessError
         ) else { throw StoreError.authentication }
 
-        SecItemDelete(baseQuery() as CFDictionary)
-        var query = baseQuery()
+        SecItemDelete(productionQuery() as CFDictionary)
+        var query = productionQuery()
         query[kSecValueData as String] = keyData
         query[kSecAttrAccessControl as String] = access
         let addStatus = SecItemAdd(query as CFDictionary, nil)
@@ -203,7 +211,7 @@ private final class WalletVaultStore {
             try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: vaultURL.path)
             try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: accountsURL.path)
         } catch {
-            SecItemDelete(baseQuery() as CFDictionary)
+            SecItemDelete(productionQuery() as CFDictionary)
             try? fileManager.removeItem(at: vaultURL)
             try? fileManager.removeItem(at: accountsURL)
             throw error
@@ -211,7 +219,7 @@ private final class WalletVaultStore {
     }
 
     func decrypt(reason: String) throws -> Data {
-        var query = baseQuery()
+        var query = productionQuery()
         let context = LAContext()
         context.localizedReason = reason
         query[kSecReturnData as String] = true
@@ -231,8 +239,9 @@ private final class WalletVaultStore {
     }
 
     func accounts() throws -> [WalletAccount] {
-        guard fileManager.fileExists(atPath: accountsURL.path) else { return [] }
-        return try JSONDecoder().decode([WalletAccount].self, from: Data(contentsOf: accountsURL))
+        let url = exists ? accountsURL : legacyAccountsURL
+        guard fileManager.fileExists(atPath: url.path) else { return [] }
+        return try JSONDecoder().decode([WalletAccount].self, from: Data(contentsOf: url))
     }
 
     func delete(reason: String) throws {
@@ -240,13 +249,47 @@ private final class WalletVaultStore {
         key.resetBytes(in: 0..<key.count)
         try? fileManager.removeItem(at: vaultURL)
         try? fileManager.removeItem(at: accountsURL)
-        let status = SecItemDelete(baseQuery() as CFDictionary)
+        let status = SecItemDelete(productionQuery() as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw StoreError.keychain(status)
         }
     }
 
-    private func baseQuery() -> [String: Any] {
+    func deleteLegacy(reason: String) throws {
+        var query = legacyQuery()
+        let context = LAContext()
+        context.localizedReason = reason
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        query[kSecUseAuthenticationContext as String] = context
+        var result: CFTypeRef?
+        let copyStatus = SecItemCopyMatching(query as CFDictionary, &result)
+        guard copyStatus == errSecSuccess, var keyData = result as? Data else {
+            throw copyStatus == errSecUserCanceled || copyStatus == errSecAuthFailed
+                ? StoreError.authentication : StoreError.keychain(copyStatus)
+        }
+        defer { keyData.resetBytes(in: 0..<keyData.count) }
+        let sealedData = try Data(contentsOf: legacyVaultURL)
+        let box = try AES.GCM.SealedBox(combined: sealedData)
+        var entropy = try AES.GCM.open(box, using: SymmetricKey(data: keyData))
+        entropy.resetBytes(in: 0..<entropy.count)
+        try? fileManager.removeItem(at: legacyVaultURL)
+        try? fileManager.removeItem(at: legacyAccountsURL)
+        let status = SecItemDelete(legacyQuery() as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw StoreError.keychain(status)
+        }
+    }
+
+    private func productionQuery() -> [String: Any] {
+        baseQuery(service: productionService, account: productionAccount)
+    }
+
+    private func legacyQuery() -> [String: Any] {
+        baseQuery(service: legacyService, account: legacyAccount)
+    }
+
+    private func baseQuery(service: String, account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -256,18 +299,29 @@ private final class WalletVaultStore {
 }
 
 final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
-    private static let protocolVersion = 1
+    private static let protocolVersion = 2
     private static let maximumPreparedIntents = 32
     private static let maximumActivePolicies = 32
     private let queue = DispatchQueue(label: "io.sparktales.locus.wallet-signer")
     private let store = WalletVaultStore()
+    private let launchGate: WalletLaunchGate?
+    private let regionCode: String
     private var pendingEntropy: Data?
     private var pendingWords: [String] = []
     private var pendingIndices: [Int] = []
+    private var pendingPurpose: WalletVaultCreationPurpose = .create
     private var unlockedEntropy: Data?
     private var activeSessionID: String?
     private var preparedIntents: [String: StoredEVMIntent] = [:]
     private var activePolicies: [String: SignerActivePolicy] = [:]
+    private var pendingPresenceIntents: Set<String> = []
+    private var policyPresencePending = false
+
+    override init() {
+        launchGate = Self.loadLaunchGate()
+        regionCode = (Locale.current.region?.identifier ?? "ZZ").uppercased()
+        super.init()
+    }
 
     func invalidateConnection() {
         queue.async {
@@ -282,40 +336,19 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
 
     func beginCreateVault(reply: @escaping (Data) -> Void) {
         queue.async {
-            guard !self.store.exists else {
+            guard !self.store.exists, !self.store.legacyExists else {
                 return reply(self.error("A Locus Vault already exists."))
             }
-            if self.pendingEntropy != nil {
-                return reply(self.encoded(WalletVaultCreation(
-                    words: self.pendingWords,
-                    verificationIndices: self.pendingIndices
-                )))
+            self.beginVaultCeremony(purpose: .create, reply: reply)
+        }
+    }
+
+    func beginRotateForMainnet(reply: @escaping (Data) -> Void) {
+        queue.async {
+            guard self.store.legacyExists, !self.store.exists else {
+                return reply(self.error("No private-alpha vault requires mainnet rotation."))
             }
-            guard let pointer = rustGenerateVault() else {
-                return reply(self.error("The signing core did not generate a vault."))
-            }
-            defer { rustFreeString(pointer) }
-            do {
-                let decoder = JSONDecoder()
-                decoder.keyDecodingStrategy = .convertFromSnakeCase
-                let generated = try decoder.decode(
-                    RustGeneratedVault.self,
-                    from: Data(String(cString: pointer).utf8)
-                )
-                guard generated.words.count == 24,
-                      let entropy = Data(hex: generated.entropyHex), entropy.count == 32 else {
-                    return reply(self.error("The signing core returned invalid BIP-39 material."))
-                }
-                self.pendingEntropy = entropy
-                self.pendingWords = generated.words
-                self.pendingIndices = Array(0..<24).shuffled().prefix(6).sorted()
-                reply(self.encoded(WalletVaultCreation(
-                    words: generated.words,
-                    verificationIndices: self.pendingIndices
-                )))
-            } catch {
-                reply(self.error("Vault generation failed: \(error.localizedDescription)"))
-            }
+            self.beginVaultCeremony(purpose: .rotateForMainnet, reply: reply)
         }
     }
 
@@ -350,9 +383,55 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         }
     }
 
+    func restoreVault(_ request: Data, reply: @escaping (Data) -> Void) {
+        queue.async {
+            guard !self.store.exists, !self.store.legacyExists, self.pendingEntropy == nil else {
+                return reply(self.error("A Locus Vault already exists or setup is in progress."))
+            }
+            do {
+                let restore = try JSONDecoder().decode(WalletVaultRestoreRequest.self, from: request)
+                guard restore.words.count == 24,
+                      restore.words.allSatisfy({ word in
+                          !word.isEmpty && word.utf8.count <= 16
+                              && word.utf8.allSatisfy { (97...122).contains($0) }
+                      }) else {
+                    throw self.signerError("Enter exactly 24 lowercase English recovery words.")
+                }
+                var phrase = restore.words.joined(separator: " ")
+                defer { phrase.replaceSubrange(phrase.startIndex..<phrase.endIndex, with: "") }
+                guard let pointer = phrase.withCString({ rustRestoreVault($0) }) else {
+                    throw self.signerError("The signing core could not validate the recovery phrase.")
+                }
+                defer { rustFreeString(pointer) }
+                let data = Data(String(cString: pointer).utf8)
+                if let failure = try? JSONDecoder().decode(WalletSignerErrorPayload.self, from: data) {
+                    throw self.signerError(failure.error)
+                }
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                let restored = try decoder.decode(RustGeneratedVault.self, from: data)
+                guard restored.words == restore.words,
+                      var entropy = Data(hex: restored.entropyHex), entropy.count == 32 else {
+                    throw self.signerError("The recovery phrase did not canonicalize safely.")
+                }
+                defer { entropy.resetBytes(in: 0..<entropy.count) }
+                let accounts = try self.deriveAccounts(entropy: entropy)
+                try self.store.create(entropy: entropy, accounts: accounts)
+                reply(self.encoded(self.currentStatus()))
+            } catch {
+                reply(self.error("Vault restoration failed: \(error.localizedDescription)"))
+            }
+        }
+    }
+
     func authorizeSession(_ reason: String, reply: @escaping (Data) -> Void) {
         queue.async {
             do {
+                guard self.store.exists else {
+                    throw self.signerError(self.store.legacyExists
+                        ? "Rotate the private-alpha vault before using mainnet signing."
+                        : "Create or restore a Locus Vault first.")
+                }
                 self.lockInMemory()
                 self.unlockedEntropy = try self.store.decrypt(reason: reason)
                 self.activeSessionID = UUID().uuidString.lowercased()
@@ -408,6 +487,11 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                     intent = try self.prepareNativeTransfer(packet: packet, entropy: entropy)
                 case .contractCall:
                     intent = try self.prepareContractCall(packet: packet, entropy: entropy)
+                case .fungibleTokenTransfer, .nftTransfer, .exactInputSwap, .reviewedCall,
+                     .standardizedSignIn, .reviewedTypedAuthorization:
+                    throw self.signerError(
+                        "The requested semantic action has no reviewed signer adapter."
+                    )
                 }
                 self.preparedIntents[intent.prepared.id] = intent
                 reply(self.encoded(intent.prepared))
@@ -440,14 +524,43 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         queue.async {
             do {
                 let authorized: WalletAuthorizedRequest<String> = try self.authorized(request)
-                guard var intent = self.preparedIntents[authorized.payload],
+                guard let intent = self.preparedIntents[authorized.payload],
                       intent.prepared.expiresAt > Date(),
                       intent.prepared.source == authorized.source else {
                     throw self.signerError("The prepared transaction is missing, expired, or belongs to another source.")
                 }
-                intent.explicitlyApproved = true
-                self.preparedIntents[authorized.payload] = intent
-                reply(self.encoded(intent.prepared))
+                if WalletNetworkCatalog.descriptor(id: intent.prepared.networkID)?.environment == .mainnet {
+                    guard self.pendingPresenceIntents.insert(authorized.payload).inserted else {
+                        throw self.signerError("User presence is already pending for this transaction.")
+                    }
+                    self.requireUserPresence(
+                        reason: "Approve this exact Locus Vault mainnet transaction"
+                    ) { result in
+                        self.pendingPresenceIntents.remove(authorized.payload)
+                        guard self.activeSessionID == authorized.sessionID,
+                              self.unlockedEntropy != nil else {
+                            return reply(self.error("Transaction confirmation failed: Locus Vault locked while approval was pending."))
+                        }
+                        switch result {
+                        case .failure(let error):
+                            reply(self.error("Transaction confirmation failed: \(error.localizedDescription)"))
+                        case .success:
+                            guard var current = self.preparedIntents[authorized.payload],
+                                  current.prepared == intent.prepared,
+                                  current.prepared.expiresAt > Date() else {
+                                return reply(self.error("Transaction confirmation failed: the intent changed or expired."))
+                            }
+                            current.explicitlyApproved = true
+                            self.preparedIntents[authorized.payload] = current
+                            reply(self.encoded(current.prepared))
+                        }
+                    }
+                    return
+                }
+                var approved = intent
+                approved.explicitlyApproved = true
+                self.preparedIntents[authorized.payload] = approved
+                reply(self.encoded(approved.prepared))
             } catch {
                 reply(self.error("Transaction confirmation failed: \(error.localizedDescription)"))
             }
@@ -504,6 +617,76 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         }
     }
 
+    func prepareSolana(_ request: Data, reply: @escaping (Data) -> Void) {
+        queue.async {
+            do {
+                let authorized: WalletAuthorizedRequest<WalletSolanaPreparationPacket> =
+                    try self.authorized(request)
+                let packet = authorized.payload
+                guard let descriptor = WalletNetworkCatalog.descriptor(id: packet.request.networkID),
+                      descriptor.chain == .solana,
+                      descriptor.identity.kind == .solanaGenesisHash,
+                      descriptor.identity.value == packet.genesisHash else {
+                    throw self.signerError("The Solana genesis identity does not match the request.")
+                }
+                try self.authorizeNetwork(
+                    descriptor.id, chain: .solana,
+                    capability: self.capability(for: packet.request.action.type)
+                )
+                throw self.signerError("The reviewed Solana transaction builder is not active in this build.")
+            } catch {
+                reply(self.error("Solana preparation failed: \(error.localizedDescription)"))
+            }
+        }
+    }
+
+    func simulateSolana(_ request: Data, reply: @escaping (Data) -> Void) {
+        reply(error("Solana simulation failed: no reviewed Solana intent is active."))
+    }
+
+    func confirmSolana(_ request: Data, reply: @escaping (Data) -> Void) {
+        reply(error("Solana confirmation failed: no reviewed Solana intent is active."))
+    }
+
+    func executeSolana(_ request: Data, reply: @escaping (Data) -> Void) {
+        reply(error("Solana execution failed: no reviewed Solana intent is active."))
+    }
+
+    func prepareSui(_ request: Data, reply: @escaping (Data) -> Void) {
+        queue.async {
+            do {
+                let authorized: WalletAuthorizedRequest<WalletSuiPreparationPacket> =
+                    try self.authorized(request)
+                let packet = authorized.payload
+                guard let descriptor = WalletNetworkCatalog.descriptor(id: packet.request.networkID),
+                      descriptor.chain == .sui,
+                      descriptor.identity.kind == .suiChainIdentifier,
+                      descriptor.identity.value == packet.chainIdentifier else {
+                    throw self.signerError("The Sui chain identity does not match the request.")
+                }
+                try self.authorizeNetwork(
+                    descriptor.id, chain: .sui,
+                    capability: self.capability(for: packet.request.action.type)
+                )
+                throw self.signerError("The reviewed Sui transaction builder is not active in this build.")
+            } catch {
+                reply(self.error("Sui preparation failed: \(error.localizedDescription)"))
+            }
+        }
+    }
+
+    func simulateSui(_ request: Data, reply: @escaping (Data) -> Void) {
+        reply(error("Sui simulation failed: no reviewed Sui intent is active."))
+    }
+
+    func confirmSui(_ request: Data, reply: @escaping (Data) -> Void) {
+        reply(error("Sui confirmation failed: no reviewed Sui intent is active."))
+    }
+
+    func executeSui(_ request: Data, reply: @escaping (Data) -> Void) {
+        reply(error("Sui execution failed: no reviewed Sui intent is active."))
+    }
+
     func activatePolicy(_ request: Data, reply: @escaping (Data) -> Void) {
         queue.async {
             do {
@@ -514,15 +697,38 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 }
                 let policy = authorized.payload
                 try self.validatePolicy(policy)
-                self.expirePolicies()
-                guard self.activePolicies[policy.id] != nil
-                        || self.activePolicies.count < Self.maximumActivePolicies else {
-                    throw self.signerError("Too many wallet policies are active for this session.")
+                guard !self.policyPresencePending else {
+                    throw self.signerError("Another policy activation is awaiting user presence.")
                 }
-                self.activePolicies[policy.id] = SignerActivePolicy(
-                    policy: policy, spentBaseUnits: "0"
-                )
-                reply(self.encoded(self.policyStatuses()))
+                self.policyPresencePending = true
+                self.requireUserPresence(
+                    reason: "Activate this Locus Vault autonomous spending rule"
+                ) { result in
+                    self.policyPresencePending = false
+                    guard self.activeSessionID == authorized.sessionID,
+                          self.unlockedEntropy != nil else {
+                        return reply(self.error("Policy activation failed: Locus Vault locked while approval was pending."))
+                    }
+                    switch result {
+                    case .failure(let error):
+                        reply(self.error("Policy activation failed: \(error.localizedDescription)"))
+                    case .success:
+                        do {
+                            try self.validatePolicy(policy)
+                            self.expirePolicies()
+                            guard self.activePolicies[policy.id] != nil
+                                    || self.activePolicies.count < Self.maximumActivePolicies else {
+                                throw self.signerError("Too many wallet policies are active for this session.")
+                            }
+                            self.activePolicies[policy.id] = SignerActivePolicy(
+                                policy: policy, spentBaseUnits: "0"
+                            )
+                            reply(self.encoded(self.policyStatuses()))
+                        } catch {
+                            reply(self.error("Policy activation failed: \(error.localizedDescription)"))
+                        }
+                    }
+                }
             } catch {
                 reply(self.error("Policy activation failed: \(error.localizedDescription)"))
             }
@@ -582,16 +788,79 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         }
     }
 
+    func deleteRecoveryVault(_ confirmation: String, reply: @escaping (Data) -> Void) {
+        queue.async {
+            guard confirmation == "DELETE RECOVERY VAULT" else {
+                return reply(self.error("Type DELETE RECOVERY VAULT to confirm deletion."))
+            }
+            guard self.store.legacyExists else {
+                return reply(self.error("No recovery-only vault exists."))
+            }
+            do {
+                try self.store.deleteLegacy(reason: "Delete the recovery-only private-alpha vault")
+                reply(self.encoded(self.currentStatus()))
+            } catch {
+                reply(self.error("Recovery vault deletion failed: \(error.localizedDescription)"))
+            }
+        }
+    }
+
+    private func beginVaultCeremony(
+        purpose: WalletVaultCreationPurpose,
+        reply: @escaping (Data) -> Void
+    ) {
+        if pendingEntropy != nil {
+            guard pendingPurpose == purpose else {
+                return reply(error("Another recovery ceremony is already in progress."))
+            }
+            return reply(encoded(WalletVaultCreation(
+                words: pendingWords,
+                verificationIndices: pendingIndices,
+                purpose: purpose
+            )))
+        }
+        guard let pointer = rustGenerateVault() else {
+            return reply(error("The signing core did not generate a vault."))
+        }
+        defer { rustFreeString(pointer) }
+        do {
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let generated = try decoder.decode(
+                RustGeneratedVault.self,
+                from: Data(String(cString: pointer).utf8)
+            )
+            guard generated.words.count == 24,
+                  let entropy = Data(hex: generated.entropyHex), entropy.count == 32 else {
+                return reply(error("The signing core returned invalid BIP-39 material."))
+            }
+            pendingEntropy = entropy
+            pendingWords = generated.words
+            pendingIndices = Array(0..<24).shuffled().prefix(6).sorted()
+            pendingPurpose = purpose
+            reply(encoded(WalletVaultCreation(
+                words: generated.words,
+                verificationIndices: pendingIndices,
+                purpose: purpose
+            )))
+        } catch {
+            reply(self.error("Vault generation failed: \(error.localizedDescription)"))
+        }
+    }
+
     private func currentStatus() -> WalletSignerStatus {
         let state: WalletVaultState
         if activeSessionID != nil { state = .unlocked }
         else if pendingEntropy != nil { state = .awaitingBackup }
-        else { state = store.exists ? .locked : .missing }
+        else if store.exists { state = .locked }
+        else if store.legacyExists { state = .rotationRequired }
+        else { state = .missing }
         return WalletSignerStatus(
             protocolVersion: Self.protocolVersion,
             vaultState: state,
             sessionID: activeSessionID,
-            accounts: (try? store.accounts()) ?? []
+            accounts: (try? store.accounts()) ?? [],
+            recoveryOnlyVaultAvailable: store.legacyExists
         )
     }
 
@@ -617,8 +886,11 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         packet: WalletEVMPreparationPacket,
         entropy: Data
     ) throws -> StoredEVMIntent {
-        guard packet.request.networkID == "eip155:11155111",
-              packet.transaction.chainID == 11_155_111,
+        try authorizeNetwork(
+            packet.request.networkID, capability: .nativeTransfer
+        )
+        guard let expectedChainID = Self.evmChainID(for: packet.request.networkID),
+              packet.transaction.chainID == expectedChainID,
               packet.request.action.type == .nativeTransfer,
               packet.request.action.contractID == nil,
               packet.request.action.function == nil,
@@ -631,10 +903,11 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
               packet.transaction.gasLimit > 0,
               packet.simulationSucceeded,
               abs(packet.observedAt.timeIntervalSinceNow) <= 30 else {
-            throw signerError("The RPC evidence does not match a fresh Sepolia native transfer.")
+            throw signerError("The RPC evidence does not match a fresh network-bound native transfer.")
         }
         let account = try store.accounts().first {
             $0.id == packet.request.accountID && $0.chain == .evm
+                && $0.networkIDs.contains(packet.request.networkID)
         }
         guard let account,
               account.address.caseInsensitiveCompare(packet.fromAddress) == .orderedSame,
@@ -661,13 +934,14 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             accountID: packet.request.accountID,
             source: packet.request.source,
             action: packet.request.action,
-            summary: "Send \(amount) wei on Sepolia to \(recipient)",
+            summary: "Send \(amount) wei on \(packet.request.networkID) to \(recipient)",
             effects: [WalletDecodedEffect(
-                id: "\(intentID):eth-debit", kind: "debit", assetID: "slip44:60",
+                id: "\(intentID):eth-debit", kind: "debit",
+                assetID: "\(packet.request.networkID)/slip44:60",
                 amountBaseUnits: amount, from: account.address, to: recipient, spender: nil
             )],
             riskFlags: [], contract: nil, adapterID: "native-eth-transfer-v1",
-            budgetAssetID: "slip44:60", spendBaseUnits: amount,
+            budgetAssetID: "\(packet.request.networkID)/slip44:60", spendBaseUnits: amount,
             maximumFeeBaseUnits: packet.request.maximumFeeBaseUnits,
             feeQuoteBaseUnits: fee, simulation: packet.simulation,
             simulationSucceeded: true, nonce: String(packet.transaction.nonce),
@@ -686,8 +960,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         packet: WalletEVMPreparationPacket,
         entropy: Data
     ) throws -> StoredEVMIntent {
-        guard packet.request.networkID == "eip155:11155111",
-              packet.transaction.chainID == 11_155_111,
+        guard let expectedChainID = Self.evmChainID(for: packet.request.networkID),
+              packet.transaction.chainID == expectedChainID,
               packet.request.action.type == .contractCall,
               packet.request.action.recipient == nil,
               packet.request.action.amountBaseUnits == nil,
@@ -705,8 +979,14 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
               packet.transaction.gasLimit > 0,
               packet.simulationSucceeded,
               abs(packet.observedAt.timeIntervalSinceNow) <= 30 else {
-            throw signerError("The RPC evidence does not match a fresh registered Sepolia call.")
+            throw signerError("The RPC evidence does not match a fresh registered network call.")
         }
+        let capability: WalletNetworkCapability = switch WalletReviewedAdapters.validatedID(for: entry) {
+        case WalletReviewedAdapters.erc20: .fungibleTokenTransfer
+        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn: .exactInputSwap
+        default: .reviewedCall
+        }
+        try authorizeNetwork(packet.request.networkID, capability: capability)
         let encodingRequest = WalletContractEncodingRequest(
             action: packet.request.action, registryEntry: entry
         )
@@ -717,6 +997,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         }
         let account = try store.accounts().first {
             $0.id == packet.request.accountID && $0.chain == .evm
+                && $0.networkIDs.contains(packet.request.networkID)
         }
         guard let account,
               account.address.caseInsensitiveCompare(packet.fromAddress) == .orderedSame,
@@ -749,7 +1030,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             id: intentID, digest: rust.digest, networkID: packet.request.networkID,
             accountID: packet.request.accountID, source: packet.request.source,
             action: packet.request.action,
-            summary: "Call \(entry.label).\(packet.request.action.function ?? "unknown") on Sepolia",
+            summary: "Call \(entry.label).\(packet.request.action.function ?? "unknown") on \(packet.request.networkID)",
             effects: decoded.effects, riskFlags: decoded.riskFlags, contract: identity,
             adapterID: decoded.adapterID, budgetAssetID: decoded.budgetAssetID,
             spendBaseUnits: decoded.spendBaseUnits,
@@ -773,7 +1054,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         let action = request.action
         let entry = request.registryEntry
         guard action.type == .contractCall,
-              entry.networkID == "eip155:11155111",
+              Self.evmChainID(for: entry.networkID) != nil,
               Self.isEVMAddress(entry.checksumAddress),
               entry.runtimeCodeHash.count == 66,
               entry.runtimeCodeHash.hasPrefix("0x"),
@@ -826,12 +1107,12 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         nativeValue: String
     ) -> (effects: [WalletDecodedEffect], riskFlags: [WalletRiskFlag],
           adapterID: String?, budgetAssetID: String, spendBaseUnits: String) {
-        let tokenAsset = "eip155:11155111/erc20:\(entry.checksumAddress.lowercased())"
+        let tokenAsset = "\(entry.networkID)/erc20:\(entry.checksumAddress.lowercased())"
         let reviewedAdapterID = WalletReviewedAdapters.validatedID(for: entry)
         var effects: [WalletDecodedEffect] = []
         var riskFlags: [WalletRiskFlag] = [.unknownEffect]
         var adapterID: String?
-        var budgetAssetID = "eip155:11155111/contract:\(entry.checksumAddress.lowercased())"
+        var budgetAssetID = "\(entry.networkID)/contract:\(entry.checksumAddress.lowercased())"
         var spendBaseUnits = "0"
         if action.function == "transfer(address,uint256)", action.arguments.count == 2,
            action.arguments[0].type == "address", action.arguments[1].type == "uint256",
@@ -863,7 +1144,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             spendBaseUnits = amount
         } else if reviewedAdapterID == WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
                   let swap = WalletUniversalRouterV2Adapter.decode(
-                    action: action, accountAddress: account.address
+                    action: action, accountAddress: account.address,
+                    networkID: entry.networkID
                   ) {
             effects = [
                 WalletDecodedEffect(
@@ -906,10 +1188,14 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         "115792089237316195423570985008687907853269984665640564039457584007913129639935"
 
     private func validatePolicy(_ policy: WalletSessionPolicy) throws {
+        try authorizeNetwork(policy.networkID, capability: .autonomousPolicy)
         let accounts = try store.accounts()
         guard !policy.id.isEmpty, policy.id.count <= 128,
-              policy.networkID == "eip155:11155111",
-              accounts.contains(where: { $0.id == policy.accountID && $0.chain == .evm }),
+              Self.evmChainID(for: policy.networkID) != nil,
+              accounts.contains(where: {
+                  $0.id == policy.accountID && $0.chain == .evm
+                      && $0.networkIDs.contains(policy.networkID)
+              }),
               policy.expiresAt > Date(),
               policy.expiresAt <= Date().addingTimeInterval(8 * 60 * 60),
               !policy.allowedRecipients.isEmpty,
@@ -917,6 +1203,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
               policy.allowedRecipients.allSatisfy(Self.isEVMAddress),
               policy.allowedAssetIDs.count == 1,
               policy.allowedAdapterIDs.count == 1,
+              policy.allowedActionKinds?.isEmpty == false,
               policy.allowedContractIDs.count <= 1,
               SignerUnsignedInteger.normalize(policy.maximumTransactionBaseUnits) != nil,
               SignerUnsignedInteger.normalize(policy.maximumSessionBaseUnits) != nil,
@@ -930,14 +1217,16 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         }
         let adapterID = policy.allowedAdapterIDs.first!
         let nativePolicy = adapterID == "native-eth-transfer-v1"
-            && policy.allowedAssetIDs == ["slip44:60"]
+            && policy.allowedAssetIDs == ["\(policy.networkID)/slip44:60"]
             && policy.allowedContractIDs.isEmpty
         let contractPolicy = [
             WalletReviewedAdapters.erc20,
             WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
         ].contains(adapterID)
             && policy.allowedContractIDs.count == 1
-            && policy.allowedAssetIDs.allSatisfy(Self.isSepoliaERC20AssetID)
+            && policy.allowedAssetIDs.allSatisfy {
+                Self.isERC20AssetID($0, networkID: policy.networkID)
+            }
         guard nativePolicy || contractPolicy else {
             throw signerError("The policy does not match a supported reviewed adapter shape.")
         }
@@ -961,6 +1250,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             } ?? policy.allowedContractIDs.isEmpty
             guard policy.accountID == transaction.accountID,
                   policy.networkID == transaction.networkID,
+                  policy.allowedActionKinds?.contains(transaction.action.type) == true,
                   policy.allowedAssetIDs.contains(transaction.budgetAssetID),
                   policy.allowedAdapterIDs.contains(adapterID),
                   counterparties.allSatisfy({ counterparty in
@@ -1045,8 +1335,95 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         value.count == 42 && value.hasPrefix("0x") && value.dropFirst(2).allSatisfy(\.isHexDigit)
     }
 
-    private static func isSepoliaERC20AssetID(_ value: String) -> Bool {
-        let prefix = "eip155:11155111/erc20:"
+    private static func evmChainID(for networkID: String) -> UInt64? {
+        switch networkID {
+        case "eip155:1": 1
+        case "eip155:11155111": 11_155_111
+        default: nil
+        }
+    }
+
+    private func capability(for action: WalletActionKind) -> WalletNetworkCapability {
+        switch action {
+        case .nativeTransfer: .nativeTransfer
+        case .fungibleTokenTransfer: .fungibleTokenTransfer
+        case .nftTransfer: .nftTransfer
+        case .exactInputSwap: .exactInputSwap
+        case .contractCall, .reviewedCall: .reviewedCall
+        case .standardizedSignIn, .reviewedTypedAuthorization: .externalWallet
+        }
+    }
+
+    private func authorizeNetwork(
+        _ networkID: String,
+        chain: WalletChain = .evm,
+        capability: WalletNetworkCapability
+    ) throws {
+        guard let descriptor = WalletNetworkCatalog.descriptor(id: networkID),
+              descriptor.chain == chain else {
+            throw signerError("The signer does not recognize this network identity.")
+        }
+        guard descriptor.staticallyReviewedCapabilities.contains(capability) else {
+            throw signerError("That chain adapter is not compiled as reviewed authority in this build.")
+        }
+        guard descriptor.environment == .mainnet else { return }
+        guard let launchGate else {
+            throw signerError(
+                "Mainnet signing is disabled because no valid signed capability manifest is bundled."
+            )
+        }
+        do {
+            try launchGate.authorize(
+                networkID: networkID, capability: capability,
+                regionCode: regionCode
+            )
+        } catch {
+            throw signerError(error.localizedDescription)
+        }
+    }
+
+    private func requireUserPresence(
+        reason: String,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        let context = LAContext()
+        context.localizedReason = reason
+        var evaluationError: NSError?
+        guard context.canEvaluatePolicy(
+            .deviceOwnerAuthentication, error: &evaluationError
+        ) else {
+            completion(.failure(evaluationError ?? signerError("User presence is unavailable.")))
+            return
+        }
+        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) {
+            success, error in
+            self.queue.async {
+                if success { completion(.success(())) }
+                else { completion(.failure(error ?? self.signerError("User presence was not confirmed."))) }
+            }
+        }
+    }
+
+    private static func loadLaunchGate(bundle: Bundle = .main) -> WalletLaunchGate? {
+        guard let publicKeyText = bundle.object(
+            forInfoDictionaryKey: "LocusWalletCapabilityPublicKey"
+        ) as? String,
+        let publicKeyData = Data(base64Encoded: publicKeyText),
+        let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData),
+        let manifestText = bundle.object(
+            forInfoDictionaryKey: "LocusWalletCapabilityManifestBase64"
+        ) as? String,
+        let manifestData = Data(base64Encoded: manifestText) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let signed = try? decoder.decode(
+            WalletSignedCapabilityManifest.self, from: manifestData
+        ) else { return nil }
+        return try? WalletLaunchGate(signedManifest: signed, publicKey: publicKey)
+    }
+
+    private static func isERC20AssetID(_ value: String, networkID: String) -> Bool {
+        let prefix = "\(networkID)/erc20:"
         guard value.hasPrefix(prefix) else { return false }
         return isEVMAddress(String(value.dropFirst(prefix.count)))
     }
@@ -1189,8 +1566,10 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     private func validSource(_ source: WalletRequestSource) -> Bool {
         switch source.kind {
         case .agent:
-            return source.origin == nil
-        case .browser:
+            return source.origin == nil && source.peerID == nil
+        case .humanUI:
+            return source.origin == nil && source.peerID == nil
+        case .browser, .embeddedBrowser:
             guard let origin = source.origin,
                   let components = URLComponents(string: origin),
                   let scheme = components.scheme?.lowercased(),
@@ -1203,6 +1582,10 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 || (scheme == "http" && components.port == 80)
             let port = components.port.map { standardPort ? "" : ":\($0)" } ?? ""
             return origin == "\(scheme)://\(host)\(port)"
+        case .walletConnectPeer:
+            guard let peerID = source.peerID,
+                  !peerID.isEmpty, peerID.utf8.count <= 512 else { return false }
+            return source.origin.map { $0.utf8.count <= 2_048 } ?? true
         }
     }
 
@@ -1212,6 +1595,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         activeSessionID = nil
         preparedIntents.removeAll(keepingCapacity: false)
         activePolicies.removeAll(keepingCapacity: false)
+        pendingPresenceIntents.removeAll(keepingCapacity: false)
+        policyPresencePending = false
     }
 
     private func clearPending() {
@@ -1219,6 +1604,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         pendingEntropy = nil
         pendingWords.removeAll(keepingCapacity: false)
         pendingIndices.removeAll(keepingCapacity: false)
+        pendingPurpose = .create
     }
 
     private func encoded<T: Encodable>(_ value: T) -> Data {

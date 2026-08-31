@@ -130,6 +130,28 @@ fi
     echo "error: direct-download release is missing WalletSigner.xpc" >&2
     exit 1
 }
+if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
+    signer_info="${wallet_signer}/Contents/Info.plist"
+    capability_key="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletCapabilityPublicKey' \
+        "${signer_info}" 2>/dev/null || true)"
+    capability_manifest="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletCapabilityManifestBase64' \
+        "${signer_info}" 2>/dev/null || true)"
+    [[ -n "${capability_key}" && -n "${capability_manifest}" ]] || {
+        echo "error: public GA requires a signed wallet capability manifest in WalletSigner.xpc" >&2
+        exit 1
+    }
+    for provider_key in \
+        LocusWalletAlchemyEthereumMainnetRPCURL \
+        LocusWalletQuickNodeEthereumMainnetRPCURL
+    do
+        provider_url="$(/usr/libexec/PlistBuddy -c "Print :${provider_key}" \
+            "${info_plist}" 2>/dev/null || true)"
+        [[ "${provider_url}" == https://* ]] || {
+            echo "error: public GA requires an HTTPS ${provider_key} provider endpoint" >&2
+            exit 1
+        }
+    done
+fi
 # The independently sandboxed signer is sealed before the containing app so
 # the outer signature commits to its executable, identifier, and entitlements.
 /usr/bin/codesign --force --timestamp --options runtime \

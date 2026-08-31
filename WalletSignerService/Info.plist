@@ -20,6 +20,10 @@
     <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>LSMinimumSystemVersion</key>
     <string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+    <key>LocusWalletCapabilityPublicKey</key>
+    <string>$(LOCUS_WALLET_CAPABILITY_PUBLIC_KEY)</string>
+    <key>LocusWalletCapabilityManifestBase64</key>
+    <string>$(LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64)</string>
     <key>XPCService</key>
     <dict>
         <key>ServiceType</key>
