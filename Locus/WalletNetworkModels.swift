@@ -241,6 +241,57 @@ struct WalletSolanaTokenAccount: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+enum WalletSolanaCollectibleStandard: String, Codable, Sendable {
+    case tokenMetadata = "token-metadata"
+    case core
+    case bubblegum
+}
+
+struct WalletSolanaCollectibleIdentity: Codable, Equatable, Sendable {
+    let networkID: String
+    let standard: WalletSolanaCollectibleStandard
+    let address: String
+
+    var canonicalID: String {
+        "\(networkID)/nft:\(standard.rawValue):\(address)"
+    }
+
+    static func parse(_ value: String) -> Self? {
+        let components = value.split(separator: "/", omittingEmptySubsequences: false)
+        guard components.count == 2 else { return nil }
+        let networkID = String(components[0])
+        let suffix = components[1].split(separator: ":", omittingEmptySubsequences: false)
+        guard suffix.count == 3, suffix[0] == "nft",
+              let standard = WalletSolanaCollectibleStandard(
+                rawValue: String(suffix[1])
+              ),
+              WalletNetworkCatalog.descriptor(id: networkID)?.chain == .solana else {
+            return nil
+        }
+        let address = String(suffix[2])
+        guard WalletSolanaBase58.decode(address, exactLength: 32) != nil else {
+            return nil
+        }
+        let identity = Self(
+            networkID: networkID, standard: standard, address: address
+        )
+        return identity.canonicalID == value ? identity : nil
+    }
+}
+
+struct WalletSolanaCollectible: Codable, Equatable, Identifiable, Sendable {
+    var id: String { identity.canonicalID }
+
+    let identity: WalletSolanaCollectibleIdentity
+    let name: String
+    let symbol: String
+    let collectionAddress: String?
+    let metadataURL: String?
+    let rasterImageURL: String?
+    let frozen: Bool
+    let delegated: Bool
+}
+
 enum WalletProviderKind: String, Codable, CaseIterable, Sendable {
     case alchemy
     case quickNode = "quicknode"
@@ -475,6 +526,12 @@ struct WalletReviewRegistry: Sendable {
             }
         }
         if network.chain == .solana {
+            if let collectible = WalletSolanaCollectibleIdentity.parse(asset.id) {
+                return collectible.networkID == network.id
+                    && collectible.address == reference
+                    && (asset.kind == .nft || asset.kind == .collectible)
+                    && (asset.decimals == nil || asset.decimals == 0)
+            }
             guard let identity = WalletSolanaAssetIdentity.parse(asset.id),
                   identity.networkID == network.id,
                   identity.mint == reference,

@@ -1516,7 +1516,46 @@ final class WalletGateway: ObservableObject {
     ) -> [String: String] {
         var balances: [String: String] = [:]
         for row in rows {
-            guard let assetID = row["asset_id"] as? String,
+            guard let assetID = row["asset_id"] as? String else { continue }
+            if let collectible = WalletSolanaCollectibleIdentity.parse(assetID) {
+                guard collectible.networkID == networkID,
+                      row["asset_kind"] as? String
+                        == WalletAssetKind.collectible.rawValue,
+                      row["collectible_standard"] as? String
+                        == collectible.standard.rawValue,
+                      row["reference"] as? String == collectible.address,
+                      row["balance_base_units"] as? String == "1",
+                      row["decimals"] as? Int == 0,
+                      row["account_count"] as? Int == 1,
+                      row["has_frozen_account"] is Bool,
+                      row["delegated"] is Bool,
+                      let name = row["name"] as? String,
+                      !name.isEmpty, name.count <= 128,
+                      let symbol = row["symbol"] as? String,
+                      !symbol.isEmpty, symbol.count <= 32 else { continue }
+                if let known = assets.first(where: { $0.id == assetID }) {
+                    guard known.chain == .solana,
+                          known.networkID == networkID,
+                          known.reference == collectible.address,
+                          known.kind == .nft || known.kind == .collectible,
+                          known.decimals == nil || known.decimals == 0 else {
+                        continue
+                    }
+                } else {
+                    let asset = WalletAsset(
+                        canonicalID: assetID, networkID: networkID,
+                        chain: .solana, kind: .collectible,
+                        reference: collectible.address, name: name,
+                        symbol: symbol, decimals: 0, trust: .quarantined,
+                        manifestRevision: 0
+                    )
+                    assets.append(asset)
+                    try? publicStore?.upsertAsset(asset)
+                }
+                balances["\(accountID):\(networkID):\(assetID)"] = "1"
+                continue
+            }
+            guard
                   let identity = WalletSolanaAssetIdentity.parse(assetID),
                   identity.networkID == networkID,
                   let mint = row["mint"] as? String, mint == identity.mint,

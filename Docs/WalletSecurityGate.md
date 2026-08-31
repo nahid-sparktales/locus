@@ -87,6 +87,16 @@ signing adapter.
   delegates, memo/CPI requirements, unknown/unparseable extensions, and other
   altered semantics are unsignable. See the
   [official extension catalogue](https://www.solana-program.com/docs/token-2022/extensions).
+- Read-only Solana collectible discovery uses Digital Asset Standard
+  `getAssetsByOwner` with verified genesis identity, canonical owner and asset
+  addresses, bounded pagination, duplicate rejection, and strict ownership.
+  Metaplex Token Metadata, Core, and compressed Bubblegum holdings receive
+  distinct canonical identities and enter quarantine. Compressed items must
+  carry canonical tree, hash, and leaf evidence. Metadata text is bounded and
+  control-free; only credential-free HTTPS PNG, JPEG, WebP, or AVIF URLs are
+  classified as raster images. SVG, HTML, script URLs, malformed items, and
+  unknown interfaces are never promoted as trusted wallet content. No remote
+  media URL currently crosses into the main-app asset store.
 - Versioned SQLite public store for activity, assets, contacts, and connections.
 - Network-scoped EIP-1193/EIP-6963 browser grants; opaque message and typed-data
   signing remain rejected.
@@ -99,7 +109,8 @@ The code intentionally does not claim GA. These capabilities stay disabled
 until their implementation and evidence gates pass:
 
 - Solana transfer-altering Token-2022 extensions,
-  NFT/compressed-collectible adapters, versioned-message and lookup-table
+  NFT/compressed-collectible transfer adapters, remote-media rendering,
+  versioned-message and lookup-table
   decoding, indexed history, priority fees, and local-validator coverage; all
   Sui builders, signing, provider execution, and localnet suites;
 - full v2/v3/v4 Universal Router, Jupiter `/build`, and pinned Cetus V3 swaps;

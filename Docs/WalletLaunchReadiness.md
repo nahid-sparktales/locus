@@ -27,13 +27,17 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
 - [x] Token-2022 `TransferChecked` for the fail-closed extension subset:
   metadata-only mint extensions and `immutableOwner` token accounts, with
   program-scoped ATA derivation and extension evidence rebound before signing.
+- [x] Read-only Solana Digital Asset Standard discovery for validated Metaplex
+  Token Metadata, Core, and compressed Bubblegum holdings, with canonical
+  identities, strict ownership/compression evidence, quarantine, bounded
+  pagination, and active-media exclusion.
 - [ ] Ethereum curated token and ERC-721/1155 discovery/transfer complete.
-- [ ] Solana transfer-altering Token-2022 extensions and
-  NFT/compressed-collectible implementation complete.
+- [ ] Solana transfer-altering Token-2022 extensions and reviewed
+  NFT/compressed-collectible transfer implementation complete.
 - [ ] Sui gRPC/GraphQL native/Coin/object implementation complete.
 - [ ] Uniswap v2/v3/v4, Jupiter `/build`, and Cetus V3 reviewed swap subsets complete.
 - [ ] MetaMask, Phantom, Slush, Wallet Standards, and Reown WalletKit lifecycle complete.
-- [ ] Sandboxed collectible media and complete current-holdings discovery.
+- [ ] Sandboxed remote collectible-media fetch and rendering complete.
 
 ## Automated and adversarial verification
 

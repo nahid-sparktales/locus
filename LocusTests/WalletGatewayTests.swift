@@ -508,6 +508,50 @@ final class WalletGatewayTests: XCTestCase {
         ))
     }
 
+    func testSignedReviewManifestCuratesExactSolanaCollectibleIdentity() throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let issuedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let address = WalletSolanaBase58.encode(Data(repeating: 14, count: 32))
+        let asset = WalletAsset(
+            canonicalID: "solana:mainnet-beta/nft:core:\(address)",
+            networkID: WalletNetworkCatalog.solanaMainnet.id,
+            chain: .solana, kind: .collectible, reference: address,
+            name: "Reviewed Core Asset", symbol: "CORE", decimals: 0,
+            trust: .curated, manifestRevision: 2
+        )
+        let manifest = WalletReviewManifest(
+            schemaVersion: 1, revision: 2, issuedAt: issuedAt,
+            expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
+            assets: [asset], evmContracts: [], explorerTemplates: [:],
+            adapterIDs: []
+        )
+        let registry = try WalletReviewRegistry(
+            signedManifest: signedReview(manifest, key: key),
+            publicKey: key.publicKey,
+            now: issuedAt.addingTimeInterval(1)
+        )
+        XCTAssertEqual(registry.assets, [asset])
+
+        let wrongReference = WalletAsset(
+            canonicalID: asset.canonicalID, networkID: asset.networkID,
+            chain: asset.chain, kind: asset.kind,
+            reference: WalletSolanaBase58.encode(Data(repeating: 15, count: 32)),
+            name: asset.name, symbol: asset.symbol, decimals: asset.decimals,
+            trust: asset.trust, manifestRevision: asset.manifestRevision
+        )
+        let invalid = WalletReviewManifest(
+            schemaVersion: 1, revision: 2, issuedAt: issuedAt,
+            expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
+            assets: [wrongReference], evmContracts: [], explorerTemplates: [:],
+            adapterIDs: []
+        )
+        XCTAssertThrowsError(try WalletReviewRegistry(
+            signedManifest: signedReview(invalid, key: key),
+            publicKey: key.publicKey,
+            now: issuedAt.addingTimeInterval(1)
+        ))
+    }
+
     func testPublicWalletSQLiteStorePersistsOnlyPublicRecordsAndQuarantine() throws {
         let store = try WalletPublicStore(path: ":memory:")
         let record = WalletActivityRecord(
@@ -1121,6 +1165,28 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertNil(WalletSolanaAssetIdentity.parse("solana:devnet/unknown:\(mint)"))
     }
 
+    func testSolanaCollectibleIdentityIsCanonicalAndStandardScoped() {
+        let address = WalletSolanaBase58.encode(Data(repeating: 12, count: 32))
+        let canonical = "solana:devnet/nft:core:\(address)"
+        XCTAssertEqual(
+            WalletSolanaCollectibleIdentity.parse(canonical)?.standard,
+            .core
+        )
+        XCTAssertEqual(
+            WalletSolanaCollectibleIdentity.parse(canonical)?.address,
+            address
+        )
+        XCTAssertNil(WalletSolanaCollectibleIdentity.parse(
+            "eip155:1/nft:core:\(address)"
+        ))
+        XCTAssertNil(WalletSolanaCollectibleIdentity.parse(
+            "solana:devnet/nft:unknown:\(address)"
+        ))
+        XCTAssertNil(WalletSolanaCollectibleIdentity.parse(
+            "solana:devnet/nft:core:0OIl"
+        ))
+    }
+
     func testSolanaTokenDiscoveryValidatesBothProgramsAndRawBalances() async throws {
         let owner = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
         let mint = WalletSolanaBase58.encode(Data(repeating: 4, count: 32))
@@ -1184,6 +1250,187 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(Set(requestedPrograms), Set(
             WalletSolanaTokenProgram.allCases.map(\.programID)
         ))
+    }
+
+    func testSolanaDASCollectiblesValidateOwnershipAndExcludeActiveMedia() async throws {
+        let owner = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let core = WalletSolanaBase58.encode(Data(repeating: 20, count: 32))
+        let collection = WalletSolanaBase58.encode(Data(repeating: 21, count: 32))
+        let compressed = WalletSolanaBase58.encode(Data(repeating: 22, count: 32))
+        let tokenMetadata = WalletSolanaBase58.encode(Data(repeating: 27, count: 32))
+        let unsupported = WalletSolanaBase58.encode(Data(repeating: 28, count: 32))
+        let ownership: [String: Any] = [
+            "ownership_model": "single", "owner": owner,
+            "frozen": false, "delegated": false,
+        ]
+        func item(
+            id: String, interface: String, compression: [String: Any],
+            content: [String: Any], grouping: [[String: Any]] = []
+        ) -> [String: Any] {
+            [
+                "id": id, "interface": interface, "burnt": false,
+                "ownership": ownership, "compression": compression,
+                "content": content, "grouping": grouping,
+            ]
+        }
+        var wrongOwner = item(
+            id: WalletSolanaBase58.encode(Data(repeating: 29, count: 32)),
+            interface: "MplCoreAsset", compression: ["compressed": false],
+            content: ["metadata": ["name": "Not Ours", "symbol": "NO"]]
+        )
+        wrongOwner["ownership"] = [
+            "ownership_model": "single",
+            "owner": WalletSolanaBase58.encode(Data(repeating: 31, count: 32)),
+            "frozen": false, "delegated": false,
+        ]
+        let client = makeSolanaRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any
+            switch method {
+            case "getGenesisHash":
+                result = WalletNetworkCatalog.solanaDevnet.identity.value
+            case "getAssetsByOwner":
+                let params = try XCTUnwrap(object["params"] as? [Any])
+                let query = try XCTUnwrap(params.first as? [String: Any])
+                XCTAssertEqual(query["ownerAddress"] as? String, owner)
+                XCTAssertEqual(query["page"] as? Int, 1)
+                XCTAssertEqual(query["limit"] as? Int, 100)
+                result = [
+                    "total": 5, "page": 1, "limit": 100,
+                    "items": [
+                        item(
+                            id: core, interface: "MplCoreAsset",
+                            compression: ["compressed": false],
+                            content: [
+                                "metadata": ["name": "Core Asset", "symbol": "CORE"],
+                                "json_uri": "https://metadata.example/core.json",
+                                "files": [[
+                                    "mime": "image/png",
+                                    "uri": "https://images.example/core.png",
+                                ]],
+                            ],
+                            grouping: [[
+                                "group_key": "collection", "group_value": collection,
+                            ]]
+                        ),
+                        item(
+                            id: compressed, interface: "V1_NFT",
+                            compression: [
+                                "compressed": true,
+                                "tree": WalletSolanaBase58.encode(
+                                    Data(repeating: 23, count: 32)
+                                ),
+                                "data_hash": WalletSolanaBase58.encode(
+                                    Data(repeating: 24, count: 32)
+                                ),
+                                "creator_hash": WalletSolanaBase58.encode(
+                                    Data(repeating: 25, count: 32)
+                                ),
+                                "asset_hash": WalletSolanaBase58.encode(
+                                    Data(repeating: 26, count: 32)
+                                ),
+                                "leaf_id": 3,
+                            ],
+                            content: [
+                                "metadata": ["name": "Compressed", "symbol": "CNFT"],
+                                "files": [],
+                            ]
+                        ),
+                        item(
+                            id: tokenMetadata, interface: "ProgrammableNFT",
+                            compression: ["compressed": false],
+                            content: [
+                                "metadata": [
+                                    "name": "Poisoned\u{0000}Name", "symbol": "PNFT",
+                                ],
+                                "json_uri": "javascript:alert(1)",
+                                "files": [[
+                                    "mime": "image/svg+xml",
+                                    "uri": "https://images.example/active.svg",
+                                ]],
+                            ]
+                        ),
+                        item(
+                            id: unsupported, interface: "Custom",
+                            compression: [
+                                "compressed": true,
+                                "tree": WalletSolanaBase58.encode(
+                                    Data(repeating: 32, count: 32)
+                                ),
+                                "data_hash": WalletSolanaBase58.encode(
+                                    Data(repeating: 33, count: 32)
+                                ),
+                                "creator_hash": WalletSolanaBase58.encode(
+                                    Data(repeating: 34, count: 32)
+                                ),
+                                "asset_hash": WalletSolanaBase58.encode(
+                                    Data(repeating: 35, count: 32)
+                                ),
+                                "leaf_id": 4,
+                            ],
+                            content: ["metadata": ["name": "Unknown", "symbol": "?"]]
+                        ),
+                        wrongOwner,
+                    ],
+                ]
+            default:
+                throw URLError(.unsupportedURL)
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": object["id"]!, "result": result,
+            ])
+        }
+        let collectibles = try await client.collectibles(owner: owner)
+        XCTAssertEqual(collectibles.count, 3)
+        XCTAssertEqual(
+            Set(collectibles.map(\.identity.standard)),
+            Set([.core, .bubblegum, .tokenMetadata])
+        )
+        let coreAsset = try XCTUnwrap(collectibles.first {
+            $0.identity.address == core
+        })
+        XCTAssertEqual(coreAsset.collectionAddress, collection)
+        XCTAssertEqual(coreAsset.metadataURL, "https://metadata.example/core.json")
+        XCTAssertEqual(coreAsset.rasterImageURL, "https://images.example/core.png")
+        let poisoned = try XCTUnwrap(collectibles.first {
+            $0.identity.address == tokenMetadata
+        })
+        XCTAssertTrue(poisoned.name.hasPrefix("Collectible "))
+        XCTAssertNil(poisoned.metadataURL)
+        XCTAssertNil(poisoned.rasterImageURL)
+    }
+
+    func testSolanaDASRejectsTruncatedPagination() async throws {
+        let owner = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let client = makeSolanaRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any
+            if method == "getGenesisHash" {
+                result = WalletNetworkCatalog.solanaDevnet.identity.value
+            } else {
+                XCTAssertEqual(method, "getAssetsByOwner")
+                result = ["total": 1, "page": 1, "limit": 100, "items": []]
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": object["id"]!, "result": result,
+            ])
+        }
+        do {
+            _ = try await client.collectibles(owner: owner)
+            XCTFail("A provider must not silently truncate collectible holdings.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("truncated"))
+        }
     }
 
     func testSolanaProviderPreparesAndRechecksOnlyVerifiedSPLAccounts() async throws {
@@ -1716,6 +1963,46 @@ final class WalletGatewayTests: XCTestCase {
             gateway.accountSnapshots.first(where: { $0.assetID == assetID })
         )
         XCTAssertEqual(snapshot.balanceBaseUnits, "420000000000000")
+        XCTAssertEqual(snapshot.freshness, .current)
+    }
+
+    func testGatewayQuarantinesDiscoveredSolanaCollectiblesUntilExplicitTrust() async throws {
+        let signer = FakeWalletSigner()
+        signer.accountChain = .solana
+        signer.accountNetworkIDs = [WalletNetworkCatalog.solanaDevnet.id]
+        signer.accountAddress = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let address = WalletSolanaBase58.encode(Data(repeating: 30, count: 32))
+        let assetID = "solana:devnet/nft:core:\(address)"
+        signer.discoveredAssetRows = [[
+            "asset_id": assetID,
+            "asset_kind": WalletAssetKind.collectible.rawValue,
+            "collectible_standard": WalletSolanaCollectibleStandard.core.rawValue,
+            "reference": address, "name": "Unknown Core Asset",
+            "symbol": "CORE", "balance_base_units": "1", "decimals": 0,
+            "account_count": 1, "has_frozen_account": false,
+            "delegated": false,
+        ]]
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            publicStore: try WalletPublicStore(path: ":memory:")
+        )
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        await gateway.refreshAccountSnapshots()
+        let quarantined = try XCTUnwrap(gateway.assets.first {
+            $0.id == assetID
+        })
+        XCTAssertEqual(quarantined.kind, .collectible)
+        XCTAssertEqual(quarantined.trust, .quarantined)
+        XCTAssertFalse(gateway.accountSnapshots.contains { $0.assetID == assetID })
+
+        gateway.trustQuarantinedAsset(id: assetID)
+        await gateway.refreshAccountSnapshots()
+        let snapshot = try XCTUnwrap(gateway.accountSnapshots.first {
+            $0.assetID == assetID
+        })
+        XCTAssertEqual(snapshot.balanceBaseUnits, "1")
         XCTAssertEqual(snapshot.freshness, .current)
     }
 

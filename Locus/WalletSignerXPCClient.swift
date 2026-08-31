@@ -447,9 +447,13 @@ final class XPCWalletSignerClient: WalletSignerClient {
                     "Select the matching Locus Vault Solana account."
                 )
             }
-            let tokenAccounts = try await solanaRPCClient(
-                for: networkID
-            ).tokenAccounts(owner: account.address)
+            let coordinator = try solanaRPCClient(for: networkID)
+            let tokenAccounts = try await coordinator.tokenAccounts(
+                owner: account.address
+            )
+            let collectibles = (try? await coordinator.collectibles(
+                owner: account.address
+            )) ?? []
             struct Aggregate {
                 let identity: WalletSolanaAssetIdentity
                 let decimals: Int
@@ -483,7 +487,13 @@ final class XPCWalletSignerClient: WalletSignerClient {
                     )
                 }
             }
-            let rows: [[String: Any]] = aggregates.values.sorted {
+            let tokenMetadataMints = Set(collectibles.compactMap { item in
+                item.identity.standard == .tokenMetadata
+                    ? item.identity.address : nil
+            })
+            var rows: [[String: Any]] = aggregates.values.filter {
+                !tokenMetadataMints.contains($0.identity.mint)
+            }.sorted {
                 $0.identity.canonicalID < $1.identity.canonicalID
             }.map { item in
                 [
@@ -496,8 +506,31 @@ final class XPCWalletSignerClient: WalletSignerClient {
                     "has_frozen_account": item.frozen,
                 ]
             }
+            rows.append(contentsOf: collectibles.map { item in
+                var row: [String: Any] = [
+                    "asset_id": item.identity.canonicalID,
+                    "asset_kind": WalletAssetKind.collectible.rawValue,
+                    "collectible_standard": item.identity.standard.rawValue,
+                    "reference": item.identity.address,
+                    "name": item.name,
+                    "symbol": item.symbol,
+                    "balance_base_units": "1",
+                    "decimals": 0,
+                    "account_count": 1,
+                    "has_frozen_account": item.frozen,
+                    "delegated": item.delegated,
+                ]
+                if let collection = item.collectionAddress {
+                    row["collection"] = collection
+                }
+                return row
+            })
+            rows.sort {
+                ($0["asset_id"] as? String ?? "")
+                    < ($1["asset_id"] as? String ?? "")
+            }
             return [
-                "text": "Loaded \(rows.count) Solana token assets.",
+                "text": "Loaded \(rows.count) Solana assets and collectibles.",
                 "account_id": account.id,
                 "network_id": networkID,
                 "assets": rows,

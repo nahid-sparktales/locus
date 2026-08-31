@@ -151,13 +151,16 @@ Mainnet is default-denied. A short-lived signed manifest can enable only code
 already reviewed in the build, only in counsel-approved regions, and only when
 its hashed audit/operational evidence satisfies the invited-canary or GA gate.
 The checked-in manifest enables nothing. Reviewed native-SOL, classic SPL, and
-narrowly safe Token-2022 `TransferChecked` builders plus quarantined token
-discovery are implemented, while mainnet signing remains gated. Solana token
+narrowly safe Token-2022 `TransferChecked` builders plus quarantined token and
+collectible discovery are implemented, while mainnet signing remains gated.
+Digital Asset Standard responses for Metaplex Token Metadata, Core, and
+compressed Bubblegum holdings are ownership-validated; active SVG/HTML/script
+media is never promoted as a wallet image. Solana token
 sends use the signer-derived recipient associated token account, creating it
 idempotently through an exact reviewed instruction when it is still
-unallocated. Token-2022 transfer-altering extensions, NFTs/versioned messages,
-all Sui adapters, full swaps, external wallets, and WalletConnect remain closed
-until their implementation and evidence gates pass.
+unallocated. Token-2022 transfer-altering extensions, collectible transfers,
+versioned messages, all Sui adapters, full swaps, external wallets, and
+WalletConnect remain closed until their implementation and evidence gates pass.
 
 The Mac App Store target embeds neither recovery nor signer service. See the
 [security gate](Docs/WalletSecurityGate.md),

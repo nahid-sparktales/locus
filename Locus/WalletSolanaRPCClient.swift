@@ -1015,6 +1015,222 @@ actor WalletSolanaRPCClient {
         return total
     }
 
+    /// Reads Digital Asset Standard holdings as untrusted public metadata.
+    /// Nothing returned here grants transfer authority; every unknown item
+    /// enters quarantine until the user explicitly trusts it or a signed
+    /// review manifest curates it.
+    func collectibles(owner: String) async throws -> [WalletSolanaCollectible] {
+        guard WalletSolanaBase58.decode(owner, exactLength: 32) != nil else {
+            throw WalletGateway.Error.invalidArguments(
+                "The Solana owner address is malformed."
+            )
+        }
+        _ = try await verifiedGenesisHash()
+        let limit = 100
+        var page = 1
+        var collected: [WalletSolanaCollectible] = []
+        var seen: Set<String> = []
+        var expectedTotal: UInt64?
+        var observedItemCount: UInt64 = 0
+        while page <= 100 {
+            let result = try await dictionaryResult(
+                method: "getAssetsByOwner",
+                params: [[
+                    "ownerAddress": owner,
+                    "page": page,
+                    "limit": limit,
+                    "displayOptions": [
+                        "showCollectionMetadata": true,
+                        "showFungible": false,
+                        "showNativeBalance": false,
+                        "showUnverifiedCollections": true,
+                    ],
+                ]]
+            )
+            guard let total = Self.unsigned(result["total"]), total <= 10_000,
+                  Self.unsigned(result["page"]) == UInt64(page),
+                  Self.unsigned(result["limit"]) == UInt64(limit),
+                  let items = result["items"] as? [Any], items.count <= limit else {
+                throw WalletRPCError.invalidResponse(
+                    "getAssetsByOwner returned invalid pagination evidence"
+                )
+            }
+            guard expectedTotal == nil || expectedTotal == total,
+                  observedItemCount + UInt64(items.count) <= total else {
+                throw WalletRPCError.invalidResponse(
+                    "getAssetsByOwner changed its pagination boundary"
+                )
+            }
+            expectedTotal = total
+            observedItemCount += UInt64(items.count)
+            for item in items {
+                guard let collectible = try? parseCollectible(
+                    item, expectedOwner: owner
+                ) else { continue }
+                guard seen.insert(collectible.id).inserted else {
+                    throw WalletRPCError.invalidResponse(
+                        "getAssetsByOwner returned a duplicate asset"
+                    )
+                }
+                collected.append(collectible)
+            }
+            if observedItemCount == total { break }
+            guard items.count == limit else {
+                throw WalletRPCError.invalidResponse(
+                    "getAssetsByOwner truncated a holdings page"
+                )
+            }
+            page += 1
+        }
+        guard let expectedTotal, observedItemCount == expectedTotal else {
+            throw WalletRPCError.invalidResponse(
+                "getAssetsByOwner exceeded the bounded holdings window"
+            )
+        }
+        return collected.sorted { $0.id < $1.id }
+    }
+
+    private func parseCollectible(
+        _ value: Any,
+        expectedOwner: String
+    ) throws -> WalletSolanaCollectible {
+        guard let item = value as? [String: Any], item.count <= 32,
+              let address = item["id"] as? String,
+              WalletSolanaBase58.decode(address, exactLength: 32) != nil,
+              let interface = item["interface"] as? String,
+              let ownership = item["ownership"] as? [String: Any],
+              ownership["owner"] as? String == expectedOwner,
+              ownership["ownership_model"] as? String == "single",
+              let frozen = ownership["frozen"] as? Bool,
+              let delegated = ownership["delegated"] as? Bool,
+              item["burnt"] as? Bool == false,
+              let compression = item["compression"] as? [String: Any],
+              let compressed = compression["compressed"] as? Bool else {
+            throw WalletRPCError.invalidResponse(
+                "The DAS collectible identity or ownership is malformed."
+            )
+        }
+        let tokenMetadataInterfaces = ["V1_NFT", "V2_NFT", "ProgrammableNFT"]
+        let standard: WalletSolanaCollectibleStandard
+        if compressed {
+            guard tokenMetadataInterfaces.contains(interface),
+                  Self.validCompressedEvidence(compression) else {
+                throw WalletRPCError.invalidResponse(
+                    "The compressed collectible proof identity is malformed."
+                )
+            }
+            standard = .bubblegum
+        } else if interface == "MplCoreAsset" {
+            standard = .core
+        } else if tokenMetadataInterfaces.contains(interface) {
+            standard = .tokenMetadata
+        } else {
+            throw WalletRPCError.invalidResponse(
+                "The DAS interface is not a reviewed collectible standard."
+            )
+        }
+
+        let content = item["content"] as? [String: Any]
+        let metadata = content?["metadata"] as? [String: Any]
+        let fallback = "Collectible \(address.prefix(4))…\(address.suffix(4))"
+        let name = Self.safeMetadataText(
+            metadata?["name"], maximumLength: 128
+        ) ?? fallback
+        let symbol = Self.safeMetadataText(
+            metadata?["symbol"], maximumLength: 32
+        ) ?? "NFT"
+        let metadataURL = Self.safeHTTPSURL(content?["json_uri"])
+        let rasterImageURL = Self.safeRasterImageURL(content?["files"])
+        let collectionAddress = try Self.collectionAddress(item["grouping"])
+        let identity = WalletSolanaCollectibleIdentity(
+            networkID: network.id, standard: standard, address: address
+        )
+        return WalletSolanaCollectible(
+            identity: identity, name: name, symbol: symbol,
+            collectionAddress: collectionAddress, metadataURL: metadataURL,
+            rasterImageURL: rasterImageURL, frozen: frozen,
+            delegated: delegated
+        )
+    }
+
+    private static func validCompressedEvidence(_ value: [String: Any]) -> Bool {
+        guard let tree = value["tree"] as? String,
+              WalletSolanaBase58.decode(tree, exactLength: 32) != nil,
+              unsigned(value["leaf_id"]) != nil else { return false }
+        for key in ["data_hash", "creator_hash", "asset_hash"] {
+            guard let hash = value[key] as? String,
+                  WalletSolanaBase58.decode(hash, exactLength: 32) != nil else {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func collectionAddress(_ value: Any?) throws -> String? {
+        guard let value else { return nil }
+        guard let groups = value as? [Any], groups.count <= 64 else {
+            throw WalletRPCError.invalidResponse(
+                "The collectible collection metadata is malformed."
+            )
+        }
+        var collection: String?
+        for raw in groups {
+            guard let group = raw as? [String: Any],
+                  let key = group["group_key"] as? String,
+                  let address = group["group_value"] as? String else {
+                throw WalletRPCError.invalidResponse(
+                    "The collectible grouping is malformed."
+                )
+            }
+            if key == "collection" {
+                guard collection == nil,
+                      WalletSolanaBase58.decode(address, exactLength: 32) != nil else {
+                    throw WalletRPCError.invalidResponse(
+                        "The collectible collection identity is ambiguous."
+                    )
+                }
+                collection = address
+            }
+        }
+        return collection
+    }
+
+    private static func safeMetadataText(
+        _ value: Any?, maximumLength: Int
+    ) -> String? {
+        guard let value = value as? String else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= maximumLength,
+              !trimmed.unicodeScalars.contains(where: {
+                CharacterSet.controlCharacters.contains($0)
+              }) else { return nil }
+        return trimmed
+    }
+
+    private static func safeHTTPSURL(_ value: Any?) -> String? {
+        guard let value = value as? String, value.utf8.count <= 2_048,
+              let url = URL(string: value), url.scheme?.lowercased() == "https",
+              url.user == nil, url.password == nil, url.host != nil else {
+            return nil
+        }
+        return url.absoluteString
+    }
+
+    private static func safeRasterImageURL(_ value: Any?) -> String? {
+        guard let files = value as? [Any], files.count <= 64 else { return nil }
+        let allowed = Set([
+            "image/png", "image/jpeg", "image/webp", "image/avif",
+        ])
+        for raw in files {
+            guard let file = raw as? [String: Any],
+                  let mime = file["mime"] as? String,
+                  allowed.contains(mime.lowercased()),
+                  let url = safeHTTPSURL(file["uri"]) else { continue }
+            return url
+        }
+        return nil
+    }
+
     private func mintEvidence(
         identity: WalletSolanaAssetIdentity
     ) async throws -> (decimals: Int, extensions: [String]) {
@@ -1526,6 +1742,14 @@ actor WalletSolanaProviderCoordinator {
         catch {
             guard let fallback else { throw error }
             return try await fallback.tokenBalance(identity: identity, owner: owner)
+        }
+    }
+
+    func collectibles(owner: String) async throws -> [WalletSolanaCollectible] {
+        do { return try await primary.collectibles(owner: owner) }
+        catch {
+            guard let fallback else { throw error }
+            return try await fallback.collectibles(owner: owner)
         }
     }
 
