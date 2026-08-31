@@ -117,9 +117,23 @@ enum WalletLaunchApproval: String, Codable, CaseIterable, Hashable, Sendable {
     case signedUpdateFeed = "signed_update_feed"
 }
 
+enum WalletReleaseStage: String, Codable, CaseIterable, Sendable {
+    case invitedCanary = "invited_canary"
+    case generalAvailability = "general_availability"
+
+    fileprivate var authorityRank: Int {
+        switch self {
+        case .invitedCanary: 0
+        case .generalAvailability: 1
+        }
+    }
+}
+
 struct WalletCapabilityManifest: Codable, Equatable, Sendable {
     let schemaVersion: Int
     let revision: Int
+    let releaseStage: WalletReleaseStage
+    let evidenceIndexSHA256: String
     let issuedAt: Date
     let expiresAt: Date
     let enabledNetworkIDs: Set<String>
@@ -141,6 +155,7 @@ enum WalletLaunchGateError: LocalizedError, Equatable {
     case capabilityNotReviewed
     case regionNotApproved
     case approvalsIncomplete(Set<WalletLaunchApproval>)
+    case generalAvailabilityNotApproved
 
     var errorDescription: String? {
         switch self {
@@ -152,6 +167,8 @@ enum WalletLaunchGateError: LocalizedError, Equatable {
         case .regionNotApproved: "This capability is unavailable in the current region."
         case .approvalsIncomplete(let missing):
             "Wallet launch approvals are incomplete: \(missing.map(\.rawValue).sorted().joined(separator: ", "))."
+        case .generalAvailabilityNotApproved:
+            "This build is approved only for the invited mainnet canary, not public GA."
         }
     }
 }
@@ -161,6 +178,10 @@ enum WalletLaunchGateError: LocalizedError, Equatable {
 /// remote response from enabling code that was not shipped as reviewed.
 struct WalletLaunchGate: Sendable {
     static let requiredGAApprovals = Set(WalletLaunchApproval.allCases)
+    static let requiredCanaryApprovals: Set<WalletLaunchApproval> = [
+        .signerAudit, .applicationPenetrationTest, .legalRegionalMatrix,
+        .providerFailoverLoadTest, .incidentDrill, .notarizedArtifact, .signedUpdateFeed,
+    ]
 
     let bundledNetworks: [String: WalletNetworkDescriptor]
     let effectiveManifest: WalletCapabilityManifest?
@@ -177,9 +198,15 @@ struct WalletLaunchGate: Sendable {
             return
         }
         guard let publicKey,
-              signedManifest.manifest.schemaVersion == 1,
+              signedManifest.manifest.schemaVersion == 2,
               signedManifest.manifest.revision > 0,
-              signedManifest.manifest.issuedAt <= now else {
+              signedManifest.manifest.issuedAt <= now,
+              signedManifest.manifest.expiresAt
+                > signedManifest.manifest.issuedAt,
+              signedManifest.manifest.evidenceIndexSHA256.count == 64,
+              signedManifest.manifest.evidenceIndexSHA256.utf8.allSatisfy({ byte in
+                  (48...57).contains(byte) || (97...102).contains(byte)
+              }) else {
             throw WalletLaunchGateError.invalidManifest
         }
         let encoder = JSONEncoder()
@@ -226,6 +253,10 @@ struct WalletLaunchGate: Sendable {
         let combined = WalletCapabilityManifest(
             schemaVersion: bundled.schemaVersion,
             revision: restriction.revision,
+            releaseStage: restriction.releaseStage.authorityRank
+                < bundled.releaseStage.authorityRank
+                ? restriction.releaseStage : bundled.releaseStage,
+            evidenceIndexSHA256: bundled.evidenceIndexSHA256,
             issuedAt: max(bundled.issuedAt, restriction.issuedAt),
             expiresAt: min(bundled.expiresAt, restriction.expiresAt),
             enabledNetworkIDs: bundled.enabledNetworkIDs
@@ -246,7 +277,7 @@ struct WalletLaunchGate: Sendable {
         networkID: String,
         capability: WalletNetworkCapability,
         regionCode: String,
-        requireGA: Bool = true
+        requireGA: Bool = false
     ) throws {
         guard let network = bundledNetworks[networkID] else {
             throw WalletLaunchGateError.networkNotReviewed
@@ -262,11 +293,14 @@ struct WalletLaunchGate: Sendable {
         guard manifest.approvedRegions.contains(regionCode.uppercased()) else {
             throw WalletLaunchGateError.regionNotApproved
         }
-        if requireGA {
-            let missing = Self.requiredGAApprovals.subtracting(manifest.completedApprovals)
-            guard missing.isEmpty else {
-                throw WalletLaunchGateError.approvalsIncomplete(missing)
-            }
+        if requireGA, manifest.releaseStage != .generalAvailability {
+            throw WalletLaunchGateError.generalAvailabilityNotApproved
+        }
+        let required = manifest.releaseStage == .generalAvailability
+            ? Self.requiredGAApprovals : Self.requiredCanaryApprovals
+        let missing = required.subtracting(manifest.completedApprovals)
+        guard missing.isEmpty else {
+            throw WalletLaunchGateError.approvalsIncomplete(missing)
         }
     }
 }

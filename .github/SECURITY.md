@@ -11,6 +11,10 @@ We aim to acknowledge a report within three working days and to tell you
 whether we consider it in scope within a week. Please give us a reasonable
 window to ship a fix before publishing.
 
+Locus Vault reports should never include a real recovery phrase, private key,
+or raw Keychain item. Wallet-specific scope and the pre-GA reward-policy status
+are documented in [WalletVulnerabilityRewards.md](../Docs/WalletVulnerabilityRewards.md).
+
 ## Supported versions
 
 Only the latest release receives fixes. Locus is distributed as a notarized
@@ -54,6 +58,10 @@ In scope:
 - Credential handling beyond the accepted trade-off above.
 - The release pipeline: signing, notarization, or the distribution audit
   accepting something it should reject.
+- Locus Vault recovery/signer isolation, unauthorized signing or policy-budget
+  bypass, semantic decoder/effect mismatch, provider-chain substitution,
+  browser or WalletConnect identity escape, capability-manifest widening, and
+  quarantined-media sandbox escape.
 
 Out of scope:
 

@@ -23,8 +23,6 @@ struct WalletSettingsView: View {
     @Binding var rpcURL: String
     @Binding var alphaEnabled: Bool
     @Binding var browserEnabled: Bool
-    @State private var recoveryPresented = false
-    @State private var restorePresented = false
     @State private var deletePresented = false
     @State private var deleteRecoveryPresented = false
     @State private var policyPresented = false
@@ -73,16 +71,10 @@ struct WalletSettingsView: View {
                 alphaEnabled = true
             }
         }
-        .sheet(isPresented: $recoveryPresented) {
-            if let creation = gateway.vaultCreation {
-                WalletVaultBackupSheet(gateway: gateway, creation: creation)
-            }
-        }
         .sheet(isPresented: $deletePresented) { WalletVaultDeleteSheet(gateway: gateway) }
         .sheet(isPresented: $deleteRecoveryPresented) {
             WalletRecoveryVaultDeleteSheet(gateway: gateway)
         }
-        .sheet(isPresented: $restorePresented) { WalletVaultRestoreSheet(gateway: gateway) }
         .sheet(isPresented: $policyPresented) { WalletNativePolicySheet(gateway: gateway) }
         .sheet(isPresented: $registryPresented) { WalletContractRegistrySheet(gateway: gateway) }
         .sheet(item: $receiveSnapshot) { snapshot in
@@ -340,14 +332,14 @@ struct WalletSettingsView: View {
                 .font(.body)
                 .foregroundStyle(LocusTheme.textSecondary)
             Button("Create Locus Vault") {
-                Task {
-                    if await gateway.beginVaultCreation() != nil { recoveryPresented = true }
-                }
+                Task { _ = await gateway.beginVaultCreation() }
             }
             .buttonStyle(.borderedProminent)
             .tint(LocusTheme.ink)
             .accessibilityIdentifier("settings.wallet.create")
-            Button("Restore from 24 Words") { restorePresented = true }
+            Button("Restore from 24 Words") {
+                Task { _ = await gateway.beginVaultRestoration() }
+            }
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("settings.wallet.restore")
         }
@@ -359,18 +351,8 @@ struct WalletSettingsView: View {
                 .font(.title3.weight(.semibold))
             Text("The vault cannot be used until the requested recovery words are confirmed.")
                 .foregroundStyle(LocusTheme.textSecondary)
-            if gateway.vaultCreation != nil {
-                Button("Continue Backup") { recoveryPresented = true }
-                    .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
-            } else {
-                Button("Restart Setup") {
-                    Task {
-                        await gateway.cancelVaultCreation()
-                        if await gateway.beginVaultCreation() != nil { recoveryPresented = true }
-                    }
-                }
-            }
+            ProgressView("The isolated recovery window owns phrase display and verification.")
+                .controlSize(.small)
         }
     }
 
@@ -381,9 +363,7 @@ struct WalletSettingsView: View {
             Text("Your earlier preview vault remains encrypted and recovery-only. Mainnet signing stays disabled until you create and verify a new production recovery phrase.")
                 .foregroundStyle(LocusTheme.textSecondary)
             Button("Create Production Recovery Phrase") {
-                Task {
-                    if await gateway.beginMainnetRotation() != nil { recoveryPresented = true }
-                }
+                Task { _ = await gateway.beginMainnetRotation() }
             }
             .buttonStyle(.borderedProminent)
             .tint(LocusTheme.ink)
@@ -610,6 +590,8 @@ struct WalletSettingsView: View {
                     Divider()
                     advancedDiagnostics
                     Divider()
+                    walletHelpAndDisclosures
+                    Divider()
                     Button("Delete Locus Vault", role: .destructive) { deletePresented = true }
                         .disabled(gateway.vaultState == .missing)
                         .accessibilityIdentifier("settings.wallet.delete")
@@ -673,6 +655,28 @@ struct WalletSettingsView: View {
                 .font(.caption)
                 .foregroundStyle(LocusTheme.textTertiary)
         }
+    }
+
+    private var walletHelpAndDisclosures: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Help and Disclosures").font(.headline)
+            Link("Recovery guide", destination: walletDocumentURL("WalletRecoveryGuide.md"))
+            Link("Wallet terms", destination: walletDocumentURL("WalletTerms.md"))
+            Link("Wallet privacy", destination: walletDocumentURL("WalletPrivacy.md"))
+            Link("Provider disclosures", destination: walletDocumentURL("WalletProviderDisclosures.md"))
+            Link(
+                "Support",
+                destination: URL(string: "https://github.com/nahid-sparktales/locus/issues")!
+            )
+            Link(
+                "Report a security issue privately",
+                destination: URL(string: "https://github.com/nahid-sparktales/locus/security/advisories/new")!
+            )
+        }
+    }
+
+    private func walletDocumentURL(_ name: String) -> URL {
+        URL(string: "https://github.com/nahid-sparktales/locus/blob/main/Docs/\(name)")!
     }
 
     private var advancedContracts: some View {
@@ -1383,148 +1387,6 @@ private struct WalletContractRegistrySheet: View {
             reviewedAdapterID: nil
         )
         Task { if await gateway.addContractRegistryEntry(draft) { dismiss() } }
-    }
-}
-
-private struct WalletVaultBackupSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject var gateway: WalletGateway
-    let creation: WalletVaultCreation
-    @State private var confirming = false
-    @State private var answers: [Int: String] = [:]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(confirming ? "Confirm your recovery phrase" : "Write down these 24 words")
-                .font(.title2.weight(.bold))
-            Text(confirming
-                 ? "Enter the six requested words. Paste and clipboard actions are disabled."
-                 : "This is the only time Locus shows the phrase. Keep it offline and private.")
-                .font(.body).foregroundStyle(LocusTheme.muted)
-            if !confirming {
-                Text("This phrase belongs only to Locus Vault. Never enter a MetaMask, Phantom, Slush, or other wallet phrase here. Standard recovery paths: EVM m/44'/60'/0'/0/0 · Solana m/44'/501'/0'/0' · Sui m/44'/784'/0'/0'/0'.")
-                    .font(.callout).foregroundStyle(LocusTheme.warning)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if confirming {
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                    ForEach(creation.verificationIndices, id: \.self) { index in
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Word \(index + 1)").font(.callout.weight(.semibold))
-                            WalletNoPasteSecureField(text: Binding(
-                                get: { answers[index] ?? "" }, set: { answers[index] = $0 }
-                            )).frame(height: 24)
-                        }
-                    }
-                }
-            } else {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 8) {
-                    ForEach(Array(creation.words.enumerated()), id: \.offset) { index, word in
-                        HStack(spacing: 5) {
-                            Text("\(index + 1).").foregroundStyle(LocusTheme.textTertiary)
-                            Text(word).fontWeight(.semibold)
-                            Spacer()
-                        }
-                        .font(LocusType.monoCaption).padding(6)
-                        .background(LocusTheme.surfaceCard).clipShape(RoundedRectangle(cornerRadius: 6))
-                    }
-                }
-            }
-            HStack {
-                Button("Cancel", role: .cancel) { Task { await gateway.cancelVaultCreation(); dismiss() } }
-                Spacer()
-                if confirming {
-                    Button("Activate vault") {
-                        Task { if await gateway.confirmVaultBackup(wordsByIndex: answers) { dismiss() } }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(creation.verificationIndices.contains { (answers[$0] ?? "").isEmpty })
-                } else {
-                    Button("I saved all 24 words") { confirming = true }.buttonStyle(.borderedProminent)
-                }
-            }
-            if let error = gateway.lastError { Text(error).font(.callout).foregroundStyle(LocusTheme.coral) }
-        }
-        .padding(22).frame(width: 620).interactiveDismissDisabled()
-    }
-}
-
-private struct WalletNoPasteSecureField: NSViewRepresentable {
-    @Binding var text: String
-    final class Field: NSSecureTextField {
-        override func performKeyEquivalent(with event: NSEvent) -> Bool {
-            if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "v" { return true }
-            return super.performKeyEquivalent(with: event)
-        }
-    }
-    final class Coordinator: NSObject, NSTextFieldDelegate {
-        var parent: WalletNoPasteSecureField
-        init(_ parent: WalletNoPasteSecureField) { self.parent = parent }
-        func controlTextDidChange(_ notification: Notification) {
-            if let field = notification.object as? NSTextField { parent.text = field.stringValue }
-        }
-    }
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-    func makeNSView(context: Context) -> Field {
-        let field = Field(); field.delegate = context.coordinator
-        field.isAutomaticTextCompletionEnabled = false
-        field.menu = NSMenu()
-        return field
-    }
-    func updateNSView(_ view: Field, context: Context) {
-        if view.stringValue != text { view.stringValue = text }
-        context.coordinator.parent = self
-    }
-}
-
-private struct WalletVaultRestoreSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject var gateway: WalletGateway
-    @State private var words = Array(repeating: "", count: 24)
-    @State private var restoring = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Restore Locus Vault").font(.title2.weight(.semibold))
-            Text("Enter the 24 words in order. Paste, autocomplete, and spell-check are disabled. The phrase is sent over the typed local wallet channel and is never persisted as public wallet metadata.")
-                .foregroundStyle(LocusTheme.textSecondary)
-            LazyVGrid(
-                columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3),
-                spacing: 10
-            ) {
-                ForEach(words.indices, id: \.self) { index in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Word \(index + 1)")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(LocusTheme.textTertiary)
-                        WalletNoPasteSecureField(text: $words[index]).frame(height: 24)
-                    }
-                }
-            }
-            HStack {
-                Button("Cancel", role: .cancel) { dismiss() }
-                Spacer()
-                if restoring { ProgressView().controlSize(.small) }
-                Button("Restore Vault") {
-                    restoring = true
-                    Task {
-                        let restored = await gateway.restoreVault(words: words)
-                        restoring = false
-                        if restored { dismiss() }
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(restoring || words.contains { word in
-                    word.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                })
-            }
-            if let error = gateway.lastError {
-                Text(error).font(.callout).foregroundStyle(LocusTheme.coral)
-            }
-        }
-        .padding(22)
-        .frame(width: 680)
-        .interactiveDismissDisabled(restoring)
     }
 }
 

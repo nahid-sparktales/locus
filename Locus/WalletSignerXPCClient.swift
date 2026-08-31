@@ -65,26 +65,37 @@ final class XPCWalletSignerClient: WalletSignerClient {
         return status
     }
 
-    func beginVaultCreation() async throws -> WalletVaultCreation {
-        try await call { proxy, reply in proxy.beginCreateVault(reply: reply) }
+    func beginRecoveryCeremony(
+        mode: WalletRecoveryCeremonyMode
+    ) async throws -> WalletRecoveryCeremonyLaunch {
+        let request = try encoder.encode(WalletRecoveryCeremonyRequest(mode: mode))
+        let response: (Data, NSXPCListenerEndpoint?) = try await withCheckedThrowingContinuation {
+            continuation in
+            let gate = WalletXPCReplyGate()
+            do {
+                let proxy = try remoteProxy(errorHandler: { error in
+                    if gate.take() { continuation.resume(throwing: error) }
+                })
+                proxy.beginRecoveryCeremony(request) { data, endpoint in
+                    if gate.take() { continuation.resume(returning: (data, endpoint)) }
+                }
+            } catch {
+                if gate.take() { continuation.resume(throwing: error) }
+            }
+        }
+        if let failure = try? decoder.decode(WalletSignerErrorPayload.self, from: response.0) {
+            throw NSError(
+                domain: "WalletSigner", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: failure.error]
+            )
+        }
+        let handle = try decoder.decode(WalletRecoveryCeremonyHandle.self, from: response.0)
+        guard let endpoint = response.1 else { throw WalletGateway.Error.signerUnavailable }
+        return WalletRecoveryCeremonyLaunch(handle: handle, signerEndpoint: endpoint)
     }
 
-    func beginMainnetRotation() async throws -> WalletVaultCreation {
-        try await call { proxy, reply in proxy.beginRotateForMainnet(reply: reply) }
-    }
-
-    func confirmVaultBackup(_ confirmation: WalletBackupConfirmation) async throws -> WalletSignerStatus {
-        let data = try encoder.encode(confirmation)
-        return try await call { proxy, reply in proxy.confirmBackup(data, reply: reply) }
-    }
-
-    func cancelVaultCreation() async throws -> WalletSignerStatus {
-        try await call { proxy, reply in proxy.cancelCreateVault(reply: reply) }
-    }
-
-    func restoreVault(words: [String]) async throws -> WalletSignerStatus {
-        let data = try encoder.encode(WalletVaultRestoreRequest(words: words))
-        return try await call { proxy, reply in proxy.restoreVault(data, reply: reply) }
+    func cancelRecoveryCeremony(id: String) async throws -> WalletSignerStatus {
+        try await call { proxy, reply in proxy.cancelRecoveryCeremony(id, reply: reply) }
     }
 
     func deleteVault(confirmation: String) async throws -> WalletSignerStatus {

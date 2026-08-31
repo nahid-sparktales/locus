@@ -660,19 +660,43 @@ enum WalletVaultCreationPurpose: String, Codable, Sendable {
     case rotateForMainnet = "rotate_for_mainnet"
 }
 
-struct WalletVaultCreation: Codable, Equatable, Sendable {
-    let words: [String]
-    /// Six zero-based word positions selected with secure randomness.
-    let verificationIndices: [Int]
-    var purpose: WalletVaultCreationPurpose = .create
+enum WalletRecoveryCeremonyMode: String, Codable, Equatable, Sendable {
+    case create
+    case rotateForMainnet = "rotate_for_mainnet"
+    case restore
+
+    var creationPurpose: WalletVaultCreationPurpose? {
+        switch self {
+        case .create: .create
+        case .rotateForMainnet: .rotateForMainnet
+        case .restore: nil
+        }
+    }
 }
 
-struct WalletBackupConfirmation: Codable, Equatable, Sendable {
-    let wordsByIndex: [Int: String]
+struct WalletRecoveryCeremonyRequest: Codable, Equatable, Sendable {
+    let mode: WalletRecoveryCeremonyMode
 }
 
-struct WalletVaultRestoreRequest: Codable, Equatable, Sendable {
-    let words: [String]
+struct WalletRecoveryCeremonyHandle: Codable, Equatable, Sendable {
+    let id: String
+    let mode: WalletRecoveryCeremonyMode
+}
+
+enum WalletRecoveryCeremonyOutcome: String, Codable, Equatable, Sendable {
+    case completed
+    case canceled
+    case failed
+}
+
+/// The only recovery-service result returned to the main Locus process. It
+/// contains ceremony state and public account metadata, never phrase words or
+/// entropy.
+struct WalletRecoveryCeremonyResult: Codable, Equatable, Sendable {
+    let ceremonyID: String
+    let outcome: WalletRecoveryCeremonyOutcome
+    let signerStatus: WalletSignerStatus?
+    let error: String?
 }
 
 struct WalletSignerErrorPayload: Codable, Equatable, Sendable {
@@ -684,11 +708,11 @@ struct WalletSignerErrorPayload: Codable, Equatable, Sendable {
 /// selector spelling and allowed classes cannot silently widen the protocol.
 @objc protocol WalletSignerXPCProtocol {
     func status(reply: @escaping (Data) -> Void)
-    func beginCreateVault(reply: @escaping (Data) -> Void)
-    func beginRotateForMainnet(reply: @escaping (Data) -> Void)
-    func confirmBackup(_ request: Data, reply: @escaping (Data) -> Void)
-    func cancelCreateVault(reply: @escaping (Data) -> Void)
-    func restoreVault(_ request: Data, reply: @escaping (Data) -> Void)
+    func beginRecoveryCeremony(
+        _ request: Data,
+        reply: @escaping (Data, NSXPCListenerEndpoint?) -> Void
+    )
+    func cancelRecoveryCeremony(_ ceremonyID: String, reply: @escaping (Data) -> Void)
     func authorizeSession(_ reason: String, reply: @escaping (Data) -> Void)
     func listAccounts(reply: @escaping (Data) -> Void)
     func encodeEVMContract(_ request: Data, reply: @escaping (Data) -> Void)
@@ -710,4 +734,29 @@ struct WalletSignerErrorPayload: Codable, Equatable, Sendable {
     func lock(reply: @escaping (Data) -> Void)
     func deleteVault(_ confirmation: String, reply: @escaping (Data) -> Void)
     func deleteRecoveryVault(_ confirmation: String, reply: @escaping (Data) -> Void)
+}
+
+/// This interface exists only on the signer's anonymous, one-time listener.
+/// The listener accepts the signed WalletRecovery service and rejects Locus,
+/// web content, agents, and unrelated local processes.
+@objc protocol WalletRecoveryBrokerXPCProtocol {
+    func creationMaterial(_ ceremonyID: String, reply: @escaping (Data) -> Void)
+    func confirmBackup(
+        _ ceremonyID: String, confirmation: Data, reply: @escaping (Data) -> Void
+    )
+    func restoreVault(
+        _ ceremonyID: String, request: Data, reply: @escaping (Data) -> Void
+    )
+    func cancel(_ ceremonyID: String, reply: @escaping (Data) -> Void)
+}
+
+/// The main app may only ask the isolated view service to present a ceremony.
+/// Secret inputs and phrase display stay in that process and travel directly
+/// to the signer broker endpoint.
+@objc protocol WalletRecoveryServiceXPCProtocol {
+    func presentCeremony(
+        _ handle: Data,
+        signerEndpoint: NSXPCListenerEndpoint,
+        reply: @escaping (Data) -> Void
+    )
 }

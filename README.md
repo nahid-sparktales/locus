@@ -138,42 +138,27 @@ The helpers behind ChatGPT-plan accounts are a separate download. They are large
 
 Direct-download builds from 1.14.0 onward check the stable release channel and can install signed updates when Locus quits. Mac App Store installations use the App Store update service.
 
-### Experimental Locus Vault
+### Locus Vault
 
-Direct-download builds can enable the isolated, Sepolia-only
-[Locus Vault](Docs/WalletActivation.md). It creates a separate 24-word recovery
-phrase for limited test funds and keeps signing material inside a sandboxed,
-network-isolated XPC service. Every privileged request is bound to the active
-app session and its agent or browser source; the signer rechecks the prepared
-transaction immediately before signing. Activation, setup, receiving, browser
-access, and diagnostics are handled in **Settings → Wallets** with no Terminal
-step.
+The notarized direct-download build is developing a public multichain,
+self-custodial [Locus Vault](Docs/WalletActivation.md). A network-disabled
+recovery window owns the 24-word phrase ceremony and sends entropy directly to
+the isolated signer over a single-use authenticated channel; the main app sees
+only public accounts and ceremony status. One phrase deterministically derives
+one Ethereum, Solana, and Sui account.
 
-| Area | Current boundary |
-| --- | --- |
-| Vault | Creates a separate 24-word phrase and derives EVM, Solana, and Sui public accounts; decrypted keys never leave the signer |
-| Wallet Hub | Shows a locked-safe Sepolia balance/address, Receive with a locally generated ERC-681 QR, activity and Etherscan links, agent spending rules, browser origins, and progressive Advanced controls |
-| Native EVM | Sepolia transfers, exact-confirmed registered-contract calls, finite ERC-20 transfers and approvals, and one narrow Universal Router V2 exact-input path |
-| Agent spending rules | Reviewed agent actions can use signer-owned limits for contract, asset, counterparty, amount, fee, expiry, and session totals; native ETH uses exact decimal-to-wei parsing, while Advanced token rules explicitly use raw units |
-| Browser provider | Session-scoped EIP-1193/EIP-6963 access for approved origins and Sepolia native transfers only; every browser transaction requires exact confirmation |
-| Activity | Stores bounded public transaction metadata, marks uncertain broadcasts, and reconciles receipt status without retaining raw signed transactions or secrets |
-| Solana and Sui | Derived public addresses are visible, but native signing remains disabled |
-| External wallets | MetaMask/Sepolia, Phantom/devnet, and Slush/Sui-testnet connector definitions exist; live connection buttons remain disabled |
+Mainnet is default-denied. A short-lived signed manifest can enable only code
+already reviewed in the build, only in counsel-approved regions, and only when
+its hashed audit/operational evidence satisfies the invited-canary or GA gate.
+The checked-in manifest enables nothing. Solana/Sui transaction builders,
+multichain token/NFT adapters, full swaps, external wallets, and WalletConnect
+remain closed until their implementation and evidence gates pass.
 
-Locking the vault, sleeping, quitting, updating, relaunching, or losing the
-signer connection clears decrypted material, prepared transactions, origin
-grants, active policies, and spending authority while retaining public
-addresses and cached balances for receiving. Saved policy templates contain
-no authorization and must be approved again after launch. Locus does not
-import MetaMask, Phantom, or Slush recovery phrases.
-
-The feature is off by default and ignored by Mac App Store builds. EVM mainnet,
-native Solana and Sui signing, and live MetaMask, Phantom, and Slush connections
-remain security gated. MetaMask Connect on Sepolia is the recommended next
-milestone after the private alpha succeeds. See the
-[security gate](Docs/WalletSecurityGate.md) and
-[threat model](Docs/WalletThreatModel.md) for the current boundaries, reviewed
-adapters, verification requirements, and incident response plan.
+The Mac App Store target embeds neither recovery nor signer service. See the
+[security gate](Docs/WalletSecurityGate.md),
+[threat model](Docs/WalletThreatModel.md), and
+[launch readiness checklist](Docs/WalletLaunchReadiness.md) for implemented
+boundaries, remaining work, and the evidence required before public GA.
 
 ## ChatGPT plan support
 

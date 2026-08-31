@@ -104,6 +104,35 @@ targetTemplates:
         # the bundled GitHub MCP preset without a developer-only environment.
         LOCUS_GITHUB_OAUTH_CLIENT_ID: Iv23liCL3tit1VOgBjWF
 targets:
+  WalletRecoveryService:
+    type: xpc-service
+    platform: macOS
+    sources:
+      - path: WalletRecoveryService
+      - path: Locus/WalletSignerProtocol.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.WalletRecovery
+        PRODUCT_NAME: WalletRecovery
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: WalletRecoveryService/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Config/WalletRecovery.entitlements
+        ENABLE_APP_SANDBOX: YES
+        APPLICATION_EXTENSION_API_ONLY: NO
+        SKIP_INSTALL: YES
+        ARCHS: arm64
+      configs:
+        Debug:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Apple Development"
+          DEVELOPMENT_TEAM: 4X4RJA7GMD
+          ENABLE_HARDENED_RUNTIME: NO
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Developer ID Application"
+          DEVELOPMENT_TEAM: 4X4RJA7GMD
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+          ENABLE_HARDENED_RUNTIME: YES
   WalletSignerService:
     type: xpc-service
     platform: macOS
@@ -167,6 +196,9 @@ targets:
         LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL: ""
         LOCUS_WALLET_QUICKNODE_ETHEREUM_SEPOLIA_RPC_URL: ""
     dependencies:
+      - target: WalletRecoveryService
+        embed: true
+        codeSign: true
       - target: WalletSignerService
         embed: true
         codeSign: true

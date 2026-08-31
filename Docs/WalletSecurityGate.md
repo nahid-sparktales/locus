@@ -1,86 +1,75 @@
-# Locus Vault security gate
+# Locus Vault security and launch gate
 
-Locus Vault is a separate, limited-fund wallet. It does not import, extract, or impersonate Phantom, MetaMask, or Slush. Those wallets remain external approval surfaces and retain their own keys and confirmation behavior.
+Status: implementation branch; mainnet default denied
+Protocol: wallet signer v2
 
-## Current build boundary
+## Authority boundary
 
-The app and local agent contain the chain-neutral gateway, transaction-intent model, policy engine, native broker protocol, and Wallet Hub surface. Wallet tools are not advertised to a model unless all conditions are true:
+The direct-download app embeds two sandboxed XPC services:
 
-1. The build is the signed direct download, not the Mac App Store target.
-2. The isolated native `WalletSigner` service is available.
-3. The person has accepted the experimental-risk sheet and enabled the
-   persisted **Sepolia Private Alpha** setting.
+- `WalletSigner.xpc` owns entropy, derived private keys, active policies,
+  cumulative budgets, prepared intents, and final signatures. It has no network
+  entitlement and accepts only the signed Locus host.
+- `WalletRecovery.xpc` owns phrase display, backup verification, and restore
+  input. It has no network entitlement. It connects to the signer through a
+  single-use anonymous endpoint that accepts only the signed recovery service.
 
-Even then, the native gateway withholds every agent wallet tool until the signer
-has successfully authorized the current signing session. Guessed or unsolicited
-wallet broker messages are rejected while the vault is locked.
+The main app receives recovery status and public accounts, never entropy or
+phrase words. If the signer, recovery service, or their one-time channel is
+interrupted, pending recovery state is cleared and signing authority locks.
 
-Direct-download builds now ship the private, sandboxed `WalletSigner.xpc`
-service. The service has no network entitlement, seals the 256-bit vault
-entropy with AES-GCM, protects its wrapping key with device-only Keychain user
-presence, and keeps decrypted material, intents, policies, and spending rules only in
-its memory. It validates the signed Locus host before accepting XPC, creates a
-separate signer instance for every connection, requires the active session and
-request source on every privileged message, bounds pending state, and clears
-secrets when that connection ends. The Mac App Store target does not embed the
-signer.
+The signer exports typed EVM, Solana, and Sui protocol-v2 operations. Arbitrary
+digest signing, raw messages, opaque calldata, unresolved Solana instructions,
+and unknown Move calls are not exported authority. Solana and Sui transaction
+builders are fail-closed until their reviewed implementations and tests land.
 
-The in-app private-alpha and browser-provider settings are off by default.
-Disabling alpha synchronously locks the signer, withdraws the agent capability,
-cancels prepared work, revokes browser grants, and leaves the encrypted vault
-intact. Legacy environment activation migrates into these settings once and is
-not authoritative afterward. Activation, receive, and recovery instructions
-are in [WalletActivation.md](WalletActivation.md).
+## Mainnet capability manifest
 
-## Signer acceptance criteria
+Mainnet authorization is the intersection of:
 
-Before the signer can satisfy the native protocol, it must:
+1. a network and capability compiled into the app;
+2. a schema-v2 Ed25519-signed manifest valid for at most 31 days;
+3. a release stage (`invited_canary` or `general_availability`);
+4. counsel-approved regions;
+5. stage-specific completed approvals; and
+6. an evidence-index SHA-256 bound into the manifest.
 
-- Run as a sandboxed XPC service with no network entitlement.
-- Generate BIP-39 recovery material and derive distinct EVM, Solana, and Sui accounts inside the signer.
-- Seal the seed with a device-only Keychain key and require Local Authentication for each signing session.
-- Use exact-version-pinned, reviewed Rust dependencies for each chain.
-- Return only public accounts, decoded transaction data, canonical digests, simulations, and signed transaction results.
-- Wipe decrypted material on manual lock, sleep, crash/interruption, Locus quit,
-  update, and relaunch. The selected phase-one behavior has no idle timeout.
-- Recheck digest, nonce, network, fee, and expiry immediately before signing.
+The signing tool checks attributable evidence artifacts and their hashes. It
+requires zero unresolved critical/high audit findings. For GA it also enforces
+at least 30 soak days, 25 external testers, 100 successful transactions per
+chain, and zero unauthorized-signing, secret-exposure, unrecoverable-vault,
+unresolved-broadcast, or loss-producing decoder events.
 
-## Rollout
+An emergency manifest may only intersect with the bundled authority. It cannot
+silently enable a new network, capability, region, approval, release stage, or
+signing adapter.
 
-1. **Implemented for the private alpha:** in-app activation, one 24-word vault,
-   a locked-state receive flow with local ERC-681 QR generation, cached balance
-   display, EVM/Solana/Sui public accounts, native EVM Sepolia transactions,
-   signer-owned spending rules,
-   registered ABI calls with signer-owned calldata and exact confirmation, and
-   a session-scoped EIP-1193/EIP-6963 provider for Sepolia native transfers.
-2. **Implemented behind experimental gates:** signer-derived ERC-20 semantics
-   and a separate, narrow Universal Router V2 exact-input adapter, each with
-   exact contract, asset, counterparty, fee, cumulative allowance, and expiry
-   constraints. Unknown effects and unlimited approvals stay exact-confirmation.
-3. **Recommended next milestone after alpha exit:** MetaMask Connect on
-   Sepolia, preserving the external wallet's keys and confirmation surface.
-   Phantom Connect on devnet and Slush Wallet Standard on Sui testnet remain
-   unavailable future capabilities.
-4. **Security gated:** EVM mainnet and every live external-wallet connection.
-5. **Security gated:** native Solana/Sui signing and live Phantom/Slush connections.
+## Implemented foundation
 
-Each mainnet gate remains off until local-chain integration tests, dependency and SBOM review, secret scanning, threat-model review, and an external security audit have passed.
+- Deterministic 24-word recovery and one EVM/Solana/Sui public account.
+- Production-vault rotation with the earlier vault retained recovery-only.
+- Five-minute default idle lock, configurable to 30 minutes.
+- EVM chain identity checks, EIP-1559 construction, simulation/recheck, exact
+  confirmation, signer-owned policies, and single-provider broadcast.
+- Alchemy primary, QuickNode fallback, optional user endpoint, provider identity
+  checks, and critical preparation-evidence comparison.
+- Versioned SQLite public store for activity, assets, contacts, and connections.
+- Network-scoped EIP-1193/EIP-6963 browser grants; opaque message and typed-data
+  signing remain rejected.
+- Signed capability tooling and release packaging checks for recovery/signer
+  entitlements, provider configuration, release stage, and evidence binding.
 
-## Private-alpha exit criteria
+## Still closed
 
-The next milestone stays closed until 3–5 invited testers can set up and
-receive without Terminal or external instructions, and at least 20
-limited-fund Sepolia transactions complete across agent and browser paths.
-There must be no unauthorized signing, replay, secret exposure,
-unrecoverable stuck state, or unresolved broadcast ambiguity. Public beta,
-external-wallet enablement, and every mainnet gate still require an external
-security audit.
+The code intentionally does not claim GA. These capabilities stay disabled
+until their implementation and evidence gates pass:
 
-The current RustSec audit reports no vulnerability advisories. It does report
-two transitive maintenance warnings (`derivative` 2.2.0 and `paste` 1.0.15);
-those crates are captured in the locked SBOM and must be removed or explicitly
-accepted during the dependency review before any mainnet gate can open.
+- production Solana and Sui builders, signing, provider execution, token/NFT
+  indexing, and local-chain suites;
+- full v2/v3/v4 Universal Router, Jupiter `/build`, and pinned Cetus V3 swaps;
+- live MetaMask, Phantom, Slush, and Reown WalletKit sessions;
+- full inbound activity/indexer reconciliation and signed asset manifests;
+- external audits, counsel approval, capacity testing, canary, soak, staffing,
+  incident drill, notarization, and signed-update verification.
 
-The formal trust boundaries, adapter language, adversarial checks, release
-criteria, and incident procedure are in
-[WalletThreatModel.md](WalletThreatModel.md).
+No manifest should be signed merely to make an incomplete feature visible.

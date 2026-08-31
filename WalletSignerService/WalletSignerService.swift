@@ -3,6 +3,22 @@ import Foundation
 import LocalAuthentication
 import Security
 
+/// Recovery-secret wire models intentionally live in the signer target rather
+/// than the shared protocol source compiled into the main Locus process.
+private struct WalletVaultCreation: Codable, Equatable, Sendable {
+    let words: [String]
+    let verificationIndices: [Int]
+    var purpose: WalletVaultCreationPurpose = .create
+}
+
+private struct WalletBackupConfirmation: Codable, Equatable, Sendable {
+    let wordsByIndex: [Int: String]
+}
+
+private struct WalletVaultRestoreRequest: Codable, Equatable, Sendable {
+    let words: [String]
+}
+
 @_silgen_name("locus_wallet_generate_vault_json")
 private func rustGenerateVault() -> UnsafeMutablePointer<CChar>?
 
@@ -84,6 +100,25 @@ private struct SignerActivePolicy {
 
     var status: WalletActivePolicyStatus {
         WalletActivePolicyStatus(policy: policy, spentBaseUnits: spentBaseUnits)
+    }
+}
+
+private final class WalletRecoveryCeremonyContext {
+    let id: String
+    let mode: WalletRecoveryCeremonyMode
+    let listener: NSXPCListener
+    let delegate: WalletRecoveryBrokerListenerDelegate
+
+    init(
+        id: String,
+        mode: WalletRecoveryCeremonyMode,
+        listener: NSXPCListener,
+        delegate: WalletRecoveryBrokerListenerDelegate
+    ) {
+        self.id = id
+        self.mode = mode
+        self.listener = listener
+        self.delegate = delegate
     }
 }
 
@@ -316,6 +351,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     private var activePolicies: [String: SignerActivePolicy] = [:]
     private var pendingPresenceIntents: Set<String> = []
     private var policyPresencePending = false
+    private var recoveryCeremony: WalletRecoveryCeremonyContext?
 
     override init() {
         launchGate = Self.loadLaunchGate()
@@ -334,93 +370,57 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         queue.async { reply(self.encoded(self.currentStatus())) }
     }
 
-    func beginCreateVault(reply: @escaping (Data) -> Void) {
-        queue.async {
-            guard !self.store.exists, !self.store.legacyExists else {
-                return reply(self.error("A Locus Vault already exists."))
-            }
-            self.beginVaultCeremony(purpose: .create, reply: reply)
-        }
-    }
-
-    func beginRotateForMainnet(reply: @escaping (Data) -> Void) {
-        queue.async {
-            guard self.store.legacyExists, !self.store.exists else {
-                return reply(self.error("No private-alpha vault requires mainnet rotation."))
-            }
-            self.beginVaultCeremony(purpose: .rotateForMainnet, reply: reply)
-        }
-    }
-
-    func confirmBackup(_ request: Data, reply: @escaping (Data) -> Void) {
+    func beginRecoveryCeremony(
+        _ request: Data,
+        reply: @escaping (Data, NSXPCListenerEndpoint?) -> Void
+    ) {
         queue.async {
             do {
-                let confirmation = try JSONDecoder().decode(WalletBackupConfirmation.self, from: request)
-                guard let entropy = self.pendingEntropy,
-                      confirmation.wordsByIndex.count == 6,
-                      Set(confirmation.wordsByIndex.keys) == Set(self.pendingIndices),
-                      confirmation.wordsByIndex.allSatisfy({ index, word in
-                          self.pendingWords[index].caseInsensitiveCompare(
-                              word.trimmingCharacters(in: .whitespacesAndNewlines)
-                          ) == .orderedSame
-                      }) else {
-                    return reply(self.error("The six recovery words did not match."))
+                let ceremony = try JSONDecoder().decode(
+                    WalletRecoveryCeremonyRequest.self, from: request
+                )
+                guard self.recoveryCeremony == nil, self.pendingEntropy == nil else {
+                    return reply(self.error("Another recovery ceremony is already active."), nil)
                 }
-                let accounts = try self.deriveAccounts(entropy: entropy)
-                try self.store.create(entropy: entropy, accounts: accounts)
-                self.clearPending()
-                reply(self.encoded(self.currentStatus()))
+                switch ceremony.mode {
+                case .create, .restore:
+                    guard !self.store.exists, !self.store.legacyExists else {
+                        return reply(self.error("A Locus Vault already exists."), nil)
+                    }
+                case .rotateForMainnet:
+                    guard self.store.legacyExists, !self.store.exists else {
+                        return reply(self.error("No preview vault requires mainnet rotation."), nil)
+                    }
+                }
+                self.lockInMemory()
+                let id = UUID().uuidString.lowercased()
+                let listener = NSXPCListener.anonymous()
+                let delegate = WalletRecoveryBrokerListenerDelegate(owner: self, ceremonyID: id)
+                listener.delegate = delegate
+                self.recoveryCeremony = WalletRecoveryCeremonyContext(
+                    id: id, mode: ceremony.mode, listener: listener, delegate: delegate
+                )
+                listener.resume()
+                reply(
+                    self.encoded(WalletRecoveryCeremonyHandle(id: id, mode: ceremony.mode)),
+                    listener.endpoint
+                )
             } catch {
-                reply(self.error("Vault activation failed: \(error.localizedDescription)"))
+                reply(self.error("Recovery ceremony could not start: \(error.localizedDescription)"), nil)
             }
         }
     }
 
-    func cancelCreateVault(reply: @escaping (Data) -> Void) {
+    func cancelRecoveryCeremony(_ ceremonyID: String, reply: @escaping (Data) -> Void) {
         queue.async {
+            guard self.recoveryCeremony?.id == ceremonyID else {
+                return reply(self.error("The recovery ceremony is no longer active."))
+            }
             self.clearPending()
+            self.lockInMemory()
+            self.recoveryCeremony?.listener.invalidate()
+            self.recoveryCeremony = nil
             reply(self.encoded(self.currentStatus()))
-        }
-    }
-
-    func restoreVault(_ request: Data, reply: @escaping (Data) -> Void) {
-        queue.async {
-            guard !self.store.exists, !self.store.legacyExists, self.pendingEntropy == nil else {
-                return reply(self.error("A Locus Vault already exists or setup is in progress."))
-            }
-            do {
-                let restore = try JSONDecoder().decode(WalletVaultRestoreRequest.self, from: request)
-                guard restore.words.count == 24,
-                      restore.words.allSatisfy({ word in
-                          !word.isEmpty && word.utf8.count <= 16
-                              && word.utf8.allSatisfy { (97...122).contains($0) }
-                      }) else {
-                    throw self.signerError("Enter exactly 24 lowercase English recovery words.")
-                }
-                var phrase = restore.words.joined(separator: " ")
-                defer { phrase.replaceSubrange(phrase.startIndex..<phrase.endIndex, with: "") }
-                guard let pointer = phrase.withCString({ rustRestoreVault($0) }) else {
-                    throw self.signerError("The signing core could not validate the recovery phrase.")
-                }
-                defer { rustFreeString(pointer) }
-                let data = Data(String(cString: pointer).utf8)
-                if let failure = try? JSONDecoder().decode(WalletSignerErrorPayload.self, from: data) {
-                    throw self.signerError(failure.error)
-                }
-                let decoder = JSONDecoder()
-                decoder.keyDecodingStrategy = .convertFromSnakeCase
-                let restored = try decoder.decode(RustGeneratedVault.self, from: data)
-                guard restored.words == restore.words,
-                      var entropy = Data(hex: restored.entropyHex), entropy.count == 32 else {
-                    throw self.signerError("The recovery phrase did not canonicalize safely.")
-                }
-                defer { entropy.resetBytes(in: 0..<entropy.count) }
-                let accounts = try self.deriveAccounts(entropy: entropy)
-                try self.store.create(entropy: entropy, accounts: accounts)
-                reply(self.encoded(self.currentStatus()))
-            } catch {
-                reply(self.error("Vault restoration failed: \(error.localizedDescription)"))
-            }
         }
     }
 
@@ -802,6 +802,126 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             } catch {
                 reply(self.error("Recovery vault deletion failed: \(error.localizedDescription)"))
             }
+        }
+    }
+
+    fileprivate func recoveryCreationMaterial(
+        ceremonyID: String, reply: @escaping (Data) -> Void
+    ) {
+        queue.async {
+            guard let ceremony = self.recoveryCeremony,
+                  ceremony.id == ceremonyID,
+                  let purpose = ceremony.mode.creationPurpose else {
+                return reply(self.error("This recovery ceremony cannot create a phrase."))
+            }
+            self.beginVaultCeremony(purpose: purpose, reply: reply)
+        }
+    }
+
+    fileprivate func recoveryConfirmBackup(
+        ceremonyID: String, confirmationData: Data, reply: @escaping (Data) -> Void
+    ) {
+        queue.async {
+            guard self.recoveryCeremony?.id == ceremonyID,
+                  self.recoveryCeremony?.mode.creationPurpose != nil else {
+                return reply(self.error("The recovery ceremony is no longer active."))
+            }
+            do {
+                let confirmation = try JSONDecoder().decode(
+                    WalletBackupConfirmation.self, from: confirmationData
+                )
+                guard let entropy = self.pendingEntropy,
+                      confirmation.wordsByIndex.count == 6,
+                      Set(confirmation.wordsByIndex.keys) == Set(self.pendingIndices),
+                      confirmation.wordsByIndex.allSatisfy({ index, word in
+                          self.pendingWords[index].caseInsensitiveCompare(
+                              word.trimmingCharacters(in: .whitespacesAndNewlines)
+                          ) == .orderedSame
+                      }) else {
+                    return reply(self.error("The six recovery words did not match."))
+                }
+                let accounts = try self.deriveAccounts(entropy: entropy)
+                try self.store.create(entropy: entropy, accounts: accounts)
+                self.clearPending()
+                self.lockInMemory()
+                reply(self.encoded(self.currentStatus()))
+            } catch {
+                reply(self.error("Vault activation failed: \(error.localizedDescription)"))
+            }
+        }
+    }
+
+    fileprivate func recoveryRestore(
+        ceremonyID: String, requestData: Data, reply: @escaping (Data) -> Void
+    ) {
+        queue.async {
+            guard self.recoveryCeremony?.id == ceremonyID,
+                  self.recoveryCeremony?.mode == .restore,
+                  !self.store.exists, !self.store.legacyExists,
+                  self.pendingEntropy == nil else {
+                return reply(self.error("The recovery ceremony is no longer active."))
+            }
+            do {
+                let restore = try JSONDecoder().decode(
+                    WalletVaultRestoreRequest.self, from: requestData
+                )
+                guard restore.words.count == 24,
+                      restore.words.allSatisfy({ word in
+                          !word.isEmpty && word.utf8.count <= 16
+                              && word.utf8.allSatisfy { (97...122).contains($0) }
+                      }) else {
+                    throw self.signerError("Enter exactly 24 lowercase English recovery words.")
+                }
+                var phrase = restore.words.joined(separator: " ")
+                defer { phrase.replaceSubrange(phrase.startIndex..<phrase.endIndex, with: "") }
+                guard let pointer = phrase.withCString({ rustRestoreVault($0) }) else {
+                    throw self.signerError("The signing core could not validate the recovery phrase.")
+                }
+                defer { rustFreeString(pointer) }
+                let data = Data(String(cString: pointer).utf8)
+                if let failure = try? JSONDecoder().decode(
+                    WalletSignerErrorPayload.self, from: data
+                ) {
+                    throw self.signerError(failure.error)
+                }
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                let restored = try decoder.decode(RustGeneratedVault.self, from: data)
+                guard restored.words == restore.words,
+                      var entropy = Data(hex: restored.entropyHex), entropy.count == 32 else {
+                    throw self.signerError("The recovery phrase did not canonicalize safely.")
+                }
+                defer { entropy.resetBytes(in: 0..<entropy.count) }
+                let accounts = try self.deriveAccounts(entropy: entropy)
+                try self.store.create(entropy: entropy, accounts: accounts)
+                self.lockInMemory()
+                reply(self.encoded(self.currentStatus()))
+            } catch {
+                reply(self.error("Vault restoration failed: \(error.localizedDescription)"))
+            }
+        }
+    }
+
+    fileprivate func recoveryCancel(
+        ceremonyID: String, reply: @escaping (Data) -> Void
+    ) {
+        queue.async {
+            guard self.recoveryCeremony?.id == ceremonyID else {
+                return reply(self.error("The recovery ceremony is no longer active."))
+            }
+            self.clearPending()
+            self.lockInMemory()
+            reply(self.encoded(self.currentStatus()))
+        }
+    }
+
+    fileprivate func recoveryConnectionEnded(ceremonyID: String) {
+        queue.async {
+            guard self.recoveryCeremony?.id == ceremonyID else { return }
+            self.clearPending()
+            self.lockInMemory()
+            self.recoveryCeremony?.listener.invalidate()
+            self.recoveryCeremony = nil
         }
     }
 
@@ -1613,6 +1733,115 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
 
     private func error(_ message: String) -> Data {
         (try? JSONEncoder().encode(WalletSignerErrorPayload(error: message))) ?? Data()
+    }
+}
+
+private final class WalletRecoveryBroker: NSObject, WalletRecoveryBrokerXPCProtocol {
+    private weak var owner: WalletSignerService?
+    private let ceremonyID: String
+
+    init(owner: WalletSignerService, ceremonyID: String) {
+        self.owner = owner
+        self.ceremonyID = ceremonyID
+    }
+
+    func creationMaterial(_ ceremonyID: String, reply: @escaping (Data) -> Void) {
+        guard ceremonyID == self.ceremonyID, let owner else {
+            return reply(Self.error("The one-time recovery channel is stale."))
+        }
+        owner.recoveryCreationMaterial(ceremonyID: ceremonyID, reply: reply)
+    }
+
+    func confirmBackup(
+        _ ceremonyID: String, confirmation: Data, reply: @escaping (Data) -> Void
+    ) {
+        guard ceremonyID == self.ceremonyID, let owner else {
+            return reply(Self.error("The one-time recovery channel is stale."))
+        }
+        owner.recoveryConfirmBackup(
+            ceremonyID: ceremonyID, confirmationData: confirmation, reply: reply
+        )
+    }
+
+    func restoreVault(
+        _ ceremonyID: String, request: Data, reply: @escaping (Data) -> Void
+    ) {
+        guard ceremonyID == self.ceremonyID, let owner else {
+            return reply(Self.error("The one-time recovery channel is stale."))
+        }
+        owner.recoveryRestore(ceremonyID: ceremonyID, requestData: request, reply: reply)
+    }
+
+    func cancel(_ ceremonyID: String, reply: @escaping (Data) -> Void) {
+        guard ceremonyID == self.ceremonyID, let owner else {
+            return reply(Self.error("The one-time recovery channel is stale."))
+        }
+        owner.recoveryCancel(ceremonyID: ceremonyID, reply: reply)
+    }
+
+    private static func error(_ message: String) -> Data {
+        (try? JSONEncoder().encode(WalletSignerErrorPayload(error: message))) ?? Data()
+    }
+}
+
+private final class WalletRecoveryBrokerListenerDelegate: NSObject, NSXPCListenerDelegate {
+    private static let recoveryBundleIdentifier = "io.sparktales.locus.WalletRecovery"
+    private static let teamIdentifier = "4X4RJA7GMD"
+    private weak var owner: WalletSignerService?
+    private let ceremonyID: String
+    private let lock = NSLock()
+    private var acceptedConnection = false
+
+    init(owner: WalletSignerService, ceremonyID: String) {
+        self.owner = owner
+        self.ceremonyID = ceremonyID
+    }
+
+    func listener(
+        _ listener: NSXPCListener, shouldAcceptNewConnection connection: NSXPCConnection
+    ) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !acceptedConnection, let owner, Self.isTrustedRecoveryService(connection) else {
+            return false
+        }
+        acceptedConnection = true
+        let broker = WalletRecoveryBroker(owner: owner, ceremonyID: ceremonyID)
+        connection.exportedInterface = NSXPCInterface(with: WalletRecoveryBrokerXPCProtocol.self)
+        connection.exportedObject = broker
+        connection.interruptionHandler = { [weak owner] in
+            owner?.recoveryConnectionEnded(ceremonyID: self.ceremonyID)
+        }
+        connection.invalidationHandler = { [weak owner] in
+            owner?.recoveryConnectionEnded(ceremonyID: self.ceremonyID)
+        }
+        connection.resume()
+        return true
+    }
+
+    private static func isTrustedRecoveryService(_ connection: NSXPCConnection) -> Bool {
+        let attributes = [
+            kSecGuestAttributePid as String: NSNumber(value: connection.processIdentifier),
+        ] as CFDictionary
+        var guest: SecCode?
+        guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &guest) == errSecSuccess,
+              let guest else { return false }
+        var staticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(guest, [], &staticCode) == errSecSuccess,
+              let staticCode else { return false }
+        var rawInformation: CFDictionary?
+        guard SecCodeCopySigningInformation(
+            staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &rawInformation
+        ) == errSecSuccess,
+              let information = rawInformation as? [String: Any],
+              information[kSecCodeInfoIdentifier as String] as? String
+                == recoveryBundleIdentifier else { return false }
+        let team = information[kSecCodeInfoTeamIdentifier as String] as? String
+        #if DEBUG
+        return team == nil || team == teamIdentifier
+        #else
+        return team == teamIdentifier
+        #endif
     }
 }
 

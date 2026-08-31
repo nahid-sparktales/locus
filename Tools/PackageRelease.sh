@@ -21,6 +21,7 @@ resources="${app}/Contents/Resources"
 info_plist="${app}/Contents/Info.plist"
 sparkle="${app}/Contents/Frameworks/Sparkle.framework"
 wallet_signer="${app}/Contents/XPCServices/WalletSigner.xpc"
+wallet_recovery="${app}/Contents/XPCServices/WalletRecovery.xpc"
 
 identity="${LOCUS_SIGN_IDENTITY:-}"
 if [[ -z "${identity}" ]]; then
@@ -130,30 +131,75 @@ fi
     echo "error: direct-download release is missing WalletSigner.xpc" >&2
     exit 1
 }
+[[ -x "${wallet_recovery}/Contents/MacOS/WalletRecovery" ]] || {
+    echo "error: direct-download release is missing WalletRecovery.xpc" >&2
+    exit 1
+}
 if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
+    wallet_release_channel="${LOCUS_WALLET_RELEASE_CHANNEL:-disabled}"
+    case "${wallet_release_channel}" in
+        disabled|canary|ga) ;;
+        *)
+            echo "error: LOCUS_WALLET_RELEASE_CHANNEL must be disabled, canary, or ga" >&2
+            exit 1
+            ;;
+    esac
     signer_info="${wallet_signer}/Contents/Info.plist"
     capability_key="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletCapabilityPublicKey' \
         "${signer_info}" 2>/dev/null || true)"
     capability_manifest="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletCapabilityManifestBase64' \
         "${signer_info}" 2>/dev/null || true)"
-    [[ -n "${capability_key}" && -n "${capability_manifest}" ]] || {
-        echo "error: public GA requires a signed wallet capability manifest in WalletSigner.xpc" >&2
-        exit 1
-    }
-    for provider_key in \
-        LocusWalletAlchemyEthereumMainnetRPCURL \
-        LocusWalletQuickNodeEthereumMainnetRPCURL
-    do
-        provider_url="$(/usr/libexec/PlistBuddy -c "Print :${provider_key}" \
-            "${info_plist}" 2>/dev/null || true)"
-        [[ "${provider_url}" == https://* ]] || {
-            echo "error: public GA requires an HTTPS ${provider_key} provider endpoint" >&2
+    if [[ "${wallet_release_channel}" == "disabled" ]]; then
+        [[ -z "${capability_key}" && -z "${capability_manifest}" ]] || {
+            echo "error: a wallet-disabled release must not embed a mainnet capability manifest" >&2
             exit 1
         }
-    done
+    else
+        [[ -n "${capability_key}" && -n "${capability_manifest}" ]] || {
+            echo "error: wallet ${wallet_release_channel} requires a signed capability manifest" >&2
+            exit 1
+        }
+        manifest_file="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-wallet-manifest.XXXXXX")"
+        if ! /bin/echo -n "${capability_manifest}" | /usr/bin/base64 -D > "${manifest_file}"; then
+            /bin/rm -f "${manifest_file}"
+            echo "error: embedded wallet capability manifest is not valid base64" >&2
+            exit 1
+        fi
+        manifest_stage="$(/usr/bin/plutil -extract manifest.releaseStage raw -o - \
+            "${manifest_file}" 2>/dev/null || true)"
+        manifest_schema="$(/usr/bin/plutil -extract manifest.schemaVersion raw -o - \
+            "${manifest_file}" 2>/dev/null || true)"
+        evidence_hash="$(/usr/bin/plutil -extract manifest.evidenceIndexSHA256 raw -o - \
+            "${manifest_file}" 2>/dev/null || true)"
+        /bin/rm -f "${manifest_file}"
+        [[ "${manifest_schema}" == "2" && "${#evidence_hash}" == "64" ]] || {
+            echo "error: wallet release requires a schema-v2 evidence-bound manifest" >&2
+            exit 1
+        }
+        expected_stage="invited_canary"
+        [[ "${wallet_release_channel}" == "ga" ]] && expected_stage="general_availability"
+        [[ "${manifest_stage}" == "${expected_stage}" ]] || {
+            echo "error: wallet ${wallet_release_channel} requires manifest stage ${expected_stage}" >&2
+            exit 1
+        }
+        for provider_key in \
+            LocusWalletAlchemyEthereumMainnetRPCURL \
+            LocusWalletQuickNodeEthereumMainnetRPCURL
+        do
+            provider_url="$(/usr/libexec/PlistBuddy -c "Print :${provider_key}" \
+                "${info_plist}" 2>/dev/null || true)"
+            [[ "${provider_url}" == https://* ]] || {
+                echo "error: wallet ${wallet_release_channel} requires an HTTPS ${provider_key} endpoint" >&2
+                exit 1
+            }
+        done
+    fi
 fi
 # The independently sandboxed signer is sealed before the containing app so
 # the outer signature commits to its executable, identifier, and entitlements.
+/usr/bin/codesign --force --timestamp --options runtime \
+    --entitlements "${repo_root}/Config/WalletRecovery.entitlements" \
+    --sign "${identity}" "${wallet_recovery}"
 /usr/bin/codesign --force --timestamp --options runtime \
     --entitlements "${repo_root}/Config/WalletSigner.entitlements" \
     --sign "${identity}" "${wallet_signer}"
