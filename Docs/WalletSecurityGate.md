@@ -213,10 +213,12 @@ signing adapter.
   only terminal object-change pagination. For a tracked ownership transition it
   requires matching canonical object IDs, increasing versions, valid digests,
   unchanged non-Coin Move type and public-transfer flag, and two exact address
-  owners. Coin/gas mutations and same-owner writes are validated then ignored;
-  creations, deletions, shared objects, dynamic fields, BCS, display metadata,
-  and media are not promoted into transfer records. Unknown transferred objects
-  enter public-metadata quarantine with an amount of one.
+  owners. Creation requires no input and one canonical address-owned output;
+  deletion requires one canonical address-owned input and no output.
+  Contradictory flags or state presence fail the batch. Shared/object-owned,
+  Coin/gas, malformed, and same-owner effects never become collectible records;
+  new identities enter public-metadata quarantine with an amount of one. BCS,
+  display metadata, media, and signing authority remain absent.
 - The isolated signer core can canonically rebuild one object-backed native SUI
   transfer from typed fields. It accepts exactly one gas coin, a positive split,
   one recipient transfer, the reviewed reference gas price and budget, and a
@@ -264,7 +266,7 @@ until their implementation and evidence gates pass:
   variants, Token Metadata/programmable and compressed-collectible transfer
   adapters, remote-media rendering,
   versioned-message signing and local-validator coverage; all
-  Sui object creation/deletion activity, gRPC execution migration, multi-object
+  Sui gRPC execution migration, multi-object
   transfers, and localnet suites; native SUI, Coin, and object-transfer mainnet
   activation remain gated;
 - full v2/v3/v4 Universal Router, Jupiter `/build`, and pinned Cetus V3 swaps;

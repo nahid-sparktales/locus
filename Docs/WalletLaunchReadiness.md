@@ -83,6 +83,12 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   effects, exact input/output object identity, version, digest, owner, type, and
   public-transfer validation. Same-owner and Coin/gas mutations are excluded;
   unknown transferred objects enter metadata-free quarantine.
+- [x] Finalized Sui non-Coin creation/deletion activity. Creation requires only
+  canonical output state owned by the tracked address; deletion requires only
+  canonical input state owned by it. Lifecycle flags, state presence, object
+  identity/type, owner, version, digest, and public-transfer evidence are bound;
+  contradictory, shared/object-owned, Coin/gas, and malformed effects cannot be
+  presented as collectible activity and new identities enter quarantine.
 - [x] Canonical signer-core builder for one object-backed native SUI transfer:
   exact `SplitCoins(GasCoin)` plus `TransferObjects`, current-epoch expiry,
   one owned gas object, reviewed reference gas price, maximum gas budget, and
@@ -124,8 +130,8 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   Core subset is implemented but not mainnet-enabled. Finalized legacy/v0/v1
   activity indexing and reviewed legacy-transfer priority fees are implemented;
   versioned-message signing remains closed.
-- [ ] Sui object creation/deletion activity, gRPC execution migration,
-  multi-object Coin merge/object batching, and localnet coverage complete. The
+- [ ] Sui gRPC execution migration, multi-object Coin merge/object batching,
+  and localnet coverage complete. The
   exact native, single-object curated Coin, and publicly transferable object
   GraphQL subsets are implemented but not mainnet-enabled.
 - [ ] Uniswap v2/v3/v4, Jupiter `/build`, and Cetus V3 reviewed swap subsets complete.

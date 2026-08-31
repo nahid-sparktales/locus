@@ -2690,6 +2690,107 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertNil(item.identity)
     }
 
+    func testSuiGraphQLIndexesOwnedObjectCreationAndDeletion() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let owner = "0x" + String(repeating: "4", count: 64)
+        let digest = WalletSolanaBase58.encode(Data(repeating: 80, count: 32))
+        let created = WalletSuiObjectReference(
+            objectID: "0x" + String(repeating: "8", count: 64), version: 1,
+            digest: WalletSolanaBase58.encode(Data(repeating: 81, count: 32)),
+            type: "0x1234::artifact::CREATED"
+        )
+        let deleted = WalletSuiObjectReference(
+            objectID: "0x" + String(repeating: "9", count: 64), version: 7,
+            digest: WalletSolanaBase58.encode(Data(repeating: 82, count: 32)),
+            type: "0x1234::artifact::DELETED"
+        )
+        let client = makeSuiGraphQLClient(now: now) { _ in
+            try self.suiActivityResponse(
+                owner: owner,
+                transactions: [self.suiActivityTransactionJSON(
+                    digest: digest, sender: owner, balanceChanges: [],
+                    objectChanges: [
+                        self.suiActivityTerminalObjectChangeJSON(
+                            state: created, owner: owner, created: true
+                        ),
+                        self.suiActivityTerminalObjectChangeJSON(
+                            state: deleted, owner: owner, created: false
+                        ),
+                    ]
+                )]
+            )
+        }
+        let activity = try await client.activity(owner: owner)
+        XCTAssertEqual(activity.count, 2)
+        let byObject = Dictionary(uniqueKeysWithValues: activity.compactMap {
+            item in item.objectIdentity.map { ($0.objectID, item) }
+        })
+        let creation = try XCTUnwrap(byObject[created.objectID])
+        XCTAssertEqual(creation.objectType, created.type)
+        XCTAssertEqual(creation.objectHasPublicTransfer, true)
+        XCTAssertEqual(creation.amountBaseUnits, "1")
+        XCTAssertEqual(creation.isInbound, true)
+        let deletion = try XCTUnwrap(byObject[deleted.objectID])
+        XCTAssertEqual(deletion.objectType, deleted.type)
+        XCTAssertEqual(deletion.objectHasPublicTransfer, true)
+        XCTAssertEqual(deletion.amountBaseUnits, "1")
+        XCTAssertEqual(deletion.isInbound, false)
+    }
+
+    func testSuiGraphQLRejectsContradictoryObjectLifecycleEvidence() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let owner = "0x" + String(repeating: "4", count: 64)
+        let digest = WalletSolanaBase58.encode(Data(repeating: 83, count: 32))
+        let object = WalletSuiObjectReference(
+            objectID: "0x" + String(repeating: "a", count: 64), version: 1,
+            digest: WalletSolanaBase58.encode(Data(repeating: 84, count: 32)),
+            type: "0x1234::artifact::OBJECT"
+        )
+        var contradictory = suiActivityTerminalObjectChangeJSON(
+            state: object, owner: owner, created: true
+        )
+        contradictory["idDeleted"] = true
+        let client = makeSuiGraphQLClient(now: now) { _ in
+            try self.suiActivityResponse(
+                owner: owner,
+                transactions: [self.suiActivityTransactionJSON(
+                    digest: digest, sender: owner, balanceChanges: [],
+                    objectChanges: [contradictory]
+                )]
+            )
+        }
+        do {
+            _ = try await client.activity(owner: owner)
+            XCTFail("Contradictory lifecycle flags must fail the activity batch.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("contradictory"))
+        }
+
+        var malformed = suiActivityTerminalObjectChangeJSON(
+            state: object, owner: owner, created: true
+        )
+        malformed["inputState"] = malformed["outputState"]
+        let malformedClient = makeSuiGraphQLClient(now: now) { _ in
+            try self.suiActivityResponse(
+                owner: owner,
+                transactions: [self.suiActivityTransactionJSON(
+                    digest: digest, sender: owner, balanceChanges: [],
+                    objectChanges: [malformed]
+                )]
+            )
+        }
+        do {
+            _ = try await malformedClient.activity(owner: owner)
+            XCTFail("A creation with an input state must fail the activity batch.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("ambiguous"))
+        }
+    }
+
     func testSuiGraphQLRejectsAmbiguousObjectActivityEvidence() async throws {
         let now = try XCTUnwrap(ISO8601DateFormatter().date(
             from: "2026-08-31T12:05:00Z"
@@ -5610,6 +5711,31 @@ final class WalletGatewayTests: XCTestCase {
                 reference: output, owner: outputOwner,
                 hasPublicTransfer: hasPublicTransfer
             ),
+        ]
+    }
+
+    private func suiActivityTerminalObjectChangeJSON(
+        state: WalletSuiObjectReference,
+        owner: String,
+        created: Bool,
+        hasPublicTransfer: Bool = true
+    ) -> [String: Any] {
+        [
+            "address": state.objectID,
+            "idCreated": created,
+            "idDeleted": !created,
+            "inputState": created
+                ? NSNull()
+                : suiObjectStateJSON(
+                    reference: state, owner: owner,
+                    hasPublicTransfer: hasPublicTransfer
+                ),
+            "outputState": created
+                ? suiObjectStateJSON(
+                    reference: state, owner: owner,
+                    hasPublicTransfer: hasPublicTransfer
+                )
+                : NSNull(),
         ]
     }
 

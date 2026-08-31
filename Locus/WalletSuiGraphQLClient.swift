@@ -1939,9 +1939,86 @@ actor WalletSuiGraphQLClient {
                     "Sui returned a malformed or duplicate activity object change"
                 )
             }
-            // Creation and deletion are not represented as transfers in this
-            // reviewed subset. They remain visible through owned-object refresh.
-            guard !idCreated, !idDeleted else { continue }
+            let inputValue = node["inputState"] as? [String: Any]
+            let outputValue = node["outputState"] as? [String: Any]
+            let inputAbsent = node["inputState"] == nil
+                || node["inputState"] is NSNull
+            let outputAbsent = node["outputState"] == nil
+                || node["outputState"] is NSNull
+            guard !(idCreated && idDeleted) else {
+                throw WalletRPCError.invalidResponse(
+                    "Sui returned contradictory object lifecycle flags"
+                )
+            }
+            if idCreated {
+                guard inputAbsent, let outputValue,
+                      let outputOwner = try activityAddressOwnerIfPresent(
+                          outputValue
+                      ) else {
+                    if inputAbsent, outputValue != nil { continue }
+                    throw WalletRPCError.invalidResponse(
+                        "Sui returned ambiguous object-creation evidence"
+                    )
+                }
+                guard outputOwner == owner else { continue }
+                guard let output = parseSimulationObjectState(outputValue),
+                      output.reference.objectID == objectID else {
+                    throw WalletRPCError.invalidResponse(
+                        "Sui returned malformed owned object-creation evidence"
+                    )
+                }
+                guard !isCoinObjectType(output.reference.type) else { continue }
+                let identity = WalletSuiObjectIdentity(
+                    networkID: networkID, objectID: objectID
+                )
+                records.append(WalletSuiIndexedActivity(
+                    id: "\(digest):\(identity.canonicalID)",
+                    transactionDigest: digest, checkpointSequence: sequence,
+                    occurredAt: timestamp, sender: sender, successful: true,
+                    identity: nil, objectIdentity: identity,
+                    objectType: output.reference.type,
+                    objectHasPublicTransfer: output.hasPublicTransfer,
+                    amountBaseUnits: "1", isInbound: true
+                ))
+                continue
+            }
+            if idDeleted {
+                guard outputAbsent, let inputValue,
+                      let inputOwner = try activityAddressOwnerIfPresent(
+                          inputValue
+                      ) else {
+                    if outputAbsent, inputValue != nil { continue }
+                    throw WalletRPCError.invalidResponse(
+                        "Sui returned ambiguous object-deletion evidence"
+                    )
+                }
+                guard inputOwner == owner else { continue }
+                guard let input = parseSimulationObjectState(inputValue),
+                      input.reference.objectID == objectID else {
+                    throw WalletRPCError.invalidResponse(
+                        "Sui returned malformed owned object-deletion evidence"
+                    )
+                }
+                guard !isCoinObjectType(input.reference.type) else { continue }
+                let identity = WalletSuiObjectIdentity(
+                    networkID: networkID, objectID: objectID
+                )
+                records.append(WalletSuiIndexedActivity(
+                    id: "\(digest):\(identity.canonicalID)",
+                    transactionDigest: digest, checkpointSequence: sequence,
+                    occurredAt: timestamp, sender: sender, successful: true,
+                    identity: nil, objectIdentity: identity,
+                    objectType: input.reference.type,
+                    objectHasPublicTransfer: input.hasPublicTransfer,
+                    amountBaseUnits: "1", isInbound: false
+                ))
+                continue
+            }
+            guard !inputAbsent, !outputAbsent else {
+                throw WalletRPCError.invalidResponse(
+                    "Sui returned incomplete object-mutation evidence"
+                )
+            }
             guard let inputValue = node["inputState"] as? [String: Any],
                   let outputValue = node["outputState"] as? [String: Any] else {
                 throw WalletRPCError.invalidResponse(
@@ -2005,6 +2082,27 @@ actor WalletSuiGraphQLClient {
               let value = address["address"] as? String,
               WalletSuiAddress.isCanonical(value) else { return nil }
         return value
+    }
+
+    private static func activityAddressOwnerIfPresent(
+        _ value: [String: Any]
+    ) throws -> String? {
+        guard let owner = value["owner"] as? [String: Any],
+              let kind = owner["__typename"] as? String,
+              !kind.isEmpty, kind.utf8.count <= 64 else {
+            throw WalletRPCError.invalidResponse(
+                "Sui returned malformed object-owner evidence"
+            )
+        }
+        guard kind == "AddressOwner" else { return nil }
+        guard let address = owner["address"] as? [String: Any],
+              let result = address["address"] as? String,
+              WalletSuiAddress.isCanonical(result) else {
+            throw WalletRPCError.invalidResponse(
+                "Sui returned malformed address-owned object evidence"
+            )
+        }
+        return result
     }
 
     private static func canonicalSignedBaseUnits(_ value: Any?) -> String? {

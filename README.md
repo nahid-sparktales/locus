@@ -222,7 +222,12 @@ Finalized Sui transaction activity is likewise read through the checkpoint-bound
 GraphQL path. It records only validated transaction effects and owner-specific
 SUI or Coin balance changes; unknown Coin types remain quarantined, failed
 effects cannot claim balance changes, and opaque BCS or Move-call data is not
-accepted. The signer core now has a deterministic, typed builder for the single
+accepted. Non-Coin history includes exact address-owned creations, deletions,
+and cross-address ownership changes. Lifecycle flags must agree with canonical
+input/output state; contradictory, malformed, shared, object-owned, Coin/gas,
+and same-owner effects cannot masquerade as collectible transfers. Newly
+observed object identities enter quarantine without remote metadata. The signer
+core now has a deterministic, typed builder for the single
 object-backed native SUI transfer shape. Provider coin selection
 is checkpoint-pinned and validates the exact `Coin<SUI>` BCS, object reference,
 owner, raw balance, and aggregate coin-object balance before choosing one
@@ -254,12 +259,11 @@ Solana token sends use the signer-derived recipient associated token account,
 creating it idempotently through an exact reviewed instruction when it is still
 unallocated. Token-2022 transfer-altering extensions, Core collection/plugin
 variants, Token Metadata and compressed-collectible transfers, versioned
-message signing, Sui object creation/deletion
-activity and gRPC execution migration,
+message signing, Sui gRPC execution migration,
 full swaps, external wallets, and WalletConnect remain closed until their
-implementation and evidence gates pass. Finalized Sui activity does record
-strict non-Coin ownership transitions for the tracked account, while validating
-and ignoring same-owner writes and gas/Coin object mutations.
+implementation and evidence gates pass. Finalized Sui activity records strict
+non-Coin lifecycle and ownership changes for the tracked account, while
+validating and ignoring same-owner writes and gas/Coin object mutations.
 
 The Mac App Store target embeds neither recovery nor signer service. See the
 [security gate](Docs/WalletSecurityGate.md),
