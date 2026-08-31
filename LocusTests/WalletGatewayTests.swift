@@ -990,6 +990,50 @@ final class WalletGatewayTests: XCTestCase {
         ))
     }
 
+    func testSolanaCanonicalSPLMessageMatchesIndependentSignerFixture() throws {
+        let payer = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let source = WalletSolanaBase58.encode(Data(repeating: 2, count: 32))
+        let mint = WalletSolanaBase58.encode(Data(repeating: 3, count: 32))
+        let destination = WalletSolanaBase58.encode(Data(repeating: 4, count: 32))
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 5, count: 32))
+        let blockhash = WalletSolanaBase58.encode(Data(repeating: 9, count: 32))
+        let transfer = try WalletSolanaCanonicalSPLTransfer(
+            feePayer: payer, sourceTokenAccount: source, mint: mint,
+            destinationTokenAccount: destination, recipientOwner: recipient,
+            tokenProgramID: WalletSolanaTokenProgram.spl.programID,
+            recentBlockhash: blockhash, amountBaseUnits: "123456789",
+            decimals: 6
+        )
+        XCTAssertEqual(transfer.message.count, 214)
+        XCTAssertEqual(transfer.unsignedTransaction.count, 279)
+        XCTAssertEqual(
+            transfer.canonicalMessageDigest,
+            "sha256:1e22ab87cedf350790b6bc80e98799dfe043aa04d0e7e1374b9e98b1a3390c7f"
+        )
+        XCTAssertEqual(transfer.message.suffix(10).first, 12)
+        XCTAssertEqual(
+            transfer.resolvedAccountsDigest,
+            WalletSolanaCanonicalSPLTransfer.resolvedDigest(
+                feePayer: payer, sourceTokenAccount: source, mint: mint,
+                destinationTokenAccount: destination,
+                recipientOwner: recipient,
+                tokenProgramID: WalletSolanaTokenProgram.spl.programID
+            )
+        )
+        XCTAssertThrowsError(try WalletSolanaCanonicalSPLTransfer(
+            feePayer: payer, sourceTokenAccount: source, mint: mint,
+            destinationTokenAccount: destination, recipientOwner: recipient,
+            tokenProgramID: WalletSolanaTokenProgram.token2022.programID,
+            recentBlockhash: blockhash, amountBaseUnits: "1", decimals: 6
+        ))
+        XCTAssertThrowsError(try WalletSolanaCanonicalSPLTransfer(
+            feePayer: payer, sourceTokenAccount: source, mint: mint,
+            destinationTokenAccount: source, recipientOwner: recipient,
+            tokenProgramID: WalletSolanaTokenProgram.spl.programID,
+            recentBlockhash: blockhash, amountBaseUnits: "1", decimals: 6
+        ))
+    }
+
     func testSolanaAssetIdentityIsCanonicalAndProgramScoped() {
         let mint = WalletSolanaBase58.encode(Data(repeating: 4, count: 32))
         let legacy = "solana:devnet/spl:\(mint)"
@@ -1070,6 +1114,121 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(Set(requestedPrograms), Set(
             WalletSolanaTokenProgram.allCases.map(\.programID)
         ))
+    }
+
+    func testSolanaProviderPreparesAndRechecksOnlyVerifiedSPLAccounts() async throws {
+        let payer = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let source = WalletSolanaBase58.encode(Data(repeating: 2, count: 32))
+        let mint = WalletSolanaBase58.encode(Data(repeating: 3, count: 32))
+        let destination = WalletSolanaBase58.encode(Data(repeating: 4, count: 32))
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 5, count: 32))
+        let blockhash = WalletSolanaBase58.encode(Data(repeating: 9, count: 32))
+        let assetID = "solana:devnet/spl:\(mint)"
+        var sourceAmount = "999999999"
+        let client = makeSolanaRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any
+            switch method {
+            case "getGenesisHash":
+                result = WalletNetworkCatalog.solanaDevnet.identity.value
+            case "getAccountInfo":
+                result = [
+                    "context": ["slot": 42],
+                    "value": [
+                        "data": [
+                            "program": "spl-token",
+                            "parsed": [
+                                "type": "mint",
+                                "info": ["decimals": 6, "isInitialized": true],
+                            ],
+                            "space": 82,
+                        ],
+                        "executable": false, "lamports": 1_461_600,
+                        "owner": WalletSolanaTokenProgram.spl.programID,
+                        "space": 82,
+                    ],
+                ]
+            case "getTokenAccountsByOwner":
+                let params = try XCTUnwrap(object["params"] as? [Any])
+                let owner = try XCTUnwrap(params[0] as? String)
+                let filter = try XCTUnwrap(params[1] as? [String: Any])
+                let programID = try XCTUnwrap(filter["programId"] as? String)
+                let values: [Any]
+                if programID != WalletSolanaTokenProgram.spl.programID {
+                    values = []
+                } else if owner == payer {
+                    values = [self.solanaTokenAccountJSON(
+                        address: source, mint: mint, owner: payer,
+                        amount: sourceAmount, decimals: 6, programID: programID
+                    )]
+                } else if owner == recipient {
+                    values = [self.solanaTokenAccountJSON(
+                        address: destination, mint: mint, owner: recipient,
+                        amount: "0", decimals: 6, programID: programID
+                    )]
+                } else {
+                    values = []
+                }
+                result = ["context": ["slot": 42], "value": values]
+            case "getLatestBlockhash":
+                result = [
+                    "context": ["slot": 42],
+                    "value": [
+                        "blockhash": blockhash, "lastValidBlockHeight": 500,
+                    ],
+                ]
+            case "getFeeForMessage":
+                result = ["context": ["slot": 42], "value": 5_000]
+            case "simulateTransaction":
+                result = [
+                    "context": ["slot": 42],
+                    "value": [
+                        "err": NSNull(), "innerInstructions": [],
+                        "logs": ["Program Tokenkeg success"], "unitsConsumed": 2_000,
+                    ],
+                ]
+            case "getBlockHeight":
+                result = 450
+            default:
+                throw URLError(.unsupportedURL)
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": object["id"]!, "result": result,
+            ])
+        }
+        let request = WalletPrepareRequest(
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            accountID: "locus-vault-solana-0", source: .human,
+            action: .fungibleTokenTransfer(
+                assetID: assetID, recipient: recipient,
+                amountBaseUnits: "123456789"
+            ),
+            maximumFeeBaseUnits: "6000"
+        )
+        let packet = try await client.prepare(request: request, feePayer: payer)
+        XCTAssertEqual(packet.canonicalMessageDigest,
+                       "sha256:1e22ab87cedf350790b6bc80e98799dfe043aa04d0e7e1374b9e98b1a3390c7f")
+        XCTAssertEqual(packet.instructions.count, 1)
+        XCTAssertEqual(
+            packet.instructions[0].adapterID,
+            WalletReviewedAdapters.solanaSPLTransferChecked
+        )
+        XCTAssertEqual(packet.instructions[0].canonicalArguments["decimals"], "6")
+        let recheck = try await client.recheck(intentID: "spl-intent", packet: packet)
+        XCTAssertEqual(recheck.resolvedAccountsDigest, packet.resolvedAccountsDigest)
+
+        sourceAmount = "1"
+        do {
+            _ = try await client.recheck(intentID: "spl-intent", packet: packet)
+            XCTFail("A substituted or depleted SPL source account must be rejected.")
+        } catch WalletRPCError.simulation(let message) {
+            XCTAssertTrue(message.contains("evidence changed"))
+        }
     }
 
     func testSolanaProviderBindsGenesisBlockhashFeeSimulationAndRecheck() async throws {
@@ -1318,6 +1477,49 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(snapshot.freshness, .current)
     }
 
+    func testGatewayPreparesOnlyExplicitlyTrustedClassicSPLToken() async throws {
+        let signer = FakeWalletSigner()
+        signer.accountChain = .solana
+        signer.accountNetworkIDs = [WalletNetworkCatalog.solanaDevnet.id]
+        signer.accountAddress = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        signer.adapterID = WalletReviewedAdapters.solanaSPLTransferChecked
+        let mint = WalletSolanaBase58.encode(Data(repeating: 3, count: 32))
+        let assetID = "solana:devnet/spl:\(mint)"
+        signer.discoveredAssetRows = [[
+            "asset_id": assetID, "mint": mint, "token_program": "spl",
+            "balance_base_units": "999999999", "decimals": 6,
+            "account_count": 1, "has_frozen_account": false,
+        ]]
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            publicStore: try WalletPublicStore(path: ":memory:")
+        )
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        await gateway.refreshAccountSnapshots()
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 5, count: 32))
+        let quarantined = await gateway.prepareHumanFungibleTransfer(
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            accountID: "account-1", assetID: assetID, recipient: recipient,
+            amountBaseUnits: "123456789", maximumFeeBaseUnits: "6000"
+        )
+        XCTAssertFalse(quarantined)
+        gateway.trustQuarantinedAsset(id: assetID)
+        let trusted = await gateway.prepareHumanFungibleTransfer(
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            accountID: "account-1", assetID: assetID, recipient: recipient,
+            amountBaseUnits: "123456789", maximumFeeBaseUnits: "6000"
+        )
+        XCTAssertTrue(trusted)
+        XCTAssertEqual(signer.preparedRequests.last?.action.assetID, assetID)
+        XCTAssertEqual(
+            signer.preparedRequests.last?.action.type,
+            .fungibleTokenTransfer
+        )
+        XCTAssertEqual(gateway.pendingConfirmation?.source, .human)
+    }
+
     private func makeRPCClient(
         response: @escaping (URLRequest) throws -> Data
     ) -> WalletSepoliaRPCClient {
@@ -1340,6 +1542,38 @@ final class WalletGatewayTests: XCTestCase {
             endpoint: "https://solana-wallet-rpc.test",
             session: URLSession(configuration: configuration)
         )
+    }
+
+    private func solanaTokenAccountJSON(
+        address: String,
+        mint: String,
+        owner: String,
+        amount: String,
+        decimals: Int,
+        programID: String
+    ) -> [String: Any] {
+        [
+            "pubkey": address,
+            "account": [
+                "data": [
+                    "program": "spl-token",
+                    "parsed": [
+                        "type": "account",
+                        "info": [
+                            "isNative": false, "mint": mint, "owner": owner,
+                            "state": "initialized",
+                            "tokenAmount": [
+                                "amount": amount, "decimals": decimals,
+                                "uiAmount": NSNull(), "uiAmountString": "ignored",
+                            ],
+                        ],
+                    ],
+                    "space": 165,
+                ],
+                "executable": false, "lamports": 2_039_280,
+                "owner": programID, "space": 165,
+            ],
+        ]
     }
 
     private func signedReview(
@@ -1627,6 +1861,65 @@ final class WalletGatewayTests: XCTestCase {
         guard case .requiresApproval = WalletPolicyEngine.evaluate(
             transaction: substituted, policy: policy, spentThisSession: "0"
         ) else { return XCTFail("A substituted SOL recipient must require exact approval.") }
+    }
+
+    func testSolanaSPLPolicyBindsMintRecipientAmountFeeAndAdapter() {
+        let mint = WalletSolanaBase58.encode(Data(repeating: 3, count: 32))
+        let assetID = "solana:devnet/spl:\(mint)"
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 5, count: 32))
+        let action = WalletSemanticAction.fungibleTokenTransfer(
+            assetID: assetID, recipient: recipient, amountBaseUnits: "1000000"
+        )
+        let transaction = WalletPreparedTransaction(
+            id: "spl-intent", digest: "digest",
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            accountID: "locus-vault-solana-0", source: .agent,
+            action: action, summary: "Send token",
+            effects: [.init(
+                id: "effect", kind: "token_transfer", assetID: assetID,
+                amountBaseUnits: "1000000", from: "payer", to: recipient,
+                spender: nil
+            )],
+            riskFlags: [], contract: nil,
+            adapterID: WalletReviewedAdapters.solanaSPLTransferChecked,
+            budgetAssetID: assetID, spendBaseUnits: "1000000",
+            maximumFeeBaseUnits: "5000", feeQuoteBaseUnits: "5000",
+            simulation: "Success", simulationSucceeded: true, nonce: "blockhash",
+            createdAt: Date(), expiresAt: Date().addingTimeInterval(120),
+            policyDecision: "", policyID: nil
+        )
+        let policy = WalletSessionPolicy(
+            id: "spl-rule", accountID: transaction.accountID,
+            networkID: transaction.networkID,
+            allowedAssetIDs: [assetID], allowedRecipients: [recipient],
+            allowedContractIDs: [],
+            allowedAdapterIDs: [WalletReviewedAdapters.solanaSPLTransferChecked],
+            maximumTransactionBaseUnits: "1000000",
+            maximumSessionBaseUnits: "5000000", maximumFeeBaseUnits: "5000",
+            expiresAt: Date().addingTimeInterval(1800),
+            allowedActionKinds: [.fungibleTokenTransfer]
+        )
+        XCTAssertEqual(WalletPolicyEngine.evaluate(
+            transaction: transaction, policy: policy, spentThisSession: "0"
+        ), .automatic)
+
+        let token2022 = WalletSessionPolicy(
+            id: policy.id, accountID: policy.accountID,
+            networkID: policy.networkID,
+            allowedAssetIDs: [assetID.replacingOccurrences(of: "/spl:", with: "/token2022:")],
+            allowedRecipients: policy.allowedRecipients,
+            allowedContractIDs: [], allowedAdapterIDs: policy.allowedAdapterIDs,
+            maximumTransactionBaseUnits: policy.maximumTransactionBaseUnits,
+            maximumSessionBaseUnits: policy.maximumSessionBaseUnits,
+            maximumFeeBaseUnits: policy.maximumFeeBaseUnits,
+            expiresAt: policy.expiresAt,
+            allowedActionKinds: policy.allowedActionKinds
+        )
+        guard case .requiresApproval = WalletPolicyEngine.evaluate(
+            transaction: transaction, policy: token2022, spentThisSession: "0"
+        ) else {
+            return XCTFail("A substituted Token-2022 asset must require exact approval.")
+        }
     }
 
     func testWalletFeatureSettingsMigrateEnvironmentOnceAndAppStoreStaysOff() {

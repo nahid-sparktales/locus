@@ -52,6 +52,18 @@ private func rustSignSolanaNativeTransfer(
     _ transactionJSON: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("locus_wallet_prepare_solana_spl_transfer_json")
+private func rustPrepareSolanaSPLTransfer(
+    _ entropyHex: UnsafePointer<CChar>,
+    _ transactionJSON: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("locus_wallet_sign_solana_spl_transfer_json")
+private func rustSignSolanaSPLTransfer(
+    _ entropyHex: UnsafePointer<CChar>,
+    _ transactionJSON: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("locus_wallet_encode_contract_call_json")
 private func rustEncodeContractCall(_ requestJSON: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
@@ -117,6 +129,18 @@ private struct RustSolanaNativeTransfer: Encodable {
     let recipient: String
     let recentBlockhash: String
     let amountBaseUnits: String
+}
+
+private struct RustSolanaSPLTransfer: Encodable {
+    let feePayer: String
+    let sourceTokenAccount: String
+    let mint: String
+    let destinationTokenAccount: String
+    let recipientOwner: String
+    let tokenProgramID: String
+    let recentBlockhash: String
+    let amountBaseUnits: String
+    let decimals: UInt8
 }
 
 private struct StoredEVMIntent {
@@ -687,9 +711,21 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                     descriptor.id, chain: .solana,
                     capability: self.capability(for: packet.request.action.type)
                 )
-                let intent = try self.prepareSolanaNativeTransfer(
-                    packet: packet, entropy: entropy
-                )
+                let intent: StoredSolanaIntent
+                switch packet.request.action.type {
+                case .nativeTransfer:
+                    intent = try self.prepareSolanaNativeTransfer(
+                        packet: packet, entropy: entropy
+                    )
+                case .fungibleTokenTransfer:
+                    intent = try self.prepareSolanaSPLTransfer(
+                        packet: packet, entropy: entropy
+                    )
+                default:
+                    throw self.signerError(
+                        "That Solana semantic action has no reviewed signer adapter."
+                    )
+                }
                 self.preparedSolanaIntents[intent.prepared.id] = intent
                 reply(self.encoded(intent.prepared))
             } catch {
@@ -1376,6 +1412,147 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         return StoredSolanaIntent(packet: packet, prepared: prepared)
     }
 
+    private func prepareSolanaSPLTransfer(
+        packet: WalletSolanaPreparationPacket,
+        entropy: Data
+    ) throws -> StoredSolanaIntent {
+        let action = packet.request.action
+        guard action.type == .fungibleTokenTransfer,
+              let assetID = action.assetID,
+              let identity = WalletSolanaAssetIdentity.parse(assetID),
+              identity.networkID == packet.request.networkID,
+              identity.program == .spl,
+              action.tokenID == nil, action.inputAssetID == nil,
+              action.outputAssetID == nil, action.minimumOutputBaseUnits == nil,
+              action.adapterID == nil, action.authorizationFormat == nil,
+              action.metadataDigest == nil, action.contractID == nil,
+              action.function == nil, action.arguments.isEmpty,
+              action.valueBaseUnits == nil,
+              let recipient = action.recipient,
+              let amount = action.amountBaseUnits.flatMap(SignerUnsignedInteger.normalize),
+              let amountValue = UInt64(amount), amountValue > 0,
+              String(amountValue) == amount,
+              packet.version == .legacy,
+              packet.priorityFeeBaseUnits == "0",
+              packet.maximumFeeBaseUnits == packet.request.maximumFeeBaseUnits,
+              let fee = SignerUnsignedInteger.normalize(packet.feeQuoteBaseUnits),
+              SignerUnsignedInteger.lessThanOrEqual(
+                  fee, packet.request.maximumFeeBaseUnits
+              ),
+              packet.lastValidBlockHeight > 0,
+              packet.simulationSucceeded,
+              abs(packet.observedAt.timeIntervalSinceNow) <= 30 else {
+            throw signerError(
+                "The RPC evidence does not match a fresh reviewed SPL token transfer."
+            )
+        }
+        let account = try store.accounts().first {
+            $0.id == packet.request.accountID && $0.chain == .solana
+                && $0.networkIDs.contains(packet.request.networkID)
+        }
+        guard let account, account.address == packet.feePayer,
+              Self.isSolanaAddress(recipient), recipient != account.address,
+              packet.instructions.count == 1,
+              let instruction = packet.instructions.first,
+              instruction.programID == WalletSolanaTokenProgram.spl.programID,
+              instruction.adapterID == WalletReviewedAdapters.solanaSPLTransferChecked,
+              instruction.semanticOperation
+                == WalletActionKind.fungibleTokenTransfer.rawValue,
+              let source = instruction.canonicalArguments["source_token_account"],
+              let mint = instruction.canonicalArguments["mint"],
+              let destination = instruction.canonicalArguments[
+                  "destination_token_account"
+              ],
+              let decimalsText = instruction.canonicalArguments["decimals"],
+              let decimals = UInt8(decimalsText),
+              identity.mint == mint,
+              instruction.canonicalArguments == [
+                  "amount": amount,
+                  "asset_id": assetID,
+                  "decimals": String(decimals),
+                  "destination_owner": recipient,
+                  "destination_token_account": destination,
+                  "mint": mint,
+                  "source_token_account": source,
+              ],
+              Self.isSolanaAddress(source), Self.isSolanaAddress(destination),
+              Set([
+                  account.address, source, mint, destination,
+                  recipient,
+                  WalletSolanaTokenProgram.spl.programID,
+              ]).count == 6 else {
+            throw signerError("The requested SPL account roles are invalid.")
+        }
+        let expectedAccounts = [
+            WalletSolanaResolvedAccount(
+                address: account.address, isSigner: true, isWritable: true,
+                lookupTableAddress: nil, lookupTableSlot: nil
+            ),
+            WalletSolanaResolvedAccount(
+                address: source, isSigner: false, isWritable: true,
+                lookupTableAddress: nil, lookupTableSlot: nil
+            ),
+            WalletSolanaResolvedAccount(
+                address: mint, isSigner: false, isWritable: false,
+                lookupTableAddress: nil, lookupTableSlot: nil
+            ),
+            WalletSolanaResolvedAccount(
+                address: destination, isSigner: false, isWritable: true,
+                lookupTableAddress: nil, lookupTableSlot: nil
+            ),
+        ]
+        let resolvedDigest = Self.solanaSPLResolvedAccountsDigest(
+            feePayer: account.address, sourceTokenAccount: source, mint: mint,
+            destinationTokenAccount: destination, recipientOwner: recipient
+        )
+        guard instruction.accounts == expectedAccounts,
+              packet.resolvedAccountsDigest == resolvedDigest else {
+            throw signerError(
+                "The SPL programs, account privileges, or arguments are outside the reviewed adapter."
+            )
+        }
+        try authorizeReviewedAdapter(
+            WalletReviewedAdapters.solanaSPLTransferChecked,
+            networkID: packet.request.networkID
+        )
+        let rust = try rustPrepareSolana(packet: packet, entropy: entropy)
+        guard rust.from == account.address,
+              rust.canonicalMessageDigest == packet.canonicalMessageDigest else {
+            throw signerError(
+                "The signer-rebuilt SPL message differs from provider preparation."
+            )
+        }
+        let now = Date()
+        let intentID = UUID().uuidString.lowercased()
+        var prepared = WalletPreparedTransaction(
+            id: intentID, digest: rust.canonicalMessageDigest,
+            networkID: packet.request.networkID,
+            accountID: packet.request.accountID,
+            source: packet.request.source, action: action,
+            summary: "Send \(amount) units of \(assetID) to \(recipient)",
+            effects: [WalletDecodedEffect(
+                id: "\(intentID):spl-transfer", kind: "token_transfer",
+                assetID: assetID, amountBaseUnits: amount,
+                from: account.address, to: recipient, spender: nil
+            )],
+            riskFlags: [], contract: nil,
+            adapterID: WalletReviewedAdapters.solanaSPLTransferChecked,
+            budgetAssetID: assetID, spendBaseUnits: amount,
+            maximumFeeBaseUnits: packet.request.maximumFeeBaseUnits,
+            feeQuoteBaseUnits: fee,
+            simulation: packet.simulation, simulationSucceeded: true,
+            nonce: packet.recentBlockhash,
+            createdAt: now, expiresAt: now.addingTimeInterval(120),
+            policyDecision: "exact_confirmation_required", policyID: nil
+        )
+        if packet.request.source.kind == .agent,
+           let policyID = try? validAutomaticPolicyID(for: prepared) {
+            prepared.policyDecision = "allowed_by_session_policy"
+            prepared.policyID = policyID
+        }
+        return StoredSolanaIntent(packet: packet, prepared: prepared)
+    }
+
     private func prepareContractCall(
         packet: WalletEVMPreparationPacket,
         entropy: Data
@@ -1735,6 +1912,16 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             && adapterID == WalletReviewedAdapters.solanaNativeTransfer
             && policy.allowedAssetIDs == ["\(policy.networkID)/slip44:501"]
             && policy.allowedContractIDs.isEmpty
+        let splSolanaPolicy = descriptor.chain == .solana
+            && adapterID == WalletReviewedAdapters.solanaSPLTransferChecked
+            && policy.allowedAssetIDs.allSatisfy {
+                guard let identity = WalletSolanaAssetIdentity.parse($0) else {
+                    return false
+                }
+                return identity.networkID == policy.networkID
+                    && identity.program == .spl
+            }
+            && policy.allowedContractIDs.isEmpty
         let contractPolicy = descriptor.chain == .evm && [
             WalletReviewedAdapters.erc20,
             WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
@@ -1743,7 +1930,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             && policy.allowedAssetIDs.allSatisfy {
                 Self.isERC20AssetID($0, networkID: policy.networkID)
             }
-        guard nativeEVMPolicy || nativeSolanaPolicy || contractPolicy else {
+        guard nativeEVMPolicy || nativeSolanaPolicy || splSolanaPolicy
+                || contractPolicy else {
             throw signerError("The policy does not match a supported reviewed adapter shape.")
         }
     }
@@ -1753,7 +1941,9 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         guard transaction.source.kind == .agent,
               let adapterID = transaction.adapterID,
               [WalletReviewedAdapters.ethereumNativeTransfer,
-               WalletReviewedAdapters.solanaNativeTransfer, WalletReviewedAdapters.erc20,
+               WalletReviewedAdapters.solanaNativeTransfer,
+               WalletReviewedAdapters.solanaSPLTransferChecked,
+               WalletReviewedAdapters.erc20,
                WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn].contains(adapterID),
               transaction.riskFlags.isEmpty,
               let counterparties = policyCounterparties(for: transaction),
@@ -1798,7 +1988,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     private func policyCounterparties(for transaction: WalletPreparedTransaction) -> [String]? {
         switch transaction.adapterID {
         case WalletReviewedAdapters.ethereumNativeTransfer,
-             WalletReviewedAdapters.solanaNativeTransfer:
+             WalletReviewedAdapters.solanaNativeTransfer,
+             WalletReviewedAdapters.solanaSPLTransferChecked:
             return transaction.action.recipient.map { [$0] }
         case WalletReviewedAdapters.erc20:
             let values = transaction.effects.compactMap { effect -> String? in
@@ -1869,6 +2060,23 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     ) -> String {
         let value = Data(
             "legacy|\(solanaSystemProgramID)|\(feePayer):signer:writable|\(recipient):nonsigner:writable"
+                .utf8
+        )
+        return "sha256:" + SHA256.hash(data: value).map {
+            String(format: "%02x", $0)
+        }.joined()
+    }
+
+    private static func solanaSPLResolvedAccountsDigest(
+        feePayer: String,
+        sourceTokenAccount: String,
+        mint: String,
+        destinationTokenAccount: String,
+        recipientOwner: String
+    ) -> String {
+        let tokenProgram = WalletSolanaTokenProgram.spl.programID
+        let value = Data(
+            "legacy|\(tokenProgram)|\(feePayer):signer:writable|\(sourceTokenAccount):nonsigner:writable|\(mint):nonsigner:readonly|\(destinationTokenAccount):nonsigner:writable|owner:\(recipientOwner)"
                 .utf8
         )
         return "sha256:" + SHA256.hash(data: value).map {
@@ -2122,23 +2330,43 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         packet: WalletSolanaPreparationPacket,
         entropy: Data
     ) throws -> RustPreparedSolana {
-        try rustSolanaCall(
-            packet: packet, entropy: entropy,
-            function: rustPrepareSolanaNativeTransfer
-        )
+        switch packet.request.action.type {
+        case .nativeTransfer:
+            return try rustSolanaNativeCall(
+                packet: packet, entropy: entropy,
+                function: rustPrepareSolanaNativeTransfer
+            )
+        case .fungibleTokenTransfer:
+            return try rustSolanaSPLCall(
+                packet: packet, entropy: entropy,
+                function: rustPrepareSolanaSPLTransfer
+            )
+        default:
+            throw signerError("The Solana signer adapter is unavailable.")
+        }
     }
 
     private func rustSignSolana(
         packet: WalletSolanaPreparationPacket,
         entropy: Data
     ) throws -> RustSignedSolana {
-        try rustSolanaCall(
-            packet: packet, entropy: entropy,
-            function: rustSignSolanaNativeTransfer
-        )
+        switch packet.request.action.type {
+        case .nativeTransfer:
+            return try rustSolanaNativeCall(
+                packet: packet, entropy: entropy,
+                function: rustSignSolanaNativeTransfer
+            )
+        case .fungibleTokenTransfer:
+            return try rustSolanaSPLCall(
+                packet: packet, entropy: entropy,
+                function: rustSignSolanaSPLTransfer
+            )
+        default:
+            throw signerError("The Solana signer adapter is unavailable.")
+        }
     }
 
-    private func rustSolanaCall<T: Decodable>(
+    private func rustSolanaNativeCall<T: Decodable>(
         packet: WalletSolanaPreparationPacket,
         entropy: Data,
         function: (UnsafePointer<CChar>, UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
@@ -2147,22 +2375,61 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
               let amount = packet.request.action.amountBaseUnits else {
             throw signerError("The semantic SOL transfer is incomplete.")
         }
+        let request = RustSolanaNativeTransfer(
+            feePayer: packet.feePayer, recipient: recipient,
+            recentBlockhash: packet.recentBlockhash,
+            amountBaseUnits: amount
+        )
+        return try rustSolanaCall(
+            request: request, entropy: entropy, function: function
+        )
+    }
+
+    private func rustSolanaSPLCall<T: Decodable>(
+        packet: WalletSolanaPreparationPacket,
+        entropy: Data,
+        function: (UnsafePointer<CChar>, UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+    ) throws -> T {
+        guard let recipient = packet.request.action.recipient,
+              let amount = packet.request.action.amountBaseUnits,
+              packet.instructions.count == 1,
+              let arguments = packet.instructions.first?.canonicalArguments,
+              let source = arguments["source_token_account"],
+              let mint = arguments["mint"],
+              let destination = arguments["destination_token_account"],
+              let decimalsText = arguments["decimals"],
+              let decimals = UInt8(decimalsText) else {
+            throw signerError("The semantic SPL transfer is incomplete.")
+        }
+        let request = RustSolanaSPLTransfer(
+            feePayer: packet.feePayer, sourceTokenAccount: source,
+            mint: mint, destinationTokenAccount: destination,
+            recipientOwner: recipient,
+            tokenProgramID: WalletSolanaTokenProgram.spl.programID,
+            recentBlockhash: packet.recentBlockhash,
+            amountBaseUnits: amount, decimals: decimals
+        )
+        return try rustSolanaCall(
+            request: request, entropy: entropy, function: function
+        )
+    }
+
+    private func rustSolanaCall<Request: Encodable, Result: Decodable>(
+        request: Request,
+        entropy: Data,
+        function: (UnsafePointer<CChar>, UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+    ) throws -> Result {
         var entropyHex = entropy.map { String(format: "%02x", $0) }.joined()
         defer {
             entropyHex.replaceSubrange(
                 entropyHex.startIndex..<entropyHex.endIndex, with: ""
             )
         }
-        let request = RustSolanaNativeTransfer(
-            feePayer: packet.feePayer, recipient: recipient,
-            recentBlockhash: packet.recentBlockhash,
-            amountBaseUnits: amount
-        )
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         let data = try encoder.encode(request)
         guard var json = String(data: data, encoding: .utf8) else {
-            throw signerError("The SOL transfer could not be encoded.")
+            throw signerError("The reviewed Solana transfer could not be encoded.")
         }
         defer { json.replaceSubrange(json.startIndex..<json.endIndex, with: "") }
         guard let pointer = entropyHex.withCString({ entropyPointer in
@@ -2177,7 +2444,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         }
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return try decoder.decode(T.self, from: result)
+        return try decoder.decode(Result.self, from: result)
     }
 
     private func rustTransactionCall<T: Decodable>(

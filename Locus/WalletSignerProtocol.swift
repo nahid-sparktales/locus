@@ -295,13 +295,14 @@ struct WalletContractRegistryEntry: Codable, Equatable, Identifiable, Sendable {
 enum WalletReviewedAdapters {
     static let ethereumNativeTransfer = "native-eth-transfer-v1"
     static let solanaNativeTransfer = "solana-system-transfer-v1"
+    static let solanaSPLTransferChecked = "solana-spl-transfer-checked-v1"
     static let erc20 = "erc20-v1"
     static let erc721SafeTransfer = "erc721-safe-transfer-v1"
     static let erc1155SafeTransfer = "erc1155-safe-transfer-v1"
     static let uniswapUniversalRouterV2ExactIn =
         "uniswap-universal-router-v2-exact-in-v1"
     static let staticallySupportedIDs: Set<String> = [
-        ethereumNativeTransfer, solanaNativeTransfer,
+        ethereumNativeTransfer, solanaNativeTransfer, solanaSPLTransferChecked,
         erc20, erc721SafeTransfer, erc1155SafeTransfer,
         uniswapUniversalRouterV2ExactIn,
     ]

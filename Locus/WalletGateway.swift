@@ -378,7 +378,8 @@ enum WalletPolicyEngine {
         let counterparties: [String]
         switch adapterID {
         case WalletReviewedAdapters.ethereumNativeTransfer,
-             WalletReviewedAdapters.solanaNativeTransfer:
+             WalletReviewedAdapters.solanaNativeTransfer,
+             WalletReviewedAdapters.solanaSPLTransferChecked:
             counterparties = transaction.action.recipient.map { [$0] } ?? []
         case WalletReviewedAdapters.erc20:
             counterparties = transaction.effects.compactMap { effect in
@@ -2341,7 +2342,18 @@ final class WalletGateway: ObservableObject {
                 )
             }
             contract = registered
-        case .fungibleTokenTransfer, .nftTransfer:
+        case .fungibleTokenTransfer:
+            if WalletNetworkCatalog.descriptor(id: request.networkID)?.chain == .solana {
+                try validateReviewedSolanaAsset(
+                    for: request.action, networkID: request.networkID
+                )
+                contract = nil
+            } else {
+                contract = try reviewedAssetContract(
+                    for: request.action, networkID: request.networkID
+                )
+            }
+        case .nftTransfer:
             contract = try reviewedAssetContract(
                 for: request.action, networkID: request.networkID
             )
@@ -2415,6 +2427,25 @@ final class WalletGateway: ObservableObject {
         return entry
     }
 
+    private func validateReviewedSolanaAsset(
+        for action: WalletSemanticAction,
+        networkID: String
+    ) throws {
+        guard action.type == .fungibleTokenTransfer,
+              let assetID = action.assetID,
+              let identity = WalletSolanaAssetIdentity.parse(assetID),
+              identity.networkID == networkID, identity.program == .spl,
+              let asset = assets.first(where: { $0.id == assetID }),
+              asset.networkID == networkID, asset.chain == .solana,
+              asset.kind == .fungibleToken, asset.reference == identity.mint,
+              asset.decimals.map({ (0...255).contains($0) }) == true,
+              asset.isVisibleByDefault else {
+            throw Error.invalidArguments(
+                "The selected SPL token is not trusted for reviewed transfers."
+            )
+        }
+    }
+
     private func parsePrepareRequest(
         _ arguments: [String: Any],
         source: WalletRequestSource
@@ -2465,10 +2496,12 @@ final class WalletGateway: ObservableObject {
             action = .contractCall(contractID: contractID, function: function,
                                    arguments: typedArguments, valueBaseUnits: value)
         case .fungibleTokenTransfer:
-            guard descriptor.chain == .evm,
+            guard descriptor.chain == .evm || descriptor.chain == .solana,
                   let assetID = nonempty(actionObject["asset_id"]),
+                  (descriptor.chain != .solana
+                    || WalletSolanaAssetIdentity.parse(assetID)?.networkID == networkID),
                   let recipient = nonempty(actionObject["recipient"]),
-                  Self.validAddress(recipient, chain: .evm),
+                  Self.validAddress(recipient, chain: descriptor.chain),
                   let amount = WalletBaseUnits.normalize(
                       nonempty(actionObject["amount_base_units"]) ?? ""
                   ), amount != "0", actionObject["calldata"] == nil else {

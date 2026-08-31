@@ -6,7 +6,7 @@ are public identifiers and are restricted and rotated vendor-side.
 | Capability | Intended primary | Intended fallback / boundary |
 | --- | --- | --- |
 | Ethereum RPC/indexing | Alchemy | QuickNode; user-defined HTTPS endpoint; chain ID verified |
-| Solana RPC/indexing | Alchemy | QuickNode; genesis identity verified; native transfers currently use no lookup table and one fully reconstructed System Program instruction; SPL and Token-2022 balances use validated [`getTokenAccountsByOwner`](https://solana.com/docs/rpc/http/gettokenaccountsbyowner) raw integer amounts |
+| Solana RPC/indexing | Alchemy | QuickNode; genesis identity verified; native transfers use one reconstructed System Program instruction; classic SPL sends use one reconstructed `TransferChecked` and require verified existing source/destination token accounts; SPL and Token-2022 balances use validated [`getTokenAccountsByOwner`](https://solana.com/docs/rpc/http/gettokenaccountsbyowner) raw integer amounts |
 | Sui data/execution | gRPC and GraphQL provider configuration | Chain identifier verified; no new JSON-RPC dependency |
 | Ethereum swaps | Uniswap Universal Router reviewed subset | Exact input only; pinned code/commands/recipient/deadline |
 | Solana swaps | Jupiter Router `/build` | Locus validates, simulates, signs, and broadcasts; no managed `/order` execution |

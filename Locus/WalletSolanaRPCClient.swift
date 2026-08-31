@@ -77,6 +77,121 @@ struct WalletSolanaCanonicalNativeTransfer: Equatable, Sendable {
     }
 }
 
+struct WalletSolanaCanonicalSPLTransfer: Equatable, Sendable {
+    let feePayer: String
+    let sourceTokenAccount: String
+    let mint: String
+    let destinationTokenAccount: String
+    let recipientOwner: String
+    let tokenProgramID: String
+    let recentBlockhash: String
+    let amount: UInt64
+    let decimals: UInt8
+    let message: Data
+    let unsignedTransaction: Data
+    let canonicalMessageDigest: String
+    let resolvedAccountsDigest: String
+
+    init(
+        feePayer: String,
+        sourceTokenAccount: String,
+        mint: String,
+        destinationTokenAccount: String,
+        recipientOwner: String,
+        tokenProgramID: String,
+        recentBlockhash: String,
+        amountBaseUnits: String,
+        decimals: Int
+    ) throws {
+        guard tokenProgramID == WalletSolanaTokenProgram.spl.programID,
+              let payer = WalletSolanaBase58.decode(feePayer, exactLength: 32),
+              let source = WalletSolanaBase58.decode(
+                  sourceTokenAccount, exactLength: 32
+              ),
+              let mintBytes = WalletSolanaBase58.decode(mint, exactLength: 32),
+              let destination = WalletSolanaBase58.decode(
+                  destinationTokenAccount, exactLength: 32
+              ),
+              WalletSolanaBase58.decode(recipientOwner, exactLength: 32) != nil,
+              let program = WalletSolanaBase58.decode(tokenProgramID, exactLength: 32),
+              let blockhash = WalletSolanaBase58.decode(recentBlockhash, exactLength: 32),
+              let amount = UInt64(amountBaseUnits), amount > 0,
+              (0...255).contains(decimals),
+              Set([
+                  feePayer, sourceTokenAccount, mint, destinationTokenAccount,
+                  recipientOwner, tokenProgramID,
+              ]).count == 6 else {
+            throw WalletGateway.Error.invalidArguments(
+                "The reviewed SPL transfer requires distinct canonical accounts, classic SPL Token, a valid blockhash, and positive u64 units."
+            )
+        }
+
+        var message = Data([1, 0, 2])
+        message.append(Self.shortVector(5))
+        message.append(payer)
+        message.append(source)
+        message.append(destination)
+        message.append(mintBytes)
+        message.append(program)
+        message.append(blockhash)
+        message.append(Self.shortVector(1))
+        message.append(4)
+        message.append(Self.shortVector(4))
+        message.append(contentsOf: [1, 3, 2, 0])
+        var instructionData = Data([12])
+        instructionData.appendLittleEndian(amount)
+        instructionData.append(UInt8(decimals))
+        message.append(Self.shortVector(instructionData.count))
+        message.append(instructionData)
+
+        var transaction = Data([1])
+        transaction.append(Data(repeating: 0, count: 64))
+        transaction.append(message)
+        self.feePayer = feePayer
+        self.sourceTokenAccount = sourceTokenAccount
+        self.mint = mint
+        self.destinationTokenAccount = destinationTokenAccount
+        self.recipientOwner = recipientOwner
+        self.tokenProgramID = tokenProgramID
+        self.recentBlockhash = recentBlockhash
+        self.amount = amount
+        self.decimals = UInt8(decimals)
+        self.message = message
+        unsignedTransaction = transaction
+        canonicalMessageDigest = Self.sha256(message)
+        resolvedAccountsDigest = Self.resolvedDigest(
+            feePayer: feePayer, sourceTokenAccount: sourceTokenAccount,
+            mint: mint, destinationTokenAccount: destinationTokenAccount,
+            recipientOwner: recipientOwner, tokenProgramID: tokenProgramID
+        )
+    }
+
+    static func resolvedDigest(
+        feePayer: String,
+        sourceTokenAccount: String,
+        mint: String,
+        destinationTokenAccount: String,
+        recipientOwner: String,
+        tokenProgramID: String
+    ) -> String {
+        sha256(Data(
+            "legacy|\(tokenProgramID)|\(feePayer):signer:writable|\(sourceTokenAccount):nonsigner:writable|\(mint):nonsigner:readonly|\(destinationTokenAccount):nonsigner:writable|owner:\(recipientOwner)"
+                .utf8
+        ))
+    }
+
+    private static func shortVector(_ value: Int) -> Data {
+        precondition((0...127).contains(value))
+        return Data([UInt8(value)])
+    }
+
+    private static func sha256(_ data: Data) -> String {
+        "sha256:" + SHA256.hash(data: data).map {
+            String(format: "%02x", $0)
+        }.joined()
+    }
+}
+
 private extension Data {
     mutating func appendLittleEndian<T: FixedWidthInteger>(_ value: T) {
         var encoded = value.littleEndian
@@ -172,6 +287,22 @@ actor WalletSolanaRPCClient {
         request: WalletPrepareRequest,
         feePayer: String
     ) async throws -> WalletSolanaPreparationPacket {
+        switch request.action.type {
+        case .nativeTransfer:
+            return try await prepareNative(request: request, feePayer: feePayer)
+        case .fungibleTokenTransfer:
+            return try await prepareSPLTransfer(request: request, feePayer: feePayer)
+        default:
+            throw WalletGateway.Error.invalidArguments(
+                "That Solana semantic action has no reviewed provider adapter."
+            )
+        }
+    }
+
+    private func prepareNative(
+        request: WalletPrepareRequest,
+        feePayer: String
+    ) async throws -> WalletSolanaPreparationPacket {
         guard request.networkID == network.id,
               request.action.type == .nativeTransfer,
               request.action.assetID == nil,
@@ -236,6 +367,116 @@ actor WalletSolanaRPCClient {
         )
     }
 
+    private func prepareSPLTransfer(
+        request: WalletPrepareRequest,
+        feePayer: String
+    ) async throws -> WalletSolanaPreparationPacket {
+        let action = request.action
+        guard request.networkID == network.id,
+              action.type == .fungibleTokenTransfer,
+              let assetID = action.assetID,
+              let identity = WalletSolanaAssetIdentity.parse(assetID),
+              identity.networkID == network.id, identity.program == .spl,
+              action.tokenID == nil, action.inputAssetID == nil,
+              action.outputAssetID == nil, action.minimumOutputBaseUnits == nil,
+              action.adapterID == nil, action.authorizationFormat == nil,
+              action.metadataDigest == nil, action.contractID == nil,
+              action.function == nil, action.arguments.isEmpty,
+              action.valueBaseUnits == nil,
+              let recipient = action.recipient,
+              WalletSolanaBase58.decode(recipient, exactLength: 32) != nil,
+              recipient != feePayer,
+              let amountText = action.amountBaseUnits,
+              let amount = UInt64(amountText), amount > 0,
+              String(amount) == amountText else {
+            throw WalletGateway.Error.invalidArguments(
+                "The reviewed SPL adapter accepts only canonical classic-token transfers."
+            )
+        }
+        let genesisHash = try await verifiedGenesisHash()
+        let decimals = try await mintDecimals(identity: identity)
+        let sourceAccounts = try await tokenAccounts(owner: feePayer).filter {
+            $0.identity == identity && $0.state == "initialized" && !$0.isNative
+                && WalletBaseUnits.lessThanOrEqual(amountText, $0.amountBaseUnits)
+                && $0.decimals == decimals
+        }
+        guard let source = sourceAccounts.sorted(by: { $0.address < $1.address }).first else {
+            throw WalletGateway.Error.invalidArguments(
+                "No single initialized SPL token account has enough balance for this transfer."
+            )
+        }
+        let destinationAccounts = try await tokenAccounts(owner: recipient).filter {
+            $0.identity == identity && $0.state == "initialized" && !$0.isNative
+                && $0.decimals == decimals
+        }
+        guard let destination = destinationAccounts.sorted(
+            by: { $0.address < $1.address }
+        ).first else {
+            throw WalletGateway.Error.invalidArguments(
+                "The recipient needs an existing verified SPL token account for this mint."
+            )
+        }
+        let latest = try await latestBlockhash()
+        let transfer = try WalletSolanaCanonicalSPLTransfer(
+            feePayer: feePayer, sourceTokenAccount: source.address,
+            mint: identity.mint, destinationTokenAccount: destination.address,
+            recipientOwner: recipient, tokenProgramID: identity.program.programID,
+            recentBlockhash: latest.blockhash, amountBaseUnits: amountText,
+            decimals: decimals
+        )
+        let fee = try await feeForMessage(transfer.message)
+        guard WalletBaseUnits.lessThanOrEqual(fee, request.maximumFeeBaseUnits) else {
+            throw WalletGateway.Error.policyDenied(
+                "The Solana network fee exceeds the requested fee ceiling."
+            )
+        }
+        let simulation = try await simulate(transfer.unsignedTransaction)
+        let instruction = WalletSolanaReviewedInstruction(
+            programID: identity.program.programID,
+            adapterID: WalletReviewedAdapters.solanaSPLTransferChecked,
+            semanticOperation: WalletActionKind.fungibleTokenTransfer.rawValue,
+            accounts: [
+                .init(
+                    address: feePayer, isSigner: true, isWritable: true,
+                    lookupTableAddress: nil, lookupTableSlot: nil
+                ),
+                .init(
+                    address: source.address, isSigner: false, isWritable: true,
+                    lookupTableAddress: nil, lookupTableSlot: nil
+                ),
+                .init(
+                    address: identity.mint, isSigner: false, isWritable: false,
+                    lookupTableAddress: nil, lookupTableSlot: nil
+                ),
+                .init(
+                    address: destination.address, isSigner: false, isWritable: true,
+                    lookupTableAddress: nil, lookupTableSlot: nil
+                ),
+            ],
+            canonicalArguments: [
+                "amount": amountText,
+                "asset_id": assetID,
+                "decimals": String(decimals),
+                "destination_owner": recipient,
+                "destination_token_account": destination.address,
+                "mint": identity.mint,
+                "source_token_account": source.address,
+            ]
+        )
+        return WalletSolanaPreparationPacket(
+            request: request, genesisHash: genesisHash, version: .legacy,
+            recentBlockhash: latest.blockhash,
+            lastValidBlockHeight: latest.lastValidBlockHeight,
+            contextSlot: latest.contextSlot, feePayer: feePayer,
+            priorityFeeBaseUnits: "0", feeQuoteBaseUnits: fee,
+            maximumFeeBaseUnits: request.maximumFeeBaseUnits,
+            canonicalMessageDigest: transfer.canonicalMessageDigest,
+            resolvedAccountsDigest: transfer.resolvedAccountsDigest,
+            instructions: [instruction], simulation: simulation,
+            simulationSucceeded: true, observedAt: Date()
+        )
+    }
+
     func recheck(
         intentID: String,
         packet: WalletSolanaPreparationPacket
@@ -250,27 +491,94 @@ actor WalletSolanaRPCClient {
         guard currentBlockHeight <= packet.lastValidBlockHeight else {
             throw WalletRPCError.simulation("the prepared Solana blockhash expired")
         }
-        let recipient = packet.request.action.recipient ?? ""
-        let amount = packet.request.action.amountBaseUnits ?? ""
-        let transaction = try WalletSolanaCanonicalNativeTransfer(
-            feePayer: packet.feePayer, recipient: recipient,
-            recentBlockhash: packet.recentBlockhash, amountBaseUnits: amount
-        )
-        guard transaction.canonicalMessageDigest == packet.canonicalMessageDigest,
-              transaction.resolvedAccountsDigest == packet.resolvedAccountsDigest else {
+        let message: Data
+        let unsignedTransaction: Data
+        let canonicalDigest: String
+        let resolvedDigest: String
+        switch packet.request.action.type {
+        case .nativeTransfer:
+            let transaction = try WalletSolanaCanonicalNativeTransfer(
+                feePayer: packet.feePayer,
+                recipient: packet.request.action.recipient ?? "",
+                recentBlockhash: packet.recentBlockhash,
+                amountBaseUnits: packet.request.action.amountBaseUnits ?? ""
+            )
+            message = transaction.message
+            unsignedTransaction = transaction.unsignedTransaction
+            canonicalDigest = transaction.canonicalMessageDigest
+            resolvedDigest = transaction.resolvedAccountsDigest
+        case .fungibleTokenTransfer:
+            let action = packet.request.action
+            guard let assetID = action.assetID,
+                  let identity = WalletSolanaAssetIdentity.parse(assetID),
+                  identity.networkID == network.id, identity.program == .spl,
+                  let recipient = action.recipient,
+                  let amount = action.amountBaseUnits,
+                  packet.instructions.count == 1,
+                  let instruction = packet.instructions.first,
+                  instruction.programID == identity.program.programID,
+                  instruction.adapterID == WalletReviewedAdapters.solanaSPLTransferChecked,
+                  let sourceAddress = instruction.canonicalArguments[
+                      "source_token_account"
+                  ],
+                  let destinationAddress = instruction.canonicalArguments[
+                      "destination_token_account"
+                  ],
+                  let decimalsText = instruction.canonicalArguments["decimals"],
+                  let decimals = Int(decimalsText), (0...255).contains(decimals) else {
+                throw WalletRPCError.simulation("the reviewed SPL evidence is incomplete")
+            }
+            let currentDecimals = try await mintDecimals(identity: identity)
+            guard currentDecimals == decimals else {
+                throw WalletRPCError.simulation("the SPL mint decimals changed")
+            }
+            let sources = try await tokenAccounts(owner: packet.feePayer)
+            let destinations = try await tokenAccounts(owner: recipient)
+            guard sources.contains(where: {
+                $0.address == sourceAddress && $0.identity == identity
+                    && $0.state == "initialized" && !$0.isNative
+                    && $0.decimals == decimals
+                    && WalletBaseUnits.lessThanOrEqual(amount, $0.amountBaseUnits)
+            }), destinations.contains(where: {
+                $0.address == destinationAddress && $0.identity == identity
+                    && $0.state == "initialized" && !$0.isNative
+                    && $0.decimals == decimals
+            }) else {
+                throw WalletRPCError.simulation(
+                    "the SPL source or destination account evidence changed"
+                )
+            }
+            let transaction = try WalletSolanaCanonicalSPLTransfer(
+                feePayer: packet.feePayer,
+                sourceTokenAccount: sourceAddress, mint: identity.mint,
+                destinationTokenAccount: destinationAddress,
+                recipientOwner: recipient,
+                tokenProgramID: identity.program.programID,
+                recentBlockhash: packet.recentBlockhash,
+                amountBaseUnits: amount, decimals: decimals
+            )
+            message = transaction.message
+            unsignedTransaction = transaction.unsignedTransaction
+            canonicalDigest = transaction.canonicalMessageDigest
+            resolvedDigest = transaction.resolvedAccountsDigest
+        default:
+            throw WalletRPCError.simulation("the Solana adapter is not reviewed")
+        }
+        guard canonicalDigest == packet.canonicalMessageDigest,
+              resolvedDigest == packet.resolvedAccountsDigest else {
             throw WalletRPCError.simulation(
                 "the prepared Solana message or resolved accounts changed"
             )
         }
-        let fee = try await feeForMessage(transaction.message)
+        let fee = try await feeForMessage(message)
         guard WalletBaseUnits.lessThanOrEqual(fee, packet.maximumFeeBaseUnits) else {
             throw WalletRPCError.simulation("the refreshed Solana fee exceeds its ceiling")
         }
-        let simulation = try await simulate(transaction.unsignedTransaction)
+        let simulation = try await simulate(unsignedTransaction)
         return WalletSolanaRecheckPacket(
             intentID: intentID, genesisHash: genesisHash,
             currentBlockHeight: currentBlockHeight,
-            resolvedAccountsDigest: transaction.resolvedAccountsDigest,
+            resolvedAccountsDigest: resolvedDigest,
             feeQuoteBaseUnits: fee, simulation: simulation,
             simulationSucceeded: true, observedAt: Date()
         )
@@ -382,6 +690,44 @@ actor WalletSolanaRPCClient {
             total = next
         }
         return total
+    }
+
+    private func mintDecimals(identity: WalletSolanaAssetIdentity) async throws -> Int {
+        guard identity.networkID == network.id else {
+            throw WalletGateway.Error.invalidArguments(
+                "The token mint belongs to another Solana network."
+            )
+        }
+        _ = try await verifiedGenesisHash()
+        let result = try await dictionaryResult(
+            method: "getAccountInfo",
+            params: [
+                identity.mint,
+                ["commitment": "confirmed", "encoding": "jsonParsed"],
+            ]
+        )
+        guard let context = result["context"] as? [String: Any],
+              Self.unsigned(context["slot"]) != nil,
+              let account = result["value"] as? [String: Any],
+              account["owner"] as? String == identity.program.programID,
+              account["executable"] as? Bool == false,
+              Self.unsigned(account["lamports"]) != nil,
+              let data = account["data"] as? [String: Any],
+              data["program"] as? String == identity.program.parsedProgramName,
+              let parsed = data["parsed"] as? [String: Any],
+              parsed["type"] as? String == "mint",
+              let info = parsed["info"] as? [String: Any],
+              info["isInitialized"] as? Bool == true,
+              let number = info["decimals"] as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.decimalValue >= 0,
+              number.decimalValue == Decimal(number.intValue),
+              (0...255).contains(number.intValue) else {
+            throw WalletRPCError.invalidResponse(
+                "getAccountInfo returned an invalid classic SPL mint"
+            )
+        }
+        return number.intValue
     }
 
     func publicRead(method: String, params: [Any]) async throws -> Any {
@@ -503,7 +849,7 @@ actor WalletSolanaRPCClient {
         if let inner = value["innerInstructions"], !(inner is NSNull) {
             guard let entries = inner as? [Any], entries.isEmpty else {
                 throw WalletRPCError.simulation(
-                    "the native SOL transfer produced unexpected inner instructions"
+                    "the reviewed Solana transaction produced unexpected inner instructions"
                 )
             }
         }
@@ -516,9 +862,9 @@ actor WalletSolanaRPCClient {
             throw WalletRPCError.invalidResponse("simulation compute units were invalid")
         }
         if let units {
-            return "System Program transfer simulation succeeded; \(units) compute units"
+            return "Reviewed Solana simulation succeeded; \(units) compute units"
         }
-        return "System Program transfer simulation succeeded"
+        return "Reviewed Solana simulation succeeded"
     }
 
     private func verifiedGenesisHash() async throws -> String {

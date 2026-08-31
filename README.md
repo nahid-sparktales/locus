@@ -150,11 +150,13 @@ one Ethereum, Solana, and Sui account.
 Mainnet is default-denied. A short-lived signed manifest can enable only code
 already reviewed in the build, only in counsel-approved regions, and only when
 its hashed audit/operational evidence satisfies the invited-canary or GA gate.
-The checked-in manifest enables nothing. A reviewed native-SOL builder and
-quarantined SPL/Token-2022 balance discovery are implemented, while mainnet
-signing remains gated. Solana token transfers, NFTs/versioned messages, all Sui
-adapters, full swaps, external wallets, and WalletConnect remain closed until
-their implementation and evidence gates pass.
+The checked-in manifest enables nothing. Reviewed native-SOL and classic SPL
+`TransferChecked` builders plus quarantined SPL/Token-2022 balance discovery are
+implemented, while mainnet signing remains gated. Classic SPL sends currently
+require an already initialized, provider-verified recipient token account.
+Token-2022 transfers, automatic associated-token-account creation,
+NFTs/versioned messages, all Sui adapters, full swaps, external wallets, and
+WalletConnect remain closed until their implementation and evidence gates pass.
 
 The Mac App Store target embeds neither recovery nor signer service. See the
 [security gate](Docs/WalletSecurityGate.md),

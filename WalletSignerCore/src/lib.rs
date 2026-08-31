@@ -83,6 +83,19 @@ struct SolanaNativeTransferRequest {
     amount_base_units: String,
 }
 
+#[derive(Clone, Deserialize)]
+struct SolanaSplTransferRequest {
+    fee_payer: String,
+    source_token_account: String,
+    mint: String,
+    destination_token_account: String,
+    recipient_owner: String,
+    token_program_id: String,
+    recent_blockhash: String,
+    amount_base_units: String,
+    decimals: u8,
+}
+
 #[derive(Serialize)]
 struct PreparedSolanaTransaction {
     from: String,
@@ -280,6 +293,20 @@ fn parse_solana_request(value: *const c_char) -> Result<SolanaNativeTransferRequ
     serde_json::from_slice(json).map_err(|_| "invalid Solana transaction JSON")
 }
 
+fn parse_solana_spl_request(
+    value: *const c_char,
+) -> Result<SolanaSplTransferRequest, &'static str> {
+    if value.is_null() {
+        return Err("missing SPL transaction");
+    }
+    // SAFETY: Callers provide a live NUL-terminated CString for this call.
+    let json = unsafe { CStr::from_ptr(value) }.to_bytes();
+    if json.len() > 16 * 1024 {
+        return Err("SPL transaction is too large");
+    }
+    serde_json::from_slice(json).map_err(|_| "invalid SPL transaction JSON")
+}
+
 fn encode_shortvec(mut value: usize, output: &mut Vec<u8>) {
     loop {
         let mut byte = (value & 0x7f) as u8;
@@ -335,6 +362,83 @@ fn build_solana_native_message(
     encode_shortvec(12, &mut message);
     message.extend_from_slice(&2_u32.to_le_bytes());
     message.extend_from_slice(&amount.to_le_bytes());
+    Ok(message)
+}
+
+fn canonical_solana_pubkey(value: &str) -> Result<Pubkey, &'static str> {
+    let key = Pubkey::from_str(value).map_err(|_| "invalid Solana public key")?;
+    if key.to_string() != value {
+        return Err("Solana public key must use canonical base58");
+    }
+    Ok(key)
+}
+
+fn canonical_solana_blockhash(value: &str) -> Result<Vec<u8>, &'static str> {
+    let blockhash = bs58::decode(value)
+        .into_vec()
+        .map_err(|_| "invalid Solana blockhash")?;
+    if blockhash.len() != 32 || bs58::encode(&blockhash).into_string() != value {
+        return Err("Solana blockhash must be canonical base58");
+    }
+    Ok(blockhash)
+}
+
+fn build_solana_spl_message(
+    request: &SolanaSplTransferRequest,
+    signing_key: &SigningKey,
+) -> Result<Vec<u8>, &'static str> {
+    const SPL_TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    if request.token_program_id != SPL_TOKEN_PROGRAM {
+        return Err("only the classic SPL Token Program is reviewed");
+    }
+    let payer = canonical_solana_pubkey(&request.fee_payer)?;
+    let source = canonical_solana_pubkey(&request.source_token_account)?;
+    let mint = canonical_solana_pubkey(&request.mint)?;
+    let destination = canonical_solana_pubkey(&request.destination_token_account)?;
+    let recipient_owner = canonical_solana_pubkey(&request.recipient_owner)?;
+    let token_program = canonical_solana_pubkey(&request.token_program_id)?;
+    let expected_payer = Pubkey::new_from_array(signing_key.verifying_key().to_bytes());
+    let distinct = [
+        payer,
+        source,
+        mint,
+        destination,
+        recipient_owner,
+        token_program,
+    ]
+    .into_iter()
+    .collect::<std::collections::HashSet<_>>();
+    if payer != expected_payer || distinct.len() != 6 {
+        return Err("SPL account roles do not match the reviewed transfer");
+    }
+    let amount = request
+        .amount_base_units
+        .parse::<u64>()
+        .map_err(|_| "invalid SPL transfer amount")?;
+    if amount == 0 || amount.to_string() != request.amount_base_units {
+        return Err("SPL transfer amount must be a positive canonical u64");
+    }
+    let blockhash = canonical_solana_blockhash(&request.recent_blockhash)?;
+
+    // Legacy message with exactly one SPL Token TransferChecked instruction.
+    // Message order: payer, source, destination, mint, program. The instruction
+    // account order is source, mint, destination, authority.
+    let mut message = vec![1, 0, 2];
+    encode_shortvec(5, &mut message);
+    message.extend_from_slice(payer.as_array());
+    message.extend_from_slice(source.as_array());
+    message.extend_from_slice(destination.as_array());
+    message.extend_from_slice(mint.as_array());
+    message.extend_from_slice(token_program.as_array());
+    message.extend_from_slice(&blockhash);
+    encode_shortvec(1, &mut message);
+    message.push(4);
+    encode_shortvec(4, &mut message);
+    message.extend_from_slice(&[1, 3, 2, 0]);
+    encode_shortvec(10, &mut message);
+    message.push(12);
+    message.extend_from_slice(&amount.to_le_bytes());
+    message.push(request.decimals);
     Ok(message)
 }
 
@@ -514,6 +618,69 @@ pub extern "C" fn locus_wallet_sign_solana_native_transfer_json(
         let signing_key = solana_signing_key(&mnemonic);
         let request = parse_solana_request(transaction_json)?;
         let message = build_solana_native_message(&request, &signing_key)?;
+        let signature = signing_key.sign(&message).to_bytes();
+        let mut transaction = Vec::with_capacity(1 + signature.len() + message.len());
+        encode_shortvec(1, &mut transaction);
+        transaction.extend_from_slice(&signature);
+        transaction.extend_from_slice(&message);
+        Ok::<_, &'static str>(SignedSolanaTransaction {
+            from: Pubkey::new_from_array(signing_key.verifying_key().to_bytes()).to_string(),
+            canonical_message_digest: solana_message_digest(&message),
+            transaction_id: bs58::encode(signature).into_string(),
+            signed_transaction: base64::engine::general_purpose::STANDARD.encode(transaction),
+        })
+    })();
+    entropy.zeroize();
+    match result {
+        Ok(value) => json_pointer(&value),
+        Err(error) => json_pointer(&ErrorResponse { error }),
+    }
+}
+
+/// Independently rebuild one reviewed classic SPL Token TransferChecked
+/// instruction. Token-2022 extensions, extra instructions, and caller-supplied
+/// message bytes are not accepted by this boundary.
+#[unsafe(no_mangle)]
+pub extern "C" fn locus_wallet_prepare_solana_spl_transfer_json(
+    entropy_hex: *const c_char,
+    transaction_json: *const c_char,
+) -> *mut c_char {
+    let Ok((mnemonic, mut entropy)) = mnemonic_from_entropy_hex(entropy_hex) else {
+        return json_pointer(&ErrorResponse {
+            error: "invalid BIP-39 entropy",
+        });
+    };
+    let result = (|| {
+        let signing_key = solana_signing_key(&mnemonic);
+        let request = parse_solana_spl_request(transaction_json)?;
+        let message = build_solana_spl_message(&request, &signing_key)?;
+        Ok::<_, &'static str>(PreparedSolanaTransaction {
+            from: Pubkey::new_from_array(signing_key.verifying_key().to_bytes()).to_string(),
+            canonical_message_digest: solana_message_digest(&message),
+        })
+    })();
+    entropy.zeroize();
+    match result {
+        Ok(value) => json_pointer(&value),
+        Err(error) => json_pointer(&ErrorResponse { error }),
+    }
+}
+
+/// Rebuild and sign only the reviewed classic SPL TransferChecked shape.
+#[unsafe(no_mangle)]
+pub extern "C" fn locus_wallet_sign_solana_spl_transfer_json(
+    entropy_hex: *const c_char,
+    transaction_json: *const c_char,
+) -> *mut c_char {
+    let Ok((mnemonic, mut entropy)) = mnemonic_from_entropy_hex(entropy_hex) else {
+        return json_pointer(&ErrorResponse {
+            error: "invalid BIP-39 entropy",
+        });
+    };
+    let result = (|| {
+        let signing_key = solana_signing_key(&mnemonic);
+        let request = parse_solana_spl_request(transaction_json)?;
+        let message = build_solana_spl_message(&request, &signing_key)?;
         let signature = signing_key.sign(&message).to_bytes();
         let mut transaction = Vec::with_capacity(1 + signature.len() + message.len());
         encode_shortvec(1, &mut transaction);
@@ -797,6 +964,130 @@ mod tests {
             unsafe { locus_wallet_string_free(pointer) };
             let value: serde_json::Value = serde_json::from_str(&json).unwrap();
             assert!(value["error"].as_str().is_some());
+        }
+    }
+
+    #[test]
+    fn solana_spl_transfer_checked_is_rebuilt_and_signed_deterministically() {
+        use ed25519_dalek::{Signature, Verifier};
+
+        let entropy =
+            CString::new("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let request = CString::new(
+            serde_json::json!({
+                "fee_payer": "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx",
+                "source_token_account": Pubkey::new_from_array([2_u8; 32]).to_string(),
+                "mint": Pubkey::new_from_array([3_u8; 32]).to_string(),
+                "destination_token_account": Pubkey::new_from_array([4_u8; 32]).to_string(),
+                "recipient_owner": Pubkey::new_from_array([5_u8; 32]).to_string(),
+                "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                "recent_blockhash": Pubkey::new_from_array([9_u8; 32]).to_string(),
+                "amount_base_units": "123456789",
+                "decimals": 6
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let prepared_pointer =
+            locus_wallet_prepare_solana_spl_transfer_json(entropy.as_ptr(), request.as_ptr());
+        let prepared_json = unsafe { CStr::from_ptr(prepared_pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(prepared_pointer) };
+        let prepared: serde_json::Value = serde_json::from_str(&prepared_json).unwrap();
+        assert_eq!(
+            prepared["from"],
+            "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        );
+        assert_eq!(
+            prepared["canonical_message_digest"],
+            "sha256:1e22ab87cedf350790b6bc80e98799dfe043aa04d0e7e1374b9e98b1a3390c7f"
+        );
+
+        let signed_pointer =
+            locus_wallet_sign_solana_spl_transfer_json(entropy.as_ptr(), request.as_ptr());
+        let signed_json = unsafe { CStr::from_ptr(signed_pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(signed_pointer) };
+        let signed: serde_json::Value = serde_json::from_str(&signed_json).unwrap();
+        assert_eq!(
+            signed["canonical_message_digest"],
+            prepared["canonical_message_digest"]
+        );
+        let transaction = base64::engine::general_purpose::STANDARD
+            .decode(signed["signed_transaction"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(transaction.len(), 279);
+        assert_eq!(transaction[0], 1);
+        let signature = Signature::from_bytes(&transaction[1..65].try_into().unwrap());
+        let (mnemonic, mut entropy_bytes) = mnemonic_from_entropy_hex(entropy.as_ptr()).unwrap();
+        solana_signing_key(&mnemonic)
+            .verifying_key()
+            .verify(&transaction[65..], &signature)
+            .unwrap();
+        entropy_bytes.zeroize();
+    }
+
+    #[test]
+    fn solana_spl_transfer_rejects_unreviewed_programs_and_role_substitution() {
+        let entropy =
+            CString::new("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let payer = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx";
+        let source = Pubkey::new_from_array([2_u8; 32]).to_string();
+        let mint = Pubkey::new_from_array([3_u8; 32]).to_string();
+        let destination = Pubkey::new_from_array([4_u8; 32]).to_string();
+        let recipient = Pubkey::new_from_array([5_u8; 32]).to_string();
+        let blockhash = Pubkey::new_from_array([9_u8; 32]).to_string();
+        let foreign = Pubkey::new_from_array([8_u8; 32]).to_string();
+        let token_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+        let cases = [
+            serde_json::json!({
+                "fee_payer": payer, "source_token_account": source, "mint": mint,
+                "destination_token_account": destination, "recipient_owner": recipient,
+                "token_program_id": token_2022, "recent_blockhash": blockhash,
+                "amount_base_units": "1", "decimals": 6
+            }),
+            serde_json::json!({
+                "fee_payer": payer, "source_token_account": source, "mint": mint,
+                "destination_token_account": destination, "recipient_owner": recipient,
+                "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                "recent_blockhash": blockhash, "amount_base_units": "0", "decimals": 6
+            }),
+            serde_json::json!({
+                "fee_payer": foreign, "source_token_account": source, "mint": mint,
+                "destination_token_account": destination, "recipient_owner": recipient,
+                "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                "recent_blockhash": blockhash, "amount_base_units": "1", "decimals": 6
+            }),
+            serde_json::json!({
+                "fee_payer": payer, "source_token_account": source, "mint": mint,
+                "destination_token_account": destination, "recipient_owner": payer,
+                "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                "recent_blockhash": blockhash, "amount_base_units": "1", "decimals": 6
+            }),
+            serde_json::json!({
+                "fee_payer": payer, "source_token_account": source, "mint": mint,
+                "destination_token_account": source, "recipient_owner": recipient,
+                "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                "recent_blockhash": blockhash, "amount_base_units": "1", "decimals": 6
+            }),
+        ];
+        for value in cases {
+            let request = CString::new(value.to_string()).unwrap();
+            let pointer =
+                locus_wallet_prepare_solana_spl_transfer_json(entropy.as_ptr(), request.as_ptr());
+            let json = unsafe { CStr::from_ptr(pointer) }
+                .to_string_lossy()
+                .into_owned();
+            unsafe { locus_wallet_string_free(pointer) };
+            assert!(
+                serde_json::from_str::<serde_json::Value>(&json).unwrap()["error"]
+                    .as_str()
+                    .is_some()
+            );
         }
     }
 
