@@ -142,7 +142,8 @@ final class XPCWalletSignerClient: WalletSignerClient {
         let encodedContract: WalletEncodedContractCall?
         if let contract {
             let encodingRequest = WalletContractEncodingRequest(
-                action: request.action, registryEntry: contract
+                action: request.action, registryEntry: contract,
+                accountID: request.accountID
             )
             let requestData = try authorized(encodingRequest, source: request.source)
             encodedContract = try await call { proxy, reply in
@@ -255,6 +256,9 @@ final class XPCWalletSignerClient: WalletSignerClient {
         case "wallet_get_balance":
             let accountID = arguments["account_id"] as? String
             let networkID = arguments["network_id"] as? String ?? WalletGateway.sepoliaNetworkID
+            let assetID = arguments["asset_id"] as? String
+                ?? WalletNetworkCatalog.descriptor(id: networkID)?.nativeAssetID
+                ?? "\(networkID)/slip44:60"
             let accounts = try await listAccounts()
             guard let account = accounts.first(where: {
                 $0.id == accountID && $0.chain == .evm && $0.networkIDs.contains(networkID)
@@ -262,12 +266,23 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 throw WalletGateway.Error.invalidArguments("Select the Locus Vault EVM account.")
             }
             let rpc = try rpcClient(for: networkID)
-            let balance = try await rpc.balance(address: account.address)
+            let balance: String
+            if assetID == WalletNetworkCatalog.descriptor(id: networkID)?.nativeAssetID {
+                balance = try await rpc.balance(address: account.address)
+            } else {
+                guard let identity = WalletEVMAssetIdentity.parse(assetID),
+                      identity.networkID == networkID else {
+                    throw WalletGateway.Error.invalidArguments(
+                        "The requested asset ID is not canonical for this network."
+                    )
+                }
+                balance = try await rpc.assetBalance(identity: identity, address: account.address)
+            }
             return [
-                "text": "\(networkID) balance: \(balance) wei",
+                "text": "\(assetID) balance: \(balance) base units",
                 "account_id": account.id,
                 "network_id": networkID,
-                "asset_id": "\(networkID)/slip44:60",
+                "asset_id": assetID,
                 "balance_base_units": balance,
             ]
         case "wallet_get_activity":

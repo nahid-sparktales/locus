@@ -917,6 +917,7 @@ private struct WalletSendSheet: View {
     let snapshot: WalletAccountSnapshot
     @State private var recipient = ""
     @State private var amount = ""
+    @State private var tokenID = ""
     @State private var maximumFee = "0.01"
     @State private var preparing = false
 
@@ -932,7 +933,18 @@ private struct WalletSendSheet: View {
                 .textSelection(.enabled)
 
             field("Raw destination", placeholder: "0x…", text: $recipient)
-            field("Amount (\(snapshot.symbol))", placeholder: "0.01", text: $amount)
+            if isNFT {
+                if let fixedTokenID = assetIdentity?.tokenID {
+                    LabeledContent("Token ID") {
+                        Text(fixedTokenID).font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                } else {
+                    field("Token ID", placeholder: "0", text: $tokenID)
+                }
+            } else {
+                field("Amount (\(snapshot.symbol))", placeholder: "0.01", text: $amount)
+            }
             field("Maximum network fee (ETH)", placeholder: "0.01", text: $maximumFee)
 
             Text("The exact raw destination, network, amount, maximum fee, decoded effects, and fresh simulation appear again before signing.")
@@ -961,18 +973,46 @@ private struct WalletSendSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 520, height: 470)
+        .frame(width: 520, height: 500)
     }
 
     private var networkName: String {
         WalletNetworkCatalog.descriptor(id: snapshot.networkID)?.displayName ?? snapshot.networkID
     }
 
+    private var network: WalletNetworkDescriptor? {
+        WalletNetworkCatalog.descriptor(id: snapshot.networkID)
+    }
+
+    private var asset: WalletAsset? {
+        gateway.assets.first { $0.id == snapshot.assetID }
+    }
+
+    private var assetIdentity: WalletEVMAssetIdentity? {
+        WalletEVMAssetIdentity.parse(snapshot.assetID)
+    }
+
+    private var isNative: Bool { snapshot.assetID == network?.nativeAssetID }
+    private var isNFT: Bool {
+        assetIdentity?.standard == .erc721 || assetIdentity?.standard == .erc1155
+    }
+
+    private var resolvedTokenID: String? {
+        assetIdentity?.tokenID
+            ?? WalletBaseUnits.normalize(tokenID.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
     private var isValid: Bool {
-        snapshot.chain == .evm
-            && recipient.trimmingCharacters(in: .whitespacesAndNewlines).count == 42
-            && WalletAmountFormatter.wei(fromEther: amount.trimmingCharacters(in: .whitespacesAndNewlines)) != nil
-            && WalletAmountFormatter.wei(fromEther: maximumFee.trimmingCharacters(in: .whitespacesAndNewlines)) != nil
+        guard snapshot.chain == .evm,
+              recipient.trimmingCharacters(in: .whitespacesAndNewlines).count == 42,
+              WalletAmountFormatter.wei(
+                  fromEther: maximumFee.trimmingCharacters(in: .whitespacesAndNewlines)
+              ) != nil else { return false }
+        if isNFT { return resolvedTokenID != nil }
+        let decimals = isNative ? (network?.nativeDecimals ?? 18) : (asset?.decimals ?? -1)
+        return WalletAmountFormatter.baseUnits(
+            from: amount.trimmingCharacters(in: .whitespacesAndNewlines), decimals: decimals
+        ).map { $0 != "0" } == true
     }
 
     private func field(_ title: String, placeholder: String, text: Binding<String>) -> some View {
@@ -984,20 +1024,42 @@ private struct WalletSendSheet: View {
     }
 
     private func prepare() {
-        guard let baseUnits = WalletAmountFormatter.wei(
-            fromEther: amount.trimmingCharacters(in: .whitespacesAndNewlines)
-        ), let feeUnits = WalletAmountFormatter.wei(
+        guard let feeUnits = WalletAmountFormatter.wei(
             fromEther: maximumFee.trimmingCharacters(in: .whitespacesAndNewlines)
         ) else { return }
         preparing = true
         Task {
-            let ready = await gateway.prepareHumanNativeTransfer(
-                networkID: snapshot.networkID,
-                accountID: snapshot.accountID,
-                recipient: recipient.trimmingCharacters(in: .whitespacesAndNewlines),
-                amountBaseUnits: baseUnits,
-                maximumFeeBaseUnits: feeUnits
-            )
+            let destination = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+            let ready: Bool
+            if isNative, let baseUnits = WalletAmountFormatter.baseUnits(
+                from: amount.trimmingCharacters(in: .whitespacesAndNewlines),
+                decimals: network?.nativeDecimals ?? 18
+            ) {
+                ready = await gateway.prepareHumanNativeTransfer(
+                    networkID: snapshot.networkID, accountID: snapshot.accountID,
+                    recipient: destination, amountBaseUnits: baseUnits,
+                    maximumFeeBaseUnits: feeUnits
+                )
+            } else if assetIdentity?.standard == .erc20,
+                      let decimals = asset?.decimals,
+                      let baseUnits = WalletAmountFormatter.baseUnits(
+                          from: amount.trimmingCharacters(in: .whitespacesAndNewlines),
+                          decimals: decimals
+                      ) {
+                ready = await gateway.prepareHumanFungibleTransfer(
+                    networkID: snapshot.networkID, accountID: snapshot.accountID,
+                    assetID: snapshot.assetID, recipient: destination,
+                    amountBaseUnits: baseUnits, maximumFeeBaseUnits: feeUnits
+                )
+            } else if isNFT, let resolvedTokenID {
+                ready = await gateway.prepareHumanNFTTransfer(
+                    networkID: snapshot.networkID, accountID: snapshot.accountID,
+                    assetID: snapshot.assetID, tokenID: resolvedTokenID,
+                    recipient: destination, maximumFeeBaseUnits: feeUnits
+                )
+            } else {
+                ready = false
+            }
             preparing = false
             if ready { dismiss() }
         }
@@ -1015,6 +1077,10 @@ private struct WalletReceiveSheet: View {
 
     private var network: WalletNetworkDescriptor? {
         WalletNetworkCatalog.descriptor(id: currentSnapshot.networkID)
+    }
+
+    private var asset: WalletAsset? {
+        gateway.assets.first { $0.id == currentSnapshot.assetID }
     }
 
     private var receivePayload: String {
@@ -1060,7 +1126,8 @@ private struct WalletReceiveSheet: View {
                 Text(currentSnapshot.balanceBaseUnits.flatMap {
                     WalletAmountFormatter.asset(
                         baseUnits: $0,
-                        decimals: network?.nativeDecimals ?? 0,
+                        decimals: asset.map { $0.decimals ?? 0 }
+                            ?? (network?.nativeDecimals ?? 0),
                         symbol: currentSnapshot.symbol
                     )
                 }

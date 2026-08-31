@@ -172,6 +172,17 @@ actor WalletEVMProviderCoordinator {
         }
     }
 
+    func assetBalance(
+        identity: WalletEVMAssetIdentity,
+        address: String
+    ) async throws -> String {
+        do { return try await primary.assetBalance(identity: identity, address: address) }
+        catch {
+            guard let fallback else { throw error }
+            return try await fallback.assetBalance(identity: identity, address: address)
+        }
+    }
+
     func verifyContract(
         _ draft: WalletContractRegistryDraft
     ) async throws -> WalletContractRegistryEntry {

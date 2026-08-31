@@ -180,8 +180,31 @@ actor WalletSepoliaRPCClient {
             amount = nativeValue
             input = encodedContract.input
             observedRuntimeCodeHash = currentCodeHash
-        case .fungibleTokenTransfer, .nftTransfer, .exactInputSwap, .reviewedCall,
-             .standardizedSignIn, .reviewedTypedAuthorization:
+        case .fungibleTokenTransfer, .nftTransfer:
+            guard let contract, let encodedContract,
+                  contract.networkID == request.networkID,
+                  WalletEVMAssetAdapter.resolve(
+                      action: request.action, registryEntry: contract,
+                      accountAddress: fromAddress
+                  ) != nil,
+                  Self.isAddress(contract.checksumAddress),
+                  encodedContract.input.hasPrefix("0x"), encodedContract.input.count >= 10 else {
+                throw WalletGateway.Error.invalidArguments(
+                    "The reviewed token or NFT transfer is missing its verified standard adapter."
+                )
+            }
+            let currentCodeHash = try await runtimeCodeHash(address: contract.checksumAddress)
+            guard currentCodeHash.caseInsensitiveCompare(contract.runtimeCodeHash) == .orderedSame else {
+                throw WalletGateway.Error.policyDenied(
+                    "The asset contract runtime code changed after registry approval."
+                )
+            }
+            recipient = contract.checksumAddress
+            amount = "0"
+            input = encodedContract.input
+            observedRuntimeCodeHash = currentCodeHash
+        case .exactInputSwap, .reviewedCall, .standardizedSignIn,
+             .reviewedTypedAuthorization:
             throw WalletGateway.Error.invalidArguments(
                 "This semantic action requires a reviewed chain adapter."
             )
@@ -306,6 +329,45 @@ actor WalletSepoliaRPCClient {
         return decimal
     }
 
+    func assetBalance(identity: WalletEVMAssetIdentity, address: String) async throws -> String {
+        guard identity.networkID == networkID, Self.isAddress(address) else {
+            throw WalletGateway.Error.invalidArguments("The EVM asset balance request is malformed.")
+        }
+        _ = try await verifiedChainID()
+        let data: String
+        switch identity.standard {
+        case .erc20:
+            data = "0x70a08231" + Self.addressWord(address)
+        case .erc721:
+            if let tokenID = identity.tokenID {
+                data = "0x6352211e" + (try Self.unsignedWord(tokenID))
+                let owner = try await stringResult(
+                    method: "eth_call",
+                    params: [["to": identity.contractAddress, "data": data], "latest"]
+                )
+                guard let resolvedOwner = Self.addressFromABIResult(owner) else {
+                    throw WalletRPCError.invalidResponse("ERC-721 ownerOf returned an invalid address")
+                }
+                return resolvedOwner.caseInsensitiveCompare(address) == .orderedSame ? "1" : "0"
+            }
+            data = "0x70a08231" + Self.addressWord(address)
+        case .erc1155:
+            guard let tokenID = identity.tokenID else {
+                throw WalletGateway.Error.invalidArguments("An ERC-1155 balance requires a token ID.")
+            }
+            data = "0x00fdd58e" + Self.addressWord(address) + (try Self.unsignedWord(tokenID))
+        }
+        let result = try await stringResult(
+            method: "eth_call",
+            params: [["to": identity.contractAddress, "data": data], "latest"]
+        )
+        guard result.count <= 66,
+              let decimal = WalletEthereumQuantity.hexToDecimal(result) else {
+            throw WalletRPCError.invalidResponse("The token balance is not one ABI uint256 value")
+        }
+        return decimal
+    }
+
     func verifyContract(_ draft: WalletContractRegistryDraft) async throws -> WalletContractRegistryEntry {
         guard draft.networkID == networkID, Self.isAddress(draft.address),
               !draft.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, draft.id.count <= 128,
@@ -418,6 +480,28 @@ actor WalletSepoliaRPCClient {
             return Character(String(addressCharacter).uppercased())
         }
         return "0x" + String(checksum)
+    }
+
+    private static func addressWord(_ address: String) -> String {
+        String(repeating: "0", count: 24) + address.dropFirst(2).lowercased()
+    }
+
+    private static func unsignedWord(_ decimal: String) throws -> String {
+        guard let encoded = WalletEthereumQuantity.decimalToHex(decimal) else {
+            throw WalletGateway.Error.invalidArguments("The token ID is not an unsigned integer.")
+        }
+        let raw = String(encoded.dropFirst(2))
+        guard raw.count <= 64 else {
+            throw WalletGateway.Error.invalidArguments("The token ID exceeds uint256.")
+        }
+        return String(repeating: "0", count: 64 - raw.count) + raw
+    }
+
+    private static func addressFromABIResult(_ value: String) -> String? {
+        let raw = value.lowercased().hasPrefix("0x") ? String(value.dropFirst(2)) : value
+        guard raw.count == 64, raw.prefix(24).allSatisfy({ $0 == "0" }),
+              raw.suffix(40).allSatisfy(\.isHexDigit) else { return nil }
+        return "0x" + String(raw.suffix(40))
     }
 
     private func verifiedChainID() async throws -> UInt64 {

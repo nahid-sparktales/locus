@@ -225,7 +225,12 @@ enum WalletAmountFormatter {
     /// notation, signs, or non-ASCII digits. The returned string is canonical
     /// wei and is suitable for policy and signing payloads.
     static func wei(fromEther value: String) -> String? {
-        guard !value.isEmpty,
+        baseUnits(from: value, decimals: 18)
+    }
+
+    static func baseUnits(from value: String, decimals: Int) -> String? {
+        guard (0...255).contains(decimals),
+              !value.isEmpty,
               value.utf8.allSatisfy({ (48...57).contains($0) || $0 == 46 }) else {
             return nil
         }
@@ -236,8 +241,8 @@ enum WalletAmountFormatter {
         guard !whole.isEmpty || !fraction.isEmpty,
               whole.utf8.allSatisfy({ (48...57).contains($0) }),
               fraction.utf8.allSatisfy({ (48...57).contains($0) }),
-              fraction.count <= 18 else { return nil }
-        let paddedFraction = fraction + String(repeating: "0", count: 18 - fraction.count)
+              fraction.count <= decimals else { return nil }
+        let paddedFraction = fraction + String(repeating: "0", count: decimals - fraction.count)
         return WalletBaseUnits.normalize((whole.isEmpty ? "0" : whole) + paddedFraction)
     }
 
@@ -246,7 +251,7 @@ enum WalletAmountFormatter {
     }
 
     static func asset(baseUnits: String, decimals: Int, symbol: String) -> String? {
-        guard (0...38).contains(decimals), let normalized = WalletBaseUnits.normalize(baseUnits)
+        guard (0...255).contains(decimals), let normalized = WalletBaseUnits.normalize(baseUnits)
         else { return nil }
         guard decimals > 0 else { return "\(normalized) \(symbol)" }
         let padded = String(repeating: "0", count: max(0, decimals + 1 - normalized.count))
@@ -975,6 +980,7 @@ final class WalletGateway: ObservableObject {
             try publicStore?.upsertAsset(trusted)
             assets.removeAll { $0.id == trusted.id }
             assets.append(trusted)
+            synchronizeAccountSnapshots(with: accounts)
             lastError = nil
         } catch {
             lastError = error.localizedDescription
@@ -1093,31 +1099,27 @@ final class WalletGateway: ObservableObject {
             let publicAccounts = try await signer.listAccounts()
             accounts = publicAccounts
             synchronizeAccountSnapshots(with: publicAccounts)
-            for account in publicAccounts where account.chain == .evm {
-                guard let snapshot = accountSnapshots.first(where: { $0.accountID == account.id }) else {
-                    continue
-                }
+            for snapshot in accountSnapshots where snapshot.chain == .evm {
                 do {
                     let result = try await signer.performRead(
                         tool: "wallet_get_balance",
                         arguments: [
-                            "account_id": account.id,
+                            "account_id": snapshot.accountID,
                             "network_id": snapshot.networkID,
+                            "asset_id": snapshot.assetID,
                         ]
                     )
                     guard let balance = result["balance_base_units"] as? String,
                           WalletBaseUnits.normalize(balance) != nil,
                           let index = accountSnapshots.firstIndex(where: {
-                              $0.accountID == account.id
-                                  && $0.networkID == snapshot.networkID
+                              $0.id == snapshot.id
                           }) else { continue }
                     accountSnapshots[index].balanceBaseUnits = WalletBaseUnits.normalize(balance)
                     accountSnapshots[index].refreshedAt = Date()
                     accountSnapshots[index].freshness = .current
                 } catch {
                     guard let index = accountSnapshots.firstIndex(where: {
-                        $0.accountID == account.id
-                            && $0.networkID == snapshot.networkID
+                        $0.id == snapshot.id
                     }) else { continue }
                     accountSnapshots[index].freshness = accountSnapshots[index].balanceBaseUnits == nil
                         ? .notLoaded : .stale
@@ -1167,7 +1169,7 @@ final class WalletGateway: ObservableObject {
 
     private func synchronizeAccountSnapshots(with publicAccounts: [WalletAccount]) {
         let previous = Dictionary(uniqueKeysWithValues: accountSnapshots.map { ($0.id, $0) })
-        accountSnapshots = publicAccounts.map { account in
+        accountSnapshots = publicAccounts.flatMap { account -> [WalletAccountSnapshot] in
             let networkID: String
             let assetID: String
             let symbol: String
@@ -1196,7 +1198,7 @@ final class WalletGateway: ObservableObject {
             }
             let id = "\(account.id):\(networkID):\(assetID)"
             let cached = previous[id]
-            return WalletAccountSnapshot(
+            let native = WalletAccountSnapshot(
                 accountID: account.id,
                 chain: account.chain,
                 address: account.address,
@@ -1208,6 +1210,24 @@ final class WalletGateway: ObservableObject {
                 refreshedAt: cached?.refreshedAt,
                 freshness: cached?.freshness ?? .notLoaded
             )
+            let additional = assets.filter {
+                $0.networkID == networkID && $0.chain == account.chain
+                    && $0.isVisibleByDefault && $0.id != assetID
+            }.sorted {
+                $0.symbol.localizedCaseInsensitiveCompare($1.symbol) == .orderedAscending
+            }.map { asset -> WalletAccountSnapshot in
+                let cached = previous["\(account.id):\(networkID):\(asset.id)"]
+                return WalletAccountSnapshot(
+                    accountID: account.id, chain: account.chain,
+                    address: account.address, label: account.label,
+                    networkID: networkID, assetID: asset.id,
+                    symbol: asset.symbol,
+                    balanceBaseUnits: cached?.balanceBaseUnits,
+                    refreshedAt: cached?.refreshedAt,
+                    freshness: cached?.freshness ?? .notLoaded
+                )
+            }
+            return [native] + additional
         }
     }
 
@@ -1547,6 +1567,72 @@ final class WalletGateway: ObservableObject {
     }
 
     @discardableResult
+    func prepareHumanFungibleTransfer(
+        networkID: String,
+        accountID: String,
+        assetID: String,
+        recipient: String,
+        amountBaseUnits: String,
+        maximumFeeBaseUnits: String
+    ) async -> Bool {
+        guard status == .unlocked else {
+            lastError = Error.vaultLocked.localizedDescription
+            return false
+        }
+        do {
+            _ = try await prepare([
+                "network_id": networkID,
+                "account_id": accountID,
+                "maximum_fee_base_units": maximumFeeBaseUnits,
+                "action": [
+                    "type": WalletActionKind.fungibleTokenTransfer.rawValue,
+                    "asset_id": assetID,
+                    "recipient": recipient,
+                    "amount_base_units": amountBaseUnits,
+                ],
+            ], source: .human)
+            lastError = nil
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    func prepareHumanNFTTransfer(
+        networkID: String,
+        accountID: String,
+        assetID: String,
+        tokenID: String,
+        recipient: String,
+        maximumFeeBaseUnits: String
+    ) async -> Bool {
+        guard status == .unlocked else {
+            lastError = Error.vaultLocked.localizedDescription
+            return false
+        }
+        do {
+            _ = try await prepare([
+                "network_id": networkID,
+                "account_id": accountID,
+                "maximum_fee_base_units": maximumFeeBaseUnits,
+                "action": [
+                    "type": WalletActionKind.nftTransfer.rawValue,
+                    "asset_id": assetID,
+                    "token_id": tokenID,
+                    "recipient": recipient,
+                ],
+            ], source: .human)
+            lastError = nil
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
     func confirmAndExecuteHumanIntent(intentID: String) async -> Bool {
         guard prepared[intentID]?.source.kind == .humanUI else { return false }
         confirm(intentID: intentID)
@@ -1804,7 +1890,8 @@ final class WalletGateway: ObservableObject {
         }
         let request = try parsePrepareRequest(arguments, source: source)
         let contract: WalletContractRegistryEntry?
-        if request.action.type == .contractCall {
+        switch request.action.type {
+        case .contractCall:
             guard let contractID = request.action.contractID,
                   let registered = contractRegistry.first(where: { $0.id == contractID }),
                   registered.networkID == request.networkID,
@@ -1815,7 +1902,11 @@ final class WalletGateway: ObservableObject {
                 )
             }
             contract = registered
-        } else {
+        case .fungibleTokenTransfer, .nftTransfer:
+            contract = try reviewedAssetContract(
+                for: request.action, networkID: request.networkID
+            )
+        default:
             contract = nil
         }
         let transaction = try await signer.prepare(request, contract: contract)
@@ -1838,6 +1929,45 @@ final class WalletGateway: ObservableObject {
         }
         prepared[transaction.id] = transaction
         return transaction
+    }
+
+    private func reviewedAssetContract(
+        for action: WalletSemanticAction,
+        networkID: String
+    ) throws -> WalletContractRegistryEntry {
+        guard let assetID = action.assetID,
+              let asset = assets.first(where: { $0.id == assetID }),
+              asset.networkID == networkID, asset.chain == .evm,
+              asset.isVisibleByDefault,
+              let identity = WalletEVMAssetIdentity.parse(assetID),
+              identity.networkID == networkID,
+              asset.reference?.caseInsensitiveCompare(identity.contractAddress) == .orderedSame,
+              let entry = contractRegistry.first(where: {
+                  $0.networkID == networkID
+                      && $0.checksumAddress.caseInsensitiveCompare(
+                          identity.contractAddress
+                      ) == .orderedSame
+              }),
+              let adapterID = WalletReviewedAdapters.validatedID(for: entry) else {
+            throw Error.invalidArguments(
+                "The selected asset is not trusted with a verified standard contract adapter."
+            )
+        }
+        let expectedAdapter: String
+        switch (action.type, identity.standard) {
+        case (.fungibleTokenTransfer, .erc20):
+            expectedAdapter = WalletReviewedAdapters.erc20
+        case (.nftTransfer, .erc721):
+            expectedAdapter = WalletReviewedAdapters.erc721SafeTransfer
+        case (.nftTransfer, .erc1155):
+            expectedAdapter = WalletReviewedAdapters.erc1155SafeTransfer
+        default:
+            throw Error.invalidArguments("The asset standard does not match the requested action.")
+        }
+        guard adapterID == expectedAdapter else {
+            throw Error.invalidArguments("The verified contract adapter does not match the asset standard.")
+        }
+        return entry
     }
 
     private func parsePrepareRequest(
@@ -1886,8 +2016,37 @@ final class WalletGateway: ObservableObject {
             }
             action = .contractCall(contractID: contractID, function: function,
                                    arguments: typedArguments, valueBaseUnits: value)
-        case .fungibleTokenTransfer, .nftTransfer, .exactInputSwap, .reviewedCall,
-             .standardizedSignIn, .reviewedTypedAuthorization:
+        case .fungibleTokenTransfer:
+            guard let assetID = nonempty(actionObject["asset_id"]),
+                  let recipient = nonempty(actionObject["recipient"]),
+                  Self.validAddress(recipient, chain: .evm),
+                  let amount = WalletBaseUnits.normalize(
+                      nonempty(actionObject["amount_base_units"]) ?? ""
+                  ), amount != "0", actionObject["calldata"] == nil else {
+                throw Error.invalidArguments(
+                    "A token transfer requires a canonical asset ID, raw recipient, and positive base-unit amount."
+                )
+            }
+            action = .fungibleTokenTransfer(
+                assetID: assetID, recipient: recipient, amountBaseUnits: amount
+            )
+        case .nftTransfer:
+            guard let assetID = nonempty(actionObject["asset_id"]),
+                  let tokenID = WalletBaseUnits.normalize(
+                      nonempty(actionObject["token_id"]) ?? ""
+                  ),
+                  let recipient = nonempty(actionObject["recipient"]),
+                  Self.validAddress(recipient, chain: .evm),
+                  actionObject["calldata"] == nil else {
+                throw Error.invalidArguments(
+                    "An NFT transfer requires a canonical asset ID, uint256 token ID, and raw recipient."
+                )
+            }
+            action = .nftTransfer(
+                assetID: assetID, tokenID: tokenID, recipient: recipient
+            )
+        case .exactInputSwap, .reviewedCall, .standardizedSignIn,
+             .reviewedTypedAuthorization:
             throw Error.invalidArguments(
                 "That operation requires a reviewed chain adapter that is not active."
             )

@@ -455,8 +455,11 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             do {
                 let authorized: WalletAuthorizedRequest<WalletContractEncodingRequest> =
                     try self.authorized(request)
-                guard authorized.source == .agent else {
-                    throw self.signerError("Browser requests cannot register or encode contract calls.")
+                if authorized.payload.action.type == .contractCall,
+                   authorized.source != .agent {
+                    throw self.signerError(
+                        "Connected peers cannot register or encode general contract calls."
+                    )
                 }
                 reply(self.encoded(try self.authoritativeContractEncoding(authorized.payload)))
             } catch {
@@ -485,10 +488,10 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 switch packet.request.action.type {
                 case .nativeTransfer:
                     intent = try self.prepareNativeTransfer(packet: packet, entropy: entropy)
-                case .contractCall:
+                case .contractCall, .fungibleTokenTransfer, .nftTransfer:
                     intent = try self.prepareContractCall(packet: packet, entropy: entropy)
-                case .fungibleTokenTransfer, .nftTransfer, .exactInputSwap, .reviewedCall,
-                     .standardizedSignIn, .reviewedTypedAuthorization:
+                case .exactInputSwap, .reviewedCall, .standardizedSignIn,
+                     .reviewedTypedAuthorization:
                     throw self.signerError(
                         "The requested semantic action has no reviewed signer adapter."
                     )
@@ -1080,48 +1083,71 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         packet: WalletEVMPreparationPacket,
         entropy: Data
     ) throws -> StoredEVMIntent {
+        let action = packet.request.action
         guard let expectedChainID = Self.evmChainID(for: packet.request.networkID),
               packet.transaction.chainID == expectedChainID,
-              packet.request.action.type == .contractCall,
-              packet.request.action.recipient == nil,
-              packet.request.action.amountBaseUnits == nil,
               let entry = packet.contractRegistryEntry,
               let encoded = packet.encodedContractCall,
               let observedCodeHash = packet.observedRuntimeCodeHash,
               entry.networkID == packet.request.networkID,
-              packet.request.action.contractID == entry.id,
               packet.transaction.to.caseInsensitiveCompare(entry.checksumAddress) == .orderedSame,
               observedCodeHash.caseInsensitiveCompare(entry.runtimeCodeHash) == .orderedSame,
-              let nativeValue = packet.request.action.valueBaseUnits.flatMap(
-                  SignerUnsignedInteger.normalize
-              ),
-              SignerUnsignedInteger.normalize(packet.transaction.value) == nativeValue,
               packet.transaction.gasLimit > 0,
               packet.simulationSucceeded,
               abs(packet.observedAt.timeIntervalSinceNow) <= 30 else {
             throw signerError("The RPC evidence does not match a fresh registered network call.")
-        }
-        let capability: WalletNetworkCapability = switch WalletReviewedAdapters.validatedID(for: entry) {
-        case WalletReviewedAdapters.erc20: .fungibleTokenTransfer
-        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn: .exactInputSwap
-        default: .reviewedCall
-        }
-        try authorizeNetwork(packet.request.networkID, capability: capability)
-        let encodingRequest = WalletContractEncodingRequest(
-            action: packet.request.action, registryEntry: entry
-        )
-        let authoritative = try authoritativeContractEncoding(encodingRequest)
-        guard authoritative == encoded,
-              authoritative.input.caseInsensitiveCompare(packet.transaction.input) == .orderedSame else {
-            throw signerError("The transaction calldata does not match signer ABI encoding.")
         }
         let account = try store.accounts().first {
             $0.id == packet.request.accountID && $0.chain == .evm
                 && $0.networkIDs.contains(packet.request.networkID)
         }
         guard let account,
-              account.address.caseInsensitiveCompare(packet.fromAddress) == .orderedSame,
-              SignerUnsignedInteger.lessThanOrEqual(
+              account.address.caseInsensitiveCompare(packet.fromAddress) == .orderedSame else {
+            throw signerError("The requested EVM account does not match the vault account.")
+        }
+        let nativeValue: String
+        switch action.type {
+        case .contractCall:
+            guard action.recipient == nil, action.amountBaseUnits == nil,
+                  action.contractID == entry.id,
+                  let value = action.valueBaseUnits.flatMap(SignerUnsignedInteger.normalize) else {
+                throw signerError("The registered call does not match its semantic request.")
+            }
+            nativeValue = value
+        case .fungibleTokenTransfer, .nftTransfer:
+            guard WalletEVMAssetAdapter.resolve(
+                action: action, registryEntry: entry,
+                accountAddress: account.address
+            ) != nil else {
+                throw signerError("The token or NFT action is outside its reviewed standard adapter.")
+            }
+            nativeValue = "0"
+        default:
+            throw signerError("This registered transaction kind is not implemented.")
+        }
+        guard SignerUnsignedInteger.normalize(packet.transaction.value) == nativeValue else {
+            throw signerError("The registered transaction carries an unexpected native value.")
+        }
+        let capability: WalletNetworkCapability = switch action.type {
+        case .fungibleTokenTransfer: .fungibleTokenTransfer
+        case .nftTransfer: .nftTransfer
+        default:
+            switch WalletReviewedAdapters.validatedID(for: entry) {
+            case WalletReviewedAdapters.erc20: .fungibleTokenTransfer
+            case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn: .exactInputSwap
+            default: .reviewedCall
+            }
+        }
+        try authorizeNetwork(packet.request.networkID, capability: capability)
+        let encodingRequest = WalletContractEncodingRequest(
+            action: action, registryEntry: entry, accountID: packet.request.accountID
+        )
+        let authoritative = try authoritativeContractEncoding(encodingRequest)
+        guard authoritative == encoded,
+              authoritative.input.caseInsensitiveCompare(packet.transaction.input) == .orderedSame else {
+            throw signerError("The transaction calldata does not match signer ABI encoding.")
+        }
+        guard SignerUnsignedInteger.lessThanOrEqual(
                   packet.transaction.maxPriorityFeePerGas, packet.transaction.maxFeePerGas
               ),
               let fee = SignerUnsignedInteger.multiply(
@@ -1138,19 +1164,27 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         let now = Date()
         let intentID = UUID().uuidString.lowercased()
         let decoded = decodedContractEffects(
-            intentID: intentID, action: packet.request.action,
+            intentID: intentID, action: action,
             entry: entry, account: account, nativeValue: nativeValue
         )
+        let semanticCall = WalletEVMAssetAdapter.resolve(
+            action: action, registryEntry: entry, accountAddress: account.address
+        )
+        let function = action.function ?? semanticCall?.function ?? ""
         let identity = WalletContractIdentity(
             registryID: entry.id, address: entry.checksumAddress, label: entry.label,
-            function: packet.request.action.function ?? "", abiDigest: entry.abiDigest,
+            function: function, abiDigest: entry.abiDigest,
             runtimeCodeHash: entry.runtimeCodeHash
         )
         var prepared = WalletPreparedTransaction(
             id: intentID, digest: rust.digest, networkID: packet.request.networkID,
             accountID: packet.request.accountID, source: packet.request.source,
-            action: packet.request.action,
-            summary: "Call \(entry.label).\(packet.request.action.function ?? "unknown") on \(packet.request.networkID)",
+            action: action,
+            summary: action.type == .fungibleTokenTransfer
+                ? "Send reviewed \(entry.label) tokens on \(packet.request.networkID)"
+                : action.type == .nftTransfer
+                    ? "Transfer reviewed \(entry.label) collectible on \(packet.request.networkID)"
+                    : "Call \(entry.label).\(function) on \(packet.request.networkID)",
             effects: decoded.effects, riskFlags: decoded.riskFlags, contract: identity,
             adapterID: decoded.adapterID, budgetAssetID: decoded.budgetAssetID,
             spendBaseUnits: decoded.spendBaseUnits,
@@ -1173,19 +1207,45 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     ) throws -> WalletEncodedContractCall {
         let action = request.action
         let entry = request.registryEntry
-        guard action.type == .contractCall,
-              Self.evmChainID(for: entry.networkID) != nil,
+        guard Self.evmChainID(for: entry.networkID) != nil,
               Self.isEVMAddress(entry.checksumAddress),
               entry.runtimeCodeHash.count == 66,
               entry.runtimeCodeHash.hasPrefix("0x"),
               entry.runtimeCodeHash.dropFirst(2).allSatisfy(\.isHexDigit),
-              action.contractID == entry.id,
-              let function = action.function,
-              entry.permittedFunctions.contains(function),
-              action.arguments.count <= 64,
               entry.normalizedABI.utf8.count <= 256 * 1024,
               let abiData = entry.normalizedABI.data(using: .utf8) else {
             throw signerError("The semantic call is outside the registered ABI boundary.")
+        }
+        let function: String
+        let arguments: [WalletTypedArgument]
+        switch action.type {
+        case .contractCall:
+            guard action.contractID == entry.id,
+                  let requestedFunction = action.function,
+                  action.arguments.count <= 64 else {
+                throw signerError("The semantic call is outside the registered ABI boundary.")
+            }
+            function = requestedFunction
+            arguments = action.arguments
+        case .fungibleTokenTransfer, .nftTransfer:
+            guard let accountID = request.accountID,
+                  let account = try store.accounts().first(where: {
+                      $0.id == accountID && $0.chain == .evm
+                          && $0.networkIDs.contains(entry.networkID)
+                  }),
+                  let semantic = WalletEVMAssetAdapter.resolve(
+                      action: action, registryEntry: entry,
+                      accountAddress: account.address
+                  ) else {
+                throw signerError("The semantic asset transfer is outside its reviewed adapter.")
+            }
+            function = semantic.function
+            arguments = semantic.arguments
+        default:
+            throw signerError("The semantic call has no reviewed EVM adapter.")
+        }
+        guard entry.permittedFunctions.contains(function) else {
+            throw signerError("The semantic function is not permitted by the registry.")
         }
         let digest = "sha256:" + SHA256.hash(data: abiData)
             .map { String(format: "%02x", $0) }.joined()
@@ -1193,7 +1253,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             throw signerError("The registered ABI digest does not match its normalized ABI.")
         }
         let rustRequest = RustContractCallRequest(
-            normalizedABI: entry.normalizedABI, function: function, arguments: action.arguments
+            normalizedABI: entry.normalizedABI, function: function, arguments: arguments
         )
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -1234,7 +1294,33 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         var adapterID: String?
         var budgetAssetID = "\(entry.networkID)/contract:\(entry.checksumAddress.lowercased())"
         var spendBaseUnits = "0"
-        if action.function == "transfer(address,uint256)", action.arguments.count == 2,
+        if let semantic = WalletEVMAssetAdapter.resolve(
+            action: action, registryEntry: entry, accountAddress: account.address
+        ), action.type == .fungibleTokenTransfer,
+           let amount = SignerUnsignedInteger.normalize(action.amountBaseUnits ?? "") {
+            effects = [WalletDecodedEffect(
+                id: "\(intentID):erc20-transfer", kind: "token_transfer",
+                assetID: semantic.assetID, amountBaseUnits: amount,
+                from: account.address, to: action.recipient, spender: nil
+            )]
+            riskFlags = []
+            adapterID = semantic.adapterID
+            budgetAssetID = semantic.assetID
+            spendBaseUnits = amount
+        } else if let semantic = WalletEVMAssetAdapter.resolve(
+            action: action, registryEntry: entry, accountAddress: account.address
+        ), action.type == .nftTransfer {
+            let tokenID = action.tokenID ?? ""
+            effects = [WalletDecodedEffect(
+                id: "\(intentID):nft-transfer", kind: "nft_transfer",
+                assetID: "\(semantic.assetID)/\(tokenID)", amountBaseUnits: "1",
+                from: account.address, to: action.recipient, spender: nil
+            )]
+            riskFlags = []
+            adapterID = semantic.adapterID
+            budgetAssetID = "\(semantic.assetID)/\(tokenID)"
+            spendBaseUnits = "1"
+        } else if action.function == "transfer(address,uint256)", action.arguments.count == 2,
            action.arguments[0].type == "address", action.arguments[1].type == "uint256",
            Self.isEVMAddress(action.arguments[0].value),
            let amount = SignerUnsignedInteger.normalize(action.arguments[1].value) {
@@ -1292,7 +1378,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         }
         if nativeValue != "0" {
             effects.append(WalletDecodedEffect(
-                id: "\(intentID):native-value", kind: "native_value", assetID: "slip44:60",
+                id: "\(intentID):native-value", kind: "native_value",
+                assetID: "\(entry.networkID)/slip44:60",
                 amountBaseUnits: nativeValue, from: account.address,
                 to: entry.checksumAddress, spender: nil
             ))

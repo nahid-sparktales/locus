@@ -294,6 +294,8 @@ struct WalletContractRegistryEntry: Codable, Equatable, Identifiable, Sendable {
 /// a reviewed adapter by supplying a label.
 enum WalletReviewedAdapters {
     static let erc20 = "erc20-v1"
+    static let erc721SafeTransfer = "erc721-safe-transfer-v1"
+    static let erc1155SafeTransfer = "erc1155-safe-transfer-v1"
     static let uniswapUniversalRouterV2ExactIn =
         "uniswap-universal-router-v2-exact-in-v1"
 
@@ -315,6 +317,17 @@ enum WalletReviewedAdapters {
             inputs: ["bytes", "bytes[]", "uint256"], stateMutability: "payable"
         ),
     ]
+    private static let erc721Functions: [String: FunctionShape] = [
+        "safeTransferFrom(address,address,uint256)": FunctionShape(
+            inputs: ["address", "address", "uint256"], stateMutability: "nonpayable"
+        ),
+    ]
+    private static let erc1155Functions: [String: FunctionShape] = [
+        "safeTransferFrom(address,address,uint256,uint256,bytes)": FunctionShape(
+            inputs: ["address", "address", "uint256", "uint256", "bytes"],
+            stateMutability: "nonpayable"
+        ),
+    ]
 
     static func classify(normalizedABI: String, permittedFunctions: [String]) -> String? {
         guard let definitions = functionDefinitions(in: normalizedABI) else { return nil }
@@ -322,6 +335,14 @@ enum WalletReviewedAdapters {
         if !permitted.isEmpty, permitted.isSubset(of: Set(erc20Functions.keys)),
            permitted.allSatisfy({ definitions[$0] == erc20Functions[$0] }) {
             return erc20
+        }
+        if permitted == Set(erc721Functions.keys),
+           permitted.allSatisfy({ definitions[$0] == erc721Functions[$0] }) {
+            return erc721SafeTransfer
+        }
+        if permitted == Set(erc1155Functions.keys),
+           permitted.allSatisfy({ definitions[$0] == erc1155Functions[$0] }) {
+            return erc1155SafeTransfer
         }
         if permitted == Set(universalRouterFunctions.keys),
            permitted.allSatisfy({ definitions[$0] == universalRouterFunctions[$0] }) {
@@ -361,6 +382,146 @@ enum WalletReviewedAdapters {
             )
         }
         return definitions
+    }
+}
+
+enum WalletEVMAssetStandard: String, Codable, Sendable {
+    case erc20
+    case erc721
+    case erc1155
+}
+
+/// Canonical EVM asset IDs are network-bound and contain no display metadata:
+/// `eip155:1/erc20:0x…`, `eip155:1/erc721:0x…[/token-id]`, or
+/// `eip155:1/erc1155:0x…/token-id`.
+struct WalletEVMAssetIdentity: Codable, Equatable, Sendable {
+    let networkID: String
+    let standard: WalletEVMAssetStandard
+    let contractAddress: String
+    let tokenID: String?
+
+    var collectionID: String {
+        "\(networkID)/\(standard.rawValue):\(contractAddress.lowercased())"
+    }
+
+    static func parse(_ value: String) -> WalletEVMAssetIdentity? {
+        let pieces = value.split(separator: "/", omittingEmptySubsequences: false)
+        guard pieces.count == 2 || pieces.count == 3 else { return nil }
+        let networkID = String(pieces[0])
+        let chainComponent = String(networkID.dropFirst("eip155:".count))
+        guard networkID.hasPrefix("eip155:"),
+              let chainID = UInt64(chainComponent), chainID > 0,
+              chainComponent == String(chainID) else { return nil }
+        let asset = pieces[1].split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        guard asset.count == 2,
+              let standard = WalletEVMAssetStandard(rawValue: String(asset[0])) else { return nil }
+        let address = String(asset[1]).lowercased()
+        guard address.count == 42, address.hasPrefix("0x"),
+              address.dropFirst(2).allSatisfy(\.isHexDigit) else { return nil }
+        let tokenID = pieces.count == 3 ? normalizedUnsigned(String(pieces[2])) : nil
+        guard pieces.count != 3 || tokenID != nil,
+              standard != .erc20 || tokenID == nil,
+              standard != .erc1155 || tokenID != nil else { return nil }
+        return WalletEVMAssetIdentity(
+            networkID: networkID, standard: standard,
+            contractAddress: address, tokenID: tokenID
+        )
+    }
+
+    private static func normalizedUnsigned(_ value: String) -> String? {
+        guard !value.isEmpty,
+              value.utf8.allSatisfy({ (48...57).contains($0) }) else { return nil }
+        let trimmed = value.drop(while: { $0 == "0" })
+        return trimmed.isEmpty ? "0" : String(trimmed)
+    }
+}
+
+struct WalletEVMReviewedSemanticCall: Equatable, Sendable {
+    let adapterID: String
+    let assetID: String
+    let function: String
+    let arguments: [WalletTypedArgument]
+}
+
+/// Converts only fully semantic token/NFT actions into reviewed standard calls.
+/// Callers cannot supply a selector, calldata, sender, or arbitrary bytes.
+enum WalletEVMAssetAdapter {
+    static func resolve(
+        action: WalletSemanticAction,
+        registryEntry: WalletContractRegistryEntry,
+        accountAddress: String
+    ) -> WalletEVMReviewedSemanticCall? {
+        guard let assetID = action.assetID,
+              let identity = WalletEVMAssetIdentity.parse(assetID),
+              identity.networkID == registryEntry.networkID,
+              identity.contractAddress.caseInsensitiveCompare(
+                  registryEntry.checksumAddress
+              ) == .orderedSame,
+              isAddress(accountAddress),
+              let recipient = action.recipient, isAddress(recipient),
+              action.contractID == nil, action.function == nil,
+              action.arguments.isEmpty, action.valueBaseUnits == nil,
+              let adapterID = WalletReviewedAdapters.validatedID(for: registryEntry) else {
+            return nil
+        }
+        switch (action.type, identity.standard, adapterID) {
+        case (.fungibleTokenTransfer, .erc20, WalletReviewedAdapters.erc20):
+            guard identity.tokenID == nil,
+                  action.tokenID == nil,
+                  let amount = normalizedUnsigned(action.amountBaseUnits), amount != "0" else {
+                return nil
+            }
+            return WalletEVMReviewedSemanticCall(
+                adapterID: adapterID, assetID: identity.collectionID,
+                function: "transfer(address,uint256)",
+                arguments: [
+                    WalletTypedArgument(type: "address", value: recipient),
+                    WalletTypedArgument(type: "uint256", value: amount),
+                ]
+            )
+        case (.nftTransfer, .erc721, WalletReviewedAdapters.erc721SafeTransfer):
+            guard action.amountBaseUnits == "1",
+                  let tokenID = normalizedUnsigned(action.tokenID),
+                  identity.tokenID == nil || identity.tokenID == tokenID else { return nil }
+            return WalletEVMReviewedSemanticCall(
+                adapterID: adapterID, assetID: identity.collectionID,
+                function: "safeTransferFrom(address,address,uint256)",
+                arguments: [
+                    WalletTypedArgument(type: "address", value: accountAddress),
+                    WalletTypedArgument(type: "address", value: recipient),
+                    WalletTypedArgument(type: "uint256", value: tokenID),
+                ]
+            )
+        case (.nftTransfer, .erc1155, WalletReviewedAdapters.erc1155SafeTransfer):
+            guard action.amountBaseUnits == "1",
+                  let tokenID = normalizedUnsigned(action.tokenID),
+                  identity.tokenID == tokenID else { return nil }
+            return WalletEVMReviewedSemanticCall(
+                adapterID: adapterID, assetID: identity.collectionID,
+                function: "safeTransferFrom(address,address,uint256,uint256,bytes)",
+                arguments: [
+                    WalletTypedArgument(type: "address", value: accountAddress),
+                    WalletTypedArgument(type: "address", value: recipient),
+                    WalletTypedArgument(type: "uint256", value: tokenID),
+                    WalletTypedArgument(type: "uint256", value: "1"),
+                    WalletTypedArgument(type: "bytes", value: "0x"),
+                ]
+            )
+        default:
+            return nil
+        }
+    }
+
+    private static func normalizedUnsigned(_ value: String?) -> String? {
+        guard let value, !value.isEmpty,
+              value.utf8.allSatisfy({ (48...57).contains($0) }) else { return nil }
+        let trimmed = value.drop(while: { $0 == "0" })
+        return trimmed.isEmpty ? "0" : String(trimmed)
+    }
+
+    private static func isAddress(_ value: String) -> Bool {
+        value.count == 42 && value.hasPrefix("0x")
+            && value.dropFirst(2).allSatisfy(\.isHexDigit)
     }
 }
 
@@ -488,6 +649,7 @@ enum WalletUniversalRouterV2Adapter {
 struct WalletContractEncodingRequest: Codable, Equatable, Sendable {
     let action: WalletSemanticAction
     let registryEntry: WalletContractRegistryEntry
+    var accountID: String? = nil
 }
 
 struct WalletEncodedContractCall: Codable, Equatable, Sendable {
