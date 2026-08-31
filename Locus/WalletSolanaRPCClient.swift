@@ -509,6 +509,7 @@ actor WalletSolanaRPCClient {
         let address: String
         let signer: Bool
         let writable: Bool
+        let source: String
     }
 
     private struct TokenBalanceEvidence: Sendable {
@@ -1527,12 +1528,13 @@ actor WalletSolanaRPCClient {
             evidence.signature,
             [
                 "commitment": "finalized", "encoding": "jsonParsed",
-                "maxSupportedTransactionVersion": 0,
+                "maxSupportedTransactionVersion": 1,
             ],
         ])
         guard let result = raw as? [String: Any], result.count <= 12,
               Self.unsigned(result["slot"]) == evidence.slot,
-              let version = result["version"], Self.validTransactionVersion(version),
+              let rawVersion = result["version"],
+              let version = Self.transactionVersion(rawVersion),
               let transaction = result["transaction"] as? [String: Any],
               transaction.count <= 4,
               let signatures = transaction["signatures"] as? [String],
@@ -1572,9 +1574,14 @@ actor WalletSolanaRPCClient {
                 )
             }
             accountKeys.append(ParsedAccountKey(
-                address: address, signer: signer, writable: writable
+                address: address, signer: signer, writable: writable,
+                source: source
             ))
         }
+        try Self.validateActivityVersionEnvelope(
+            version: version, message: message, meta: meta,
+            accountKeys: accountKeys
+        )
         guard let ownerIndex = accountKeys.firstIndex(where: {
             $0.address == owner
         }), accountKeys.first?.signer == true,
@@ -1937,11 +1944,185 @@ actor WalletSolanaRPCClient {
             || (value as? String).map({ $0.utf8.count <= 512 }) == true
     }
 
-    private static func validTransactionVersion(_ value: Any) -> Bool {
-        if value as? String == "legacy" { return true }
+    private static func transactionVersion(
+        _ value: Any
+    ) -> WalletSolanaTransactionVersion? {
+        if value as? String == "legacy" { return .legacy }
         guard let number = value as? NSNumber,
-              CFGetTypeID(number) != CFBooleanGetTypeID() else { return false }
-        return number.decimalValue == 0
+              CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+        if number.decimalValue == 0 { return .v0 }
+        if number.decimalValue == 1 { return .v1 }
+        return nil
+    }
+
+    private static func validateActivityVersionEnvelope(
+        version: WalletSolanaTransactionVersion,
+        message: [String: Any],
+        meta: [String: Any],
+        accountKeys: [ParsedAccountKey]
+    ) throws {
+        switch version {
+        case .legacy:
+            guard message["transactionConfig"] == nil,
+                  emptyOrAbsent(message["addressTableLookups"]),
+                  emptyLoadedAddressesOrAbsent(meta["loadedAddresses"]),
+                  accountKeys.allSatisfy({ $0.source == "transaction" }) else {
+                throw WalletRPCError.invalidResponse(
+                    "legacy Solana activity carried versioned-message evidence"
+                )
+            }
+        case .v0:
+            guard message["transactionConfig"] == nil else {
+                throw WalletRPCError.invalidResponse(
+                    "v0 Solana activity carried a v1 transaction configuration"
+                )
+            }
+            try validateV0LookupEvidence(
+                message["addressTableLookups"], loaded: meta["loadedAddresses"],
+                accountKeys: accountKeys
+            )
+        case .v1:
+            guard message.keys.contains("transactionConfig"),
+                  message["addressTableLookups"] == nil,
+                  emptyLoadedAddressesOrAbsent(meta["loadedAddresses"]),
+                  accountKeys.allSatisfy({ $0.source == "transaction" }) else {
+                throw WalletRPCError.invalidResponse(
+                    "v1 Solana activity carried lookup-table evidence"
+                )
+            }
+            try validateV1TransactionConfig(message["transactionConfig"])
+        }
+    }
+
+    private static func validateV0LookupEvidence(
+        _ rawLookups: Any?,
+        loaded rawLoaded: Any?,
+        accountKeys: [ParsedAccountKey]
+    ) throws {
+        guard let lookups = rawLookups as? [Any], lookups.count <= 32 else {
+            throw WalletRPCError.invalidResponse(
+                "v0 Solana address-table lookups were missing or excessive"
+            )
+        }
+        var tableAddresses: Set<String> = []
+        var writableCount = 0
+        var readonlyCount = 0
+        for raw in lookups {
+            guard let lookup = raw as? [String: Any], lookup.count == 3,
+                  let table = lookup["accountKey"] as? String,
+                  WalletSolanaBase58.decode(table, exactLength: 32) != nil,
+                  tableAddresses.insert(table).inserted,
+                  let writable = byteIndexes(lookup["writableIndexes"]),
+                  let readonly = byteIndexes(lookup["readonlyIndexes"]),
+                  Set(writable).isDisjoint(with: Set(readonly)) else {
+                throw WalletRPCError.invalidResponse(
+                    "a v0 Solana address-table lookup was malformed"
+                )
+            }
+            writableCount += writable.count
+            readonlyCount += readonly.count
+        }
+        guard writableCount + readonlyCount <= 64 else {
+            throw WalletRPCError.invalidResponse(
+                "v0 Solana activity resolved excessive lookup-table accounts"
+            )
+        }
+        let transactionAccounts = accountKeys.prefix {
+            $0.source == "transaction"
+        }
+        let lookupAccounts = Array(accountKeys.dropFirst(transactionAccounts.count))
+        guard transactionAccounts.allSatisfy({ $0.source == "transaction" }),
+              lookupAccounts.allSatisfy({
+                  $0.source == "lookupTable" && !$0.signer
+              }), lookupAccounts.count == writableCount + readonlyCount else {
+            throw WalletRPCError.invalidResponse(
+                "v0 Solana resolved account sources did not match its lookups"
+            )
+        }
+        if lookups.isEmpty {
+            guard emptyLoadedAddressesOrAbsent(rawLoaded), lookupAccounts.isEmpty else {
+                throw WalletRPCError.invalidResponse(
+                    "v0 Solana empty lookups carried resolved addresses"
+                )
+            }
+            return
+        }
+        guard let loaded = rawLoaded as? [String: Any], loaded.count == 2,
+              let writable = canonicalAddressArray(loaded["writable"]),
+              let readonly = canonicalAddressArray(loaded["readonly"]),
+              writable.count == writableCount,
+              readonly.count == readonlyCount,
+              Set(writable).isDisjoint(with: Set(readonly)),
+              Set(writable + readonly).isDisjoint(with: Set(
+                  transactionAccounts.map(\.address)
+              )),
+              lookupAccounts.map(\.address) == writable + readonly,
+              lookupAccounts.prefix(writable.count).allSatisfy(\.writable),
+              lookupAccounts.dropFirst(writable.count).allSatisfy({ !$0.writable }) else {
+            throw WalletRPCError.invalidResponse(
+                "v0 Solana loaded addresses were substituted or reordered"
+            )
+        }
+    }
+
+    private static func validateV1TransactionConfig(_ raw: Any?) throws {
+        guard let config = raw as? [String: Any], config.count == 4,
+              Set(config.keys) == Set([
+                  "computeUnitLimit", "heapSize",
+                  "loadedAccountsDataSizeLimit", "priorityFee",
+              ]),
+              let computeLimit = unsigned(config["computeUnitLimit"]),
+              computeLimit > 0, computeLimit <= UInt64(UInt32.max),
+              optionalUInt32(config["heapSize"]),
+              let loadedLimit = unsigned(config["loadedAccountsDataSizeLimit"]),
+              loadedLimit <= UInt64(UInt32.max),
+              optionalUInt64(config["priorityFee"]) else {
+            throw WalletRPCError.invalidResponse(
+                "v1 Solana transaction resource limits were malformed"
+            )
+        }
+    }
+
+    private static func byteIndexes(_ raw: Any?) -> [UInt8]? {
+        guard let values = raw as? [Any], values.count <= 64 else { return nil }
+        var result: [UInt8] = []
+        var seen: Set<UInt8> = []
+        for value in values {
+            guard let number = unsigned(value), number <= UInt64(UInt8.max),
+                  seen.insert(UInt8(number)).inserted else { return nil }
+            result.append(UInt8(number))
+        }
+        return result
+    }
+
+    private static func canonicalAddressArray(_ raw: Any?) -> [String]? {
+        guard let values = raw as? [String], values.count <= 64,
+              values.allSatisfy({
+                  WalletSolanaBase58.decode($0, exactLength: 32) != nil
+              }), Set(values).count == values.count else { return nil }
+        return values
+    }
+
+    private static func emptyOrAbsent(_ raw: Any?) -> Bool {
+        raw == nil || (raw as? [Any])?.isEmpty == true
+    }
+
+    private static func emptyLoadedAddressesOrAbsent(_ raw: Any?) -> Bool {
+        if raw == nil { return true }
+        guard let loaded = raw as? [String: Any], loaded.count == 2,
+              let writable = loaded["writable"] as? [Any], writable.isEmpty,
+              let readonly = loaded["readonly"] as? [Any], readonly.isEmpty else {
+            return false
+        }
+        return true
+    }
+
+    private static func optionalUInt32(_ raw: Any?) -> Bool {
+        raw is NSNull || unsigned(raw).map({ $0 <= UInt64(UInt32.max) }) == true
+    }
+
+    private static func optionalUInt64(_ raw: Any?) -> Bool {
+        raw is NSNull || unsigned(raw) != nil
     }
 
     private static func transactionDate(

@@ -183,7 +183,10 @@ activity is read from bounded
 [`getSignaturesForAddress`](https://solana.com/docs/rpc/http/getsignaturesforaddress)
 pages and exact
 [`getTransaction`](https://solana.com/docs/rpc/http/gettransaction) evidence
-after genesis verification. Each accepted signature remains visible as a
+after genesis verification. Legacy and v0 envelopes bind resolved lookup-table
+account order, privileges, and recorded loaded addresses; v1 envelopes require
+the complete canonical resource configuration and prohibit lookup tables. Each
+accepted signature remains visible as a
 transaction-level record; exact owner SOL and reviewed SPL/Token-2022 balance
 deltas and the narrow Core `TransferV1` shape are additive effects. Unknown
 programs are not guessed, while malformed, duplicate, reordered, wrong-slot,
@@ -243,7 +246,7 @@ Solana token sends use the signer-derived recipient associated token account,
 creating it idempotently through an exact reviewed instruction when it is still
 unallocated. Token-2022 transfer-altering extensions, Core collection/plugin
 variants, Token Metadata and compressed-collectible transfers, versioned
-message signing and v1 decoding, priority fees, Sui object creation/deletion
+message signing, priority fees, Sui object creation/deletion
 activity and gRPC execution migration,
 full swaps, external wallets, and WalletConnect remain closed until their
 implementation and evidence gates pass. Finalized Sui activity does record

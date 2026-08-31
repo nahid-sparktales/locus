@@ -3684,7 +3684,7 @@ final class WalletGatewayTests: XCTestCase {
                 XCTAssertEqual(params.first as? String, signature)
                 let configuration = try XCTUnwrap(params[1] as? [String: Any])
                 XCTAssertEqual(configuration["encoding"] as? String, "jsonParsed")
-                XCTAssertEqual(configuration["maxSupportedTransactionVersion"] as? Int, 0)
+                XCTAssertEqual(configuration["maxSupportedTransactionVersion"] as? Int, 1)
                 let accountKeys: [[String: Any]] = [
                     ["pubkey": owner, "signer": true, "writable": true,
                      "source": "transaction"],
@@ -3840,6 +3840,132 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(activity.count, 1)
         XCTAssertEqual(activity.first?.id, "\(signature):transaction")
         XCTAssertNil(activity.first?.assetID)
+    }
+
+    func testSolanaActivityValidatesV0LookupsAndV1ResourceLimits() async throws {
+        let owner = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let table = WalletSolanaBase58.encode(Data(repeating: 49, count: 32))
+        let loadedWritable = WalletSolanaBase58.encode(Data(repeating: 50, count: 32))
+        let loadedReadonly = WalletSolanaBase58.encode(Data(repeating: 51, count: 32))
+        let signature = WalletSolanaBase58.encode(Data(repeating: 52, count: 64))
+        let timestamp = UInt64(Date().addingTimeInterval(-60).timeIntervalSince1970)
+        var responseVersion = 0
+        var substituteEvidence = false
+        var malformedResourceLimit = false
+        let client = makeSolanaRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any
+            switch method {
+            case "getGenesisHash":
+                result = WalletNetworkCatalog.solanaDevnet.identity.value
+            case "getSignaturesForAddress":
+                result = [[
+                    "signature": signature, "slot": 44,
+                    "blockTime": timestamp, "confirmationStatus": "finalized",
+                    "err": NSNull(), "memo": NSNull(),
+                ]]
+            case "getTransaction":
+                var message: [String: Any]
+                var meta: [String: Any]
+                if responseVersion == 0 {
+                    message = [
+                        "accountKeys": [
+                            ["pubkey": owner, "signer": true,
+                             "writable": true, "source": "transaction"],
+                            ["pubkey": loadedWritable, "signer": false,
+                             "writable": true, "source": "lookupTable"],
+                            ["pubkey": loadedReadonly, "signer": false,
+                             "writable": false, "source": "lookupTable"],
+                        ],
+                        "addressTableLookups": [[
+                            "accountKey": table, "writableIndexes": [1],
+                            "readonlyIndexes": [2],
+                        ]],
+                        "instructions": [],
+                    ]
+                    meta = [
+                        "err": NSNull(), "fee": 5_000,
+                        "preBalances": [1_000_000, 10, 20],
+                        "postBalances": [1_000_000, 10, 20],
+                        "preTokenBalances": [], "postTokenBalances": [],
+                        "innerInstructions": [], "logMessages": [],
+                        "loadedAddresses": [
+                            "writable": [loadedWritable],
+                            "readonly": substituteEvidence
+                                ? [loadedWritable] : [loadedReadonly],
+                        ],
+                    ]
+                } else {
+                    message = [
+                        "accountKeys": [[
+                            "pubkey": owner, "signer": true,
+                            "writable": true, "source": "transaction",
+                        ]],
+                        "transactionConfig": [
+                            "computeUnitLimit": 30_000, "heapSize": NSNull(),
+                            "loadedAccountsDataSizeLimit": 200_000,
+                            "priorityFee": malformedResourceLimit
+                                ? "5000" : NSNull(),
+                        ],
+                        "instructions": [],
+                    ]
+                    if substituteEvidence { message["addressTableLookups"] = [] }
+                    meta = [
+                        "err": NSNull(), "fee": 5_000,
+                        "preBalances": [1_000_000],
+                        "postBalances": [1_000_000],
+                        "preTokenBalances": [], "postTokenBalances": [],
+                        "innerInstructions": [], "logMessages": [],
+                    ]
+                }
+                result = [
+                    "slot": 44, "blockTime": timestamp,
+                    "version": responseVersion,
+                    "transaction": [
+                        "signatures": [signature], "message": message,
+                    ],
+                    "meta": meta,
+                ]
+            default:
+                throw URLError(.unsupportedURL)
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": object["id"]!, "result": result,
+            ])
+        }
+        var activity = try await client.activity(owner: owner)
+        XCTAssertEqual(activity.count, 1)
+        substituteEvidence = true
+        do {
+            _ = try await client.activity(owner: owner)
+            XCTFail("Substituted v0 loaded addresses must reject the batch.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("substituted or reordered"))
+        }
+        responseVersion = 1
+        substituteEvidence = false
+        activity = try await client.activity(owner: owner)
+        XCTAssertEqual(activity.count, 1)
+        substituteEvidence = true
+        do {
+            _ = try await client.activity(owner: owner)
+            XCTFail("A v1 transaction must not carry address-table evidence.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("v1 Solana activity"))
+        }
+        substituteEvidence = false
+        malformedResourceLimit = true
+        do {
+            _ = try await client.activity(owner: owner)
+            XCTFail("A v1 resource limit must use its canonical integer form.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("resource limits"))
+        }
     }
 
     func testSolanaActivityCapPreservesEveryFetchedTransactionRecord() async throws {

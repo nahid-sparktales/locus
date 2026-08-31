@@ -50,7 +50,9 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   token program/mint/owner/decimals, and Core instruction accounts are checked;
   every accepted transaction keeps a generic record, reviewed effects are
   additive, unknown programs are not guessed, and unknown assets are
-  quarantined. Public SQLite retains the newest 500 normalized records.
+  quarantined. v0 lookup counts/order/privileges are rebound to recorded loaded
+  addresses, while v1 requires its exact resource configuration and rejects
+  lookup tables. Public SQLite retains the newest 500 normalized records.
 - [x] Read-only Sui GraphQL network health and native SUI balances with full
   genesis-digest verification, bounded/error-free response envelopes, fresh
   checkpoint and epoch/gas evidence, and exact reconciliation of coin-object
@@ -112,9 +114,8 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
 - [ ] Solana transfer-altering Token-2022 extensions, Core collection/plugin
   variants, Token Metadata/programmable NFT transfers, and compressed-
   collectible transfer implementation complete. The standalone plugin-free
-  Core subset is implemented but not mainnet-enabled. Finalized legacy/v0
-  activity indexing is implemented; v1 decoding and versioned-message signing
-  remain closed.
+  Core subset is implemented but not mainnet-enabled. Finalized legacy/v0/v1
+  activity indexing is implemented; versioned-message signing remains closed.
 - [ ] Sui object creation/deletion activity, gRPC execution migration,
   multi-object Coin merge/object batching, and localnet coverage complete. The
   exact native, single-object curated Coin, and publicly transferable object
