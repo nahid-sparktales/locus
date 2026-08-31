@@ -90,6 +90,10 @@ struct SolanaNativeTransferRequest {
     recipient: String,
     recent_blockhash: String,
     amount_base_units: String,
+    #[serde(default)]
+    compute_unit_limit: Option<u32>,
+    #[serde(default)]
+    compute_unit_price_micro_lamports: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -105,6 +109,10 @@ struct SolanaSplTransferRequest {
     recent_blockhash: String,
     amount_base_units: String,
     decimals: u8,
+    #[serde(default)]
+    compute_unit_limit: Option<u32>,
+    #[serde(default)]
+    compute_unit_price_micro_lamports: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -114,6 +122,10 @@ struct SolanaCoreTransferRequest {
     asset: String,
     recipient: String,
     recent_blockhash: String,
+    #[serde(default)]
+    compute_unit_limit: Option<u32>,
+    #[serde(default)]
+    compute_unit_price_micro_lamports: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -912,17 +924,37 @@ fn build_solana_native_message(
     if blockhash.len() != 32 || bs58::encode(&blockhash).into_string() != request.recent_blockhash {
         return Err("Solana blockhash must be canonical base58");
     }
+    let compute_budget = reviewed_solana_compute_budget(
+        request.compute_unit_limit,
+        request.compute_unit_price_micro_lamports.as_deref(),
+    )?;
+    if let Some((_, _, compute_program)) = compute_budget
+        && [payer, recipient, system_program, compute_program]
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != 4
+    {
+        return Err("compute-budget account roles overlap");
+    }
 
-    // Legacy message with exactly one System Program transfer instruction.
+    // Legacy message with one System Program transfer and, when requested,
+    // exactly one CU limit and one CU price instruction.
     // Accounts: fee payer (signer+writable), recipient (writable), System
     // Program (readonly). Instruction data is bincode enum tag 2 + u64 lamports.
-    let mut message = vec![1, 0, 1];
-    encode_shortvec(3, &mut message);
+    let mut message = vec![1, 0, if compute_budget.is_some() { 2 } else { 1 }];
+    encode_shortvec(if compute_budget.is_some() { 4 } else { 3 }, &mut message);
     message.extend_from_slice(payer.as_array());
     message.extend_from_slice(recipient.as_array());
     message.extend_from_slice(system_program.as_array());
+    if let Some((_, _, compute_program)) = compute_budget {
+        message.extend_from_slice(compute_program.as_array());
+    }
     message.extend_from_slice(&blockhash);
-    encode_shortvec(1, &mut message);
+    encode_shortvec(if compute_budget.is_some() { 3 } else { 1 }, &mut message);
+    if let Some((limit, price, _)) = compute_budget {
+        append_solana_compute_budget_instructions(&mut message, 3, limit, price);
+    }
     message.push(2);
     encode_shortvec(2, &mut message);
     message.extend_from_slice(&[0, 1]);
@@ -948,6 +980,51 @@ fn canonical_solana_blockhash(value: &str) -> Result<Vec<u8>, &'static str> {
         return Err("Solana blockhash must be canonical base58");
     }
     Ok(blockhash)
+}
+
+fn reviewed_solana_compute_budget(
+    limit: Option<u32>,
+    price: Option<&str>,
+) -> Result<Option<(u32, u64, Pubkey)>, &'static str> {
+    const COMPUTE_BUDGET_PROGRAM: &str = "ComputeBudget111111111111111111111111111111";
+    match (limit, price) {
+        (None, None) => Ok(None),
+        (Some(limit), Some(price)) => {
+            if limit == 0 || limit > 1_400_000 {
+                return Err("compute unit limit is outside the reviewed range");
+            }
+            let price_value = price
+                .parse::<u64>()
+                .map_err(|_| "invalid compute unit price")?;
+            if price_value.to_string() != price {
+                return Err("compute unit price must be a canonical u64");
+            }
+            Ok(Some((
+                limit,
+                price_value,
+                canonical_solana_pubkey(COMPUTE_BUDGET_PROGRAM)?,
+            )))
+        }
+        _ => Err("compute unit limit and price must be bound together"),
+    }
+}
+
+fn append_solana_compute_budget_instructions(
+    message: &mut Vec<u8>,
+    program_index: u8,
+    limit: u32,
+    price_micro_lamports: u64,
+) {
+    message.push(program_index);
+    encode_shortvec(0, message);
+    encode_shortvec(5, message);
+    message.push(2);
+    message.extend_from_slice(&limit.to_le_bytes());
+    message.push(program_index);
+    encode_shortvec(0, message);
+    encode_shortvec(9, message);
+    message.push(3);
+    message.extend_from_slice(&price_micro_lamports.to_le_bytes());
 }
 
 fn derive_solana_associated_token_address(
@@ -1030,6 +1107,10 @@ fn build_solana_spl_message(
         return Err("SPL transfer amount must be a positive canonical u64");
     }
     let blockhash = canonical_solana_blockhash(&request.recent_blockhash)?;
+    let compute_budget = reviewed_solana_compute_budget(
+        request.compute_unit_limit,
+        request.compute_unit_price_micro_lamports.as_deref(),
+    )?;
 
     let mut message;
     if request.create_destination_associated_account {
@@ -1051,10 +1132,29 @@ fn build_solana_spl_message(
         {
             return Err("associated-token account roles overlap");
         }
+        if let Some((_, _, compute_program)) = compute_budget
+            && [
+                payer,
+                source,
+                destination,
+                recipient_owner,
+                mint,
+                system_program,
+                token_program,
+                associated_token_program,
+                compute_program,
+            ]
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+                != 9
+        {
+            return Err("compute-budget account roles overlap");
+        }
         // Accounts: payer, source, destination ATA, recipient owner, mint,
         // System Program, Token Program, Associated Token Program.
-        message = vec![1, 0, 5];
-        encode_shortvec(8, &mut message);
+        message = vec![1, 0, if compute_budget.is_some() { 6 } else { 5 }];
+        encode_shortvec(if compute_budget.is_some() { 9 } else { 8 }, &mut message);
         for account in [
             payer,
             source,
@@ -1067,8 +1167,14 @@ fn build_solana_spl_message(
         ] {
             message.extend_from_slice(account.as_array());
         }
+        if let Some((_, _, compute_program)) = compute_budget {
+            message.extend_from_slice(compute_program.as_array());
+        }
         message.extend_from_slice(&blockhash);
-        encode_shortvec(2, &mut message);
+        encode_shortvec(if compute_budget.is_some() { 4 } else { 2 }, &mut message);
+        if let Some((limit, price, _)) = compute_budget {
+            append_solana_compute_budget_instructions(&mut message, 8, limit, price);
+        }
         // CreateIdempotent: payer, ATA, owner, mint, System, Token.
         message.push(7);
         encode_shortvec(6, &mut message);
@@ -1081,13 +1187,28 @@ fn build_solana_spl_message(
         message.extend_from_slice(&[1, 4, 2, 0]);
     } else {
         // Accounts: payer, source, destination, mint, Token Program.
-        message = vec![1, 0, 2];
-        encode_shortvec(5, &mut message);
+        if let Some((_, _, compute_program)) = compute_budget
+            && [payer, source, destination, mint, token_program, compute_program]
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                != 6
+        {
+            return Err("compute-budget account roles overlap");
+        }
+        message = vec![1, 0, if compute_budget.is_some() { 3 } else { 2 }];
+        encode_shortvec(if compute_budget.is_some() { 6 } else { 5 }, &mut message);
         for account in [payer, source, destination, mint, token_program] {
             message.extend_from_slice(account.as_array());
         }
+        if let Some((_, _, compute_program)) = compute_budget {
+            message.extend_from_slice(compute_program.as_array());
+        }
         message.extend_from_slice(&blockhash);
-        encode_shortvec(1, &mut message);
+        encode_shortvec(if compute_budget.is_some() { 3 } else { 1 }, &mut message);
+        if let Some((limit, price, _)) = compute_budget {
+            append_solana_compute_budget_instructions(&mut message, 5, limit, price);
+        }
         message.push(4);
         encode_shortvec(4, &mut message);
         message.extend_from_slice(&[1, 3, 2, 0]);
@@ -1119,18 +1240,37 @@ fn build_solana_core_message(
         return Err("Core account roles do not match the reviewed transfer");
     }
     let blockhash = canonical_solana_blockhash(&request.recent_blockhash)?;
+    let compute_budget = reviewed_solana_compute_budget(
+        request.compute_unit_limit,
+        request.compute_unit_price_micro_lamports.as_deref(),
+    )?;
+    if let Some((_, _, compute_program)) = compute_budget
+        && [payer, asset, recipient, core_program, compute_program]
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != 5
+    {
+        return Err("Core compute-budget account roles overlap");
+    }
 
     // Exact legacy TransferV1 message. Optional collection, authority, system
     // program, and log wrapper are all represented by the Core program sentinel;
     // payer is consequently the resolved owner authority. Compression proof is
     // Borsh None and no remaining accounts can cross this boundary.
-    let mut message = vec![1, 0, 2];
-    encode_shortvec(4, &mut message);
+    let mut message = vec![1, 0, if compute_budget.is_some() { 3 } else { 2 }];
+    encode_shortvec(if compute_budget.is_some() { 5 } else { 4 }, &mut message);
     for account in [payer, asset, recipient, core_program] {
         message.extend_from_slice(account.as_array());
     }
+    if let Some((_, _, compute_program)) = compute_budget {
+        message.extend_from_slice(compute_program.as_array());
+    }
     message.extend_from_slice(&blockhash);
-    encode_shortvec(1, &mut message);
+    encode_shortvec(if compute_budget.is_some() { 3 } else { 1 }, &mut message);
+    if let Some((limit, price, _)) = compute_budget {
+        append_solana_compute_budget_instructions(&mut message, 4, limit, price);
+    }
     message.push(3);
     encode_shortvec(7, &mut message);
     message.extend_from_slice(&[1, 3, 0, 3, 2, 3, 3]);
@@ -2417,6 +2557,80 @@ mod tests {
             .verify(&transaction[65..], &signature)
             .unwrap();
         entropy_bytes.zeroize();
+    }
+
+    #[test]
+    fn solana_native_priority_budget_is_exact_and_fail_closed() {
+        let entropy =
+            CString::new("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let recipient = Pubkey::new_from_array([7_u8; 32]).to_string();
+        let blockhash = Pubkey::new_from_array([9_u8; 32]).to_string();
+        let base = serde_json::json!({
+            "fee_payer": "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx",
+            "recipient": recipient,
+            "recent_blockhash": blockhash,
+            "amount_base_units": "123456789",
+            "compute_unit_limit": 825,
+            "compute_unit_price_micro_lamports": "30000"
+        });
+        let request = CString::new(base.to_string()).unwrap();
+        let pointer =
+            locus_wallet_prepare_solana_native_transfer_json(entropy.as_ptr(), request.as_ptr());
+        let json = unsafe { CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(pointer) };
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            value["canonical_message_digest"],
+            "sha256:d8a487a5cba7e2c33f0d4eebf8e79f64e9cff82034ab8ab6bb30968af6868efa"
+        );
+
+        let mut cases = Vec::new();
+        let mut missing_price = base.clone();
+        missing_price
+            .as_object_mut()
+            .unwrap()
+            .remove("compute_unit_price_micro_lamports");
+        cases.push(missing_price);
+        let mut missing_limit = base.clone();
+        missing_limit
+            .as_object_mut()
+            .unwrap()
+            .remove("compute_unit_limit");
+        cases.push(missing_limit);
+        let mut zero_limit = base.clone();
+        zero_limit["compute_unit_limit"] = serde_json::json!(0);
+        cases.push(zero_limit);
+        let mut excessive_limit = base.clone();
+        excessive_limit["compute_unit_limit"] = serde_json::json!(1_400_001);
+        cases.push(excessive_limit);
+        let mut compute_recipient = base.clone();
+        compute_recipient["recipient"] =
+            serde_json::json!("ComputeBudget111111111111111111111111111111");
+        cases.push(compute_recipient);
+        let mut noncanonical_price = base;
+        noncanonical_price["compute_unit_price_micro_lamports"] = serde_json::json!("030000");
+        cases.push(noncanonical_price);
+
+        for value in cases {
+            let request = CString::new(value.to_string()).unwrap();
+            let pointer = locus_wallet_prepare_solana_native_transfer_json(
+                entropy.as_ptr(),
+                request.as_ptr(),
+            );
+            let json = unsafe { CStr::from_ptr(pointer) }
+                .to_string_lossy()
+                .into_owned();
+            unsafe { locus_wallet_string_free(pointer) };
+            assert!(
+                serde_json::from_str::<serde_json::Value>(&json).unwrap()["error"]
+                    .as_str()
+                    .is_some(),
+                "unsafe priority budget was accepted: {json}"
+            );
+        }
     }
 
     #[test]

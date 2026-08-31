@@ -199,6 +199,8 @@ private struct RustSolanaNativeTransfer: Encodable {
     let recipient: String
     let recentBlockhash: String
     let amountBaseUnits: String
+    let computeUnitLimit: UInt32
+    let computeUnitPriceMicroLamports: String
 }
 
 private struct RustSolanaSPLTransfer: Encodable {
@@ -213,6 +215,8 @@ private struct RustSolanaSPLTransfer: Encodable {
     let recentBlockhash: String
     let amountBaseUnits: String
     let decimals: UInt8
+    let computeUnitLimit: UInt32
+    let computeUnitPriceMicroLamports: String
 }
 
 private struct RustSolanaCoreTransfer: Encodable {
@@ -220,6 +224,8 @@ private struct RustSolanaCoreTransfer: Encodable {
     let asset: String
     let recipient: String
     let recentBlockhash: String
+    let computeUnitLimit: UInt32
+    let computeUnitPriceMicroLamports: String
 }
 
 private struct RustSolanaAssociatedTokenRequest: Encodable {
@@ -408,6 +414,24 @@ private enum SignerUnsignedInteger {
         guard borrow == 0 else { return nil }
         while a.count > 1, a.last == 0 { a.removeLast() }
         return a.reversed().map(String.init).joined()
+    }
+
+    static func solanaPriorityFee(
+        computeUnitLimit: UInt32,
+        priceMicroLamports: String
+    ) -> String? {
+        guard computeUnitLimit > 0, computeUnitLimit <= 1_400_000,
+              UInt64(priceMicroLamports) != nil,
+              let microLamports = multiply(
+                  String(computeUnitLimit), priceMicroLamports
+              ), let normalized = normalize(microLamports) else { return nil }
+        guard normalized != "0" else { return "0" }
+        if normalized.count <= 6 { return "1" }
+        let split = normalized.index(normalized.endIndex, offsetBy: -6)
+        let whole = String(normalized[..<split])
+        let remainder = normalized[split...]
+        return remainder.allSatisfy({ $0 == "0" })
+            ? whole : add(whole, "1")
     }
 
     static func lessThanOrEqual(_ lhs: String, _ rhs: String) -> Bool {
@@ -1698,9 +1722,22 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
               let amountValue = UInt64(amount), amountValue > 0,
               String(amountValue) == amount,
               packet.version == .legacy,
-              packet.priorityFeeBaseUnits == "0",
+              packet.computeUnitLimit > 0,
+              packet.computeUnitLimit <= 1_400_000,
+              let computePrice = SignerUnsignedInteger.normalize(
+                  packet.computeUnitPriceMicroLamports
+              ), computePrice == packet.computeUnitPriceMicroLamports,
+              UInt64(computePrice) != nil,
+              let priorityFee = SignerUnsignedInteger.solanaPriorityFee(
+                  computeUnitLimit: packet.computeUnitLimit,
+                  priceMicroLamports: computePrice
+              ), priorityFee == SignerUnsignedInteger.normalize(
+                  packet.priorityFeeBaseUnits
+              ),
               packet.maximumFeeBaseUnits == packet.request.maximumFeeBaseUnits,
               let fee = SignerUnsignedInteger.normalize(packet.feeQuoteBaseUnits),
+              let baseFee = SignerUnsignedInteger.subtract(fee, priorityFee),
+              baseFee != "0",
               SignerUnsignedInteger.lessThanOrEqual(
                   fee, packet.request.maximumFeeBaseUnits
               ),
@@ -2190,9 +2227,22 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
               action.arguments.isEmpty, action.valueBaseUnits == nil,
               let recipient = action.recipient,
               packet.version == .legacy,
-              packet.priorityFeeBaseUnits == "0",
+              packet.computeUnitLimit > 0,
+              packet.computeUnitLimit <= 1_400_000,
+              let computePrice = SignerUnsignedInteger.normalize(
+                  packet.computeUnitPriceMicroLamports
+              ), computePrice == packet.computeUnitPriceMicroLamports,
+              UInt64(computePrice) != nil,
+              let priorityFee = SignerUnsignedInteger.solanaPriorityFee(
+                  computeUnitLimit: packet.computeUnitLimit,
+                  priceMicroLamports: computePrice
+              ), priorityFee == SignerUnsignedInteger.normalize(
+                  packet.priorityFeeBaseUnits
+              ),
               packet.maximumFeeBaseUnits == packet.request.maximumFeeBaseUnits,
               let fee = SignerUnsignedInteger.normalize(packet.feeQuoteBaseUnits),
+              let baseFee = SignerUnsignedInteger.subtract(fee, priorityFee),
+              baseFee != "0",
               SignerUnsignedInteger.lessThanOrEqual(
                 fee, packet.request.maximumFeeBaseUnits
               ),
@@ -2341,9 +2391,22 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
               let amountValue = UInt64(amount), amountValue > 0,
               String(amountValue) == amount,
               packet.version == .legacy,
-              packet.priorityFeeBaseUnits == "0",
+              packet.computeUnitLimit > 0,
+              packet.computeUnitLimit <= 1_400_000,
+              let computePrice = SignerUnsignedInteger.normalize(
+                  packet.computeUnitPriceMicroLamports
+              ), computePrice == packet.computeUnitPriceMicroLamports,
+              UInt64(computePrice) != nil,
+              let priorityFee = SignerUnsignedInteger.solanaPriorityFee(
+                  computeUnitLimit: packet.computeUnitLimit,
+                  priceMicroLamports: computePrice
+              ), priorityFee == SignerUnsignedInteger.normalize(
+                  packet.priorityFeeBaseUnits
+              ),
               packet.maximumFeeBaseUnits == packet.request.maximumFeeBaseUnits,
               let fee = SignerUnsignedInteger.normalize(packet.feeQuoteBaseUnits),
+              let baseFee = SignerUnsignedInteger.subtract(fee, priorityFee),
+              baseFee != "0",
               SignerUnsignedInteger.lessThanOrEqual(
                   fee, packet.request.maximumFeeBaseUnits
               ),
@@ -3365,6 +3428,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
               recheck.simulationSucceeded,
               abs(recheck.observedAt.timeIntervalSinceNow) <= 30,
               let fee = SignerUnsignedInteger.normalize(recheck.feeQuoteBaseUnits),
+              fee == intent.packet.feeQuoteBaseUnits,
               SignerUnsignedInteger.lessThanOrEqual(
                   fee, intent.prepared.maximumFeeBaseUnits
               ) else {
@@ -3896,7 +3960,10 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         let request = RustSolanaNativeTransfer(
             feePayer: packet.feePayer, recipient: recipient,
             recentBlockhash: packet.recentBlockhash,
-            amountBaseUnits: amount
+            amountBaseUnits: amount,
+            computeUnitLimit: packet.computeUnitLimit,
+            computeUnitPriceMicroLamports:
+                packet.computeUnitPriceMicroLamports
         )
         return try rustSolanaCall(
             request: request, entropy: entropy, function: function
@@ -3930,7 +3997,10 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             associatedTokenProgramID: Self.solanaAssociatedTokenProgramID,
             createDestinationAssociatedAccount: packet.instructions.count == 2,
             recentBlockhash: packet.recentBlockhash,
-            amountBaseUnits: amount, decimals: decimals
+            amountBaseUnits: amount, decimals: decimals,
+            computeUnitLimit: packet.computeUnitLimit,
+            computeUnitPriceMicroLamports:
+                packet.computeUnitPriceMicroLamports
         )
         return try rustSolanaCall(
             request: request, entropy: entropy, function: function
@@ -3951,7 +4021,10 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         }
         let request = RustSolanaCoreTransfer(
             feePayer: packet.feePayer, asset: identity.address,
-            recipient: recipient, recentBlockhash: packet.recentBlockhash
+            recipient: recipient, recentBlockhash: packet.recentBlockhash,
+            computeUnitLimit: packet.computeUnitLimit,
+            computeUnitPriceMicroLamports:
+                packet.computeUnitPriceMicroLamports
         )
         return try rustSolanaCall(
             request: request, entropy: entropy, function: function

@@ -24,6 +24,13 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   strict standard binding, and default quarantine.
 - [x] Native SOL legacy message reconstruction, signing, simulation recheck,
   expiry handling, single-provider broadcast, status finality, and capped rules.
+- [x] Account-local Solana priority fees for reviewed legacy transfers. A
+  provisional maximum-limit/zero-price message is simulated, the measured units
+  receive a capped ten-percent margin, the newest 20 fee samples use a
+  deterministic 75th percentile, and the selected price is reduced to the
+  user's exact fee ceiling. Swift and Rust independently rebuild the two fixed
+  Compute Budget instructions; final fee, bytes, simulation, and recheck must
+  agree before signing.
 - [x] Strict SPL and Token-2022 account discovery with raw base-unit balances,
   program/mint/owner validation, signed curation, and unknown-mint quarantine.
 - [x] Classic SPL `TransferChecked` with independently rebuilt signer message,
@@ -115,7 +122,8 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   variants, Token Metadata/programmable NFT transfers, and compressed-
   collectible transfer implementation complete. The standalone plugin-free
   Core subset is implemented but not mainnet-enabled. Finalized legacy/v0/v1
-  activity indexing is implemented; versioned-message signing remains closed.
+  activity indexing and reviewed legacy-transfer priority fees are implemented;
+  versioned-message signing remains closed.
 - [ ] Sui object creation/deletion activity, gRPC execution migration,
   multi-object Coin merge/object batching, and localnet coverage complete. The
   exact native, single-object curated Coin, and publicly transferable object

@@ -86,6 +86,14 @@ signing adapter.
   blockhash lifetime, account privileges, fee, simulation, request source, and
   broadcast ID are rebound before the single signing operation. Capped SOL
   agent rules use the same signer-owned policy boundary.
+- Reviewed legacy SOL, SPL/Token-2022, and Core transfers use a fixed two-pass
+  priority-fee protocol. The first exact message has the 1.4-million compute-unit
+  maximum and zero unit price; its measured units receive a ten-percent margin.
+  Locus samples recent fees for the exact writable accounts, uses the
+  deterministic 75th percentile of the newest 20, and caps the price to the
+  user's remaining maximum fee with integer ceiling arithmetic. The final
+  message contains exactly one unit-limit and one unit-price instruction, is
+  fee-quoted and simulated again, and is independently rebuilt by the signer.
 - SPL Token and Token-2022 account discovery validates genesis, program owner,
   wallet owner, mint, token-account state, decimals, and canonical raw u64
   balances. Unknown mints are stored as public quarantine records and remain
@@ -255,7 +263,7 @@ until their implementation and evidence gates pass:
 - Solana transfer-altering Token-2022 extensions, Core collection/plugin
   variants, Token Metadata/programmable and compressed-collectible transfer
   adapters, remote-media rendering,
-  versioned-message signing, priority fees, and local-validator coverage; all
+  versioned-message signing and local-validator coverage; all
   Sui object creation/deletion activity, gRPC execution migration, multi-object
   transfers, and localnet suites; native SUI, Coin, and object-transfer mainnet
   activation remain gated;

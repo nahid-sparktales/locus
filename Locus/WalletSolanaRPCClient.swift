@@ -1,6 +1,44 @@
 import CryptoKit
 import Foundation
 
+private enum WalletSolanaComputeBudget {
+    static let programID = "ComputeBudget111111111111111111111111111111"
+    static let maximumUnits: UInt32 = 1_400_000
+
+    static func validate(limit: UInt32?, price: UInt64?) throws -> Bool {
+        guard (limit == nil) == (price == nil) else {
+            throw WalletGateway.Error.invalidArguments(
+                "Solana compute-unit limit and price must be bound together."
+            )
+        }
+        guard let limit else { return false }
+        guard limit > 0, limit <= maximumUnits else {
+            throw WalletGateway.Error.invalidArguments(
+                "The Solana compute-unit limit is outside the reviewed range."
+            )
+        }
+        return true
+    }
+
+    static func appendInstructions(
+        limit: UInt32,
+        price: UInt64,
+        programIndex: UInt8,
+        to message: inout Data
+    ) {
+        message.append(programIndex)
+        message.append(0)
+        message.append(5)
+        message.append(2)
+        message.appendLittleEndian(limit)
+        message.append(programIndex)
+        message.append(0)
+        message.append(9)
+        message.append(3)
+        message.appendLittleEndian(price)
+    }
+}
+
 struct WalletSolanaCanonicalNativeTransfer: Equatable, Sendable {
     static let systemProgramID = "11111111111111111111111111111111"
 
@@ -17,7 +55,9 @@ struct WalletSolanaCanonicalNativeTransfer: Equatable, Sendable {
         feePayer: String,
         recipient: String,
         recentBlockhash: String,
-        amountBaseUnits: String
+        amountBaseUnits: String,
+        computeUnitLimit: UInt32? = nil,
+        computeUnitPriceMicroLamports: UInt64? = nil
     ) throws {
         guard let payer = WalletSolanaBase58.decode(feePayer, exactLength: 32),
               let destination = WalletSolanaBase58.decode(recipient, exactLength: 32),
@@ -29,13 +69,34 @@ struct WalletSolanaCanonicalNativeTransfer: Equatable, Sendable {
             )
         }
 
-        var message = Data([1, 0, 1])
-        message.append(Self.shortVector(3))
+        let hasComputeBudget = try WalletSolanaComputeBudget.validate(
+            limit: computeUnitLimit, price: computeUnitPriceMicroLamports
+        )
+        var message = Data([1, 0, hasComputeBudget ? 2 : 1])
+        message.append(Self.shortVector(hasComputeBudget ? 4 : 3))
         message.append(payer)
         message.append(destination)
         message.append(Data(repeating: 0, count: 32))
+        if hasComputeBudget {
+            guard let computeProgram = WalletSolanaBase58.decode(
+                WalletSolanaComputeBudget.programID, exactLength: 32
+            ), Set([
+                payer, destination, Data(repeating: 0, count: 32), computeProgram,
+            ]).count == 4 else {
+                throw WalletGateway.Error.invalidArguments(
+                    "The compute-budget account overlaps a transfer role."
+                )
+            }
+            message.append(computeProgram)
+        }
         message.append(blockhash)
-        message.append(Self.shortVector(1))
+        message.append(Self.shortVector(hasComputeBudget ? 3 : 1))
+        if let computeUnitLimit, let computeUnitPriceMicroLamports {
+            WalletSolanaComputeBudget.appendInstructions(
+                limit: computeUnitLimit, price: computeUnitPriceMicroLamports,
+                programIndex: 3, to: &message
+            )
+        }
         message.append(2)
         message.append(Self.shortVector(2))
         message.append(contentsOf: [0, 1])
@@ -118,7 +179,9 @@ struct WalletSolanaCanonicalSPLTransfer: Equatable, Sendable {
         createsDestinationAssociatedAccount: Bool = false,
         mintExtensions: [String] = [],
         sourceAccountExtensions: [String] = [],
-        destinationAccountExtensions: [String] = []
+        destinationAccountExtensions: [String] = [],
+        computeUnitLimit: UInt32? = nil,
+        computeUnitPriceMicroLamports: UInt64? = nil
     ) throws {
         guard WalletSolanaTokenProgram.allCases.contains(where: {
                   $0.programID == tokenProgramID
@@ -180,6 +243,28 @@ struct WalletSolanaCanonicalSPLTransfer: Equatable, Sendable {
                 )
             }
         }
+        let hasComputeBudget = try WalletSolanaComputeBudget.validate(
+            limit: computeUnitLimit, price: computeUnitPriceMicroLamports
+        )
+        let computeProgram: Data?
+        if hasComputeBudget {
+            computeProgram = WalletSolanaBase58.decode(
+                WalletSolanaComputeBudget.programID, exactLength: 32
+            )
+            guard computeProgram != nil,
+                  ![
+                      feePayer, sourceTokenAccount, mint,
+                      destinationTokenAccount, recipientOwner, tokenProgramID,
+                      Self.associatedTokenProgramID,
+                      WalletSolanaCanonicalNativeTransfer.systemProgramID,
+                  ].contains(WalletSolanaComputeBudget.programID) else {
+                throw WalletGateway.Error.invalidArguments(
+                    "The compute-budget account overlaps a token role."
+                )
+            }
+        } else {
+            computeProgram = nil
+        }
 
         let creationAccounts: [WalletSolanaResolvedAccount]
         var message: Data
@@ -193,16 +278,24 @@ struct WalletSolanaCanonicalSPLTransfer: Equatable, Sendable {
                     "The reviewed associated-token accounts are malformed."
                 )
             }
-            message = Data([1, 0, 5])
-            message.append(Self.shortVector(8))
+            message = Data([1, 0, hasComputeBudget ? 6 : 5])
+            message.append(Self.shortVector(hasComputeBudget ? 9 : 8))
             for account in [
                 payer, source, destination, owner, mintBytes,
                 Data(repeating: 0, count: 32), program, associatedProgram,
             ] {
                 message.append(account)
             }
+            if let computeProgram { message.append(computeProgram) }
             message.append(blockhash)
-            message.append(Self.shortVector(2))
+            message.append(Self.shortVector(hasComputeBudget ? 4 : 2))
+            if let computeUnitLimit, let computeUnitPriceMicroLamports {
+                WalletSolanaComputeBudget.appendInstructions(
+                    limit: computeUnitLimit,
+                    price: computeUnitPriceMicroLamports,
+                    programIndex: 8, to: &message
+                )
+            }
             message.append(7)
             message.append(Self.shortVector(6))
             message.append(contentsOf: [0, 2, 3, 4, 5, 6])
@@ -240,13 +333,21 @@ struct WalletSolanaCanonicalSPLTransfer: Equatable, Sendable {
                 ),
             ]
         } else {
-            message = Data([1, 0, 2])
-            message.append(Self.shortVector(5))
+            message = Data([1, 0, hasComputeBudget ? 3 : 2])
+            message.append(Self.shortVector(hasComputeBudget ? 6 : 5))
             for account in [payer, source, destination, mintBytes, program] {
                 message.append(account)
             }
+            if let computeProgram { message.append(computeProgram) }
             message.append(blockhash)
-            message.append(Self.shortVector(1))
+            message.append(Self.shortVector(hasComputeBudget ? 3 : 1))
+            if let computeUnitLimit, let computeUnitPriceMicroLamports {
+                WalletSolanaComputeBudget.appendInstructions(
+                    limit: computeUnitLimit,
+                    price: computeUnitPriceMicroLamports,
+                    programIndex: 5, to: &message
+                )
+            }
             message.append(4)
             message.append(Self.shortVector(4))
             message.append(contentsOf: [1, 3, 2, 0])
@@ -353,7 +454,9 @@ struct WalletSolanaCanonicalCoreTransfer: Equatable, Sendable {
         asset: String,
         recipient: String,
         recentBlockhash: String,
-        assetDataDigest: String
+        assetDataDigest: String,
+        computeUnitLimit: UInt32? = nil,
+        computeUnitPriceMicroLamports: UInt64? = nil
     ) throws {
         guard let payer = WalletSolanaBase58.decode(feePayer, exactLength: 32),
               let assetBytes = WalletSolanaBase58.decode(asset, exactLength: 32),
@@ -370,17 +473,43 @@ struct WalletSolanaCanonicalCoreTransfer: Equatable, Sendable {
             )
         }
 
+        let hasComputeBudget = try WalletSolanaComputeBudget.validate(
+            limit: computeUnitLimit, price: computeUnitPriceMicroLamports
+        )
+        let computeProgram: Data?
+        if hasComputeBudget {
+            computeProgram = WalletSolanaBase58.decode(
+                WalletSolanaComputeBudget.programID, exactLength: 32
+            )
+            guard computeProgram != nil,
+                  ![feePayer, asset, recipient, Self.coreProgramID]
+                    .contains(WalletSolanaComputeBudget.programID) else {
+                throw WalletGateway.Error.invalidArguments(
+                    "The compute-budget account overlaps a Core role."
+                )
+            }
+        } else {
+            computeProgram = nil
+        }
+
         // Legacy account order is fixed by this reviewed adapter rather than
         // delegated to an SDK: payer, writable asset, recipient, Core program.
         // Optional collection/authority/system/log-wrapper accounts all use the
         // Core program sentinel. Payer therefore remains the resolved authority.
-        var message = Data([1, 0, 2])
-        message.append(Data([4]))
+        var message = Data([1, 0, hasComputeBudget ? 3 : 2])
+        message.append(Data([hasComputeBudget ? 5 : 4]))
         for account in [payer, assetBytes, destination, core] {
             message.append(account)
         }
+        if let computeProgram { message.append(computeProgram) }
         message.append(blockhash)
-        message.append(Data([1]))
+        message.append(Data([hasComputeBudget ? 3 : 1]))
+        if let computeUnitLimit, let computeUnitPriceMicroLamports {
+            WalletSolanaComputeBudget.appendInstructions(
+                limit: computeUnitLimit, price: computeUnitPriceMicroLamports,
+                programIndex: 4, to: &message
+            )
+        }
         message.append(3)
         message.append(Data([7]))
         message.append(contentsOf: [1, 3, 0, 3, 2, 3, 3])
@@ -527,6 +656,17 @@ actor WalletSolanaRPCClient {
         let data: Data?
     }
 
+    private struct SimulationEvidence: Sendable {
+        let summary: String
+        let unitsConsumed: UInt64
+    }
+
+    private struct PriorityPlan: Sendable {
+        let computeUnitLimit: UInt32
+        let computeUnitPriceMicroLamports: UInt64
+        let priorityFeeBaseUnits: String
+    }
+
     init(
         network: WalletNetworkDescriptor,
         endpoint: String,
@@ -605,17 +745,39 @@ actor WalletSolanaRPCClient {
         }
         let genesisHash = try await verifiedGenesisHash()
         let latest = try await latestBlockhash()
+        let provisional = try WalletSolanaCanonicalNativeTransfer(
+            feePayer: feePayer, recipient: recipient,
+            recentBlockhash: latest.blockhash, amountBaseUnits: amount,
+            computeUnitLimit: WalletSolanaComputeBudget.maximumUnits,
+            computeUnitPriceMicroLamports: 0
+        )
+        let baseFee = try await feeForMessage(provisional.message)
+        let provisionalSimulation = try await simulateEvidence(
+            provisional.unsignedTransaction
+        )
+        let priority = try await priorityPlan(
+            unitsConsumed: provisionalSimulation.unitsConsumed,
+            writableAccounts: [feePayer, recipient], baseFee: baseFee,
+            maximumFee: request.maximumFeeBaseUnits
+        )
         let transaction = try WalletSolanaCanonicalNativeTransfer(
             feePayer: feePayer, recipient: recipient,
-            recentBlockhash: latest.blockhash, amountBaseUnits: amount
+            recentBlockhash: latest.blockhash, amountBaseUnits: amount,
+            computeUnitLimit: priority.computeUnitLimit,
+            computeUnitPriceMicroLamports:
+                priority.computeUnitPriceMicroLamports
         )
         let fee = try await feeForMessage(transaction.message)
-        guard WalletBaseUnits.lessThanOrEqual(fee, request.maximumFeeBaseUnits) else {
-            throw WalletGateway.Error.policyDenied(
-                "The Solana network fee exceeds the requested fee ceiling."
+        try Self.validateFinalFee(
+            fee, baseFee: baseFee, plan: priority,
+            maximumFee: request.maximumFeeBaseUnits
+        )
+        let simulation = try await simulateEvidence(transaction.unsignedTransaction)
+        guard simulation.unitsConsumed <= UInt64(priority.computeUnitLimit) else {
+            throw WalletRPCError.simulation(
+                "the final SOL transfer exceeded its reviewed compute limit"
             )
         }
-        let simulation = try await simulate(transaction.unsignedTransaction)
         let instruction = WalletSolanaReviewedInstruction(
             programID: WalletSolanaCanonicalNativeTransfer.systemProgramID,
             adapterID: WalletReviewedAdapters.solanaNativeTransfer,
@@ -637,12 +799,17 @@ actor WalletSolanaRPCClient {
             recentBlockhash: latest.blockhash,
             lastValidBlockHeight: latest.lastValidBlockHeight,
             contextSlot: latest.contextSlot,
-            feePayer: feePayer, priorityFeeBaseUnits: "0",
+            feePayer: feePayer,
+            computeUnitLimit: priority.computeUnitLimit,
+            computeUnitPriceMicroLamports: String(
+                priority.computeUnitPriceMicroLamports
+            ),
+            priorityFeeBaseUnits: priority.priorityFeeBaseUnits,
             feeQuoteBaseUnits: fee,
             maximumFeeBaseUnits: request.maximumFeeBaseUnits,
             canonicalMessageDigest: transaction.canonicalMessageDigest,
             resolvedAccountsDigest: transaction.resolvedAccountsDigest,
-            instructions: [instruction], simulation: simulation,
+            instructions: [instruction], simulation: simulation.summary,
             simulationSucceeded: true, observedAt: Date()
         )
     }
@@ -676,22 +843,47 @@ actor WalletSolanaRPCClient {
             address: identity.address, expectedOwner: feePayer
         )
         let latest = try await latestBlockhash()
+        let provisional = try WalletSolanaCanonicalCoreTransfer(
+            feePayer: feePayer, asset: identity.address, recipient: recipient,
+            recentBlockhash: latest.blockhash,
+            assetDataDigest: assetEvidence.dataDigest,
+            computeUnitLimit: WalletSolanaComputeBudget.maximumUnits,
+            computeUnitPriceMicroLamports: 0
+        )
+        let baseFee = try await feeForMessage(provisional.message)
+        let provisionalSimulation = try await simulateCoreTransferEvidence(
+            provisional.unsignedTransaction, asset: identity.address,
+            expectedOwner: recipient,
+            expectedUpdateAuthority: assetEvidence.updateAuthority
+        )
+        let priority = try await priorityPlan(
+            unitsConsumed: provisionalSimulation.unitsConsumed,
+            writableAccounts: [feePayer, identity.address], baseFee: baseFee,
+            maximumFee: request.maximumFeeBaseUnits
+        )
         let transaction = try WalletSolanaCanonicalCoreTransfer(
             feePayer: feePayer, asset: identity.address, recipient: recipient,
             recentBlockhash: latest.blockhash,
-            assetDataDigest: assetEvidence.dataDigest
+            assetDataDigest: assetEvidence.dataDigest,
+            computeUnitLimit: priority.computeUnitLimit,
+            computeUnitPriceMicroLamports:
+                priority.computeUnitPriceMicroLamports
         )
         let fee = try await feeForMessage(transaction.message)
-        guard WalletBaseUnits.lessThanOrEqual(fee, request.maximumFeeBaseUnits) else {
-            throw WalletGateway.Error.policyDenied(
-                "The Solana network fee exceeds the requested fee ceiling."
-            )
-        }
-        let simulation = try await simulateCoreTransfer(
+        try Self.validateFinalFee(
+            fee, baseFee: baseFee, plan: priority,
+            maximumFee: request.maximumFeeBaseUnits
+        )
+        let simulation = try await simulateCoreTransferEvidence(
             transaction.unsignedTransaction, asset: identity.address,
             expectedOwner: recipient,
             expectedUpdateAuthority: assetEvidence.updateAuthority
         )
+        guard simulation.unitsConsumed <= UInt64(priority.computeUnitLimit) else {
+            throw WalletRPCError.simulation(
+                "the final Core transfer exceeded its reviewed compute limit"
+            )
+        }
         let authorityKind: String
         let authorityAddress: String
         switch assetEvidence.updateAuthority {
@@ -736,12 +928,17 @@ actor WalletSolanaRPCClient {
             recentBlockhash: latest.blockhash,
             lastValidBlockHeight: latest.lastValidBlockHeight,
             contextSlot: max(latest.contextSlot, assetEvidence.slot),
-            feePayer: feePayer, priorityFeeBaseUnits: "0",
+            feePayer: feePayer,
+            computeUnitLimit: priority.computeUnitLimit,
+            computeUnitPriceMicroLamports: String(
+                priority.computeUnitPriceMicroLamports
+            ),
+            priorityFeeBaseUnits: priority.priorityFeeBaseUnits,
             feeQuoteBaseUnits: fee,
             maximumFeeBaseUnits: request.maximumFeeBaseUnits,
             canonicalMessageDigest: transaction.canonicalMessageDigest,
             resolvedAccountsDigest: transaction.resolvedAccountsDigest,
-            instructions: [instruction], simulation: simulation,
+            instructions: [instruction], simulation: simulation.summary,
             simulationSucceeded: true, observedAt: Date()
         )
     }
@@ -832,6 +1029,28 @@ actor WalletSolanaRPCClient {
             validateAccounts: true
         )
         let latest = try await latestBlockhash()
+        let provisional = try WalletSolanaCanonicalSPLTransfer(
+            feePayer: feePayer, sourceTokenAccount: source.address,
+            mint: identity.mint, destinationTokenAccount: destination.address,
+            recipientOwner: recipient, tokenProgramID: identity.program.programID,
+            recentBlockhash: latest.blockhash, amountBaseUnits: amountText,
+            decimals: decimals,
+            createsDestinationAssociatedAccount: createDestinationAssociatedAccount,
+            mintExtensions: mintState.extensions,
+            sourceAccountExtensions: source.extensions,
+            destinationAccountExtensions: destination.extensions,
+            computeUnitLimit: WalletSolanaComputeBudget.maximumUnits,
+            computeUnitPriceMicroLamports: 0
+        )
+        let baseFee = try await feeForMessage(provisional.message)
+        let provisionalSimulation = try await simulateEvidence(
+            provisional.unsignedTransaction
+        )
+        let priority = try await priorityPlan(
+            unitsConsumed: provisionalSimulation.unitsConsumed,
+            writableAccounts: [feePayer, source.address, destination.address],
+            baseFee: baseFee, maximumFee: request.maximumFeeBaseUnits
+        )
         let transfer = try WalletSolanaCanonicalSPLTransfer(
             feePayer: feePayer, sourceTokenAccount: source.address,
             mint: identity.mint, destinationTokenAccount: destination.address,
@@ -841,15 +1060,22 @@ actor WalletSolanaRPCClient {
             createsDestinationAssociatedAccount: createDestinationAssociatedAccount,
             mintExtensions: mintState.extensions,
             sourceAccountExtensions: source.extensions,
-            destinationAccountExtensions: destination.extensions
+            destinationAccountExtensions: destination.extensions,
+            computeUnitLimit: priority.computeUnitLimit,
+            computeUnitPriceMicroLamports:
+                priority.computeUnitPriceMicroLamports
         )
         let fee = try await feeForMessage(transfer.message)
-        guard WalletBaseUnits.lessThanOrEqual(fee, request.maximumFeeBaseUnits) else {
-            throw WalletGateway.Error.policyDenied(
-                "The Solana network fee exceeds the requested fee ceiling."
+        try Self.validateFinalFee(
+            fee, baseFee: baseFee, plan: priority,
+            maximumFee: request.maximumFeeBaseUnits
+        )
+        let simulation = try await simulateEvidence(transfer.unsignedTransaction)
+        guard simulation.unitsConsumed <= UInt64(priority.computeUnitLimit) else {
+            throw WalletRPCError.simulation(
+                "the final Solana token transfer exceeded its reviewed compute limit"
             )
         }
-        let simulation = try await simulate(transfer.unsignedTransaction)
         let adapterID = identity.program == .token2022
             ? WalletReviewedAdapters.solanaToken2022TransferChecked
             : WalletReviewedAdapters.solanaSPLTransferChecked
@@ -917,11 +1143,15 @@ actor WalletSolanaRPCClient {
             recentBlockhash: latest.blockhash,
             lastValidBlockHeight: latest.lastValidBlockHeight,
             contextSlot: latest.contextSlot, feePayer: feePayer,
-            priorityFeeBaseUnits: "0", feeQuoteBaseUnits: fee,
+            computeUnitLimit: priority.computeUnitLimit,
+            computeUnitPriceMicroLamports: String(
+                priority.computeUnitPriceMicroLamports
+            ), priorityFeeBaseUnits: priority.priorityFeeBaseUnits,
+            feeQuoteBaseUnits: fee,
             maximumFeeBaseUnits: request.maximumFeeBaseUnits,
             canonicalMessageDigest: transfer.canonicalMessageDigest,
             resolvedAccountsDigest: transfer.resolvedAccountsDigest,
-            instructions: instructions, simulation: simulation,
+            instructions: instructions, simulation: simulation.summary,
             simulationSucceeded: true, observedAt: Date()
         )
     }
@@ -940,6 +1170,20 @@ actor WalletSolanaRPCClient {
         guard currentBlockHeight <= packet.lastValidBlockHeight else {
             throw WalletRPCError.simulation("the prepared Solana blockhash expired")
         }
+        guard packet.computeUnitLimit > 0,
+              packet.computeUnitLimit <= WalletSolanaComputeBudget.maximumUnits,
+              let computeUnitPrice = UInt64(
+                  packet.computeUnitPriceMicroLamports
+              ), String(computeUnitPrice)
+                == packet.computeUnitPriceMicroLamports,
+              Self.priorityFee(
+                  computeUnitLimit: packet.computeUnitLimit,
+                  priceMicroLamports: computeUnitPrice
+              ) == packet.priorityFeeBaseUnits else {
+            throw WalletRPCError.simulation(
+                "the prepared Solana priority-fee evidence is malformed"
+            )
+        }
         let message: Data
         let unsignedTransaction: Data
         let canonicalDigest: String
@@ -951,7 +1195,9 @@ actor WalletSolanaRPCClient {
                 feePayer: packet.feePayer,
                 recipient: packet.request.action.recipient ?? "",
                 recentBlockhash: packet.recentBlockhash,
-                amountBaseUnits: packet.request.action.amountBaseUnits ?? ""
+                amountBaseUnits: packet.request.action.amountBaseUnits ?? "",
+                computeUnitLimit: packet.computeUnitLimit,
+                computeUnitPriceMicroLamports: computeUnitPrice
             )
             message = transaction.message
             unsignedTransaction = transaction.unsignedTransaction
@@ -1058,7 +1304,9 @@ actor WalletSolanaRPCClient {
                     createsDestinationAssociatedAccount,
                 mintExtensions: boundMintExtensions,
                 sourceAccountExtensions: boundSourceExtensions,
-                destinationAccountExtensions: boundDestinationExtensions
+                destinationAccountExtensions: boundDestinationExtensions,
+                computeUnitLimit: packet.computeUnitLimit,
+                computeUnitPriceMicroLamports: computeUnitPrice
             )
             let expectedTransferAccounts = [
                 WalletSolanaResolvedAccount(
@@ -1191,7 +1439,9 @@ actor WalletSolanaRPCClient {
             let transaction = try WalletSolanaCanonicalCoreTransfer(
                 feePayer: packet.feePayer, asset: identity.address,
                 recipient: recipient, recentBlockhash: packet.recentBlockhash,
-                assetDataDigest: current.dataDigest
+                assetDataDigest: current.dataDigest,
+                computeUnitLimit: packet.computeUnitLimit,
+                computeUnitPriceMicroLamports: computeUnitPrice
             )
             message = transaction.message
             unsignedTransaction = transaction.unsignedTransaction
@@ -1208,8 +1458,13 @@ actor WalletSolanaRPCClient {
             )
         }
         let fee = try await feeForMessage(message)
-        guard WalletBaseUnits.lessThanOrEqual(fee, packet.maximumFeeBaseUnits) else {
-            throw WalletRPCError.simulation("the refreshed Solana fee exceeds its ceiling")
+        guard fee == packet.feeQuoteBaseUnits,
+              WalletBaseUnits.lessThanOrEqual(
+                  fee, packet.maximumFeeBaseUnits
+              ) else {
+            throw WalletRPCError.simulation(
+                "the refreshed Solana fee changed or exceeded its ceiling"
+            )
         }
         let simulation: String
         if packet.request.action.type == .nftTransfer,
@@ -1217,13 +1472,25 @@ actor WalletSolanaRPCClient {
            let identity = WalletSolanaCollectibleIdentity.parse(assetID),
            let recipient = packet.request.action.recipient,
            let coreUpdateAuthority {
-            simulation = try await simulateCoreTransfer(
+            let evidence = try await simulateCoreTransferEvidence(
                 unsignedTransaction, asset: identity.address,
                 expectedOwner: recipient,
                 expectedUpdateAuthority: coreUpdateAuthority
             )
+            guard evidence.unitsConsumed <= UInt64(packet.computeUnitLimit) else {
+                throw WalletRPCError.simulation(
+                    "the Core recheck exceeded its reviewed compute limit"
+                )
+            }
+            simulation = evidence.summary
         } else {
-            simulation = try await simulate(unsignedTransaction)
+            let evidence = try await simulateEvidence(unsignedTransaction)
+            guard evidence.unitsConsumed <= UInt64(packet.computeUnitLimit) else {
+                throw WalletRPCError.simulation(
+                    "the Solana recheck exceeded its reviewed compute limit"
+                )
+            }
+            simulation = evidence.summary
         }
         return WalletSolanaRecheckPacket(
             intentID: intentID, genesisHash: genesisHash,
@@ -2698,7 +2965,122 @@ actor WalletSolanaRPCClient {
         return String(fee)
     }
 
-    private func simulate(_ unsignedTransaction: Data) async throws -> String {
+    private func priorityPlan(
+        unitsConsumed: UInt64,
+        writableAccounts: [String],
+        baseFee: String,
+        maximumFee: String
+    ) async throws -> PriorityPlan {
+        guard unitsConsumed > 0,
+              unitsConsumed <= UInt64(WalletSolanaComputeBudget.maximumUnits),
+              !writableAccounts.isEmpty, writableAccounts.count <= 128,
+              Set(writableAccounts).count == writableAccounts.count,
+              writableAccounts.allSatisfy({
+                  WalletSolanaBase58.decode($0, exactLength: 32) != nil
+              }),
+              let base = UInt64(baseFee), String(base) == baseFee,
+              let maximum = UInt64(maximumFee), String(maximum) == maximumFee,
+              base <= maximum else {
+            throw WalletRPCError.invalidResponse(
+                "Solana compute or fee evidence was outside reviewed bounds"
+            )
+        }
+        let margin = max(UInt64(1), (unitsConsumed + 9) / 10)
+        let bounded = min(
+            UInt64(WalletSolanaComputeBudget.maximumUnits),
+            unitsConsumed + margin
+        )
+        guard let limit = UInt32(exactly: bounded), limit > 0 else {
+            throw WalletRPCError.invalidResponse(
+                "Solana compute-unit evidence could not be bounded"
+            )
+        }
+        let raw = try await rpc(
+            method: "getRecentPrioritizationFees", params: [writableAccounts]
+        )
+        guard let rows = raw as? [Any], !rows.isEmpty, rows.count <= 150 else {
+            throw WalletRPCError.invalidResponse(
+                "getRecentPrioritizationFees returned excessive data"
+            )
+        }
+        var recent: [(slot: UInt64, price: UInt64)] = []
+        var slots: Set<UInt64> = []
+        for row in rows {
+            guard let value = row as? [String: Any], value.count == 2,
+                  let slot = Self.unsigned(value["slot"]),
+                  let price = Self.unsigned(value["prioritizationFee"]),
+                  slots.insert(slot).inserted else {
+                throw WalletRPCError.invalidResponse(
+                    "getRecentPrioritizationFees returned malformed evidence"
+                )
+            }
+            recent.append((slot, price))
+        }
+        let latestPrices = recent.sorted { $0.slot > $1.slot }
+            .prefix(20).map(\.price).sorted()
+        let recommended = latestPrices.isEmpty ? 0
+            : latestPrices[(latestPrices.count - 1) * 3 / 4]
+        let available = maximum - base
+        let maximumPrice: UInt64
+        if available > UInt64.max / 1_000_000 {
+            maximumPrice = UInt64.max
+        } else {
+            maximumPrice = available * 1_000_000 / UInt64(limit)
+        }
+        let price = min(recommended, maximumPrice)
+        guard let priority = Self.priorityFee(
+                  computeUnitLimit: limit, priceMicroLamports: price
+              ),
+              let total = WalletBaseUnits.add(baseFee, priority),
+              WalletBaseUnits.lessThanOrEqual(total, maximumFee) else {
+            throw WalletRPCError.invalidResponse(
+                "Solana priority-fee arithmetic exceeded its exact ceiling"
+            )
+        }
+        return PriorityPlan(
+            computeUnitLimit: limit,
+            computeUnitPriceMicroLamports: price,
+            priorityFeeBaseUnits: priority
+        )
+    }
+
+    private static func priorityFee(
+        computeUnitLimit: UInt32,
+        priceMicroLamports: UInt64
+    ) -> String? {
+        guard let microLamports = WalletBaseUnits.multiply(
+            String(computeUnitLimit), String(priceMicroLamports)
+        ), let normalized = WalletBaseUnits.normalize(microLamports) else {
+            return nil
+        }
+        guard normalized != "0" else { return "0" }
+        if normalized.count <= 6 { return "1" }
+        let split = normalized.index(normalized.endIndex, offsetBy: -6)
+        let whole = String(normalized[..<split])
+        let remainder = normalized[split...]
+        return remainder.allSatisfy({ $0 == "0" })
+            ? whole : WalletBaseUnits.add(whole, "1")
+    }
+
+    private static func validateFinalFee(
+        _ totalFee: String,
+        baseFee: String,
+        plan: PriorityPlan,
+        maximumFee: String
+    ) throws {
+        guard let expected = WalletBaseUnits.add(
+                  baseFee, plan.priorityFeeBaseUnits
+              ), expected == totalFee,
+              WalletBaseUnits.lessThanOrEqual(totalFee, maximumFee) else {
+            throw WalletRPCError.invalidResponse(
+                "getFeeForMessage did not match the reviewed priority fee"
+            )
+        }
+    }
+
+    private func simulateEvidence(
+        _ unsignedTransaction: Data
+    ) async throws -> SimulationEvidence {
         let result = try await dictionaryResult(method: "simulateTransaction", params: [
             unsignedTransaction.base64EncodedString(),
             [
@@ -2722,22 +3104,22 @@ actor WalletSolanaRPCClient {
         guard logs.count <= 1_000, logs.allSatisfy({ $0.utf8.count <= 1_024 }) else {
             throw WalletRPCError.invalidResponse("simulation logs exceeded wallet limits")
         }
-        let units = Self.unsigned(value["unitsConsumed"])
-        guard units.map({ $0 <= 1_400_000 }) != false else {
+        guard let units = Self.unsigned(value["unitsConsumed"]), units > 0,
+              units <= UInt64(WalletSolanaComputeBudget.maximumUnits) else {
             throw WalletRPCError.invalidResponse("simulation compute units were invalid")
         }
-        if let units {
-            return "Reviewed Solana simulation succeeded; \(units) compute units"
-        }
-        return "Reviewed Solana simulation succeeded"
+        return SimulationEvidence(
+            summary: "Reviewed Solana simulation succeeded; \(units) compute units",
+            unitsConsumed: units
+        )
     }
 
-    private func simulateCoreTransfer(
+    private func simulateCoreTransferEvidence(
         _ unsignedTransaction: Data,
         asset: String,
         expectedOwner: String,
         expectedUpdateAuthority: WalletSolanaCoreAssetEvidence.UpdateAuthority
-    ) async throws -> String {
+    ) async throws -> SimulationEvidence {
         let result = try await dictionaryResult(method: "simulateTransaction", params: [
             unsignedTransaction.base64EncodedString(),
             [
@@ -2775,15 +3157,16 @@ actor WalletSolanaRPCClient {
         let logs = (value["logs"] as? [String]) ?? []
         guard logs.count <= 1_000,
               logs.allSatisfy({ $0.utf8.count <= 1_024 }),
-              Self.unsigned(value["unitsConsumed"]).map({ $0 <= 1_400_000 }) != false else {
+              let units = Self.unsigned(value["unitsConsumed"]), units > 0,
+              units <= UInt64(WalletSolanaComputeBudget.maximumUnits) else {
             throw WalletRPCError.invalidResponse(
                 "Core simulation output exceeded wallet limits"
             )
         }
-        if let units = Self.unsigned(value["unitsConsumed"]) {
-            return "Reviewed Core owner transition succeeded; \(units) compute units"
-        }
-        return "Reviewed Core owner transition succeeded"
+        return SimulationEvidence(
+            summary: "Reviewed Core owner transition succeeded; \(units) compute units",
+            unitsConsumed: units
+        )
     }
 
     private func verifiedGenesisHash() async throws -> String {

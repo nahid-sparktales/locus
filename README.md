@@ -193,6 +193,14 @@ programs are not guessed, while malformed, duplicate, reordered, wrong-slot,
 or owner-substituted evidence rejects the batch. The newest 500 normalized
 records are stored in public SQLite, and unknown token/Core identities enter
 quarantine.
+Reviewed legacy Solana transfers use a two-pass compute-budget flow. Locus first
+simulates the independently rebuilt message at the protocol maximum with a zero
+unit price, adds a ten-percent measured-unit margin capped at 1.4 million, and
+then samples recent fees for the exact writable accounts. The newest 20 samples'
+75th-percentile price is capped to the user's remaining maximum fee before the
+final message is built. The app and signer independently encode exactly one
+`SetComputeUnitLimit` and one `SetComputeUnitPrice`; the provider's final fee and
+simulation must match that exact message again before signing.
 Sui native balances now use the
 [current GraphQL API](https://sdk.mystenlabs.com/sui/clients/graphql), bind the
 full Base58 genesis checkpoint digest, reject
@@ -246,7 +254,7 @@ Solana token sends use the signer-derived recipient associated token account,
 creating it idempotently through an exact reviewed instruction when it is still
 unallocated. Token-2022 transfer-altering extensions, Core collection/plugin
 variants, Token Metadata and compressed-collectible transfers, versioned
-message signing, priority fees, Sui object creation/deletion
+message signing, Sui object creation/deletion
 activity and gRPC execution migration,
 full swaps, external wallets, and WalletConnect remain closed until their
 implementation and evidence gates pass. Finalized Sui activity does record

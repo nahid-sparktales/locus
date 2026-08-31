@@ -3205,6 +3205,17 @@ final class WalletGatewayTests: XCTestCase {
             feePayer: payer, recipient: recipient,
             recentBlockhash: blockhash, amountBaseUnits: "18446744073709551616"
         ))
+        XCTAssertThrowsError(try WalletSolanaCanonicalNativeTransfer(
+            feePayer: payer, recipient: recipient,
+            recentBlockhash: blockhash, amountBaseUnits: "1",
+            computeUnitLimit: 825
+        ))
+        XCTAssertThrowsError(try WalletSolanaCanonicalNativeTransfer(
+            feePayer: payer,
+            recipient: "ComputeBudget111111111111111111111111111111",
+            recentBlockhash: blockhash, amountBaseUnits: "1",
+            computeUnitLimit: 825, computeUnitPriceMicroLamports: 30_000
+        ))
     }
 
     func testSolanaCanonicalCoreMessageMatchesIndependentSignerShape() throws {
@@ -4181,6 +4192,8 @@ final class WalletGatewayTests: XCTestCase {
                 ]
             case "getFeeForMessage":
                 result = ["context": ["slot": 42], "value": 5_000]
+            case "getRecentPrioritizationFees":
+                result = [["slot": 42, "prioritizationFee": 0]]
             case "simulateTransaction":
                 result = [
                     "context": ["slot": 42],
@@ -4212,7 +4225,9 @@ final class WalletGatewayTests: XCTestCase {
             recipientAssociatedTokenAddress: destination
         )
         XCTAssertEqual(packet.canonicalMessageDigest,
-                       "sha256:25ad6ed5b9995274e83214731f90361f3873880a34f656adae5b9ce20c928ca8")
+                       "sha256:ce71b30c644741f4113ae3e8f038d81eaeeed2d8ac3f390e1bec0782320a1ad0")
+        XCTAssertEqual(packet.computeUnitLimit, 2_200)
+        XCTAssertEqual(packet.computeUnitPriceMicroLamports, "0")
         XCTAssertEqual(packet.instructions.count, 2)
         XCTAssertEqual(
             packet.instructions[0].adapterID,
@@ -4327,6 +4342,8 @@ final class WalletGatewayTests: XCTestCase {
                 ]
             case "getFeeForMessage":
                 result = ["context": ["slot": 42], "value": 5_000]
+            case "getRecentPrioritizationFees":
+                result = [["slot": 42, "prioritizationFee": 0]]
             case "simulateTransaction":
                 result = [
                     "context": ["slot": 42],
@@ -4360,8 +4377,10 @@ final class WalletGatewayTests: XCTestCase {
         )
         XCTAssertEqual(
             packet.canonicalMessageDigest,
-            "sha256:163ce00af6a503a938aabe131c8c672d16fbe56104b2431de34ebb9dcddc7f4a"
+            "sha256:0df481d3222a4bc61d33e4c14b0e4df81cc96e899200f02c263b86f2c47bf447"
         )
+        XCTAssertEqual(packet.computeUnitLimit, 3_300)
+        XCTAssertEqual(packet.computeUnitPriceMicroLamports, "0")
         XCTAssertEqual(
             packet.instructions.last?.adapterID,
             WalletReviewedAdapters.solanaToken2022TransferChecked
@@ -4422,6 +4441,8 @@ final class WalletGatewayTests: XCTestCase {
                 ]
             case "getFeeForMessage":
                 result = ["context": ["slot": 42], "value": 5_000]
+            case "getRecentPrioritizationFees":
+                result = [["slot": 42, "prioritizationFee": 0]]
             case "simulateTransaction":
                 result = [
                     "context": ["slot": 45],
@@ -4565,6 +4586,8 @@ final class WalletGatewayTests: XCTestCase {
         let blockhash = WalletSolanaBase58.encode(Data(repeating: 9, count: 32))
         let recipient = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
         var currentBlockHeight = 450
+        var feeRequestCount = 0
+        var substitutedFee = false
         let client = makeSolanaRPCClient { request in
             let body = try walletRPCRequestBody(request)
             let object = try XCTUnwrap(
@@ -4585,14 +4608,32 @@ final class WalletGatewayTests: XCTestCase {
                     ],
                 ]
             case "getFeeForMessage":
-                result = ["context": ["slot": 42], "value": 5_000]
+                feeRequestCount += 1
+                result = [
+                    "context": ["slot": 42],
+                    "value": feeRequestCount == 1
+                        ? 5_000 : (substitutedFee ? 5_024 : 5_025),
+                ]
+            case "getRecentPrioritizationFees":
+                let params = try XCTUnwrap(object["params"] as? [Any])
+                let writableAccounts = try XCTUnwrap(params[0] as? [String])
+                XCTAssertEqual(writableAccounts, [
+                    "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx",
+                    recipient,
+                ])
+                result = [
+                    ["slot": 42, "prioritizationFee": 40_000],
+                    ["slot": 41, "prioritizationFee": 30_000],
+                    ["slot": 40, "prioritizationFee": 20_000],
+                    ["slot": 39, "prioritizationFee": 10_000],
+                ]
             case "simulateTransaction":
                 result = [
                     "context": ["slot": 42],
                     "value": [
                         "err": NSNull(), "innerInstructions": [],
                         "logs": ["Program 11111111111111111111111111111111 success"],
-                        "unitsConsumed": 150,
+                        "unitsConsumed": 750,
                     ],
                 ]
             case "getBlockHeight":
@@ -4619,8 +4660,14 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(packet.genesisHash, WalletNetworkCatalog.solanaDevnet.identity.value)
         XCTAssertEqual(packet.version, .legacy)
         XCTAssertEqual(packet.recentBlockhash, blockhash)
-        XCTAssertEqual(packet.feeQuoteBaseUnits, "5000")
-        XCTAssertEqual(packet.priorityFeeBaseUnits, "0")
+        XCTAssertEqual(packet.feeQuoteBaseUnits, "5025")
+        XCTAssertEqual(packet.computeUnitLimit, 825)
+        XCTAssertEqual(packet.computeUnitPriceMicroLamports, "30000")
+        XCTAssertEqual(packet.priorityFeeBaseUnits, "25")
+        XCTAssertEqual(
+            packet.canonicalMessageDigest,
+            "sha256:d8a487a5cba7e2c33f0d4eebf8e79f64e9cff82034ab8ab6bb30968af6868efa"
+        )
         XCTAssertEqual(packet.instructions.count, 1)
         XCTAssertEqual(
             packet.instructions[0].adapterID,
@@ -4633,6 +4680,14 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(recheck.resolvedAccountsDigest, packet.resolvedAccountsDigest)
         XCTAssertTrue(recheck.simulationSucceeded)
 
+        substitutedFee = true
+        do {
+            _ = try await client.recheck(intentID: "intent-sol", packet: packet)
+            XCTFail("A changed fee for the exact prepared message must be rejected.")
+        } catch WalletRPCError.simulation(let message) {
+            XCTAssertTrue(message.contains("fee changed"))
+        }
+        substitutedFee = false
         currentBlockHeight = 501
         do {
             _ = try await client.recheck(intentID: "intent-sol", packet: packet)
@@ -4640,6 +4695,68 @@ final class WalletGatewayTests: XCTestCase {
         } catch WalletRPCError.simulation(let message) {
             XCTAssertTrue(message.contains("expired"))
         }
+    }
+
+    func testSolanaPriorityFeeIsCappedByTheExactUserMaximum() async throws {
+        let payer = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
+        let blockhash = WalletSolanaBase58.encode(Data(repeating: 9, count: 32))
+        var feeRequestCount = 0
+        let client = makeSolanaRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any
+            switch method {
+            case "getGenesisHash":
+                result = WalletNetworkCatalog.solanaDevnet.identity.value
+            case "getLatestBlockhash":
+                result = [
+                    "context": ["slot": 42],
+                    "value": ["blockhash": blockhash, "lastValidBlockHeight": 500],
+                ]
+            case "getFeeForMessage":
+                feeRequestCount += 1
+                result = [
+                    "context": ["slot": 42],
+                    "value": feeRequestCount == 1 ? 5_000 : 5_010,
+                ]
+            case "getRecentPrioritizationFees":
+                result = [["slot": 42, "prioritizationFee": 40_000]]
+            case "simulateTransaction":
+                result = [
+                    "context": ["slot": 42],
+                    "value": [
+                        "err": NSNull(), "innerInstructions": [], "logs": [],
+                        "unitsConsumed": 750,
+                    ],
+                ]
+            case "getBlockHeight":
+                result = 450
+            default:
+                throw URLError(.unsupportedURL)
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": object["id"]!, "result": result,
+            ])
+        }
+        let request = WalletPrepareRequest(
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            accountID: "locus-vault-solana-0", source: .human,
+            action: .nativeTransfer(
+                recipient: recipient, amountBaseUnits: "123456789"
+            ),
+            maximumFeeBaseUnits: "5010"
+        )
+        let packet = try await client.prepare(request: request, feePayer: payer)
+        XCTAssertEqual(packet.computeUnitLimit, 825)
+        XCTAssertEqual(packet.computeUnitPriceMicroLamports, "12121")
+        XCTAssertEqual(packet.priorityFeeBaseUnits, "10")
+        XCTAssertEqual(packet.feeQuoteBaseUnits, "5010")
+        _ = try await client.recheck(intentID: "capped-priority", packet: packet)
     }
 
     func testSolanaProviderRejectsMaliciousGenesisBeforePreparation() async throws {

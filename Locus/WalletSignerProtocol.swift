@@ -752,6 +752,8 @@ struct WalletSolanaPreparationPacket: Codable, Equatable, Sendable {
     let lastValidBlockHeight: UInt64
     let contextSlot: UInt64
     let feePayer: String
+    let computeUnitLimit: UInt32
+    let computeUnitPriceMicroLamports: String
     let priorityFeeBaseUnits: String
     let feeQuoteBaseUnits: String
     let maximumFeeBaseUnits: String
