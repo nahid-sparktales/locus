@@ -171,7 +171,11 @@ SUI or Coin balance changes; unknown Coin types remain quarantined, failed
 effects cannot claim balance changes, and opaque BCS or Move-call data is not
 accepted. The signer core now has a deterministic, typed builder for the single
 object-backed native SUI transfer shape, but it remains unreachable through XPC
-until provider coin selection, simulation, effect recheck, and execution land.
+until simulation, effect recheck, and execution land. Provider coin selection
+is checkpoint-pinned and validates the exact `Coin<SUI>` BCS, object reference,
+owner, raw balance, and aggregate coin-object balance before choosing one
+deterministic sufficient gas coin; fragmented or accumulator-only funds are not
+silently widened into a different transaction shape.
 Solana token sends use the signer-derived recipient associated token account,
 creating it idempotently through an exact reviewed instruction when it is still
 unallocated. Token-2022 transfer-altering extensions, collectible transfers,

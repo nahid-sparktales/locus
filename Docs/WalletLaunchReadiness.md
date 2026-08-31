@@ -50,6 +50,11 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   one owned gas object, reviewed reference gas price, maximum gas budget, and
   deterministic BCS/digest/signature fixtures. The XPC capability remains
   closed pending provider preparation, simulation, and recheck.
+- [x] Checkpoint-bound native SUI gas-coin discovery and deterministic
+  single-coin selection. The provider validates exact `Coin<SUI>` type, owner,
+  object ID/version/digest, canonical 40-byte Coin BCS, embedded UID, raw u64
+  balance, stable pagination, and reconciliation with the checkpoint's total
+  coin-object balance. Fragmented funds remain unsignable in this subset.
 - [ ] Ethereum curated token and ERC-721/1155 discovery/transfer complete.
 - [ ] Solana transfer-altering Token-2022 extensions and reviewed
   NFT/compressed-collectible transfer implementation complete.

@@ -134,6 +134,13 @@ signing adapter.
   role substitution, underfunding, and chain substitution. This builder is not
   reachable through XPC until checkpoint-bound coin selection, simulation,
   effect recheck, and execution are complete.
+- Native SUI gas discovery filters the GraphQL object connection to the exact
+  `0x2::coin::Coin<0x2::sui::SUI>` type at one pinned checkpoint. It accepts
+  only canonical owner/object/version/digest evidence and the exact 40-byte BCS
+  layout of `Coin<SUI>`, verifies the embedded UID, and requires the enumerated
+  balance sum to equal the checkpoint's coin-object balance. Selection chooses
+  the smallest sufficient single coin, breaking ties by object ID. It never
+  invents a merge command or spends the address balance accumulator.
 - Versioned SQLite public store for activity, assets, contacts, and connections.
 - Network-scoped EIP-1193/EIP-6963 browser grants; opaque message and typed-data
   signing remain rejected.
