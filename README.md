@@ -169,12 +169,13 @@ Finalized Sui transaction activity is likewise read through the checkpoint-bound
 GraphQL path. It records only validated transaction effects and owner-specific
 SUI or Coin balance changes; unknown Coin types remain quarantined, failed
 effects cannot claim balance changes, and opaque BCS or Move-call data is not
-accepted.
-Solana token
-sends use the signer-derived recipient associated token account, creating it
-idempotently through an exact reviewed instruction when it is still
+accepted. The signer core now has a deterministic, typed builder for the single
+object-backed native SUI transfer shape, but it remains unreachable through XPC
+until provider coin selection, simulation, effect recheck, and execution land.
+Solana token sends use the signer-derived recipient associated token account,
+creating it idempotently through an exact reviewed instruction when it is still
 unallocated. Token-2022 transfer-altering extensions, collectible transfers,
-versioned messages, Sui object transfers and transaction/signing adapters, full
+versioned messages, Sui XPC signing and object-transfer adapters, full
 swaps, external wallets, and WalletConnect remain closed until their
 implementation and evidence gates pass.
 

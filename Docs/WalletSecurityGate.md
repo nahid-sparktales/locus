@@ -127,6 +127,13 @@ signing adapter.
   or Coin types, unstable pages, and truncated results fail closed. Only public
   activity metadata enters SQLite; unknown Coins remain quarantined and no BCS,
   Move-call, or signing authority is exposed.
+- The isolated signer core can canonically rebuild one object-backed native SUI
+  transfer from typed fields. It accepts exactly one gas coin, a positive split,
+  one recipient transfer, the reviewed reference gas price and budget, and a
+  current-epoch expiration; it rejects arbitrary BCS, Move calls, extra commands,
+  role substitution, underfunding, and chain substitution. This builder is not
+  reachable through XPC until checkpoint-bound coin selection, simulation,
+  effect recheck, and execution are complete.
 - Versioned SQLite public store for activity, assets, contacts, and connections.
 - Network-scoped EIP-1193/EIP-6963 browser grants; opaque message and typed-data
   signing remain rejected.
@@ -142,7 +149,7 @@ until their implementation and evidence gates pass:
   NFT/compressed-collectible transfer adapters, remote-media rendering,
   versioned-message and lookup-table
   decoding, indexed history, priority fees, and local-validator coverage; all
-  Sui transaction builders, signing, provider execution, Coin and object/NFT
+  Sui XPC signing authority, provider execution, Coin and object/NFT
   transfers, object-effect activity, gRPC execution, and localnet suites;
 - full v2/v3/v4 Universal Router, Jupiter `/build`, and pinned Cetus V3 swaps;
 - live MetaMask, Phantom, Slush, and Reown WalletKit sessions;

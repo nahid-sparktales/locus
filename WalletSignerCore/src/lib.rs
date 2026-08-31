@@ -21,7 +21,16 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use slip10_ed25519::derive_ed25519_private_key;
 use solana_pubkey::Pubkey;
+use sui_crypto::SuiSigner;
 use sui_crypto::ed25519::Ed25519PrivateKey;
+use sui_sdk_types::bcs::ToBcs;
+use sui_sdk_types::{
+    Address as SuiAddress, Argument as SuiArgument, Command as SuiCommand,
+    Digest as SuiDigest, GasPayment as SuiGasPayment, ObjectReference as SuiObjectReference,
+    ProgrammableTransaction as SuiProgrammableTransaction, SplitCoins as SuiSplitCoins,
+    Transaction as SuiTransaction, TransactionExpiration as SuiTransactionExpiration,
+    TransactionKind as SuiTransactionKind, TransferObjects as SuiTransferObjects,
+};
 use zeroize::Zeroize;
 
 #[derive(Serialize)]
@@ -123,6 +132,42 @@ struct SignedSolanaTransaction {
     canonical_message_digest: String,
     transaction_id: String,
     signed_transaction: String,
+}
+
+#[derive(Clone, Deserialize)]
+struct SuiNativeTransferRequest {
+    chain_identifier: String,
+    sender: String,
+    recipient: String,
+    gas_object_id: String,
+    gas_object_version: u64,
+    gas_object_digest: String,
+    gas_balance_base_units: String,
+    amount_base_units: String,
+    reference_gas_price_base_units: String,
+    gas_price_base_units: String,
+    gas_budget_base_units: String,
+    current_epoch: u64,
+    expiration_epoch: u64,
+}
+
+#[derive(Serialize)]
+struct PreparedSuiTransaction {
+    from: String,
+    chain_identifier: String,
+    transaction_digest: String,
+    signing_digest: String,
+    transaction_bcs: String,
+}
+
+#[derive(Serialize)]
+struct SignedSuiTransaction {
+    from: String,
+    chain_identifier: String,
+    transaction_digest: String,
+    signing_digest: String,
+    transaction_bcs: String,
+    signature: String,
 }
 
 #[derive(Deserialize)]
@@ -294,6 +339,169 @@ fn solana_signing_key(mnemonic: &Mnemonic) -> SigningKey {
     secret.zeroize();
     seed.zeroize();
     key
+}
+
+fn sui_signing_key(mnemonic: &Mnemonic) -> Ed25519PrivateKey {
+    let mut seed = mnemonic.to_seed("");
+    let mut secret = derive_ed25519_private_key(&seed, &[44, 784, 0, 0, 0]);
+    let key = Ed25519PrivateKey::new(secret);
+    secret.zeroize();
+    seed.zeroize();
+    key
+}
+
+fn parse_canonical_sui_address(value: &str) -> Result<SuiAddress, &'static str> {
+    let address = SuiAddress::from_str(value).map_err(|_| "invalid Sui address")?;
+    if address.to_string() != value {
+        return Err("Sui address must be canonical 32-byte hex");
+    }
+    Ok(address)
+}
+
+fn parse_canonical_sui_digest(value: &str) -> Result<SuiDigest, &'static str> {
+    let digest = SuiDigest::from_str(value).map_err(|_| "invalid Sui digest")?;
+    if digest.to_string() != value {
+        return Err("Sui digest must use canonical base58");
+    }
+    Ok(digest)
+}
+
+fn parse_canonical_u64(value: &str, error: &'static str) -> Result<u64, &'static str> {
+    let parsed = value.parse::<u64>().map_err(|_| error)?;
+    if parsed.to_string() != value {
+        return Err(error);
+    }
+    Ok(parsed)
+}
+
+fn parse_sui_native_request(
+    value: *const c_char,
+) -> Result<SuiNativeTransferRequest, &'static str> {
+    if value.is_null() {
+        return Err("missing Sui transaction");
+    }
+    // SAFETY: Callers provide a live NUL-terminated CString for this call.
+    let json = unsafe { CStr::from_ptr(value) }.to_bytes();
+    if json.len() > 16 * 1024 {
+        return Err("Sui transaction is too large");
+    }
+    serde_json::from_slice(json).map_err(|_| "invalid Sui transaction JSON")
+}
+
+fn build_sui_native_transaction(
+    request: &SuiNativeTransferRequest,
+    signing_key: &Ed25519PrivateKey,
+) -> Result<SuiTransaction, &'static str> {
+    const SUI_MAINNET_CHAIN_ID: &str = "4btiuiMPvEENsttpZC7CZ53DruC3MAgfznDbASZ7DR6S";
+    const SUI_TESTNET_CHAIN_ID: &str = "69WiPg3DAQiwdxfncX6wYQ2siKwAe6L9BZthQea3JNMD";
+    if request.chain_identifier != SUI_MAINNET_CHAIN_ID
+        && request.chain_identifier != SUI_TESTNET_CHAIN_ID
+    {
+        return Err("unsupported Sui chain identifier");
+    }
+    parse_canonical_sui_digest(&request.chain_identifier)?;
+
+    let sender = parse_canonical_sui_address(&request.sender)?;
+    let expected_sender = signing_key.public_key().derive_address();
+    let recipient = parse_canonical_sui_address(&request.recipient)?;
+    let gas_object_id = parse_canonical_sui_address(&request.gas_object_id)?;
+    let gas_object_digest = parse_canonical_sui_digest(&request.gas_object_digest)?;
+    if sender != expected_sender
+        || recipient == sender
+        || recipient == SuiAddress::ZERO
+        || gas_object_id == SuiAddress::ZERO
+        || gas_object_id == sender
+        || gas_object_id == recipient
+    {
+        return Err("Sui account roles do not match the reviewed transfer");
+    }
+    if request.gas_object_version == 0 {
+        return Err("Sui gas object version must be positive");
+    }
+
+    let balance = parse_canonical_u64(
+        &request.gas_balance_base_units,
+        "invalid Sui gas coin balance",
+    )?;
+    let amount = parse_canonical_u64(
+        &request.amount_base_units,
+        "invalid SUI transfer amount",
+    )?;
+    let reference_gas_price = parse_canonical_u64(
+        &request.reference_gas_price_base_units,
+        "invalid Sui reference gas price",
+    )?;
+    let gas_price = parse_canonical_u64(
+        &request.gas_price_base_units,
+        "invalid Sui gas price",
+    )?;
+    let gas_budget = parse_canonical_u64(
+        &request.gas_budget_base_units,
+        "invalid Sui gas budget",
+    )?;
+    if amount == 0 || reference_gas_price == 0 || gas_budget == 0 {
+        return Err("Sui amount, reference gas price, and gas budget must be positive");
+    }
+    if gas_price != reference_gas_price {
+        return Err("Sui gas price does not match reviewed reference gas price");
+    }
+    let required_balance = amount
+        .checked_add(gas_budget)
+        .ok_or("Sui transfer amount and gas budget overflow")?;
+    if required_balance > balance {
+        return Err("Sui gas coin cannot cover the transfer and maximum gas budget");
+    }
+    if request.expiration_epoch != request.current_epoch {
+        return Err("Sui transaction must expire at the reviewed current epoch");
+    }
+
+    let gas_object = SuiObjectReference::new(
+        gas_object_id,
+        request.gas_object_version,
+        gas_object_digest,
+    );
+    Ok(SuiTransaction {
+        kind: SuiTransactionKind::ProgrammableTransaction(SuiProgrammableTransaction {
+            inputs: vec![
+                sui_sdk_types::Input::Pure(amount.to_le_bytes().to_vec()),
+                sui_sdk_types::Input::Pure(recipient.as_bytes().to_vec()),
+            ],
+            commands: vec![
+                SuiCommand::SplitCoins(SuiSplitCoins {
+                    coin: SuiArgument::Gas,
+                    amounts: vec![SuiArgument::Input(0)],
+                }),
+                SuiCommand::TransferObjects(SuiTransferObjects {
+                    objects: vec![SuiArgument::NestedResult(0, 0)],
+                    address: SuiArgument::Input(1),
+                }),
+            ],
+        }),
+        sender,
+        gas_payment: SuiGasPayment {
+            objects: vec![gas_object],
+            owner: sender,
+            price: gas_price,
+            budget: gas_budget,
+        },
+        expiration: SuiTransactionExpiration::Epoch(request.expiration_epoch),
+    })
+}
+
+fn prepare_sui_transaction_response(
+    request: &SuiNativeTransferRequest,
+    transaction: &SuiTransaction,
+) -> Result<PreparedSuiTransaction, &'static str> {
+    let transaction_bcs = transaction
+        .to_bcs()
+        .map_err(|_| "Sui transaction serialization failed")?;
+    Ok(PreparedSuiTransaction {
+        from: transaction.sender.to_string(),
+        chain_identifier: request.chain_identifier.clone(),
+        transaction_digest: transaction.digest().to_string(),
+        signing_digest: format!("blake2b256:{}", hex::encode(transaction.signing_digest())),
+        transaction_bcs: base64::engine::general_purpose::STANDARD.encode(transaction_bcs),
+    })
 }
 
 fn parse_solana_request(value: *const c_char) -> Result<SolanaNativeTransferRequest, &'static str> {
@@ -842,6 +1050,70 @@ pub extern "C" fn locus_wallet_sign_solana_spl_transfer_json(
     }
 }
 
+/// Independently rebuild one reviewed object-backed native SUI transfer. The
+/// accepted programmable transaction is exactly `SplitCoins(GasCoin)` followed
+/// by `TransferObjects`; caller-supplied BCS, Move calls, and extra commands are
+/// absent from this boundary.
+#[unsafe(no_mangle)]
+pub extern "C" fn locus_wallet_prepare_sui_native_transfer_json(
+    entropy_hex: *const c_char,
+    transaction_json: *const c_char,
+) -> *mut c_char {
+    let Ok((mnemonic, mut entropy)) = mnemonic_from_entropy_hex(entropy_hex) else {
+        return json_pointer(&ErrorResponse {
+            error: "invalid BIP-39 entropy",
+        });
+    };
+    let result = (|| {
+        let signing_key = sui_signing_key(&mnemonic);
+        let request = parse_sui_native_request(transaction_json)?;
+        let transaction = build_sui_native_transaction(&request, &signing_key)?;
+        prepare_sui_transaction_response(&request, &transaction)
+    })();
+    entropy.zeroize();
+    match result {
+        Ok(value) => json_pointer(&value),
+        Err(error) => json_pointer(&ErrorResponse { error }),
+    }
+}
+
+/// Rebuild and sign only the reviewed object-backed native SUI transfer shape.
+/// The result contains canonical transaction BCS and the Sui
+/// `flag || signature || public-key` user signature required for execution.
+#[unsafe(no_mangle)]
+pub extern "C" fn locus_wallet_sign_sui_native_transfer_json(
+    entropy_hex: *const c_char,
+    transaction_json: *const c_char,
+) -> *mut c_char {
+    let Ok((mnemonic, mut entropy)) = mnemonic_from_entropy_hex(entropy_hex) else {
+        return json_pointer(&ErrorResponse {
+            error: "invalid BIP-39 entropy",
+        });
+    };
+    let result = (|| {
+        let signing_key = sui_signing_key(&mnemonic);
+        let request = parse_sui_native_request(transaction_json)?;
+        let transaction = build_sui_native_transaction(&request, &signing_key)?;
+        let prepared = prepare_sui_transaction_response(&request, &transaction)?;
+        let signature = signing_key
+            .sign_transaction(&transaction)
+            .map_err(|_| "Sui transaction signing failed")?;
+        Ok::<_, &'static str>(SignedSuiTransaction {
+            from: prepared.from,
+            chain_identifier: prepared.chain_identifier,
+            transaction_digest: prepared.transaction_digest,
+            signing_digest: prepared.signing_digest,
+            transaction_bcs: prepared.transaction_bcs,
+            signature: signature.to_base64(),
+        })
+    })();
+    entropy.zeroize();
+    match result {
+        Ok(value) => json_pointer(&value),
+        Err(error) => json_pointer(&ErrorResponse { error }),
+    }
+}
+
 /// Derive one public account for each supported chain. Private keys and the
 /// BIP-39 seed are zeroized before this function returns.
 #[unsafe(no_mangle)]
@@ -1005,6 +1277,157 @@ mod tests {
             value["accounts"][2]["address"],
             "0xf967e21c16a4757daafec13ee79c0dc5c5329199be5d70c86fd07b8e75db892c"
         );
+    }
+
+    fn reviewed_sui_native_request() -> serde_json::Value {
+        serde_json::json!({
+            "chain_identifier": "4btiuiMPvEENsttpZC7CZ53DruC3MAgfznDbASZ7DR6S",
+            "sender": "0xf967e21c16a4757daafec13ee79c0dc5c5329199be5d70c86fd07b8e75db892c",
+            "recipient": SuiAddress::new([7_u8; 32]).to_string(),
+            "gas_object_id": SuiAddress::new([8_u8; 32]).to_string(),
+            "gas_object_version": 42,
+            "gas_object_digest": SuiDigest::new([9_u8; 32]).to_string(),
+            "gas_balance_base_units": "5000000000",
+            "amount_base_units": "123456789",
+            "reference_gas_price_base_units": "1000",
+            "gas_price_base_units": "1000",
+            "gas_budget_base_units": "10000000",
+            "current_epoch": 412,
+            "expiration_epoch": 412
+        })
+    }
+
+    #[test]
+    fn sui_native_transfer_is_rebuilt_and_signed_deterministically() {
+        use sui_crypto::SuiVerifier;
+        use sui_crypto::ed25519::Ed25519VerifyingKey;
+        use sui_sdk_types::UserSignature;
+        use sui_sdk_types::bcs::FromBcs;
+
+        let entropy =
+            CString::new("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let request = CString::new(reviewed_sui_native_request().to_string()).unwrap();
+        let prepared_pointer =
+            locus_wallet_prepare_sui_native_transfer_json(entropy.as_ptr(), request.as_ptr());
+        let prepared_json = unsafe { CStr::from_ptr(prepared_pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(prepared_pointer) };
+        let prepared: serde_json::Value = serde_json::from_str(&prepared_json).unwrap();
+        assert_eq!(
+            prepared["from"],
+            "0xf967e21c16a4757daafec13ee79c0dc5c5329199be5d70c86fd07b8e75db892c"
+        );
+        assert_eq!(
+            prepared["chain_identifier"],
+            "4btiuiMPvEENsttpZC7CZ53DruC3MAgfznDbASZ7DR6S"
+        );
+        assert_eq!(
+            prepared["transaction_digest"],
+            "UWx2nPyFTrBo7AFnv46gHJthCkfERY5ash86HcnSdpC"
+        );
+        assert_eq!(
+            prepared["signing_digest"],
+            "blake2b256:ea728848d79bf40086a665575c973e09ad816617602133decbf6240412bb4cee"
+        );
+        assert_eq!(
+            prepared["transaction_bcs"],
+            "AAACAAgVzVsHAAAAAAAgBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcCAgABAQAAAQEDAAAAAAEBAPln4hwWpHV9qv7BPuecDcXFMpGZvl1wyG/Qe45124ksAQgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIKgAAAAAAAAAgCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQn5Z+IcFqR1far+wT7nnA3FxTKRmb5dcMhv0HuOdduJLOgDAAAAAAAAgJaYAAAAAAABnAEAAAAAAAA="
+        );
+
+        let signed_pointer =
+            locus_wallet_sign_sui_native_transfer_json(entropy.as_ptr(), request.as_ptr());
+        let signed_json = unsafe { CStr::from_ptr(signed_pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(signed_pointer) };
+        let signed: serde_json::Value = serde_json::from_str(&signed_json).unwrap();
+        assert_eq!(signed["transaction_digest"], prepared["transaction_digest"]);
+        assert_eq!(signed["signing_digest"], prepared["signing_digest"]);
+        assert_eq!(signed["transaction_bcs"], prepared["transaction_bcs"]);
+        assert_eq!(
+            signed["signature"],
+            "AIFiwj9e+NiUQPvv6rEJem47TpYdjo3tJW0XxyDi3zbffmCkq9mGIG1ugMIIGy1tw8+X6Be4iwKt3uhFIoXWdw8gXFduCkowYm4UcNay6Iz0RwTwP7oVMVlw7Oe+CutXlg=="
+        );
+
+        let transaction_bytes = base64::engine::general_purpose::STANDARD
+            .decode(signed["transaction_bcs"].as_str().unwrap())
+            .unwrap();
+        let transaction = SuiTransaction::from_bcs(&transaction_bytes).unwrap();
+        assert_eq!(transaction.digest().to_string(), signed["transaction_digest"]);
+        assert_eq!(
+            format!("blake2b256:{}", hex::encode(transaction.signing_digest())),
+            signed["signing_digest"]
+        );
+        let signature =
+            UserSignature::from_base64(signed["signature"].as_str().unwrap()).unwrap();
+        let (mnemonic, mut entropy_bytes) = mnemonic_from_entropy_hex(entropy.as_ptr()).unwrap();
+        let signing_key = sui_signing_key(&mnemonic);
+        Ed25519VerifyingKey::new(&signing_key.public_key())
+            .unwrap()
+            .verify_transaction(&transaction, &signature)
+            .unwrap();
+        entropy_bytes.zeroize();
+    }
+
+    #[test]
+    fn sui_native_transfer_rejects_substitution_and_unsafe_funding() {
+        let entropy =
+            CString::new("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let base = reviewed_sui_native_request();
+        let mut cases = Vec::new();
+
+        let mut foreign_sender = base.clone();
+        foreign_sender["sender"] = SuiAddress::new([6_u8; 32]).to_string().into();
+        cases.push(foreign_sender);
+
+        let mut self_transfer = base.clone();
+        self_transfer["recipient"] = base["sender"].clone();
+        cases.push(self_transfer);
+
+        let mut zero_amount = base.clone();
+        zero_amount["amount_base_units"] = "0".into();
+        cases.push(zero_amount);
+
+        let mut underfunded = base.clone();
+        underfunded["gas_balance_base_units"] = "133456788".into();
+        cases.push(underfunded);
+
+        let mut gas_price_substitution = base.clone();
+        gas_price_substitution["gas_price_base_units"] = "1001".into();
+        cases.push(gas_price_substitution);
+
+        let mut stale_epoch_evidence = base.clone();
+        stale_epoch_evidence["expiration_epoch"] = 413.into();
+        cases.push(stale_epoch_evidence);
+
+        let mut unknown_chain = base.clone();
+        unknown_chain["chain_identifier"] = SuiDigest::new([3_u8; 32]).to_string().into();
+        cases.push(unknown_chain);
+
+        let mut noncanonical_recipient = base;
+        noncanonical_recipient["recipient"] = "0x7".into();
+        cases.push(noncanonical_recipient);
+
+        for value in cases {
+            let request = CString::new(value.to_string()).unwrap();
+            let pointer = locus_wallet_prepare_sui_native_transfer_json(
+                entropy.as_ptr(),
+                request.as_ptr(),
+            );
+            let json = unsafe { CStr::from_ptr(pointer) }
+                .to_string_lossy()
+                .into_owned();
+            unsafe { locus_wallet_string_free(pointer) };
+            assert!(
+                serde_json::from_str::<serde_json::Value>(&json).unwrap()["error"]
+                    .as_str()
+                    .is_some(),
+                "unsafe Sui request was accepted: {json}"
+            );
+        }
     }
 
     #[test]

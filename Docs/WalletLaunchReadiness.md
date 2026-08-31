@@ -45,6 +45,11 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   checkpoint-pinned GraphQL connection, with exact transaction/effects digest,
   sender, status, timestamp, checkpoint, signed-delta, owner, and Coin-type
   validation; failed, duplicate, unstable, or truncated evidence fails closed.
+- [x] Canonical signer-core builder for one object-backed native SUI transfer:
+  exact `SplitCoins(GasCoin)` plus `TransferObjects`, current-epoch expiry,
+  one owned gas object, reviewed reference gas price, maximum gas budget, and
+  deterministic BCS/digest/signature fixtures. The XPC capability remains
+  closed pending provider preparation, simulation, and recheck.
 - [ ] Ethereum curated token and ERC-721/1155 discovery/transfer complete.
 - [ ] Solana transfer-altering Token-2022 extensions and reviewed
   NFT/compressed-collectible transfer implementation complete.
